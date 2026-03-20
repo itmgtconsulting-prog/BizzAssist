@@ -1,0 +1,66 @@
+{
+  // ── Formatting ────────────────────────────────────────────────────────────
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "editor.formatOnSave": true,
+  "editor.formatOnPaste": false,
+  "editor.tabSize": 2,
+  "editor.insertSpaces": true,
+  "editor.rulers": [100],
+  "files.eol": "\n",
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true,
+
+  // ── Language-specific formatting ──────────────────────────────────────────
+  "[typescript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.formatOnSave": true
+  },
+  "[typescriptreact]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.formatOnSave": true
+  },
+  "[javascript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[json]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[markdown]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.wordWrap": "on"
+  },
+
+  // ── ESLint ────────────────────────────────────────────────────────────────
+  "eslint.enable": true,
+  "eslint.validate": ["javascript", "javascriptreact", "typescript", "typescriptreact"],
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "explicit"
+  },
+
+  // ── TypeScript ────────────────────────────────────────────────────────────
+  "typescript.preferences.importModuleSpecifier": "non-relative",
+  "typescript.updateImportsOnFileMove.enabled": "always",
+  "typescript.suggest.autoImports": true,
+  "typescript.inlayHints.parameterNames.enabled": "literals",
+
+  // ── File explorer ─────────────────────────────────────────────────────────
+  "files.exclude": {
+    "**/.git": true,
+    "**/node_modules": true,
+    "**/.next": true,
+    "**/coverage": true
+  },
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/.next": true,
+    "**/coverage": true,
+    "**/.git": true
+  },
+
+  // ── Git ───────────────────────────────────────────────────────────────────
+  "git.enableSmartCommit": true,
+  "git.confirmSync": false,
+
+  // ── Terminal ──────────────────────────────────────────────────────────────
+  "terminal.integrated.defaultProfile.windows": "Git Bash"
+}

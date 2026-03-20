@@ -1,0 +1,37 @@
+{
+  "recommendations": [
+    // ── Required for this project ──────────────────────────────────────────
+    "esbenp.prettier-vscode",
+    "dbaeumer.vscode-eslint",
+    "bradlc.vscode-tailwindcss",
+    "ms-vscode.vscode-typescript-next",
+
+    // ── Next.js & React ───────────────────────────────────────────────────
+    "dsznajder.es7-react-js-snippets",
+    "formulahendry.auto-rename-tag",
+
+    // ── Git & Code review ─────────────────────────────────────────────────
+    "eamodio.gitlens",
+    "github.vscode-pull-request-github",
+    "mhutchie.git-graph",
+
+    // ── Testing ───────────────────────────────────────────────────────────
+    "vitest.explorer",
+    "ms-playwright.playwright",
+
+    // ── Code quality ──────────────────────────────────────────────────────
+    "streetsidesoftware.code-spell-checker",
+    "usernamehw.errorlens",
+    "wayou.vscode-todo-highlight",
+
+    // ── Productivity ──────────────────────────────────────────────────────
+    "christian-kohler.path-intellisense",
+    "burkeholland.simple-react-snippets",
+    "mikestead.dotenv",
+    "editorconfig.editorconfig",
+
+    // ── Security ──────────────────────────────────────────────────────────
+    "snyk-security.snyk-vulnerability-scanner"
+  ],
+  "unwantedRecommendations": []
+}

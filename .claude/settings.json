@@ -1,0 +1,29 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -Command \"$input = $input -join ''; try { $json = $input | ConvertFrom-Json; $file = $json.tool_input.file_path; if ($file -match '\\.(ts|tsx|js|jsx)$') { Set-Location 'C:\\Users\\JakobJuulRasmussenPh\\IT Management Consulting(1)\\BizzAssist\\bizzassist'; $result = npm test 2>&1; Write-Host ($result | Select-Object -Last 20 | Out-String) } } catch { }\"",
+            "timeout": 120,
+            "statusMessage": "Running tests after code change..."
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -Command \"$proj='C:\\\\Users\\\\JakobJuulRasmussenPh\\\\IT Management Consulting(1)\\\\BizzAssist\\\\bizzassist'; Set-Location $proj; $testOut = npm test -- --passWithNoTests 2>&1 | Select-Object -Last 25 | Out-String; $testPassed = $LASTEXITCODE -eq 0; $gate = if($testPassed) { '[PASS] npm test GREEN' } else { '[FAIL] npm test FAILED — work is NOT done, fix tests first' }; $msg = @\"`n=== BIZZASSIST RELEASE GATE ===`n`n$gate`n`nTest output (last 25 lines):`n$testOut`nCODE REVIEWER (block PR if any fail):`n  [ ] Every function/component/hook/route has JSDoc comment block`n  [ ] No secrets or API keys committed to source`n  [ ] No PII (names, emails, IPs) in application logs or Sentry`n  [ ] All external inputs validated + sanitised at API boundary`n  [ ] No cross-tenant queries — every query scoped to verified tenant_id`n  [ ] Rate limiting present on all new public API routes`n  [ ] npm audit — no critical CVEs introduced`n`nARCHITECT (required for structural changes):`n  [ ] New routes follow App Router /app/(tenant)/ SaaS structure`n  [ ] No shared mutable state between tenants`n  [ ] DB migrations include RLS policies on every new table`n  [ ] HTTP security headers and middleware not bypassed`n  [ ] Multi-tenant isolation verified (schema-per-tenant pattern)`n`nISO 27001:`n  [ ] No Restricted data (tokens/keys/PII) in source code`n  [ ] Audit log written for all data mutations (tenant.audit_log)`n  [ ] Data classification respected (see docs/security/DATA_CLASSIFICATION.md)`n`nTESTER gate:`n  npm test               unit + component (must be green)`n  npm run test:e2e       end-to-end (must be green)`n  Coverage target: lines >= 70%, branches >= 60%`n`nWork is NOT done until tests are green and all boxes are checked.`n\"@; @{systemMessage=$msg} | ConvertTo-Json -Compress\"",
+            "timeout": 120,
+            "statusMessage": "Running tests + showing release gate checklist..."
+          }
+        ]
+      }
+    ]
+  }
+}

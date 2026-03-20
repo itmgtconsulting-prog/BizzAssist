@@ -1,0 +1,165 @@
+name: CI — BizzAssist Quality Gate
+
+# Runs on every PR and every push to main/develop.
+# Implements ISO 27001 A.14: automated quality gate in the SDLC.
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  NODE_VERSION: '24.14.0'
+
+jobs:
+  # ── 1. Lint & Format ────────────────────────────────────────────────────
+  lint:
+    name: Lint & Format check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        run: npm run lint
+
+      - name: Run Prettier check
+        run: npm run format:check
+
+  # ── 2. TypeScript type check ─────────────────────────────────────────────
+  typecheck:
+    name: TypeScript type check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript check
+        run: npm run type-check
+
+  # ── 3. Unit & Component tests ────────────────────────────────────────────
+  test-unit:
+    name: Unit & component tests (Vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests with coverage
+        run: npm run test:coverage
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 14
+
+  # ── 4. E2E tests ─────────────────────────────────────────────────────────
+  test-e2e:
+    name: E2E tests (Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run E2E tests
+        run: npm run test:e2e
+        env:
+          CI: true
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 14
+
+  # ── 5. Security audit ────────────────────────────────────────────────────
+  security:
+    name: Security audit (npm audit)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run npm audit (fail on critical/high)
+        run: npm audit --audit-level=high
+
+  # ── 6. Build check ───────────────────────────────────────────────────────
+  build:
+    name: Production build check
+    runs-on: ubuntu-latest
+    needs: [lint, typecheck, test-unit]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Next.js production bundle
+        run: npm run build
+        env:
+          NODE_ENV: production
+          NEXT_PUBLIC_APP_URL: https://bizzassist.dk
+          # Sentry build-time vars (use GitHub secrets in production)
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}

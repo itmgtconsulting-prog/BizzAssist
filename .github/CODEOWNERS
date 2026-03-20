@@ -1,0 +1,24 @@
+# BizzAssist — CODEOWNERS
+# Defines who must review changes to specific files/areas.
+# All PRs require approval from at least one code owner.
+
+# Global default — Jakob reviews everything
+* @jakob-bizzassist
+
+# Security-critical files — require explicit review
+docs/security/          @jakob-bizzassist
+middleware.ts           @jakob-bizzassist
+next.config.ts          @jakob-bizzassist
+.github/workflows/      @jakob-bizzassist
+
+# Database schema & migrations — DBA must review
+docs/architecture/DATABASE.md   @jakob-bizzassist
+supabase/migrations/            @jakob-bizzassist
+
+# Architecture decisions — ARCHITECT must review
+docs/architecture/      @jakob-bizzassist
+docs/agents/            @jakob-bizzassist
+CLAUDE.md               @jakob-bizzassist
+
+# Environment & secrets template — always reviewed
+.env.local.example      @jakob-bizzassist

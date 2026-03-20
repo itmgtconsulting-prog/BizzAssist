@@ -1,0 +1,6 @@
+#!/bin/sh
+# BizzAssist — Husky pre-commit hook
+# Runs lint-staged (ESLint + Prettier on staged files) then unit tests.
+# Implements ISO 27001 A.14: quality gate in the SDLC.
+npx lint-staged
+npm test

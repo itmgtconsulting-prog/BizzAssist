@@ -1,0 +1,6 @@
+#!/bin/sh
+# BizzAssist — Husky commit-msg hook
+# Enforces Conventional Commits format via commitlint.
+# Format: <type>(<scope>): <subject>
+# Example: feat(auth): add Google OAuth login
+npx --no -- commitlint --edit "$1"

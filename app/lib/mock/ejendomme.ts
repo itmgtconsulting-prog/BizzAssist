@@ -4,6 +4,7 @@
  * Udskiftes med Datafordeleren API i produktion.
  */
 
+/** Simpel ejerrepræsentation til overblikssektionen. */
 export interface Ejer {
   navn: string;
   cvr?: string;
@@ -12,16 +13,20 @@ export interface Ejer {
   erhvervsdato: string;
 }
 
+/** Tinglyst hæftelse på ejendommen. */
 export interface Haeftelse {
   id: string;
   type: 'pantebrev' | 'ejerpantebrev' | 'servitut' | 'udlæg';
   kreditor: string;
+  debitor?: string;
+  prioritet?: number;
   beloeb?: number;
   tinglysningsdato: string;
   status: 'aktiv' | 'aflyst';
   dokument: string;
 }
 
+/** En enkelt handel i handelshistorikken. */
 export interface HandelHistorik {
   dato: string;
   pris: number;
@@ -29,6 +34,7 @@ export interface HandelHistorik {
   koeberType: 'selskab' | 'person';
 }
 
+/** BBR-bygningsdata. */
 export interface BBRBygning {
   id: string;
   opfoerelsesaar: number;
@@ -50,6 +56,7 @@ export interface BBRBygning {
   erhvervsareal: number;
 }
 
+/** Miljøindikator for en ejendom. */
 export interface Miljoeindikator {
   id: string;
   titel: string;
@@ -58,6 +65,111 @@ export interface Miljoeindikator {
   ikon: string;
 }
 
+/** Virksomhed der har/har haft adresse på ejendommen. */
+export interface VirksomhedPaaAdresse {
+  navn: string;
+  adresse: string;
+  industri: string;
+  /** Fx "17 år til nu" */
+  periode: string;
+  ansatte?: number;
+  cvr: string;
+}
+
+/** Nuværende adkomsthaver ifølge tinglysning. */
+export interface Adkomsthaver {
+  navn: string;
+  cvr?: string;
+  /** Procent */
+  andel: number;
+  /** Fx "Skøde" */
+  type: string;
+  beloeb: number;
+  dato: string;
+}
+
+/** Historisk adkomst (tidligere ejere). */
+export interface HistoriskAdkomst {
+  /** Array af navne — kan være flere medejere. */
+  navne: string[];
+  /** Array af procentandele, matcher navne-indeks. */
+  andele: number[];
+  type: string;
+  beloeb: number;
+  dato: string;
+}
+
+/** Node i ejerstruktur-træet. */
+export interface EjerstrukturNode {
+  id: string;
+  navn: string;
+  type: 'person' | 'selskab' | 'ejendom';
+  /** Fx "Led" */
+  titel?: string;
+  /** 0–100 */
+  andel?: number;
+  foraeldreId?: string;
+}
+
+/** Detaljerede oplysninger om den nuværende ejer (selskab). */
+export interface EjerDetaljer {
+  navn: string;
+  cvr: string;
+  adresse: string;
+  overtagelsesdato: string;
+  ejertype: string;
+  branche: string;
+  telefon: string;
+  email: string;
+  tegningsregel: string;
+  reklamebeskyttet: boolean;
+  noegletal: {
+    aar: number;
+    resultatFoerSkat: number;
+    resultat: number;
+  };
+}
+
+/** En række i salgshistoriktabellen. */
+export interface SalgsHistorikRaekke {
+  /** Liste af købere med valgfri andel. */
+  koebere: { navn: string; andel?: number }[];
+  /** Fx "Skøde", "Familieoverdragelse", "Endeligt skøde". */
+  handelstype: string;
+  kilde: 'tinglysning' | 'ejerfortegnelsen';
+  /** Samlet andel. */
+  andel?: number;
+  pris: number;
+  dato: string;
+}
+
+/** En række i udbudshistoriktabellen. */
+export interface UdbudsHistorikRaekke {
+  status: string;
+  /** Positiv = prisstigning, negativ = prisfald. */
+  prisaendring?: number;
+  pris: number;
+  dato: string;
+}
+
+/** BBR Jordstykke. */
+export interface Jordstykke {
+  matrikelNummer: string;
+  ejerlavsnavn: string;
+  /** m² */
+  registreretAreal: number;
+}
+
+/** BBR Enhed. */
+export interface Enhed {
+  adresse: string;
+  anvendelse: string;
+  vaerelser?: number;
+  /** m² */
+  samletAreal: number;
+}
+
+/** Fuld ejendomsmodel. */
 export interface Ejendom {
   id: string;
   bfe: string;
@@ -117,6 +229,44 @@ export interface Ejendom {
 
   // Meta
   thumbnail?: string;
+
+  // --- Udvidede felter (Resights-niveau) ---
+
+  /** Virksomheder registreret på adressen. */
+  virksomhederPaaAdressen?: VirksomhedPaaAdresse[];
+
+  /** Nuværende adkomsthaver fra tinglysning. */
+  adkomsthaver?: Adkomsthaver;
+
+  /** Historiske adkomster fra tinglysning. */
+  historiskeAdkomster?: HistoriskAdkomst[];
+
+  /** Tingbogsattest metadata. */
+  tingbogsattest?: {
+    aktNummer: string;
+    matrikler: { matrikelNummer: string; areal: number; registreringsdato: string }[];
+  };
+
+  /** Ejerstruktur som fladt array af noder (bygger et træ). */
+  ejerstruktur?: EjerstrukturNode[];
+
+  /** Detaljerede oplysninger om den aktuelle ejer. */
+  ejerDetaljer?: EjerDetaljer;
+
+  /** Salgshistorik med købernavne og handelstype. */
+  salgshistorik?: SalgsHistorikRaekke[];
+
+  /** Udbudshistorik fra ejendomsmæglere. */
+  udbudshistorik?: UdbudsHistorikRaekke[];
+
+  /** BBR Jordstykker. */
+  jordstykker?: Jordstykke[];
+
+  /** BBR Enheder. */
+  enheder?: Enhed[];
+
+  /** Antal tekniske anlæg registreret i BBR. */
+  tekniskeAnlaeg?: number;
 }
 
 export const mockEjendomme: Ejendom[] = [
@@ -192,6 +342,8 @@ export const mockEjendomme: Ejendom[] = [
         id: 'h-001',
         type: 'pantebrev',
         kreditor: 'Nykredit Realkredit A/S',
+        debitor: 'JAJR Ejendomme 2 ApS',
+        prioritet: 1,
         beloeb: 8500000,
         tinglysningsdato: '2025-12-09',
         status: 'aktiv',
@@ -201,6 +353,8 @@ export const mockEjendomme: Ejendom[] = [
         id: 'h-002',
         type: 'servitut',
         kreditor: 'Hvidovre Kommune',
+        debitor: 'Ejer til enhver tid',
+        prioritet: 2,
         tinglysningsdato: '1972-04-15',
         status: 'aktiv',
         dokument: 'Deklaration om byggelinje',
@@ -210,7 +364,7 @@ export const mockEjendomme: Ejendom[] = [
       {
         id: 'm-001',
         titel: 'Boringer',
-        beskrivelse: 'Der er 5 aktiv boringer.',
+        beskrivelse: 'Der er 5 aktive boringer.',
         status: 'advarsel',
         ikon: '🔩',
       },
@@ -252,6 +406,205 @@ export const mockEjendomme: Ejendom[] = [
     ],
     lat: 55.6397,
     lng: 12.4784,
+
+    // --- Udvidede data ---
+    virksomhederPaaAdressen: [
+      {
+        navn: 'JAJR Ejendomme 2 ApS',
+        adresse: 'Arnold Nielsens Boulevard 64A, 2650 Hvidovre',
+        industri: 'Køb og salg af egen fast ejendom',
+        periode: '3 mdr. til nu',
+        ansatte: 1,
+        cvr: '43817652',
+      },
+      {
+        navn: 'Hvidovre VVS & Ventilation A/S',
+        adresse: 'Arnold Nielsens Boulevard 64A, 2650 Hvidovre',
+        industri: 'VVS-arbejde',
+        periode: '17 år til nu',
+        ansatte: 24,
+        cvr: '27384910',
+      },
+      {
+        navn: 'Risbjerg El-Service ApS',
+        adresse: 'Arnold Nielsens Boulevard 64A, 2650 Hvidovre',
+        industri: 'Elektriske installationer',
+        periode: '11 år til nu',
+        ansatte: 8,
+        cvr: '31029847',
+      },
+    ],
+
+    adkomsthaver: {
+      navn: 'JAJR Ejendomme 2 ApS',
+      cvr: '43817652',
+      andel: 100,
+      type: 'Skøde',
+      beloeb: 12500000,
+      dato: '2025-12-09',
+    },
+
+    historiskeAdkomster: [
+      {
+        navne: ['Hvidovre Erhverv Holding ApS'],
+        andele: [100],
+        type: 'Skøde',
+        beloeb: 9800000,
+        dato: '2021-03-15',
+      },
+      {
+        navne: ['BV Invest ApS'],
+        andele: [100],
+        type: 'Endeligt skøde',
+        beloeb: 7200000,
+        dato: '2017-06-22',
+      },
+      {
+        navne: ['Bent Viggo Nielsen', 'Kirsten Nielsen'],
+        andele: [50, 50],
+        type: 'Familieoverdragelse',
+        beloeb: 5500000,
+        dato: '2013-11-08',
+      },
+      {
+        navne: ['ANB Ejendomme K/S'],
+        andele: [100],
+        type: 'Skøde',
+        beloeb: 4100000,
+        dato: '2009-04-17',
+      },
+    ],
+
+    tingbogsattest: {
+      aktNummer: '2025-12-09.A.22837',
+      matrikler: [
+        {
+          matrikelNummer: '21co, Hvidovre By, Risbjerg',
+          areal: 1648,
+          registreringsdato: '2025-12-09',
+        },
+      ],
+    },
+
+    ejerstruktur: [
+      {
+        id: 'node-jakob',
+        navn: 'Jakob Juul Rasmussen',
+        type: 'person',
+        titel: 'Direktør & ejer',
+        andel: 100,
+      },
+      {
+        id: 'node-holding',
+        navn: 'JAJR Holding ApS',
+        type: 'selskab',
+        titel: 'Holdingselskab',
+        cvr: '41928374',
+        andel: 100,
+        foraeldreId: 'node-jakob',
+      } as EjerstrukturNode & { cvr: string },
+      {
+        id: 'node-ejendom2',
+        navn: 'JAJR Ejendomme 2 ApS',
+        type: 'selskab',
+        titel: 'Driftsselskab',
+        cvr: '43817652',
+        andel: 100,
+        foraeldreId: 'node-holding',
+      } as EjerstrukturNode & { cvr: string },
+      {
+        id: 'node-property',
+        navn: 'Arnold Nielsens Boulevard 64A',
+        type: 'ejendom',
+        titel: 'BFE 2091183',
+        foraeldreId: 'node-ejendom2',
+      },
+    ],
+
+    ejerDetaljer: {
+      navn: 'JAJR Ejendomme 2 ApS',
+      cvr: '43817652',
+      adresse: 'Arnold Nielsens Boulevard 64A, 2650 Hvidovre',
+      overtagelsesdato: '2025-12-09',
+      ejertype: 'Selskab',
+      branche: 'Køb og salg af egen fast ejendom (682040)',
+      telefon: '+45 20 30 40 50',
+      email: 'jakob@jajr.dk',
+      tegningsregel: 'Direktionen alene',
+      reklamebeskyttet: false,
+      noegletal: {
+        aar: 2023,
+        resultatFoerSkat: 480000,
+        resultat: 372000,
+      },
+    },
+
+    salgshistorik: [
+      {
+        koebere: [{ navn: 'JAJR Ejendomme 2 ApS', andel: 100 }],
+        handelstype: 'Skøde',
+        kilde: 'tinglysning',
+        andel: 100,
+        pris: 12500000,
+        dato: '2025-12-09',
+      },
+      {
+        koebere: [{ navn: 'Hvidovre Erhverv Holding ApS', andel: 100 }],
+        handelstype: 'Almindelig fri handel',
+        kilde: 'tinglysning',
+        andel: 100,
+        pris: 9800000,
+        dato: '2021-03-15',
+      },
+      {
+        koebere: [{ navn: 'BV Invest ApS', andel: 100 }],
+        handelstype: 'Endeligt skøde',
+        kilde: 'ejerfortegnelsen',
+        andel: 100,
+        pris: 7200000,
+        dato: '2017-06-22',
+      },
+      {
+        koebere: [
+          { navn: 'Bent Viggo Nielsen', andel: 50 },
+          { navn: 'Kirsten Nielsen', andel: 50 },
+        ],
+        handelstype: 'Familieoverdragelse',
+        kilde: 'tinglysning',
+        andel: 100,
+        pris: 5500000,
+        dato: '2013-11-08',
+      },
+      {
+        koebere: [{ navn: 'ANB Ejendomme K/S', andel: 100 }],
+        handelstype: 'Skøde',
+        kilde: 'tinglysning',
+        andel: 100,
+        pris: 4100000,
+        dato: '2009-04-17',
+      },
+    ],
+
+    udbudshistorik: [],
+
+    jordstykker: [
+      {
+        matrikelNummer: '21co',
+        ejerlavsnavn: 'Hvidovre By, Risbjerg',
+        registreretAreal: 1648,
+      },
+    ],
+
+    enheder: [
+      {
+        adresse: 'Arnold Nielsens Boulevard 64A, 2650 Hvidovre',
+        anvendelse: 'Kontor',
+        vaerelser: undefined,
+        samletAreal: 1104,
+      },
+    ],
+
+    tekniskeAnlaeg: 0,
   },
   {
     id: 'ej-002',
@@ -324,6 +677,8 @@ export const mockEjendomme: Ejendom[] = [
         id: 'h-003',
         type: 'pantebrev',
         kreditor: 'Realkredit Danmark A/S',
+        debitor: 'K1 Invest ApS',
+        prioritet: 1,
         beloeb: 20000000,
         tinglysningsdato: '2024-06-15',
         status: 'aktiv',
@@ -418,6 +773,8 @@ export const mockEjendomme: Ejendom[] = [
         id: 'h-004',
         type: 'pantebrev',
         kreditor: 'Jyske Realkredit A/S',
+        debitor: 'Mette og Lars Andersen',
+        prioritet: 1,
         beloeb: 6500000,
         tinglysningsdato: '2023-08-22',
         status: 'aktiv',
@@ -520,6 +877,8 @@ export const mockEjendomme: Ejendom[] = [
         id: 'h-005',
         type: 'pantebrev',
         kreditor: 'Sydbank A/S',
+        debitor: 'Aarhus Logistik A/S',
+        prioritet: 1,
         beloeb: 12000000,
         tinglysningsdato: '2022-11-03',
         status: 'aktiv',
@@ -529,6 +888,8 @@ export const mockEjendomme: Ejendom[] = [
         id: 'h-006',
         type: 'ejerpantebrev',
         kreditor: 'Aarhus Logistik A/S',
+        debitor: 'Aarhus Logistik A/S',
+        prioritet: 2,
         beloeb: 3000000,
         tinglysningsdato: '2022-11-03',
         status: 'aktiv',

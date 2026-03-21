@@ -46,6 +46,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts';
+import PropertyMap from '@/app/components/ejendomme/PropertyMap';
 import {
   getEjendomById,
   formatDKK,
@@ -1586,28 +1587,13 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
         </div>
 
         {/* ─── Kortpanel — højre side ─── */}
-        <div className="hidden xl:flex w-[380px] flex-shrink-0 flex-col border-l border-slate-700/50">
-          {/* Luftfoto */}
-          <div className="flex-1 bg-slate-900 relative overflow-hidden">
-            <iframe
-              src={`https://www.openstreetmap.org/export/embed.html?bbox=${ejendom.lng - 0.005},${ejendom.lat - 0.003},${ejendom.lng + 0.005},${ejendom.lat + 0.003}&layer=mapnik&marker=${ejendom.lat},${ejendom.lng}`}
-              className="w-full h-full border-none opacity-80"
-              title="Ejendomskort"
-            />
-            <div className="absolute top-3 right-3">
-              <button className="px-2 py-1 bg-slate-900/90 backdrop-blur-sm border border-slate-700/50 rounded-lg text-slate-300 text-xs">
-                Luftfoto →
-              </button>
-            </div>
-          </div>
-          {/* Matrikelkort placeholder */}
-          <div className="h-[180px] bg-slate-900/80 border-t border-slate-700/50 flex items-center justify-center">
-            <div className="text-center">
-              <MapPin size={20} className="text-slate-600 mx-auto mb-2" />
-              <p className="text-slate-500 text-xs">Matrikelkort</p>
-              <p className="text-slate-600 text-xs">WFS integration · Fase 2</p>
-            </div>
-          </div>
+        <div className="hidden xl:flex w-[380px] flex-shrink-0 border-l border-slate-700/50">
+          <PropertyMap
+            lat={ejendom.lat}
+            lng={ejendom.lng}
+            adresse={`${ejendom.adresse}, ${ejendom.postnummer} ${ejendom.by}`}
+            visMmatrikel={true}
+          />
         </div>
       </div>
     </div>

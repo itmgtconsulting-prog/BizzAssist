@@ -24,6 +24,7 @@ import { Eye, EyeOff, ArrowLeft, Loader2, AlertCircle } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';
 import { signIn } from '@/app/auth/actions';
+import { createClient } from '@/lib/supabase/client';
 
 /** Maps server-returned error codes to bilingual user-facing messages */
 const errorMessages: Record<string, { da: string; en: string }> = {
@@ -55,7 +56,33 @@ function LoginForm() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [oauthLoading, setOauthLoading] = useState<'google' | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  /**
+   * Initiates an OAuth sign-in flow via Supabase.
+   * Redirects the browser to the provider's consent screen.
+   *
+   * @param provider - The OAuth provider to use ('google')
+   */
+  const handleOAuth = async (provider: 'google') => {
+    setOauthLoading(provider);
+    setError(null);
+    const supabase = createClient();
+    const { error: oauthError } = await supabase.auth.signInWithOAuth({
+      provider,
+      options: {
+        redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(redirectTo)}`,
+        // Force account picker so users can switch accounts after logout
+        queryParams: { prompt: 'select_account' },
+      },
+    });
+    if (oauthError) {
+      setError('unexpected_error');
+      setOauthLoading(null);
+    }
+    // On success the browser is redirected — no further action needed
+  };
 
   /**
    * Handles form submission — calls the signIn server action.
@@ -127,12 +154,12 @@ function LoginForm() {
               <p className="text-slate-400 text-sm">{t.subtitle}</p>
             </div>
 
-            {/* OAuth buttons — wired in BIZZ-11/12 */}
+            {/* OAuth buttons */}
             <div className="space-y-3 mb-6">
               <button
-                disabled
-                className="w-full flex items-center justify-center gap-3 bg-white/50 text-slate-500 font-medium py-3 px-4 rounded-xl text-sm cursor-not-allowed"
-                title={lang === 'da' ? 'Kommer snart' : 'Coming soon'}
+                onClick={() => handleOAuth('google')}
+                disabled={oauthLoading === 'google'}
+                className="w-full flex items-center justify-center gap-3 bg-white hover:bg-gray-50 text-gray-700 font-medium py-3 px-4 rounded-xl text-sm transition-colors disabled:opacity-50"
               >
                 <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
                   <path
@@ -152,7 +179,13 @@ function LoginForm() {
                     fill="#EA4335"
                   />
                 </svg>
-                {lang === 'da' ? 'Fortsæt med Google' : 'Continue with Google'}
+                {oauthLoading === 'google' ? (
+                  <Loader2 size={16} className="animate-spin text-gray-500" />
+                ) : lang === 'da' ? (
+                  'Fortsæt med Google'
+                ) : (
+                  'Continue with Google'
+                )}
               </button>
               <button
                 disabled

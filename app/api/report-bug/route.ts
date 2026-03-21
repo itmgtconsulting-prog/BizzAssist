@@ -9,6 +9,8 @@ export interface BugReportPayload {
   userAgent?: string;
   sentryEventId?: string;
   email?: string;
+  /** Base64-encoded PNG screenshot (data URL format) */
+  screenshotBase64?: string;
 }
 
 const PRIORITY_MAP: Record<string, string> = {
@@ -120,6 +122,35 @@ async function createJiraIssue(payload: BugReportPayload) {
   return res.json();
 }
 
+/**
+ * Attaches a base64-encoded PNG screenshot to an existing JIRA issue.
+ *
+ * @param issueKey      - JIRA issue key (e.g. BIZZ-42)
+ * @param screenshotB64 - data URL string (data:image/png;base64,...)
+ */
+async function attachScreenshotToJira(issueKey: string, screenshotB64: string): Promise<void> {
+  const host = process.env.JIRA_HOST;
+  const email = process.env.JIRA_EMAIL;
+  const token = process.env.JIRA_API_TOKEN;
+  if (!host || !email || !token) return;
+
+  const credentials = Buffer.from(`${email}:${token}`).toString('base64');
+  const base64Data = screenshotB64.replace(/^data:image\/\w+;base64,/, '');
+  const buffer = Buffer.from(base64Data, 'base64');
+
+  const formData = new FormData();
+  formData.append('file', new Blob([buffer], { type: 'image/png' }), 'screenshot.png');
+
+  await fetch(`https://${host}/rest/api/3/issue/${issueKey}/attachments`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${credentials}`,
+      'X-Atlassian-Token': 'no-check',
+    },
+    body: formData,
+  });
+}
+
 export async function POST(req: NextRequest) {
   try {
     const payload: BugReportPayload = await req.json();
@@ -133,6 +164,14 @@ export async function POST(req: NextRequest) {
     payload.userAgent = req.headers.get('user-agent') ?? undefined;
 
     const issue = await createJiraIssue(payload);
+
+    // Attach screenshot to JIRA issue if provided
+    if (payload.screenshotBase64) {
+      await attachScreenshotToJira(issue.key, payload.screenshotBase64).catch((err) => {
+        // Non-fatal — log but don't fail the request
+        console.error('[report-bug] screenshot attach failed:', err);
+      });
+    }
 
     return NextResponse.json({
       success: true,

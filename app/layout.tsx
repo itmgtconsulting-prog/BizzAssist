@@ -3,6 +3,8 @@ import { Geist } from 'next/font/google';
 import './globals.css';
 import { LanguageProvider } from '@/app/context/LanguageContext';
 import ServiceWorkerRegistration from '@/app/components/ServiceWorkerRegistration';
+import FeedbackButton from '@/app/components/FeedbackButton';
+import HideNextDevIndicator from '@/app/components/HideNextDevIndicator';
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -42,6 +44,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="min-h-full flex flex-col antialiased">
         <LanguageProvider>
           {children}
+          <FeedbackButton />
+          <HideNextDevIndicator />
           <ServiceWorkerRegistration />
         </LanguageProvider>
       </body>

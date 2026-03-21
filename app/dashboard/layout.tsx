@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { signOut } from '@/app/auth/actions';
 import {
   LayoutDashboard,
   Search,
@@ -16,9 +17,9 @@ import {
   Menu,
   X,
   Bell,
+  Shield,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
-import FeedbackButton from '@/app/components/FeedbackButton';
 
 const navItems = [
   { icon: LayoutDashboard, labelDa: 'Oversigt', labelEn: 'Overview', href: '/dashboard' },
@@ -34,6 +35,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const { lang, setLang } = useLanguage();
   const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const profileRef = useRef<HTMLDivElement>(null);
+
+  // Close profile dropdown when clicking outside
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (profileRef.current && !profileRef.current.contains(e.target as Node)) {
+        setProfileOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   return (
     <div className="flex h-screen bg-[#0a1020] overflow-hidden">
@@ -92,24 +106,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             );
           })}
         </nav>
-
-        {/* Bottom section */}
-        <div className="px-4 pb-6 space-y-1 border-t border-white/10 pt-4">
-          <Link
-            href="/dashboard/settings"
-            className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-slate-400 hover:text-white hover:bg-white/5 transition-all"
-          >
-            <Settings size={18} />
-            {lang === 'da' ? 'Indstillinger' : 'Settings'}
-          </Link>
-          <Link
-            href="/"
-            className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-slate-400 hover:text-white hover:bg-white/5 transition-all"
-          >
-            <LogOut size={18} />
-            {lang === 'da' ? 'Log ud' : 'Log out'}
-          </Link>
-        </div>
       </aside>
 
       {/* Main content */}
@@ -163,15 +159,56 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <Bell size={20} />
               <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-blue-600 rounded-full" />
             </button>
-            <div className="w-9 h-9 bg-blue-600 rounded-full flex items-center justify-center text-white text-sm font-bold cursor-pointer">
-              JR
+            {/* Profile dropdown */}
+            <div className="relative" ref={profileRef}>
+              <button
+                onClick={() => setProfileOpen((o) => !o)}
+                className="w-9 h-9 bg-blue-600 hover:bg-blue-500 rounded-full flex items-center justify-center text-white text-sm font-bold transition-colors"
+              >
+                JR
+              </button>
+
+              {profileOpen && (
+                <div className="absolute right-0 top-11 w-52 bg-[#1e293b] border border-white/10 rounded-2xl shadow-2xl overflow-hidden z-50">
+                  <div className="px-4 py-3 border-b border-white/10">
+                    <p className="text-white text-sm font-medium">Jakob Juul Rasmussen</p>
+                    <p className="text-slate-500 text-xs mt-0.5 truncate">jjrchefen@hotmail.com</p>
+                  </div>
+                  <div className="py-1.5">
+                    <Link
+                      href="/dashboard/settings"
+                      onClick={() => setProfileOpen(false)}
+                      className="flex items-center gap-3 px-4 py-2.5 text-sm text-slate-300 hover:text-white hover:bg-white/5 transition-colors"
+                    >
+                      <Settings size={15} />
+                      {lang === 'da' ? 'Indstillinger' : 'Settings'}
+                    </Link>
+                    <Link
+                      href="/dashboard/settings/security"
+                      onClick={() => setProfileOpen(false)}
+                      className="flex items-center gap-3 px-4 py-2.5 text-sm text-slate-300 hover:text-white hover:bg-white/5 transition-colors"
+                    >
+                      <Shield size={15} />
+                      {lang === 'da' ? 'Sikkerhed & 2FA' : 'Security & 2FA'}
+                    </Link>
+                  </div>
+                  <div className="py-1.5 border-t border-white/10">
+                    <button
+                      onClick={() => signOut()}
+                      className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-400 hover:text-red-300 hover:bg-red-500/5 transition-colors"
+                    >
+                      <LogOut size={15} />
+                      {lang === 'da' ? 'Log ud' : 'Log out'}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </header>
 
         {/* Page content */}
         <main className="flex-1 overflow-y-auto">{children}</main>
-        <FeedbackButton />
       </div>
     </div>
   );

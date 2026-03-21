@@ -12,6 +12,7 @@
  */
 
 import { NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
 
 /** Shape of the health check response body */
 interface HealthStatus {
@@ -37,12 +38,15 @@ export async function GET(): Promise<NextResponse<HealthStatus>> {
   // ── Check database connectivity (when Supabase is configured) ────────────
   let dbStatus: 'ok' | 'error' | 'unconfigured' = 'unconfigured';
 
-  if (process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  if (process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
     try {
-      // TODO: Replace with real Supabase ping query once DB is set up.
-      // const { error } = await supabaseAdmin.from('tenants').select('id').limit(1);
-      // dbStatus = error ? 'error' : 'ok';
-      dbStatus = 'ok';
+      const supabase = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+      );
+      // Lightweight probe: getSession() just reads the cookie — no network call to Auth server
+      const { error } = await supabase.auth.getSession();
+      dbStatus = error ? 'error' : 'ok';
     } catch {
       dbStatus = 'error';
     }

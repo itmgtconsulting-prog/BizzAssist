@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import {
   X,
   Bug,
@@ -10,6 +10,9 @@ import {
   CheckCircle,
   AlertCircle,
   ChevronDown,
+  Camera,
+  Upload,
+  Trash2,
 } from 'lucide-react';
 import type { BugReportPayload } from '@/app/api/report-bug/route';
 
@@ -42,6 +45,10 @@ const text = {
     ],
     emailLabel: 'Din e-mail (valgfrit)',
     emailPlaceholder: 'jakob@bizzassist.dk',
+    screenshotLabel: 'Skærmbillede (valgfrit)',
+    captureBtn: 'Tag skærmbillede',
+    uploadBtn: 'Upload billede',
+    removeScreenshot: 'Fjern',
     submit: 'Send rapport',
     sending: 'Sender...',
     successTitle: 'Rapport sendt!',
@@ -71,6 +78,10 @@ const text = {
     ],
     emailLabel: 'Your email (optional)',
     emailPlaceholder: 'jakob@bizzassist.dk',
+    screenshotLabel: 'Screenshot (optional)',
+    captureBtn: 'Capture screen',
+    uploadBtn: 'Upload image',
+    removeScreenshot: 'Remove',
     submit: 'Send report',
     sending: 'Sending...',
     successTitle: 'Report sent!',
@@ -89,9 +100,11 @@ export default function BugReportModal({ open, onClose, lang = 'da', currentPage
   const [description, setDescription] = useState('');
   const [severity, setSeverity] = useState<'low' | 'medium' | 'high' | 'critical'>('medium');
   const [email, setEmail] = useState('');
+  const [screenshot, setScreenshot] = useState<string | null>(null);
   const [status, setStatus] = useState<'idle' | 'sending' | 'success' | 'error'>('idle');
   const [errorMsg, setErrorMsg] = useState('');
   const [issueKey, setIssueKey] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (!open) return null;
 
@@ -100,9 +113,45 @@ export default function BugReportModal({ open, onClose, lang = 'da', currentPage
     setDescription('');
     setSeverity('medium');
     setEmail('');
+    setScreenshot(null);
     setStatus('idle');
     setErrorMsg('');
     setIssueKey('');
+  };
+
+  /**
+   * Captures the screen using the browser's getDisplayMedia API.
+   * User selects which screen/tab to capture via the browser picker.
+   */
+  const captureScreen = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+      const video = document.createElement('video');
+      video.srcObject = stream;
+      await new Promise<void>((resolve) => {
+        video.onloadedmetadata = () => resolve();
+      });
+      await video.play();
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      canvas.getContext('2d')!.drawImage(video, 0, 0);
+      stream.getTracks().forEach((t) => t.stop());
+      setScreenshot(canvas.toDataURL('image/png'));
+    } catch {
+      // User cancelled the picker — do nothing
+    }
+  };
+
+  /**
+   * Handles file upload input — reads the selected image as a base64 data URL.
+   */
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setScreenshot(reader.result as string);
+    reader.readAsDataURL(file);
   };
 
   const handleClose = () => {
@@ -121,6 +170,7 @@ export default function BugReportModal({ open, onClose, lang = 'da', currentPage
       severity,
       page: currentPage ?? (typeof window !== 'undefined' ? window.location.pathname : undefined),
       email: email.trim() || undefined,
+      screenshotBase64: screenshot ?? undefined,
     };
 
     try {
@@ -284,6 +334,55 @@ export default function BugReportModal({ open, onClose, lang = 'da', currentPage
                 placeholder={t.emailPlaceholder}
                 className="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:border-blue-400 transition-colors"
               />
+            </div>
+
+            {/* Screenshot */}
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                {t.screenshotLabel}
+              </label>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleFileUpload}
+              />
+              {screenshot ? (
+                <div className="relative">
+                  <img
+                    src={screenshot}
+                    alt="Screenshot preview"
+                    className="w-full rounded-xl border border-slate-200 object-cover max-h-48"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setScreenshot(null)}
+                    className="absolute top-2 right-2 bg-red-500 text-white rounded-lg p-1 hover:bg-red-600 transition-colors"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ) : (
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={captureScreen}
+                    className="flex-1 flex items-center justify-center gap-2 border border-slate-200 rounded-xl py-2.5 text-sm text-slate-600 hover:bg-slate-50 transition-colors"
+                  >
+                    <Camera size={15} />
+                    {t.captureBtn}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="flex-1 flex items-center justify-center gap-2 border border-slate-200 rounded-xl py-2.5 text-sm text-slate-600 hover:bg-slate-50 transition-colors"
+                  >
+                    <Upload size={15} />
+                    {t.uploadBtn}
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Error */}

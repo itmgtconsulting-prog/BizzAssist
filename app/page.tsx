@@ -5,8 +5,6 @@ import Features from '@/app/components/Features';
 import UseCases from '@/app/components/UseCases';
 import CTABanner from '@/app/components/CTABanner';
 import Footer from '@/app/components/Footer';
-import FeedbackButton from '@/app/components/FeedbackButton';
-
 export default function HomePage() {
   return (
     <main className="flex flex-col min-h-screen">
@@ -17,7 +15,6 @@ export default function HomePage() {
       <UseCases />
       <CTABanner />
       <Footer />
-      <FeedbackButton />
     </main>
   );
 }

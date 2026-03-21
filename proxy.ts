@@ -1,5 +1,5 @@
 /**
- * Next.js Edge Middleware — Supabase Auth + Security + Rate Limiting
+ * Next.js Edge Proxy — Supabase Auth + Security + Rate Limiting
  *
  * Implements ISO 27001 controls:
  *   A.9  (Access Control)    — refreshes Supabase session, guards protected routes
@@ -91,7 +91,7 @@ function isWithinRateLimit(ip: string): boolean {
 // ---------------------------------------------------------------------------
 
 /**
- * Main middleware function — runs on every matched request.
+ * Main proxy function — runs on every matched request.
  *
  * Order of operations:
  *   1. HTTPS redirect (production only)
@@ -104,7 +104,7 @@ function isWithinRateLimit(ip: string): boolean {
  * @param req - Incoming Next.js edge request
  * @returns NextResponse to continue, redirect, or return 429
  */
-export async function middleware(req: NextRequest): Promise<NextResponse> {
+export async function proxy(req: NextRequest): Promise<NextResponse> {
   const { pathname, protocol } = req.nextUrl;
   const ip = getClientIp(req);
 

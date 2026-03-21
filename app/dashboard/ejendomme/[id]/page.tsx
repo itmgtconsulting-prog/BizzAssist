@@ -263,6 +263,20 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
   const { id } = use(params);
   const router = useRouter();
   const [aktivTab, setAktivTab] = useState<Tab>('overblik');
+  /** Valgte dokument-id'er til batch-download */
+  const [valgteDoc, setValgteDoc] = useState<Set<string>>(new Set());
+
+  /**
+   * Toggler et dokument i udvalgslisten.
+   * @param docId - Unikt dokument-id
+   */
+  const toggleDoc = (docId: string) =>
+    setValgteDoc((prev) => {
+      const next = new Set(prev);
+      if (next.has(docId)) next.delete(docId);
+      else next.add(docId);
+      return next;
+    });
 
   const ejendom = getEjendomById(id);
 
@@ -373,703 +387,768 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
 
       {/* ─── Indhold + kort ─── */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Tab-indhold — scroll til venstre */}
-        <div className="flex-1 overflow-y-auto px-6 py-5">
-          {/* ══════════════════════════════════════════
+        {/* Venstre kolonne: scrollbart indhold + evt. download-bar */}
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <div className="flex-1 overflow-y-auto px-6 py-5">
+            {/* ══════════════════════════════════════════
               OVERBLIK
           ══════════════════════════════════════════ */}
-          {aktivTab === 'overblik' && (
-            <div className="space-y-5">
-              {/* 3-kolonne summary: Matrikel / Bygning / Enhed */}
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                {/* Matrikel */}
-                <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                  <p className="text-slate-400 text-xs font-medium mb-3">
-                    <span className="text-white font-bold text-base">
-                      {ejendom.jordstykker?.length ?? 1}
-                    </span>{' '}
-                    matrikel
-                  </p>
-                  <div className="space-y-2">
-                    <DataKort
-                      label="Grundareal"
-                      value={`${ejendom.grundareal.toLocaleString('da-DK')} m²`}
-                    />
-                    <DataKort label="Bebyggelsesprocent" value={`${ejendom.bebyggelsesprocent}%`} />
-                  </div>
-                </div>
-
-                {/* Bygning */}
-                <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                  <p className="text-slate-400 text-xs font-medium mb-3">
-                    <span className="text-white font-bold text-base">
-                      {ejendom.bygninger.length}
-                    </span>{' '}
-                    bygning
-                  </p>
-                  <div className="space-y-2">
-                    <DataKort
-                      label="Bygningsareal"
-                      value={`${ejendom.bygningsareal.toLocaleString('da-DK')} m²`}
-                    />
-                    <DataKort label="Kælder" value={`${ejendom.kaelder} m²`} />
-                    <DataKort label="Udnyttet tagetage" value="0 m²" />
-                  </div>
-                </div>
-
-                {/* Enhed */}
-                <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                  <p className="text-slate-400 text-xs font-medium mb-3">
-                    <span className="text-white font-bold text-base">
-                      {ejendom.erhvervsenheder + ejendom.beboelsesenheder}
-                    </span>{' '}
-                    enhed
-                  </p>
-                  <div className="space-y-2">
-                    {ejendom.beboelsesareal > 0 && (
-                      <DataKort label="Beboelsesareal" value={`${ejendom.beboelsesareal} m²`} />
-                    )}
-                    <DataKort
-                      label="Erhvervsareal"
-                      value={`${ejendom.erhvervsareal.toLocaleString('da-DK')} m²`}
-                    />
-                    <DataKort label="Erhvervsenheder" value={`${ejendom.erhvervsenheder}`} />
-                  </div>
-                </div>
-              </div>
-
-              {/* Ejer + Seneste handel */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {/* Ejer */}
-                <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                  <p className="text-slate-400 text-xs font-medium uppercase tracking-wide mb-3">
-                    Ejere
-                  </p>
-                  <div className="space-y-2">
-                    {ejendom.ejere.map((ejer, i) => (
-                      <div key={i} className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <div className="w-7 h-7 rounded-lg bg-blue-500/20 flex items-center justify-center">
-                            <Users size={13} className="text-blue-400" />
-                          </div>
-                          <div>
-                            {ejer.cvr ? (
-                              <Link
-                                href={`/dashboard/virksomheder/${ejer.cvr}`}
-                                className="text-white text-sm font-medium hover:text-blue-300 transition-colors flex items-center gap-1"
-                              >
-                                {ejer.navn}
-                                <ChevronRight size={12} />
-                              </Link>
-                            ) : (
-                              <p className="text-white text-sm font-medium">{ejer.navn}</p>
-                            )}
-                            <p className="text-slate-500 text-xs">CVR {ejer.cvr ?? 'Person'}</p>
-                          </div>
-                        </div>
-                        <span className="text-slate-300 text-sm font-semibold">
-                          {ejer.ejerandel}%
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Seneste handel */}
-                <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                  <p className="text-slate-400 text-xs font-medium uppercase tracking-wide mb-3">
-                    Seneste handel
-                  </p>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <p className="text-white text-2xl font-bold">
-                        {formatDKK(ejendom.senesteHandel.pris)}
-                      </p>
-                      <p className="text-slate-500 text-xs mt-0.5">
-                        {formatDato(ejendom.senesteHandel.dato)}
-                      </p>
-                    </div>
-                    <div className="flex flex-col justify-center">
-                      <p className="text-slate-400 text-xs">Pris/m²</p>
-                      <p className="text-slate-200 font-semibold">
-                        {ejendom.senesteHandel.prisPerM2.toLocaleString('da-DK')} DKK
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-slate-400 text-xs">Ejendomsværdi</p>
-                      <p className="text-slate-200 font-semibold text-sm">
-                        {formatDKK(ejendom.ejendomsvaerdi)}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-slate-400 text-xs">Grundskyld</p>
-                      <p className="text-slate-200 font-semibold text-sm">
-                        {formatDKK(ejendom.grundskyld)}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Virksomheder på adressen */}
-              {ejendom.virksomhederPaaAdressen && ejendom.virksomhederPaaAdressen.length > 0 && (
-                <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
-                  <div className="px-4 py-3 border-b border-slate-700/40 flex items-center justify-between">
-                    <h3 className="text-white font-semibold text-sm">Virksomheder på adressen</h3>
-                    <span className="text-slate-500 text-xs">
-                      {ejendom.virksomhederPaaAdressen.length} virksomheder
-                    </span>
-                  </div>
-                  <table className="w-full">
-                    <thead>
-                      <tr className="text-slate-500 text-xs border-b border-slate-700/30">
-                        <th className="px-4 py-2 text-left font-medium">Virksomhed</th>
-                        <th className="px-4 py-2 text-left font-medium">Industri</th>
-                        <th className="px-4 py-2 text-left font-medium">Periode</th>
-                        <th className="px-4 py-2 text-right font-medium">Ansatte</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {ejendom.virksomhederPaaAdressen.map((v) => (
-                        <tr
-                          key={v.cvr}
-                          className="border-t border-slate-700/30 hover:bg-slate-700/20 transition-colors"
-                        >
-                          <td className="px-4 py-3">
-                            <Link
-                              href={`/dashboard/virksomheder/${v.cvr}`}
-                              className="text-blue-300 hover:text-blue-200 text-sm font-medium transition-colors flex items-center gap-1"
-                            >
-                              {v.navn}
-                              <ChevronRight size={12} />
-                            </Link>
-                            <p className="text-slate-500 text-xs">CVR {v.cvr}</p>
-                          </td>
-                          <td className="px-4 py-3 text-slate-300 text-xs">{v.industri}</td>
-                          <td className="px-4 py-3 text-slate-400 text-xs">{v.periode}</td>
-                          <td className="px-4 py-3 text-right text-slate-300 text-sm">
-                            {v.ansatte ?? '—'}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-
-              {/* Miljøindikatorer */}
-              <div>
-                <p className="text-slate-400 text-xs font-medium uppercase tracking-wide mb-3">
-                  Miljøindikatorer
-                </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {ejendom.miljoeindikatorer.map((m) => (
-                    <div
-                      key={m.id}
-                      className={`flex items-center justify-between p-3 border rounded-xl ${miljoStatusColor[m.status]}`}
-                    >
-                      <div className="flex items-center gap-3">
-                        <span className="text-lg">{m.ikon}</span>
-                        <div>
-                          <p className="text-slate-200 text-sm font-medium">{m.titel}</p>
-                          <p className="text-slate-400 text-xs">{m.beskrivelse}</p>
-                        </div>
-                      </div>
-                      <button className="text-slate-600 hover:text-slate-400 ml-2 flex-shrink-0">
-                        <MapPin size={14} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ══════════════════════════════════════════
-              BBR
-          ══════════════════════════════════════════ */}
-          {aktivTab === 'bbr' && (
-            <div className="space-y-6">
-              {/* Jordstykker */}
-              <div>
-                <SectionTitle title="Jordstykker" />
-                {/* Stat-kort */}
-                <div className="grid grid-cols-3 gap-3 mb-3">
-                  <DataKort label="Jordstykker" value={`${ejendom.jordstykker?.length ?? 1}`} />
-                  <DataKort
-                    label="Registreret areal"
-                    value={`${ejendom.grundareal.toLocaleString('da-DK')} m²`}
-                  />
-                  <DataKort
-                    label="Matrikelkommunekode"
-                    value={ejendom.matrikelNummer.split(',')[0] ?? '—'}
-                  />
-                </div>
-
-                <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="text-slate-500 text-xs border-b border-slate-700/30">
-                        <th className="px-4 py-2 text-left font-medium">Matrikelnummer</th>
-                        <th className="px-4 py-2 text-left font-medium">Ejerlavsnavn</th>
-                        <th className="px-4 py-2 text-right font-medium">
-                          <span className="flex items-center justify-end gap-1">
-                            <Map size={11} />
-                            Registreret areal
-                          </span>
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(ejendom.jordstykker ?? []).map((js, i) => (
-                        <tr
-                          key={i}
-                          className="border-t border-slate-700/30 hover:bg-slate-700/20 transition-colors"
-                        >
-                          <td className="px-4 py-3 text-slate-200 text-sm font-medium">
-                            {js.matrikelNummer}
-                          </td>
-                          <td className="px-4 py-3 text-slate-300 text-sm">{js.ejerlavsnavn}</td>
-                          <td className="px-4 py-3 text-slate-300 text-sm text-right">
-                            {js.registreretAreal.toLocaleString('da-DK')} m²
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* Bygninger */}
-              <div>
-                <SectionTitle title="Bygninger" />
-                <div className="grid grid-cols-3 gap-3 mb-3">
-                  <DataKort label="Bygninger" value={`${ejendom.bygninger.length}`} />
-                  <DataKort
-                    label="Samlet bygningsareal"
-                    value={`${ejendom.bygningsareal.toLocaleString('da-DK')} m²`}
-                  />
-                  <DataKort label="Opførelsesår" value={`${ejendom.opfoerelsesaar}`} />
-                </div>
-
-                <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="text-slate-500 text-xs border-b border-slate-700/30">
-                        <th className="px-4 py-2 text-left font-medium">Anvendelse</th>
-                        <th className="px-4 py-2 text-left font-medium">Opførelsesår</th>
-                        <th className="px-4 py-2 text-right font-medium">Bebygget areal</th>
-                        <th className="px-4 py-2 text-right font-medium">Samlet areal</th>
-                        <th className="px-2 py-2 text-right font-medium">Energi</th>
-                        <th className="px-2 py-2"></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {ejendom.bygninger.map((b) => (
-                        <tr
-                          key={b.id}
-                          className="border-t border-slate-700/30 hover:bg-slate-700/20 transition-colors"
-                        >
-                          <td className="px-4 py-3 text-slate-200 text-sm">{b.anvendelse}</td>
-                          <td className="px-4 py-3 text-slate-300 text-sm">{b.opfoerelsesaar}</td>
-                          <td className="px-4 py-3 text-slate-300 text-sm text-right">
-                            {b.bygningsareal.toLocaleString('da-DK')} m²
-                          </td>
-                          <td className="px-4 py-3 text-slate-300 text-sm text-right">
-                            {(b.bygningsareal + b.kaelder).toLocaleString('da-DK')} m²
-                          </td>
-                          <td className="px-2 py-3 text-right">
-                            <span
-                              className={`inline-flex px-1.5 py-0.5 rounded text-xs font-bold text-white ${energiColor[b.energimaerke] ?? 'bg-slate-600'}`}
-                            >
-                              {b.energimaerke}
-                            </span>
-                          </td>
-                          <td className="px-2 py-3 text-right">
-                            <ChevronRight size={14} className="text-slate-600 ml-auto" />
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* Enheder */}
-              <div>
-                <SectionTitle title="Enheder" />
-                <div className="grid grid-cols-3 gap-3 mb-3">
-                  <DataKort
-                    label="Enheder i alt"
-                    value={`${ejendom.erhvervsenheder + ejendom.beboelsesenheder}`}
-                  />
-                  <DataKort label="Erhvervsenheder" value={`${ejendom.erhvervsenheder}`} />
-                  <DataKort label="Beboelsesenheder" value={`${ejendom.beboelsesenheder}`} />
-                </div>
-
-                <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="text-slate-500 text-xs border-b border-slate-700/30">
-                        <th className="px-4 py-2 text-left font-medium">Adresse</th>
-                        <th className="px-4 py-2 text-left font-medium">Anvendelse</th>
-                        <th className="px-4 py-2 text-right font-medium">Værelser</th>
-                        <th className="px-4 py-2 text-right font-medium">Samlet areal</th>
-                        <th className="px-2 py-2"></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(ejendom.enheder ?? []).map((enhed, i) => (
-                        <tr
-                          key={i}
-                          className="border-t border-slate-700/30 hover:bg-slate-700/20 transition-colors"
-                        >
-                          <td className="px-4 py-3 text-slate-200 text-sm">{enhed.adresse}</td>
-                          <td className="px-4 py-3 text-slate-300 text-sm">{enhed.anvendelse}</td>
-                          <td className="px-4 py-3 text-slate-300 text-sm text-right">
-                            {enhed.vaerelser ?? '—'}
-                          </td>
-                          <td className="px-4 py-3 text-slate-300 text-sm text-right">
-                            {enhed.samletAreal.toLocaleString('da-DK')} m²
-                          </td>
-                          <td className="px-2 py-3 text-right">
-                            <ChevronRight size={14} className="text-slate-600 ml-auto" />
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* Tekniske anlæg */}
-              <div>
-                <SectionTitle title="Tekniske anlæg" />
-                <div className="grid grid-cols-2 gap-3">
-                  <DataKort
-                    label="Tekniske anlæg"
-                    value={`${ejendom.tekniskeAnlaeg ?? 0} Tekniske anlæg`}
-                  />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ══════════════════════════════════════════
-              EJERFORHOLD
-          ══════════════════════════════════════════ */}
-          {aktivTab === 'ejerforhold' && (
-            <div className="space-y-6">
-              {/* Ejer-kort */}
-              {ejendom.ejerDetaljer && (
-                <div>
-                  <SectionTitle title="Ejer" />
+            {aktivTab === 'overblik' && (
+              <div className="space-y-5">
+                {/* 3-kolonne summary: Matrikel / Bygning / Enhed */}
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                  {/* Matrikel */}
                   <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                    {/* Toprække: logo + navn + badges */}
-                    <div className="flex items-start gap-4 mb-4">
-                      <div className="w-12 h-12 rounded-xl bg-blue-500/20 border border-blue-500/30 flex items-center justify-center flex-shrink-0">
-                        <Briefcase size={20} className="text-blue-400" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          {ejendom.ejere[0]?.cvr ? (
-                            <Link
-                              href={`/dashboard/virksomheder/${ejendom.ejere[0].cvr}`}
-                              className="text-white font-bold text-base hover:text-blue-300 transition-colors flex items-center gap-1"
-                            >
-                              {ejendom.ejerDetaljer.navn}
-                              <ChevronRight size={14} />
-                            </Link>
-                          ) : (
-                            <p className="text-white font-bold text-base">
-                              {ejendom.ejerDetaljer.navn}
-                            </p>
-                          )}
-                          <span className="px-2 py-0.5 bg-blue-500/10 border border-blue-500/20 rounded-full text-xs text-blue-300">
-                            Primær kontakt
+                    <p className="text-slate-400 text-xs font-medium mb-3">
+                      <span className="text-white font-bold text-base">
+                        {ejendom.jordstykker?.length ?? 1}
+                      </span>{' '}
+                      matrikel
+                    </p>
+                    <div className="space-y-2">
+                      <DataKort
+                        label="Grundareal"
+                        value={`${ejendom.grundareal.toLocaleString('da-DK')} m²`}
+                      />
+                      <DataKort
+                        label="Bebyggelsesprocent"
+                        value={`${ejendom.bebyggelsesprocent}%`}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Bygning */}
+                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                    <p className="text-slate-400 text-xs font-medium mb-3">
+                      <span className="text-white font-bold text-base">
+                        {ejendom.bygninger.length}
+                      </span>{' '}
+                      bygning
+                    </p>
+                    <div className="space-y-2">
+                      <DataKort
+                        label="Bygningsareal"
+                        value={`${ejendom.bygningsareal.toLocaleString('da-DK')} m²`}
+                      />
+                      <DataKort label="Kælder" value={`${ejendom.kaelder} m²`} />
+                      <DataKort label="Udnyttet tagetage" value="0 m²" />
+                    </div>
+                  </div>
+
+                  {/* Enhed */}
+                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                    <p className="text-slate-400 text-xs font-medium mb-3">
+                      <span className="text-white font-bold text-base">
+                        {ejendom.erhvervsenheder + ejendom.beboelsesenheder}
+                      </span>{' '}
+                      enhed
+                    </p>
+                    <div className="space-y-2">
+                      {ejendom.beboelsesareal > 0 && (
+                        <DataKort label="Beboelsesareal" value={`${ejendom.beboelsesareal} m²`} />
+                      )}
+                      <DataKort
+                        label="Erhvervsareal"
+                        value={`${ejendom.erhvervsareal.toLocaleString('da-DK')} m²`}
+                      />
+                      <DataKort label="Erhvervsenheder" value={`${ejendom.erhvervsenheder}`} />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Ejer + Seneste handel */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {/* Ejer */}
+                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                    <p className="text-slate-400 text-xs font-medium uppercase tracking-wide mb-3">
+                      Ejere
+                    </p>
+                    <div className="space-y-2">
+                      {ejendom.ejere.map((ejer, i) => (
+                        <div key={i} className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className="w-7 h-7 rounded-lg bg-blue-500/20 flex items-center justify-center">
+                              <Users size={13} className="text-blue-400" />
+                            </div>
+                            <div>
+                              {ejer.cvr ? (
+                                <Link
+                                  href={`/dashboard/virksomheder/${ejer.cvr}`}
+                                  className="text-white text-sm font-medium hover:text-blue-300 transition-colors flex items-center gap-1"
+                                >
+                                  {ejer.navn}
+                                  <ChevronRight size={12} />
+                                </Link>
+                              ) : (
+                                <p className="text-white text-sm font-medium">{ejer.navn}</p>
+                              )}
+                              <p className="text-slate-500 text-xs">CVR {ejer.cvr ?? 'Person'}</p>
+                            </div>
+                          </div>
+                          <span className="text-slate-300 text-sm font-semibold">
+                            {ejer.ejerandel}%
                           </span>
-                          {ejendom.ejerDetaljer.reklamebeskyttet && (
-                            <span className="px-2 py-0.5 bg-orange-500/10 border border-orange-500/20 rounded-full text-xs text-orange-300">
-                              Reklamebeskyttet
-                            </span>
-                          )}
                         </div>
-                        <p className="text-slate-400 text-xs mt-0.5">
-                          CVR {ejendom.ejerDetaljer.cvr}
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Seneste handel */}
+                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                    <p className="text-slate-400 text-xs font-medium uppercase tracking-wide mb-3">
+                      Seneste handel
+                    </p>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <p className="text-white text-2xl font-bold">
+                          {formatDKK(ejendom.senesteHandel.pris)}
+                        </p>
+                        <p className="text-slate-500 text-xs mt-0.5">
+                          {formatDato(ejendom.senesteHandel.dato)}
+                        </p>
+                      </div>
+                      <div className="flex flex-col justify-center">
+                        <p className="text-slate-400 text-xs">Pris/m²</p>
+                        <p className="text-slate-200 font-semibold">
+                          {ejendom.senesteHandel.prisPerM2.toLocaleString('da-DK')} DKK
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-slate-400 text-xs">Ejendomsværdi</p>
+                        <p className="text-slate-200 font-semibold text-sm">
+                          {formatDKK(ejendom.ejendomsvaerdi)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-slate-400 text-xs">Grundskyld</p>
+                        <p className="text-slate-200 font-semibold text-sm">
+                          {formatDKK(ejendom.grundskyld)}
                         </p>
                       </div>
                     </div>
-
-                    {/* Detaljeliste */}
-                    <div className="grid grid-cols-1 gap-0 divide-y divide-slate-700/30">
-                      {[
-                        {
-                          label: 'Overtagelsesdato',
-                          value: formatDato(ejendom.ejerDetaljer.overtagelsesdato),
-                        },
-                        { label: 'Ejertype', value: ejendom.ejerDetaljer.ejertype },
-                        { label: 'Branchenavn', value: ejendom.ejerDetaljer.branche },
-                        {
-                          label: 'Telefon',
-                          value: ejendom.ejerDetaljer.telefon,
-                          ikon: <Phone size={11} className="text-slate-500" />,
-                        },
-                        {
-                          label: 'E-mail',
-                          value: ejendom.ejerDetaljer.email,
-                          ikon: <Mail size={11} className="text-slate-500" />,
-                        },
-                        {
-                          label: 'Tegningsregel',
-                          value: ejendom.ejerDetaljer.tegningsregel,
-                        },
-                      ].map((row) => (
-                        <div
-                          key={row.label}
-                          className="flex items-center justify-between py-2.5 first:pt-0"
-                        >
-                          <span className="text-slate-500 text-xs">{row.label}</span>
-                          <span className="text-slate-200 text-xs flex items-center gap-1">
-                            {row.ikon}
-                            {row.value}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
                   </div>
                 </div>
-              )}
 
-              {/* Ejerstruktur */}
-              {ejendom.ejerstruktur && ejendom.ejerstruktur.length > 0 && (
-                <div>
-                  <SectionTitle title="Ejerstruktur" />
-                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                    <EjerstrukturTrae noder={ejendom.ejerstruktur} />
-                  </div>
-                </div>
-              )}
-
-              {/* Nøgletal */}
-              {ejendom.ejerDetaljer && (
-                <div>
-                  <SectionTitle
-                    title={`Nøgletal ${ejendom.ejerDetaljer.noegletal.aar} for ${ejendom.ejerDetaljer.navn}`}
-                  />
+                {/* Virksomheder på adressen */}
+                {ejendom.virksomhederPaaAdressen && ejendom.virksomhederPaaAdressen.length > 0 && (
                   <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
-                    <div className="px-4 py-2 border-b border-slate-700/30">
-                      <p className="text-slate-400 text-xs font-medium">Resultatopgørelse</p>
+                    <div className="px-4 py-3 border-b border-slate-700/40 flex items-center justify-between">
+                      <h3 className="text-white font-semibold text-sm">Virksomheder på adressen</h3>
+                      <span className="text-slate-500 text-xs">
+                        {ejendom.virksomhederPaaAdressen.length} virksomheder
+                      </span>
                     </div>
                     <table className="w-full">
+                      <thead>
+                        <tr className="text-slate-500 text-xs border-b border-slate-700/30">
+                          <th className="px-4 py-2 text-left font-medium">Virksomhed</th>
+                          <th className="px-4 py-2 text-left font-medium">Industri</th>
+                          <th className="px-4 py-2 text-left font-medium">Periode</th>
+                          <th className="px-4 py-2 text-right font-medium">Ansatte</th>
+                        </tr>
+                      </thead>
                       <tbody>
-                        <tr className="border-b border-slate-700/30 hover:bg-slate-700/20">
-                          <td className="px-4 py-3 text-slate-300 text-sm">Resultat før skat</td>
-                          <td className="px-4 py-3 text-right">
-                            <span
-                              className={`text-sm font-semibold ${ejendom.ejerDetaljer.noegletal.resultatFoerSkat >= 0 ? 'text-green-400' : 'text-red-400'}`}
-                            >
-                              {formatDKK(ejendom.ejerDetaljer.noegletal.resultatFoerSkat)}
-                            </span>
-                          </td>
-                        </tr>
-                        <tr className="hover:bg-slate-700/20">
-                          <td className="px-4 py-3 text-slate-300 text-sm">Resultat</td>
-                          <td className="px-4 py-3 text-right">
-                            <span
-                              className={`text-sm font-semibold ${ejendom.ejerDetaljer.noegletal.resultat >= 0 ? 'text-green-400' : 'text-red-400'}`}
-                            >
-                              {formatDKK(ejendom.ejerDetaljer.noegletal.resultat)}
-                            </span>
-                          </td>
-                        </tr>
+                        {ejendom.virksomhederPaaAdressen.map((v) => (
+                          <tr
+                            key={v.cvr}
+                            className="border-t border-slate-700/30 hover:bg-slate-700/20 transition-colors"
+                          >
+                            <td className="px-4 py-3">
+                              <Link
+                                href={`/dashboard/virksomheder/${v.cvr}`}
+                                className="text-blue-300 hover:text-blue-200 text-sm font-medium transition-colors flex items-center gap-1"
+                              >
+                                {v.navn}
+                                <ChevronRight size={12} />
+                              </Link>
+                              <p className="text-slate-500 text-xs">CVR {v.cvr}</p>
+                            </td>
+                            <td className="px-4 py-3 text-slate-300 text-xs">{v.industri}</td>
+                            <td className="px-4 py-3 text-slate-400 text-xs">{v.periode}</td>
+                            <td className="px-4 py-3 text-right text-slate-300 text-sm">
+                              {v.ansatte ?? '—'}
+                            </td>
+                          </tr>
+                        ))}
                       </tbody>
                     </table>
                   </div>
-                </div>
-              )}
+                )}
 
-              {/* Fallback: vis eksisterende ejere hvis ingen ejerDetaljer */}
-              {!ejendom.ejerDetaljer && (
-                <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                {/* Miljøindikatorer */}
+                <div>
                   <p className="text-slate-400 text-xs font-medium uppercase tracking-wide mb-3">
-                    Nuværende ejere
+                    Miljøindikatorer
                   </p>
-                  <div className="space-y-3">
-                    {ejendom.ejere.map((ejer, i) => (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {ejendom.miljoeindikatorer.map((m) => (
                       <div
-                        key={i}
-                        className="flex items-center justify-between p-3 bg-slate-900/40 rounded-xl"
+                        key={m.id}
+                        className={`flex items-center justify-between p-3 border rounded-xl ${miljoStatusColor[m.status]}`}
                       >
                         <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-xl bg-blue-500/20 flex items-center justify-center">
-                            <Users size={16} className="text-blue-400" />
-                          </div>
+                          <span className="text-lg">{m.ikon}</span>
                           <div>
-                            {ejer.cvr ? (
-                              <Link
-                                href={`/dashboard/virksomheder/${ejer.cvr}`}
-                                className="text-white font-semibold hover:text-blue-300 transition-colors flex items-center gap-1 text-sm"
-                              >
-                                {ejer.navn}
-                                <ChevronRight size={13} />
-                              </Link>
-                            ) : (
-                              <p className="text-white font-semibold text-sm">{ejer.navn}</p>
-                            )}
-                            <p className="text-slate-500 text-xs">
-                              {ejer.type === 'selskab' ? `CVR ${ejer.cvr}` : 'Privatperson'} ·
-                              Erhvervet {formatDato(ejer.erhvervsdato)}
-                            </p>
+                            <p className="text-slate-200 text-sm font-medium">{m.titel}</p>
+                            <p className="text-slate-400 text-xs">{m.beskrivelse}</p>
                           </div>
                         </div>
-                        <div className="text-right">
-                          <p className="text-white font-bold text-lg">{ejer.ejerandel}%</p>
-                          <p className="text-slate-500 text-xs">ejerandel</p>
-                        </div>
+                        <button className="text-slate-600 hover:text-slate-400 ml-2 flex-shrink-0">
+                          <MapPin size={14} />
+                        </button>
                       </div>
                     ))}
                   </div>
                 </div>
-              )}
-            </div>
-          )}
+              </div>
+            )}
 
-          {/* ══════════════════════════════════════════
-              TINGLYSNING
+            {/* ══════════════════════════════════════════
+              BBR
           ══════════════════════════════════════════ */}
-          {aktivTab === 'tinglysning' && (
-            <div className="space-y-6">
-              {/* Tingbogsattest */}
-              {ejendom.tingbogsattest && (
+            {aktivTab === 'bbr' && (
+              <div className="space-y-6">
+                {/* Jordstykker */}
                 <div>
-                  <SectionTitle title="Tingbogsattest" onDownload={() => undefined} />
-                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                    <div className="grid grid-cols-2 gap-4 mb-4">
-                      <div>
-                        <p className="text-slate-500 text-xs mb-1">BFE-nr.</p>
-                        <p className="text-white font-semibold text-sm">{ejendom.bfe}</p>
-                      </div>
-                      <div>
-                        <p className="text-slate-500 text-xs mb-1">Matrikler</p>
-                        {ejendom.tingbogsattest.matrikler.map((m, i) => (
-                          <p key={i} className="text-white text-sm font-medium">
-                            {m.matrikelNummer}{' '}
-                            <span className="text-slate-400 font-normal">
-                              ({m.areal.toLocaleString('da-DK')} m²){' '}
+                  <SectionTitle title="Jordstykker" />
+                  {/* Stat-kort */}
+                  <div className="grid grid-cols-3 gap-3 mb-3">
+                    <DataKort label="Jordstykker" value={`${ejendom.jordstykker?.length ?? 1}`} />
+                    <DataKort
+                      label="Registreret areal"
+                      value={`${ejendom.grundareal.toLocaleString('da-DK')} m²`}
+                    />
+                    <DataKort
+                      label="Matrikelkommunekode"
+                      value={ejendom.matrikelNummer.split(',')[0] ?? '—'}
+                    />
+                  </div>
+
+                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="text-slate-500 text-xs border-b border-slate-700/30">
+                          <th className="px-4 py-2 text-left font-medium">Matrikelnummer</th>
+                          <th className="px-4 py-2 text-left font-medium">Ejerlavsnavn</th>
+                          <th className="px-4 py-2 text-right font-medium">
+                            <span className="flex items-center justify-end gap-1">
+                              <Map size={11} />
+                              Registreret areal
                             </span>
-                            <span className="text-slate-500 text-xs">{m.registreringsdato}</span>
-                          </p>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button className="flex items-center gap-1.5 px-3 py-1.5 border border-slate-700/60 rounded-lg text-slate-300 text-xs hover:bg-slate-700/40 transition-colors">
-                        Akt nr. {ejendom.tingbogsattest.aktNummer}
-                      </button>
-                      <button className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 rounded-lg text-white text-xs font-medium transition-colors">
-                        <Download size={12} />
-                        Tingbogsattest
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Adkomsthaver */}
-              {ejendom.adkomsthaver && (
-                <div>
-                  <SectionTitle title="Adkomsthaver" />
-                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
-                    <table className="w-full">
-                      <thead>
-                        <tr className="text-slate-500 text-xs border-b border-slate-700/30">
-                          <th className="px-4 py-2 text-left font-medium">Adkomsthaver</th>
-                          <th className="px-4 py-2 text-left font-medium">Type</th>
-                          <th className="px-4 py-2 text-right font-medium">Beløb</th>
-                          <th className="px-4 py-2 text-right font-medium">Dato</th>
-                          <th className="px-2 py-2"></th>
+                          </th>
                         </tr>
                       </thead>
                       <tbody>
-                        <tr className="border-t border-slate-700/30 hover:bg-slate-700/20 transition-colors">
-                          <td className="px-4 py-3">
-                            {ejendom.adkomsthaver.cvr ? (
-                              <Link
-                                href={`/dashboard/virksomheder/${ejendom.adkomsthaver.cvr}`}
-                                className="text-blue-300 hover:text-blue-200 text-sm font-medium flex items-center gap-1"
-                              >
-                                {ejendom.adkomsthaver.navn}
-                                <ChevronRight size={12} />
-                              </Link>
-                            ) : (
-                              <p className="text-slate-200 text-sm font-medium">
-                                {ejendom.adkomsthaver.navn}
-                              </p>
-                            )}
-                            <p className="text-slate-500 text-xs">
-                              {ejendom.adkomsthaver.andel}% andel
-                            </p>
-                          </td>
-                          <td className="px-4 py-3 text-slate-300 text-sm">
-                            {ejendom.adkomsthaver.type}
-                          </td>
-                          <td className="px-4 py-3 text-white text-sm font-semibold text-right">
-                            {formatDKK(ejendom.adkomsthaver.beloeb)}
-                          </td>
-                          <td className="px-4 py-3 text-slate-400 text-sm text-right">
-                            {formatDato(ejendom.adkomsthaver.dato)}
-                          </td>
-                          <td className="px-2 py-3 text-right">
-                            <button className="text-slate-600 hover:text-slate-300 transition-colors">
-                              <FileText size={13} />
-                            </button>
-                          </td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              {/* Historiske adkomster */}
-              {ejendom.historiskeAdkomster && ejendom.historiskeAdkomster.length > 0 && (
-                <div>
-                  <SectionTitle title="Historiske adkomster" />
-                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
-                    <table className="w-full">
-                      <thead>
-                        <tr className="text-slate-500 text-xs border-b border-slate-700/30">
-                          <th className="px-4 py-2 text-left font-medium">Adkomsthaver</th>
-                          <th className="px-4 py-2 text-left font-medium">Type</th>
-                          <th className="px-4 py-2 text-right font-medium">Beløb</th>
-                          <th className="px-4 py-2 text-right font-medium">Dato</th>
-                          <th className="px-2 py-2"></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {ejendom.historiskeAdkomster.map((ha, i) => (
+                        {(ejendom.jordstykker ?? []).map((js, i) => (
                           <tr
                             key={i}
                             className="border-t border-slate-700/30 hover:bg-slate-700/20 transition-colors"
                           >
-                            <td className="px-4 py-3">
-                              {ha.navne.map((navn, ni) => (
-                                <p key={ni} className="text-slate-200 text-sm">
-                                  {navn}
-                                  {ha.andele.length > 1 && (
-                                    <span className="text-slate-500 ml-1 text-xs">
-                                      ({ha.andele[ni]}%)
-                                    </span>
-                                  )}
-                                </p>
-                              ))}
+                            <td className="px-4 py-3 text-slate-200 text-sm font-medium">
+                              {js.matrikelNummer}
                             </td>
-                            <td className="px-4 py-3 text-slate-300 text-sm">{ha.type}</td>
-                            <td className="px-4 py-3 text-slate-200 text-sm font-semibold text-right">
-                              {formatDKK(ha.beloeb)}
+                            <td className="px-4 py-3 text-slate-300 text-sm">{js.ejerlavsnavn}</td>
+                            <td className="px-4 py-3 text-slate-300 text-sm text-right">
+                              {js.registreretAreal.toLocaleString('da-DK')} m²
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Bygninger */}
+                <div>
+                  <SectionTitle title="Bygninger" />
+                  <div className="grid grid-cols-3 gap-3 mb-3">
+                    <DataKort label="Bygninger" value={`${ejendom.bygninger.length}`} />
+                    <DataKort
+                      label="Samlet bygningsareal"
+                      value={`${ejendom.bygningsareal.toLocaleString('da-DK')} m²`}
+                    />
+                    <DataKort label="Opførelsesår" value={`${ejendom.opfoerelsesaar}`} />
+                  </div>
+
+                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="text-slate-500 text-xs border-b border-slate-700/30">
+                          <th className="px-4 py-2 text-left font-medium">Anvendelse</th>
+                          <th className="px-4 py-2 text-left font-medium">Opførelsesår</th>
+                          <th className="px-4 py-2 text-right font-medium">Bebygget areal</th>
+                          <th className="px-4 py-2 text-right font-medium">Samlet areal</th>
+                          <th className="px-2 py-2 text-right font-medium">Energi</th>
+                          <th className="px-2 py-2"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {ejendom.bygninger.map((b) => (
+                          <tr
+                            key={b.id}
+                            className="border-t border-slate-700/30 hover:bg-slate-700/20 transition-colors"
+                          >
+                            <td className="px-4 py-3 text-slate-200 text-sm">{b.anvendelse}</td>
+                            <td className="px-4 py-3 text-slate-300 text-sm">{b.opfoerelsesaar}</td>
+                            <td className="px-4 py-3 text-slate-300 text-sm text-right">
+                              {b.bygningsareal.toLocaleString('da-DK')} m²
+                            </td>
+                            <td className="px-4 py-3 text-slate-300 text-sm text-right">
+                              {(b.bygningsareal + b.kaelder).toLocaleString('da-DK')} m²
+                            </td>
+                            <td className="px-2 py-3 text-right">
+                              <span
+                                className={`inline-flex px-1.5 py-0.5 rounded text-xs font-bold text-white ${energiColor[b.energimaerke] ?? 'bg-slate-600'}`}
+                              >
+                                {b.energimaerke}
+                              </span>
+                            </td>
+                            <td className="px-2 py-3 text-right">
+                              <ChevronRight size={14} className="text-slate-600 ml-auto" />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Enheder */}
+                <div>
+                  <SectionTitle title="Enheder" />
+                  <div className="grid grid-cols-3 gap-3 mb-3">
+                    <DataKort
+                      label="Enheder i alt"
+                      value={`${ejendom.erhvervsenheder + ejendom.beboelsesenheder}`}
+                    />
+                    <DataKort label="Erhvervsenheder" value={`${ejendom.erhvervsenheder}`} />
+                    <DataKort label="Beboelsesenheder" value={`${ejendom.beboelsesenheder}`} />
+                  </div>
+
+                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="text-slate-500 text-xs border-b border-slate-700/30">
+                          <th className="px-4 py-2 text-left font-medium">Adresse</th>
+                          <th className="px-4 py-2 text-left font-medium">Anvendelse</th>
+                          <th className="px-4 py-2 text-right font-medium">Værelser</th>
+                          <th className="px-4 py-2 text-right font-medium">Samlet areal</th>
+                          <th className="px-2 py-2"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(ejendom.enheder ?? []).map((enhed, i) => (
+                          <tr
+                            key={i}
+                            className="border-t border-slate-700/30 hover:bg-slate-700/20 transition-colors"
+                          >
+                            <td className="px-4 py-3 text-slate-200 text-sm">{enhed.adresse}</td>
+                            <td className="px-4 py-3 text-slate-300 text-sm">{enhed.anvendelse}</td>
+                            <td className="px-4 py-3 text-slate-300 text-sm text-right">
+                              {enhed.vaerelser ?? '—'}
+                            </td>
+                            <td className="px-4 py-3 text-slate-300 text-sm text-right">
+                              {enhed.samletAreal.toLocaleString('da-DK')} m²
+                            </td>
+                            <td className="px-2 py-3 text-right">
+                              <ChevronRight size={14} className="text-slate-600 ml-auto" />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Tekniske anlæg */}
+                <div>
+                  <SectionTitle title="Tekniske anlæg" />
+                  <div className="grid grid-cols-2 gap-3">
+                    <DataKort
+                      label="Tekniske anlæg"
+                      value={`${ejendom.tekniskeAnlaeg ?? 0} Tekniske anlæg`}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ══════════════════════════════════════════
+              EJERFORHOLD
+          ══════════════════════════════════════════ */}
+            {aktivTab === 'ejerforhold' && (
+              <div className="space-y-6">
+                {/* Ejer-kort */}
+                {ejendom.ejerDetaljer && (
+                  <div>
+                    <SectionTitle title="Ejer" />
+                    <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                      {/* Toprække: logo + navn + badges */}
+                      <div className="flex items-start gap-4 mb-4">
+                        <div className="w-12 h-12 rounded-xl bg-blue-500/20 border border-blue-500/30 flex items-center justify-center flex-shrink-0">
+                          <Briefcase size={20} className="text-blue-400" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {ejendom.ejere[0]?.cvr ? (
+                              <Link
+                                href={`/dashboard/virksomheder/${ejendom.ejere[0].cvr}`}
+                                className="text-white font-bold text-base hover:text-blue-300 transition-colors flex items-center gap-1"
+                              >
+                                {ejendom.ejerDetaljer.navn}
+                                <ChevronRight size={14} />
+                              </Link>
+                            ) : (
+                              <p className="text-white font-bold text-base">
+                                {ejendom.ejerDetaljer.navn}
+                              </p>
+                            )}
+                            <span className="px-2 py-0.5 bg-blue-500/10 border border-blue-500/20 rounded-full text-xs text-blue-300">
+                              Primær kontakt
+                            </span>
+                            {ejendom.ejerDetaljer.reklamebeskyttet && (
+                              <span className="px-2 py-0.5 bg-orange-500/10 border border-orange-500/20 rounded-full text-xs text-orange-300">
+                                Reklamebeskyttet
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-slate-400 text-xs mt-0.5">
+                            CVR {ejendom.ejerDetaljer.cvr}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Detaljeliste */}
+                      <div className="grid grid-cols-1 gap-0 divide-y divide-slate-700/30">
+                        {[
+                          {
+                            label: 'Overtagelsesdato',
+                            value: formatDato(ejendom.ejerDetaljer.overtagelsesdato),
+                          },
+                          { label: 'Ejertype', value: ejendom.ejerDetaljer.ejertype },
+                          { label: 'Branchenavn', value: ejendom.ejerDetaljer.branche },
+                          {
+                            label: 'Telefon',
+                            value: ejendom.ejerDetaljer.telefon,
+                            ikon: <Phone size={11} className="text-slate-500" />,
+                          },
+                          {
+                            label: 'E-mail',
+                            value: ejendom.ejerDetaljer.email,
+                            ikon: <Mail size={11} className="text-slate-500" />,
+                          },
+                          {
+                            label: 'Tegningsregel',
+                            value: ejendom.ejerDetaljer.tegningsregel,
+                          },
+                        ].map((row) => (
+                          <div
+                            key={row.label}
+                            className="flex items-center justify-between py-2.5 first:pt-0"
+                          >
+                            <span className="text-slate-500 text-xs">{row.label}</span>
+                            <span className="text-slate-200 text-xs flex items-center gap-1">
+                              {row.ikon}
+                              {row.value}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Ejerstruktur */}
+                {ejendom.ejerstruktur && ejendom.ejerstruktur.length > 0 && (
+                  <div>
+                    <SectionTitle title="Ejerstruktur" />
+                    <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                      <EjerstrukturTrae noder={ejendom.ejerstruktur} />
+                    </div>
+                  </div>
+                )}
+
+                {/* Nøgletal */}
+                {ejendom.ejerDetaljer && (
+                  <div>
+                    <SectionTitle
+                      title={`Nøgletal ${ejendom.ejerDetaljer.noegletal.aar} for ${ejendom.ejerDetaljer.navn}`}
+                    />
+                    <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
+                      <div className="px-4 py-2 border-b border-slate-700/30">
+                        <p className="text-slate-400 text-xs font-medium">Resultatopgørelse</p>
+                      </div>
+                      <table className="w-full">
+                        <tbody>
+                          <tr className="border-b border-slate-700/30 hover:bg-slate-700/20">
+                            <td className="px-4 py-3 text-slate-300 text-sm">Resultat før skat</td>
+                            <td className="px-4 py-3 text-right">
+                              <span
+                                className={`text-sm font-semibold ${ejendom.ejerDetaljer.noegletal.resultatFoerSkat >= 0 ? 'text-green-400' : 'text-red-400'}`}
+                              >
+                                {formatDKK(ejendom.ejerDetaljer.noegletal.resultatFoerSkat)}
+                              </span>
+                            </td>
+                          </tr>
+                          <tr className="hover:bg-slate-700/20">
+                            <td className="px-4 py-3 text-slate-300 text-sm">Resultat</td>
+                            <td className="px-4 py-3 text-right">
+                              <span
+                                className={`text-sm font-semibold ${ejendom.ejerDetaljer.noegletal.resultat >= 0 ? 'text-green-400' : 'text-red-400'}`}
+                              >
+                                {formatDKK(ejendom.ejerDetaljer.noegletal.resultat)}
+                              </span>
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Fallback: vis eksisterende ejere hvis ingen ejerDetaljer */}
+                {!ejendom.ejerDetaljer && (
+                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                    <p className="text-slate-400 text-xs font-medium uppercase tracking-wide mb-3">
+                      Nuværende ejere
+                    </p>
+                    <div className="space-y-3">
+                      {ejendom.ejere.map((ejer, i) => (
+                        <div
+                          key={i}
+                          className="flex items-center justify-between p-3 bg-slate-900/40 rounded-xl"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-xl bg-blue-500/20 flex items-center justify-center">
+                              <Users size={16} className="text-blue-400" />
+                            </div>
+                            <div>
+                              {ejer.cvr ? (
+                                <Link
+                                  href={`/dashboard/virksomheder/${ejer.cvr}`}
+                                  className="text-white font-semibold hover:text-blue-300 transition-colors flex items-center gap-1 text-sm"
+                                >
+                                  {ejer.navn}
+                                  <ChevronRight size={13} />
+                                </Link>
+                              ) : (
+                                <p className="text-white font-semibold text-sm">{ejer.navn}</p>
+                              )}
+                              <p className="text-slate-500 text-xs">
+                                {ejer.type === 'selskab' ? `CVR ${ejer.cvr}` : 'Privatperson'} ·
+                                Erhvervet {formatDato(ejer.erhvervsdato)}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-white font-bold text-lg">{ejer.ejerandel}%</p>
+                            <p className="text-slate-500 text-xs">ejerandel</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ══════════════════════════════════════════
+              TINGLYSNING
+          ══════════════════════════════════════════ */}
+            {aktivTab === 'tinglysning' && (
+              <div className="space-y-6">
+                {/* Tingbogsattest */}
+                {ejendom.tingbogsattest && (
+                  <div>
+                    <SectionTitle title="Tingbogsattest" onDownload={() => undefined} />
+                    <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                      <div className="grid grid-cols-2 gap-4 mb-4">
+                        <div>
+                          <p className="text-slate-500 text-xs mb-1">BFE-nr.</p>
+                          <p className="text-white font-semibold text-sm">{ejendom.bfe}</p>
+                        </div>
+                        <div>
+                          <p className="text-slate-500 text-xs mb-1">Matrikler</p>
+                          {ejendom.tingbogsattest.matrikler.map((m, i) => (
+                            <p key={i} className="text-white text-sm font-medium">
+                              {m.matrikelNummer}{' '}
+                              <span className="text-slate-400 font-normal">
+                                ({m.areal.toLocaleString('da-DK')} m²){' '}
+                              </span>
+                              <span className="text-slate-500 text-xs">{m.registreringsdato}</span>
+                            </p>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button className="flex items-center gap-1.5 px-3 py-1.5 border border-slate-700/60 rounded-lg text-slate-300 text-xs hover:bg-slate-700/40 transition-colors">
+                          Akt nr. {ejendom.tingbogsattest.aktNummer}
+                        </button>
+                        <button className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 rounded-lg text-white text-xs font-medium transition-colors">
+                          <Download size={12} />
+                          Tingbogsattest
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Adkomsthaver */}
+                {ejendom.adkomsthaver && (
+                  <div>
+                    <SectionTitle title="Adkomsthaver" />
+                    <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
+                      <table className="w-full">
+                        <thead>
+                          <tr className="text-slate-500 text-xs border-b border-slate-700/30">
+                            <th className="px-4 py-2 text-left font-medium">Adkomsthaver</th>
+                            <th className="px-4 py-2 text-left font-medium">Type</th>
+                            <th className="px-4 py-2 text-right font-medium">Beløb</th>
+                            <th className="px-4 py-2 text-right font-medium">Dato</th>
+                            <th className="px-2 py-2"></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr className="border-t border-slate-700/30 hover:bg-slate-700/20 transition-colors">
+                            <td className="px-4 py-3">
+                              {ejendom.adkomsthaver.cvr ? (
+                                <Link
+                                  href={`/dashboard/virksomheder/${ejendom.adkomsthaver.cvr}`}
+                                  className="text-blue-300 hover:text-blue-200 text-sm font-medium flex items-center gap-1"
+                                >
+                                  {ejendom.adkomsthaver.navn}
+                                  <ChevronRight size={12} />
+                                </Link>
+                              ) : (
+                                <p className="text-slate-200 text-sm font-medium">
+                                  {ejendom.adkomsthaver.navn}
+                                </p>
+                              )}
+                              <p className="text-slate-500 text-xs">
+                                {ejendom.adkomsthaver.andel}% andel
+                              </p>
+                            </td>
+                            <td className="px-4 py-3 text-slate-300 text-sm">
+                              {ejendom.adkomsthaver.type}
+                            </td>
+                            <td className="px-4 py-3 text-white text-sm font-semibold text-right">
+                              {formatDKK(ejendom.adkomsthaver.beloeb)}
                             </td>
                             <td className="px-4 py-3 text-slate-400 text-sm text-right">
-                              {formatDato(ha.dato)}
+                              {formatDato(ejendom.adkomsthaver.dato)}
+                            </td>
+                            <td className="px-2 py-3 text-right">
+                              <button className="text-slate-600 hover:text-slate-300 transition-colors">
+                                <FileText size={13} />
+                              </button>
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Historiske adkomster */}
+                {ejendom.historiskeAdkomster && ejendom.historiskeAdkomster.length > 0 && (
+                  <div>
+                    <SectionTitle title="Historiske adkomster" />
+                    <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
+                      <table className="w-full">
+                        <thead>
+                          <tr className="text-slate-500 text-xs border-b border-slate-700/30">
+                            <th className="px-4 py-2 text-left font-medium">Adkomsthaver</th>
+                            <th className="px-4 py-2 text-left font-medium">Type</th>
+                            <th className="px-4 py-2 text-right font-medium">Beløb</th>
+                            <th className="px-4 py-2 text-right font-medium">Dato</th>
+                            <th className="px-2 py-2"></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {ejendom.historiskeAdkomster.map((ha, i) => (
+                            <tr
+                              key={i}
+                              className="border-t border-slate-700/30 hover:bg-slate-700/20 transition-colors"
+                            >
+                              <td className="px-4 py-3">
+                                {ha.navne.map((navn, ni) => (
+                                  <p key={ni} className="text-slate-200 text-sm">
+                                    {navn}
+                                    {ha.andele.length > 1 && (
+                                      <span className="text-slate-500 ml-1 text-xs">
+                                        ({ha.andele[ni]}%)
+                                      </span>
+                                    )}
+                                  </p>
+                                ))}
+                              </td>
+                              <td className="px-4 py-3 text-slate-300 text-sm">{ha.type}</td>
+                              <td className="px-4 py-3 text-slate-200 text-sm font-semibold text-right">
+                                {formatDKK(ha.beloeb)}
+                              </td>
+                              <td className="px-4 py-3 text-slate-400 text-sm text-right">
+                                {formatDato(ha.dato)}
+                              </td>
+                              <td className="px-2 py-3 text-right">
+                                <button className="text-slate-600 hover:text-slate-300 transition-colors">
+                                  <FileText size={13} />
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Hæftelser */}
+                <div>
+                  <SectionTitle title="Hæftelser" />
+                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="text-slate-500 text-xs border-b border-slate-700/30">
+                          <th className="px-4 py-2 text-left font-medium">Prioritet</th>
+                          <th className="px-4 py-2 text-left font-medium">Kreditor</th>
+                          <th className="px-4 py-2 text-left font-medium">Debitor</th>
+                          <th className="px-4 py-2 text-left font-medium">Type</th>
+                          <th className="px-4 py-2 text-right font-medium">Hovedstol</th>
+                          <th className="px-4 py-2 text-right font-medium">Dato</th>
+                          <th className="px-2 py-2"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {ejendom.haeftelser.map((h) => (
+                          <tr
+                            key={h.id}
+                            className="border-t border-slate-700/30 hover:bg-slate-700/20 transition-colors"
+                          >
+                            <td className="px-4 py-3">
+                              {h.prioritet !== undefined ? (
+                                <span className="inline-flex items-center justify-center w-5 h-5 bg-slate-700/60 rounded text-slate-300 text-xs font-semibold">
+                                  {h.prioritet}
+                                </span>
+                              ) : (
+                                <span className="text-slate-500 text-sm">—</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-slate-200 text-sm">{h.kreditor}</td>
+                            <td className="px-4 py-3 text-slate-300 text-sm">{h.debitor ?? '—'}</td>
+                            <td className="px-4 py-3 text-slate-300 text-sm capitalize">
+                              {h.type}
+                            </td>
+                            <td className="px-4 py-3 text-right">
+                              {h.beloeb !== undefined ? (
+                                <span className="text-white text-sm font-semibold">
+                                  {formatDKK(h.beloeb)}
+                                </span>
+                              ) : (
+                                <span className="text-slate-500 text-sm">—</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-slate-400 text-sm text-right">
+                              {formatDato(h.tinglysningsdato)}
                             </td>
                             <td className="px-2 py-3 text-right">
                               <button className="text-slate-600 hover:text-slate-300 transition-colors">
@@ -1081,309 +1160,427 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                       </tbody>
                     </table>
                   </div>
-                </div>
-              )}
 
-              {/* Hæftelser */}
-              <div>
-                <SectionTitle title="Hæftelser" />
-                <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="text-slate-500 text-xs border-b border-slate-700/30">
-                        <th className="px-4 py-2 text-left font-medium">Prioritet</th>
-                        <th className="px-4 py-2 text-left font-medium">Kreditor</th>
-                        <th className="px-4 py-2 text-left font-medium">Debitor</th>
-                        <th className="px-4 py-2 text-left font-medium">Type</th>
-                        <th className="px-4 py-2 text-right font-medium">Hovedstol</th>
-                        <th className="px-4 py-2 text-right font-medium">Dato</th>
-                        <th className="px-2 py-2"></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {ejendom.haeftelser.map((h) => (
-                        <tr
-                          key={h.id}
-                          className="border-t border-slate-700/30 hover:bg-slate-700/20 transition-colors"
-                        >
-                          <td className="px-4 py-3">
-                            {h.prioritet !== undefined ? (
-                              <span className="inline-flex items-center justify-center w-5 h-5 bg-slate-700/60 rounded text-slate-300 text-xs font-semibold">
-                                {h.prioritet}
-                              </span>
-                            ) : (
-                              <span className="text-slate-500 text-sm">—</span>
-                            )}
-                          </td>
-                          <td className="px-4 py-3 text-slate-200 text-sm">{h.kreditor}</td>
-                          <td className="px-4 py-3 text-slate-300 text-sm">{h.debitor ?? '—'}</td>
-                          <td className="px-4 py-3 text-slate-300 text-sm capitalize">{h.type}</td>
-                          <td className="px-4 py-3 text-right">
-                            {h.beloeb !== undefined ? (
-                              <span className="text-white text-sm font-semibold">
-                                {formatDKK(h.beloeb)}
-                              </span>
-                            ) : (
-                              <span className="text-slate-500 text-sm">—</span>
-                            )}
-                          </td>
-                          <td className="px-4 py-3 text-slate-400 text-sm text-right">
-                            {formatDato(h.tinglysningsdato)}
-                          </td>
-                          <td className="px-2 py-3 text-right">
-                            <button className="text-slate-600 hover:text-slate-300 transition-colors">
-                              <FileText size={13} />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  {/* Matrikel-tæller */}
+                  <p className="text-slate-500 text-xs mt-2 text-right">
+                    {ejendom.jordstykker?.length ?? 1} matrikel · {ejendom.haeftelser.length}{' '}
+                    hæftelser
+                  </p>
                 </div>
-
-                {/* Matrikel-tæller */}
-                <p className="text-slate-500 text-xs mt-2 text-right">
-                  {ejendom.jordstykker?.length ?? 1} matrikel · {ejendom.haeftelser.length}{' '}
-                  hæftelser
-                </p>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* ══════════════════════════════════════════
+            {/* ══════════════════════════════════════════
               ØKONOMI
           ══════════════════════════════════════════ */}
-          {aktivTab === 'oekonomi' && (
-            <div className="space-y-6">
-              {/* Vurdering */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <DataKort
-                  label="Ejendomsværdi"
-                  value={formatDKK(ejendom.ejendomsvaerdi)}
-                  sub="Seneste vurdering"
-                />
-                <DataKort
-                  label="Grundværdi"
-                  value={formatDKK(ejendom.grundvaerdi)}
-                  sub="Seneste vurdering"
-                />
-                <DataKort label="Skat i alt" value={formatDKK(ejendom.skat)} sub="Årlig" />
-                <DataKort label="Grundskyld" value={formatDKK(ejendom.grundskyld)} sub="Årlig" />
-              </div>
+            {aktivTab === 'oekonomi' && (
+              <div className="space-y-6">
+                {/* Vurdering */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <DataKort
+                    label="Ejendomsværdi"
+                    value={formatDKK(ejendom.ejendomsvaerdi)}
+                    sub="Seneste vurdering"
+                  />
+                  <DataKort
+                    label="Grundværdi"
+                    value={formatDKK(ejendom.grundvaerdi)}
+                    sub="Seneste vurdering"
+                  />
+                  <DataKort label="Skat i alt" value={formatDKK(ejendom.skat)} sub="Årlig" />
+                  <DataKort label="Grundskyld" value={formatDKK(ejendom.grundskyld)} sub="Årlig" />
+                </div>
 
-              {/* Prishistorik graf */}
-              <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                <div className="flex items-center justify-between mb-4">
-                  <p className="text-slate-200 text-sm font-semibold">Prishistorik</p>
-                  <div className="flex items-center gap-1 text-slate-400 text-xs">
-                    <TrendingUp size={12} />
-                    <span>mio. DKK</span>
+                {/* Prishistorik graf */}
+                <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                  <div className="flex items-center justify-between mb-4">
+                    <p className="text-slate-200 text-sm font-semibold">Prishistorik</p>
+                    <div className="flex items-center gap-1 text-slate-400 text-xs">
+                      <TrendingUp size={12} />
+                      <span>mio. DKK</span>
+                    </div>
                   </div>
+                  <ResponsiveContainer width="100%" height={200}>
+                    <AreaChart data={prisData}>
+                      <defs>
+                        <linearGradient id="prisGradient" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
+                          <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                      <XAxis
+                        dataKey="dato"
+                        tick={{ fill: '#64748b', fontSize: 12 }}
+                        axisLine={false}
+                        tickLine={false}
+                      />
+                      <YAxis
+                        tick={{ fill: '#64748b', fontSize: 12 }}
+                        axisLine={false}
+                        tickLine={false}
+                        tickFormatter={(v: number) => `${v}M`}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          background: '#0f172a',
+                          border: '1px solid #1e293b',
+                          borderRadius: '12px',
+                          color: '#fff',
+                        }}
+                        formatter={
+                          ((value: number | string) => [`${value} mio. DKK`, 'Pris']) as Parameters<
+                            typeof Tooltip
+                          >[0]['formatter']
+                        }
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="pris"
+                        stroke="#3b82f6"
+                        strokeWidth={2}
+                        fill="url(#prisGradient)"
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
                 </div>
-                <ResponsiveContainer width="100%" height={200}>
-                  <AreaChart data={prisData}>
-                    <defs>
-                      <linearGradient id="prisGradient" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
-                        <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                    <XAxis
-                      dataKey="dato"
-                      tick={{ fill: '#64748b', fontSize: 12 }}
-                      axisLine={false}
-                      tickLine={false}
-                    />
-                    <YAxis
-                      tick={{ fill: '#64748b', fontSize: 12 }}
-                      axisLine={false}
-                      tickLine={false}
-                      tickFormatter={(v: number) => `${v}M`}
-                    />
-                    <Tooltip
-                      contentStyle={{
-                        background: '#0f172a',
-                        border: '1px solid #1e293b',
-                        borderRadius: '12px',
-                        color: '#fff',
-                      }}
-                      formatter={
-                        ((value: number | string) => [`${value} mio. DKK`, 'Pris']) as Parameters<
-                          typeof Tooltip
-                        >[0]['formatter']
-                      }
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="pris"
-                      stroke="#3b82f6"
-                      strokeWidth={2}
-                      fill="url(#prisGradient)"
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
 
-              {/* Salgshistorik */}
-              <div>
-                <SectionTitle title="Salgshistorik" onDownload={() => undefined} />
-                <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="text-slate-500 text-xs border-b border-slate-700/30">
-                        <th className="px-4 py-2 text-left font-medium">Køber</th>
-                        <th className="px-4 py-2 text-left font-medium">Type</th>
-                        <th className="px-4 py-2 text-right font-medium">Andel</th>
-                        <th className="px-4 py-2 text-right font-medium">Pris</th>
-                        <th className="px-4 py-2 text-right font-medium">Dato</th>
-                        <th className="px-2 py-2"></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(
-                        ejendom.salgshistorik ??
-                        ejendom.handelHistorik.map((h) => ({
-                          koebere: [
-                            {
-                              navn: h.koeberType === 'selskab' ? 'Selskab' : 'Privatperson',
-                              andel: 100 as number | undefined,
-                            },
-                          ],
-                          handelstype: 'Skøde',
-                          kilde: 'tinglysning' as const,
-                          andel: 100,
-                          pris: h.pris,
-                          dato: h.dato,
-                        }))
-                      ).map((s, i) => (
-                        <tr
-                          key={i}
-                          className="border-t border-slate-700/30 hover:bg-slate-700/20 transition-colors"
-                        >
-                          <td className="px-4 py-3">
-                            {s.koebere.map((k, ki) => (
-                              <p key={ki} className="text-slate-200 text-sm">
-                                {k.navn}
-                                {k.andel !== undefined && s.koebere.length > 1 && (
-                                  <span className="text-slate-500 ml-1 text-xs">({k.andel}%)</span>
-                                )}
-                              </p>
-                            ))}
-                          </td>
-                          <td className="px-4 py-3">
-                            <p className="text-slate-300 text-sm">{s.handelstype}</p>
-                            <p className="text-orange-400 text-xs capitalize">{s.kilde}</p>
-                          </td>
-                          <td className="px-4 py-3 text-slate-300 text-sm text-right">
-                            {s.andel !== undefined ? `${s.andel}%` : '—'}
-                          </td>
-                          <td className="px-4 py-3 text-white text-sm font-semibold text-right">
-                            {formatDKK(s.pris)}
-                          </td>
-                          <td className="px-4 py-3 text-slate-400 text-sm text-right">
-                            {formatDato(s.dato)}
-                          </td>
-                          <td className="px-2 py-3 text-right">
-                            <ChevronRight size={14} className="text-slate-600 ml-auto" />
-                          </td>
+                {/* Salgshistorik */}
+                <div>
+                  <SectionTitle title="Salgshistorik" onDownload={() => undefined} />
+                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="text-slate-500 text-xs border-b border-slate-700/30">
+                          <th className="px-4 py-2 text-left font-medium">Køber</th>
+                          <th className="px-4 py-2 text-left font-medium">Type</th>
+                          <th className="px-4 py-2 text-right font-medium">Andel</th>
+                          <th className="px-4 py-2 text-right font-medium">Pris</th>
+                          <th className="px-4 py-2 text-right font-medium">Dato</th>
+                          <th className="px-2 py-2"></th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* Udbudshistorik */}
-              <div>
-                <SectionTitle title="Udbudshistorik" />
-                <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="text-slate-500 text-xs border-b border-slate-700/30">
-                        <th className="px-4 py-2 text-left font-medium">Status</th>
-                        <th className="px-4 py-2 text-right font-medium">Prisændring</th>
-                        <th className="px-4 py-2 text-right font-medium">Pris</th>
-                        <th className="px-4 py-2 text-right font-medium">Dato</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {ejendom.udbudshistorik && ejendom.udbudshistorik.length > 0 ? (
-                        ejendom.udbudshistorik.map((u, i) => (
+                      </thead>
+                      <tbody>
+                        {(
+                          ejendom.salgshistorik ??
+                          ejendom.handelHistorik.map((h) => ({
+                            koebere: [
+                              {
+                                navn: h.koeberType === 'selskab' ? 'Selskab' : 'Privatperson',
+                                andel: 100 as number | undefined,
+                              },
+                            ],
+                            handelstype: 'Skøde',
+                            kilde: 'tinglysning' as const,
+                            andel: 100,
+                            pris: h.pris,
+                            dato: h.dato,
+                          }))
+                        ).map((s, i) => (
                           <tr
                             key={i}
                             className="border-t border-slate-700/30 hover:bg-slate-700/20 transition-colors"
                           >
-                            <td className="px-4 py-3 text-slate-200 text-sm">{u.status}</td>
-                            <td className="px-4 py-3 text-right">
-                              {u.prisaendring !== undefined ? (
-                                <span
-                                  className={`text-sm font-medium ${u.prisaendring >= 0 ? 'text-green-400' : 'text-red-400'}`}
-                                >
-                                  {u.prisaendring >= 0 ? '+' : ''}
-                                  {u.prisaendring.toLocaleString('da-DK')} DKK
-                                </span>
-                              ) : (
-                                <span className="text-slate-500 text-sm">—</span>
-                              )}
+                            <td className="px-4 py-3">
+                              {s.koebere.map((k, ki) => (
+                                <p key={ki} className="text-slate-200 text-sm">
+                                  {k.navn}
+                                  {k.andel !== undefined && s.koebere.length > 1 && (
+                                    <span className="text-slate-500 ml-1 text-xs">
+                                      ({k.andel}%)
+                                    </span>
+                                  )}
+                                </p>
+                              ))}
+                            </td>
+                            <td className="px-4 py-3">
+                              <p className="text-slate-300 text-sm">{s.handelstype}</p>
+                              <p className="text-orange-400 text-xs capitalize">{s.kilde}</p>
+                            </td>
+                            <td className="px-4 py-3 text-slate-300 text-sm text-right">
+                              {s.andel !== undefined ? `${s.andel}%` : '—'}
                             </td>
                             <td className="px-4 py-3 text-white text-sm font-semibold text-right">
-                              {formatDKK(u.pris)}
+                              {formatDKK(s.pris)}
                             </td>
                             <td className="px-4 py-3 text-slate-400 text-sm text-right">
-                              {formatDato(u.dato)}
+                              {formatDato(s.dato)}
+                            </td>
+                            <td className="px-2 py-3 text-right">
+                              <ChevronRight size={14} className="text-slate-600 ml-auto" />
                             </td>
                           </tr>
-                        ))
-                      ) : (
-                        <tr>
-                          <td colSpan={4} className="px-4 py-6 text-center text-slate-500 text-sm">
-                            Ingen udbudshistorik registreret
-                          </td>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Udbudshistorik */}
+                <div>
+                  <SectionTitle title="Udbudshistorik" />
+                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="text-slate-500 text-xs border-b border-slate-700/30">
+                          <th className="px-4 py-2 text-left font-medium">Status</th>
+                          <th className="px-4 py-2 text-right font-medium">Prisændring</th>
+                          <th className="px-4 py-2 text-right font-medium">Pris</th>
+                          <th className="px-4 py-2 text-right font-medium">Dato</th>
                         </tr>
-                      )}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {ejendom.udbudshistorik && ejendom.udbudshistorik.length > 0 ? (
+                          ejendom.udbudshistorik.map((u, i) => (
+                            <tr
+                              key={i}
+                              className="border-t border-slate-700/30 hover:bg-slate-700/20 transition-colors"
+                            >
+                              <td className="px-4 py-3 text-slate-200 text-sm">{u.status}</td>
+                              <td className="px-4 py-3 text-right">
+                                {u.prisaendring !== undefined ? (
+                                  <span
+                                    className={`text-sm font-medium ${u.prisaendring >= 0 ? 'text-green-400' : 'text-red-400'}`}
+                                  >
+                                    {u.prisaendring >= 0 ? '+' : ''}
+                                    {u.prisaendring.toLocaleString('da-DK')} DKK
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-500 text-sm">—</span>
+                                )}
+                              </td>
+                              <td className="px-4 py-3 text-white text-sm font-semibold text-right">
+                                {formatDKK(u.pris)}
+                              </td>
+                              <td className="px-4 py-3 text-slate-400 text-sm text-right">
+                                {formatDato(u.dato)}
+                              </td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr>
+                            <td
+                              colSpan={4}
+                              className="px-4 py-6 text-center text-slate-500 text-sm"
+                            >
+                              Ingen udbudshistorik registreret
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* ══════════════════════════════════════════
+            {/* ══════════════════════════════════════════
               DOKUMENTER
           ══════════════════════════════════════════ */}
-          {aktivTab === 'dokumenter' && (
-            <div className="space-y-3">
-              {ejendom.haeftelser.map((h) => (
-                <div
-                  key={h.id}
-                  className="flex items-center justify-between p-4 bg-slate-800/40 border border-slate-700/40 rounded-xl hover:border-slate-600/60 transition-colors group cursor-pointer"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 bg-slate-700/50 rounded-lg">
-                      <FileText size={15} className="text-slate-400" />
-                    </div>
-                    <div>
-                      <p className="text-slate-200 text-sm font-medium">{h.dokument}</p>
-                      <p className="text-slate-500 text-xs">
-                        {formatDato(h.tinglysningsdato)} · {h.kreditor}
-                      </p>
-                    </div>
+            {aktivTab === 'dokumenter' && (
+              <div className="space-y-4 pb-4">
+                {/* ── Stamdokumenter ── */}
+                <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
+                  <div className="px-4 py-3 border-b border-slate-700/40 flex items-center justify-between">
+                    <h3 className="text-white font-semibold text-sm">Stamdokumenter</h3>
+                    <Download
+                      size={14}
+                      className="text-slate-600 hover:text-slate-300 cursor-pointer transition-colors"
+                    />
                   </div>
-                  <Download
-                    size={15}
-                    className="text-slate-600 group-hover:text-slate-300 transition-colors"
-                  />
+                  {/* Kolonneheader */}
+                  <div className="px-4 py-2 border-b border-slate-700/30 flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      className="w-3.5 h-3.5 accent-blue-500 opacity-0"
+                      readOnly
+                    />
+                    <span className="text-slate-500 text-xs font-medium flex-1">Navn</span>
+                  </div>
+                  {[
+                    { id: 'std-1', navn: 'BizzAssist ejendomsrapport', sub: 'gratis', link: true },
+                    {
+                      id: 'std-2',
+                      navn: 'Ejendomsdatarapport',
+                      sub: 'pris: kr. 105 inkl. moms',
+                      link: true,
+                    },
+                    { id: 'std-3', navn: 'BBR-meddelelse', sub: null, link: false },
+                    { id: 'std-4', navn: 'BBR-tabeller (Excel)', sub: null, link: false },
+                    { id: 'std-5', navn: 'Matrikelkort', sub: null, link: false },
+                    {
+                      id: 'std-6',
+                      navn: 'Konfliktrapport',
+                      sub: null,
+                      link: false,
+                      settings: true,
+                    },
+                    { id: 'std-7', navn: 'Jordforureningsattest', sub: null, link: true },
+                    { id: 'std-8', navn: 'Ejendomsskat (fra OIS)', sub: null, link: false },
+                    { id: 'std-9', navn: 'SKAT Ejendomsvurdering', sub: null, link: false },
+                  ].map((doc) => (
+                    <div
+                      key={doc.id}
+                      className="px-4 py-2.5 border-b border-slate-700/20 last:border-0 flex items-center gap-3 hover:bg-slate-700/20 transition-colors group"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={valgteDoc.has(doc.id)}
+                        onChange={() => toggleDoc(doc.id)}
+                        className="w-3.5 h-3.5 accent-blue-500 cursor-pointer"
+                      />
+                      <span
+                        className={`flex-1 text-sm ${doc.link ? 'text-blue-400 hover:text-blue-300 cursor-pointer' : 'text-slate-300'}`}
+                      >
+                        {doc.navn}
+                        {doc.sub && <span className="text-slate-500 ml-1">({doc.sub})</span>}
+                      </span>
+                      <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        {doc.settings && <FileText size={13} className="text-slate-500" />}
+                        <FileText size={13} className="text-slate-500" />
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
 
-              <div className="flex items-start gap-2 p-3 bg-blue-500/5 border border-blue-500/20 rounded-xl mt-4">
-                <Info size={14} className="text-blue-400 mt-0.5 flex-shrink-0" />
-                <p className="text-slate-400 text-xs">
-                  Dokumenthentning fra tinglysning.dk integreres i Fase 2. BBR-meddelelse tilføjes
-                  via Datafordeleren.
-                </p>
+                {/* ── Tinglysning ── */}
+                <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
+                  <div className="px-4 py-3 border-b border-slate-700/40 flex items-center justify-between">
+                    <h3 className="text-white font-semibold text-sm">Tinglysning</h3>
+                    <Download
+                      size={14}
+                      className="text-slate-600 hover:text-slate-300 cursor-pointer transition-colors"
+                    />
+                  </div>
+                  <div className="px-4 py-2 border-b border-slate-700/30 flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      className="w-3.5 h-3.5 accent-blue-500 opacity-0"
+                      readOnly
+                    />
+                    <span className="text-slate-500 text-xs font-medium flex-1">Type</span>
+                  </div>
+                  {[
+                    { id: 'tgl-1', navn: 'Tingbogsattest', link: true, expandable: false },
+                    {
+                      id: 'tgl-2',
+                      navn: `Indskannet akt nr. ${ejendom.tingbogsattest?.aktNummer ?? '7_CO21'}`,
+                      link: true,
+                      expandable: false,
+                    },
+                    {
+                      id: 'tgl-3',
+                      navn: 'Adkomster inkl. påtegninger og bilag',
+                      link: false,
+                      expandable: true,
+                    },
+                    {
+                      id: 'tgl-4',
+                      navn: 'Hæftelser inkl. påtegninger og bilag',
+                      link: false,
+                      expandable: true,
+                    },
+                  ].map((doc) => (
+                    <div
+                      key={doc.id}
+                      className="px-4 py-2.5 border-b border-slate-700/20 last:border-0 flex items-center gap-3 hover:bg-slate-700/20 transition-colors group"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={valgteDoc.has(doc.id)}
+                        onChange={() => toggleDoc(doc.id)}
+                        className="w-3.5 h-3.5 accent-blue-500 cursor-pointer"
+                      />
+                      {doc.expandable && <ChevronRight size={13} className="text-slate-500" />}
+                      <span
+                        className={`flex-1 text-sm ${doc.link ? 'text-blue-400 hover:text-blue-300 cursor-pointer' : 'text-slate-300'}`}
+                      >
+                        {doc.navn}
+                      </span>
+                      <FileText
+                        size={13}
+                        className="text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                      />
+                    </div>
+                  ))}
+                  {/* Servitutter — ingen data */}
+                  <div className="px-4 py-2.5 flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      className="w-3.5 h-3.5 accent-blue-500 opacity-0"
+                      readOnly
+                    />
+                    <span className="text-slate-500 text-sm italic">
+                      Servitutter: Ejendommen har ingen elektroniske servitutdokumenter at
+                      downloade...
+                    </span>
+                    <FileText size={13} className="text-slate-700 ml-auto" />
+                  </div>
+                </div>
+
+                {/* ── Planer ── */}
+                <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
+                  <div className="px-4 py-3 border-b border-slate-700/40 flex items-center justify-between">
+                    <h3 className="text-white font-semibold text-sm">Planer</h3>
+                    <Download
+                      size={14}
+                      className="text-slate-600 hover:text-slate-300 cursor-pointer transition-colors"
+                    />
+                  </div>
+                  {[
+                    {
+                      id: 'pla-1',
+                      navn: 'Kommuneplan',
+                      sub: 'Hvidovre Kommuneplan 2022',
+                      link: true,
+                    },
+                    {
+                      id: 'pla-2',
+                      navn: 'Lokalplan',
+                      sub: 'LP 110 — Erhvervsområde Risbjerg',
+                      link: true,
+                    },
+                  ].map((doc) => (
+                    <div
+                      key={doc.id}
+                      className="px-4 py-2.5 border-b border-slate-700/20 last:border-0 flex items-center gap-3 hover:bg-slate-700/20 transition-colors group"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={valgteDoc.has(doc.id)}
+                        onChange={() => toggleDoc(doc.id)}
+                        className="w-3.5 h-3.5 accent-blue-500 cursor-pointer"
+                      />
+                      <span className="flex-1 text-sm text-blue-400 hover:text-blue-300 cursor-pointer">
+                        {doc.navn}
+                        {doc.sub && (
+                          <span className="text-slate-500 ml-1 font-normal">— {doc.sub}</span>
+                        )}
+                      </span>
+                      <FileText
+                        size={13}
+                        className="text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                      />
+                    </div>
+                  ))}
+                </div>
               </div>
+            )}
+          </div>
+
+          {/* Download-bar — kun synlig på Dokumenter-tab */}
+          {aktivTab === 'dokumenter' && (
+            <div className="border-t border-slate-700/50 px-6 py-3 flex items-center justify-between bg-slate-900/80 backdrop-blur-sm">
+              <span className="text-slate-400 text-sm">
+                <span className="text-white font-semibold">{valgteDoc.size}</span> dokumenter valgt
+              </span>
+              <button
+                disabled={valgteDoc.size === 0}
+                className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 disabled:cursor-not-allowed border border-slate-600 rounded-lg text-slate-300 text-sm font-medium transition-all"
+              >
+                Download dokumenter
+                <Download size={14} />
+              </button>
             </div>
           )}
         </div>

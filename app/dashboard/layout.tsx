@@ -25,7 +25,7 @@ const navItems = [
   { icon: LayoutDashboard, labelDa: 'Oversigt', labelEn: 'Overview', href: '/dashboard' },
   { icon: Search, labelDa: 'Søg', labelEn: 'Search', href: '/dashboard/search' },
   { icon: MessageSquare, labelDa: 'AI Chat', labelEn: 'AI Chat', href: '/dashboard/chat' },
-  { icon: Building2, labelDa: 'Ejendomme', labelEn: 'Properties', href: '/dashboard/properties' },
+  { icon: Building2, labelDa: 'Ejendomme', labelEn: 'Properties', href: '/dashboard/ejendomme' },
   { icon: Briefcase, labelDa: 'Virksomheder', labelEn: 'Companies', href: '/dashboard/companies' },
   { icon: Users, labelDa: 'Personer', labelEn: 'People', href: '/dashboard/people' },
   { icon: BarChart3, labelDa: 'Analyser', labelEn: 'Analysis', href: '/dashboard/analysis' },

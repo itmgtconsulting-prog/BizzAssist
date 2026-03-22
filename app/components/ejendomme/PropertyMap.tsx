@@ -174,26 +174,55 @@ export default function PropertyMap({ lat, lng, adresse, visMatrikel = true }: P
         const layers = m.getStyle()?.layers ?? [];
         for (const layer of layers) {
           const id = layer.id;
+          const sourceLayer = (layer as Record<string, unknown>)['source-layer'];
 
-          // 2D bygningsfyld — markant lysere så de adskilles fra baggrundsfarven
+          // ── Baggrund og jordflade ────────────────────────────────────────
+          // dark-v11's baggrund er ~#0d131f. Lysnes markant til mellemdark blå.
+          if (layer.type === 'background') {
+            m.setPaintProperty(id, 'background-color', '#1a2d42');
+          }
+
+          // Basis jordlag (kyst, land) — lidt lysere end baggrunden
+          if (
+            layer.type === 'fill' &&
+            (sourceLayer === 'land' || id === 'land' || id === 'land-structure')
+          ) {
+            m.setPaintProperty(id, 'fill-color', '#1e3248');
+          }
+
+          // Landcover (skov, græs, sand) — lys blågrøn/blå tone
+          if (layer.type === 'fill' && sourceLayer === 'landcover') {
+            m.setPaintProperty(id, 'fill-color', '#1e3248');
+            m.setPaintProperty(id, 'fill-opacity', 0.6);
+          }
+
+          // Boligområder, industriområder og øvrige landuse
+          if (
+            layer.type === 'fill' &&
+            sourceLayer === 'landuse' &&
+            !id.includes('park') &&
+            !id.includes('pitch') &&
+            !id.includes('cemetery')
+          ) {
+            m.setPaintProperty(id, 'fill-color', '#22364e');
+          }
+
+          // ── Bygninger ────────────────────────────────────────────────────
+          // Sættes markant lysere end baggrunden for klar visuel adskillelse
           if (id === 'building' && layer.type === 'fill') {
             m.setPaintProperty('building', 'fill-color', '#3a5878');
             m.setPaintProperty('building', 'fill-opacity', 1);
           }
-
-          // Bygningskonturer — lysere end fyldet for klar afgrænsning
           if (id === 'building-outline' && layer.type === 'line') {
             m.setPaintProperty('building-outline', 'line-color', '#5a7898');
             m.setPaintProperty('building-outline', 'line-opacity', 1);
           }
-
-          // 3D bygninger ved høj zoom
           if (id === 'building-extrusion' && layer.type === 'fill-extrusion') {
             m.setPaintProperty('building-extrusion', 'fill-extrusion-color', '#3a5878');
           }
 
-          // Veje — spring casing-lag over så vejkanter bevares mørkere
-          const sourceLayer = (layer as Record<string, unknown>)['source-layer'];
+          // ── Veje ─────────────────────────────────────────────────────────
+          // Spring casing-lag over så vejkanter bevares mørkere end fyldet
           if (
             sourceLayer === 'road' &&
             layer.type === 'line' &&

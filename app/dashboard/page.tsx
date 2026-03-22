@@ -205,7 +205,7 @@ export default function DashboardPage() {
                 icon: Building2,
                 labelDa: 'Ejendomme',
                 labelEn: 'Properties',
-                href: '/dashboard/properties',
+                href: '/dashboard/ejendomme',
                 color: 'bg-emerald-500/10 text-emerald-400',
               },
             ].map((action) => {

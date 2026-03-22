@@ -13,7 +13,7 @@
  * - SVG-baseret ejerstrukturtræ
  */
 
-import { useState, use } from 'react';
+import { useState, use, Suspense } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -26,12 +26,10 @@ import {
   Sparkles,
   ChevronRight,
   TrendingUp,
-  Shield,
   FileText,
   Users,
   Landmark,
   BarChart3,
-  Info,
   Briefcase,
   Phone,
   Mail,
@@ -1588,12 +1586,21 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
 
         {/* ─── Kortpanel — højre side ─── */}
         <div className="hidden xl:flex w-[380px] flex-shrink-0 border-l border-slate-700/50">
-          <PropertyMap
-            lat={ejendom.lat}
-            lng={ejendom.lng}
-            adresse={`${ejendom.adresse}, ${ejendom.postnummer} ${ejendom.by}`}
-            visMmatrikel={true}
-          />
+          <Suspense
+            fallback={
+              <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900 gap-3">
+                <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                <p className="text-slate-500 text-xs">Indlæser kort…</p>
+              </div>
+            }
+          >
+            <PropertyMap
+              lat={ejendom.lat}
+              lng={ejendom.lng}
+              adresse={`${ejendom.adresse}, ${ejendom.postnummer} ${ejendom.by}`}
+              visMatrikel={true}
+            />
+          </Suspense>
         </div>
       </div>
     </div>

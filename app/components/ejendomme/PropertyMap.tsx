@@ -4,24 +4,26 @@
  * Interaktiv ejendomskort-komponent.
  *
  * Bruger Mapbox GL via react-map-gl som basekort med toggle
- * mellem street-view og satellite/luftfoto.
+ * mellem gadekort (dark-v11) og luftfoto (satellite-streets-v12).
  *
- * Kortforsyningen WFS-lag (Geodatastyrelsen) viser de officielle
- * matrikelgrænser ovenpå Mapbox baselaget.
+ * Matrikelgrænser hentes fra DAWA / Dataforsyningen — gratis uden API-nøgle:
+ *   https://api.dataforsyningen.dk/jordstykker?x={lng}&y={lat}&srid=4326&format=geojson
  *
- * Kræver:
+ * Kræver kun:
  *   NEXT_PUBLIC_MAPBOX_TOKEN  — fra mapbox.com (pk.ey...)
- *   NEXT_PUBLIC_KORTFORSYNINGEN_USER  — tjenestebrugernavn fra datafordeler.dk
- *   NEXT_PUBLIC_KORTFORSYNINGEN_PASS  — tjenestebrugeradgangskode
  */
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import Map, { Marker, Source, Layer, NavigationControl, type MapRef } from 'react-map-gl/mapbox';
-import type { FillLayerSpecification, LineLayerSpecification } from 'mapbox-gl';
-import { Satellite, Map as MapIcon, Maximize2, Minimize2 } from 'lucide-react';
+import type {
+  FillLayerSpecification,
+  LineLayerSpecification,
+  GeoJSONSourceSpecification,
+} from 'mapbox-gl';
+import { Satellite, Map as MapIcon, Maximize2, Minimize2, Layers } from 'lucide-react';
 import 'mapbox-gl/dist/mapbox-gl.css';
 
-/** Mapbox styles */
+/** Mapbox basekort-styles */
 const STYLES = {
   dark: 'mapbox://styles/mapbox/dark-v11',
   satellite: 'mapbox://styles/mapbox/satellite-streets-v12',
@@ -29,88 +31,116 @@ const STYLES = {
 
 type MapStyle = keyof typeof STYLES;
 
-/**
- * WFS-kilde URL til Kortforsyningens matrikellag.
- * Returnerer GeoJSON-grænser for matrikler i et givent bbox.
- *
- * @param user - Tjenestebrugernavn fra datafordeler.dk
- * @param pass - Tjenestebrugeradgangskode
- * @param lng - Længdegrad for centerpunkt
- * @param lat - Breddegrad for centerpunkt
- */
-function matrikelWfsUrl(user: string, pass: string, lng: number, lat: number): string {
-  const delta = 0.003;
-  const bbox = `${lng - delta},${lat - delta},${lng + delta},${lat + delta},EPSG:4326`;
-  return (
-    `https://services.datafordeler.dk/Matrikel/MatrikelGaeldendeDKWFS/1.0.0/WFS` +
-    `?username=${user}&password=${pass}` +
-    `&SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature` +
-    `&TYPENAMES=mat:Jordstykke&OUTPUTFORMAT=application/json` +
-    `&SRSNAME=EPSG:4326&BBOX=${bbox}`
-  );
-}
-
-/** Stil for matrikel-fyld */
+/** Stil for matrikellag — gennemsigtig blå fyld */
 const matrikelFillLayer: FillLayerSpecification = {
   id: 'matrikel-fill',
   type: 'fill',
   source: 'matrikel',
   paint: {
     'fill-color': '#3b82f6',
-    'fill-opacity': 0.15,
+    'fill-opacity': 0.12,
   },
 };
 
-/** Stil for matrikel-grænselinje */
+/** Stil for matrikellag — rød grænselinje */
 const matrikelLineLayer: LineLayerSpecification = {
   id: 'matrikel-line',
   type: 'line',
   source: 'matrikel',
   paint: {
     'line-color': '#ef4444',
-    'line-width': 2,
-    'line-opacity': 0.9,
+    'line-width': 2.5,
+    'line-opacity': 0.95,
   },
 };
 
+/** Tom GeoJSON FeatureCollection brugt som fallback inden data loader */
+const EMPTY_GEOJSON: GeoJSONSourceSpecification['data'] = {
+  type: 'FeatureCollection',
+  features: [],
+};
+
 interface PropertyMapProps {
-  /** Breddegrad */
+  /** Breddegrad for ejendommen */
   lat: number;
-  /** Længdegrad */
+  /** Længdegrad for ejendommen */
   lng: number;
-  /** Adresse vist i marker-tooltip */
+  /** Adresse vist i markør-tooltip */
   adresse: string;
-  /** Vis/skjul matrikellag */
-  visMmatrikel?: boolean;
+  /** Vis matrikelgrænselag — default true */
+  visMatrikel?: boolean;
+}
+
+/** In-memory cache så samme koordinat ikke hentes to gange i samme session */
+const matrikelCache: Record<string, GeoJSONSourceSpecification['data']> = {};
+
+/**
+ * Henter matrikelgrænse som GeoJSON fra DAWA (gratis, ingen token).
+ * Resultatet caches i hukommelsen for sessionen.
+ * Returnerer null hvis kaldet fejler.
+ *
+ * @param lng - Længdegrad
+ * @param lat - Breddegrad
+ */
+async function hentMatrikelGeojson(
+  lng: number,
+  lat: number
+): Promise<GeoJSONSourceSpecification['data'] | null> {
+  const cacheKey = `${lng.toFixed(5)},${lat.toFixed(5)}`;
+  if (cacheKey in matrikelCache) return matrikelCache[cacheKey];
+
+  try {
+    const url = `https://api.dataforsyningen.dk/jordstykker?x=${lng}&y=${lat}&srid=4326&format=geojson`;
+    const res = await fetch(url, { next: { revalidate: 86400 } } as RequestInit);
+    if (!res.ok) return null;
+    const json = await res.json();
+    // DAWA returnerer et array — pak ind i FeatureCollection
+    const data: GeoJSONSourceSpecification['data'] = Array.isArray(json)
+      ? { type: 'FeatureCollection', features: json }
+      : (json as GeoJSONSourceSpecification['data']);
+    matrikelCache[cacheKey] = data;
+    return data;
+  } catch {
+    return null;
+  }
 }
 
 /**
  * Interaktiv Mapbox-kort til ejendomssider.
- * Viser ejendomsmarkør, luftfoto/gade toggle og matrikelgrænser.
+ *
+ * Viser ejendomsmarkør, luftfoto/gade toggle og officielle matrikelgrænser
+ * fra DAWA (Dataforsyningen) — uden API-nøgle.
  *
  * @param lat - Breddegrad
  * @param lng - Længdegrad
- * @param adresse - Adresse til tooltip
- * @param visMatrikel - Skal matrikellag vises
+ * @param adresse - Adresse til markør-label
+ * @param visMatrikel - Skal matrikellag vises (default: true)
  */
-export default function PropertyMap({ lat, lng, adresse, visMmatrikel = true }: PropertyMapProps) {
+export default function PropertyMap({ lat, lng, adresse, visMatrikel = true }: PropertyMapProps) {
   const mapRef = useRef<MapRef>(null);
   const [mapStyle, setMapStyle] = useState<MapStyle>('satellite');
   const [fullscreen, setFullscreen] = useState(false);
+  const [matrikelData, setMatrikelData] =
+    useState<GeoJSONSourceSpecification['data']>(EMPTY_GEOJSON);
 
   const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? '';
-  const kortUser = process.env.NEXT_PUBLIC_KORTFORSYNINGEN_USER ?? '';
-  const kortPass = process.env.NEXT_PUBLIC_KORTFORSYNINGEN_PASS ?? '';
+  const harToken = mapboxToken.startsWith('pk.');
 
-  const harNoegler = mapboxToken.startsWith('pk.');
-  const harKortforsyningen = kortUser.length > 0 && kortPass.length > 0;
+  /** Hent matrikeldata fra DAWA — setState kun i async callback */
+  useEffect(() => {
+    if (!visMatrikel) return;
+    hentMatrikelGeojson(lng, lat).then((data) => {
+      if (data) setMatrikelData(data);
+    });
+  }, [lng, lat, visMatrikel]);
 
-  /** Centrer kortet på ejendomspositionen igen */
+  /** Centrer kortet på ejendommen igen */
   const centerMap = useCallback(() => {
     mapRef.current?.flyTo({ center: [lng, lat], zoom: 17, duration: 800 });
   }, [lat, lng]);
 
-  if (!harNoegler) {
+  /** Vis fallback UI hvis Mapbox-token mangler */
+  if (!harToken) {
     return (
       <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900 text-center px-6 gap-3">
         <MapIcon size={28} className="text-slate-500" />
@@ -118,8 +148,7 @@ export default function PropertyMap({ lat, lng, adresse, visMmatrikel = true }: 
         <p className="text-slate-500 text-xs leading-relaxed">
           Tilføj{' '}
           <code className="bg-slate-800 px-1 rounded text-blue-300">NEXT_PUBLIC_MAPBOX_TOKEN</code>{' '}
-          til <code className="bg-slate-800 px-1 rounded text-blue-300">.env.local</code> for at
-          aktivere kortet.
+          til <code className="bg-slate-800 px-1 rounded text-blue-300">.env.local</code>
         </p>
       </div>
     );
@@ -137,9 +166,9 @@ export default function PropertyMap({ lat, lng, adresse, visMmatrikel = true }: 
       >
         <NavigationControl position="bottom-right" showCompass={false} />
 
-        {/* Matrikellag fra Kortforsyningen */}
-        {harKortforsyningen && visMmatrikel && (
-          <Source id="matrikel" type="geojson" data={matrikelWfsUrl(kortUser, kortPass, lng, lat)}>
+        {/* Matrikellag fra DAWA — gratis, ingen token */}
+        {visMatrikel && (
+          <Source id="matrikel" type="geojson" data={matrikelData}>
             <Layer {...matrikelFillLayer} />
             <Layer {...matrikelLineLayer} />
           </Source>
@@ -156,7 +185,7 @@ export default function PropertyMap({ lat, lng, adresse, visMmatrikel = true }: 
         </Marker>
       </Map>
 
-      {/* Style-toggle */}
+      {/* Gadekort / Luftfoto toggle */}
       <div className="absolute top-3 left-3 flex gap-1.5 z-10">
         <button
           onClick={() => setMapStyle('dark')}
@@ -190,10 +219,11 @@ export default function PropertyMap({ lat, lng, adresse, visMmatrikel = true }: 
         {fullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
       </button>
 
-      {/* Kortforsyningen mangler badge */}
-      {!harKortforsyningen && (
-        <div className="absolute bottom-3 left-3 z-10 bg-slate-900/90 border border-slate-700/50 rounded-lg px-2.5 py-1.5">
-          <p className="text-slate-500 text-xs">Matrikelgrænser: Tilføj Kortforsyningen nøgler</p>
+      {/* Matrikellag badge */}
+      {visMatrikel && (
+        <div className="absolute bottom-3 left-3 z-10 flex items-center gap-1.5 bg-slate-900/90 border border-slate-700/50 rounded-lg px-2.5 py-1.5">
+          <Layers size={11} className="text-green-400" />
+          <p className="text-slate-400 text-xs">Matrikelgrænser</p>
         </div>
       )}
     </div>

@@ -86,24 +86,36 @@ function EjendomCard({ ejendom }: { ejendom: Ejendom }) {
 function DawaResultItem({
   result,
   onVælg,
+  aktiv,
 }: {
   result: DawaAutocompleteResult;
   onVælg: (r: DawaAutocompleteResult) => void;
+  aktiv?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={() => onVælg(result)}
-      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-700/50 transition-colors text-left group"
+      className={`w-full flex items-center gap-3 px-4 py-3 transition-colors text-left group ${
+        aktiv ? 'bg-blue-600/20' : 'hover:bg-slate-700/50'
+      }`}
     >
-      <div className="p-1.5 bg-slate-700 rounded-lg flex-shrink-0 group-hover:bg-blue-600/20 transition-colors">
-        <MapPin size={13} className="text-slate-400 group-hover:text-blue-400" />
+      <div
+        className={`p-1.5 rounded-lg flex-shrink-0 transition-colors ${aktiv ? 'bg-blue-600/30' : 'bg-slate-700 group-hover:bg-blue-600/20'}`}
+      >
+        <MapPin
+          size={13}
+          className={aktiv ? 'text-blue-400' : 'text-slate-400 group-hover:text-blue-400'}
+        />
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-white text-sm font-medium truncate">{result.tekst}</p>
         <p className="text-slate-500 text-xs">{result.adresse.kommunenavn} Kommune</p>
       </div>
-      <ArrowRight size={13} className="text-slate-600 group-hover:text-blue-400 flex-shrink-0" />
+      <ArrowRight
+        size={13}
+        className={aktiv ? 'text-blue-400' : 'text-slate-600 group-hover:text-blue-400'}
+      />
     </button>
   );
 }
@@ -121,6 +133,7 @@ export default function EjendommeListeside() {
   const [resultater, setResultater] = useState<DawaAutocompleteResult[]>([]);
   const [søgerDAWA, setSøgerDAWA] = useState(false);
   const [åben, setÅben] = useState(false);
+  const [markeret, setMarkeret] = useState(-1);
   /** Lazy initialisering fra localStorage — ingen useEffect nødvendig */
   const [seneste, setSeneste] = useState<DawaAutocompleteResult[]>(() => {
     if (typeof window === 'undefined') return [];
@@ -213,8 +226,24 @@ export default function EjendommeListeside() {
               onChange={(e) => {
                 setSøgning(e.target.value);
                 setÅben(true);
+                setMarkeret(-1);
               }}
               onFocus={() => setÅben(true)}
+              onKeyDown={(e) => {
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault();
+                  setMarkeret((m) => Math.min(m + 1, resultater.length - 1));
+                } else if (e.key === 'ArrowUp') {
+                  e.preventDefault();
+                  setMarkeret((m) => Math.max(m - 1, -1));
+                } else if (e.key === 'Enter') {
+                  const valgt = markeret >= 0 ? resultater[markeret] : resultater[0];
+                  if (valgt) vælgAdresse(valgt);
+                } else if (e.key === 'Escape') {
+                  setÅben(false);
+                  setMarkeret(-1);
+                }
+              }}
               placeholder="Søg på adresse, vejnavn eller postnummer…"
               className="w-full bg-slate-800/60 border border-slate-600/50 focus:border-blue-500/60 rounded-2xl pl-11 pr-12 py-4 text-white placeholder:text-slate-500 outline-none transition-all text-base shadow-lg"
             />
@@ -274,8 +303,13 @@ export default function EjendommeListeside() {
                       Ingen adresser fundet for &ldquo;{søgning}&rdquo;
                     </div>
                   )}
-                  {resultater.map((r) => (
-                    <DawaResultItem key={r.adresse.id} result={r} onVælg={vælgAdresse} />
+                  {resultater.map((r, i) => (
+                    <DawaResultItem
+                      key={r.adresse.id}
+                      result={r}
+                      onVælg={vælgAdresse}
+                      aktiv={i === markeret}
+                    />
                   ))}
                   {resultater.length === 8 && (
                     <div className="px-4 py-2 border-t border-slate-700/40">

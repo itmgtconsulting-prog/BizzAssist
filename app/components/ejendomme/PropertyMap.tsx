@@ -156,6 +156,56 @@ export default function PropertyMap({ lat, lng, adresse, visMatrikel = true }: P
     return () => observer.disconnect();
   }, []);
 
+  /**
+   * Overstyrer bygningsfarver på gadekort (navigation-night-v1) for klar aflæsning.
+   *
+   * navigation-night-v1 viser bygninger i en meget subtil mørkegrå tone der er
+   * svær at adskille fra baggrunden. Vi sætter dem til en markant lysere blågrå
+   * (#687f96) med en endnu lysere konturlinje (#8fa8be) så hvert bygningsfodaftryk
+   * er tydeligt og kan aflæses klart.
+   *
+   * Bruger 'style.load'-eventet (ikke 'idle') — det er det korrekte Mapbox GL-event
+   * der fyrer præcis én gang når stilen og alle dens lag er fuldt initialiseret.
+   */
+  useEffect(() => {
+    if (mapStyle !== 'dark') return;
+    const map = mapRef.current?.getMap();
+    if (!map) return;
+
+    function lysBuildings() {
+      const m = mapRef.current?.getMap();
+      if (!m) return;
+      try {
+        m.setPaintProperty('building', 'fill-color', '#687f96');
+        m.setPaintProperty('building', 'fill-opacity', 1);
+      } catch {
+        /* lag ikke klar */
+      }
+      try {
+        m.setPaintProperty('building-outline', 'line-color', '#8fa8be');
+        m.setPaintProperty('building-outline', 'line-opacity', 1);
+        m.setPaintProperty('building-outline', 'line-width', 1);
+      } catch {
+        /* lag ikke klar */
+      }
+      try {
+        m.setPaintProperty('building-extrusion', 'fill-extrusion-color', '#687f96');
+      } catch {
+        /* lag ikke klar */
+      }
+    }
+
+    // 'style.load' fyrer præcis når den nye stils lag er initialiseret og klar
+    map.on('style.load', lysBuildings);
+
+    // Prøv også med det samme hvis stilen allerede er indlæst (f.eks. første render)
+    if (map.isStyleLoaded()) lysBuildings();
+
+    return () => {
+      map.off('style.load', lysBuildings);
+    };
+  }, [mapStyle]);
+
   /** Centrer kortet på ejendommen igen */
   const centerMap = useCallback(() => {
     mapRef.current?.flyTo({ center: [lng, lat], zoom: 17, duration: 800 });

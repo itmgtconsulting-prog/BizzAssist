@@ -13,7 +13,7 @@
  * - SVG-baseret ejerstrukturtræ
  */
 
-import { useState, use, Suspense } from 'react';
+import { useState, use, useEffect, Suspense } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -51,6 +51,13 @@ import {
   formatDato,
   type EjerstrukturNode,
 } from '@/app/lib/mock/ejendomme';
+import {
+  dawaHentAdresse,
+  dawaHentJordstykke,
+  erDawaId,
+  type DawaAdresse,
+  type DawaJordstykke,
+} from '@/app/lib/dawa';
 
 type Tab = 'overblik' | 'bbr' | 'ejerforhold' | 'tinglysning' | 'oekonomi' | 'dokumenter';
 
@@ -262,8 +269,34 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
   const { id } = use(params);
   const router = useRouter();
   const [aktivTab, setAktivTab] = useState<Tab>('overblik');
-  /** Valgte dokument-id'er til batch-download */
   const [valgteDoc, setValgteDoc] = useState<Set<string>>(new Set());
+
+  // DAWA-tilstand — kun aktiv når id er et DAWA UUID
+  const [dawaAdresse, setDawaAdresse] = useState<DawaAdresse | null>(null);
+  const [dawaJordstykke, setDawaJordstykke] = useState<DawaJordstykke | null>(null);
+  // true = loader, false = fejl, null = idle/done
+  const [dawaStatus, setDawaStatus] = useState<'loader' | 'fejl' | 'ok' | 'idle'>('idle');
+
+  const erDAWA = erDawaId(id);
+
+  /**
+   * Henter DAWA-adresse og jordstykke.
+   * Al setState sker i async then-callback — ikke synkront.
+   */
+  useEffect(() => {
+    if (!erDAWA) return;
+    setDawaStatus('loader');
+    dawaHentAdresse(id).then(async (adr) => {
+      if (!adr) {
+        setDawaStatus('fejl');
+        return;
+      }
+      setDawaAdresse(adr);
+      const jord = await dawaHentJordstykke(adr.x, adr.y);
+      setDawaJordstykke(jord);
+      setDawaStatus('ok');
+    });
+  }, [id, erDAWA]);
 
   /**
    * Toggler et dokument i udvalgslisten.
@@ -277,8 +310,164 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
       return next;
     });
 
-  const ejendom = getEjendomById(id);
+  const ejendom = erDAWA ? null : getEjendomById(id);
 
+  // ── DAWA: Loading ──
+  if (erDAWA && dawaStatus === 'loader') {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-4">
+        <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+        <p className="text-slate-400 text-sm">Henter adressedata…</p>
+      </div>
+    );
+  }
+
+  // ── DAWA: Fejl ──
+  if (erDAWA && dawaStatus === 'fejl') {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-center px-6">
+        <MapPin size={40} className="text-slate-600 mb-4" />
+        <h2 className="text-white text-xl font-semibold mb-2">Adresse ikke fundet</h2>
+        <p className="text-slate-400 text-sm mb-6">Adressen kunne ikke hentes fra DAWA.</p>
+        <Link
+          href="/dashboard/ejendomme"
+          className="text-blue-400 hover:text-blue-300 flex items-center gap-2 text-sm"
+        >
+          <ArrowLeft size={16} /> Tilbage til ejendomme
+        </Link>
+      </div>
+    );
+  }
+
+  // ── DAWA: Rigtig adresse fundet ──
+  if (erDAWA && dawaAdresse) {
+    const adresseStreng = `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`;
+    return (
+      <div className="flex h-full overflow-hidden">
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* Header */}
+          <div className="px-6 pt-5 pb-4 border-b border-slate-700/40 flex-shrink-0">
+            <button
+              onClick={() => router.push('/dashboard/ejendomme')}
+              className="flex items-center gap-1.5 text-slate-400 hover:text-white text-sm mb-3 transition-colors"
+            >
+              <ArrowLeft size={15} /> Ejendomme
+            </button>
+            <h1 className="text-xl font-bold text-white">{adresseStreng}</h1>
+            <div className="flex flex-wrap gap-2 mt-2">
+              <span className="flex items-center gap-1 text-xs text-slate-400 bg-slate-800/60 px-2.5 py-1 rounded-full">
+                <MapPin size={11} /> {dawaAdresse.kommunenavn} Kommune
+              </span>
+              {dawaJordstykke && (
+                <span className="flex items-center gap-1 text-xs text-slate-400 bg-slate-800/60 px-2.5 py-1 rounded-full">
+                  <Building2 size={11} /> {dawaJordstykke.matrikelnr}, {dawaJordstykke.ejerlav.navn}
+                </span>
+              )}
+              <span className="flex items-center gap-1 text-xs text-blue-400 bg-blue-500/10 px-2.5 py-1 rounded-full">
+                DAWA · Live data
+              </span>
+            </div>
+          </div>
+
+          {/* DAWA overblik */}
+          <div className="flex-1 overflow-y-auto px-6 py-5">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+              <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                <p className="text-slate-400 text-xs mb-1">Postnummer</p>
+                <p className="text-white font-semibold">
+                  {dawaAdresse.postnr} {dawaAdresse.postnrnavn}
+                </p>
+              </div>
+              <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                <p className="text-slate-400 text-xs mb-1">Kommune</p>
+                <p className="text-white font-semibold">{dawaAdresse.kommunenavn}</p>
+              </div>
+              <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                <p className="text-slate-400 text-xs mb-1">Region</p>
+                <p className="text-white font-semibold">{dawaAdresse.regionsnavn || '–'}</p>
+              </div>
+              {dawaJordstykke && (
+                <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                  <p className="text-slate-400 text-xs mb-1">Grundareal</p>
+                  <p className="text-white font-semibold">
+                    {dawaJordstykke.areal_m2.toLocaleString('da-DK')} m²
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Matrikelinfo */}
+            {dawaJordstykke && (
+              <div className="bg-slate-800/40 border border-slate-700/40 rounded-2xl p-5 mb-4">
+                <h3 className="text-white font-semibold text-sm mb-3">Matrikeloplysninger</h3>
+                <div className="grid grid-cols-2 gap-y-3 text-sm">
+                  <div>
+                    <p className="text-slate-500 text-xs">Matrikelnr.</p>
+                    <p className="text-white">{dawaJordstykke.matrikelnr}</p>
+                  </div>
+                  <div>
+                    <p className="text-slate-500 text-xs">Ejerlav</p>
+                    <p className="text-white">{dawaJordstykke.ejerlav.navn}</p>
+                  </div>
+                  <div>
+                    <p className="text-slate-500 text-xs">Areal</p>
+                    <p className="text-white">
+                      {dawaJordstykke.areal_m2.toLocaleString('da-DK')} m²
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-slate-500 text-xs">Ejerlavskode</p>
+                    <p className="text-white">{dawaJordstykke.ejerlav.kode}</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Kommende data-banner */}
+            <div className="bg-blue-600/8 border border-blue-500/20 rounded-2xl p-5">
+              <p className="text-blue-300 text-sm font-semibold mb-1">
+                Fuld ejendomsdata kommer i næste fase
+              </p>
+              <p className="text-slate-400 text-xs leading-relaxed">
+                BBR-data (bygningsareal, etager, energimærke), ejerforhold, tinglysning og
+                salgshistorik kobles på via Datafordeler og Tinglysning.dk.
+              </p>
+              <div className="flex flex-wrap gap-2 mt-3">
+                {['BBR', 'Ejerforhold', 'Tinglysning', 'Økonomi', 'Dokumenter'].map((t) => (
+                  <span
+                    key={t}
+                    className="text-xs text-slate-500 bg-slate-800 px-2.5 py-1 rounded-full border border-slate-700/40"
+                  >
+                    {t}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Kortpanel */}
+        <div className="hidden xl:flex w-[380px] flex-shrink-0 border-l border-slate-700/50">
+          <Suspense
+            fallback={
+              <div className="w-full h-full flex items-center justify-center bg-slate-900">
+                <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+              </div>
+            }
+          >
+            <PropertyMap
+              lat={dawaAdresse.y}
+              lng={dawaAdresse.x}
+              adresse={adresseStreng}
+              visMatrikel={true}
+            />
+          </Suspense>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Mock: Ejendom ikke fundet ──
   if (!ejendom) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-center px-6">

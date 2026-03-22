@@ -1,30 +1,35 @@
 'use client';
 
 /**
- * Ejendomme listeside.
- * Viser søgning, filtrering og kort over danske ejendomme.
- * Datafordeleren API integreres i Fase 2 — mock data bruges nu.
+ * Ejendomme listeside med live DAWA-adressesøgning.
+ *
+ * Søger i alle ~2,8 mio. danske adresser via DAWA autocomplete (gratis).
+ * Mock-ejendomme vises som "Populære ejendomme" når ingen søgning er aktiv.
+ * Rigtige BBR-data hentes via Datafordeler i Fase 2.
  */
 
-import { useState, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   Search,
-  SlidersHorizontal,
   MapPin,
   Building2,
   Home,
   Warehouse,
-  TrendingUp,
   ChevronRight,
   X,
+  Loader2,
+  Clock,
+  ArrowRight,
 } from 'lucide-react';
-import { mockEjendomme, formatDKK, formatDato, type Ejendom } from '@/app/lib/mock/ejendomme';
+import { mockEjendomme, formatDKK, type Ejendom } from '@/app/lib/mock/ejendomme';
+import { dawaAutocomplete, type DawaAutocompleteResult } from '@/app/lib/dawa';
 
-/**
- * Returnerer CSS-farve-klasser baseret på ejendomstype.
- * @param type - Ejendomstypetekst
- */
+const RECENT_KEY = 'ba-ejendomme-recent';
+const MAX_RECENT = 5;
+
+/** Returnerer farve-klasse baseret på ejendomstype */
 const typeColor = (type: string): string => {
   if (type.includes('Parcelhus')) return 'text-green-400 bg-green-400/10';
   if (type.includes('Beboelses')) return 'text-blue-400 bg-blue-400/10';
@@ -32,283 +37,311 @@ const typeColor = (type: string): string => {
   return 'text-purple-400 bg-purple-400/10';
 };
 
-/**
- * Ikon-komponent for ejendomstype — deklareret uden for render.
- * @param type - Ejendomstypetekst
- */
+/** Type-ikon */
 function TypeIkon({ type }: { type: string }) {
-  if (type.includes('Parcelhus') || type.includes('Beboelses')) return <Home size={20} />;
-  if (type.includes('Industri') || type.includes('lager')) return <Warehouse size={20} />;
-  return <Building2 size={20} />;
+  if (type.includes('Parcelhus') || type.includes('Beboelses')) return <Home size={18} />;
+  if (type.includes('Industri') || type.includes('lager')) return <Warehouse size={18} />;
+  return <Building2 size={18} />;
 }
 
-/**
- * Kort ejendomskort til listesiden.
- * @param ejendom - Ejendomsdata
- */
+/** Mock ejendomskort til "Populære ejendomme" */
 function EjendomCard({ ejendom }: { ejendom: Ejendom }) {
   const color = typeColor(ejendom.ejendomstype);
-
   return (
-    <Link href={`/dashboard/ejendomme/${ejendom.id}`}>
-      <div className="group bg-slate-800/40 hover:bg-slate-800/70 border border-slate-700/50 hover:border-blue-500/40 rounded-2xl p-5 transition-all duration-200 cursor-pointer">
-        <div className="flex items-start gap-4">
-          {/* Ikon */}
-          <div className={`p-3 rounded-xl flex-shrink-0 ${color}`}>
-            <TypeIkon type={ejendom.ejendomstype} />
-          </div>
-
-          {/* Info */}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-start justify-between gap-2">
-              <div>
-                <h3 className="text-white font-semibold text-sm truncate group-hover:text-blue-300 transition-colors">
-                  {ejendom.adresse}
-                </h3>
-                <p className="text-slate-400 text-xs mt-0.5">
-                  {ejendom.postnummer} {ejendom.by} · BFE {ejendom.bfe}
-                </p>
-              </div>
-              <ChevronRight
-                size={16}
-                className="text-slate-600 group-hover:text-blue-400 transition-colors flex-shrink-0 mt-0.5"
-              />
-            </div>
-
-            {/* Type badge */}
-            <div className="mt-2">
-              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${color}`}>
-                {ejendom.ejendomstype.split(' (')[0]}
-              </span>
-            </div>
-
-            {/* Nøgletal */}
-            <div className="mt-3 grid grid-cols-3 gap-3">
-              <div>
-                <p className="text-slate-500 text-xs">Grundareal</p>
-                <p className="text-slate-200 text-sm font-medium">
-                  {ejendom.grundareal.toLocaleString('da-DK')} m²
-                </p>
-              </div>
-              <div>
-                <p className="text-slate-500 text-xs">Bygningsareal</p>
-                <p className="text-slate-200 text-sm font-medium">
-                  {ejendom.bygningsareal.toLocaleString('da-DK')} m²
-                </p>
-              </div>
-              <div>
-                <p className="text-slate-500 text-xs">Seneste handel</p>
-                <p className="text-slate-200 text-sm font-medium">
-                  {formatDKK(ejendom.senesteHandel.pris).replace(' DKK', '')}
-                </p>
-              </div>
-            </div>
-
-            {/* Ejer + dato */}
-            <div className="mt-3 flex items-center justify-between">
-              <p className="text-slate-500 text-xs truncate">
-                {ejendom.ejere[0]?.navn}
-                {ejendom.ejere.length > 1 && ` +${ejendom.ejere.length - 1}`}
-              </p>
-              <div className="flex items-center gap-1 text-xs text-slate-500">
-                <TrendingUp size={11} />
-                <span>{formatDato(ejendom.senesteHandel.dato)}</span>
-              </div>
-            </div>
-          </div>
+    <Link
+      href={`/dashboard/ejendomme/${ejendom.id}`}
+      className="group bg-slate-800/40 border border-slate-700/40 hover:border-blue-500/40 rounded-2xl p-5 flex flex-col gap-3 transition-all hover:bg-slate-800/60"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className={`p-2 rounded-xl ${color}`}>
+          <TypeIkon type={ejendom.ejendomstype} />
         </div>
+        <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${color}`}>
+          {ejendom.ejendomstype.split('(')[0].trim()}
+        </span>
+      </div>
+      <div>
+        <p className="text-white font-semibold text-sm leading-snug">{ejendom.adresse}</p>
+        <p className="text-slate-400 text-xs mt-0.5">
+          {ejendom.postnummer} {ejendom.by} · {ejendom.kommune}
+        </p>
+      </div>
+      <div className="flex items-center justify-between pt-1 border-t border-slate-700/40">
+        <div>
+          <p className="text-white text-sm font-semibold">
+            {formatDKK(ejendom.senesteHandel.pris)}
+          </p>
+          <p className="text-slate-500 text-xs">{ejendom.grundareal} m² grund</p>
+        </div>
+        <ChevronRight
+          size={16}
+          className="text-slate-600 group-hover:text-blue-400 transition-colors"
+        />
       </div>
     </Link>
   );
 }
 
-/** Filtre state */
-interface Filtre {
-  type: string;
-  minM2: string;
-  maxM2: string;
-  postnummer: string;
+/** Et enkelt DAWA-resultat i dropdown */
+function DawaResultItem({
+  result,
+  onVælg,
+}: {
+  result: DawaAutocompleteResult;
+  onVælg: (r: DawaAutocompleteResult) => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onVælg(result)}
+      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-700/50 transition-colors text-left group"
+    >
+      <div className="p-1.5 bg-slate-700 rounded-lg flex-shrink-0 group-hover:bg-blue-600/20 transition-colors">
+        <MapPin size={13} className="text-slate-400 group-hover:text-blue-400" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-white text-sm font-medium truncate">{result.tekst}</p>
+        <p className="text-slate-500 text-xs">{result.adresse.kommunenavn} Kommune</p>
+      </div>
+      <ArrowRight size={13} className="text-slate-600 group-hover:text-blue-400 flex-shrink-0" />
+    </button>
+  );
 }
 
 /**
- * Ejendomme listeside med søgning, filtrering og kortvisning.
+ * Ejendomme listeside.
+ * Kombinerer DAWA live-søgning med mock-ejendomme som inspiration.
  */
-export default function EjendommePage() {
-  const [soeg, setSoeg] = useState('');
-  const [filtrePaanel, setFiltrePaanel] = useState(false);
-  const [filtre, setFiltre] = useState<Filtre>({ type: '', minM2: '', maxM2: '', postnummer: '' });
+export default function EjendommeListeside() {
+  const router = useRouter();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
-  /** Filtrerede ejendomme baseret på søgning og filtre */
-  const filtrerede = useMemo(() => {
-    return mockEjendomme.filter((e) => {
-      const soegMatch =
-        !soeg ||
-        e.adresse.toLowerCase().includes(soeg.toLowerCase()) ||
-        e.by.toLowerCase().includes(soeg.toLowerCase()) ||
-        e.bfe.includes(soeg) ||
-        e.kommune.toLowerCase().includes(soeg.toLowerCase()) ||
-        e.ejere.some((ej) => ej.navn.toLowerCase().includes(soeg.toLowerCase()));
+  const [søgning, setSøgning] = useState('');
+  const [resultater, setResultater] = useState<DawaAutocompleteResult[]>([]);
+  const [søgerDAWA, setSøgerDAWA] = useState(false);
+  const [åben, setÅben] = useState(false);
+  /** Lazy initialisering fra localStorage — ingen useEffect nødvendig */
+  const [seneste, setSeneste] = useState<DawaAutocompleteResult[]>(() => {
+    if (typeof window === 'undefined') return [];
+    try {
+      const raw = localStorage.getItem(RECENT_KEY);
+      return raw ? (JSON.parse(raw) as DawaAutocompleteResult[]) : [];
+    } catch {
+      return [];
+    }
+  });
 
-      const typeMatch =
-        !filtre.type || e.ejendomstype.toLowerCase().includes(filtre.type.toLowerCase());
-      const minM2Match = !filtre.minM2 || e.bygningsareal >= parseInt(filtre.minM2);
-      const maxM2Match = !filtre.maxM2 || e.bygningsareal <= parseInt(filtre.maxM2);
-      const postnrMatch = !filtre.postnummer || e.postnummer.startsWith(filtre.postnummer);
-
-      return soegMatch && typeMatch && minM2Match && maxM2Match && postnrMatch;
+  /** Gem nyligt valgt adresse i localStorage */
+  const gemSeneste = useCallback((result: DawaAutocompleteResult) => {
+    setSeneste((prev) => {
+      const filtreret = prev.filter((r) => r.adresse.id !== result.adresse.id);
+      const opdateret = [result, ...filtreret].slice(0, MAX_RECENT);
+      try {
+        localStorage.setItem(RECENT_KEY, JSON.stringify(opdateret));
+      } catch {
+        /* ignorer */
+      }
+      return opdateret;
     });
-  }, [soeg, filtre]);
+  }, []);
 
-  const aktiveFiltre = Object.values(filtre).filter(Boolean).length;
+  /** Luk dropdown ved klik udenfor */
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(e.target as Node) &&
+        inputRef.current &&
+        !inputRef.current.contains(e.target as Node)
+      ) {
+        setÅben(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  /**
+   * Debounced DAWA-søgning.
+   * Al setState sker i setTimeout-callback — ikke synkront i effect-body.
+   */
+  useEffect(() => {
+    const timer = setTimeout(async () => {
+      if (søgning.trim().length < 2) {
+        setResultater([]);
+        setSøgerDAWA(false);
+        return;
+      }
+      setSøgerDAWA(true);
+      const data = await dawaAutocomplete(søgning);
+      setResultater(data);
+      setSøgerDAWA(false);
+    }, 220);
+    return () => clearTimeout(timer);
+  }, [søgning]);
+
+  /** Naviger til ejendomsdetaljesiden for den valgte adresse */
+  function vælgAdresse(result: DawaAutocompleteResult) {
+    gemSeneste(result);
+    setÅben(false);
+    setSøgning('');
+    router.push(`/dashboard/ejendomme/${result.adresse.id}`);
+  }
+
+  const visDropdown =
+    åben && (resultater.length > 0 || søgerDAWA || (søgning.length < 2 && seneste.length > 0));
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Top */}
-      <div className="px-6 pt-6 pb-4 border-b border-slate-700/50">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h1 className="text-white text-2xl font-bold">Ejendomme</h1>
-            <p className="text-slate-400 text-sm mt-0.5">{filtrerede.length} ejendomme fundet</p>
-          </div>
-        </div>
+    <div className="flex flex-col h-full bg-[#0a1628]">
+      {/* ─── Header ─── */}
+      <div className="px-8 pt-8 pb-6 border-b border-slate-700/40">
+        <h1 className="text-2xl font-bold text-white mb-1">Ejendomme</h1>
+        <p className="text-slate-400 text-sm">Søg på alle ~2,8 mio. danske adresser</p>
 
-        {/* Søgebar */}
-        <div className="flex gap-3">
-          <div className="relative flex-1">
+        {/* Søgeboks med DAWA autocomplete */}
+        <div className="relative mt-5">
+          <div className="relative">
             <Search
-              size={16}
-              className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400"
+              size={18}
+              className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"
             />
             <input
+              ref={inputRef}
               type="text"
-              value={soeg}
-              onChange={(e) => setSoeg(e.target.value)}
-              placeholder="Søg på adresse, BFE-nummer, ejer, by eller kommune..."
-              className="w-full pl-10 pr-4 py-2.5 bg-slate-800/60 border border-slate-700/60 rounded-xl text-white placeholder-slate-500 text-sm focus:outline-none focus:border-blue-500/60 focus:ring-1 focus:ring-blue-500/30 transition-all"
+              value={søgning}
+              onChange={(e) => {
+                setSøgning(e.target.value);
+                setÅben(true);
+              }}
+              onFocus={() => setÅben(true)}
+              placeholder="Søg på adresse, vejnavn eller postnummer…"
+              className="w-full bg-slate-800/60 border border-slate-600/50 focus:border-blue-500/60 rounded-2xl pl-11 pr-12 py-4 text-white placeholder:text-slate-500 outline-none transition-all text-base shadow-lg"
             />
-            {soeg && (
-              <button
-                onClick={() => setSoeg('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
-              >
-                <X size={14} />
-              </button>
-            )}
-          </div>
-
-          <button
-            onClick={() => setFiltrePaanel(!filtrePaanel)}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border text-sm font-medium transition-all ${
-              filtrePaanel || aktiveFiltre > 0
-                ? 'bg-blue-600/20 border-blue-500/40 text-blue-300'
-                : 'bg-slate-800/60 border-slate-700/60 text-slate-300 hover:border-slate-600'
-            }`}
-          >
-            <SlidersHorizontal size={15} />
-            Filtre
-            {aktiveFiltre > 0 && (
-              <span className="bg-blue-500 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center">
-                {aktiveFiltre}
-              </span>
-            )}
-          </button>
-        </div>
-
-        {/* Filterpanel */}
-        {filtrePaanel && (
-          <div className="mt-3 p-4 bg-slate-800/40 border border-slate-700/40 rounded-xl grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div>
-              <label className="text-slate-400 text-xs mb-1 block">Ejendomstype</label>
-              <select
-                value={filtre.type}
-                onChange={(e) => setFiltre((f) => ({ ...f, type: e.target.value }))}
-                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
-              >
-                <option value="">Alle typer</option>
-                <option value="Parcelhus">Parcelhus</option>
-                <option value="Beboelses">Beboelse</option>
-                <option value="Handel">Erhverv / Kontor</option>
-                <option value="Industri">Industri / Lager</option>
-              </select>
-            </div>
-            <div>
-              <label className="text-slate-400 text-xs mb-1 block">Min. m²</label>
-              <input
-                type="number"
-                value={filtre.minM2}
-                onChange={(e) => setFiltre((f) => ({ ...f, minM2: e.target.value }))}
-                placeholder="0"
-                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
-              />
-            </div>
-            <div>
-              <label className="text-slate-400 text-xs mb-1 block">Max. m²</label>
-              <input
-                type="number"
-                value={filtre.maxM2}
-                onChange={(e) => setFiltre((f) => ({ ...f, maxM2: e.target.value }))}
-                placeholder="99999"
-                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
-              />
-            </div>
-            <div>
-              <label className="text-slate-400 text-xs mb-1 block">Postnummer</label>
-              <input
-                type="text"
-                value={filtre.postnummer}
-                onChange={(e) => setFiltre((f) => ({ ...f, postnummer: e.target.value }))}
-                placeholder="fx 2650"
-                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
-              />
-            </div>
-            {aktiveFiltre > 0 && (
-              <div className="col-span-full flex justify-end">
+            {/* Loader / Ryd-knap */}
+            <div className="absolute right-4 top-1/2 -translate-y-1/2">
+              {søgerDAWA ? (
+                <Loader2 size={18} className="text-blue-400 animate-spin" />
+              ) : søgning.length > 0 ? (
                 <button
-                  onClick={() => setFiltre({ type: '', minM2: '', maxM2: '', postnummer: '' })}
-                  className="text-slate-400 hover:text-white text-xs flex items-center gap-1"
+                  type="button"
+                  onClick={() => {
+                    setSøgning('');
+                    setResultater([]);
+                    setÅben(false);
+                    inputRef.current?.focus();
+                  }}
+                  className="text-slate-500 hover:text-slate-300 transition-colors"
                 >
-                  <X size={12} /> Ryd filtre
+                  <X size={18} />
                 </button>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Indhold */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Liste */}
-        <div className="w-full lg:w-[480px] flex-shrink-0 overflow-y-auto px-6 py-4 space-y-3">
-          {filtrerede.length === 0 ? (
-            <div className="text-center py-16">
-              <MapPin size={32} className="text-slate-600 mx-auto mb-3" />
-              <p className="text-slate-400">Ingen ejendomme matcher din søgning</p>
-              <button
-                onClick={() => {
-                  setSoeg('');
-                  setFiltre({ type: '', minM2: '', maxM2: '', postnummer: '' });
-                }}
-                className="mt-3 text-blue-400 hover:text-blue-300 text-sm"
-              >
-                Ryd søgning
-              </button>
+              ) : null}
             </div>
-          ) : (
-            filtrerede.map((e) => <EjendomCard key={e.id} ejendom={e} />)
+          </div>
+
+          {/* Dropdown */}
+          {visDropdown && (
+            <div
+              ref={dropdownRef}
+              className="absolute top-full mt-2 left-0 right-0 bg-slate-800 border border-slate-700/60 rounded-2xl overflow-hidden shadow-2xl z-50"
+            >
+              {/* Seneste søgninger (når ingen aktiv søgning) */}
+              {søgning.length < 2 && seneste.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-2 px-4 py-2.5 border-b border-slate-700/40">
+                    <Clock size={12} className="text-slate-500" />
+                    <span className="text-slate-500 text-xs font-medium uppercase tracking-wide">
+                      Seneste søgninger
+                    </span>
+                  </div>
+                  {seneste.map((r) => (
+                    <DawaResultItem key={r.adresse.id} result={r} onVælg={vælgAdresse} />
+                  ))}
+                </div>
+              )}
+
+              {/* DAWA-resultater */}
+              {søgning.length >= 2 && (
+                <>
+                  {søgerDAWA && (
+                    <div className="flex items-center gap-3 px-4 py-3 text-slate-500 text-sm">
+                      <Loader2 size={14} className="animate-spin" />
+                      Søger i alle danske adresser…
+                    </div>
+                  )}
+                  {!søgerDAWA && resultater.length === 0 && (
+                    <div className="px-4 py-4 text-slate-500 text-sm text-center">
+                      Ingen adresser fundet for &ldquo;{søgning}&rdquo;
+                    </div>
+                  )}
+                  {resultater.map((r) => (
+                    <DawaResultItem key={r.adresse.id} result={r} onVælg={vælgAdresse} />
+                  ))}
+                  {resultater.length === 8 && (
+                    <div className="px-4 py-2 border-t border-slate-700/40">
+                      <p className="text-slate-600 text-xs text-center">
+                        Viser de 8 bedste resultater — præcisér søgningen for flere
+                      </p>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
           )}
         </div>
+      </div>
 
-        {/* Kort — vises kun på store skærme */}
-        <div className="hidden lg:flex flex-1 bg-slate-900/50 border-l border-slate-700/50 items-center justify-center relative overflow-hidden">
-          <iframe
-            src={`https://www.openstreetmap.org/export/embed.html?bbox=8.0,54.5,15.5,57.8&layer=mapnik&marker=55.6761,12.5683`}
-            className="w-full h-full border-none opacity-80"
-            title="Ejendomskort"
-          />
-          <div className="absolute inset-0 bg-gradient-to-b from-slate-900/20 to-transparent pointer-events-none" />
-          <div className="absolute bottom-4 left-4 bg-slate-900/90 backdrop-blur-sm border border-slate-700/50 rounded-xl px-3 py-2">
-            <p className="text-slate-400 text-xs">Interaktivt kort · Fase 2</p>
-            <p className="text-slate-300 text-xs font-medium">Mapbox integration kommer</p>
+      {/* ─── Indhold ─── */}
+      <div className="flex-1 overflow-y-auto px-8 py-6">
+        {/* Eksempel-søgninger */}
+        <div className="flex flex-wrap gap-2 mb-8">
+          {[
+            'Bredgade 1, København',
+            'Rådhuspladsen, København',
+            'Vesterbrogade 100',
+            'Nørreport Station',
+            'Kongens Nytorv',
+          ].map((eksempel) => (
+            <button
+              key={eksempel}
+              type="button"
+              onClick={() => {
+                setSøgning(eksempel);
+                setÅben(true);
+                inputRef.current?.focus();
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800/40 hover:bg-slate-700/60 border border-slate-700/40 hover:border-slate-600 rounded-full text-xs text-slate-400 hover:text-slate-200 transition-all"
+            >
+              <Search size={11} />
+              {eksempel}
+            </button>
+          ))}
+        </div>
+
+        {/* Populære ejendomme (mock) */}
+        <div>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-white font-semibold text-base">Populære ejendomme</h2>
+            <span className="text-slate-500 text-xs bg-slate-800/60 px-2.5 py-1 rounded-full">
+              Demo-data
+            </span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            {mockEjendomme.map((e) => (
+              <EjendomCard key={e.id} ejendom={e} />
+            ))}
+          </div>
+        </div>
+
+        {/* Info-banner */}
+        <div className="mt-8 flex items-start gap-3 bg-blue-600/8 border border-blue-500/20 rounded-2xl px-5 py-4">
+          <Building2 size={18} className="text-blue-400 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-blue-300 text-sm font-medium">~2,8 mio. adresser tilgængelige</p>
+            <p className="text-slate-400 text-xs mt-0.5 leading-relaxed">
+              Søg på enhver dansk adresse for at se placering og matrikelgrænser på kortet. Fuld
+              BBR- og ejerdata kobles på via Datafordeler i næste fase.
+            </p>
           </div>
         </div>
       </div>

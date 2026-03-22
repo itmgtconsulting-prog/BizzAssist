@@ -151,12 +151,16 @@ export default function PropertyMap({ lat, lng, adresse, visMatrikel = true }: P
   }, []);
 
   /**
-   * Justerer gadekort-stil (dark-v11) for bedre kontrast.
-   * dark-v11's standardfarver er næsten sort for bygninger og veje —
-   * overstyres til lysere blågrå toner der stadig passer til mørkt tema.
+   * Justerer gadekort-stil (dark-v11) for markant bedre kontrast.
    *
-   * Køres når mapStyle er 'dark' og stilen er fuldt indlæst (idle-event).
-   * Filtrerer casing-lag fra så vejenes kantlinjer bevares mørkere end fyldet.
+   * dark-v11's baggrundsfarve er ~#0d131f (næsten sort). For at bygninger
+   * kan skelnes klart sættes de til #3a5878 (lys blågrå) med en synlig
+   * konturlinje i #5a7898. Veje justeres til #4a6888 (tydelig mod mørk bg).
+   *
+   * Håndterer tre typer bygningstegning i dark-v11:
+   *   'building'            — 2D fill-lag (altid til stede)
+   *   'building-outline'   — konturlinje (hvis til stede)
+   *   'building-extrusion' — 3D fill-extrusion ved høj zoom (hvis til stede)
    */
   useEffect(() => {
     if (mapStyle !== 'dark') return;
@@ -169,20 +173,34 @@ export default function PropertyMap({ lat, lng, adresse, visMatrikel = true }: P
       try {
         const layers = m.getStyle()?.layers ?? [];
         for (const layer of layers) {
-          // Bygninger: fra næsten-sort til medium blågrå
-          if (layer.id === 'building' && layer.type === 'fill') {
-            m.setPaintProperty('building', 'fill-color', '#1e2d42');
-            m.setPaintProperty('building', 'fill-opacity', 0.95);
+          const id = layer.id;
+
+          // 2D bygningsfyld — markant lysere så de adskilles fra baggrundsfarven
+          if (id === 'building' && layer.type === 'fill') {
+            m.setPaintProperty('building', 'fill-color', '#3a5878');
+            m.setPaintProperty('building', 'fill-opacity', 1);
           }
-          // Veje: lysere linjer — spring casing-lag over så kanterne bevares
+
+          // Bygningskonturer — lysere end fyldet for klar afgrænsning
+          if (id === 'building-outline' && layer.type === 'line') {
+            m.setPaintProperty('building-outline', 'line-color', '#5a7898');
+            m.setPaintProperty('building-outline', 'line-opacity', 1);
+          }
+
+          // 3D bygninger ved høj zoom
+          if (id === 'building-extrusion' && layer.type === 'fill-extrusion') {
+            m.setPaintProperty('building-extrusion', 'fill-extrusion-color', '#3a5878');
+          }
+
+          // Veje — spring casing-lag over så vejkanter bevares mørkere
           const sourceLayer = (layer as Record<string, unknown>)['source-layer'];
           if (
             sourceLayer === 'road' &&
             layer.type === 'line' &&
-            !layer.id.includes('-case') &&
-            !layer.id.includes('-bg')
+            !id.includes('-case') &&
+            !id.includes('-bg')
           ) {
-            m.setPaintProperty(layer.id, 'line-color', '#3a5070');
+            m.setPaintProperty(id, 'line-color', '#4a6888');
           }
         }
       } catch {

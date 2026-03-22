@@ -13,7 +13,7 @@
  * - SVG-baseret ejerstrukturtræ
  */
 
-import { useState, use, useEffect, Suspense } from 'react';
+import { useState, use, useEffect, useRef, Suspense } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -271,6 +271,63 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
   const [aktivTab, setAktivTab] = useState<Tab>('overblik');
   const [valgteDoc, setValgteDoc] = useState<Set<string>>(new Set());
 
+  /**
+   * JS-baseret xl-breakpoint detektion (≥1280px).
+   * Erstatter Tailwind `hidden xl:flex` som Turbopack ikke genererer korrekt
+   * ved client-side navigation (FOUC i dev-mode).
+   */
+  const [visKort, setVisKort] = useState(true);
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 1280px)');
+    setVisKort(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setVisKort(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+
+  /**
+   * Kortpanel-bredde i px — kan trækkes af brugeren via adskillelseslinien.
+   * Standard 380 px, min 200 px, max 900 px.
+   */
+  const [kortBredde, setKortBredde] = useState(380);
+
+  /**
+   * True mens brugeren trækker adskillelseslinien.
+   * Aktiverer globale mousemove/mouseup-handlers via useEffect.
+   */
+  const [trækker, setTrækker] = useState(false);
+
+  /**
+   * Gemmer startpunktet for en drag-operation.
+   * Bruger ref i stedet for state for at undgå re-renders under drag.
+   */
+  const trækStart = useRef<{ x: number; bredde: number } | null>(null);
+
+  /**
+   * Globale drag-handlers — kun aktive mens trækker === true.
+   * Beregner ny kortbredde som startBredde + (startX − currentX),
+   * dvs. bevægelse mod venstre øger kortbredden og omvendt.
+   */
+  useEffect(() => {
+    if (!trækker) return;
+    function onMove(e: MouseEvent) {
+      if (!trækStart.current) return;
+      const delta = trækStart.current.x - e.clientX;
+      const nyBredde = Math.min(900, Math.max(200, trækStart.current.bredde + delta));
+      setKortBredde(nyBredde);
+    }
+    function onUp() {
+      setTrækker(false);
+      trækStart.current = null;
+    }
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [trækker]);
+
   // DAWA-tilstand — kun aktiv når id er et DAWA UUID
   const [dawaAdresse, setDawaAdresse] = useState<DawaAdresse | null>(null);
   const [dawaJordstykke, setDawaJordstykke] = useState<DawaJordstykke | null>(null);
@@ -343,7 +400,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
   if (erDAWA && dawaAdresse) {
     const adresseStreng = `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`;
     return (
-      <div className="flex h-full overflow-hidden">
+      <div className={`flex h-full overflow-hidden${trækker ? ' select-none' : ''}`}>
         <div className="flex-1 flex flex-col overflow-hidden">
           {/* Header */}
           <div className="px-6 pt-5 pb-4 border-b border-slate-700/40 flex-shrink-0">
@@ -446,23 +503,41 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
           </div>
         </div>
 
-        {/* Kortpanel */}
-        <div className="hidden xl:flex w-[380px] flex-shrink-0 border-l border-slate-700/50">
-          <Suspense
-            fallback={
-              <div className="w-full h-full flex items-center justify-center bg-slate-900">
-                <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-              </div>
-            }
+        {/* Adskillelseslinie — træk for at ændre kortpanel-bredde */}
+        {visKort && (
+          <div
+            className={`w-1.5 flex-shrink-0 cursor-col-resize flex items-center justify-center group transition-colors ${trækker ? 'bg-blue-500/30' : 'bg-slate-800 hover:bg-blue-500/20'}`}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              trækStart.current = { x: e.clientX, bredde: kortBredde };
+              setTrækker(true);
+            }}
           >
-            <PropertyMap
-              lat={dawaAdresse.y}
-              lng={dawaAdresse.x}
-              adresse={adresseStreng}
-              visMatrikel={true}
+            <div
+              className={`w-0.5 h-10 rounded-full transition-colors ${trækker ? 'bg-blue-400' : 'bg-slate-600 group-hover:bg-blue-400'}`}
             />
-          </Suspense>
-        </div>
+          </div>
+        )}
+
+        {/* Kortpanel */}
+        {visKort && (
+          <div className="flex flex-shrink-0" style={{ width: kortBredde }}>
+            <Suspense
+              fallback={
+                <div className="w-full h-full flex items-center justify-center bg-slate-900">
+                  <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                </div>
+              }
+            >
+              <PropertyMap
+                lat={dawaAdresse.y}
+                lng={dawaAdresse.x}
+                adresse={adresseStreng}
+                visMatrikel={true}
+              />
+            </Suspense>
+          </div>
+        )}
       </div>
     );
   }
@@ -495,7 +570,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
     }));
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div className={`flex flex-col h-full overflow-hidden${trækker ? ' select-none' : ''}`}>
       {/* ─── Header ─── */}
       <div className="px-6 pt-5 pb-0 border-b border-slate-700/50 bg-slate-900/30">
         {/* Tilbage + handlinger */}
@@ -1773,24 +1848,42 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
           )}
         </div>
 
-        {/* ─── Kortpanel — højre side ─── */}
-        <div className="hidden xl:flex w-[380px] flex-shrink-0 border-l border-slate-700/50">
-          <Suspense
-            fallback={
-              <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900 gap-3">
-                <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-                <p className="text-slate-500 text-xs">Indlæser kort…</p>
-              </div>
-            }
+        {/* Adskillelseslinie — træk for at ændre kortpanel-bredde */}
+        {visKort && (
+          <div
+            className={`w-1.5 flex-shrink-0 cursor-col-resize flex items-center justify-center group transition-colors ${trækker ? 'bg-blue-500/30' : 'bg-slate-800 hover:bg-blue-500/20'}`}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              trækStart.current = { x: e.clientX, bredde: kortBredde };
+              setTrækker(true);
+            }}
           >
-            <PropertyMap
-              lat={ejendom.lat}
-              lng={ejendom.lng}
-              adresse={`${ejendom.adresse}, ${ejendom.postnummer} ${ejendom.by}`}
-              visMatrikel={true}
+            <div
+              className={`w-0.5 h-10 rounded-full transition-colors ${trækker ? 'bg-blue-400' : 'bg-slate-600 group-hover:bg-blue-400'}`}
             />
-          </Suspense>
-        </div>
+          </div>
+        )}
+
+        {/* ─── Kortpanel — højre side ─── */}
+        {visKort && (
+          <div className="flex flex-shrink-0" style={{ width: kortBredde }}>
+            <Suspense
+              fallback={
+                <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900 gap-3">
+                  <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                  <p className="text-slate-500 text-xs">Indlæser kort…</p>
+                </div>
+              }
+            >
+              <PropertyMap
+                lat={ejendom.lat}
+                lng={ejendom.lng}
+                adresse={`${ejendom.adresse}, ${ejendom.postnummer} ${ejendom.by}`}
+                visMatrikel={true}
+              />
+            </Suspense>
+          </div>
+        )}
       </div>
     </div>
   );

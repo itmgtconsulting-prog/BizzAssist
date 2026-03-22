@@ -15,6 +15,7 @@ import { useRouter } from 'next/navigation';
 import {
   Search,
   MapPin,
+  Navigation,
   Building2,
   Home,
   Warehouse,
@@ -25,7 +26,7 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import { mockEjendomme, formatDKK, type Ejendom } from '@/app/lib/mock/ejendomme';
-import { dawaAutocomplete, type DawaAutocompleteResult } from '@/app/lib/dawa';
+import { dawaAutocomplete, erDawaId, type DawaAutocompleteResult } from '@/app/lib/dawa';
 
 const RECENT_KEY = 'ba-ejendomme-recent';
 const MAX_RECENT = 5;
@@ -104,20 +105,162 @@ function DawaResultItem({
       <div
         className={`p-1.5 rounded-lg flex-shrink-0 transition-colors ${aktiv ? 'bg-blue-600/30' : 'bg-slate-700 group-hover:bg-blue-600/20'}`}
       >
-        <MapPin
-          size={13}
-          className={aktiv ? 'text-blue-400' : 'text-slate-400 group-hover:text-blue-400'}
-        />
+        {result.type === 'vejnavn' ? (
+          <Navigation
+            size={13}
+            className={aktiv ? 'text-blue-400' : 'text-slate-400 group-hover:text-blue-400'}
+          />
+        ) : (
+          <MapPin
+            size={13}
+            className={aktiv ? 'text-blue-400' : 'text-slate-400 group-hover:text-blue-400'}
+          />
+        )}
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-white text-sm font-medium truncate">{result.tekst}</p>
-        <p className="text-slate-500 text-xs">{result.adresse.kommunenavn} Kommune</p>
+        <p className="text-slate-500 text-xs">
+          {result.type === 'vejnavn'
+            ? 'Vej — tilføj husnummer'
+            : result.adresse.postnr
+              ? `${result.adresse.postnr} ${result.adresse.postnrnavn}`
+              : 'Danmark'}
+        </p>
       </div>
       <ArrowRight
         size={13}
         className={aktiv ? 'text-blue-400' : 'text-slate-600 group-hover:text-blue-400'}
       />
     </button>
+  );
+}
+
+interface DropdownPos {
+  top: number;
+  left: number;
+  width: number;
+}
+
+interface DropdownPortalProps {
+  inputRef: React.RefObject<HTMLInputElement | null>;
+  dropdownRef: React.RefObject<HTMLDivElement | null>;
+  søgning: string;
+  resultater: DawaAutocompleteResult[];
+  søgerDAWA: boolean;
+  søgningFærdig: boolean;
+  seneste: DawaAutocompleteResult[];
+  markeret: number;
+  onVælg: (r: DawaAutocompleteResult) => void;
+}
+
+/**
+ * Portal-komponent til autocomplete-dropdown.
+ *
+ * Renderes i document.body for at undgå overflow:hidden klipning fra dashboard.
+ * Positionen beregnes i useLayoutEffect (kører synkront efter DOM-mutation, før paint)
+ * og gemt i lokal state — overholder React 19-reglen om ingen ref-læsning under render.
+ *
+ * @param inputRef - Ref til søgeinput — position beregnes relativt hertil
+ * @param dropdownRef - Ref til dropdown-div — bruges til klik-uden-for detection
+ */
+function DropdownPortal({
+  inputRef,
+  dropdownRef,
+  søgning,
+  resultater,
+  søgerDAWA,
+  søgningFærdig,
+  seneste,
+  markeret,
+  onVælg,
+}: DropdownPortalProps) {
+  const [pos, setPos] = useState<DropdownPos | null>(null);
+
+  /**
+   * Beregn og opdater dropdown-position synkront efter DOM-mutation og ved scroll/resize.
+   * useLayoutEffect sikrer at positionen er sat før browseren painter — ingen flash.
+   */
+  useEffect(() => {
+    function opdater() {
+      if (!inputRef.current) return;
+      const r = inputRef.current.getBoundingClientRect();
+      if (r.width > 0) setPos({ top: r.bottom + 8, left: r.left, width: r.width });
+    }
+    opdater();
+    window.addEventListener('resize', opdater);
+    window.addEventListener('scroll', opdater, true);
+    return () => {
+      window.removeEventListener('resize', opdater);
+      window.removeEventListener('scroll', opdater, true);
+    };
+  }, [inputRef]);
+
+  if (!pos) return null;
+
+  return createPortal(
+    <div
+      ref={dropdownRef}
+      style={{
+        position: 'fixed',
+        top: pos.top,
+        left: pos.left,
+        width: pos.width,
+        zIndex: 9999,
+      }}
+      className="bg-slate-800 border border-slate-700/60 rounded-2xl overflow-hidden shadow-2xl"
+    >
+      {/* Seneste søgninger */}
+      {søgning.length < 2 && seneste.length > 0 && (
+        <div>
+          <div className="flex items-center gap-2 px-4 py-2.5 border-b border-slate-700/40">
+            <Clock size={12} className="text-slate-500" />
+            <span className="text-slate-500 text-xs font-medium uppercase tracking-wide">
+              Seneste søgninger
+            </span>
+          </div>
+          {seneste
+            .filter((r) => r.adresse?.id)
+            .map((r) => (
+              <DawaResultItem key={r.adresse.id} result={r} onVælg={onVælg} />
+            ))}
+        </div>
+      )}
+
+      {/* DAWA-resultater */}
+      {søgning.length >= 2 && (
+        <>
+          {søgerDAWA && (
+            <div className="flex items-center gap-3 px-4 py-3 text-slate-500 text-sm">
+              <Loader2 size={14} className="animate-spin" />
+              Søger i alle danske adresser…
+            </div>
+          )}
+          {!søgerDAWA && søgningFærdig && resultater.length === 0 && (
+            <div className="px-4 py-4 text-slate-500 text-sm text-center">
+              Ingen adresser fundet for &ldquo;{søgning}&rdquo;
+            </div>
+          )}
+          {resultater
+            .filter((r) => r.adresse?.id)
+            .map((r, i) => (
+              <DawaResultItem
+                key={r.adresse.id}
+                result={r}
+                onVælg={onVælg}
+                aktiv={i === markeret}
+              />
+            ))}
+          {resultater.length === 8 && (
+            <div className="px-4 py-2 border-t border-slate-700/40">
+              <p className="text-slate-600 text-xs text-center">
+                Viser de 8 bedste resultater — præcisér søgningen for flere
+              </p>
+            </div>
+          )}
+        </>
+      )}
+    </div>,
+    document.body
   );
 }
 
@@ -129,20 +272,22 @@ export default function EjendommeListeside() {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  /** Følger inputfeltets position — bruges til portal-placering */
-  const [dropdownPos, setDropdownPos] = useState({ top: 0, left: 0, width: 0 });
 
   const [søgning, setSøgning] = useState('');
   const [resultater, setResultater] = useState<DawaAutocompleteResult[]>([]);
   const [søgerDAWA, setSøgerDAWA] = useState(false);
+  /** True når DAWA-kaldet er afsluttet — holder dropdown åben selv ved 0 resultater */
+  const [søgningFærdig, setSøgningFærdig] = useState(false);
   const [åben, setÅben] = useState(false);
   const [markeret, setMarkeret] = useState(-1);
-  /** Lazy initialisering fra localStorage — ingen useEffect nødvendig */
+  /** Lazy initialisering fra localStorage — filtrerer evt. korrupt/forældet data fra */
   const [seneste, setSeneste] = useState<DawaAutocompleteResult[]>(() => {
     if (typeof window === 'undefined') return [];
     try {
       const raw = localStorage.getItem(RECENT_KEY);
-      return raw ? (JSON.parse(raw) as DawaAutocompleteResult[]) : [];
+      const parsed = raw ? (JSON.parse(raw) as DawaAutocompleteResult[]) : [];
+      // Bevar kun elementer med gyldig adresse-struktur
+      return Array.isArray(parsed) ? parsed.filter((r) => r?.adresse?.id) : [];
     } catch {
       return [];
     }
@@ -151,7 +296,7 @@ export default function EjendommeListeside() {
   /** Gem nyligt valgt adresse i localStorage */
   const gemSeneste = useCallback((result: DawaAutocompleteResult) => {
     setSeneste((prev) => {
-      const filtreret = prev.filter((r) => r.adresse.id !== result.adresse.id);
+      const filtreret = prev.filter((r) => r.adresse?.id !== result.adresse.id);
       const opdateret = [result, ...filtreret].slice(0, MAX_RECENT);
       try {
         localStorage.setItem(RECENT_KEY, JSON.stringify(opdateret));
@@ -161,22 +306,6 @@ export default function EjendommeListeside() {
       return opdateret;
     });
   }, []);
-
-  /** Opdater dropdown-position når åben ændres eller vindue resizes */
-  useEffect(() => {
-    function opdaterPos() {
-      if (!inputRef.current) return;
-      const rect = inputRef.current.getBoundingClientRect();
-      setDropdownPos({ top: rect.bottom + 8, left: rect.left, width: rect.width });
-    }
-    if (åben) opdaterPos();
-    window.addEventListener('resize', opdaterPos);
-    window.addEventListener('scroll', opdaterPos, true);
-    return () => {
-      window.removeEventListener('resize', opdaterPos);
-      window.removeEventListener('scroll', opdaterPos, true);
-    };
-  }, [åben]);
 
   /** Luk dropdown ved klik udenfor */
   useEffect(() => {
@@ -196,9 +325,11 @@ export default function EjendommeListeside() {
 
   /**
    * Debounced DAWA-søgning.
-   * Al setState sker i setTimeout-callback — ikke synkront i effect-body.
+   * Nulstiller søgningFærdig ved søgningsændring, sætter den til true når svaret modtages.
+   * Dropdown forbliver åben via søgningFærdig selvom resultater er tomme (viser "ingen fundet").
    */
   useEffect(() => {
+    setSøgningFærdig(false);
     const timer = setTimeout(async () => {
       if (søgning.trim().length < 2) {
         setResultater([]);
@@ -209,12 +340,24 @@ export default function EjendommeListeside() {
       const data = await dawaAutocomplete(søgning);
       setResultater(data);
       setSøgerDAWA(false);
+      setSøgningFærdig(true);
     }, 220);
     return () => clearTimeout(timer);
   }, [søgning]);
 
-  /** Naviger til ejendomsdetaljesiden for den valgte adresse */
+  /**
+   * Håndterer valg af et autocomplete-resultat.
+   * - vejnavn-type: udfylder søgefeltet med gadenavn + mellemrum så brugeren kan taste husnummer
+   * - adresse/adgangsadresse: navigerer til ejendomsdetaljesiden
+   */
   function vælgAdresse(result: DawaAutocompleteResult) {
+    if (!erDawaId(result.adresse.id)) {
+      // Vejnavn — autoudfyld søgefeltet og hold dropdown åben
+      setSøgning(result.adresse.vejnavn + ' ');
+      setMarkeret(-1);
+      inputRef.current?.focus();
+      return;
+    }
     gemSeneste(result);
     setÅben(false);
     setSøgning('');
@@ -222,7 +365,11 @@ export default function EjendommeListeside() {
   }
 
   const visDropdown =
-    åben && (resultater.length > 0 || søgerDAWA || (søgning.length < 2 && seneste.length > 0));
+    åben &&
+    (resultater.length > 0 ||
+      søgerDAWA ||
+      søgningFærdig || // Behold åben efter DAWA svarer — selvom 0 resultater (viser "ingen fundet")
+      (søgning.length < 2 && seneste.length > 0));
 
   return (
     <div className="flex flex-col h-full bg-[#0a1628]">
@@ -288,69 +435,19 @@ export default function EjendommeListeside() {
           </div>
 
           {/* Dropdown via Portal — undgår overflow:hidden klipning fra dashboard layout */}
-          {visDropdown &&
-            typeof document !== 'undefined' &&
-            createPortal(
-              <div
-                ref={dropdownRef}
-                style={{
-                  position: 'fixed',
-                  top: dropdownPos.top,
-                  left: dropdownPos.left,
-                  width: dropdownPos.width,
-                  zIndex: 9999,
-                }}
-                className="bg-slate-800 border border-slate-700/60 rounded-2xl overflow-hidden shadow-2xl"
-              >
-                {/* Seneste søgninger */}
-                {søgning.length < 2 && seneste.length > 0 && (
-                  <div>
-                    <div className="flex items-center gap-2 px-4 py-2.5 border-b border-slate-700/40">
-                      <Clock size={12} className="text-slate-500" />
-                      <span className="text-slate-500 text-xs font-medium uppercase tracking-wide">
-                        Seneste søgninger
-                      </span>
-                    </div>
-                    {seneste.map((r) => (
-                      <DawaResultItem key={r.adresse.id} result={r} onVælg={vælgAdresse} />
-                    ))}
-                  </div>
-                )}
-
-                {/* DAWA-resultater */}
-                {søgning.length >= 2 && (
-                  <>
-                    {søgerDAWA && (
-                      <div className="flex items-center gap-3 px-4 py-3 text-slate-500 text-sm">
-                        <Loader2 size={14} className="animate-spin" />
-                        Søger i alle danske adresser…
-                      </div>
-                    )}
-                    {!søgerDAWA && resultater.length === 0 && (
-                      <div className="px-4 py-4 text-slate-500 text-sm text-center">
-                        Ingen adresser fundet for &ldquo;{søgning}&rdquo;
-                      </div>
-                    )}
-                    {resultater.map((r, i) => (
-                      <DawaResultItem
-                        key={r.adresse.id}
-                        result={r}
-                        onVælg={vælgAdresse}
-                        aktiv={i === markeret}
-                      />
-                    ))}
-                    {resultater.length === 8 && (
-                      <div className="px-4 py-2 border-t border-slate-700/40">
-                        <p className="text-slate-600 text-xs text-center">
-                          Viser de 8 bedste resultater — præcisér søgningen for flere
-                        </p>
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>,
-              document.body
-            )}
+          {visDropdown && typeof document !== 'undefined' && (
+            <DropdownPortal
+              inputRef={inputRef}
+              dropdownRef={dropdownRef}
+              søgning={søgning}
+              resultater={resultater}
+              søgerDAWA={søgerDAWA}
+              søgningFærdig={søgningFærdig}
+              seneste={seneste}
+              markeret={markeret}
+              onVælg={vælgAdresse}
+            />
+          )}
         </div>
       </div>
 

@@ -534,6 +534,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                 lng={dawaAdresse.x}
                 adresse={adresseStreng}
                 visMatrikel={true}
+                onAdresseValgt={(id) => router.push(`/dashboard/ejendomme/${id}`)}
               />
             </Suspense>
           </div>
@@ -1880,6 +1881,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                 lng={ejendom.lng}
                 adresse={`${ejendom.adresse}, ${ejendom.postnummer} ${ejendom.by}`}
                 visMatrikel={true}
+                onAdresseValgt={(id) => router.push(`/dashboard/ejendomme/${id}`)}
               />
             </Suspense>
           </div>

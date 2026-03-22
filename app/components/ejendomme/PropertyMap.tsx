@@ -14,13 +14,20 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import Map, { Marker, Source, Layer, NavigationControl, type MapRef } from 'react-map-gl/mapbox';
+import Map, {
+  Marker,
+  Source,
+  Layer,
+  NavigationControl,
+  type MapRef,
+  type MapMouseEvent,
+} from 'react-map-gl/mapbox';
 import type {
   FillLayerSpecification,
   LineLayerSpecification,
   GeoJSONSourceSpecification,
 } from 'mapbox-gl';
-import { Satellite, Map as MapIcon, Maximize2, Minimize2, Layers } from 'lucide-react';
+import { Satellite, Map as MapIcon, Maximize2, Minimize2, Layers, Loader2 } from 'lucide-react';
 import 'mapbox-gl/dist/mapbox-gl.css';
 
 /**
@@ -60,6 +67,29 @@ const matrikelLineLayer: LineLayerSpecification = {
   },
 };
 
+/** Hover-highlight: lys gul fyld */
+const hoverFillLayer: FillLayerSpecification = {
+  id: 'hover-fill',
+  type: 'fill',
+  source: 'hover-matrikel',
+  paint: {
+    'fill-color': '#facc15',
+    'fill-opacity': 0.25,
+  },
+};
+
+/** Hover-highlight: gul konturlinje */
+const hoverLineLayer: LineLayerSpecification = {
+  id: 'hover-line',
+  type: 'line',
+  source: 'hover-matrikel',
+  paint: {
+    'line-color': '#facc15',
+    'line-width': 2.5,
+    'line-opacity': 1,
+  },
+};
+
 /** Tom GeoJSON FeatureCollection brugt som fallback inden data loader */
 const EMPTY_GEOJSON: GeoJSONSourceSpecification['data'] = {
   type: 'FeatureCollection',
@@ -75,6 +105,11 @@ interface PropertyMapProps {
   adresse: string;
   /** Vis matrikelgrænselag — default true */
   visMatrikel?: boolean;
+  /**
+   * Kaldes med DAWA adgangsadresse-UUID når brugeren klikker på kortet.
+   * Forælderkomponenten bruger dette til at navigere til den klikkede ejendom.
+   */
+  onAdresseValgt?: (id: string) => void;
 }
 
 /** In-memory cache så samme koordinat ikke hentes to gange i samme session */
@@ -122,13 +157,25 @@ async function hentMatrikelGeojson(
  * @param adresse - Adresse til markør-label
  * @param visMatrikel - Skal matrikellag vises (default: true)
  */
-export default function PropertyMap({ lat, lng, adresse, visMatrikel = true }: PropertyMapProps) {
+export default function PropertyMap({
+  lat,
+  lng,
+  adresse,
+  visMatrikel = true,
+  onAdresseValgt,
+}: PropertyMapProps) {
   const mapRef = useRef<MapRef>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [mapStyle, setMapStyle] = useState<MapStyle>('satellite');
   const [fullscreen, setFullscreen] = useState(false);
   const [matrikelData, setMatrikelData] =
     useState<GeoJSONSourceSpecification['data']>(EMPTY_GEOJSON);
+  /** True mens DAWA reverse geocode-kald kører efter korteklik */
+  const [søgerAdresse, setSøgerAdresse] = useState(false);
+  /** GeoJSON for den matrikel musen svæver over — vises som gult highlight-lag */
+  const [hoverData, setHoverData] = useState<GeoJSONSourceSpecification['data']>(EMPTY_GEOJSON);
+  /** Debounce-timer ref til hover-kald — forhindrer for mange API-kald */
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? '';
   const harToken = mapboxToken.startsWith('pk.');
@@ -233,6 +280,60 @@ export default function PropertyMap({ lat, lng, adresse, visMatrikel = true }: P
     mapRef.current?.flyTo({ center: [lng, lat], zoom: 17, duration: 800 });
   }, [lat, lng]);
 
+  /**
+   * Håndterer klik på kortet.
+   * Kalder DAWA reverse geocode for at finde nærmeste adgangsadresse ved
+   * de klikkede koordinater, og videregiver UUID til onAdresseValgt-callback.
+   *
+   * @param e - Mapbox korteklik-event med lngLat koordinater
+   */
+  const handleKlik = useCallback(
+    async (e: MapMouseEvent) => {
+      if (!onAdresseValgt || søgerAdresse) return;
+      const { lng: x, lat: y } = e.lngLat;
+      setSøgerAdresse(true);
+      try {
+        const res = await fetch(
+          `https://api.dataforsyningen.dk/adgangsadresser/reverse?x=${x}&y=${y}&struktur=mini`,
+          { signal: AbortSignal.timeout(5000) }
+        );
+        if (!res.ok) return;
+        const data: { id?: string } = await res.json();
+        if (data?.id) onAdresseValgt(data.id);
+      } catch {
+        /* ignorer netværksfejl */
+      } finally {
+        setSøgerAdresse(false);
+      }
+    },
+    [onAdresseValgt, søgerAdresse]
+  );
+
+  /**
+   * Håndterer musebevægelse over kortet.
+   * Debouncer 80 ms og henter matrikelgrænse for cursor-koordinaterne via
+   * DAWA — resultatet vises som et gult highlight-lag på kortet.
+   * Rydder highlight ved hurtig bevægelse (cancelTimer).
+   */
+  const handleMouseMove = useCallback(
+    (e: MapMouseEvent) => {
+      if (!onAdresseValgt) return;
+      if (hoverTimer.current) clearTimeout(hoverTimer.current);
+      hoverTimer.current = setTimeout(async () => {
+        const { lng: x, lat: y } = e.lngLat;
+        const data = await hentMatrikelGeojson(x, y);
+        setHoverData(data ?? EMPTY_GEOJSON);
+      }, 80);
+    },
+    [onAdresseValgt]
+  );
+
+  /** Ryd hover-highlight når musen forlader kortet */
+  const handleMouseLeave = useCallback(() => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    setHoverData(EMPTY_GEOJSON);
+  }, []);
+
   /** Vis fallback UI hvis Mapbox-token mangler */
   if (!harToken) {
     return (
@@ -260,6 +361,10 @@ export default function PropertyMap({ lat, lng, adresse, visMatrikel = true }: P
         style={{ width: '100%', height: '100%' }}
         mapStyle={STYLES[mapStyle]}
         attributionControl={false}
+        onClick={onAdresseValgt ? handleKlik : undefined}
+        onMouseMove={onAdresseValgt ? handleMouseMove : undefined}
+        onMouseLeave={onAdresseValgt ? handleMouseLeave : undefined}
+        cursor={onAdresseValgt ? (søgerAdresse ? 'wait' : 'crosshair') : 'grab'}
       >
         <NavigationControl position="bottom-right" showCompass={false} />
 
@@ -268,6 +373,14 @@ export default function PropertyMap({ lat, lng, adresse, visMatrikel = true }: P
           <Source id="matrikel" type="geojson" data={matrikelData}>
             <Layer {...matrikelFillLayer} />
             <Layer {...matrikelLineLayer} />
+          </Source>
+        )}
+
+        {/* Hover-highlight — gul matrikelgrænse ved museover */}
+        {onAdresseValgt && (
+          <Source id="hover-matrikel" type="geojson" data={hoverData}>
+            <Layer {...hoverFillLayer} />
+            <Layer {...hoverLineLayer} />
           </Source>
         )}
 
@@ -315,6 +428,16 @@ export default function PropertyMap({ lat, lng, adresse, visMatrikel = true }: P
       >
         {fullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
       </button>
+
+      {/* Loading-overlay ved korteklik */}
+      {søgerAdresse && (
+        <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none">
+          <div className="flex items-center gap-2 bg-slate-900/90 border border-slate-700/60 rounded-xl px-3 py-2 shadow-lg">
+            <Loader2 size={13} className="text-blue-400 animate-spin" />
+            <span className="text-slate-300 text-xs">Henter ejendom…</span>
+          </div>
+        </div>
+      )}
 
       {/* Matrikellag badge */}
       {visMatrikel && (

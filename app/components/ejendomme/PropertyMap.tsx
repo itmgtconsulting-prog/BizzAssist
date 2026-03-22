@@ -175,6 +175,8 @@ export default function PropertyMap({ lat, lng, adresse, visMatrikel = true }: P
     function lysBuildings() {
       const m = mapRef.current?.getMap();
       if (!m) return;
+
+      // ── Bygninger ──────────────────────────────────────────────────────
       try {
         m.setPaintProperty('building', 'fill-color', '#687f96');
         m.setPaintProperty('building', 'fill-opacity', 1);
@@ -192,6 +194,27 @@ export default function PropertyMap({ lat, lng, adresse, visMatrikel = true }: P
         m.setPaintProperty('building-extrusion', 'fill-extrusion-color', '#687f96');
       } catch {
         /* lag ikke klar */
+      }
+
+      // ── Veje ───────────────────────────────────────────────────────────
+      // navigation-night-v1 styler primærveje i teal/cyan som er for dominerende.
+      // Casing-lag (kantlinjer) skjules helt — vejfyld sættes til neutral grå.
+      const layers = m.getStyle()?.layers ?? [];
+      for (const layer of layers) {
+        if (layer.type !== 'line') continue;
+        const src = (layer as Record<string, unknown>)['source-layer'];
+        if (src !== 'road') continue;
+        try {
+          if (layer.id.includes('-case') || layer.id.includes('-bg')) {
+            // Skjul kantlinjer så der ikke er en farvet border rundt om vejene
+            m.setPaintProperty(layer.id, 'line-opacity', 0);
+          } else {
+            // Vejfyld: neutral blågrå — synlig men ikke dominerende
+            m.setPaintProperty(layer.id, 'line-color', '#3d4f62');
+          }
+        } catch {
+          /* lag ikke klar */
+        }
       }
     }
 

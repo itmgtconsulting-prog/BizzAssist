@@ -9,6 +9,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -128,6 +129,8 @@ export default function EjendommeListeside() {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  /** Følger inputfeltets position — bruges til portal-placering */
+  const [dropdownPos, setDropdownPos] = useState({ top: 0, left: 0, width: 0 });
 
   const [søgning, setSøgning] = useState('');
   const [resultater, setResultater] = useState<DawaAutocompleteResult[]>([]);
@@ -158,6 +161,22 @@ export default function EjendommeListeside() {
       return opdateret;
     });
   }, []);
+
+  /** Opdater dropdown-position når åben ændres eller vindue resizes */
+  useEffect(() => {
+    function opdaterPos() {
+      if (!inputRef.current) return;
+      const rect = inputRef.current.getBoundingClientRect();
+      setDropdownPos({ top: rect.bottom + 8, left: rect.left, width: rect.width });
+    }
+    if (åben) opdaterPos();
+    window.addEventListener('resize', opdaterPos);
+    window.addEventListener('scroll', opdaterPos, true);
+    return () => {
+      window.removeEventListener('resize', opdaterPos);
+      window.removeEventListener('scroll', opdaterPos, true);
+    };
+  }, [åben]);
 
   /** Luk dropdown ved klik udenfor */
   useEffect(() => {
@@ -268,60 +287,70 @@ export default function EjendommeListeside() {
             </div>
           </div>
 
-          {/* Dropdown */}
-          {visDropdown && (
-            <div
-              ref={dropdownRef}
-              className="absolute top-full mt-2 left-0 right-0 bg-slate-800 border border-slate-700/60 rounded-2xl overflow-hidden shadow-2xl z-50"
-            >
-              {/* Seneste søgninger (når ingen aktiv søgning) */}
-              {søgning.length < 2 && seneste.length > 0 && (
-                <div>
-                  <div className="flex items-center gap-2 px-4 py-2.5 border-b border-slate-700/40">
-                    <Clock size={12} className="text-slate-500" />
-                    <span className="text-slate-500 text-xs font-medium uppercase tracking-wide">
-                      Seneste søgninger
-                    </span>
+          {/* Dropdown via Portal — undgår overflow:hidden klipning fra dashboard layout */}
+          {visDropdown &&
+            typeof document !== 'undefined' &&
+            createPortal(
+              <div
+                ref={dropdownRef}
+                style={{
+                  position: 'fixed',
+                  top: dropdownPos.top,
+                  left: dropdownPos.left,
+                  width: dropdownPos.width,
+                  zIndex: 9999,
+                }}
+                className="bg-slate-800 border border-slate-700/60 rounded-2xl overflow-hidden shadow-2xl"
+              >
+                {/* Seneste søgninger */}
+                {søgning.length < 2 && seneste.length > 0 && (
+                  <div>
+                    <div className="flex items-center gap-2 px-4 py-2.5 border-b border-slate-700/40">
+                      <Clock size={12} className="text-slate-500" />
+                      <span className="text-slate-500 text-xs font-medium uppercase tracking-wide">
+                        Seneste søgninger
+                      </span>
+                    </div>
+                    {seneste.map((r) => (
+                      <DawaResultItem key={r.adresse.id} result={r} onVælg={vælgAdresse} />
+                    ))}
                   </div>
-                  {seneste.map((r) => (
-                    <DawaResultItem key={r.adresse.id} result={r} onVælg={vælgAdresse} />
-                  ))}
-                </div>
-              )}
+                )}
 
-              {/* DAWA-resultater */}
-              {søgning.length >= 2 && (
-                <>
-                  {søgerDAWA && (
-                    <div className="flex items-center gap-3 px-4 py-3 text-slate-500 text-sm">
-                      <Loader2 size={14} className="animate-spin" />
-                      Søger i alle danske adresser…
-                    </div>
-                  )}
-                  {!søgerDAWA && resultater.length === 0 && (
-                    <div className="px-4 py-4 text-slate-500 text-sm text-center">
-                      Ingen adresser fundet for &ldquo;{søgning}&rdquo;
-                    </div>
-                  )}
-                  {resultater.map((r, i) => (
-                    <DawaResultItem
-                      key={r.adresse.id}
-                      result={r}
-                      onVælg={vælgAdresse}
-                      aktiv={i === markeret}
-                    />
-                  ))}
-                  {resultater.length === 8 && (
-                    <div className="px-4 py-2 border-t border-slate-700/40">
-                      <p className="text-slate-600 text-xs text-center">
-                        Viser de 8 bedste resultater — præcisér søgningen for flere
-                      </p>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          )}
+                {/* DAWA-resultater */}
+                {søgning.length >= 2 && (
+                  <>
+                    {søgerDAWA && (
+                      <div className="flex items-center gap-3 px-4 py-3 text-slate-500 text-sm">
+                        <Loader2 size={14} className="animate-spin" />
+                        Søger i alle danske adresser…
+                      </div>
+                    )}
+                    {!søgerDAWA && resultater.length === 0 && (
+                      <div className="px-4 py-4 text-slate-500 text-sm text-center">
+                        Ingen adresser fundet for &ldquo;{søgning}&rdquo;
+                      </div>
+                    )}
+                    {resultater.map((r, i) => (
+                      <DawaResultItem
+                        key={r.adresse.id}
+                        result={r}
+                        onVælg={vælgAdresse}
+                        aktiv={i === markeret}
+                      />
+                    ))}
+                    {resultater.length === 8 && (
+                      <div className="px-4 py-2 border-t border-slate-700/40">
+                        <p className="text-slate-600 text-xs text-center">
+                          Viser de 8 bedste resultater — præcisér søgningen for flere
+                        </p>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>,
+              document.body
+            )}
         </div>
       </div>
 

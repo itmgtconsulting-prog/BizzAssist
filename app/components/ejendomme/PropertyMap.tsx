@@ -196,16 +196,21 @@ export default function PropertyMap({ lat, lng, adresse, visMatrikel = true }: P
         /* lag ikke klar */
       }
 
-      // ── Linje-lag ──────────────────────────────────────────────────────
-      // Skjuler ALLE linje-lag fra stilens tiles (veje, grænser, jernbaner osv.)
-      // undtagen vores egne matrikel-lag og bygningskonturen.
-      // Vej-labels (symbol-lag) og bygningsfyld (fill-lag) bevares uændret.
+      // ── Veje og linje-lag ──────────────────────────────────────────────
+      // Casing/bg-lag (de farvede kantlinjer) skjules helt.
+      // Vejfyld-lag farves mørk antracit #181f2a så veje fremstår som
+      // mørke stier mellem bygningerne — ingen teal, ingen farvet border.
       const layers = m.getStyle()?.layers ?? [];
       for (const layer of layers) {
         if (layer.type !== 'line') continue;
         if (layer.id.startsWith('matrikel') || layer.id === 'building-outline') continue;
         try {
-          m.setPaintProperty(layer.id, 'line-opacity', 0);
+          if (layer.id.includes('-case') || layer.id.includes('-bg')) {
+            m.setPaintProperty(layer.id, 'line-opacity', 0);
+          } else {
+            m.setPaintProperty(layer.id, 'line-color', '#181f2a');
+            m.setPaintProperty(layer.id, 'line-opacity', 1);
+          }
         } catch {
           /* lag ikke klar */
         }

@@ -150,6 +150,53 @@ export default function PropertyMap({ lat, lng, adresse, visMatrikel = true }: P
     return () => observer.disconnect();
   }, []);
 
+  /**
+   * Justerer gadekort-stil (dark-v11) for bedre kontrast.
+   * dark-v11's standardfarver er næsten sort for bygninger og veje —
+   * overstyres til lysere blågrå toner der stadig passer til mørkt tema.
+   *
+   * Køres når mapStyle er 'dark' og stilen er fuldt indlæst (idle-event).
+   * Filtrerer casing-lag fra så vejenes kantlinjer bevares mørkere end fyldet.
+   */
+  useEffect(() => {
+    if (mapStyle !== 'dark') return;
+    const map = mapRef.current?.getMap();
+    if (!map) return;
+
+    function opdaterFarver() {
+      const m = mapRef.current?.getMap();
+      if (!m?.isStyleLoaded()) return;
+      try {
+        const layers = m.getStyle()?.layers ?? [];
+        for (const layer of layers) {
+          // Bygninger: fra næsten-sort til medium blågrå
+          if (layer.id === 'building' && layer.type === 'fill') {
+            m.setPaintProperty('building', 'fill-color', '#1e2d42');
+            m.setPaintProperty('building', 'fill-opacity', 0.95);
+          }
+          // Veje: lysere linjer — spring casing-lag over så kanterne bevares
+          const sourceLayer = (layer as Record<string, unknown>)['source-layer'];
+          if (
+            sourceLayer === 'road' &&
+            layer.type === 'line' &&
+            !layer.id.includes('-case') &&
+            !layer.id.includes('-bg')
+          ) {
+            m.setPaintProperty(layer.id, 'line-color', '#3a5070');
+          }
+        }
+      } catch {
+        /* stil ikke klar endnu */
+      }
+    }
+
+    if (map.isStyleLoaded()) {
+      opdaterFarver();
+    } else {
+      map.once('idle', opdaterFarver);
+    }
+  }, [mapStyle]);
+
   /** Centrer kortet på ejendommen igen */
   const centerMap = useCallback(() => {
     mapRef.current?.flyTo({ center: [lng, lat], zoom: 17, duration: 800 });

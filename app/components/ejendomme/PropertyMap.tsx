@@ -118,6 +118,7 @@ async function hentMatrikelGeojson(
  */
 export default function PropertyMap({ lat, lng, adresse, visMatrikel = true }: PropertyMapProps) {
   const mapRef = useRef<MapRef>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [mapStyle, setMapStyle] = useState<MapStyle>('satellite');
   const [fullscreen, setFullscreen] = useState(false);
   const [matrikelData, setMatrikelData] =
@@ -133,6 +134,21 @@ export default function PropertyMap({ lat, lng, adresse, visMatrikel = true }: P
       if (data) setMatrikelData(data);
     });
   }, [lng, lat, visMatrikel]);
+
+  /**
+   * ResizeObserver på container-elementet — kalder map.resize() når bredden ændres
+   * (f.eks. ved drag af adskillelseslinien). Mapbox GL opdaterer ikke canvas-størrelsen
+   * automatisk ved CSS-ændringer, kun ved window resize-events.
+   */
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const observer = new ResizeObserver(() => {
+      mapRef.current?.resize();
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
 
   /** Centrer kortet på ejendommen igen */
   const centerMap = useCallback(() => {
@@ -155,7 +171,10 @@ export default function PropertyMap({ lat, lng, adresse, visMatrikel = true }: P
   }
 
   return (
-    <div className={`relative w-full h-full ${fullscreen ? 'fixed inset-0 z-50' : ''}`}>
+    <div
+      ref={containerRef}
+      className={`relative w-full h-full ${fullscreen ? 'fixed inset-0 z-50' : ''}`}
+    >
       <Map
         ref={mapRef}
         mapboxAccessToken={mapboxToken}

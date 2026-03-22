@@ -67,24 +67,24 @@ const matrikelLineLayer: LineLayerSpecification = {
   },
 };
 
-/** Hover-highlight: lys gul fyld */
+/** Hover-highlight: blå fyld — matcher BizzAssist accent (#2563eb / blue-600) */
 const hoverFillLayer: FillLayerSpecification = {
   id: 'hover-fill',
   type: 'fill',
   source: 'hover-matrikel',
   paint: {
-    'fill-color': '#facc15',
-    'fill-opacity': 0.25,
+    'fill-color': '#3b82f6',
+    'fill-opacity': 0.2,
   },
 };
 
-/** Hover-highlight: gul konturlinje */
+/** Hover-highlight: lys blå konturlinje */
 const hoverLineLayer: LineLayerSpecification = {
   id: 'hover-line',
   type: 'line',
   source: 'hover-matrikel',
   paint: {
-    'line-color': '#facc15',
+    'line-color': '#60a5fa',
     'line-width': 2.5,
     'line-opacity': 1,
   },

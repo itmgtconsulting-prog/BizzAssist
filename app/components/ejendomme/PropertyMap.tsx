@@ -4,7 +4,7 @@
  * Interaktiv ejendomskort-komponent.
  *
  * Bruger Mapbox GL via react-map-gl som basekort med toggle
- * mellem gadekort (dark-v11) og luftfoto (satellite-streets-v12).
+ * mellem gadekort (navigation-night-v1) og luftfoto (satellite-streets-v12).
  *
  * Matrikelgrænser hentes fra DAWA / Dataforsyningen — gratis uden API-nøgle:
  *   https://api.dataforsyningen.dk/jordstykker?x={lng}&y={lat}&srid=4326&format=geojson
@@ -23,9 +23,15 @@ import type {
 import { Satellite, Map as MapIcon, Maximize2, Minimize2, Layers } from 'lucide-react';
 import 'mapbox-gl/dist/mapbox-gl.css';
 
-/** Mapbox basekort-styles */
+/**
+ * Mapbox basekort-styles.
+ *
+ * 'dark' bruger navigation-night-v1 i stedet for dark-v11:
+ * navigation-night-v1 er professionelt designet til mørke miljøer med
+ * klar kontrast på bygninger, veje og baggrund — ingen custom overrides nødvendige.
+ */
 const STYLES = {
-  dark: 'mapbox://styles/mapbox/dark-v11',
+  dark: 'mapbox://styles/mapbox/navigation-night-v1',
   satellite: 'mapbox://styles/mapbox/satellite-streets-v12',
 } as const;
 
@@ -38,7 +44,7 @@ const matrikelFillLayer: FillLayerSpecification = {
   source: 'matrikel',
   paint: {
     'fill-color': '#3b82f6',
-    'fill-opacity': 0.12,
+    'fill-opacity': 0.15,
   },
 };
 
@@ -149,100 +155,6 @@ export default function PropertyMap({ lat, lng, adresse, visMatrikel = true }: P
     observer.observe(container);
     return () => observer.disconnect();
   }, []);
-
-  /**
-   * Justerer gadekort-stil (dark-v11) for markant bedre kontrast.
-   *
-   * dark-v11's baggrundsfarve er ~#0d131f (næsten sort). For at bygninger
-   * kan skelnes klart sættes de til #3a5878 (lys blågrå) med en synlig
-   * konturlinje i #5a7898. Veje justeres til #4a6888 (tydelig mod mørk bg).
-   *
-   * Håndterer tre typer bygningstegning i dark-v11:
-   *   'building'            — 2D fill-lag (altid til stede)
-   *   'building-outline'   — konturlinje (hvis til stede)
-   *   'building-extrusion' — 3D fill-extrusion ved høj zoom (hvis til stede)
-   */
-  useEffect(() => {
-    if (mapStyle !== 'dark') return;
-    const map = mapRef.current?.getMap();
-    if (!map) return;
-
-    function opdaterFarver() {
-      const m = mapRef.current?.getMap();
-      if (!m?.isStyleLoaded()) return;
-      try {
-        const layers = m.getStyle()?.layers ?? [];
-        for (const layer of layers) {
-          const id = layer.id;
-          const sourceLayer = (layer as Record<string, unknown>)['source-layer'];
-
-          // ── Baggrund og jordflade ────────────────────────────────────────
-          // dark-v11's baggrund er ~#0d131f. Lysnes markant til mellemdark blå.
-          if (layer.type === 'background') {
-            m.setPaintProperty(id, 'background-color', '#1a2d42');
-          }
-
-          // Basis jordlag (kyst, land) — lidt lysere end baggrunden
-          if (
-            layer.type === 'fill' &&
-            (sourceLayer === 'land' || id === 'land' || id === 'land-structure')
-          ) {
-            m.setPaintProperty(id, 'fill-color', '#1e3248');
-          }
-
-          // Landcover (skov, græs, sand) — lys blågrøn/blå tone
-          if (layer.type === 'fill' && sourceLayer === 'landcover') {
-            m.setPaintProperty(id, 'fill-color', '#1e3248');
-            m.setPaintProperty(id, 'fill-opacity', 0.6);
-          }
-
-          // Boligområder, industriområder og øvrige landuse
-          if (
-            layer.type === 'fill' &&
-            sourceLayer === 'landuse' &&
-            !id.includes('park') &&
-            !id.includes('pitch') &&
-            !id.includes('cemetery')
-          ) {
-            m.setPaintProperty(id, 'fill-color', '#22364e');
-          }
-
-          // ── Bygninger ────────────────────────────────────────────────────
-          // Sættes markant lysere end baggrunden for klar visuel adskillelse
-          if (id === 'building' && layer.type === 'fill') {
-            m.setPaintProperty('building', 'fill-color', '#3a5878');
-            m.setPaintProperty('building', 'fill-opacity', 1);
-          }
-          if (id === 'building-outline' && layer.type === 'line') {
-            m.setPaintProperty('building-outline', 'line-color', '#5a7898');
-            m.setPaintProperty('building-outline', 'line-opacity', 1);
-          }
-          if (id === 'building-extrusion' && layer.type === 'fill-extrusion') {
-            m.setPaintProperty('building-extrusion', 'fill-extrusion-color', '#3a5878');
-          }
-
-          // ── Veje ─────────────────────────────────────────────────────────
-          // Spring casing-lag over så vejkanter bevares mørkere end fyldet
-          if (
-            sourceLayer === 'road' &&
-            layer.type === 'line' &&
-            !id.includes('-case') &&
-            !id.includes('-bg')
-          ) {
-            m.setPaintProperty(id, 'line-color', '#4a6888');
-          }
-        }
-      } catch {
-        /* stil ikke klar endnu */
-      }
-    }
-
-    if (map.isStyleLoaded()) {
-      opdaterFarver();
-    } else {
-      map.once('idle', opdaterFarver);
-    }
-  }, [mapStyle]);
 
   /** Centrer kortet på ejendommen igen */
   const centerMap = useCallback(() => {

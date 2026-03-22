@@ -196,22 +196,16 @@ export default function PropertyMap({ lat, lng, adresse, visMatrikel = true }: P
         /* lag ikke klar */
       }
 
-      // ── Veje ───────────────────────────────────────────────────────────
-      // navigation-night-v1 styler primærveje i teal/cyan som er for dominerende.
-      // Casing-lag (kantlinjer) skjules helt — vejfyld sættes til neutral grå.
+      // ── Linje-lag ──────────────────────────────────────────────────────
+      // Skjuler ALLE linje-lag fra stilens tiles (veje, grænser, jernbaner osv.)
+      // undtagen vores egne matrikel-lag og bygningskonturen.
+      // Vej-labels (symbol-lag) og bygningsfyld (fill-lag) bevares uændret.
       const layers = m.getStyle()?.layers ?? [];
       for (const layer of layers) {
         if (layer.type !== 'line') continue;
-        const src = (layer as Record<string, unknown>)['source-layer'];
-        if (src !== 'road') continue;
+        if (layer.id.startsWith('matrikel') || layer.id === 'building-outline') continue;
         try {
-          if (layer.id.includes('-case') || layer.id.includes('-bg')) {
-            // Skjul kantlinjer så der ikke er en farvet border rundt om vejene
-            m.setPaintProperty(layer.id, 'line-opacity', 0);
-          } else {
-            // Vejfyld: neutral blågrå — synlig men ikke dominerende
-            m.setPaintProperty(layer.id, 'line-color', '#3d4f62');
-          }
+          m.setPaintProperty(layer.id, 'line-opacity', 0);
         } catch {
           /* lag ikke klar */
         }

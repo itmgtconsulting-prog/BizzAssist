@@ -294,37 +294,64 @@ async function fetchBBRGraphQL(
  *   2. Hent BFEnummer fra DAWA jordstykker-endpoint
  *
  * Datafordeler EBR GraphQL-endpointet eksisterer ikke — DAWA er den korrekte kilde.
+ * Håndterer både adresse-UUID og adgangsadresse-UUID som input.
  *
- * @param dawaId - DAWA adgangsadresse UUID (fra route-param)
- * @returns BFEnummer som tal, eller null ved fejl/manglende data
+ * @param dawaId - DAWA adresse- eller adgangsadresse-UUID (fra route-param)
+ * @returns { bfeNummer, adgangsadresseId } — bfeNummer null ved fejl,
+ *          adgangsadresseId er adgangsadresse-UUID (bruges til BBR_Bygning husnummer-felt)
  */
-async function fetchBFENummer(dawaId: string): Promise<number | null> {
+async function fetchBFENummer(
+  dawaId: string
+): Promise<{ bfeNummer: number | null; adgangsadresseId: string }> {
   try {
-    // Trin 1: Hent adgangsadresse med jordstykke-reference
+    let ejerlavKode: number | undefined;
+    let matrikelnr: string | undefined;
+    let adgangsadresseId = dawaId;
+
+    // Trin 1a: Forsøg direkte som adgangsadresse
     const adgRes = await fetch(`${DAWA_BASE}/adgangsadresser/${dawaId}`, {
       signal: AbortSignal.timeout(5000),
       next: { revalidate: 3600 },
     });
-    if (!adgRes.ok) return null;
 
-    const adg = (await adgRes.json()) as {
-      jordstykke?: { ejerlav?: { kode?: number }; matrikelnr?: string };
-    };
-    const ejerlavKode = adg?.jordstykke?.ejerlav?.kode;
-    const matrikelnr = adg?.jordstykke?.matrikelnr;
-    if (!ejerlavKode || !matrikelnr) return null;
+    if (adgRes.ok) {
+      const adg = (await adgRes.json()) as {
+        jordstykke?: { ejerlav?: { kode?: number }; matrikelnr?: string };
+      };
+      ejerlavKode = adg?.jordstykke?.ejerlav?.kode;
+      matrikelnr = adg?.jordstykke?.matrikelnr;
+    } else {
+      // Trin 1b: ID er en adresse (med etage/dør) — hent adgangsadresse via /adresser/{id}
+      const adrRes = await fetch(`${DAWA_BASE}/adresser/${dawaId}`, {
+        signal: AbortSignal.timeout(5000),
+        next: { revalidate: 3600 },
+      });
+      if (!adrRes.ok) return { bfeNummer: null, adgangsadresseId: dawaId };
+
+      const adr = (await adrRes.json()) as {
+        adgangsadresse?: {
+          id?: string;
+          jordstykke?: { ejerlav?: { kode?: number }; matrikelnr?: string };
+        };
+      };
+      adgangsadresseId = adr?.adgangsadresse?.id ?? dawaId;
+      ejerlavKode = adr?.adgangsadresse?.jordstykke?.ejerlav?.kode;
+      matrikelnr = adr?.adgangsadresse?.jordstykke?.matrikelnr;
+    }
+
+    if (!ejerlavKode || !matrikelnr) return { bfeNummer: null, adgangsadresseId };
 
     // Trin 2: Hent BFEnummer fra jordstykker-endpoint
     const jsRes = await fetch(`${DAWA_BASE}/jordstykker/${ejerlavKode}/${matrikelnr}`, {
       signal: AbortSignal.timeout(5000),
       next: { revalidate: 3600 },
     });
-    if (!jsRes.ok) return null;
+    if (!jsRes.ok) return { bfeNummer: null, adgangsadresseId };
 
     const js = (await jsRes.json()) as { bfenummer?: number };
-    return js?.bfenummer ?? null;
+    return { bfeNummer: js?.bfenummer ?? null, adgangsadresseId };
   } catch {
-    return null;
+    return { bfeNummer: null, adgangsadresseId: dawaId };
   }
 }
 
@@ -502,15 +529,17 @@ export async function GET(
   }
 
   const vt = nowDafDateTime();
-  const vars = { vt, id };
 
-  // Hent bygninger, enheder og BFEnummer parallelt.
-  // BFEnummer hentes fra DAWA jordstykker (gratis, ingen auth).
-  // Datafordeler EBR GraphQL-endpoint eksisterer ikke — DAWA er den korrekte kilde.
-  const [rawBygninger, rawEnheder, bfeNummer] = await Promise.all([
-    fetchBBRGraphQL(BYGNING_QUERY, vars),
-    fetchBBRGraphQL(ENHED_QUERY, vars),
-    fetchBFENummer(id),
+  // Resolve adgangsadresse-UUID og BFEnummer.
+  // Nødvendigt fordi DAWA-ID kan være enten en adresse- eller adgangsadresse-UUID.
+  // BBR_Bygning.husnummer kræver adgangsadresse-UUID; BBR_Enhed.adresseIdentificerer
+  // accepterer begge typer, så vi bruger original id for enheder.
+  const { bfeNummer, adgangsadresseId } = await fetchBFENummer(id);
+
+  // Hent bygninger og enheder parallelt med korrekte UUIDs.
+  const [rawBygninger, rawEnheder] = await Promise.all([
+    fetchBBRGraphQL(BYGNING_QUERY, { vt, id: adgangsadresseId }),
+    fetchBBRGraphQL(ENHED_QUERY, { vt, id }),
   ]);
 
   // Udtræk unikke bygning-UUID'er fra enheder (primær kilde)
@@ -525,15 +554,30 @@ export async function GET(
   const fraBygninger: string[] = rawBygninger
     ? (rawBygninger as RawBBRBygning[])
         .map((b) => b.id_lokalId)
-        .filter((id): id is string => typeof id === 'string' && id.length > 0)
+        .filter((bId): bId is string => typeof bId === 'string' && bId.length > 0)
     : [];
 
   const bygningIds = [...new Set([...fraEnheder, ...fraBygninger])];
 
   const bygningPunkter = await fetchBygningPunkter(bygningIds);
 
-  const bbr = rawBygninger ? (rawBygninger as RawBBRBygning[]).map(normaliseBygning) : null;
-  const enheder = rawEnheder ? (rawEnheder as RawBBREnhed[]).map(normaliseEnhed) : null;
+  // Dedupliker BBR-data — BBR GraphQL kan returnere samme objekt i flere virkningsperioder.
+  // Vi beholder kun ét objekt pr. id_lokalId (første forekomst er nyeste virkningstid).
+  const deduplicerBBR = <T extends { id_lokalId?: string }>(arr: T[]): T[] => {
+    const seen = new Set<string>();
+    return arr.filter((item) => {
+      const key = item.id_lokalId ?? '';
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  };
+
+  const rawBygningerUnique = rawBygninger ? deduplicerBBR(rawBygninger as RawBBRBygning[]) : null;
+  const rawEnhederUnique = rawEnheder ? deduplicerBBR(rawEnheder as RawBBREnhed[]) : null;
+
+  const bbr = rawBygningerUnique ? rawBygningerUnique.map(normaliseBygning) : null;
+  const enheder = rawEnhederUnique ? rawEnhederUnique.map(normaliseEnhed) : null;
 
   // Map DAWA BFEnummer → BBREjendomsrelation shape (bevarer eksisterende interface)
   const ejendomsrelationer: BBREjendomsrelation[] | null =

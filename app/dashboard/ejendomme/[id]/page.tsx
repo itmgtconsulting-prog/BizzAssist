@@ -23,7 +23,6 @@ import {
   List,
   MapPin,
   Building2,
-  Sparkles,
   ChevronRight,
   TrendingUp,
   FileText,
@@ -58,6 +57,15 @@ import {
   type DawaAdresse,
   type DawaJordstykke,
 } from '@/app/lib/dawa';
+import type {
+  EjendomApiResponse,
+  LiveBBRBygning,
+  LiveBBREnhed,
+} from '@/app/api/ejendom/[id]/route';
+import type { CVRVirksomhed, CVRResponse } from '@/app/api/cvr/route';
+import type { VurderingData, VurderingResponse } from '@/app/api/vurdering/route';
+import type { EjerData, EjerskabResponse } from '@/app/api/ejerskab/route';
+import { gemRecentEjendom } from '@/app/lib/recentEjendomme';
 
 type Tab = 'overblik' | 'bbr' | 'ejerforhold' | 'tinglysning' | 'oekonomi' | 'dokumenter';
 
@@ -278,7 +286,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
    */
   const [visKort, setVisKort] = useState(true);
   useEffect(() => {
-    const mq = window.matchMedia('(min-width: 1280px)');
+    const mq = window.matchMedia('(min-width: 900px)');
     setVisKort(mq.matches);
     const handler = (e: MediaQueryListEvent) => setVisKort(e.matches);
     mq.addEventListener('change', handler);
@@ -334,6 +342,28 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
   // true = loader, false = fejl, null = idle/done
   const [dawaStatus, setDawaStatus] = useState<'loader' | 'fejl' | 'ok' | 'idle'>('idle');
 
+  /** BBR data fra server-side API-route — null = ikke hentet / ikke tilgængeligt */
+  const [bbrData, setBbrData] = useState<EjendomApiResponse | null>(null);
+  /** True mens BBR-data hentes */
+  const [bbrLoader, setBbrLoader] = useState(false);
+
+  /** CVR-virksomheder registreret på adressen */
+  const [cvrVirksomheder, setCvrVirksomheder] = useState<CVRVirksomhed[] | null>(null);
+  /** True hvis CVR_ES_USER/PASS mangler i .env.local */
+  const [cvrTokenMangler, setCvrTokenMangler] = useState(false);
+
+  /** Ejendomsvurderingsdata fra Datafordeler — null = ikke hentet endnu */
+  const [vurdering, setVurdering] = useState<VurderingData | null>(null);
+  /** True mens vurderingsdata hentes */
+  const [vurderingLoader, setVurderingLoader] = useState(false);
+
+  /** Ejere fra Ejerfortegnelsen (Datafordeler) */
+  const [ejere, setEjere] = useState<EjerData[] | null>(null);
+  /** True mens ejerdata hentes */
+  const [ejereLoader, setEjereLoader] = useState(false);
+  /** True hvis Datafordeler returnerer 403 — Dataadgang-ansøgning mangler for EJF */
+  const [manglerEjereAdgang, setManglerEjereAdgang] = useState(false);
+
   const erDAWA = erDawaId(id);
 
   /**
@@ -352,8 +382,85 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
       const jord = await dawaHentJordstykke(adr.x, adr.y);
       setDawaJordstykke(jord);
       setDawaStatus('ok');
+
+      // Gem besøget i "seneste sete ejendomme"-historikken
+      gemRecentEjendom({
+        id,
+        adresse: adr.adressebetegnelse.split(',')[0],
+        postnr: adr.postnr,
+        by: adr.postnrnavn,
+        kommune: adr.kommunenavn,
+        anvendelse: null, // opdateres nedenfor når BBR-data er klar
+      });
     });
   }, [id, erDAWA]);
+
+  /**
+   * Henter BBR-data fra server-side API-route når DAWA-adressen er klar.
+   * Fejler stille — bbrData.bbrFejl beskriver årsagen hvis data mangler.
+   */
+  useEffect(() => {
+    if (!erDAWA || dawaStatus !== 'ok') return;
+    setBbrLoader(true);
+    fetch(`/api/ejendom/${id}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: EjendomApiResponse | null) => {
+        setBbrData(data);
+      })
+      .catch(() => setBbrData(null))
+      .finally(() => setBbrLoader(false));
+  }, [id, erDAWA, dawaStatus]);
+
+  /**
+   * Henter CVR-virksomheder på adressen via /api/cvr når DAWA-adressen er klar.
+   * Fejler stille — viser tom liste hvis ingen resultater eller fejl.
+   */
+  useEffect(() => {
+    if (!erDAWA || dawaStatus !== 'ok' || !dawaAdresse) return;
+    const params = new URLSearchParams({
+      vejnavn: dawaAdresse.vejnavn,
+      husnr: dawaAdresse.husnr,
+      postnr: dawaAdresse.postnr,
+    });
+    fetch(`/api/cvr?${params}`)
+      .then((r) => (r.ok ? r.json() : { virksomheder: [], tokenMangler: false }))
+      .then((data: CVRResponse) => {
+        setCvrVirksomheder(data.virksomheder);
+        setCvrTokenMangler(data.tokenMangler);
+      })
+      .catch(() => setCvrVirksomheder([]));
+  }, [id, erDAWA, dawaStatus, dawaAdresse]);
+
+  /**
+   * Henter ejendomsvurdering og ejerskabsdata fra Datafordeler når BFEnummer
+   * er tilgængeligt via BBR Ejendomsrelation.
+   * Kører i parallel og fejler stille ved manglende API-nøgle.
+   */
+  useEffect(() => {
+    if (!erDAWA || !bbrData?.ejendomsrelationer?.length) return;
+    const bfeNummer = bbrData.ejendomsrelationer[0]?.bfeNummer;
+    if (!bfeNummer) return;
+
+    setVurderingLoader(true);
+    setEjereLoader(true);
+
+    fetch(`/api/vurdering?bfeNummer=${bfeNummer}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: VurderingResponse | null) => {
+        setVurdering(data?.vurdering ?? null);
+      })
+      .catch(() => setVurdering(null))
+      .finally(() => setVurderingLoader(false));
+
+    fetch(`/api/ejerskab?bfeNummer=${bfeNummer}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: EjerskabResponse | null) => {
+        setManglerEjereAdgang(data?.manglerAdgang ?? false);
+        setEjere(data?.ejere ?? []);
+      })
+      .catch(() => setEjere([]))
+      .finally(() => setEjereLoader(false));
+  }, [id, erDAWA, bbrData]);
 
   /**
    * Toggler et dokument i udvalgslisten.
@@ -399,111 +506,835 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
   // ── DAWA: Rigtig adresse fundet ──
   if (erDAWA && dawaAdresse) {
     const adresseStreng = `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`;
+
+    /** Første BBR-bygning (de fleste ejendomme har kun én) */
+    const foersteBygning: LiveBBRBygning | null = bbrData?.bbr?.[0] ?? null;
+
     return (
-      <div className={`flex h-full overflow-hidden${trækker ? ' select-none' : ''}`}>
-        <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Header */}
-          <div className="px-6 pt-5 pb-4 border-b border-slate-700/40 flex-shrink-0">
-            <button
-              onClick={() => router.push('/dashboard/ejendomme')}
-              className="flex items-center gap-1.5 text-slate-400 hover:text-white text-sm mb-3 transition-colors"
-            >
-              <ArrowLeft size={15} /> Ejendomme
-            </button>
-            <h1 className="text-xl font-bold text-white">{adresseStreng}</h1>
-            <div className="flex flex-wrap gap-2 mt-2">
-              <span className="flex items-center gap-1 text-xs text-slate-400 bg-slate-800/60 px-2.5 py-1 rounded-full">
-                <MapPin size={11} /> {dawaAdresse.kommunenavn} Kommune
-              </span>
-              {dawaJordstykke && (
-                <span className="flex items-center gap-1 text-xs text-slate-400 bg-slate-800/60 px-2.5 py-1 rounded-full">
-                  <Building2 size={11} /> {dawaJordstykke.matrikelnr}, {dawaJordstykke.ejerlav.navn}
+      <div className={`flex-1 flex overflow-hidden${trækker ? ' select-none' : ''}`}>
+        {/* ─── Venstre: header + tabs + indhold ─── */}
+        <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+          {/* ─── Header ─── */}
+          <div className="px-6 pt-5 pb-0 border-b border-slate-700/50 bg-slate-900/30">
+            <div className="flex items-center justify-between mb-3">
+              <button
+                onClick={() => router.push('/dashboard/ejendomme')}
+                className="flex items-center gap-2 text-slate-400 hover:text-white text-sm transition-colors"
+              >
+                <ArrowLeft size={16} /> Ejendomme
+              </button>
+              <button className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700/60 rounded-lg text-slate-300 text-sm transition-all">
+                <Bell size={14} /> Følg
+              </button>
+            </div>
+
+            <div className="mb-3">
+              <h1 className="text-white text-xl font-bold">{adresseStreng}</h1>
+              <div className="flex items-center gap-2 mt-2 flex-wrap">
+                <span className="flex items-center gap-1 px-2 py-0.5 bg-slate-800 border border-slate-700/50 rounded-full text-xs text-slate-300">
+                  <MapPin size={11} /> {dawaAdresse.kommunenavn} Kommune
                 </span>
-              )}
-              <span className="flex items-center gap-1 text-xs text-blue-400 bg-blue-500/10 px-2.5 py-1 rounded-full">
-                DAWA · Live data
-              </span>
+                {dawaJordstykke && (
+                  <span className="flex items-center gap-1 px-2 py-0.5 bg-slate-800 border border-slate-700/50 rounded-full text-xs text-slate-300">
+                    <Building2 size={11} /> {dawaJordstykke.matrikelnr},{' '}
+                    {dawaJordstykke.ejerlav.navn}
+                  </span>
+                )}
+                {foersteBygning?.opfoerelsesaar && (
+                  <span className="px-2 py-0.5 bg-slate-800 border border-slate-700/50 rounded-full text-xs text-slate-300">
+                    {foersteBygning.anvendelse} ({foersteBygning.opfoerelsesaar})
+                  </span>
+                )}
+                <span className="flex items-center gap-1 px-2 py-0.5 bg-blue-500/10 border border-blue-500/20 rounded-full text-xs text-blue-400">
+                  {bbrLoader ? 'Henter BBR…' : bbrData?.bbr ? 'BBR · Live' : 'DAWA · Live'}
+                </span>
+                {dawaAdresse.zone && (
+                  <span
+                    className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border ${
+                      dawaAdresse.zone === 'Byzone'
+                        ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
+                        : dawaAdresse.zone === 'Landzone'
+                          ? 'bg-amber-500/10 border-amber-500/20 text-amber-400'
+                          : dawaAdresse.zone === 'Sommerhuszone'
+                            ? 'bg-orange-500/10 border-orange-500/20 text-orange-400'
+                            : 'bg-slate-700/40 border-slate-600/40 text-slate-400'
+                    }`}
+                  >
+                    {dawaAdresse.zone}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Tabs */}
+            <div className="flex gap-1 -mb-px">
+              {tabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setAktivTab(tab.id)}
+                  className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-all whitespace-nowrap ${
+                    aktivTab === tab.id
+                      ? 'border-blue-500 text-blue-300'
+                      : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600'
+                  }`}
+                >
+                  {tab.ikon}
+                  {tab.label}
+                </button>
+              ))}
             </div>
           </div>
 
-          {/* DAWA overblik */}
           <div className="flex-1 overflow-y-auto px-6 py-5">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-              <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                <p className="text-slate-400 text-xs mb-1">Postnummer</p>
-                <p className="text-white font-semibold">
-                  {dawaAdresse.postnr} {dawaAdresse.postnrnavn}
-                </p>
-              </div>
-              <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                <p className="text-slate-400 text-xs mb-1">Kommune</p>
-                <p className="text-white font-semibold">{dawaAdresse.kommunenavn}</p>
-              </div>
-              <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                <p className="text-slate-400 text-xs mb-1">Region</p>
-                <p className="text-white font-semibold">{dawaAdresse.regionsnavn || '–'}</p>
-              </div>
-              {dawaJordstykke && (
-                <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                  <p className="text-slate-400 text-xs mb-1">Grundareal</p>
-                  <p className="text-white font-semibold">
-                    {dawaJordstykke.areal_m2.toLocaleString('da-DK')} m²
-                  </p>
-                </div>
-              )}
-            </div>
+            {/* ══ OVERBLIK ══ */}
+            {aktivTab === 'overblik' && (
+              <div className="space-y-5">
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                  {/* Matrikel */}
+                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                    <p className="text-slate-400 text-xs font-medium mb-3">
+                      <span className="text-white font-bold text-base">1</span> matrikel
+                    </p>
+                    <div className="space-y-2">
+                      <DataKort
+                        label="Grundareal"
+                        value={
+                          dawaJordstykke
+                            ? `${dawaJordstykke.areal_m2.toLocaleString('da-DK')} m²`
+                            : '–'
+                        }
+                      />
+                      <DataKort
+                        label="Matrikelnr."
+                        value={dawaJordstykke?.matrikelnr ?? dawaAdresse.matrikelnr ?? '–'}
+                      />
+                      <DataKort label="Ejerlav" value={dawaJordstykke?.ejerlav.navn ?? '–'} />
+                    </div>
+                  </div>
 
-            {/* Matrikelinfo */}
-            {dawaJordstykke && (
-              <div className="bg-slate-800/40 border border-slate-700/40 rounded-2xl p-5 mb-4">
-                <h3 className="text-white font-semibold text-sm mb-3">Matrikeloplysninger</h3>
-                <div className="grid grid-cols-2 gap-y-3 text-sm">
-                  <div>
-                    <p className="text-slate-500 text-xs">Matrikelnr.</p>
-                    <p className="text-white">{dawaJordstykke.matrikelnr}</p>
+                  {/* Bygning */}
+                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                    <p className="text-slate-400 text-xs font-medium mb-3">
+                      <span className="text-white font-bold text-base">
+                        {bbrData?.bbr?.length ?? '–'}
+                      </span>{' '}
+                      bygning
+                    </p>
+                    <div className="space-y-2">
+                      <DataKort
+                        label="Bygningsareal"
+                        value={
+                          foersteBygning?.samletBygningsareal != null
+                            ? `${foersteBygning.samletBygningsareal.toLocaleString('da-DK')} m²`
+                            : '–'
+                        }
+                      />
+                      <DataKort
+                        label="Etager"
+                        value={foersteBygning?.antalEtager?.toString() ?? '–'}
+                      />
+                      <DataKort
+                        label="Opført"
+                        value={foersteBygning?.opfoerelsesaar?.toString() ?? '–'}
+                      />
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-slate-500 text-xs">Ejerlav</p>
-                    <p className="text-white">{dawaJordstykke.ejerlav.navn}</p>
+
+                  {/* Enhed */}
+                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                    <p className="text-slate-400 text-xs font-medium mb-3">
+                      <span className="text-white font-bold text-base">
+                        {bbrData?.enheder?.length ?? '–'}
+                      </span>{' '}
+                      enhed
+                    </p>
+                    <div className="space-y-2">
+                      <DataKort
+                        label="Boligareal"
+                        value={
+                          foersteBygning?.samletBoligareal != null
+                            ? `${foersteBygning.samletBoligareal.toLocaleString('da-DK')} m²`
+                            : '–'
+                        }
+                      />
+                      <DataKort
+                        label="Erhvervsareal"
+                        value={
+                          foersteBygning?.samletErhvervsareal != null
+                            ? `${foersteBygning.samletErhvervsareal.toLocaleString('da-DK')} m²`
+                            : '–'
+                        }
+                      />
+                      <DataKort
+                        label="Boligenheder"
+                        value={foersteBygning?.antalBoligenheder?.toString() ?? '–'}
+                      />
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-slate-500 text-xs">Areal</p>
-                    <p className="text-white">
-                      {dawaJordstykke.areal_m2.toLocaleString('da-DK')} m²
+                </div>
+
+                {/* Adresseoplysninger fra DAWA */}
+                <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                  <p className="text-slate-400 text-xs font-medium uppercase tracking-wide mb-3">
+                    Adresseoplysninger
+                  </p>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <DataKort
+                      label="Postnummer"
+                      value={`${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`}
+                    />
+                    <DataKort label="Kommune" value={dawaAdresse.kommunenavn} />
+                    <DataKort label="Region" value={dawaAdresse.regionsnavn || '–'} />
+                    <DataKort label="Zone" value={dawaAdresse.zone ?? '–'} />
+                  </div>
+                </div>
+
+                {/* Datafordeler identifikatorer */}
+                {bbrData && (
+                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                    <p className="text-slate-400 text-xs font-medium uppercase tracking-wide mb-3">
+                      Register-ID&apos;er
+                    </p>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <DataKort label="DAWA UUID" value={dawaAdresse.id.slice(0, 8) + '…'} />
+                      <DataKort
+                        label="BFEnummer"
+                        value={
+                          bbrData.ejendomsrelationer?.[0]?.bfeNummer
+                            ? String(bbrData.ejendomsrelationer[0].bfeNummer)
+                            : bbrLoader
+                              ? 'Henter…'
+                              : '–'
+                        }
+                      />
+                      <DataKort
+                        label="Matrikelnr."
+                        value={dawaJordstykke?.matrikelnr ?? dawaAdresse.matrikelnr ?? '–'}
+                      />
+                      <DataKort
+                        label="Ejerlav"
+                        value={dawaJordstykke?.ejerlav.navn ?? dawaAdresse.ejerlavsnavn ?? '–'}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Virksomheder på adressen — CVR OpenData */}
+                {cvrTokenMangler ? (
+                  <div className="bg-amber-500/8 border border-amber-500/20 rounded-xl p-4">
+                    <p className="text-amber-300 text-xs font-medium uppercase tracking-wide mb-2">
+                      Virksomheder på adressen
+                    </p>
+                    <p className="text-slate-400 text-sm mb-3">
+                      CVR-opslag kræver gratis adgang til Erhvervsstyrelsens CVR OpenData.
+                    </p>
+                    <ol className="text-slate-400 text-xs space-y-1 list-decimal list-inside leading-relaxed">
+                      <li>
+                        Gå til{' '}
+                        <span className="text-blue-400 font-medium">
+                          datacvr.virk.dk/data/login
+                        </span>{' '}
+                        → opret gratis bruger
+                      </li>
+                      <li>
+                        Tilføj til <code className="bg-slate-800 px-1 rounded">.env.local</code>:
+                      </li>
+                    </ol>
+                    <code className="block bg-slate-900 rounded-lg px-3 py-2 mt-2 text-xs text-emerald-400 font-mono">
+                      CVR_ES_USER=din@email.dk{'\n'}CVR_ES_PASS=dit_password
+                    </code>
+                    <p className="text-slate-500 text-xs mt-2">Genstart dev-serveren bagefter.</p>
+                  </div>
+                ) : cvrVirksomheder === null ? (
+                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                    <p className="text-slate-400 text-xs font-medium uppercase tracking-wide mb-2">
+                      Virksomheder på adressen
+                    </p>
+                    <div className="flex items-center gap-2 text-slate-500 text-sm">
+                      <div className="w-3.5 h-3.5 border border-slate-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                      Henter CVR-data…
+                    </div>
+                  </div>
+                ) : cvrVirksomheder.length > 0 ? (
+                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
+                    <div className="px-4 py-3 border-b border-slate-700/40 flex items-center justify-between">
+                      <p className="text-slate-400 text-xs font-medium uppercase tracking-wide">
+                        Virksomheder på adressen
+                      </p>
+                      <span className="text-slate-500 text-xs">
+                        {cvrVirksomheder.filter((v) => v.aktiv).length} aktive
+                        {cvrVirksomheder.some((v) => !v.aktiv) &&
+                          ` · ${cvrVirksomheder.filter((v) => !v.aktiv).length} ophørte`}
+                      </span>
+                    </div>
+                    <div className="divide-y divide-slate-700/30">
+                      {cvrVirksomheder.map((v) => (
+                        <div
+                          key={v.cvr}
+                          className={`px-4 py-3 flex items-start justify-between gap-4 ${!v.aktiv ? 'opacity-50' : ''}`}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 mb-0.5">
+                              <Link
+                                href={`/dashboard/companies/${v.cvr}`}
+                                className="text-white text-sm font-medium hover:text-blue-400 transition-colors truncate"
+                              >
+                                {v.navn}
+                              </Link>
+                              <span
+                                className={`px-1.5 py-0.5 rounded text-[10px] font-semibold flex-shrink-0 ${v.aktiv ? 'bg-emerald-500/15 text-emerald-400' : 'bg-slate-700/60 text-slate-500'}`}
+                              >
+                                {v.aktiv ? 'AKTIV' : 'OPHØRT'}
+                              </span>
+                            </div>
+                            <p className="text-slate-500 text-xs">
+                              CVR {v.cvr}
+                              {v.branche ? ` · ${v.branche}` : ''}
+                            </p>
+                            {v.telefon && (
+                              <p className="text-slate-600 text-xs mt-0.5">{v.telefon}</p>
+                            )}
+                          </div>
+                          <div className="text-right flex-shrink-0">
+                            {v.type && (
+                              <span className="px-2 py-0.5 bg-slate-700/60 rounded text-xs text-slate-300">
+                                {v.type}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                    <p className="text-slate-400 text-xs font-medium uppercase tracking-wide mb-1">
+                      Virksomheder på adressen
+                    </p>
+                    <p className="text-slate-500 text-sm">
+                      Ingen CVR-registrerede virksomheder fundet på denne adresse.
                     </p>
                   </div>
-                  <div>
-                    <p className="text-slate-500 text-xs">Ejerlavskode</p>
-                    <p className="text-white">{dawaJordstykke.ejerlav.kode}</p>
+                )}
+
+                {/* BBR-fejlbesked */}
+                {bbrData?.bbrFejl && (
+                  <div className="bg-orange-500/8 border border-orange-500/20 rounded-xl p-4 flex items-start gap-3">
+                    <div className="w-5 h-5 rounded-full bg-orange-500/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <span className="text-orange-400 text-xs">!</span>
+                    </div>
+                    <div>
+                      <p className="text-orange-300 text-sm font-medium">BBR-data utilgængeligt</p>
+                      <p className="text-slate-400 text-xs mt-1">{bbrData.bbrFejl}</p>
+                      <a
+                        href="https://datafordeler.dk"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-400 text-xs hover:text-blue-300 mt-1 inline-block"
+                      >
+                        Åbn datafordeler.dk →
+                      </a>
+                    </div>
                   </div>
+                )}
+              </div>
+            )}
+
+            {/* ══ BBR ══ */}
+            {aktivTab === 'bbr' && (
+              <div className="space-y-4">
+                {bbrLoader && (
+                  <div className="flex items-center gap-3 py-8 justify-center">
+                    <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                    <span className="text-slate-400 text-sm">Henter BBR-data…</span>
+                  </div>
+                )}
+
+                {!bbrLoader &&
+                  bbrData?.bbr &&
+                  bbrData.bbr.map((byg: LiveBBRBygning, i: number) => (
+                    <div
+                      key={byg.id || i}
+                      className="bg-slate-800/40 border border-slate-700/40 rounded-2xl p-5"
+                    >
+                      <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-white font-semibold text-sm">
+                          Bygning {byg.bygningsnr ?? i + 1}
+                        </h3>
+                        {byg.energimaerke && (
+                          <span
+                            className={`px-2.5 py-0.5 rounded text-xs font-bold text-white ${
+                              energiColor[byg.energimaerke] ?? 'bg-slate-600'
+                            }`}
+                          >
+                            {byg.energimaerke}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-3 text-sm">
+                        <div>
+                          <p className="text-slate-500 text-xs">Opførelses­år</p>
+                          <p className="text-white">{byg.opfoerelsesaar ?? '–'}</p>
+                        </div>
+                        <div>
+                          <p className="text-slate-500 text-xs">Ombygnings­år</p>
+                          <p className="text-white">{byg.ombygningsaar ?? '–'}</p>
+                        </div>
+                        <div>
+                          <p className="text-slate-500 text-xs">Etager</p>
+                          <p className="text-white">{byg.antalEtager ?? '–'}</p>
+                        </div>
+                        <div>
+                          <p className="text-slate-500 text-xs">Bebygget areal</p>
+                          <p className="text-white">
+                            {byg.bebyggetAreal != null
+                              ? `${byg.bebyggetAreal.toLocaleString('da-DK')} m²`
+                              : '–'}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-slate-500 text-xs">Samlet bygningsareal</p>
+                          <p className="text-white">
+                            {byg.samletBygningsareal != null
+                              ? `${byg.samletBygningsareal.toLocaleString('da-DK')} m²`
+                              : '–'}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-slate-500 text-xs">Kælder</p>
+                          <p className="text-white">
+                            {byg.kaelder != null ? `${byg.kaelder} m²` : '–'}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-slate-500 text-xs">Tagetage</p>
+                          <p className="text-white">
+                            {byg.tagetage != null ? `${byg.tagetage} m²` : '–'}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-slate-500 text-xs">Boligareal</p>
+                          <p className="text-white">
+                            {byg.samletBoligareal != null
+                              ? `${byg.samletBoligareal.toLocaleString('da-DK')} m²`
+                              : '–'}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-slate-500 text-xs">Erhvervsareal</p>
+                          <p className="text-white">
+                            {byg.samletErhvervsareal != null
+                              ? `${byg.samletErhvervsareal.toLocaleString('da-DK')} m²`
+                              : '–'}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-slate-500 text-xs">Boligenheder</p>
+                          <p className="text-white">{byg.antalBoligenheder ?? '–'}</p>
+                        </div>
+                        <div>
+                          <p className="text-slate-500 text-xs">Erhvervsenheder</p>
+                          <p className="text-white">{byg.antalErhvervsenheder ?? '–'}</p>
+                        </div>
+                        <div>
+                          <p className="text-slate-500 text-xs">Anvendelse</p>
+                          <p className="text-white">{byg.anvendelse}</p>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 pt-4 border-t border-slate-700/40 grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-3 text-sm">
+                        <div>
+                          <p className="text-slate-500 text-xs">Tagmateriale</p>
+                          <p className="text-white">{byg.tagmateriale}</p>
+                        </div>
+                        <div>
+                          <p className="text-slate-500 text-xs">Ydervæg</p>
+                          <p className="text-white">{byg.ydervaeg}</p>
+                        </div>
+                        <div>
+                          <p className="text-slate-500 text-xs">Varme­installation</p>
+                          <p className="text-white">{byg.varmeinstallation}</p>
+                        </div>
+                        <div>
+                          <p className="text-slate-500 text-xs">Opvarmnings­form</p>
+                          <p className="text-white">{byg.opvarmningsform}</p>
+                        </div>
+                        <div>
+                          <p className="text-slate-500 text-xs">Vandforsyning</p>
+                          <p className="text-white">{byg.vandforsyning}</p>
+                        </div>
+                        <div>
+                          <p className="text-slate-500 text-xs">Afløbsforhold</p>
+                          <p className="text-white">{byg.afloeb}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+
+                {/* BBR enheder */}
+                {!bbrLoader && bbrData?.enheder && bbrData.enheder.length > 0 && (
+                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-2xl overflow-hidden">
+                    <div className="px-4 py-3 border-b border-slate-700/40">
+                      <h3 className="text-white font-semibold text-sm">
+                        Enheder ({bbrData.enheder.length})
+                      </h3>
+                    </div>
+                    <div className="divide-y divide-slate-700/30">
+                      {bbrData.enheder.map((enh: LiveBBREnhed, i: number) => (
+                        <div key={enh.id || i} className="px-4 py-3 grid grid-cols-4 gap-3 text-sm">
+                          <div>
+                            <p className="text-slate-500 text-xs">Etage / Dør</p>
+                            <p className="text-white">
+                              {enh.etage ? `${enh.etage}.` : '–'}
+                              {enh.doer ? ` ${enh.doer}` : ''}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-slate-500 text-xs">Areal</p>
+                            <p className="text-white">
+                              {enh.areal != null ? `${enh.areal} m²` : '–'}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-slate-500 text-xs">Anvendelse</p>
+                            <p className="text-white">{enh.anvendelse}</p>
+                          </div>
+                          <div>
+                            <p className="text-slate-500 text-xs">Energimærke</p>
+                            <p className="text-white">{enh.energimaerke ?? '–'}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Ingen BBR */}
+                {!bbrLoader && !bbrData?.bbr && (
+                  <div className="bg-orange-500/8 border border-orange-500/20 rounded-xl p-5">
+                    <p className="text-orange-300 text-sm font-medium mb-1">
+                      BBR-data ikke tilgængeligt
+                    </p>
+                    <p className="text-slate-400 text-xs leading-relaxed">
+                      {bbrData?.bbrFejl ??
+                        'BBR-data kræver et aktivt abonnement på BBRPublic-tjenesten på datafordeler.dk.'}
+                    </p>
+                    <a
+                      href="https://datafordeler.dk"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-400 text-xs hover:text-blue-300 mt-2 inline-block"
+                    >
+                      Åbn datafordeler.dk og aktiver BBRPublic →
+                    </a>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ══ EJERFORHOLD ══ */}
+            {aktivTab === 'ejerforhold' && (
+              <div className="space-y-4">
+                {/* ── Ejere fra Ejerfortegnelsen ── */}
+                <div>
+                  <p className="text-slate-400 text-xs font-medium uppercase tracking-wider mb-3">
+                    Ejerfortegnelsen · Datafordeler
+                  </p>
+                  {ejereLoader ? (
+                    <div className="flex items-center gap-2 text-slate-500 text-sm">
+                      <div className="w-4 h-4 border-2 border-slate-600 border-t-blue-500 rounded-full animate-spin" />
+                      Henter ejerdata…
+                    </div>
+                  ) : !bbrData?.ejendomsrelationer?.[0]?.bfeNummer ? (
+                    <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-4 space-y-3">
+                      <div className="flex items-center gap-2">
+                        <div className="w-5 h-5 rounded-full bg-amber-500/20 flex items-center justify-center flex-shrink-0">
+                          <span className="text-amber-400 text-xs font-bold">!</span>
+                        </div>
+                        <p className="text-amber-300 text-sm font-medium">
+                          BFEnummer ikke tilgængeligt
+                        </p>
+                      </div>
+                      <p className="text-slate-400 text-xs leading-relaxed">
+                        {!bbrData
+                          ? 'BBR-data mangler — DATAFORDELER_API_KEY er sandsynligvis ikke sat i .env.local'
+                          : bbrData.ejendomsrelationer === null
+                            ? 'BBR Ejendomsrelation-forespørgslen fejlede — tjenesten er muligvis ikke aktiveret'
+                            : 'Ingen Ejendomsrelation fundet for denne adresse'}
+                      </p>
+                      <div className="space-y-1.5 text-xs text-slate-400">
+                        <p className="font-medium text-slate-300">
+                          Tjek disse 3 punkter på datafordeler.dk:
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] flex-shrink-0 ${bbrData?.bbr ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-700 text-slate-500'}`}
+                          >
+                            {bbrData?.bbr ? '✓' : '○'}
+                          </span>
+                          <span className={bbrData?.bbr ? 'text-emerald-400' : ''}>
+                            BBRPublic — aktiveret i Datafordeler bruger
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="w-4 h-4 rounded-full bg-slate-700 text-slate-500 flex items-center justify-center text-[10px] flex-shrink-0">
+                            ○
+                          </span>
+                          <span>EjendomBeliggenhedsadresse — aktiveret under Ejerfortegnelsen</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="w-4 h-4 rounded-full bg-slate-700 text-slate-500 flex items-center justify-center text-[10px] flex-shrink-0">
+                            ○
+                          </span>
+                          <span>Ejendomsvurdering — aktiveret under HentEjendomsvurdering</span>
+                        </div>
+                      </div>
+                      <a
+                        href="https://datafordeler.dk/dataoversigt/ejendomme/"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-blue-400 text-xs hover:text-blue-300 transition-colors"
+                      >
+                        Gå til datafordeler.dk → Ejendomme →
+                      </a>
+                    </div>
+                  ) : manglerEjereAdgang ? (
+                    <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-4 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <div className="w-5 h-5 rounded-full bg-amber-500/20 flex items-center justify-center flex-shrink-0">
+                          <span className="text-amber-400 text-xs font-bold">!</span>
+                        </div>
+                        <p className="text-amber-300 text-sm font-medium">
+                          Dataadgang mangler — Ejerfortegnelsen (EJF)
+                        </p>
+                      </div>
+                      <p className="text-slate-400 text-xs leading-relaxed">
+                        OAuth-token er gyldigt, men adgang til EJF kræver en godkendt
+                        Dataadgang-ansøgning hos Geodatastyrelsen.
+                      </p>
+                      <a
+                        href="https://datafordeler.dk/vejledning/brugeradgang/anmodning-om-adgang/ejerfortegnelsen-ejf/"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-blue-400 text-xs hover:text-blue-300 transition-colors"
+                      >
+                        Ansøg om adgang til EJF på datafordeler.dk →
+                      </a>
+                    </div>
+                  ) : ejere && ejere.length > 0 ? (
+                    <div className="space-y-2">
+                      {ejere.map((ejer, i) => {
+                        /** Beregn ejerandel i procent fra brøk */
+                        const ejerandelPct =
+                          ejer.ejerandel_taeller != null && ejer.ejerandel_naevner
+                            ? Math.round((ejer.ejerandel_taeller / ejer.ejerandel_naevner) * 100)
+                            : null;
+                        return (
+                          <div
+                            key={i}
+                            className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span
+                                    className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                                      ejer.ejertype === 'selskab'
+                                        ? 'bg-blue-500/15 text-blue-400 border border-blue-500/25'
+                                        : 'bg-purple-500/15 text-purple-400 border border-purple-500/25'
+                                    }`}
+                                  >
+                                    {ejer.ejertype === 'selskab' ? 'Selskab' : 'Person'}
+                                  </span>
+                                </div>
+                                {ejer.cvr ? (
+                                  <Link
+                                    href={`/dashboard/companies/${ejer.cvr}`}
+                                    className="text-blue-400 hover:text-blue-300 text-xs transition-colors"
+                                  >
+                                    CVR {ejer.cvr} →
+                                  </Link>
+                                ) : (
+                                  <p className="text-slate-400 text-sm">Privat person</p>
+                                )}
+                                {ejer.virkningFra && (
+                                  <p className="text-slate-500 text-xs mt-1">
+                                    Ejer siden{' '}
+                                    {new Date(ejer.virkningFra).toLocaleDateString('da-DK')}
+                                  </p>
+                                )}
+                              </div>
+                              {ejerandelPct != null && (
+                                <span className="text-white text-sm font-semibold flex-shrink-0">
+                                  {ejerandelPct}%
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {bbrData?.ejendomsrelationer?.[0]?.bfeNummer && (
+                        <p className="text-slate-600 text-xs text-right">
+                          BFE {bbrData.ejendomsrelationer[0].bfeNummer}
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="bg-slate-800/30 border border-slate-700/40 rounded-xl p-4 text-center">
+                      <Users size={24} className="text-slate-600 mx-auto mb-2" />
+                      <p className="text-slate-400 text-xs">
+                        Ingen ejerdata fundet via Datafordeler
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* ── Tinglysning — coming soon ── */}
+                <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl p-4">
+                  <p className="text-slate-400 text-xs font-medium uppercase tracking-wider mb-1">
+                    Tinglysning
+                  </p>
+                  <p className="text-slate-500 text-xs">
+                    Historiske adkomster og skøder kræver adgang til Tinglysning.dk REST API
+                    (backlog).
+                  </p>
                 </div>
               </div>
             )}
 
-            {/* Kommende data-banner */}
-            <div className="bg-blue-600/8 border border-blue-500/20 rounded-2xl p-5">
-              <p className="text-blue-300 text-sm font-semibold mb-1">
-                Fuld ejendomsdata kommer i næste fase
-              </p>
-              <p className="text-slate-400 text-xs leading-relaxed">
-                BBR-data (bygningsareal, etager, energimærke), ejerforhold, tinglysning og
-                salgshistorik kobles på via Datafordeler og Tinglysning.dk.
-              </p>
-              <div className="flex flex-wrap gap-2 mt-3">
-                {['BBR', 'Ejerforhold', 'Tinglysning', 'Økonomi', 'Dokumenter'].map((t) => (
-                  <span
-                    key={t}
-                    className="text-xs text-slate-500 bg-slate-800 px-2.5 py-1 rounded-full border border-slate-700/40"
-                  >
-                    {t}
-                  </span>
-                ))}
+            {/* ══ TINGLYSNING ══ */}
+            {aktivTab === 'tinglysning' && (
+              <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl p-6 text-center">
+                <Landmark size={32} className="text-slate-600 mx-auto mb-3" />
+                <p className="text-slate-300 text-sm font-medium mb-1">Tinglysning</p>
+                <p className="text-slate-500 text-xs leading-relaxed max-w-sm mx-auto">
+                  Hæftelser, pantegæld og servitutter hentes via Tinglysning.dk. Kræver abonnement
+                  på tingbogsattest-tjenesten.
+                </p>
               </div>
-            </div>
+            )}
+
+            {/* ══ ØKONOMI ══ */}
+            {aktivTab === 'oekonomi' && (
+              <div className="space-y-4">
+                {/* ── Ejendomsvurdering ── */}
+                <div>
+                  <p className="text-slate-400 text-xs font-medium uppercase tracking-wider mb-3">
+                    Ejendomsvurdering · Datafordeler
+                  </p>
+                  {vurderingLoader ? (
+                    <div className="flex items-center gap-2 text-slate-500 text-sm">
+                      <div className="w-4 h-4 border-2 border-slate-600 border-t-blue-500 rounded-full animate-spin" />
+                      Henter vurderingsdata…
+                    </div>
+                  ) : vurdering ? (
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                        <p className="text-slate-400 text-xs mb-1">Ejendomsværdi</p>
+                        <p className="text-white text-lg font-bold">
+                          {vurdering.ejendomsvaerdi != null
+                            ? `${(vurdering.ejendomsvaerdi / 1_000_000).toFixed(1)} mio. kr.`
+                            : '–'}
+                        </p>
+                        {vurdering.aar && (
+                          <p className="text-slate-500 text-xs mt-1">Vurdering {vurdering.aar}</p>
+                        )}
+                      </div>
+                      <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                        <p className="text-slate-400 text-xs mb-1">Grundværdi</p>
+                        <p className="text-white text-lg font-bold">
+                          {vurdering.grundvaerdi != null
+                            ? `${(vurdering.grundvaerdi / 1_000_000).toFixed(1)} mio. kr.`
+                            : '–'}
+                        </p>
+                        {vurdering.bebyggelsesprocent != null && (
+                          <p className="text-slate-500 text-xs mt-1">
+                            Bebygget {vurdering.bebyggelsesprocent}%
+                          </p>
+                        )}
+                      </div>
+                      {vurdering.vurderetAreal != null && (
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                          <p className="text-slate-400 text-xs mb-1">Vurderet areal</p>
+                          <p className="text-white text-base font-semibold">
+                            {vurdering.vurderetAreal.toLocaleString('da-DK')} m²
+                          </p>
+                        </div>
+                      )}
+                      {vurdering.benyttelseskode && (
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                          <p className="text-slate-400 text-xs mb-1">Benyttelseskode</p>
+                          <p className="text-white text-base font-semibold">
+                            {vurdering.benyttelseskode}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  ) : !bbrData?.ejendomsrelationer?.[0]?.bfeNummer ? (
+                    <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-4 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <div className="w-5 h-5 rounded-full bg-amber-500/20 flex items-center justify-center flex-shrink-0">
+                          <span className="text-amber-400 text-xs font-bold">!</span>
+                        </div>
+                        <p className="text-amber-300 text-sm font-medium">
+                          BFEnummer ikke tilgængeligt
+                        </p>
+                      </div>
+                      <p className="text-slate-400 text-xs leading-relaxed">
+                        Ejendomsvurdering kræver BFEnummer fra BBR Ejendomsrelation.
+                        <br />
+                        Aktivér <strong className="text-slate-300">
+                          Ejendomsvurdering
+                        </strong> og <strong className="text-slate-300">BBRPublic</strong> på
+                        datafordeler.dk.
+                      </p>
+                      <a
+                        href="https://datafordeler.dk/dataoversigt/ejendomme/"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-blue-400 text-xs hover:text-blue-300 transition-colors"
+                      >
+                        Gå til datafordeler.dk → Ejendomme →
+                      </a>
+                    </div>
+                  ) : (
+                    <div className="bg-slate-800/30 border border-slate-700/40 rounded-xl p-4 text-center">
+                      <BarChart3 size={24} className="text-slate-600 mx-auto mb-2" />
+                      <p className="text-slate-400 text-xs">
+                        Ingen vurderingsdata fundet via Datafordeler
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* ── Salgshistorik — coming soon ── */}
+                <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl p-4">
+                  <p className="text-slate-400 text-xs font-medium uppercase tracking-wider mb-1">
+                    Salgshistorik
+                  </p>
+                  <p className="text-slate-500 text-xs">
+                    Historiske handelspriser hentes via Tinglysning.dk (backlog).
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* ══ DOKUMENTER ══ */}
+            {aktivTab === 'dokumenter' && (
+              <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl p-6 text-center">
+                <FileText size={32} className="text-slate-600 mx-auto mb-3" />
+                <p className="text-slate-300 text-sm font-medium mb-1">Dokumenter</p>
+                <p className="text-slate-500 text-xs leading-relaxed max-w-sm mx-auto">
+                  Tingbogsattester og BBR-meddelelser genereres automatisk når tinglysning- og
+                  BBR-abonnement er aktiveret.
+                </p>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Adskillelseslinie — træk for at ændre kortpanel-bredde */}
+        {/* Adskillelseslinie */}
         {visKort && (
           <div
             className={`w-1.5 flex-shrink-0 cursor-col-resize flex items-center justify-center group transition-colors ${trækker ? 'bg-blue-500/30' : 'bg-slate-800 hover:bg-blue-500/20'}`}
@@ -519,9 +1350,9 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
           </div>
         )}
 
-        {/* Kortpanel */}
+        {/* Kortpanel — strækker fuld højde */}
         {visKort && (
-          <div className="flex flex-shrink-0" style={{ width: kortBredde }}>
+          <div className="flex-shrink-0" style={{ width: kortBredde }}>
             <Suspense
               fallback={
                 <div className="w-full h-full flex items-center justify-center bg-slate-900">
@@ -534,7 +1365,8 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                 lng={dawaAdresse.x}
                 adresse={adresseStreng}
                 visMatrikel={true}
-                onAdresseValgt={(id) => router.push(`/dashboard/ejendomme/${id}`)}
+                onAdresseValgt={(newId) => router.push(`/dashboard/ejendomme/${newId}`)}
+                bygningPunkter={bbrData?.bygningPunkter ?? undefined}
               />
             </Suspense>
           </div>
@@ -571,7 +1403,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
     }));
 
   return (
-    <div className={`flex flex-col h-full overflow-hidden${trækker ? ' select-none' : ''}`}>
+    <div className={`flex-1 flex flex-col overflow-hidden${trækker ? ' select-none' : ''}`}>
       {/* ─── Header ─── */}
       <div className="px-6 pt-5 pb-0 border-b border-slate-700/50 bg-slate-900/30">
         {/* Tilbage + handlinger */}
@@ -584,25 +1416,10 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
             Ejendomme
           </button>
 
-          <div className="flex items-center gap-2">
-            {/* AI Analysér — BizzAssist eksklusiv feature */}
-            <button className="flex items-center gap-2 px-3 py-1.5 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 rounded-lg text-blue-300 text-sm font-medium transition-all">
-              <Sparkles size={14} />
-              AI Analysér
-            </button>
-            <button className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700/60 rounded-lg text-slate-300 text-sm transition-all">
-              <Download size={14} />
-              Rapport
-            </button>
-            <button className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700/60 rounded-lg text-slate-300 text-sm transition-all">
-              <Bell size={14} />
-              Følg
-            </button>
-            <button className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700/60 rounded-lg text-slate-300 text-sm transition-all">
-              <List size={14} />
-              Liste
-            </button>
-          </div>
+          <button className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700/60 rounded-lg text-slate-300 text-sm transition-all">
+            <Bell size={14} />
+            Følg
+          </button>
         </div>
 
         {/* Adresse + meta */}
@@ -1882,6 +2699,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                 adresse={`${ejendom.adresse}, ${ejendom.postnummer} ${ejendom.by}`}
                 visMatrikel={true}
                 onAdresseValgt={(id) => router.push(`/dashboard/ejendomme/${id}`)}
+                bygningPunkter={bbrData?.bygningPunkter ?? undefined}
               />
             </Suspense>
           </div>

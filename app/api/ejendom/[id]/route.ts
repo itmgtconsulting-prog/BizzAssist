@@ -494,6 +494,7 @@ export async function GET(
         bbr: null,
         enheder: null,
         bygningPunkter: null,
+        ejendomsrelationer: null,
         bbrFejl: 'Ugyldigt adresse-id',
       },
       { status: 400 }

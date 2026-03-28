@@ -17,64 +17,55 @@ import {
   MapPin,
   Navigation,
   Building2,
-  Home,
-  Warehouse,
   ChevronRight,
   X,
   Loader2,
   Clock,
   ArrowRight,
 } from 'lucide-react';
-import { mockEjendomme, formatDKK, type Ejendom } from '@/app/lib/mock/ejendomme';
-import { dawaAutocomplete, erDawaId, type DawaAutocompleteResult } from '@/app/lib/dawa';
+import { erDawaId, type DawaAutocompleteResult } from '@/app/lib/dawa';
+import { hentRecentEjendomme, type RecentEjendom } from '@/app/lib/recentEjendomme';
 
 const RECENT_KEY = 'ba-ejendomme-recent';
 const MAX_RECENT = 5;
 
-/** Returnerer farve-klasse baseret på ejendomstype */
-const typeColor = (type: string): string => {
-  if (type.includes('Parcelhus')) return 'text-green-400 bg-green-400/10';
-  if (type.includes('Beboelses')) return 'text-blue-400 bg-blue-400/10';
-  if (type.includes('Industri')) return 'text-orange-400 bg-orange-400/10';
-  return 'text-purple-400 bg-purple-400/10';
-};
+/**
+ * Kort for én senest set ejendom.
+ * Viser adresse, kommune, tidspunkt for besøg og evt. BBR-anvendelse.
+ */
+function RecentEjendomCard({ ejendom, now }: { ejendom: RecentEjendom; now: number }) {
+  const minSiden = Math.round((now - ejendom.senestiSet) / 60000);
+  const tidTekst =
+    minSiden < 1
+      ? 'Lige nu'
+      : minSiden < 60
+        ? `${minSiden} min. siden`
+        : minSiden < 1440
+          ? `${Math.round(minSiden / 60)} t. siden`
+          : `${Math.round(minSiden / 1440)} d. siden`;
 
-/** Type-ikon */
-function TypeIkon({ type }: { type: string }) {
-  if (type.includes('Parcelhus') || type.includes('Beboelses')) return <Home size={18} />;
-  if (type.includes('Industri') || type.includes('lager')) return <Warehouse size={18} />;
-  return <Building2 size={18} />;
-}
-
-/** Mock ejendomskort til "Populære ejendomme" */
-function EjendomCard({ ejendom }: { ejendom: Ejendom }) {
-  const color = typeColor(ejendom.ejendomstype);
   return (
     <Link
       href={`/dashboard/ejendomme/${ejendom.id}`}
-      className="group bg-slate-800/40 border border-slate-700/40 hover:border-blue-500/40 rounded-2xl p-5 flex flex-col gap-3 transition-all hover:bg-slate-800/60"
+      className="group bg-slate-800/40 border border-slate-700/40 hover:border-emerald-500/40 rounded-2xl p-5 flex flex-col gap-3 transition-all hover:bg-slate-800/60"
     >
       <div className="flex items-start justify-between gap-3">
-        <div className={`p-2 rounded-xl ${color}`}>
-          <TypeIkon type={ejendom.ejendomstype} />
+        <div className="p-2 rounded-xl text-emerald-400 bg-emerald-400/10">
+          <Building2 size={18} />
         </div>
-        <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${color}`}>
-          {ejendom.ejendomstype.split('(')[0].trim()}
-        </span>
+        <div className="flex items-center gap-1 text-slate-500 text-xs">
+          <Clock size={11} />
+          {tidTekst}
+        </div>
       </div>
       <div>
         <p className="text-white font-semibold text-sm leading-snug">{ejendom.adresse}</p>
         <p className="text-slate-400 text-xs mt-0.5">
-          {ejendom.postnummer} {ejendom.by} · {ejendom.kommune}
+          {ejendom.postnr} {ejendom.by} · {ejendom.kommune}
         </p>
+        {ejendom.anvendelse && <p className="text-slate-500 text-xs mt-1">{ejendom.anvendelse}</p>}
       </div>
-      <div className="flex items-center justify-between pt-1 border-t border-slate-700/40">
-        <div>
-          <p className="text-white text-sm font-semibold">
-            {formatDKK(ejendom.senesteHandel.pris)}
-          </p>
-          <p className="text-slate-500 text-xs">{ejendom.grundareal} m² grund</p>
-        </div>
+      <div className="flex items-center justify-end pt-1 border-t border-slate-700/40">
         <ChevronRight
           size={16}
           className="text-slate-600 group-hover:text-blue-400 transition-colors"
@@ -280,6 +271,16 @@ export default function EjendommeListeside() {
   const [søgningFærdig, setSøgningFærdig] = useState(false);
   const [åben, setÅben] = useState(false);
   const [markeret, setMarkeret] = useState(-1);
+  /** Seneste sete ejendomme — indlæst fra localStorage ved mount */
+  const [senesteEjendomme, setSenesteEjendomme] = useState<RecentEjendom[]>([]);
+  /** Timestamp for "tid siden" — sat ved mount for at undgå impure Date.now() i render */
+  const [renderNow, setRenderNow] = useState(0);
+
+  useEffect(() => {
+    setSenesteEjendomme(hentRecentEjendomme());
+    setRenderNow(Date.now());
+  }, []);
+
   /** Lazy initialisering fra localStorage — filtrerer evt. korrupt/forældet data fra */
   const [seneste, setSeneste] = useState<DawaAutocompleteResult[]>(() => {
     if (typeof window === 'undefined') return [];
@@ -337,7 +338,8 @@ export default function EjendommeListeside() {
         return;
       }
       setSøgerDAWA(true);
-      const data = await dawaAutocomplete(søgning);
+      const res = await fetch(`/api/adresse/autocomplete?q=${encodeURIComponent(søgning)}`);
+      const data: DawaAutocompleteResult[] = res.ok ? await res.json() : [];
       setResultater(data);
       setSøgerDAWA(false);
       setSøgningFærdig(true);
@@ -372,10 +374,10 @@ export default function EjendommeListeside() {
       (søgning.length < 2 && seneste.length > 0));
 
   return (
-    <div className="flex flex-col h-full bg-[#0a1628]">
+    <div className="flex-1 flex flex-col bg-[#0a1628]">
       {/* ─── Header ─── */}
       <div className="px-8 pt-8 pb-6 border-b border-slate-700/40">
-        <h1 className="text-2xl font-bold text-white mb-1">Ejendomme</h1>
+        <h1 className="text-2xl font-bold text-emerald-400 mb-1">Ejendomme</h1>
         <p className="text-slate-400 text-sm">Søg på alle ~2,8 mio. danske adresser</p>
 
         {/* Søgeboks med DAWA autocomplete */}
@@ -453,57 +455,42 @@ export default function EjendommeListeside() {
 
       {/* ─── Indhold ─── */}
       <div className="flex-1 overflow-y-auto px-8 py-6">
-        {/* Eksempel-søgninger */}
-        <div className="flex flex-wrap gap-2 mb-8">
-          {[
-            'Bredgade 1, København',
-            'Rådhuspladsen, København',
-            'Vesterbrogade 100',
-            'Nørreport Station',
-            'Kongens Nytorv',
-          ].map((eksempel) => (
-            <button
-              key={eksempel}
-              type="button"
-              onClick={() => {
-                setSøgning(eksempel);
-                setÅben(true);
-                inputRef.current?.focus();
-              }}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800/40 hover:bg-slate-700/60 border border-slate-700/40 hover:border-slate-600 rounded-full text-xs text-slate-400 hover:text-slate-200 transition-all"
-            >
-              <Search size={11} />
-              {eksempel}
-            </button>
-          ))}
-        </div>
-
-        {/* Populære ejendomme (mock) */}
-        <div>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-white font-semibold text-base">Populære ejendomme</h2>
-            <span className="text-slate-500 text-xs bg-slate-800/60 px-2.5 py-1 rounded-full">
-              Demo-data
-            </span>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {mockEjendomme.map((e) => (
-              <EjendomCard key={e.id} ejendom={e} />
-            ))}
-          </div>
-        </div>
-
-        {/* Info-banner */}
-        <div className="mt-8 flex items-start gap-3 bg-blue-600/8 border border-blue-500/20 rounded-2xl px-5 py-4">
-          <Building2 size={18} className="text-blue-400 flex-shrink-0 mt-0.5" />
+        {/* Seneste sete ejendomme */}
+        {senesteEjendomme.length > 0 ? (
           <div>
-            <p className="text-blue-300 text-sm font-medium">~2,8 mio. adresser tilgængelige</p>
-            <p className="text-slate-400 text-xs mt-0.5 leading-relaxed">
-              Søg på enhver dansk adresse for at se placering og matrikelgrænser på kortet. Fuld
-              BBR- og ejerdata kobles på via Datafordeler i næste fase.
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Clock size={15} className="text-slate-400" />
+                <h2 className="text-white font-semibold text-base">Seneste sete ejendomme</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  window.localStorage.removeItem('ba-seneste-ejendomme');
+                  setSenesteEjendomme([]);
+                }}
+                className="text-slate-600 hover:text-slate-400 text-xs transition-colors"
+              >
+                Ryd historik
+              </button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {senesteEjendomme.map((e) => (
+                <RecentEjendomCard key={e.id} ejendom={e} now={renderNow} />
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center py-16 text-center gap-3">
+            <div className="p-4 bg-slate-800/40 rounded-2xl">
+              <Building2 size={28} className="text-slate-600" />
+            </div>
+            <p className="text-slate-400 text-sm font-medium">Ingen ejendomme set endnu</p>
+            <p className="text-slate-600 text-xs max-w-xs leading-relaxed">
+              Søg på en adresse ovenfor — ejendomme du besøger vises her
             </p>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

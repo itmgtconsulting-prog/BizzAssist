@@ -23,13 +23,14 @@ import {
   vandforsyningTekst,
   afloebsforholdTekst,
   bygAnvendelseTekst,
+  bygStatusTekst,
   enhedAnvendelseTekst,
 } from '@/app/lib/bbrKoder';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
 /** Raw BBR bygning from Datafordeler GraphQL v2 */
-interface RawBBRBygning {
+export interface RawBBRBygning {
   id_lokalId?: string;
   byg026Opfoerelsesaar?: number;
   byg027OmTilbygningsaar?: number;
@@ -95,22 +96,31 @@ export interface LiveBBRBygning {
   vandforsyning: string;
   afloeb: string;
   anvendelse: string;
+  anvendelseskode: number | null;
   energimaerke: string | null;
   fredning: string | null;
   status: string | null;
   bygningsnr: number | null;
+  /** Seneste revisionsdato fra BBR (byg094Revisionsdato) — ISO-dato-streng */
+  revisionsdato: string | null;
 }
 
 /** Normalised BBR enhed returned to client */
 export interface LiveBBREnhed {
   id: string;
+  bygningId: string | null;
+  /** Etagebetegnelse fra DAWA (f.eks. "st", "1", "2") */
   etage: string | null;
+  /** Dørbetegnelse fra DAWA (f.eks. "tv", "th", "1") */
   doer: string | null;
+  /** Fuld adressebetegnelse fra DAWA */
+  adressebetegnelse: string | null;
   areal: number | null;
   arealBolig: number | null;
   arealErhverv: number | null;
   vaerelser: number | null;
   anvendelse: string;
+  status: string | null;
   energimaerke: string | null;
   varmeinstallation: string;
 }
@@ -128,11 +138,15 @@ export interface BBRBygningPunkt {
   status: string | null;
 }
 
-/** BBR Ejendomsrelation — kobler husnummer til BFEnummer */
+/** BBR Ejendomsrelation — kobler husnummer til BFEnummer og matrikelinfo */
 export interface BBREjendomsrelation {
   bfeNummer: number | null;
   ejendomsnummer: string | null;
   ejendomstype: string | null;
+  /** Ejerlavkode (cadastralDistrictIdentifier) — bruges til DkJord API */
+  ejerlavKode: number | null;
+  /** Matrikelnummer — bruges til DkJord API */
+  matrikelnr: string | null;
 }
 
 /** Shape of the full API response */
@@ -170,7 +184,7 @@ async function fetchBygningPunkter(bygningIds: string[]): Promise<BBRBygningPunk
     `&typeName=bbr_v001:bygning_current` +
     `&outputFormat=application%2Fjson` +
     `&srsName=EPSG:4326` +
-    `&count=50` +
+    `&count=1000` +
     `&CQL_FILTER=${cqlFilter}` +
     `&apikey=${DF_API_KEY}`;
 
@@ -215,7 +229,7 @@ async function fetchBygningPunkter(bygningIds: string[]): Promise<BBRBygningPunk
           samletAreal:
             p.byg038SamletBygningsareal != null ? Number(p.byg038SamletBygningsareal) : null,
           antalEtager: p.byg054AntalEtager != null ? Number(p.byg054AntalEtager) : null,
-          status: p.status != null ? String(p.status) : null,
+          status: p.status != null ? bygStatusTekst(parseInt(String(p.status), 10)) : null,
         };
       });
   } catch {
@@ -254,23 +268,36 @@ async function fetchDatafordelerGraphQL(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query, variables }),
       signal: AbortSignal.timeout(8000),
-      next: { revalidate: 3600 },
+      cache: 'no-store',
     });
 
-    if (!res.ok) return null;
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      const hdrs = Object.fromEntries(res.headers.entries());
+      console.error(
+        `[BBR GQL] HTTP ${res.status} url=${url.replace(/apiKey=[^&]+/, 'apiKey=REDACTED')}`
+      );
+      console.error(`[BBR GQL] Headers:`, JSON.stringify(hdrs));
+      console.error(`[BBR GQL] Body: "${txt.slice(0, 600)}"`);
+      return null;
+    }
 
     const json = (await res.json()) as {
       data?: Record<string, { nodes?: unknown[] }>;
       errors?: unknown[];
     };
 
-    if (json.errors?.length) return null;
+    if (json.errors?.length) {
+      console.error('[BBR GQL] GraphQL errors:', JSON.stringify(json.errors).slice(0, 600));
+      return null;
+    }
 
     // Return the nodes array from the first data key
     const firstKey = Object.keys(json.data ?? {})[0];
     const nodes = json.data?.[firstKey]?.nodes;
     return Array.isArray(nodes) ? nodes : null;
-  } catch {
+  } catch (err) {
+    console.error('[BBR GQL] Fetch error:', err);
     return null;
   }
 }
@@ -300,9 +327,12 @@ async function fetchBBRGraphQL(
  * @returns { bfeNummer, adgangsadresseId } — bfeNummer null ved fejl,
  *          adgangsadresseId er adgangsadresse-UUID (bruges til BBR_Bygning husnummer-felt)
  */
-async function fetchBFENummer(
-  dawaId: string
-): Promise<{ bfeNummer: number | null; adgangsadresseId: string }> {
+async function fetchBFENummer(dawaId: string): Promise<{
+  bfeNummer: number | null;
+  adgangsadresseId: string;
+  ejerlavKode: number | null;
+  matrikelnr: string | null;
+}> {
   try {
     let ejerlavKode: number | undefined;
     let matrikelnr: string | undefined;
@@ -326,7 +356,8 @@ async function fetchBFENummer(
         signal: AbortSignal.timeout(5000),
         next: { revalidate: 3600 },
       });
-      if (!adrRes.ok) return { bfeNummer: null, adgangsadresseId: dawaId };
+      if (!adrRes.ok)
+        return { bfeNummer: null, adgangsadresseId: dawaId, ejerlavKode: null, matrikelnr: null };
 
       const adr = (await adrRes.json()) as {
         adgangsadresse?: {
@@ -339,19 +370,33 @@ async function fetchBFENummer(
       matrikelnr = adr?.adgangsadresse?.jordstykke?.matrikelnr;
     }
 
-    if (!ejerlavKode || !matrikelnr) return { bfeNummer: null, adgangsadresseId };
+    if (!ejerlavKode || !matrikelnr) {
+      return { bfeNummer: null, adgangsadresseId, ejerlavKode: null, matrikelnr: null };
+    }
 
     // Trin 2: Hent BFEnummer fra jordstykker-endpoint
     const jsRes = await fetch(`${DAWA_BASE}/jordstykker/${ejerlavKode}/${matrikelnr}`, {
       signal: AbortSignal.timeout(5000),
       next: { revalidate: 3600 },
     });
-    if (!jsRes.ok) return { bfeNummer: null, adgangsadresseId };
+    if (!jsRes.ok) {
+      return {
+        bfeNummer: null,
+        adgangsadresseId,
+        ejerlavKode: ejerlavKode ?? null,
+        matrikelnr: matrikelnr ?? null,
+      };
+    }
 
     const js = (await jsRes.json()) as { bfenummer?: number };
-    return { bfeNummer: js?.bfenummer ?? null, adgangsadresseId };
+    return {
+      bfeNummer: js?.bfenummer ?? null,
+      adgangsadresseId,
+      ejerlavKode: ejerlavKode ?? null,
+      matrikelnr: matrikelnr ?? null,
+    };
   } catch {
-    return { bfeNummer: null, adgangsadresseId: dawaId };
+    return { bfeNummer: null, adgangsadresseId: dawaId, ejerlavKode: null, matrikelnr: null };
   }
 }
 
@@ -403,10 +448,12 @@ export function normaliseBygning(raw: RawBBRBygning): LiveBBRBygning {
     vandforsyning: vandforsyningTekst(parseCode(raw.byg030Vandforsyning)),
     afloeb: afloebsforholdTekst(parseCode(raw.byg031Afloebsforhold)),
     anvendelse: bygAnvendelseTekst(parseCode(raw.byg021BygningensAnvendelse)),
+    anvendelseskode: parseCode(raw.byg021BygningensAnvendelse) ?? null,
     energimaerke: null,
     fredning: raw.byg070Fredning ?? null,
-    status: raw.status ?? null,
-    bygningsnr: null,
+    status: raw.status != null ? bygStatusTekst(parseInt(raw.status, 10)) : null,
+    bygningsnr: null, // udfyldes fra WFS bygningPunkter efter fetch
+    revisionsdato: raw.byg094Revisionsdato ?? null,
   };
 }
 
@@ -427,13 +474,16 @@ export function normaliseEnhed(raw: RawBBREnhed): LiveBBREnhed {
 
   return {
     id: raw.id_lokalId ?? '',
+    bygningId: (raw.bygning && !UUID_RE.test(raw.bygning) ? null : raw.bygning) ?? null,
     etage: etageValue,
-    doer: null,
+    doer: null, // udfyldes fra DAWA efter fetch
+    adressebetegnelse: null, // udfyldes fra DAWA efter fetch
     areal: raw.enh026EnhedensSamledeAreal ?? null,
     arealBolig: raw.enh027ArealTilBeboelse ?? null,
     arealErhverv: raw.enh028ArealTilErhverv ?? null,
     vaerelser: raw.enh031AntalVaerelser ?? null,
     anvendelse: enhedAnvendelseTekst(parseCode(raw.enh020EnhedensAnvendelse)),
+    status: raw.status ?? null,
     energimaerke: null,
     varmeinstallation: varmeInstallationTekst(parseCode(raw.enh051Varmeinstallation)),
   };
@@ -443,7 +493,7 @@ export function normaliseEnhed(raw: RawBBREnhed): LiveBBREnhed {
 
 const BYGNING_QUERY = `
   query($vt: DafDateTime!, $id: String!) {
-    BBR_Bygning(first: 10, virkningstid: $vt, where: { husnummer: { eq: $id } }) {
+    BBR_Bygning(first: 100, virkningstid: $vt, where: { husnummer: { eq: $id } }) {
       nodes {
         id_lokalId
         byg026Opfoerelsesaar
@@ -475,7 +525,7 @@ const BYGNING_QUERY = `
 
 const ENHED_QUERY = `
   query($vt: DafDateTime!, $id: String!) {
-    BBR_Enhed(first: 50, virkningstid: $vt, where: { adresseIdentificerer: { eq: $id } }) {
+    BBR_Enhed(first: 100, virkningstid: $vt, where: { adresseIdentificerer: { eq: $id } }) {
       nodes {
         id_lokalId
         adresseIdentificerer
@@ -495,6 +545,48 @@ const ENHED_QUERY = `
     }
   }
 `;
+
+/**
+ * Batch-henter DAWA-adressedata for en liste af adresse-UUIDs.
+ * Returnerer et map fra UUID → { etage, doer, adressebetegnelse }.
+ * Bruger DAWA's bulk-endpoint (kommaseparerede IDs) for effektivitet.
+ *
+ * @param ids - Array af DAWA adresse-UUIDs (fra BBR_Enhed.adresseIdentificerer)
+ */
+async function fetchDAWAEnhedAdresser(
+  ids: string[]
+): Promise<Map<string, { etage: string | null; doer: string | null; adressebetegnelse: string }>> {
+  const result = new Map<
+    string,
+    { etage: string | null; doer: string | null; adressebetegnelse: string }
+  >();
+  const uuids = ids.filter((id) => UUID_RE.test(id));
+  if (uuids.length === 0) return result;
+
+  try {
+    const params = uuids.map((id) => `id=${encodeURIComponent(id)}`).join('&');
+    const res = await fetch(`${DAWA_BASE}/adresser?${params}&struktur=mini`, {
+      signal: AbortSignal.timeout(8000),
+      next: { revalidate: 3600 },
+    });
+    if (!res.ok) return result;
+    const data = (await res.json()) as Array<Record<string, unknown>>;
+    for (const item of data) {
+      const itemId = typeof item.id === 'string' ? item.id : null;
+      if (!itemId) continue;
+      const etage = typeof item.etage === 'string' && item.etage ? item.etage : null;
+      const doer = typeof item.dør === 'string' && item.dør ? item.dør : null;
+      const adressebetegnelse =
+        typeof item.adressebetegnelse === 'string'
+          ? item.adressebetegnelse
+          : `${item.vejnavn ?? ''} ${item.husnr ?? ''}`.trim();
+      result.set(itemId, { etage, doer, adressebetegnelse });
+    }
+  } catch {
+    // silent fail — adressedata er nice-to-have, ikke kritisk
+  }
+  return result;
+}
 
 // ─── Route handler ─────────────────────────────────────────────────────────
 
@@ -534,7 +626,7 @@ export async function GET(
   // Nødvendigt fordi DAWA-ID kan være enten en adresse- eller adgangsadresse-UUID.
   // BBR_Bygning.husnummer kræver adgangsadresse-UUID; BBR_Enhed.adresseIdentificerer
   // accepterer begge typer, så vi bruger original id for enheder.
-  const { bfeNummer, adgangsadresseId } = await fetchBFENummer(id);
+  const { bfeNummer, adgangsadresseId, ejerlavKode, matrikelnr } = await fetchBFENummer(id);
 
   // Hent bygninger og enheder parallelt med korrekte UUIDs.
   const [rawBygninger, rawEnheder] = await Promise.all([
@@ -576,12 +668,50 @@ export async function GET(
   const rawBygningerUnique = rawBygninger ? deduplicerBBR(rawBygninger as RawBBRBygning[]) : null;
   const rawEnhederUnique = rawEnheder ? deduplicerBBR(rawEnheder as RawBBREnhed[]) : null;
 
-  const bbr = rawBygningerUnique ? rawBygningerUnique.map(normaliseBygning) : null;
-  const enheder = rawEnhederUnique ? rawEnhederUnique.map(normaliseEnhed) : null;
+  // Byg et map fra bygnings-UUID → bygningsnr fra WFS-punkterne (byg007Bygningsnummer)
+  const bygningsnrFraWFS = new Map<string, number>();
+  if (bygningPunkter) {
+    for (const p of bygningPunkter) {
+      if (p.id && p.bygningsnr != null) bygningsnrFraWFS.set(p.id, p.bygningsnr);
+    }
+  }
 
-  // Map DAWA BFEnummer → BBREjendomsrelation shape (bevarer eksisterende interface)
+  const bbr = rawBygningerUnique
+    ? rawBygningerUnique.map((raw) => {
+        const b = normaliseBygning(raw);
+        b.bygningsnr = bygningsnrFraWFS.get(b.id) ?? null;
+        return b;
+      })
+    : null;
+
+  const enhederRaw = rawEnhederUnique ? rawEnhederUnique.map(normaliseEnhed) : null;
+
+  // Batch-hent DAWA-adresser for alle enheder — giver etage, dør og fuld adresse
+  let enheder = enhederRaw;
+  if (enhederRaw && enhederRaw.length > 0) {
+    const adresseIds = (rawEnhederUnique as RawBBREnhed[])
+      .map((e) => e.adresseIdentificerer)
+      .filter((id): id is string => typeof id === 'string' && UUID_RE.test(id));
+    const dawaMap = await fetchDAWAEnhedAdresser(adresseIds);
+
+    enheder = enhederRaw.map((e, idx) => {
+      const adresseId = (rawEnhederUnique as RawBBREnhed[])[idx]?.adresseIdentificerer;
+      const dawa = adresseId ? dawaMap.get(adresseId) : undefined;
+      if (!dawa) return e;
+      return {
+        ...e,
+        etage: dawa.etage ?? e.etage,
+        doer: dawa.doer ?? e.doer,
+        adressebetegnelse: dawa.adressebetegnelse,
+      };
+    });
+  }
+
+  // Map DAWA BFEnummer + matrikelinfo → BBREjendomsrelation shape
   const ejendomsrelationer: BBREjendomsrelation[] | null =
-    bfeNummer != null ? [{ bfeNummer, ejendomsnummer: null, ejendomstype: null }] : null;
+    bfeNummer != null
+      ? [{ bfeNummer, ejendomsnummer: null, ejendomstype: null, ejerlavKode, matrikelnr }]
+      : null;
 
   const bbrFejl = !DF_API_KEY
     ? 'Datafordeler API-nøgle ikke konfigureret.'

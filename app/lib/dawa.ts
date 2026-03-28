@@ -7,6 +7,8 @@
  * Dokumentation: https://dawadocs.dataforsyningen.dk
  */
 
+import { kommunenavnFraKode } from './kommuner';
+
 /**
  * Et autocomplete-resultat fra DAWA — normaliseret fra alle 3 DAWA-typer:
  *   - 'adresse'       → fuld adresse med lejlighed/dør (UUID navigerbar)
@@ -51,6 +53,11 @@ export interface DawaAdresse {
   ejerlavskode?: number;
   /** Samlet adressestreng */
   adressebetegnelse: string;
+  /**
+   * Planzone fra DAWA adgangsadresse: 'Byzone' | 'Landzone' | 'Sommerhuszone'.
+   * Afgørende for bygge- og anvendelsesregler.
+   */
+  zone?: string;
 }
 
 /** Et jordstykke (matrikel) fra DAWA */
@@ -63,6 +70,23 @@ export interface DawaJordstykke {
 }
 
 const BASE = 'https://api.dataforsyningen.dk';
+
+/**
+ * Fjerner dobbelt-komma fra adressestrenge.
+ *
+ * DAWA returnerer f.eks. "Søbyvej 11, , 2650 Hvidovre" for adresser uden
+ * etage- eller dørangivelse. Denne funktion normaliserer `, ,` → `,` og
+ * fjerner løse kommaer med mellemrum så strengen bliver pæn at vise.
+ *
+ * @param s - Rå adressestreng fra DAWA
+ * @returns Renset streng uden dobbelt-komma
+ */
+export function rensAdresseStreng(s: string): string {
+  return s
+    .replace(/,\s*,/g, ',') // ", ," → ","
+    .replace(/,\s{2,}/g, ', ') // normalisér ekstra mellemrum efter komma
+    .trim();
+}
 
 /**
  * Mapper et råt DAWA-svarobjekt til DawaAutocompleteResult.
@@ -82,7 +106,7 @@ function normaliserDawaResultat(r: unknown): DawaAutocompleteResult | null {
   if (typeof r !== 'object' || r === null) return null;
   const item = r as Record<string, unknown>;
   const type = typeof item.type === 'string' ? item.type : '';
-  const tekst = (typeof item.tekst === 'string' ? item.tekst : '').trim();
+  const tekst = rensAdresseStreng(typeof item.tekst === 'string' ? item.tekst : '');
   const data = item.data;
   if (!data || typeof data !== 'object') return null;
   const d = data as Record<string, unknown>;
@@ -153,46 +177,93 @@ export async function dawaAutocomplete(q: string): Promise<DawaAutocompleteResul
 }
 
 /**
+ * Henter planzone (Byzone/Landzone/Sommerhuszone) fra DAWA fuld adgangsadresse endpoint.
+ * Returnerer undefined stille ved fejl — zone er ikke kritisk data.
+ *
+ * @param agId - DAWA adgangsadresse UUID
+ * @returns Zonestreng eller undefined
+ */
+async function hentZone(agId: string): Promise<string | undefined> {
+  try {
+    const res = await fetch(`${BASE}/adgangsadresser/${agId}`, {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!res.ok) return undefined;
+    const data = (await res.json()) as Record<string, unknown>;
+    return typeof data.zone === 'string' ? data.zone : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Henter fuld adressedetalje fra DAWA ud fra UUID.
  * Prøver først /adresser/{id}, derefter /adgangsadresser/{id} som fallback
  * (bruges når UUID stammer fra et adgangsadresse-autocomplete-resultat).
+ * Henter planzone parallelt fra den fulde adgangsadresse-endpoint.
  * Returnerer null hvis ingen af endpointene finder adressen.
  *
  * @param id - DAWA adresse- eller adgangsadresse-UUID
  */
 export async function dawaHentAdresse(id: string): Promise<DawaAdresse | null> {
-  const mapRaw = (raw: Record<string, unknown>): DawaAdresse => ({
-    id: raw.id as string,
-    vejnavn: raw.vejnavn as string,
-    husnr: raw.husnr as string,
-    etage: (raw.etage as string | null) ?? undefined,
-    dør: (raw.dør as string | null) ?? undefined,
-    postnr: raw.postnr as string,
-    postnrnavn: raw.postnrnavn as string,
-    kommunenavn: raw.kommunenavn as string,
-    regionsnavn: (raw.regionsnavn as string) ?? '',
-    x: raw.x as number,
-    y: raw.y as number,
-    matrikelnr: (raw.matrikelnr as string | null) ?? undefined,
-    ejerlavsnavn: (raw.ejerlavsnavn as string | null) ?? undefined,
-    ejerlavskode: (raw.ejerlavskode as number | null) ?? undefined,
-    adressebetegnelse:
-      (raw.adressebetegnelse as string | null) ??
-      `${raw.vejnavn} ${raw.husnr}, ${raw.postnr} ${raw.postnrnavn}`,
-  });
+  const mapRaw = (raw: Record<string, unknown>, zone?: string): DawaAdresse => {
+    // kommunenavn og regionsnavn kan enten ligge fladt (struktur=mini) eller nested
+    const nested = (key: string) =>
+      raw[key] && typeof raw[key] === 'object'
+        ? (((raw[key] as Record<string, unknown>).navn as string | undefined) ?? '')
+        : '';
+    const kommunenavn =
+      (typeof raw.kommunenavn === 'string' && raw.kommunenavn) ||
+      nested('kommune') ||
+      kommunenavnFraKode(raw.kommunekode as string | undefined) ||
+      '';
+    const regionsnavn =
+      (typeof raw.regionsnavn === 'string' && raw.regionsnavn) || nested('region') || '';
+    return {
+      id: raw.id as string,
+      vejnavn: raw.vejnavn as string,
+      husnr: raw.husnr as string,
+      etage: (raw.etage as string | null) ?? undefined,
+      dør: (raw.dør as string | null) ?? undefined,
+      postnr: raw.postnr as string,
+      postnrnavn: raw.postnrnavn as string,
+      kommunenavn,
+      regionsnavn,
+      x: raw.x as number,
+      y: raw.y as number,
+      matrikelnr: (raw.matrikelnr as string | null) ?? undefined,
+      ejerlavsnavn: (raw.ejerlavsnavn as string | null) ?? undefined,
+      ejerlavskode: (raw.ejerlavskode as number | null) ?? undefined,
+      adressebetegnelse: rensAdresseStreng(
+        (raw.adressebetegnelse as string | null) ??
+          `${raw.vejnavn} ${raw.husnr}, ${raw.postnr} ${raw.postnrnavn}`
+      ),
+      zone,
+    };
+  };
 
   try {
-    // Forsøg 1: fuld adresse
+    // Forsøg 1: fuld adresse (UUID er adresse-UUID)
     const res1 = await fetch(`${BASE}/adresser/${id}?struktur=mini`, {
       signal: AbortSignal.timeout(5000),
     });
-    if (res1.ok) return mapRaw(await res1.json());
+    if (res1.ok) {
+      const raw = (await res1.json()) as Record<string, unknown>;
+      // adgangsadresseid giver os adgangspunktet hvorfra vi kan hente zone
+      const agId = typeof raw.adgangsadresseid === 'string' ? raw.adgangsadresseid : null;
+      const zone = agId ? await hentZone(agId) : undefined;
+      return mapRaw(raw, zone);
+    }
 
-    // Forsøg 2: adgangspunkt (adgangsadresse-UUID fra autocomplete)
-    const res2 = await fetch(`${BASE}/adgangsadresser/${id}?struktur=mini`, {
-      signal: AbortSignal.timeout(5000),
-    });
-    if (res2.ok) return mapRaw(await res2.json());
+    // Forsøg 2: adgangspunkt (UUID er adgangsadresse-UUID fra autocomplete)
+    // Hent mini-data og zone parallelt for at spare tid
+    const [res2, zone2] = await Promise.all([
+      fetch(`${BASE}/adgangsadresser/${id}?struktur=mini`, {
+        signal: AbortSignal.timeout(5000),
+      }),
+      hentZone(id),
+    ]);
+    if (res2.ok) return mapRaw((await res2.json()) as Record<string, unknown>, zone2);
 
     return null;
   } catch {
@@ -216,10 +287,12 @@ export async function dawaHentJordstykke(lng: number, lat: number): Promise<Dawa
     const data = await res.json();
     if (!Array.isArray(data) || data.length === 0) return null;
     const j = data[0];
+    // registreretareal er det officielt tinglyste areal — brug det fremfor det geometrisk beregnede areal_m2
+    const areal = (j.registreretareal as number | null) ?? (j.areal_m2 as number | null) ?? 0;
     return {
       matrikelnr: j.matrikelnr,
       ejerlav: { navn: j.ejerlav?.navn ?? '', kode: j.ejerlav?.kode ?? 0 },
-      areal_m2: j.areal_m2 ?? 0,
+      areal_m2: areal,
       kommune: { navn: j.kommune?.navn ?? '', kode: j.kommune?.kode ?? 0 },
       visueltcenter: j.visueltcenter,
     };

@@ -27,64 +27,78 @@ import type {
   LineLayerSpecification,
   GeoJSONSourceSpecification,
 } from 'mapbox-gl';
-import { Satellite, Map as MapIcon, Maximize2, Minimize2, Layers, Loader2 } from 'lucide-react';
+import { Satellite, Map as MapIcon, Maximize2, Minimize2, Loader2, Building2 } from 'lucide-react';
 import 'mapbox-gl/dist/mapbox-gl.css';
 
 /**
  * Mapbox basekort-styles.
  *
- * 'dark' bruger navigation-night-v1 i stedet for dark-v11:
- * navigation-night-v1 er professionelt designet til mørke miljøer med
- * klar kontrast på bygninger, veje og baggrund — ingen custom overrides nødvendige.
+ * 'dark' (Gade) og 'bbr' bruger navigation-night-v1 — mørkt design optimeret
+ * til høj kontrast: veje er lysere end omgivelserne, bygninger er markant
+ * mørkere end veje, og baggrundsarealer er dybt mørke.
+ * 'bbr' tilføjer BBR-bygningsmarkører ovenpå den mørke base.
+ * 'satellite' bruger satellite-streets-v12 til luftfoto med vejnavne.
  */
 const STYLES = {
   dark: 'mapbox://styles/mapbox/navigation-night-v1',
   satellite: 'mapbox://styles/mapbox/satellite-streets-v12',
+  bbr: 'mapbox://styles/mapbox/navigation-night-v1',
 } as const;
 
 type MapStyle = keyof typeof STYLES;
 
-/** Stil for matrikellag — gennemsigtig blå fyld */
+/** Alle matrikelparceller — usynligt fyld-lag til hover-detektion via queryRenderedFeatures */
 const matrikelFillLayer: FillLayerSpecification = {
   id: 'matrikel-fill',
   type: 'fill',
   source: 'matrikel',
   paint: {
     'fill-color': '#3b82f6',
-    'fill-opacity': 0.15,
+    'fill-opacity': 0,
   },
 };
 
-/** Stil for matrikellag — rød grænselinje */
-const matrikelLineLayer: LineLayerSpecification = {
-  id: 'matrikel-line',
-  type: 'line',
-  source: 'matrikel',
-  paint: {
-    'line-color': '#ef4444',
-    'line-width': 2.5,
-    'line-opacity': 0.95,
-  },
-};
-
-/** Hover-highlight: blå fyld — matcher BizzAssist accent (#2563eb / blue-600) */
-const hoverFillLayer: FillLayerSpecification = {
-  id: 'hover-fill',
+/** Valgt ejendoms matrikel — fremhævet blå fyld */
+const selectedFillLayer: FillLayerSpecification = {
+  id: 'selected-fill',
   type: 'fill',
-  source: 'hover-matrikel',
+  source: 'selected-matrikel',
   paint: {
     'fill-color': '#3b82f6',
     'fill-opacity': 0.2,
   },
 };
 
-/** Hover-highlight: lys blå konturlinje */
+/** Valgt ejendoms matrikel — tydeligere grænselinje */
+const selectedLineLayer: LineLayerSpecification = {
+  id: 'selected-line',
+  type: 'line',
+  source: 'selected-matrikel',
+  paint: {
+    'line-color': '#60a5fa',
+    'line-width': 2,
+    'line-opacity': 1,
+  },
+};
+
+/** Hover-highlight: blå fyld — matcher kortsidens stil */
+const hoverFillLayer: FillLayerSpecification = {
+  id: 'hover-fill',
+  type: 'fill',
+  source: 'hover-matrikel',
+  paint: {
+    'fill-color': '#3b82f6',
+    'fill-opacity': 0.3,
+  },
+};
+
+/** Hover-highlight: lys blå konturlinje (matcher kortsidens stil) */
 const hoverLineLayer: LineLayerSpecification = {
   id: 'hover-line',
   type: 'line',
   source: 'hover-matrikel',
   paint: {
-    'line-color': '#60a5fa',
+    'line-color': '#93c5fd',
     'line-width': 2.5,
     'line-opacity': 1,
   },
@@ -95,6 +109,33 @@ const EMPTY_GEOJSON: GeoJSONSourceSpecification['data'] = {
   type: 'FeatureCollection',
   features: [],
 };
+
+/** Et enkelt BBR-bygningspunkt til kortvisning */
+export interface BBRBygningPunkt {
+  id: string;
+  lng: number;
+  lat: number;
+  bygningsnr: number | null;
+  anvendelse: string;
+  opfoerelsesaar: number | null;
+  samletAreal: number | null;
+  antalEtager: number | null;
+  status: string | null;
+}
+
+/** Statuskoder der anses som aktive bygninger */
+const AKTIV_STATUS = new Set(['1', '2', '3', '6', '7']);
+
+const STYLE_STORAGE_KEY = 'bizzassist-map-style';
+const ZOOM_STORAGE_KEY = 'bizzassist-map-zoom';
+const DEFAULT_ZOOM = 17;
+
+/** Læs gemt zoom fra localStorage — fallback til DEFAULT_ZOOM */
+function læsGemtZoom(): number {
+  if (typeof window === 'undefined') return DEFAULT_ZOOM;
+  const v = parseFloat(window.localStorage.getItem(ZOOM_STORAGE_KEY) ?? '');
+  return isFinite(v) ? v : DEFAULT_ZOOM;
+}
 
 interface PropertyMapProps {
   /** Breddegrad for ejendommen */
@@ -110,15 +151,82 @@ interface PropertyMapProps {
    * Forælderkomponenten bruger dette til at navigere til den klikkede ejendom.
    */
   onAdresseValgt?: (id: string) => void;
+  /**
+   * BBR-bygningspunkter til visning på kortet i BBR-tilstand.
+   * Hentes server-side fra Datafordeler WFS.
+   */
+  bygningPunkter?: BBRBygningPunkt[];
 }
 
-/** In-memory cache så samme koordinat ikke hentes to gange i samme session */
-const matrikelCache: Record<string, GeoJSONSourceSpecification['data']> = {};
+/** In-memory cache — gemmer { all, selected } per koordinat */
+const matrikelCache: Record<
+  string,
+  { all: GeoJSONSourceSpecification['data']; selected: GeoJSONSourceSpecification['data'] }
+> = {};
 
 /**
- * Henter matrikelgrænse som GeoJSON fra DAWA (gratis, ingen token).
- * Resultatet caches i hukommelsen for sessionen.
- * Returnerer null hvis kaldet fejler.
+ * Ray-casting point-in-polygon test.
+ * Returnerer true hvis punktet (px, py) ligger inde i ringen (ring af [lng, lat] par).
+ *
+ * @param px - Punktets x (længdegrad)
+ * @param py - Punktets y (breddegrad)
+ * @param ring - Polygon-ring som array af [lng, lat] koordinatpar
+ */
+function punktIRing(px: number, py: number, ring: number[][]): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0],
+      yi = ring[i][1];
+    const xj = ring[j][0],
+      yj = ring[j][1];
+    if (yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+/**
+ * Finder den GeoJSON-feature (matrikelparcel) der indeholder punktet (lng, lat).
+ * Bruger ray-casting mod ydre ring af hver Polygon/MultiPolygon.
+ *
+ * @param fc - FeatureCollection fra matrikel-API
+ * @param lng - Ejendomspunktets længdegrad
+ * @param lat - Ejendomspunktets breddegrad
+ * @returns FeatureCollection med kun den matchende feature, eller alle hvis ingen match
+ */
+function filtrerTilEjendom(
+  fc: {
+    type: string;
+    features: {
+      type: string;
+      geometry: { type: string; coordinates: number[][][] | number[][][][] };
+      properties: Record<string, unknown>;
+    }[];
+  },
+  lng: number,
+  lat: number
+): GeoJSONSourceSpecification['data'] {
+  const match = fc.features.find((f) => {
+    if (f.geometry.type === 'Polygon') {
+      return punktIRing(lng, lat, f.geometry.coordinates[0] as number[][]);
+    }
+    if (f.geometry.type === 'MultiPolygon') {
+      return (f.geometry.coordinates as number[][][][]).some((poly) =>
+        punktIRing(lng, lat, poly[0])
+      );
+    }
+    return false;
+  });
+  // Returnér kun den matchende parcel — eller hele FC som fallback
+  return match
+    ? ({ type: 'FeatureCollection', features: [match] } as GeoJSONSourceSpecification['data'])
+    : (fc as GeoJSONSourceSpecification['data']);
+}
+
+/**
+ * Henter alle matrikelparceller i et bbox-vindue rundt om punktet.
+ * Returnerer { all, selected } — alle parceller + den ene der indeholder punktet.
  *
  * @param lng - Længdegrad
  * @param lat - Breddegrad
@@ -126,21 +234,31 @@ const matrikelCache: Record<string, GeoJSONSourceSpecification['data']> = {};
 async function hentMatrikelGeojson(
   lng: number,
   lat: number
-): Promise<GeoJSONSourceSpecification['data'] | null> {
+): Promise<{
+  all: GeoJSONSourceSpecification['data'];
+  selected: GeoJSONSourceSpecification['data'];
+} | null> {
   const cacheKey = `${lng.toFixed(5)},${lat.toFixed(5)}`;
   if (cacheKey in matrikelCache) return matrikelCache[cacheKey];
 
   try {
-    const url = `https://api.dataforsyningen.dk/jordstykker?x=${lng}&y=${lat}&srid=4326&format=geojson`;
-    const res = await fetch(url, { next: { revalidate: 86400 } } as RequestInit);
+    const delta = 0.001;
+    const url = `/api/matrikel/bbox?w=${lng - delta}&s=${lat - delta}&e=${lng + delta}&n=${lat + delta}`;
+    const res = await fetch(url);
     if (!res.ok) return null;
     const json = await res.json();
-    // DAWA returnerer et array — pak ind i FeatureCollection
-    const data: GeoJSONSourceSpecification['data'] = Array.isArray(json)
-      ? { type: 'FeatureCollection', features: json }
-      : (json as GeoJSONSourceSpecification['data']);
-    matrikelCache[cacheKey] = data;
-    return data;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const fc: any =
+      json?.type === 'FeatureCollection'
+        ? json
+        : Array.isArray(json)
+          ? { type: 'FeatureCollection', features: json }
+          : json;
+    const all = fc as GeoJSONSourceSpecification['data'];
+    const selected = filtrerTilEjendom(fc, lng, lat);
+    const result = { all, selected };
+    matrikelCache[cacheKey] = result;
+    return result;
   } catch {
     return null;
   }
@@ -163,12 +281,42 @@ export default function PropertyMap({
   adresse,
   visMatrikel = true,
   onAdresseValgt,
+  bygningPunkter,
 }: PropertyMapProps) {
   const mapRef = useRef<MapRef>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [mapStyle, setMapStyle] = useState<MapStyle>('satellite');
+  /**
+   * Korttype initialiseres fra localStorage så den bevares på tværs af navigationer.
+   * Sikrer at brugeren forbliver i f.eks. BBR-tilstand når de klikker til ny ejendom.
+   */
+  const [mapStyle, setMapStyleState] = useState<MapStyle>(() => {
+    if (typeof window === 'undefined') return 'satellite';
+    const saved = window.localStorage.getItem(STYLE_STORAGE_KEY) as MapStyle | null;
+    return saved && saved in STYLES ? saved : 'satellite';
+  });
+  const setMapStyle = (style: MapStyle) => {
+    setMapStyleState(style);
+    window.localStorage.setItem(STYLE_STORAGE_KEY, style);
+  };
   const [fullscreen, setFullscreen] = useState(false);
+  /** Den BBR-bygning hvis hover-tooltip vises — null = ingen */
+  const [aktivBygning, setAktivBygning] = useState<BBRBygningPunkt | null>(null);
+  /**
+   * Pixel-position for det aktive bygnings-tooltip.
+   * Beregnes via map.project() når en bygning hover-aktiveres, så tooltippet
+   * kan renderes i container-laget (z-50) oven over alle Marker-noder.
+   */
+  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
+  /**
+   * Gemmer brugerens aktuelle zoom-niveau — initialiseres fra localStorage
+   * så zoom bevares på tværs af navigationer (komponent remountes ved ny rute).
+   * Opdateres via onZoomEnd og persisteres til localStorage samtidig.
+   */
+  const zoomRef = useRef<number>(læsGemtZoom());
   const [matrikelData, setMatrikelData] =
+    useState<GeoJSONSourceSpecification['data']>(EMPTY_GEOJSON);
+  /** GeoJSON for kun den valgte ejendoms matrikelparcel — fremhævet stil */
+  const [selectedMatrikelData, setSelectedMatrikelData] =
     useState<GeoJSONSourceSpecification['data']>(EMPTY_GEOJSON);
   /** True mens DAWA reverse geocode-kald kører efter korteklik */
   const [søgerAdresse, setSøgerAdresse] = useState(false);
@@ -180,13 +328,27 @@ export default function PropertyMap({
   const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? '';
   const harToken = mapboxToken.startsWith('pk.');
 
-  /** Hent matrikeldata fra DAWA — setState kun i async callback */
+  /** Hent matrikeldata — alle parceller + fremhæv ejendommens egen parcel */
   useEffect(() => {
     if (!visMatrikel) return;
-    hentMatrikelGeojson(lng, lat).then((data) => {
-      if (data) setMatrikelData(data);
+    hentMatrikelGeojson(lng, lat).then((result) => {
+      if (result) {
+        setMatrikelData(result.all);
+        setSelectedMatrikelData(result.selected);
+      }
     });
   }, [lng, lat, visMatrikel]);
+
+  /**
+   * Flyver til ny ejendom ved lat/lng-ændring med default zoom 17.
+   * Resetter zoom ved ejendomsskift så man altid starter tæt på bygningen.
+   * Luk også bygnings-tooltip så gammel markør ikke hænger over ny ejendom.
+   */
+  useEffect(() => {
+    setAktivBygning(null);
+    zoomRef.current = DEFAULT_ZOOM;
+    mapRef.current?.flyTo({ center: [lng, lat], zoom: DEFAULT_ZOOM, duration: 800 });
+  }, [lat, lng]);
 
   /**
    * ResizeObserver på container-elementet — kalder map.resize() når bredden ændres
@@ -202,78 +364,6 @@ export default function PropertyMap({
     observer.observe(container);
     return () => observer.disconnect();
   }, []);
-
-  /**
-   * Overstyrer bygningsfarver på gadekort (navigation-night-v1) for klar aflæsning.
-   *
-   * navigation-night-v1 viser bygninger i en meget subtil mørkegrå tone der er
-   * svær at adskille fra baggrunden. Vi sætter dem til en markant lysere blågrå
-   * (#687f96) med en endnu lysere konturlinje (#8fa8be) så hvert bygningsfodaftryk
-   * er tydeligt og kan aflæses klart.
-   *
-   * Bruger 'style.load'-eventet (ikke 'idle') — det er det korrekte Mapbox GL-event
-   * der fyrer præcis én gang når stilen og alle dens lag er fuldt initialiseret.
-   */
-  useEffect(() => {
-    if (mapStyle !== 'dark') return;
-    const map = mapRef.current?.getMap();
-    if (!map) return;
-
-    function lysBuildings() {
-      const m = mapRef.current?.getMap();
-      if (!m) return;
-
-      // ── Bygninger ──────────────────────────────────────────────────────
-      try {
-        m.setPaintProperty('building', 'fill-color', '#687f96');
-        m.setPaintProperty('building', 'fill-opacity', 1);
-      } catch {
-        /* lag ikke klar */
-      }
-      try {
-        m.setPaintProperty('building-outline', 'line-color', '#8fa8be');
-        m.setPaintProperty('building-outline', 'line-opacity', 1);
-        m.setPaintProperty('building-outline', 'line-width', 1);
-      } catch {
-        /* lag ikke klar */
-      }
-      try {
-        m.setPaintProperty('building-extrusion', 'fill-extrusion-color', '#687f96');
-      } catch {
-        /* lag ikke klar */
-      }
-
-      // ── Veje og linje-lag ──────────────────────────────────────────────
-      // Casing/bg-lag (de farvede kantlinjer) skjules helt.
-      // Vejfyld-lag farves mørk antracit #181f2a så veje fremstår som
-      // mørke stier mellem bygningerne — ingen teal, ingen farvet border.
-      const layers = m.getStyle()?.layers ?? [];
-      for (const layer of layers) {
-        if (layer.type !== 'line') continue;
-        if (layer.id.startsWith('matrikel') || layer.id === 'building-outline') continue;
-        try {
-          if (layer.id.includes('-case') || layer.id.includes('-bg')) {
-            m.setPaintProperty(layer.id, 'line-opacity', 0);
-          } else {
-            m.setPaintProperty(layer.id, 'line-color', '#181f2a');
-            m.setPaintProperty(layer.id, 'line-opacity', 1);
-          }
-        } catch {
-          /* lag ikke klar */
-        }
-      }
-    }
-
-    // 'style.load' fyrer præcis når den nye stils lag er initialiseret og klar
-    map.on('style.load', lysBuildings);
-
-    // Prøv også med det samme hvis stilen allerede er indlæst (f.eks. første render)
-    if (map.isStyleLoaded()) lysBuildings();
-
-    return () => {
-      map.off('style.load', lysBuildings);
-    };
-  }, [mapStyle]);
 
   /** Centrer kortet på ejendommen igen */
   const centerMap = useCallback(() => {
@@ -293,12 +383,12 @@ export default function PropertyMap({
       const { lng: x, lat: y } = e.lngLat;
       setSøgerAdresse(true);
       try {
-        const res = await fetch(
-          `https://api.dataforsyningen.dk/adgangsadresser/reverse?x=${x}&y=${y}&struktur=mini`,
-          { signal: AbortSignal.timeout(5000) }
-        );
+        // Server-side proxy — undgår direkte DAWA-kald (DAWA lukker 1. juli 2026)
+        const res = await fetch(`/api/adresse/reverse?lng=${x}&lat=${y}`, {
+          signal: AbortSignal.timeout(6000),
+        });
         if (!res.ok) return;
-        const data: { id?: string } = await res.json();
+        const data: { id?: string | null } = await res.json();
         if (data?.id) onAdresseValgt(data.id);
       } catch {
         /* ignorer netværksfejl */
@@ -311,18 +401,36 @@ export default function PropertyMap({
 
   /**
    * Håndterer musebevægelse over kortet.
-   * Debouncer 80 ms og henter matrikelgrænse for cursor-koordinaterne via
-   * DAWA — resultatet vises som et gult highlight-lag på kortet.
-   * Rydder highlight ved hurtig bevægelse (cancelTimer).
+   * Bruger queryRenderedFeatures mod matrikel-fill laget for at finde den
+   * specifikke matrikelparcel under cursoren — matcher kortsidens tilgang.
+   * Falder tilbage til bbox-fetch hvis matrikel-fill laget ikke eksisterer endnu.
    */
   const handleMouseMove = useCallback(
     (e: MapMouseEvent) => {
       if (!onAdresseValgt) return;
+      const map = mapRef.current?.getMap();
+      if (!map) return;
+
+      // Forsøg at finde matrikelparcel under cursoren via allerede-rendererede features
+      if (map.getLayer('matrikel-fill')) {
+        const features = map.queryRenderedFeatures(e.point, { layers: ['matrikel-fill'] });
+        if (features.length > 0) {
+          setHoverData({
+            type: 'FeatureCollection',
+            features: [features[0].toJSON()],
+          } as GeoJSONSourceSpecification['data']);
+        } else {
+          setHoverData(EMPTY_GEOJSON);
+        }
+        return;
+      }
+
+      // Fallback: hent via API (bruges kun hvis matrikel-fill ikke er tilgængeligt)
       if (hoverTimer.current) clearTimeout(hoverTimer.current);
       hoverTimer.current = setTimeout(async () => {
         const { lng: x, lat: y } = e.lngLat;
-        const data = await hentMatrikelGeojson(x, y);
-        setHoverData(data ?? EMPTY_GEOJSON);
+        const result = await hentMatrikelGeojson(x, y);
+        setHoverData(result?.selected ?? EMPTY_GEOJSON);
       }, 80);
     },
     [onAdresseValgt]
@@ -333,6 +441,94 @@ export default function PropertyMap({
     if (hoverTimer.current) clearTimeout(hoverTimer.current);
     setHoverData(EMPTY_GEOJSON);
   }, []);
+
+  /**
+   * Tilpasser navigation-night-v1 stilen ved hvert stilload.
+   * Skjuler route/traffic/congestion overlay-lag (grønne/gule linjer på veje)
+   * og sætter vej- og baggrundsfarver til mørk grå/blågrå.
+   *
+   * VIGTIGT: isStyleLoaded()-checket er bevidst udeladt — ved style.load-event
+   * er stilen klar, og checket kan returnere false pga. interne Mapbox _changed-flag.
+   * Registreres som permanent style.load-listener i handleMapLoad (ikke useEffect)
+   * for at undgå race-condition hvor listener ankommer efter eventet fyrer.
+   */
+  const anvendStilOverrides = useCallback(() => {
+    const map = mapRef.current?.getMap();
+    if (!map) return;
+
+    // Kun tilpas navigation-night-v1 (dark/bbr) — satellite-streets behøver ingen overrides
+    const currentStyle = map.getStyle()?.name?.toLowerCase() ?? '';
+    if (!currentStyle.includes('navigation') && !currentStyle.includes('night')) return;
+
+    const layers = map.getStyle()?.layers;
+    if (!layers) return;
+    for (const layer of layers) {
+      const id = layer.id.toLowerCase();
+      // Skjul route/traffic/congestion-lag (inkl. grønne congestion-linjer)
+      if (
+        id.startsWith('navigation-route') ||
+        id.startsWith('navigation-traffic') ||
+        id.includes('congestion') ||
+        id.includes('waypoint') ||
+        id.includes('origin') ||
+        id.includes('destination')
+      ) {
+        try {
+          map.setLayoutProperty(layer.id, 'visibility', 'none');
+        } catch {
+          /* ignore */
+        }
+      }
+      // Sæt vejfarver til mørk grå
+      if (
+        id.includes('road') ||
+        id.includes('street') ||
+        id.includes('motorway') ||
+        id.includes('highway')
+      ) {
+        if (layer.type === 'line')
+          try {
+            map.setPaintProperty(layer.id, 'line-color', '#6b7280');
+          } catch {
+            /* ignore */
+          }
+        if (layer.type === 'fill')
+          try {
+            map.setPaintProperty(layer.id, 'fill-color', '#6b7280');
+          } catch {
+            /* ignore */
+          }
+      }
+      // Mørk baggrund
+      if ((layer.id === 'background' || layer.id === 'land') && layer.type === 'background')
+        try {
+          map.setPaintProperty(layer.id, 'background-color', '#28303f');
+        } catch {
+          /* ignore */
+        }
+      if (layer.id === 'land' && layer.type === 'fill')
+        try {
+          map.setPaintProperty(layer.id, 'fill-color', '#28303f');
+        } catch {
+          /* ignore */
+        }
+    }
+  }, []);
+
+  /**
+   * Registrerer style.load-listener PERMANENT ved initial map load.
+   * Dette undgår race-condition hvor useEffect-baseret registrering
+   * ankommer for sent — Mapbox fyrer style.load under render-cyklussen,
+   * men useEffect kører EFTER render.
+   */
+  const handleMapLoad = useCallback(() => {
+    const map = mapRef.current?.getMap();
+    if (!map) return;
+    // Anvend overrides på den allerede indlæste startsstil
+    anvendStilOverrides();
+    // Lyt permanent — style.load fyrer ved hvert fremtidigt stilskift
+    map.on('style.load', anvendStilOverrides);
+  }, [anvendStilOverrides]);
 
   /** Vis fallback UI hvis Mapbox-token mangler */
   if (!harToken) {
@@ -354,29 +550,43 @@ export default function PropertyMap({
       ref={containerRef}
       className={`relative w-full h-full ${fullscreen ? 'fixed inset-0 z-50' : ''}`}
     >
+      {/* Skjul Mapbox-logo og attribution */}
+      <style>{`.mapboxgl-ctrl-logo,.mapboxgl-ctrl-attrib{display:none!important}`}</style>
       <Map
         ref={mapRef}
         mapboxAccessToken={mapboxToken}
-        initialViewState={{ longitude: lng, latitude: lat, zoom: 17 }}
+        initialViewState={{ longitude: lng, latitude: lat, zoom: DEFAULT_ZOOM }}
         style={{ width: '100%', height: '100%' }}
         mapStyle={STYLES[mapStyle]}
         attributionControl={false}
+        onLoad={handleMapLoad}
         onClick={onAdresseValgt ? handleKlik : undefined}
         onMouseMove={onAdresseValgt ? handleMouseMove : undefined}
         onMouseLeave={onAdresseValgt ? handleMouseLeave : undefined}
         cursor={onAdresseValgt ? (søgerAdresse ? 'wait' : 'crosshair') : 'grab'}
+        onZoomEnd={(e) => {
+          zoomRef.current = e.viewState.zoom;
+          window.localStorage.setItem(ZOOM_STORAGE_KEY, String(e.viewState.zoom));
+        }}
       >
         <NavigationControl position="bottom-right" showCompass={false} />
 
-        {/* Matrikellag fra DAWA — gratis, ingen token */}
+        {/* Alle matrikelparceller — usynligt fyld-lag til hover/klik-detektion */}
         {visMatrikel && (
           <Source id="matrikel" type="geojson" data={matrikelData}>
             <Layer {...matrikelFillLayer} />
-            <Layer {...matrikelLineLayer} />
           </Source>
         )}
 
-        {/* Hover-highlight — gul matrikelgrænse ved museover */}
+        {/* Valgt ejendoms matrikelparcel — fremhævet */}
+        {visMatrikel && (
+          <Source id="selected-matrikel" type="geojson" data={selectedMatrikelData}>
+            <Layer {...selectedFillLayer} />
+            <Layer {...selectedLineLayer} />
+          </Source>
+        )}
+
+        {/* Hover-highlight — matrikelgrænse ved museover */}
         {onAdresseValgt && (
           <Source id="hover-matrikel" type="geojson" data={hoverData}>
             <Layer {...hoverFillLayer} />
@@ -393,10 +603,65 @@ export default function PropertyMap({
             <div className="w-3 h-3 bg-blue-600 rounded-full border-2 border-white shadow-lg" />
           </div>
         </Marker>
+
+        {/* BBR-bygningsmarkører — kun synlige i BBR-tilstand */}
+        {mapStyle === 'bbr' &&
+          bygningPunkter?.map((b, bIdx) => {
+            const aktiv = AKTIV_STATUS.has(b.status ?? '');
+            const erHover = aktivBygning?.id === b.id;
+            return (
+              <Marker key={`${b.id}-${bIdx}`} longitude={b.lng} latitude={b.lat} anchor="center">
+                {/* Kun cirklen i Marker — tooltip løftes til container-lag */}
+                <div
+                  onMouseEnter={() => {
+                    setAktivBygning(b);
+                    const px = mapRef.current?.project({ lng: b.lng, lat: b.lat });
+                    if (px) setTooltipPos({ x: px.x, y: px.y });
+                  }}
+                  onMouseLeave={() => {
+                    setAktivBygning(null);
+                    setTooltipPos(null);
+                  }}
+                  aria-label={`Byg${b.bygningsnr ?? '?'} — ${b.anvendelse}`}
+                  className={`w-5 h-5 rounded-full border-2 shadow-lg cursor-pointer transition-all ${
+                    aktiv
+                      ? erHover
+                        ? 'bg-emerald-400 border-emerald-200 scale-125'
+                        : 'bg-emerald-500/90 border-emerald-300 hover:scale-125'
+                      : erHover
+                        ? 'bg-slate-500 border-slate-300 scale-110'
+                        : 'bg-slate-600/80 border-slate-400 hover:scale-110'
+                  }`}
+                />
+              </Marker>
+            );
+          })}
       </Map>
 
-      {/* Gadekort / Luftfoto toggle */}
+      {/* Luftfoto / Gade / BBR toggle — BBR yderst til højre */}
+      {/* BBR | Gade | Luftfoto — BBR yderst til venstre, Luftfoto yderst til højre */}
       <div className="absolute top-3 left-3 flex gap-1.5 z-10">
+        {bygningPunkter && bygningPunkter.length > 0 && (
+          <button
+            onClick={() => {
+              setMapStyle('bbr');
+              setAktivBygning(null);
+            }}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-all ${
+              mapStyle === 'bbr'
+                ? 'bg-emerald-600 text-white'
+                : 'bg-slate-900/90 text-slate-300 hover:bg-slate-800 border border-slate-700'
+            }`}
+          >
+            <Building2 size={12} />
+            BBR
+            <span
+              className={`ml-0.5 rounded-full px-1 py-0 text-[10px] font-bold ${mapStyle === 'bbr' ? 'bg-emerald-500 text-white' : 'bg-slate-700 text-slate-300'}`}
+            >
+              {bygningPunkter.length}
+            </span>
+          </button>
+        )}
         <button
           onClick={() => setMapStyle('dark')}
           className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-all ${
@@ -439,13 +704,58 @@ export default function PropertyMap({
         </div>
       )}
 
-      {/* Matrikellag badge */}
-      {visMatrikel && (
-        <div className="absolute bottom-3 left-3 z-10 flex items-center gap-1.5 bg-slate-900/90 border border-slate-700/50 rounded-lg px-2.5 py-1.5">
-          <Layers size={11} className="text-green-400" />
-          <p className="text-slate-400 text-xs">Matrikelgrænser</p>
-        </div>
-      )}
+      {/*
+       * BBR hover-tooltip — renderes i container-laget (z-50) så den altid
+       * er over alle Marker-noder uanset DOM-rækkefølge.
+       * Positioneres via map.project() pixel-koordinater fra onMouseEnter.
+       */}
+      {aktivBygning &&
+        tooltipPos &&
+        (() => {
+          const aktiv = AKTIV_STATUS.has(aktivBygning.status ?? '');
+          return (
+            <div
+              className="absolute z-50 w-56 bg-slate-900 border border-slate-700/60 rounded-xl shadow-2xl p-3 text-xs pointer-events-none"
+              style={{
+                left: tooltipPos.x,
+                top: tooltipPos.y,
+                transform: 'translate(-50%, calc(-100% - 14px))',
+              }}
+            >
+              <p className="text-emerald-400 font-bold text-[11px] mb-0.5">
+                Byg{aktivBygning.bygningsnr ?? '?'}
+              </p>
+              <p className="text-white font-semibold mb-1.5 leading-tight">
+                {aktivBygning.anvendelse}
+              </p>
+              <div className="space-y-0.5 text-slate-300">
+                {aktivBygning.opfoerelsesaar && (
+                  <p>
+                    Opført: <span className="text-white">{aktivBygning.opfoerelsesaar}</span>
+                  </p>
+                )}
+                {aktivBygning.samletAreal && (
+                  <p>
+                    Areal: <span className="text-white">{aktivBygning.samletAreal} m²</span>
+                  </p>
+                )}
+                {aktivBygning.antalEtager && (
+                  <p>
+                    Etager: <span className="text-white">{aktivBygning.antalEtager}</span>
+                  </p>
+                )}
+                <p>
+                  Status:{' '}
+                  <span className={aktiv ? 'text-emerald-400' : 'text-slate-400'}>
+                    {aktiv ? 'Aktiv' : 'Nedrevet/andet'}
+                  </span>
+                </p>
+              </div>
+              {/* Pil ned mod markøren */}
+              <div className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-slate-700/60" />
+            </div>
+          );
+        })()}
     </div>
   );
 }

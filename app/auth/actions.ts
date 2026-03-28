@@ -16,6 +16,7 @@
 
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -44,7 +45,7 @@ export interface AuthResult {
 export async function signIn(
   email: string,
   password: string,
-  redirectTo = '/dashboard'
+  _redirectTo = '/dashboard'
 ): Promise<AuthResult> {
   const supabase = await createClient();
 
@@ -67,9 +68,59 @@ export async function signIn(
     redirect('/login/mfa');
   }
 
-  // Safe redirect — ensure path is relative to prevent open redirect
-  const safePath = redirectTo.startsWith('/') ? redirectTo : '/dashboard';
-  redirect(safePath);
+  // ── Subscription gate — check FRESH data from Supabase Auth database ────
+  // Uses admin client to bypass JWT caching. This is the only reliable way
+  // to ensure admin-set subscriptions are immediately visible.
+  const {
+    data: { user: authedUser },
+  } = await supabase.auth.getUser();
+  console.log('[signIn] authedUser:', authedUser?.email, 'id:', authedUser?.id);
+
+  if (authedUser) {
+    try {
+      const admin = createAdminClient();
+      const { data: freshUser, error: adminErr } = await admin.auth.admin.getUserById(
+        authedUser.id
+      );
+      console.log('[signIn] admin getUserById error:', adminErr?.message ?? 'none');
+      console.log(
+        '[signIn] freshUser app_metadata:',
+        JSON.stringify(freshUser?.user?.app_metadata)
+      );
+
+      const sub = freshUser?.user?.app_metadata?.subscription as
+        | { status?: string; planId?: string }
+        | undefined;
+
+      console.log('[signIn] subscription:', JSON.stringify(sub));
+
+      if (!sub || !sub.planId) {
+        console.log('[signIn] → BLOCKED: no_subscription');
+        await supabase.auth.signOut();
+        redirect('/login?error=no_subscription');
+      }
+      if (sub.status === 'pending') {
+        console.log('[signIn] → BLOCKED: subscription_pending');
+        await supabase.auth.signOut();
+        redirect('/login?error=subscription_pending');
+      }
+      if (sub.status === 'cancelled') {
+        console.log('[signIn] → BLOCKED: subscription_cancelled');
+        await supabase.auth.signOut();
+        redirect('/login?error=subscription_cancelled');
+      }
+      console.log('[signIn] → ALLOWED: subscription active');
+    } catch (err) {
+      // If admin client fails, let user through — dashboard will re-check
+      console.error('[signIn] Subscription check error:', err);
+    }
+  }
+
+  // Return success — let the client handle the redirect.
+  // This ensures cookies are properly set before navigation.
+  // Using redirect() in a server action can cause cookies not to be
+  // propagated to the browser in some Next.js versions.
+  return { error: null };
 }
 
 // ---------------------------------------------------------------------------

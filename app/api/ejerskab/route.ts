@@ -193,7 +193,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjerskabRe
 
   const query = `{
     EJF_Ejerskab(
-      first: 20
+      first: 500
       virkningstid: "${virkningstid}"
       where: {
         bestemtFastEjendomBFENr: { eq: ${bfeNummer} }

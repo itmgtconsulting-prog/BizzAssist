@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/poll-properties",
+      "schedule": "0 3 * * *"
+    }
+  ]
+}

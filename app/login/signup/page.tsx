@@ -10,9 +10,10 @@
 
 import { useState, FormEvent } from 'react';
 import Link from 'next/link';
-import { Eye, EyeOff, ArrowLeft, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Eye, EyeOff, ArrowLeft, Loader2, AlertCircle, CheckCircle2, Clock } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { signUp } from '@/app/auth/actions';
+import { registerSubscription, PLANS, type UserSubscription } from '@/app/lib/subscriptions';
 
 const errorMessages: Record<string, { da: string; en: string }> = {
   email_rate_limit: {
@@ -26,6 +27,10 @@ const errorMessages: Record<string, { da: string; en: string }> = {
   password_too_weak: {
     da: 'Adgangskoden skal være mindst 8 tegn.',
     en: 'Password must be at least 8 characters.',
+  },
+  passwords_mismatch: {
+    da: 'Adgangskoderne er ikke ens.',
+    en: 'Passwords do not match.',
   },
   unexpected_error: {
     da: 'Noget gik galt. Prøv igen.',
@@ -70,7 +75,10 @@ export default function SignupPage() {
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [isDemo, setIsDemo] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -83,8 +91,27 @@ export default function SignupPage() {
       setError('password_too_weak');
       return;
     }
+    if (password !== confirmPassword) {
+      setError('passwords_mismatch');
+      return;
+    }
     setLoading(true);
     try {
+      // Register demo subscription in global list (NOT in ba-subscription — that
+      // gets set by switchActiveUser when the user logs in to the dashboard)
+      if (isDemo) {
+        const now = new Date().toISOString();
+        const sub: UserSubscription = {
+          email,
+          planId: 'demo',
+          status: PLANS.demo.requiresApproval ? 'pending' : 'active',
+          createdAt: now,
+          approvedAt: PLANS.demo.requiresApproval ? null : now,
+          tokensUsedThisMonth: 0,
+          periodStart: now,
+        };
+        registerSubscription(sub);
+      }
       const result = await signUp(email, password, fullName);
       if (result?.error) setError(result.error);
     } catch {
@@ -137,9 +164,7 @@ export default function SignupPage() {
                 {lang === 'da' ? 'Opret din konto' : 'Create your account'}
               </h1>
               <p className="text-slate-400 text-sm">
-                {lang === 'da'
-                  ? 'Gratis i 14 dage — intet kreditkort'
-                  : 'Free for 14 days — no credit card'}
+                {lang === 'da' ? 'Kom i gang med BizzAssist' : 'Get started with BizzAssist'}
               </p>
             </div>
 
@@ -239,19 +264,118 @@ export default function SignupPage() {
                 )}
               </div>
 
-              {/* What you get */}
-              <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl p-4 space-y-2">
-                {[
-                  lang === 'da' ? '14 dages gratis prøveperiode' : '14-day free trial',
-                  lang === 'da' ? 'Ingen kreditkort kræves' : 'No credit card required',
-                  lang === 'da' ? 'Opsig når som helst' : 'Cancel anytime',
-                ].map((item) => (
-                  <div key={item} className="flex items-center gap-2">
-                    <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />
-                    <span className="text-slate-400 text-xs">{item}</span>
-                  </div>
-                ))}
+              {/* Confirm password */}
+              <div>
+                <label className="block text-slate-300 text-sm font-medium mb-2">
+                  {lang === 'da' ? 'Bekræft adgangskode' : 'Confirm password'}
+                </label>
+                <div className="relative">
+                  <input
+                    type={showConfirmPassword ? 'text' : 'password'}
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="••••••••"
+                    autoComplete="new-password"
+                    required
+                    minLength={8}
+                    disabled={loading}
+                    className={`w-full bg-white/5 border rounded-xl px-4 py-3 pr-12 text-white placeholder-slate-600 focus:outline-none focus:border-blue-500 transition-colors text-sm disabled:opacity-50 ${
+                      confirmPassword.length > 0 && password !== confirmPassword
+                        ? 'border-red-500/50'
+                        : 'border-white/10'
+                    }`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors"
+                  >
+                    {showConfirmPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+                {confirmPassword.length > 0 && password !== confirmPassword && (
+                  <p className="text-red-400 text-xs mt-1">
+                    {lang === 'da' ? 'Adgangskoderne er ikke ens' : 'Passwords do not match'}
+                  </p>
+                )}
               </div>
+
+              {/* Demo checkbox */}
+              <label className="flex items-start gap-3 cursor-pointer group">
+                <div className="relative mt-0.5 shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={isDemo}
+                    onChange={(e) => setIsDemo(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-5 h-5 rounded-md border-2 border-slate-600 bg-white/5 peer-checked:bg-blue-600 peer-checked:border-blue-600 transition-colors flex items-center justify-center">
+                    {isDemo && (
+                      <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 12 12"
+                        fill="none"
+                        stroke="white"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="M2.5 6l2.5 2.5 4.5-5" />
+                      </svg>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <span className="text-white text-sm font-medium">
+                    {lang === 'da' ? 'Anmod om demo-adgang' : 'Request demo access'}
+                  </span>
+                  <p className="text-slate-500 text-xs mt-0.5 leading-relaxed">
+                    {lang === 'da'
+                      ? 'Gratis prøveperiode med AI-adgang. Kræver godkendelse af administrator.'
+                      : 'Free trial with AI access. Requires administrator approval.'}
+                  </p>
+                </div>
+              </label>
+
+              {/* Demo pending info */}
+              {isDemo && (
+                <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-4 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Clock size={14} className="text-amber-400 shrink-0" />
+                    <span className="text-amber-300 text-xs font-medium">
+                      {lang === 'da'
+                        ? 'Demo-konto kræver godkendelse'
+                        : 'Demo account requires approval'}
+                    </span>
+                  </div>
+                  <p className="text-slate-500 text-xs leading-relaxed pl-[22px]">
+                    {lang === 'da'
+                      ? 'Din konto oprettes med det samme, men du får begrænset adgang indtil en administrator godkender din anmodning.'
+                      : 'Your account is created immediately, but you will have limited access until an administrator approves your request.'}
+                  </p>
+                </div>
+              )}
+
+              {/* What you get (non-demo) */}
+              {!isDemo && (
+                <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl p-4 space-y-2">
+                  {[
+                    lang === 'da' ? 'Adgang til basisdata' : 'Access to basic data',
+                    lang === 'da'
+                      ? 'Ejendomme, virksomheder og ejere'
+                      : 'Properties, companies and owners',
+                    lang === 'da'
+                      ? 'Vælg abonnement efter oprettelse'
+                      : 'Choose subscription after signup',
+                  ].map((item) => (
+                    <div key={item} className="flex items-center gap-2">
+                      <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />
+                      <span className="text-slate-400 text-xs">{item}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               <button
                 type="submit"

@@ -55,6 +55,10 @@ export interface TenantContext {
   reports: ReportsApi;
   /** AI conversations API */
   aiConversations: AiConversationsApi;
+  /** Property snapshots for change detection (cron job) */
+  propertySnapshots: PropertySnapshotsApi;
+  /** User-facing notifications */
+  notifications: NotificationsApi;
   /** Audit log (write-only from application code) */
   auditLog: AuditLogApi;
 }
@@ -149,6 +153,43 @@ export interface WriteAuditEntry {
   ip_address?: string;
 }
 
+/** Snapshot type for property change detection */
+export type SnapshotType = 'bbr' | 'vurdering' | 'ejerskab' | 'energi' | 'plan' | 'cvr';
+
+/** Notification type for property changes */
+export type NotificationType =
+  | 'bbr_change'
+  | 'vurdering_change'
+  | 'ejerskifte'
+  | 'energi_change'
+  | 'plan_change'
+  | 'cvr_change'
+  | 'generel';
+
+export interface PropertySnapshot {
+  id: string;
+  tenant_id: string;
+  entity_id: string;
+  snapshot_type: SnapshotType;
+  snapshot_hash: string;
+  snapshot_data: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface Notification {
+  id: string;
+  tenant_id: string;
+  user_id: string;
+  entity_id: string;
+  entity_type: 'property' | 'company' | 'person';
+  notification_type: NotificationType;
+  title: string;
+  message: string;
+  metadata: Record<string, unknown> | null;
+  is_read: boolean;
+  created_at: string;
+}
+
 // ---------------------------------------------------------------------------
 // Tenant API interfaces
 // ---------------------------------------------------------------------------
@@ -198,6 +239,32 @@ interface AiConversationsApi {
 interface AuditLogApi {
   write(entry: WriteAuditEntry): Promise<void>;
   list(opts?: { limit?: number }): Promise<AuditLogEntry[]>;
+}
+
+interface PropertySnapshotsApi {
+  /** Hent seneste snapshot for en ejendom og type */
+  getLatest(entityId: string, snapshotType: SnapshotType): Promise<PropertySnapshot | null>;
+  /** Opret nyt snapshot (service_role only — bruges af cron job) */
+  create(
+    data: Omit<PropertySnapshot, 'id' | 'tenant_id' | 'created_at'>
+  ): Promise<PropertySnapshot>;
+}
+
+interface NotificationsApi {
+  /** Hent notifikationer for den aktuelle bruger */
+  list(opts?: { unread_only?: boolean; limit?: number }): Promise<Notification[]>;
+  /** Antal ulæste notifikationer */
+  countUnread(): Promise<number>;
+  /** Marker én notifikation som læst */
+  markAsRead(id: string): Promise<void>;
+  /** Marker alle notifikationer som læst */
+  markAllAsRead(): Promise<void>;
+  /** Slet læste notifikationer */
+  deleteRead(): Promise<void>;
+  /** Opret notifikation (service_role only — bruges af cron job) */
+  create(
+    data: Omit<Notification, 'id' | 'tenant_id' | 'created_at' | 'is_read'>
+  ): Promise<Notification>;
 }
 
 // ---------------------------------------------------------------------------
@@ -530,6 +597,125 @@ export async function getTenantContext(tenantId: string): Promise<TenantContext>
     },
   };
 
+  // ── Property Snapshots ──────────────────────────────────────
+  const propertySnapshots: PropertySnapshotsApi = {
+    async getLatest(entityId, snapshotType) {
+      const { data, error } = await tenantDb(admin, schemaName)
+        .from('property_snapshots')
+        .select('*')
+        .eq('tenant_id', tenantId)
+        .eq('entity_id', entityId)
+        .eq('snapshot_type', snapshotType)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw new Error(`property_snapshots.getLatest: ${error.message}`);
+      return data as PropertySnapshot | null;
+    },
+
+    async create(payload) {
+      const { data, error } = await tenantDb(admin, schemaName)
+        .from('property_snapshots')
+        .insert({ ...payload, tenant_id: tenantId })
+        .select()
+        .single();
+      if (error) throw new Error(`property_snapshots.create: ${error.message}`);
+      return data as PropertySnapshot;
+    },
+  };
+
+  // ── Notifications ──────────────────────────────────────────
+  const notifications: NotificationsApi = {
+    async list({ unread_only, limit = 50 } = {}) {
+      let q = tenantDb(admin, schemaName)
+        .from('notifications')
+        .select('*')
+        .eq('tenant_id', tenantId)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+      if (unread_only) q = q.eq('is_read', false);
+
+      // Scopér til brugerens egne notifikationer
+      const supabase = await createServerClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (user) q = q.eq('user_id', user.id);
+
+      const { data, error } = await q;
+      if (error) throw new Error(`notifications.list: ${error.message}`);
+      return (data ?? []) as Notification[];
+    },
+
+    async countUnread() {
+      const supabase = await createServerClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return 0;
+
+      const { count, error } = await tenantDb(admin, schemaName)
+        .from('notifications')
+        .select('*', { count: 'exact', head: true })
+        .eq('tenant_id', tenantId)
+        .eq('user_id', user.id)
+        .eq('is_read', false);
+      if (error) throw new Error(`notifications.countUnread: ${error.message}`);
+      return count ?? 0;
+    },
+
+    async markAsRead(id) {
+      const { error } = await tenantDb(admin, schemaName)
+        .from('notifications')
+        .update({ is_read: true })
+        .eq('id', id)
+        .eq('tenant_id', tenantId);
+      if (error) throw new Error(`notifications.markAsRead: ${error.message}`);
+    },
+
+    async markAllAsRead() {
+      const supabase = await createServerClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { error } = await tenantDb(admin, schemaName)
+        .from('notifications')
+        .update({ is_read: true })
+        .eq('tenant_id', tenantId)
+        .eq('user_id', user.id)
+        .eq('is_read', false);
+      if (error) throw new Error(`notifications.markAllAsRead: ${error.message}`);
+    },
+
+    async deleteRead() {
+      const supabase = await createServerClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { error } = await tenantDb(admin, schemaName)
+        .from('notifications')
+        .delete()
+        .eq('tenant_id', tenantId)
+        .eq('user_id', user.id)
+        .eq('is_read', true);
+      if (error) throw new Error(`notifications.deleteRead: ${error.message}`);
+    },
+
+    async create(payload) {
+      const { data, error } = await tenantDb(admin, schemaName)
+        .from('notifications')
+        .insert({ ...payload, tenant_id: tenantId, is_read: false })
+        .select()
+        .single();
+      if (error) throw new Error(`notifications.create: ${error.message}`);
+      return data as Notification;
+    },
+  };
+
   // ── Audit Log ──────────────────────────────────────────────
   const auditLog: AuditLogApi = {
     /**
@@ -583,6 +769,8 @@ export async function getTenantContext(tenantId: string): Promise<TenantContext>
     savedSearches,
     reports,
     aiConversations,
+    propertySnapshots,
+    notifications,
     auditLog,
   };
 }

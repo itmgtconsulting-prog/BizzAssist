@@ -282,7 +282,7 @@ export default function SecuritySettingsPage() {
   // ---------------------------------------------------------------------------
 
   return (
-    <div className="min-h-screen bg-[#0f172a] px-4 py-10 sm:px-8">
+    <div className="flex-1 overflow-y-auto bg-[#0f172a] px-4 py-10 sm:px-8">
       <div className="max-w-xl mx-auto space-y-6">
         {/* Page heading */}
         <div>

@@ -13,10 +13,10 @@ export const translations = {
     hero: {
       badge: 'Danmarks #1 forretningsintelligens platform',
       title: 'Kend alt om',
-      titleHighlight: 'virksomheder, ejendomme & personer',
+      titleHighlight: 'virksomheder, ejendomme & ejere',
       subtitle:
         'BizzAssist samler data fra hundredvis af offentlige og private kilder og lader dig analysere det med AI — på sekunder.',
-      searchPlaceholder: 'Søg på virksomhed, CVR-nummer, person eller adresse...',
+      searchPlaceholder: 'Søg på virksomhed, CVR-nummer, ejer eller adresse...',
       ctaPrimary: 'Start gratis',
       ctaSecondary: 'Se demo',
       trustedBy: 'Betroet af 500+ virksomheder i Danmark',
@@ -30,7 +30,7 @@ export const translations = {
     features: {
       title: 'Alt data. Ét sted.',
       subtitle:
-        'Vi samler de vigtigste data om ejendomme, virksomheder og personer fra alle relevante kilder i Danmark.',
+        'Vi samler de vigtigste data om ejendomme, virksomheder og ejere fra alle relevante kilder i Danmark.',
       items: [
         {
           icon: 'building',
@@ -46,7 +46,7 @@ export const translations = {
         },
         {
           icon: 'users',
-          title: 'Persondata',
+          title: 'Ejerdata',
           description:
             'Direktører, bestyrelsesmedlemmer, ejere, netværk og personlige forretningsforbindelser.',
         },
@@ -54,7 +54,7 @@ export const translations = {
           icon: 'sparkles',
           title: 'AI-analyse',
           description:
-            'Stil spørgsmål om enhver virksomhed, ejendom eller person og få øjeblikkelige, datadrevne svar.',
+            'Stil spørgsmål om enhver virksomhed, ejendom eller ejer og få øjeblikkelige, datadrevne svar.',
         },
       ],
     },
@@ -106,6 +106,7 @@ export const translations = {
       product: 'Produkt',
       company: 'Virksomhed',
       legal: 'Juridisk',
+      contact: 'Kontakt',
       links: {
         features: 'Funktioner',
         pricing: 'Priser',
@@ -116,8 +117,16 @@ export const translations = {
         privacy: 'Privatlivspolitik',
         terms: 'Vilkår og betingelser',
         cookies: 'Cookiepolitik',
+        business: 'Forretning',
+        support: 'Support',
       },
-      copyright: '© 2025 BizzAssist ApS. Alle rettigheder forbeholdes.',
+      supplier: {
+        label: 'Leveret af',
+        name: 'Pecunia IT ApS',
+        cvr: 'CVR-nr: 44718502',
+        address: 'Søbyvej 11, 2650 Hvidovre',
+      },
+      copyright: '© 2025 BizzAssist. Alle rettigheder forbeholdes.',
     },
     login: {
       title: 'Log ind på BizzAssist',
@@ -145,10 +154,10 @@ export const translations = {
     hero: {
       badge: "Denmark's #1 business intelligence platform",
       title: 'Know everything about',
-      titleHighlight: 'companies, properties & individuals',
+      titleHighlight: 'companies, properties & owners',
       subtitle:
         'BizzAssist aggregates data from hundreds of public and private sources and lets you analyse it with AI — in seconds.',
-      searchPlaceholder: 'Search company, CVR number, person or address...',
+      searchPlaceholder: 'Search company, CVR number, owner or address...',
       ctaPrimary: 'Start for free',
       ctaSecondary: 'Watch demo',
       trustedBy: 'Trusted by 500+ companies in Denmark',
@@ -156,13 +165,13 @@ export const translations = {
     stats: [
       { value: '2M+', label: 'Companies' },
       { value: '4M+', label: 'Properties' },
-      { value: '5M+', label: 'Person profiles' },
+      { value: '5M+', label: 'Owner profiles' },
       { value: '50+', label: 'Data sources' },
     ],
     features: {
       title: 'All data. One place.',
       subtitle:
-        'We aggregate the most important data on properties, companies, and individuals from all relevant sources in Denmark.',
+        'We aggregate the most important data on properties, companies, and owners from all relevant sources in Denmark.',
       items: [
         {
           icon: 'building',
@@ -178,7 +187,7 @@ export const translations = {
         },
         {
           icon: 'users',
-          title: 'People Data',
+          title: 'Owner Data',
           description:
             'Directors, board members, owners, networks and personal business connections.',
         },
@@ -186,7 +195,7 @@ export const translations = {
           icon: 'sparkles',
           title: 'AI Analysis',
           description:
-            'Ask questions about any company, property or person and get instant, data-driven answers.',
+            'Ask questions about any company, property or owner and get instant, data-driven answers.',
         },
       ],
     },
@@ -238,6 +247,7 @@ export const translations = {
       product: 'Product',
       company: 'Company',
       legal: 'Legal',
+      contact: 'Contact',
       links: {
         features: 'Features',
         pricing: 'Pricing',
@@ -248,8 +258,16 @@ export const translations = {
         privacy: 'Privacy Policy',
         terms: 'Terms & Conditions',
         cookies: 'Cookie Policy',
+        business: 'Business',
+        support: 'Support',
       },
-      copyright: '© 2025 BizzAssist ApS. All rights reserved.',
+      supplier: {
+        label: 'Provided by',
+        name: 'Pecunia IT ApS',
+        cvr: 'CVR: 44718502',
+        address: 'Søbyvej 11, 2650 Hvidovre',
+      },
+      copyright: '© 2025 BizzAssist. All rights reserved.',
     },
     login: {
       title: 'Log in to BizzAssist',

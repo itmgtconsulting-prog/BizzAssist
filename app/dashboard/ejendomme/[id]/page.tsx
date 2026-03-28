@@ -32,7 +32,10 @@ import {
   Briefcase,
   Phone,
   Mail,
-  Map,
+  Map as MapIcon,
+  CheckCircle,
+  XCircle,
+  Info,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -50,46 +53,42 @@ import {
   formatDato,
   type EjerstrukturNode,
 } from '@/app/lib/mock/ejendomme';
-import {
-  dawaHentAdresse,
-  dawaHentJordstykke,
-  erDawaId,
-  type DawaAdresse,
-  type DawaJordstykke,
-} from '@/app/lib/dawa';
-import type {
-  EjendomApiResponse,
-  LiveBBRBygning,
-  LiveBBREnhed,
-} from '@/app/api/ejendom/[id]/route';
+import { erDawaId, type DawaAdresse, type DawaJordstykke } from '@/app/lib/dawa';
+import type { EjendomApiResponse, LiveBBRBygning } from '@/app/api/ejendom/[id]/route';
 import type { CVRVirksomhed, CVRResponse } from '@/app/api/cvr/route';
 import type { VurderingData, VurderingResponse } from '@/app/api/vurdering/route';
 import type { EjerData, EjerskabResponse } from '@/app/api/ejerskab/route';
+import type { PlandataItem, PlandataResponse } from '@/app/api/plandata/route';
+import type { EnergimaerkeItem, EnergimaerkeResponse } from '@/app/api/energimaerke/route';
+import type { JordParcelItem, JordResponse } from '@/app/api/jord/route';
+import type { HandelData, SalgshistorikResponse } from '@/app/api/salgshistorik/route';
+import type {
+  ForelobigVurdering,
+  ForelobigVurderingResponse,
+} from '@/app/api/vurdering-forelobig/route';
+import type { MatrikelEjendom, MatrikelResponse } from '@/app/api/matrikel/route';
 import { gemRecentEjendom } from '@/app/lib/recentEjendomme';
+import { erTracked, toggleTrackEjendom } from '@/app/lib/trackedEjendomme';
+import FoelgTooltip from '@/app/components/FoelgTooltip';
 
-type Tab = 'overblik' | 'bbr' | 'ejerforhold' | 'tinglysning' | 'oekonomi' | 'dokumenter';
+type Tab =
+  | 'overblik'
+  | 'bbr'
+  | 'ejerforhold'
+  | 'tinglysning'
+  | 'oekonomi'
+  | 'skatter'
+  | 'dokumenter';
 
 const tabs: { id: Tab; label: string; ikon: React.ReactNode }[] = [
-  { id: 'overblik', label: 'Overblik', ikon: <Building2 size={14} /> },
+  { id: 'overblik', label: 'Oversigt', ikon: <Building2 size={14} /> },
   { id: 'bbr', label: 'BBR', ikon: <FileText size={14} /> },
-  { id: 'ejerforhold', label: 'Ejerforhold', ikon: <Users size={14} /> },
+  { id: 'ejerforhold', label: 'Ejerskab', ikon: <Users size={14} /> },
   { id: 'tinglysning', label: 'Tinglysning', ikon: <Landmark size={14} /> },
   { id: 'oekonomi', label: 'Økonomi', ikon: <BarChart3 size={14} /> },
+  { id: 'skatter', label: 'SKAT', ikon: <Landmark size={14} /> },
   { id: 'dokumenter', label: 'Dokumenter', ikon: <FileText size={14} /> },
 ];
-
-/** Energimærke baggrundfarve */
-const energiColor: Record<string, string> = {
-  A2020: 'bg-green-500',
-  A2015: 'bg-green-400',
-  A2010: 'bg-lime-400',
-  B: 'bg-yellow-300',
-  C: 'bg-yellow-400',
-  D: 'bg-orange-400',
-  E: 'bg-orange-500',
-  F: 'bg-red-500',
-  G: 'bg-red-700',
-};
 
 /** Miljøindikator statusfarve */
 const miljoStatusColor: Record<string, string> = {
@@ -106,9 +105,9 @@ const miljoStatusColor: Record<string, string> = {
  */
 function DataKort({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
-    <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-3">
-      <p className="text-slate-400 text-xs mb-1">{label}</p>
-      <p className="text-white font-semibold text-base leading-tight">{value}</p>
+    <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-2">
+      <p className="text-slate-400 text-xs leading-none mb-0.5">{label}</p>
+      <p className="text-white font-semibold text-sm leading-tight">{value}</p>
       {sub && <p className="text-slate-500 text-xs mt-0.5">{sub}</p>}
     </div>
   );
@@ -121,7 +120,7 @@ function DataKort({ label, value, sub }: { label: string; value: string; sub?: s
  */
 function SectionTitle({ title, onDownload }: { title: string; onDownload?: () => void }) {
   return (
-    <div className="flex items-center justify-between mb-3">
+    <div className="flex items-center justify-between mb-1.5">
       <h3 className="text-white font-semibold text-sm">{title}</h3>
       {onDownload && (
         <button
@@ -354,8 +353,12 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
 
   /** Ejendomsvurderingsdata fra Datafordeler — null = ikke hentet endnu */
   const [vurdering, setVurdering] = useState<VurderingData | null>(null);
+  /** Alle vurderinger fra Datafordeler — bruges til historiktabel */
+  const [alleVurderinger, setAlleVurderinger] = useState<VurderingData[]>([]);
   /** True mens vurderingsdata hentes */
   const [vurderingLoader, setVurderingLoader] = useState(false);
+  /** True = vis fuld vurderingshistorik-tabel */
+  const [visVurderingHistorik, setVisVurderingHistorik] = useState(false);
 
   /** Ejere fra Ejerfortegnelsen (Datafordeler) */
   const [ejere, setEjere] = useState<EjerData[] | null>(null);
@@ -364,7 +367,90 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
   /** True hvis Datafordeler returnerer 403 — Dataadgang-ansøgning mangler for EJF */
   const [manglerEjereAdgang, setManglerEjereAdgang] = useState(false);
 
+  /** BBR-tab: ID'er på bygningsrækker der er foldet ud */
+  const [expandedBygninger, setExpandedBygninger] = useState<Set<string>>(new Set());
+  /** BBR-tab: ID'er på enhedsrækker der er foldet ud */
+  const [expandedEnheder, setExpandedEnheder] = useState<Set<string>>(new Set());
+
+  /** Plandata (lokalplaner + kommuneplanrammer) for ejendommen */
+  const [plandata, setPlandata] = useState<PlandataItem[] | null>(null);
+  /** True mens plandata hentes */
+  const [plandataLoader, setPlandataLoader] = useState(false);
+  /** Fejlbesked fra plandata-endpoint */
+  const [plandataFejl, setPlandataFejl] = useState<string | null>(null);
+
+  /** Energimærkerapporter fra Energistyrelsen EMOData */
+  const [energimaerker, setEnergimaerker] = useState<EnergimaerkeItem[] | null>(null);
+  /** True mens energimærker hentes */
+  const [energiLoader, setEnergiLoader] = useState(false);
+  /** True = EMO_USERNAME/PASSWORD mangler i .env.local */
+  const [energiManglerAdgang, setEnergiManglerAdgang] = useState(false);
+  /** Fejlbesked fra energimærke-endpoint */
+  const [energiFejl, setEnergiFejl] = useState<string | null>(null);
+  /** ID'er på plan-rækker der er foldet ud i detaljevisning */
+  const [expandedPlaner, setExpandedPlaner] = useState<Set<string>>(new Set());
+
+  /** Salgshistorik fra EJF Datafordeler — handler med prisdata */
+  const [salgshistorik, setSalgshistorik] = useState<HandelData[] | null>(null);
+  /** True mens salgshistorik hentes */
+  const [salgshistorikLoader, setSalgshistorikLoader] = useState(false);
+  /** True hvis EJF-adgang mangler hos Geodatastyrelsen */
+  const [salgshistorikManglerAdgang, setSalgshistorikManglerAdgang] = useState(false);
+
+  /** Jordforureningsdata fra DkJord API — null = ikke hentet endnu */
+  const [jordData, setJordData] = useState<JordParcelItem[] | null>(null);
+  /** True mens jordforureningsdata hentes */
+  const [jordLoader, setJordLoader] = useState(false);
+  /** True = matriklen har ingen forureningsregistreringer */
+  const [jordIngenData, setJordIngenData] = useState(false);
+  /** Fejlbesked fra jord-endpoint */
+  const [jordFejl, setJordFejl] = useState<string | null>(null);
+
+  /** Forelobige vurderinger fra Vurderingsportalen — separat fra Datafordeler-vurderinger */
+  const [forelobige, setForelobige] = useState<ForelobigVurdering[]>([]);
+  /** True mens forelobige vurderinger hentes */
+  const [, setForelobigLoader] = useState(false);
+  /** Matrikeldata fra Datafordeler MAT-registret */
+  const [matrikelData, setMatrikelData] = useState<MatrikelEjendom | null>(null);
+  /** True mens matrikeldata hentes */
+  const [matrikelLoader, setMatrikelLoader] = useState(false);
+  /** ID'er på jord-rækker der er foldet ud */
+  const [expandedJord, setExpandedJord] = useState<Set<string>>(new Set());
+
   const erDAWA = erDawaId(id);
+
+  /** Om ejendommen er fulgt af brugeren — synkroniseret med localStorage */
+  const [erFulgt, setErFulgt] = useState(false);
+  /** Vis Følg-tooltip med info om overvåget data */
+  const [visFoelgTooltip, setVisFoelgTooltip] = useState(false);
+
+  /** Indlæs tracking-tilstand ved mount og lyt efter ændringer */
+  useEffect(() => {
+    setErFulgt(erTracked(id));
+    const handler = () => setErFulgt(erTracked(id));
+    window.addEventListener('ba-tracked-changed', handler);
+    window.addEventListener('storage', handler);
+    return () => {
+      window.removeEventListener('ba-tracked-changed', handler);
+      window.removeEventListener('storage', handler);
+    };
+  }, [id]);
+
+  /**
+   * Detekterer om ejendommen er en kolonihave/fritidshytte på lejet grund.
+   * BBR koder: 520 = Kolonihavehus, 540 = Campinghytte (bruges ofte for kolonihaver).
+   * Kolonihaver på lejet grund er fritaget for ejendomsværdiskat
+   * jf. EVL § 9, stk. 1, nr. 6 og Kolonihaveloven § 2.
+   * Grundskyld betales af grundejer (typisk kommunen/foreningen), ikke den enkelte haveejer.
+   */
+  const KOLONIHAVE_KODER = new Set([520, 540]);
+  const erKolonihave =
+    bbrData?.bbr?.some(
+      (b: LiveBBRBygning) => b.anvendelseskode != null && KOLONIHAVE_KODER.has(b.anvendelseskode)
+    ) ?? false;
+
+  // Grundskyld stigningsbegrænsning (4,75% loft, ESL § 45) — fjernet fra UI.
+  // Kræver historisk grundskyld-data for korrekt beregning. Se backlog.
 
   /**
    * Henter DAWA-adresse og jordstykke.
@@ -373,26 +459,29 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
   useEffect(() => {
     if (!erDAWA) return;
     setDawaStatus('loader');
-    dawaHentAdresse(id).then(async (adr) => {
-      if (!adr) {
-        setDawaStatus('fejl');
-        return;
-      }
-      setDawaAdresse(adr);
-      const jord = await dawaHentJordstykke(adr.x, adr.y);
-      setDawaJordstykke(jord);
-      setDawaStatus('ok');
+    fetch(`/api/adresse/lookup?id=${encodeURIComponent(id)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then(async (adr: DawaAdresse | null) => {
+        if (!adr) {
+          setDawaStatus('fejl');
+          return;
+        }
+        setDawaAdresse(adr);
+        const jordRes = await fetch(`/api/adresse/jordstykke?lng=${adr.x}&lat=${adr.y}`);
+        const jord: DawaJordstykke | null = jordRes.ok ? await jordRes.json() : null;
+        setDawaJordstykke(jord);
+        setDawaStatus('ok');
 
-      // Gem besøget i "seneste sete ejendomme"-historikken
-      gemRecentEjendom({
-        id,
-        adresse: adr.adressebetegnelse.split(',')[0],
-        postnr: adr.postnr,
-        by: adr.postnrnavn,
-        kommune: adr.kommunenavn,
-        anvendelse: null, // opdateres nedenfor når BBR-data er klar
+        // Gem besøget i "seneste sete ejendomme"-historikken
+        gemRecentEjendom({
+          id,
+          adresse: adr.adressebetegnelse.split(',')[0],
+          postnr: adr.postnr,
+          by: adr.postnrnavn,
+          kommune: adr.kommunenavn,
+          anvendelse: null, // opdateres nedenfor når BBR-data er klar
+        });
       });
-    });
   }, [id, erDAWA]);
 
   /**
@@ -444,10 +533,16 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
     setVurderingLoader(true);
     setEjereLoader(true);
 
-    fetch(`/api/vurdering?bfeNummer=${bfeNummer}`)
+    const kommunekode = dawaJordstykke?.kommune?.kode;
+    const vurderingUrl = kommunekode
+      ? `/api/vurdering?bfeNummer=${bfeNummer}&kommunekode=${kommunekode}`
+      : `/api/vurdering?bfeNummer=${bfeNummer}`;
+
+    fetch(vurderingUrl)
       .then((r) => (r.ok ? r.json() : null))
       .then((data: VurderingResponse | null) => {
         setVurdering(data?.vurdering ?? null);
+        setAlleVurderinger(data?.alle ?? []);
       })
       .catch(() => setVurdering(null))
       .finally(() => setVurderingLoader(false));
@@ -460,7 +555,133 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
       })
       .catch(() => setEjere([]))
       .finally(() => setEjereLoader(false));
+
+    setSalgshistorikLoader(true);
+    fetch(`/api/salgshistorik?bfeNummer=${bfeNummer}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: SalgshistorikResponse | null) => {
+        setSalgshistorikManglerAdgang(data?.manglerAdgang ?? false);
+        setSalgshistorik(data?.handler ?? []);
+      })
+      .catch(() => setSalgshistorik([]))
+      .finally(() => setSalgshistorikLoader(false));
   }, [id, erDAWA, bbrData]);
+
+  /**
+   * Henter matrikeldata (jordstykker, landbrugsnotering m.m.) fra Datafordeler MAT-registret.
+   * Kører når BFE-nummer er tilgængeligt via BBR Ejendomsrelation.
+   */
+  useEffect(() => {
+    if (!erDAWA || !bbrData?.ejendomsrelationer?.length) return;
+    const bfeNummer = bbrData.ejendomsrelationer[0]?.bfeNummer;
+    if (!bfeNummer) return;
+    setMatrikelLoader(true);
+    fetch(`/api/matrikel?bfeNummer=${bfeNummer}`)
+      .then((r) => r.json())
+      .then((data: MatrikelResponse) => {
+        if (data.matrikel) setMatrikelData(data.matrikel);
+      })
+      .catch(() => {})
+      .finally(() => setMatrikelLoader(false));
+  }, [erDAWA, bbrData]);
+
+  /**
+   * Henter forelobige ejendomsvurderinger fra Vurderingsportalen.
+   * Proever foerst adgangsadresse-ID fra DAWA, derefter BFE-nummer fra BBR.
+   * Disse er separate fra de endelige vurderinger fra Datafordeler.
+   */
+  useEffect(() => {
+    if (!erDAWA) return;
+
+    // Byg soegeparametre — brug adresseId (DAWA UUID) hvis tilgaengeligt, ellers bfeNummer
+    const adresseId = dawaAdresse?.id;
+    const bfeNummer = bbrData?.ejendomsrelationer?.[0]?.bfeNummer;
+
+    if (!adresseId && !bfeNummer) return;
+
+    const params = new URLSearchParams();
+    if (adresseId) {
+      params.set('adresseId', adresseId);
+    }
+    if (bfeNummer) {
+      params.set('bfeNummer', String(bfeNummer));
+    }
+
+    setForelobigLoader(true);
+    fetch(`/api/vurdering-forelobig?${params}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: ForelobigVurderingResponse | null) => {
+        setForelobige(data?.forelobige ?? []);
+      })
+      .catch(() => setForelobige([]))
+      .finally(() => setForelobigLoader(false));
+  }, [id, erDAWA, dawaAdresse, bbrData]);
+
+  /**
+   * Henter energimærkerapporter via /api/energimaerke når BFE-nummer er tilgængeligt.
+   * Kræver EMO_USERNAME/PASSWORD i .env.local — fejler stille med manglerAdgang-flag.
+   */
+  useEffect(() => {
+    if (!erDAWA || !bbrData?.ejendomsrelationer?.length) return;
+    const bfeNummer = bbrData.ejendomsrelationer[0]?.bfeNummer;
+    if (!bfeNummer) return;
+
+    setEnergiLoader(true);
+    fetch(`/api/energimaerke?bfeNummer=${bfeNummer}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: EnergimaerkeResponse | null) => {
+        setEnergimaerker(data?.maerker ?? null);
+        setEnergiManglerAdgang(data?.manglerAdgang ?? false);
+        setEnergiFejl(data?.fejl ?? null);
+      })
+      .catch(() => setEnergiFejl('Netværksfejl ved hentning af energimærker'))
+      .finally(() => setEnergiLoader(false));
+  }, [id, erDAWA, bbrData]);
+
+  /**
+   * Henter jordforureningsstatus fra DkJord API når ejerlavKode + matrikelnr er tilgængelige.
+   * Åbne data — kræver ingen autentificering.
+   */
+  useEffect(() => {
+    if (!erDAWA || !bbrData?.ejendomsrelationer?.length) return;
+    const rel = bbrData.ejendomsrelationer[0];
+    if (!rel?.ejerlavKode || !rel?.matrikelnr) return;
+
+    setJordLoader(true);
+    setJordData(null);
+    setJordIngenData(false);
+    setJordFejl(null);
+
+    fetch(
+      `/api/jord?ejerlavKode=${rel.ejerlavKode}&matrikelnr=${encodeURIComponent(rel.matrikelnr)}`
+    )
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: JordResponse | null) => {
+        setJordData(data?.items ?? null);
+        setJordIngenData(data?.ingenData ?? false);
+        setJordFejl(data?.fejl ?? null);
+      })
+      .catch(() => setJordFejl('Netværksfejl ved hentning af jordforureningsdata'))
+      .finally(() => setJordLoader(false));
+  }, [id, erDAWA, bbrData]);
+
+  /**
+   * Henter lokalplaner og kommuneplanrammer via /api/plandata når DAWA-adressen er klar.
+   * Kræver kun adresse-UUID — koordinater hentes internt af API-routen via DAWA.
+   */
+  useEffect(() => {
+    if (!erDAWA || dawaStatus !== 'ok') return;
+    setPlandataLoader(true);
+    setPlandataFejl(null);
+    fetch(`/api/plandata?adresseId=${id}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: PlandataResponse | null) => {
+        setPlandata(data?.planer ?? null);
+        if (data?.fejl) setPlandataFejl(data.fejl);
+      })
+      .catch(() => setPlandataFejl('Netværksfejl ved hentning af plandata'))
+      .finally(() => setPlandataLoader(false));
+  }, [id, erDAWA, dawaStatus]);
 
   /**
    * Toggler et dokument i udvalgslisten.
@@ -473,6 +694,225 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
       else next.add(docId);
       return next;
     });
+
+  /** True mens ZIP-filen genereres og downloades */
+  const [zipLoader, setZipLoader] = useState(false);
+  /** True mens PDF-rapport genereres */
+  const [rapportLoader, setRapportLoader] = useState(false);
+
+  /**
+   * Genererer og downloader en PDF-rapport med al ejendomsdata.
+   * POSTer samlet data til /api/rapport og trigger browser-download af resultatet.
+   */
+  const handleDownloadRapport = async () => {
+    if (rapportLoader) return;
+    setRapportLoader(true);
+    try {
+      const rel = bbrData?.ejendomsrelationer?.[0];
+      const adresse = dawaAdresse
+        ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
+        : (ejendom?.adresse ?? 'Ukendt adresse');
+
+      const payload = {
+        adresse,
+        kommune: dawaAdresse?.kommunenavn ?? null,
+        postnr: dawaAdresse?.postnr ?? null,
+        by: dawaAdresse?.postnrnavn ?? null,
+        bfeNummer: rel?.bfeNummer ?? null,
+        matrikelnr: rel?.matrikelnr ?? null,
+        ejerlavKode: rel?.ejerlavKode ?? null,
+        bygninger: (bbrData?.bbr ?? []).map((b: LiveBBRBygning) => ({
+          id: b.id,
+          opfoerelsesaar: b.opfoerelsesaar,
+          bygningsareal: b.samletBygningsareal ?? b.bebyggetAreal,
+          boligareal: b.samletBoligareal,
+          samletAreal: b.samletBygningsareal,
+          etager: b.antalEtager,
+          anvendelsestekst: b.anvendelse,
+          tagmateriale: b.tagmateriale,
+          ydervaeggene: b.ydervaeg,
+          energimaerke: b.energimaerke,
+        })),
+        vurdering: vurdering
+          ? {
+              aar: vurdering.aar,
+              ejendomsvaerdi: vurdering.ejendomsvaerdi,
+              grundvaerdi: vurdering.grundvaerdi,
+              estimereretGrundskyld: vurdering.estimereretGrundskyld,
+              grundskyldspromille: vurdering.grundskyldspromille,
+            }
+          : null,
+        alleVurderinger: alleVurderinger.map((v) => ({
+          aar: v.aar,
+          ejendomsvaerdi: v.ejendomsvaerdi,
+          grundvaerdi: v.grundvaerdi,
+        })),
+        ejere: (ejere ?? []).map((e: EjerData) => ({
+          navn: e.cvr ? `CVR ${e.cvr}` : e.ejertype === 'person' ? 'Person' : 'Ukendt',
+          ejertype: e.ejertype,
+          cvr: e.cvr ?? null,
+          ejerandel:
+            e.ejerandel_taeller != null && e.ejerandel_naevner != null
+              ? { taeller: e.ejerandel_taeller, naevner: e.ejerandel_naevner }
+              : null,
+        })),
+        salgshistorik: (salgshistorik ?? []).map((h: HandelData) => ({
+          koebsaftaleDato: h.koebsaftaleDato,
+          kontantKoebesum: h.kontantKoebesum,
+          overdragelsesmaade: h.overdragelsesmaade,
+        })),
+        matrikel:
+          matrikelData?.jordstykker?.map((js) => ({
+            matrikelnummer: js.matrikelnummer,
+            registreretAreal: js.registreretAreal,
+            vejareal: js.vejareal,
+            fredskov: js.fredskov,
+            strandbeskyttelse: js.strandbeskyttelse,
+          })) ?? [],
+        plandata: (plandata ?? []).map((p: PlandataItem) => ({
+          type: p.type,
+          navn: p.navn,
+          nummer: p.nummer,
+          status: p.status,
+        })),
+        jordforurening: (jordData ?? []).map((j: JordParcelItem) => ({
+          pollutionStatusCodeText: j.pollutionStatusText,
+          locationNames: j.locationNames,
+        })),
+        jordIngenData,
+      };
+
+      const res = await fetch('/api/rapport', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const err = (await res.json().catch(() => ({ fejl: 'Ukendt fejl' }))) as { fejl?: string };
+        alert(`Rapport-download fejlede: ${err.fejl ?? res.statusText}`);
+        return;
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download =
+        res.headers.get('Content-Disposition')?.match(/filename="([^"]+)"/)?.[1] ?? 'rapport.pdf';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert(`Rapport-download fejlede: ${err instanceof Error ? err.message : 'Ukendt fejl'}`);
+    } finally {
+      setRapportLoader(false);
+    }
+  };
+
+  /**
+   * Henter de valgte dokumenter fra Dokumenter-tabben og downloader dem som ZIP.
+   * Bygger en liste over downloadbare PDF-URL'er baseret på valgte dokument-IDs,
+   * POSTer til /api/dokumenter/zip og trigger browser-download af resultatet.
+   */
+  const handleDownloadZip = async () => {
+    if (valgteDoc.size === 0 || zipLoader) return;
+
+    const rel = bbrData?.ejendomsrelationer?.[0];
+    const bfeNummer = rel?.bfeNummer;
+    const ejerlavKode = rel?.ejerlavKode;
+    const matrikelnr = rel?.matrikelnr;
+
+    type ZipDoc = { filename: string; url: string };
+    const docs: ZipDoc[] = [];
+
+    for (const id of valgteDoc) {
+      // BBR-meddelelse
+      if (id === 'std-3' && bfeNummer) {
+        docs.push({
+          filename: 'BBR-meddelelse.pdf',
+          url: `https://bbr.dk/pls/wwwdata/get_newois_pck.show_bbr_meddelelse_pdf?i_bfe=${bfeNummer}`,
+        });
+      }
+      // Matrikelkort (intern API)
+      if (id === 'std-5' && ejerlavKode && matrikelnr) {
+        docs.push({
+          filename: `Matrikelkort_${matrikelnr}.pdf`,
+          url: `/api/matrikelkort?ejerlavKode=${ejerlavKode}&matrikelnr=${encodeURIComponent(matrikelnr)}`,
+        });
+      }
+      // Jordforureningsattest — via intern /api/jord/pdf proxy der fetcher /report/generate direkte
+      if (id === 'std-7' && ejerlavKode && matrikelnr) {
+        docs.push({
+          filename: `Jordforureningsattest_${matrikelnr}.pdf`,
+          url: `/api/jord/pdf?elav=${ejerlavKode}&matrnr=${encodeURIComponent(matrikelnr)}`,
+        });
+      }
+    }
+
+    // Planer med doklink
+    if (plandata) {
+      for (const plan of plandata) {
+        if (plan.doklink && valgteDoc.has(`pla-${plan.id}`)) {
+          docs.push({
+            filename: `Plan_${(plan.navn ?? plan.id ?? 'ukendt').replace(/[^a-zA-Z0-9æøåÆØÅ]/g, '_')}.pdf`,
+            url: plan.doklink,
+          });
+        }
+      }
+    }
+
+    if (docs.length === 0) {
+      alert('De valgte dokumenter har ingen direkte PDF-links der kan downloades.');
+      return;
+    }
+
+    setZipLoader(true);
+    try {
+      const adresse =
+        dawaStatus === 'ok' ? (dawaAdresse?.vejnavn ?? 'ejendom') : (ejendom?.adresse ?? 'ejendom');
+      const res = await fetch('/api/dokumenter/zip', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          docs,
+          arkivNavn: `BizzAssist_${adresse.replace(/[^a-zA-Z0-9æøåÆØÅ]/g, '_')}`,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = (await res.json().catch(() => ({ fejl: 'Ukendt fejl' }))) as { fejl?: string };
+        alert(`ZIP-download fejlede: ${err.fejl ?? res.statusText}`);
+        return;
+      }
+
+      // Trigger browser-download
+      const springedeOver = res.headers.get('X-Springede-Over');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download =
+        res.headers.get('Content-Disposition')?.match(/filename="([^"]+)"/)?.[1] ??
+        'dokumenter.zip';
+      a.click();
+      URL.revokeObjectURL(url);
+
+      // Informér brugeren hvis nogle dokumenter ikke kunne valideres som gyldige PDF-filer
+      if (springedeOver) {
+        const liste = springedeOver
+          .split(' | ')
+          .map((s) => `• ${s}`)
+          .join('\n');
+        alert(
+          `ZIP-filen er hentet, men følgende dokumenter kunne ikke inkluderes (ikke en gyldig PDF):\n\n${liste}\n\nPrøv at åbne dem direkte i browseren.`
+        );
+      }
+    } catch (err) {
+      alert(`ZIP-download fejlede: ${err instanceof Error ? err.message : 'Ukendt fejl'}`);
+    } finally {
+      setZipLoader(false);
+    }
+  };
 
   const ejendom = erDAWA ? null : getEjendomById(id);
 
@@ -507,9 +947,6 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
   if (erDAWA && dawaAdresse) {
     const adresseStreng = `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`;
 
-    /** Første BBR-bygning (de fleste ejendomme har kun én) */
-    const foersteBygning: LiveBBRBygning | null = bbrData?.bbr?.[0] ?? null;
-
     return (
       <div className={`flex-1 flex overflow-hidden${trækker ? ' select-none' : ''}`}>
         {/* ─── Venstre: header + tabs + indhold ─── */}
@@ -523,16 +960,88 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
               >
                 <ArrowLeft size={16} /> Ejendomme
               </button>
-              <button className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700/60 rounded-lg text-slate-300 text-sm transition-all">
-                <Bell size={14} /> Følg
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleDownloadRapport}
+                  disabled={rapportLoader}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-wait border border-blue-500/60 rounded-lg text-white text-sm font-medium transition-all"
+                  title="Download ejendomsrapport som PDF"
+                >
+                  {rapportLoader ? (
+                    <>
+                      <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                      Genererer…
+                    </>
+                  ) : (
+                    <>
+                      <Download size={14} />
+                      Rapport
+                    </>
+                  )}
+                </button>
+                <div
+                  className="relative"
+                  onMouseEnter={() => !erFulgt && setVisFoelgTooltip(true)}
+                  onMouseLeave={() => setVisFoelgTooltip(false)}
+                >
+                  <button
+                    onClick={async () => {
+                      setVisFoelgTooltip(false);
+                      const postnr = dawaAdresse?.postnr ?? '';
+                      const by = dawaAdresse?.postnrnavn ?? '';
+                      const kommune =
+                        dawaAdresse?.kommunenavn ?? dawaJordstykke?.kommune.navn ?? '';
+                      const anvendelse = bbrData?.bbr?.[0]?.anvendelse ?? null;
+                      const nyTilstand = toggleTrackEjendom({
+                        id,
+                        adresse: adresseStreng,
+                        postnr,
+                        by,
+                        kommune,
+                        anvendelse,
+                      });
+                      setErFulgt(nyTilstand);
+                      window.dispatchEvent(new Event('ba-tracked-changed'));
+                      try {
+                        if (nyTilstand) {
+                          await fetch('/api/tracked', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              entity_id: id,
+                              label: adresseStreng,
+                              entity_data: { postnr, by, kommune, anvendelse },
+                            }),
+                          });
+                        } else {
+                          await fetch(`/api/tracked?id=${encodeURIComponent(id)}`, {
+                            method: 'DELETE',
+                          });
+                        }
+                      } catch {
+                        /* Supabase ikke tilgængelig */
+                      }
+                    }}
+                    className={`flex items-center gap-2 px-3 py-1.5 border rounded-lg text-sm transition-all ${
+                      erFulgt
+                        ? 'bg-blue-600/20 hover:bg-blue-600/30 border-blue-500/40 text-blue-300'
+                        : 'bg-slate-800 hover:bg-slate-700 border-slate-700/60 text-slate-300'
+                    }`}
+                  >
+                    <Bell size={14} className={erFulgt ? 'fill-blue-400 text-blue-400' : ''} />
+                    {erFulgt ? 'Følger' : 'Følg'}
+                  </button>
+                  <FoelgTooltip lang="da" visible={visFoelgTooltip} />
+                </div>
+              </div>
             </div>
 
             <div className="mb-3">
               <h1 className="text-white text-xl font-bold">{adresseStreng}</h1>
               <div className="flex items-center gap-2 mt-2 flex-wrap">
                 <span className="flex items-center gap-1 px-2 py-0.5 bg-slate-800 border border-slate-700/50 rounded-full text-xs text-slate-300">
-                  <MapPin size={11} /> {dawaAdresse.kommunenavn} Kommune
+                  <MapPin size={11} />
+                  {(dawaAdresse.kommunenavn || null) ?? dawaJordstykke?.kommune.navn ?? '–'}
                 </span>
                 {dawaJordstykke && (
                   <span className="flex items-center gap-1 px-2 py-0.5 bg-slate-800 border border-slate-700/50 rounded-full text-xs text-slate-300">
@@ -540,24 +1049,16 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                     {dawaJordstykke.ejerlav.navn}
                   </span>
                 )}
-                {foersteBygning?.opfoerelsesaar && (
-                  <span className="px-2 py-0.5 bg-slate-800 border border-slate-700/50 rounded-full text-xs text-slate-300">
-                    {foersteBygning.anvendelse} ({foersteBygning.opfoerelsesaar})
-                  </span>
-                )}
-                <span className="flex items-center gap-1 px-2 py-0.5 bg-blue-500/10 border border-blue-500/20 rounded-full text-xs text-blue-400">
-                  {bbrLoader ? 'Henter BBR…' : bbrData?.bbr ? 'BBR · Live' : 'DAWA · Live'}
-                </span>
-                {dawaAdresse.zone && (
+                {(dawaAdresse.zone === 'Byzone' ||
+                  dawaAdresse.zone === 'Landzone' ||
+                  dawaAdresse.zone === 'Sommerhuszone') && (
                   <span
                     className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border ${
                       dawaAdresse.zone === 'Byzone'
                         ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
                         : dawaAdresse.zone === 'Landzone'
                           ? 'bg-amber-500/10 border-amber-500/20 text-amber-400'
-                          : dawaAdresse.zone === 'Sommerhuszone'
-                            ? 'bg-orange-500/10 border-orange-500/20 text-orange-400'
-                            : 'bg-slate-700/40 border-slate-600/40 text-slate-400'
+                          : 'bg-orange-500/10 border-orange-500/20 text-orange-400'
                     }`}
                   >
                     {dawaAdresse.zone}
@@ -588,136 +1089,348 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
           <div className="flex-1 overflow-y-auto px-6 py-5">
             {/* ══ OVERBLIK ══ */}
             {aktivTab === 'overblik' && (
-              <div className="space-y-5">
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              <div className="space-y-2">
+                {/* 2-spalte layout: ejendomsdata (venstre) + økonomi (højre) */}
+                <div className="grid grid-cols-2 gap-2">
+                  {/* ─── Rad 1: Matrikel (v) + Ejendomsvurdering (h)
+                       CSS grid sikrer automatisk ens højde på disse to bokse ─── */}
+
                   {/* Matrikel */}
-                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                    <p className="text-slate-400 text-xs font-medium mb-3">
-                      <span className="text-white font-bold text-base">1</span> matrikel
+                  {(() => {
+                    // Grundareal: brug DAWA jordstykke → VUR vurderet areal som fallback
+                    const grundareal =
+                      (dawaJordstykke?.areal_m2 || null) ?? vurdering?.vurderetAreal ?? null;
+                    const bygAreal =
+                      bbrData?.bbr?.reduce((s, b) => s + (b.bebyggetAreal ?? 0), 0) ?? 0;
+                    // Bebyggelsesprocent: fra VUR hvis tilgængeligt, ellers beregnet
+                    const bebyggPct =
+                      vurdering?.bebyggelsesprocent != null
+                        ? vurdering.bebyggelsesprocent
+                        : grundareal && bygAreal
+                          ? Math.round((bygAreal / grundareal) * 100)
+                          : null;
+                    // Kommunenavn: DAWA → jordstykke som fallback
+                    const kommunenavn =
+                      (dawaAdresse.kommunenavn || null) ?? dawaJordstykke?.kommune.navn ?? null;
+                    return (
+                      <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-2.5">
+                        <div className="flex items-baseline justify-between mb-1.5">
+                          <div className="flex items-baseline gap-1">
+                            <span className="text-white font-bold text-lg">1</span>
+                            <span className="text-slate-400 text-xs">matrikel</span>
+                          </div>
+                          {bebyggPct !== null && (
+                            <span className="text-slate-400 text-xs font-medium">
+                              {bebyggPct}% bebygget
+                            </span>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+                          <div>
+                            <p className="text-slate-500 text-xs leading-none mb-0.5">Grundareal</p>
+                            <p className="text-white text-sm font-medium">
+                              {grundareal ? `${grundareal.toLocaleString('da-DK')} m²` : '–'}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-slate-500 text-xs leading-none mb-0.5">
+                              Matrikelnr.
+                            </p>
+                            <p className="text-white text-sm font-medium">
+                              {dawaJordstykke?.matrikelnr ?? dawaAdresse.matrikelnr ?? '–'}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-slate-500 text-xs leading-none mb-0.5">Ejerlav</p>
+                            <p className="text-white text-sm truncate">
+                              {dawaJordstykke?.ejerlav.navn ?? '–'}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-slate-500 text-xs leading-none mb-0.5">Kommune</p>
+                            <p className="text-white text-sm">{kommunenavn ?? '–'}</p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Ejendomsvurdering */}
+                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-2.5">
+                    <p className="text-slate-400 text-xs font-medium uppercase tracking-wide mb-1.5 flex items-center gap-2">
+                      <span>Ejendomsvurdering</span>
+                      {vurdering?.erNytSystem && (
+                        <span className="px-1.5 py-0.5 bg-blue-500/10 border border-blue-500/20 rounded text-[10px] text-blue-400 font-medium normal-case tracking-normal">
+                          NY
+                        </span>
+                      )}
                     </p>
-                    <div className="space-y-2">
-                      <DataKort
-                        label="Grundareal"
-                        value={
-                          dawaJordstykke
-                            ? `${dawaJordstykke.areal_m2.toLocaleString('da-DK')} m²`
-                            : '–'
-                        }
-                      />
-                      <DataKort
-                        label="Matrikelnr."
-                        value={dawaJordstykke?.matrikelnr ?? dawaAdresse.matrikelnr ?? '–'}
-                      />
-                      <DataKort label="Ejerlav" value={dawaJordstykke?.ejerlav.navn ?? '–'} />
-                    </div>
+                    {vurderingLoader ? (
+                      <div className="flex items-center gap-2 text-slate-500 text-xs">
+                        <div className="w-3 h-3 border border-slate-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                        Henter vurdering…
+                      </div>
+                    ) : vurdering ? (
+                      <div className="space-y-2">
+                        {/* Ejendomsværdi + Grundværdi side om side */}
+                        <div className="grid grid-cols-2 gap-x-3">
+                          <div>
+                            <p className="text-slate-500 text-xs leading-none mb-0.5">
+                              Ejendomsværdi
+                              {vurdering.aar && (
+                                <span className="ml-1 text-slate-600">({vurdering.aar})</span>
+                              )}
+                            </p>
+                            <p className="text-white text-base font-bold">
+                              {vurdering.ejendomsvaerdi
+                                ? formatDKK(vurdering.ejendomsvaerdi)
+                                : 'Fastsættes ikke'}
+                            </p>
+                            {vurdering.afgiftspligtigEjendomsvaerdi !== null &&
+                              vurdering.afgiftspligtigEjendomsvaerdi !==
+                                vurdering.ejendomsvaerdi && (
+                                <p className="text-slate-500 text-xs mt-0.5">
+                                  Afgiftspligtig:{' '}
+                                  {formatDKK(vurdering.afgiftspligtigEjendomsvaerdi)}
+                                </p>
+                              )}
+                          </div>
+                          <div>
+                            <p className="text-slate-500 text-xs leading-none mb-0.5">
+                              Grundværdi
+                              {vurdering.aar && (
+                                <span className="ml-1 text-slate-600">({vurdering.aar})</span>
+                              )}
+                            </p>
+                            <p className="text-white text-sm font-medium">
+                              {vurdering.grundvaerdi ? formatDKK(vurdering.grundvaerdi) : '–'}
+                            </p>
+                            {vurdering.afgiftspligtigGrundvaerdi !== null &&
+                              vurdering.afgiftspligtigGrundvaerdi !== vurdering.grundvaerdi && (
+                                <p className="text-slate-500 text-xs mt-0.5">
+                                  Afgiftspligtig: {formatDKK(vurdering.afgiftspligtigGrundvaerdi)}
+                                </p>
+                              )}
+                          </div>
+                        </div>
+                        {/* Vurderet areal + Grundskyld side om side */}
+                        <div className="grid grid-cols-2 gap-x-3 pt-1.5 border-t border-slate-700/30">
+                          <div>
+                            <p className="text-slate-500 text-xs leading-none mb-0.5">
+                              Vurderet areal
+                            </p>
+                            <p className="text-white text-sm font-medium">
+                              {vurdering.vurderetAreal
+                                ? `${vurdering.vurderetAreal.toLocaleString('da-DK')} m²`
+                                : '–'}
+                            </p>
+                          </div>
+                          {/* Grundskyld — foretrækker faktisk fra Vurderingsportalen, falder tilbage til estimeret */}
+                          {(() => {
+                            const nyesteFrl = forelobige.length > 0 ? forelobige[0] : null;
+                            const faktiskGrundskyld = nyesteFrl?.grundskyld ?? null;
+                            if (faktiskGrundskyld !== null && faktiskGrundskyld > 0) {
+                              return (
+                                <div>
+                                  <p className="text-slate-500 text-xs leading-none mb-0.5">
+                                    Grundskyld
+                                    <span className="text-slate-600 ml-1">
+                                      ({nyesteFrl!.vurderingsaar})
+                                    </span>
+                                  </p>
+                                  <p className="text-white text-sm font-medium flex items-center gap-1">
+                                    {formatDKK(faktiskGrundskyld)}
+                                    <span className="text-slate-500 text-xs">/ år</span>
+                                  </p>
+                                </div>
+                              );
+                            }
+                            if (vurdering.estimereretGrundskyld !== null) {
+                              return (
+                                <div>
+                                  <p className="text-slate-500 text-xs leading-none mb-0.5">
+                                    Est. grundskyld
+                                    {vurdering.grundskyldspromille !== null && (
+                                      <span className="text-slate-600 ml-1">
+                                        ({vurdering.grundskyldspromille}‰)
+                                      </span>
+                                    )}
+                                  </p>
+                                  <p className="text-white text-sm font-medium">
+                                    {formatDKK(vurdering.estimereretGrundskyld)}
+                                    <span className="text-slate-500 text-xs ml-1">/ år</span>
+                                  </p>
+                                </div>
+                              );
+                            }
+                            return null;
+                          })()}
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-slate-500 text-xs">
+                        {bbrLoader || !bbrData
+                          ? 'Afventer BBR-data…'
+                          : !bbrData.ejendomsrelationer?.[0]?.bfeNummer
+                            ? 'BFEnummer ikke fundet'
+                            : 'Ingen vurderingsdata'}
+                      </p>
+                    )}
+
+                    {/* ── Forelobig vurdering — vises hvis nyere end nuvaerende vurdering ── */}
+                    {(() => {
+                      const nyesteForelobig = forelobige.length > 0 ? forelobige[0] : null;
+                      const erNyere =
+                        nyesteForelobig &&
+                        (!vurdering?.aar || nyesteForelobig.vurderingsaar > vurdering.aar);
+                      if (!nyesteForelobig || !erNyere) return null;
+                      return (
+                        <div className="mt-2 bg-amber-500/5 border border-amber-500/20 rounded-xl p-3">
+                          <div className="flex items-center gap-2 mb-1.5">
+                            <span className="px-1.5 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded text-[10px] text-amber-400 font-medium">
+                              FORELØBIG
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+                            <div>
+                              <p className="text-slate-500 text-xs leading-none mb-0.5">
+                                Ejendomsværdi
+                                <span className="ml-1 text-slate-600">
+                                  ({nyesteForelobig.vurderingsaar})
+                                </span>
+                              </p>
+                              <p className="text-amber-200 text-sm font-medium">
+                                {nyesteForelobig.ejendomsvaerdi
+                                  ? formatDKK(nyesteForelobig.ejendomsvaerdi)
+                                  : 'Fastsættes ikke'}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-slate-500 text-xs leading-none mb-0.5">
+                                Grundværdi
+                                <span className="ml-1 text-slate-600">
+                                  ({nyesteForelobig.vurderingsaar})
+                                </span>
+                              </p>
+                              <p className="text-amber-200 text-sm font-medium">
+                                {nyesteForelobig.grundvaerdi
+                                  ? formatDKK(nyesteForelobig.grundvaerdi)
+                                  : '0 DKK'}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
 
-                  {/* Bygning */}
-                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                    <p className="text-slate-400 text-xs font-medium mb-3">
-                      <span className="text-white font-bold text-base">
-                        {bbrData?.bbr?.length ?? '–'}
-                      </span>{' '}
-                      bygning
-                    </p>
-                    <div className="space-y-2">
-                      <DataKort
-                        label="Bygningsareal"
-                        value={
-                          foersteBygning?.samletBygningsareal != null
-                            ? `${foersteBygning.samletBygningsareal.toLocaleString('da-DK')} m²`
-                            : '–'
-                        }
-                      />
-                      <DataKort
-                        label="Etager"
-                        value={foersteBygning?.antalEtager?.toString() ?? '–'}
-                      />
-                      <DataKort
-                        label="Opført"
-                        value={foersteBygning?.opfoerelsesaar?.toString() ?? '–'}
-                      />
-                    </div>
-                  </div>
+                  {/* ─── Rad 2: Bygninger (v) + Enheder (h)
+                       self-start: boksene strækkes ikke til at matche hinanden ─── */}
 
-                  {/* Enhed */}
-                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                    <p className="text-slate-400 text-xs font-medium mb-3">
-                      <span className="text-white font-bold text-base">
-                        {bbrData?.enheder?.length ?? '–'}
-                      </span>{' '}
-                      enhed
-                    </p>
-                    <div className="space-y-2">
-                      <DataKort
-                        label="Boligareal"
-                        value={
-                          foersteBygning?.samletBoligareal != null
-                            ? `${foersteBygning.samletBoligareal.toLocaleString('da-DK')} m²`
-                            : '–'
-                        }
-                      />
-                      <DataKort
-                        label="Erhvervsareal"
-                        value={
-                          foersteBygning?.samletErhvervsareal != null
-                            ? `${foersteBygning.samletErhvervsareal.toLocaleString('da-DK')} m²`
-                            : '–'
-                        }
-                      />
-                      <DataKort
-                        label="Boligenheder"
-                        value={foersteBygning?.antalBoligenheder?.toString() ?? '–'}
-                      />
-                    </div>
-                  </div>
+                  {/* Bygninger — ekskluder nedrevne/historiske */}
+                  {(() => {
+                    const bygninger = (bbrData?.bbr ?? [])
+                      .filter(
+                        (b) =>
+                          b.status !== 'Nedrevet/slettet' &&
+                          b.status !== 'Bygning nedrevet' &&
+                          b.status !== 'Bygning bortfaldet'
+                      )
+                      .sort((a, b) => (a.bygningsnr ?? 9999) - (b.bygningsnr ?? 9999));
+                    const totAreal = bygninger.reduce(
+                      (s, b) => s + (b.samletBygningsareal ?? 0),
+                      0
+                    );
+                    const boligAreal = bygninger.reduce((s, b) => s + (b.samletBoligareal ?? 0), 0);
+                    const erhvAreal = bygninger.reduce(
+                      (s, b) => s + (b.samletErhvervsareal ?? 0),
+                      0
+                    );
+                    const kaelder = bygninger.reduce((s, b) => s + (b.kaelder ?? 0), 0);
+                    return (
+                      <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-2.5 self-start">
+                        <div className="flex items-baseline gap-1 mb-1.5">
+                          <span className="text-white font-bold text-lg">
+                            {bbrLoader ? '…' : bygninger.length || '–'}
+                          </span>
+                          <span className="text-slate-400 text-xs">bygninger</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+                          <div>
+                            <p className="text-slate-500 text-xs leading-none mb-0.5">
+                              Bygningsareal
+                            </p>
+                            <p className="text-white text-sm font-medium">
+                              {totAreal ? `${totAreal.toLocaleString('da-DK')} m²` : '–'}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-slate-500 text-xs leading-none mb-0.5">
+                              Beboelsesareal
+                            </p>
+                            <p className="text-white text-sm font-medium">
+                              {boligAreal ? `${boligAreal.toLocaleString('da-DK')} m²` : '0 m²'}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-slate-500 text-xs leading-none mb-0.5">
+                              Erhvervsareal
+                            </p>
+                            <p className="text-white text-sm font-medium">
+                              {erhvAreal ? `${erhvAreal.toLocaleString('da-DK')} m²` : '–'}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-slate-500 text-xs leading-none mb-0.5">Kælder</p>
+                            <p className="text-white text-sm font-medium">
+                              {kaelder ? `${kaelder.toLocaleString('da-DK')} m²` : '0 m²'}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Enheder */}
+                  {(() => {
+                    const enheder = bbrData?.enheder ?? [];
+                    const boligEnh = enheder.filter((e) => (e.arealBolig ?? 0) > 0).length;
+                    const erhvEnh = enheder.filter((e) => (e.arealErhverv ?? 0) > 0).length;
+                    const totAreal = enheder.reduce((s, e) => s + (e.areal ?? 0), 0);
+                    return (
+                      <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-2.5 self-start">
+                        <div className="flex items-baseline gap-1 mb-1.5">
+                          <span className="text-white font-bold text-lg">
+                            {bbrLoader ? '…' : enheder.length || '–'}
+                          </span>
+                          <span className="text-slate-400 text-xs">enheder</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+                          <div>
+                            <p className="text-slate-500 text-xs leading-none mb-0.5">
+                              Beboelsesenheder
+                            </p>
+                            <p className="text-white text-sm font-medium">{boligEnh}</p>
+                          </div>
+                          <div>
+                            <p className="text-slate-500 text-xs leading-none mb-0.5">
+                              Erhvervsenheder
+                            </p>
+                            <p className="text-white text-sm font-medium">{erhvEnh}</p>
+                          </div>
+                          <div className="col-span-2">
+                            <p className="text-slate-500 text-xs leading-none mb-0.5">
+                              Samlet enhedsareal
+                            </p>
+                            <p className="text-white text-sm font-medium">
+                              {totAreal ? `${totAreal.toLocaleString('da-DK')} m²` : '–'}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
-
-                {/* Adresseoplysninger fra DAWA */}
-                <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                  <p className="text-slate-400 text-xs font-medium uppercase tracking-wide mb-3">
-                    Adresseoplysninger
-                  </p>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    <DataKort
-                      label="Postnummer"
-                      value={`${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`}
-                    />
-                    <DataKort label="Kommune" value={dawaAdresse.kommunenavn} />
-                    <DataKort label="Region" value={dawaAdresse.regionsnavn || '–'} />
-                    <DataKort label="Zone" value={dawaAdresse.zone ?? '–'} />
-                  </div>
-                </div>
-
-                {/* Datafordeler identifikatorer */}
-                {bbrData && (
-                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                    <p className="text-slate-400 text-xs font-medium uppercase tracking-wide mb-3">
-                      Register-ID&apos;er
-                    </p>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                      <DataKort label="DAWA UUID" value={dawaAdresse.id.slice(0, 8) + '…'} />
-                      <DataKort
-                        label="BFEnummer"
-                        value={
-                          bbrData.ejendomsrelationer?.[0]?.bfeNummer
-                            ? String(bbrData.ejendomsrelationer[0].bfeNummer)
-                            : bbrLoader
-                              ? 'Henter…'
-                              : '–'
-                        }
-                      />
-                      <DataKort
-                        label="Matrikelnr."
-                        value={dawaJordstykke?.matrikelnr ?? dawaAdresse.matrikelnr ?? '–'}
-                      />
-                      <DataKort
-                        label="Ejerlav"
-                        value={dawaJordstykke?.ejerlav.navn ?? dawaAdresse.ejerlavsnavn ?? '–'}
-                      />
-                    </div>
-                  </div>
-                )}
 
                 {/* Virksomheder på adressen — CVR OpenData */}
                 {cvrTokenMangler ? (
@@ -758,7 +1471,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                 ) : cvrVirksomheder.length > 0 ? (
                   <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
                     <div className="px-4 py-3 border-b border-slate-700/40 flex items-center justify-between">
-                      <p className="text-slate-400 text-xs font-medium uppercase tracking-wide">
+                      <p className="text-slate-200 text-sm font-semibold">
                         Virksomheder på adressen
                       </p>
                       <span className="text-slate-500 text-xs">
@@ -767,43 +1480,60 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                           ` · ${cvrVirksomheder.filter((v) => !v.aktiv).length} ophørte`}
                       </span>
                     </div>
-                    <div className="divide-y divide-slate-700/30">
-                      {cvrVirksomheder.map((v) => (
-                        <div
-                          key={v.cvr}
-                          className={`px-4 py-3 flex items-start justify-between gap-4 ${!v.aktiv ? 'opacity-50' : ''}`}
-                        >
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2 mb-0.5">
-                              <Link
-                                href={`/dashboard/companies/${v.cvr}`}
-                                className="text-white text-sm font-medium hover:text-blue-400 transition-colors truncate"
-                              >
-                                {v.navn}
-                              </Link>
-                              <span
-                                className={`px-1.5 py-0.5 rounded text-[10px] font-semibold flex-shrink-0 ${v.aktiv ? 'bg-emerald-500/15 text-emerald-400' : 'bg-slate-700/60 text-slate-500'}`}
-                              >
-                                {v.aktiv ? 'AKTIV' : 'OPHØRT'}
-                              </span>
+                    {/* Tabelheader */}
+                    <div className="grid grid-cols-[1fr_1fr_120px_72px] px-4 py-2 text-slate-500 text-xs font-medium border-b border-slate-700/30">
+                      <span>Virksomhed</span>
+                      <span>Industri</span>
+                      <span className="text-right">Periode</span>
+                      <span className="text-right">Ansatte</span>
+                    </div>
+                    <div className="divide-y divide-slate-700/20">
+                      {cvrVirksomheder.map((v) => {
+                        // Beregn relativ tid fra aktivFra
+                        const periode = (() => {
+                          if (!v.aktivFra) return '–';
+                          const fra = new Date(v.aktivFra);
+                          const nu = new Date();
+                          const mdr =
+                            (nu.getFullYear() - fra.getFullYear()) * 12 +
+                            (nu.getMonth() - fra.getMonth());
+                          if (mdr < 1) return 'Under 1 md.';
+                          if (mdr < 12) return `${mdr} md. til nu`;
+                          return `${Math.floor(mdr / 12)} år til nu`;
+                        })();
+                        return (
+                          <div
+                            key={v.cvr}
+                            className={`grid grid-cols-[1fr_1fr_120px_72px] px-4 py-3 items-center gap-2 hover:bg-slate-700/10 transition-colors ${!v.aktiv ? 'opacity-50' : ''}`}
+                          >
+                            {/* Virksomhed */}
+                            <div className="min-w-0 flex items-center gap-2">
+                              <div
+                                className={`w-2 h-2 rounded-full flex-shrink-0 ${v.aktiv ? 'bg-emerald-400' : 'bg-slate-500'}`}
+                              />
+                              <div className="min-w-0">
+                                <Link
+                                  href={`/dashboard/companies/${v.cvr}`}
+                                  className="text-slate-200 text-sm font-medium hover:text-blue-400 transition-colors truncate block"
+                                >
+                                  {v.navn}
+                                </Link>
+                                <p className="text-slate-500 text-xs truncate">{v.adresse}</p>
+                              </div>
                             </div>
-                            <p className="text-slate-500 text-xs">
-                              CVR {v.cvr}
-                              {v.branche ? ` · ${v.branche}` : ''}
-                            </p>
-                            {v.telefon && (
-                              <p className="text-slate-600 text-xs mt-0.5">{v.telefon}</p>
-                            )}
+                            {/* Industri */}
+                            <span className="text-slate-400 text-xs truncate pr-2">
+                              {v.branche ?? '–'}
+                            </span>
+                            {/* Periode */}
+                            <span className="text-slate-400 text-xs text-right">{periode}</span>
+                            {/* Ansatte */}
+                            <span className="text-slate-300 text-sm text-right font-medium">
+                              {v.ansatte ?? '–'}
+                            </span>
                           </div>
-                          <div className="text-right flex-shrink-0">
-                            {v.type && (
-                              <span className="px-2 py-0.5 bg-slate-700/60 rounded text-xs text-slate-300">
-                                {v.type}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 ) : (
@@ -840,177 +1570,375 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
               </div>
             )}
 
-            {/* ══ BBR ══ */}
+            {/* ══ BBR ══ — Live data, collapsible rækker */}
             {aktivTab === 'bbr' && (
-              <div className="space-y-4">
-                {bbrLoader && (
-                  <div className="flex items-center gap-3 py-8 justify-center">
-                    <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-                    <span className="text-slate-400 text-sm">Henter BBR-data…</span>
+              <div className="space-y-3">
+                {bbrData?.bbrFejl && (
+                  <div className="p-3 bg-orange-500/10 border border-orange-500/20 rounded-lg">
+                    <p className="text-orange-300 text-sm">BBR: {bbrData.bbrFejl}</p>
                   </div>
                 )}
 
-                {!bbrLoader &&
-                  bbrData?.bbr &&
-                  bbrData.bbr.map((byg: LiveBBRBygning, i: number) => (
-                    <div
-                      key={byg.id || i}
-                      className="bg-slate-800/40 border border-slate-700/40 rounded-2xl p-5"
-                    >
-                      <div className="flex items-center justify-between mb-4">
-                        <h3 className="text-white font-semibold text-sm">
-                          Bygning {byg.bygningsnr ?? i + 1}
-                        </h3>
-                        {byg.energimaerke && (
-                          <span
-                            className={`px-2.5 py-0.5 rounded text-xs font-bold text-white ${
-                              energiColor[byg.energimaerke] ?? 'bg-slate-600'
-                            }`}
-                          >
-                            {byg.energimaerke}
+                {/* Information */}
+                <div>
+                  <SectionTitle title="Information" />
+                  {(() => {
+                    const grundareal =
+                      (dawaJordstykke?.areal_m2 || null) ?? vurdering?.vurderetAreal ?? null;
+                    const kommunenavn =
+                      (dawaAdresse.kommunenavn || null) ?? dawaJordstykke?.kommune.navn ?? null;
+                    return (
+                      <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
+                        <div className="flex items-center gap-3 px-3 py-2 text-xs">
+                          <MapIcon size={12} className="text-slate-500 flex-shrink-0" />
+                          <span className="text-slate-200 font-medium flex-shrink-0">
+                            {dawaJordstykke?.matrikelnr ?? dawaAdresse.matrikelnr ?? '–'}
                           </span>
-                        )}
-                      </div>
-
-                      <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-3 text-sm">
-                        <div>
-                          <p className="text-slate-500 text-xs">Opførelses­år</p>
-                          <p className="text-white">{byg.opfoerelsesaar ?? '–'}</p>
-                        </div>
-                        <div>
-                          <p className="text-slate-500 text-xs">Ombygnings­år</p>
-                          <p className="text-white">{byg.ombygningsaar ?? '–'}</p>
-                        </div>
-                        <div>
-                          <p className="text-slate-500 text-xs">Etager</p>
-                          <p className="text-white">{byg.antalEtager ?? '–'}</p>
-                        </div>
-                        <div>
-                          <p className="text-slate-500 text-xs">Bebygget areal</p>
-                          <p className="text-white">
-                            {byg.bebyggetAreal != null
-                              ? `${byg.bebyggetAreal.toLocaleString('da-DK')} m²`
-                              : '–'}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-slate-500 text-xs">Samlet bygningsareal</p>
-                          <p className="text-white">
-                            {byg.samletBygningsareal != null
-                              ? `${byg.samletBygningsareal.toLocaleString('da-DK')} m²`
-                              : '–'}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-slate-500 text-xs">Kælder</p>
-                          <p className="text-white">
-                            {byg.kaelder != null ? `${byg.kaelder} m²` : '–'}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-slate-500 text-xs">Tagetage</p>
-                          <p className="text-white">
-                            {byg.tagetage != null ? `${byg.tagetage} m²` : '–'}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-slate-500 text-xs">Boligareal</p>
-                          <p className="text-white">
-                            {byg.samletBoligareal != null
-                              ? `${byg.samletBoligareal.toLocaleString('da-DK')} m²`
-                              : '–'}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-slate-500 text-xs">Erhvervsareal</p>
-                          <p className="text-white">
-                            {byg.samletErhvervsareal != null
-                              ? `${byg.samletErhvervsareal.toLocaleString('da-DK')} m²`
-                              : '–'}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-slate-500 text-xs">Boligenheder</p>
-                          <p className="text-white">{byg.antalBoligenheder ?? '–'}</p>
-                        </div>
-                        <div>
-                          <p className="text-slate-500 text-xs">Erhvervsenheder</p>
-                          <p className="text-white">{byg.antalErhvervsenheder ?? '–'}</p>
-                        </div>
-                        <div>
-                          <p className="text-slate-500 text-xs">Anvendelse</p>
-                          <p className="text-white">{byg.anvendelse}</p>
+                          <span className="text-slate-500">·</span>
+                          <span className="text-slate-400 truncate flex-1">
+                            {dawaJordstykke?.ejerlav.navn ?? '–'}
+                          </span>
+                          {kommunenavn && (
+                            <>
+                              <span className="text-slate-500">·</span>
+                              <span className="text-slate-400 flex-shrink-0">{kommunenavn}</span>
+                            </>
+                          )}
+                          {grundareal && (
+                            <>
+                              <span className="text-slate-500">·</span>
+                              <span className="text-slate-300 flex-shrink-0 font-medium">
+                                {grundareal.toLocaleString('da-DK')} m²
+                              </span>
+                            </>
+                          )}
                         </div>
                       </div>
+                    );
+                  })()}
+                </div>
 
-                      <div className="mt-4 pt-4 border-t border-slate-700/40 grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-3 text-sm">
-                        <div>
-                          <p className="text-slate-500 text-xs">Tagmateriale</p>
-                          <p className="text-white">{byg.tagmateriale}</p>
-                        </div>
-                        <div>
-                          <p className="text-slate-500 text-xs">Ydervæg</p>
-                          <p className="text-white">{byg.ydervaeg}</p>
-                        </div>
-                        <div>
-                          <p className="text-slate-500 text-xs">Varme­installation</p>
-                          <p className="text-white">{byg.varmeinstallation}</p>
-                        </div>
-                        <div>
-                          <p className="text-slate-500 text-xs">Opvarmnings­form</p>
-                          <p className="text-white">{byg.opvarmningsform}</p>
-                        </div>
-                        <div>
-                          <p className="text-slate-500 text-xs">Vandforsyning</p>
-                          <p className="text-white">{byg.vandforsyning}</p>
-                        </div>
-                        <div>
-                          <p className="text-slate-500 text-xs">Afløbsforhold</p>
-                          <p className="text-white">{byg.afloeb}</p>
-                        </div>
+                {/* Bygninger — ekskluder nedrevne/historiske */}
+                {(() => {
+                  // Filtrer til aktive bygninger (ekskluder nedrevne/historiske) så tabellen matcher BBR-kortet
+                  const alleBygninger = bbrData?.bbr ?? [];
+                  // Set af bygnings-IDs der har geodata (koordinater i WFS)
+                  const geodataIds = new Set((bbrData?.bygningPunkter ?? []).map((p) => p.id));
+                  const bygninger = alleBygninger
+                    .filter(
+                      (b) =>
+                        b.status !== 'Nedrevet/slettet' &&
+                        b.status !== 'Bygning nedrevet' &&
+                        b.status !== 'Bygning bortfaldet'
+                    )
+                    .sort((a, b) => (a.bygningsnr ?? 9999) - (b.bygningsnr ?? 9999));
+                  const totAreal = bygninger.reduce((s, b) => s + (b.samletBygningsareal ?? 0), 0);
+                  const boligAreal = bygninger.reduce((s, b) => s + (b.samletBoligareal ?? 0), 0);
+                  const erhvAreal = bygninger.reduce((s, b) => s + (b.samletErhvervsareal ?? 0), 0);
+                  return (
+                    <div>
+                      <SectionTitle title="Bygninger" />
+                      <div className="grid grid-cols-4 gap-2 mb-2">
+                        <DataKort
+                          label="Bygninger"
+                          value={bbrLoader ? '…' : `${bygninger.length}`}
+                        />
+                        <DataKort
+                          label="Bygningsareal"
+                          value={totAreal ? `${totAreal.toLocaleString('da-DK')} m²` : '–'}
+                        />
+                        <DataKort
+                          label="Beboelsesareal"
+                          value={boligAreal ? `${boligAreal.toLocaleString('da-DK')} m²` : '0 m²'}
+                        />
+                        <DataKort
+                          label="Erhvervsareal"
+                          value={erhvAreal ? `${erhvAreal.toLocaleString('da-DK')} m²` : '–'}
+                        />
                       </div>
-                    </div>
-                  ))}
-
-                {/* BBR enheder */}
-                {!bbrLoader && bbrData?.enheder && bbrData.enheder.length > 0 && (
-                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-2xl overflow-hidden">
-                    <div className="px-4 py-3 border-b border-slate-700/40">
-                      <h3 className="text-white font-semibold text-sm">
-                        Enheder ({bbrData.enheder.length})
-                      </h3>
-                    </div>
-                    <div className="divide-y divide-slate-700/30">
-                      {bbrData.enheder.map((enh: LiveBBREnhed, i: number) => (
-                        <div key={enh.id || i} className="px-4 py-3 grid grid-cols-4 gap-3 text-sm">
-                          <div>
-                            <p className="text-slate-500 text-xs">Etage / Dør</p>
-                            <p className="text-white">
-                              {enh.etage ? `${enh.etage}.` : '–'}
-                              {enh.doer ? ` ${enh.doer}` : ''}
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-slate-500 text-xs">Areal</p>
-                            <p className="text-white">
-                              {enh.areal != null ? `${enh.areal} m²` : '–'}
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-slate-500 text-xs">Anvendelse</p>
-                            <p className="text-white">{enh.anvendelse}</p>
-                          </div>
-                          <div>
-                            <p className="text-slate-500 text-xs">Energimærke</p>
-                            <p className="text-white">{enh.energimaerke ?? '–'}</p>
-                          </div>
+                      {bbrLoader ? (
+                        <div className="text-slate-500 text-sm text-center py-3">
+                          Henter bygningsdata…
                         </div>
-                      ))}
+                      ) : bygninger.length === 0 ? (
+                        <div className="text-slate-500 text-sm text-center py-3">
+                          Ingen aktive bygninger tilgængeligt
+                        </div>
+                      ) : (
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
+                          {/* Kolonneheader: ▶ | Byg# | Anvendelse | Opf.år | Bebygget | Samlet | Geo | Status */}
+                          <div className="grid grid-cols-[28px_40px_1fr_68px_96px_96px_52px_90px] px-3 py-2 text-slate-500 text-xs font-medium border-b border-slate-700/30">
+                            <span />
+                            <span className="text-center">Nr.</span>
+                            <span>Anvendelse</span>
+                            <span className="text-right">Opf. år</span>
+                            <span className="text-right">Bebygget</span>
+                            <span className="text-right">Samlet</span>
+                            <span className="text-center">Geodata</span>
+                            <span className="text-center">Status</span>
+                          </div>
+                          {bygninger.map((b, i) => {
+                            const rowId = b.id || String(i);
+                            const aaben = expandedBygninger.has(rowId);
+                            const detaljer: [string, string][] = (
+                              [
+                                ['Ydervæg', b.ydervaeg || null],
+                                ['Tagmateriale', b.tagmateriale || null],
+                                ['Varmeinstallation', b.varmeinstallation || null],
+                                ['Opvarmningsform', b.opvarmningsform || null],
+                                ['Vandforsyning', b.vandforsyning || null],
+                                ['Afløb', b.afloeb || null],
+                                ['Etager', b.antalEtager != null ? `${b.antalEtager}` : null],
+                                [
+                                  'Boligareal',
+                                  b.samletBoligareal
+                                    ? `${b.samletBoligareal.toLocaleString('da-DK')} m²`
+                                    : null,
+                                ],
+                                [
+                                  'Erhvervsareal',
+                                  b.samletErhvervsareal
+                                    ? `${b.samletErhvervsareal.toLocaleString('da-DK')} m²`
+                                    : null,
+                                ],
+                                [
+                                  'Ombygningsår',
+                                  b.ombygningsaar != null ? `${b.ombygningsaar}` : null,
+                                ],
+                                ['Fredning', b.fredning || null],
+                              ] as [string, string | null][]
+                            ).filter((row): row is [string, string] => row[1] !== null);
+                            return (
+                              <div
+                                key={rowId}
+                                className="border-t border-slate-700/30 first:border-0"
+                              >
+                                <button
+                                  onClick={() =>
+                                    setExpandedBygninger((prev) => {
+                                      const next = new Set(prev);
+                                      aaben ? next.delete(rowId) : next.add(rowId);
+                                      return next;
+                                    })
+                                  }
+                                  className="w-full grid grid-cols-[28px_40px_1fr_68px_96px_96px_52px_90px] px-3 py-1.5 text-sm hover:bg-slate-700/20 transition-colors text-left items-center"
+                                >
+                                  {/* Chevron til venstre */}
+                                  <ChevronRight
+                                    size={14}
+                                    className={`text-slate-500 transition-transform flex-shrink-0 ${aaben ? 'rotate-90' : ''}`}
+                                  />
+                                  {/* Bygningsnummer */}
+                                  <span className="text-slate-500 text-xs text-center font-mono">
+                                    {b.bygningsnr ?? '–'}
+                                  </span>
+                                  <span className="text-slate-200 truncate pr-2">
+                                    {b.anvendelse || '–'}
+                                  </span>
+                                  <span className="text-slate-400 text-right">
+                                    {b.opfoerelsesaar ?? '–'}
+                                  </span>
+                                  <span className="text-slate-300 text-right">
+                                    {b.bebyggetAreal
+                                      ? `${b.bebyggetAreal.toLocaleString('da-DK')} m²`
+                                      : '–'}
+                                  </span>
+                                  <span className="text-slate-300 text-right">
+                                    {b.samletBygningsareal
+                                      ? `${b.samletBygningsareal.toLocaleString('da-DK')} m²`
+                                      : '–'}
+                                  </span>
+                                  {/* Geodata-status: grøn ✓ hvis koordinater kendes, rød ✗ hvis mangler */}
+                                  <span className="flex justify-center">
+                                    {geodataIds.has(b.id) ? (
+                                      <CheckCircle size={14} className="text-emerald-400" />
+                                    ) : (
+                                      <XCircle size={14} className="text-red-400" />
+                                    )}
+                                  </span>
+                                  {/* Status badge */}
+                                  <span className="flex justify-center">
+                                    {b.status == null || b.status.startsWith('Bygning opført') ? (
+                                      <span className="text-emerald-400 text-xs">Opført</span>
+                                    ) : b.status === 'Projekteret bygning' ? (
+                                      <span className="text-amber-400 text-xs">Projekteret</span>
+                                    ) : b.status === 'Bygning under opførelse' ? (
+                                      <span className="text-amber-400 text-xs">
+                                        Under opførelse
+                                      </span>
+                                    ) : b.status === 'Midlertidig opførelse' ? (
+                                      <span className="text-amber-400 text-xs">Midlertidig</span>
+                                    ) : b.status === 'Kondemneret' ? (
+                                      <span className="text-red-400 text-xs">Kondemneret</span>
+                                    ) : (
+                                      <span className="text-slate-400 text-xs truncate">
+                                        {b.status}
+                                      </span>
+                                    )}
+                                  </span>
+                                </button>
+                                {aaben && detaljer.length > 0 && (
+                                  <div className="px-3 pb-2 bg-slate-900/40 border-t border-slate-700/20">
+                                    <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs pt-2">
+                                      {detaljer.map(([lbl, val]) => (
+                                        <div key={lbl} className="flex justify-between gap-2">
+                                          <span className="text-slate-500">{lbl}</span>
+                                          <span className="text-slate-300 text-right">{val}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
 
-                {/* Ingen BBR */}
+                {/* Enheder */}
+                {(() => {
+                  const bygningsnrMap = new Map(
+                    (bbrData?.bygningPunkter ?? []).map((p) => [p.id, p.bygningsnr ?? 9999])
+                  );
+                  const enheder = (bbrData?.enheder ?? []).slice().sort((a, b) => {
+                    const nrA = a.bygningId ? (bygningsnrMap.get(a.bygningId) ?? 9999) : 9999;
+                    const nrB = b.bygningId ? (bygningsnrMap.get(b.bygningId) ?? 9999) : 9999;
+                    return nrA - nrB;
+                  });
+                  const boligEnh = enheder.filter((e) => (e.arealBolig ?? 0) > 0).length;
+                  const erhvEnh = enheder.filter((e) => (e.arealErhverv ?? 0) > 0).length;
+                  const totAreal = enheder.reduce((s, e) => s + (e.areal ?? 0), 0);
+                  return (
+                    <div>
+                      <SectionTitle title="Enheder" />
+                      <div className="grid grid-cols-4 gap-2 mb-2">
+                        <DataKort
+                          label="Enheder i alt"
+                          value={bbrLoader ? '…' : `${enheder.length}`}
+                        />
+                        <DataKort label="Beboelsesenheder" value={`${boligEnh}`} />
+                        <DataKort label="Erhvervsenheder" value={`${erhvEnh}`} />
+                        <DataKort
+                          label="Samlet areal"
+                          value={totAreal ? `${totAreal.toLocaleString('da-DK')} m²` : '–'}
+                        />
+                      </div>
+                      {bbrLoader ? (
+                        <div className="text-slate-500 text-sm text-center py-3">
+                          Henter enhedsdata…
+                        </div>
+                      ) : enheder.length === 0 ? (
+                        <div className="text-slate-500 text-sm text-center py-3">
+                          Ingen enheder tilgængeligt
+                        </div>
+                      ) : (
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
+                          {/* Kolonneheader: ▶ | Byg.nr | Anvendelse | Areal | Værelser */}
+                          <div className="grid grid-cols-[28px_44px_1fr_96px_72px] px-3 py-2 text-slate-500 text-xs font-medium border-b border-slate-700/30">
+                            <span />
+                            <span className="text-center">Byg.</span>
+                            <span>Anvendelse</span>
+                            <span className="text-right">Areal</span>
+                            <span className="text-right">Værelser</span>
+                          </div>
+                          {enheder.map((e, i) => {
+                            const rowId = e.id || String(i);
+                            const aaben = expandedEnheder.has(rowId);
+                            // Slå bygningsnummer op fra WFS-punkterne via bygningId
+                            const bygningsnr = e.bygningId
+                              ? ((bbrData?.bygningPunkter ?? []).find((p) => p.id === e.bygningId)
+                                  ?.bygningsnr ?? null)
+                              : null;
+                            const detaljer: [string, string][] = (
+                              [
+                                ['Adresse', e.adressebetegnelse || null],
+                                ['Etage', e.etage || null],
+                                ['Dør', e.doer || null],
+                                ['Status', e.status || null],
+                                [
+                                  'Boligareal',
+                                  e.arealBolig
+                                    ? `${e.arealBolig.toLocaleString('da-DK')} m²`
+                                    : null,
+                                ],
+                                [
+                                  'Erhvervsareal',
+                                  e.arealErhverv
+                                    ? `${e.arealErhverv.toLocaleString('da-DK')} m²`
+                                    : null,
+                                ],
+                                [
+                                  'Varmeinstallation',
+                                  e.varmeinstallation !== '–' ? e.varmeinstallation : null,
+                                ],
+                              ] as [string, string | null][]
+                            ).filter((row): row is [string, string] => row[1] !== null);
+                            return (
+                              <div
+                                key={rowId}
+                                className="border-t border-slate-700/30 first:border-0"
+                              >
+                                <button
+                                  onClick={() =>
+                                    setExpandedEnheder((prev) => {
+                                      const next = new Set(prev);
+                                      aaben ? next.delete(rowId) : next.add(rowId);
+                                      return next;
+                                    })
+                                  }
+                                  className="w-full grid grid-cols-[28px_44px_1fr_96px_72px] px-3 py-1.5 text-sm hover:bg-slate-700/20 transition-colors text-left items-center"
+                                >
+                                  <ChevronRight
+                                    size={14}
+                                    className={`text-slate-500 transition-transform flex-shrink-0 ${aaben ? 'rotate-90' : ''}`}
+                                  />
+                                  <span className="text-slate-500 text-xs text-center font-mono">
+                                    {bygningsnr ?? '–'}
+                                  </span>
+                                  <span className="min-w-0 pr-2">
+                                    <span className="block text-slate-200 truncate">
+                                      {e.anvendelse || '–'}
+                                    </span>
+                                    {(e.etage || e.doer) && (
+                                      <span className="block text-slate-500 text-xs truncate">
+                                        {[e.etage && `${e.etage}.`, e.doer]
+                                          .filter(Boolean)
+                                          .join(' ')}
+                                      </span>
+                                    )}
+                                  </span>
+                                  <span className="text-slate-300 text-right">
+                                    {e.areal ? `${e.areal.toLocaleString('da-DK')} m²` : '–'}
+                                  </span>
+                                  <span className="text-slate-400 text-right">
+                                    {e.vaerelser ?? '–'}
+                                  </span>
+                                </button>
+                                {aaben && detaljer.length > 0 && (
+                                  <div className="px-3 pb-2 bg-slate-900/40 border-t border-slate-700/20">
+                                    <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs pt-2">
+                                      {detaljer.map(([lbl, val]) => (
+                                        <div key={lbl} className="flex justify-between gap-2">
+                                          <span className="text-slate-500">{lbl}</span>
+                                          <span className="text-slate-300 text-right">{val}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* Ingen BBR-data */}
                 {!bbrLoader && !bbrData?.bbr && (
                   <div className="bg-orange-500/8 border border-orange-500/20 rounded-xl p-5">
                     <p className="text-orange-300 text-sm font-medium mb-1">
@@ -1020,16 +1948,122 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                       {bbrData?.bbrFejl ??
                         'BBR-data kræver et aktivt abonnement på BBRPublic-tjenesten på datafordeler.dk.'}
                     </p>
-                    <a
-                      href="https://datafordeler.dk"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-blue-400 text-xs hover:text-blue-300 mt-2 inline-block"
-                    >
-                      Åbn datafordeler.dk og aktiver BBRPublic →
-                    </a>
                   </div>
                 )}
+
+                {/* ── Matrikeloplysninger (Datafordeler MAT) ── */}
+                <div className="mt-5">
+                  <SectionTitle title="Matrikeloplysninger" />
+                  {matrikelLoader ? (
+                    <div className="flex items-center gap-2 text-slate-500 text-sm py-4">
+                      <div className="w-4 h-4 border-2 border-slate-600 border-t-blue-500 rounded-full animate-spin" />
+                      Henter matrikeldata…
+                    </div>
+                  ) : matrikelData ? (
+                    <div className="space-y-3">
+                      {/* Ejendomsinfo */}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        {matrikelData.landbrugsnotering && (
+                          <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3">
+                            <p className="text-slate-400 text-xs mb-0.5">Landbrugsnotering</p>
+                            <p className="text-white text-sm font-medium">
+                              {matrikelData.landbrugsnotering}
+                            </p>
+                          </div>
+                        )}
+                        {matrikelData.opdeltIEjerlejligheder && (
+                          <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3">
+                            <p className="text-slate-400 text-xs mb-0.5">Ejerlejligheder</p>
+                            <p className="text-white text-sm font-medium">
+                              Opdelt i ejerlejligheder
+                            </p>
+                          </div>
+                        )}
+                        {matrikelData.erFaelleslod && (
+                          <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3">
+                            <p className="text-slate-400 text-xs mb-0.5">Fælleslod</p>
+                            <p className="text-white text-sm font-medium">Ja</p>
+                          </div>
+                        )}
+                        {matrikelData.udskiltVej && (
+                          <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3">
+                            <p className="text-slate-400 text-xs mb-0.5">Udskilt vej</p>
+                            <p className="text-white text-sm font-medium">Ja</p>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Jordstykker tabel */}
+                      {matrikelData.jordstykker.length > 0 && (
+                        <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden">
+                          <div className="px-4 py-2.5 border-b border-slate-700/30">
+                            <p className="text-slate-300 text-xs font-semibold uppercase tracking-wider">
+                              Jordstykker ({matrikelData.jordstykker.length})
+                            </p>
+                          </div>
+                          <div className="divide-y divide-slate-700/20">
+                            {matrikelData.jordstykker.map((js) => (
+                              <div
+                                key={js.id}
+                                className="px-4 py-2.5 grid grid-cols-[1fr_100px_80px_auto] gap-3 items-center"
+                              >
+                                <div>
+                                  <p className="text-white text-sm font-medium">
+                                    Matr.nr. {js.matrikelnummer}
+                                    {js.ejerlavskode && (
+                                      <span className="text-slate-500 text-xs ml-2">
+                                        Ejerlav {js.ejerlavskode}
+                                      </span>
+                                    )}
+                                  </p>
+                                  {js.ejerlavsnavn && (
+                                    <p className="text-slate-500 text-xs">{js.ejerlavsnavn}</p>
+                                  )}
+                                </div>
+                                <p className="text-slate-300 text-sm tabular-nums text-right">
+                                  {js.registreretAreal != null
+                                    ? `${js.registreretAreal.toLocaleString('da-DK')} m²`
+                                    : '–'}
+                                </p>
+                                <p className="text-slate-500 text-xs text-right">
+                                  {js.vejareal != null && js.vejareal > 0
+                                    ? `Vej: ${js.vejareal.toLocaleString('da-DK')} m²`
+                                    : ''}
+                                </p>
+                                <div className="flex gap-1.5 flex-wrap justify-end">
+                                  {js.fredskov === true && (
+                                    <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-green-900/50 text-green-400 border border-green-800/40">
+                                      Fredskov
+                                    </span>
+                                  )}
+                                  {js.strandbeskyttelse === true && (
+                                    <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-blue-900/50 text-blue-400 border border-blue-800/40">
+                                      Strandbeskyttelse
+                                    </span>
+                                  )}
+                                  {js.klitfredning === true && (
+                                    <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-amber-900/50 text-amber-400 border border-amber-800/40">
+                                      Klitfredning
+                                    </span>
+                                  )}
+                                  {js.jordrente === true && (
+                                    <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-purple-900/50 text-purple-400 border border-purple-800/40">
+                                      Jordrente
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="bg-slate-800/30 border border-slate-700/40 rounded-xl p-4 text-center">
+                      <p className="text-slate-500 text-xs">Ingen matrikeldata fundet</p>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
@@ -1217,118 +2251,1133 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
 
             {/* ══ ØKONOMI ══ */}
             {aktivTab === 'oekonomi' && (
-              <div className="space-y-4">
+              <div className="space-y-5">
                 {/* ── Ejendomsvurdering ── */}
                 <div>
-                  <p className="text-slate-400 text-xs font-medium uppercase tracking-wider mb-3">
-                    Ejendomsvurdering · Datafordeler
-                  </p>
+                  <SectionTitle title="Ejendomsvurdering" />
                   {vurderingLoader ? (
-                    <div className="flex items-center gap-2 text-slate-500 text-sm">
+                    <div className="flex items-center gap-2 text-slate-500 text-sm py-4">
                       <div className="w-4 h-4 border-2 border-slate-600 border-t-blue-500 rounded-full animate-spin" />
                       Henter vurderingsdata…
                     </div>
                   ) : vurdering ? (
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                        <p className="text-slate-400 text-xs mb-1">Ejendomsværdi</p>
-                        <p className="text-white text-lg font-bold">
-                          {vurdering.ejendomsvaerdi != null
-                            ? `${(vurdering.ejendomsvaerdi / 1_000_000).toFixed(1)} mio. kr.`
-                            : '–'}
-                        </p>
-                        {vurdering.aar && (
-                          <p className="text-slate-500 text-xs mt-1">Vurdering {vurdering.aar}</p>
-                        )}
-                      </div>
-                      <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                        <p className="text-slate-400 text-xs mb-1">Grundværdi</p>
-                        <p className="text-white text-lg font-bold">
-                          {vurdering.grundvaerdi != null
-                            ? `${(vurdering.grundvaerdi / 1_000_000).toFixed(1)} mio. kr.`
-                            : '–'}
-                        </p>
-                        {vurdering.bebyggelsesprocent != null && (
-                          <p className="text-slate-500 text-xs mt-1">
-                            Bebygget {vurdering.bebyggelsesprocent}%
-                          </p>
-                        )}
-                      </div>
-                      {vurdering.vurderetAreal != null && (
+                    <>
+                      {/* Aktuelle tal */}
+                      <div className="grid grid-cols-3 gap-3 mb-3">
                         <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                          <p className="text-slate-400 text-xs mb-1">Vurderet areal</p>
-                          <p className="text-white text-base font-semibold">
-                            {vurdering.vurderetAreal.toLocaleString('da-DK')} m²
+                          <p className="text-slate-400 text-xs mb-1">
+                            Ejendomsværdi
+                            {vurdering.aar && (
+                              <span className="ml-1 text-slate-500">({vurdering.aar})</span>
+                            )}
+                          </p>
+                          <p className="text-white text-lg font-bold">
+                            {vurdering.ejendomsvaerdi != null
+                              ? formatDKK(vurdering.ejendomsvaerdi)
+                              : 'Fastsættes ikke'}
                           </p>
                         </div>
-                      )}
-                      {vurdering.benyttelseskode && (
                         <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                          <p className="text-slate-400 text-xs mb-1">Benyttelseskode</p>
-                          <p className="text-white text-base font-semibold">
-                            {vurdering.benyttelseskode}
+                          <p className="text-slate-400 text-xs mb-1">Grundværdi</p>
+                          <p className="text-white text-lg font-bold">
+                            {vurdering.grundvaerdi != null ? formatDKK(vurdering.grundvaerdi) : '–'}
                           </p>
                         </div>
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                          <p className="text-slate-400 text-xs mb-1">Grundareal</p>
+                          <p className="text-white text-lg font-bold">
+                            {vurdering.vurderetAreal != null
+                              ? `${vurdering.vurderetAreal.toLocaleString('da-DK')} m²`
+                              : '–'}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Vurderingshistorik — collapsible tabel med forelobige prepended */}
+                      {(alleVurderinger.length > 1 || forelobige.length > 0) && (
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
+                          <button
+                            onClick={() => setVisVurderingHistorik((v) => !v)}
+                            className="w-full flex items-center gap-2 px-4 py-3 hover:bg-slate-700/20 transition-colors"
+                          >
+                            <ChevronRight
+                              size={14}
+                              className={`text-slate-500 transition-transform flex-shrink-0 ${visVurderingHistorik ? 'rotate-90' : ''}`}
+                            />
+                            <span className="text-slate-300 text-sm font-medium">
+                              Vurderingshistorik
+                            </span>
+                            {forelobige.length > 0 && (
+                              <span className="px-1.5 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded text-[10px] text-amber-400 font-medium">
+                                {forelobige.length} FORELOBIG{forelobige.length > 1 ? 'E' : ''}
+                              </span>
+                            )}
+                          </button>
+                          {visVurderingHistorik && (
+                            <>
+                              {/* Header */}
+                              <div className="grid grid-cols-[140px_1fr_1fr_100px] px-4 py-2 text-slate-500 text-xs font-medium border-t border-slate-700/30 bg-slate-900/30">
+                                <span>Aar</span>
+                                <span>Ejendomsvaerdi</span>
+                                <span>Grundvaerdi</span>
+                                <span className="text-right">Grundareal</span>
+                              </div>
+
+                              {/* Forelobige vurderinger — prepended med amber badge */}
+                              {forelobige.map((fv, i) => (
+                                <div
+                                  key={`forelobig-${fv.vurderingsaar}-${i}`}
+                                  className="grid grid-cols-[140px_1fr_1fr_100px] px-4 py-2.5 text-sm border-t border-amber-500/10 bg-amber-500/[0.02] hover:bg-amber-500/5 items-center"
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-amber-200 font-medium">
+                                      {fv.vurderingsaar}
+                                    </span>
+                                    <span className="px-1.5 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded text-[10px] text-amber-400 font-medium">
+                                      FORELOBIG
+                                    </span>
+                                  </div>
+                                  <span className="text-amber-200/80">
+                                    {fv.ejendomsvaerdi
+                                      ? formatDKK(fv.ejendomsvaerdi)
+                                      : 'Fastsaettes ikke'}
+                                  </span>
+                                  <span className="text-amber-200/80">
+                                    {fv.grundvaerdi ? formatDKK(fv.grundvaerdi) : '0 DKK'}
+                                  </span>
+                                  <span className="text-slate-400 text-right">–</span>
+                                </div>
+                              ))}
+
+                              {/* Endelige vurderinger fra Datafordeler */}
+                              {alleVurderinger.map((v, i) => {
+                                return (
+                                  <div
+                                    key={`${v.aar}-${i}`}
+                                    className="grid grid-cols-[140px_1fr_1fr_100px] px-4 py-2.5 text-sm border-t border-slate-700/20 hover:bg-slate-700/10 items-center"
+                                  >
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-slate-200 font-medium">
+                                        {v.aar ?? '–'}
+                                      </span>
+                                      {v.erNytSystem && (
+                                        <span className="px-1.5 py-0.5 bg-blue-500/10 border border-blue-500/20 rounded text-[10px] text-blue-400 font-medium">
+                                          NY
+                                        </span>
+                                      )}
+                                    </div>
+                                    <span className="text-slate-300">
+                                      {v.ejendomsvaerdi != null
+                                        ? formatDKK(v.ejendomsvaerdi)
+                                        : 'Fastsaettes ikke'}
+                                    </span>
+                                    <span className="text-slate-300">
+                                      {v.grundvaerdi != null ? formatDKK(v.grundvaerdi) : '0 DKK'}
+                                    </span>
+                                    <span className="text-slate-400 text-right">
+                                      {v.vurderetAreal != null
+                                        ? `${v.vurderetAreal.toLocaleString('da-DK')} m²`
+                                        : '–'}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </>
+                          )}
+                        </div>
                       )}
-                    </div>
+                    </>
                   ) : !bbrData?.ejendomsrelationer?.[0]?.bfeNummer ? (
-                    <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-4 space-y-2">
-                      <div className="flex items-center gap-2">
-                        <div className="w-5 h-5 rounded-full bg-amber-500/20 flex items-center justify-center flex-shrink-0">
-                          <span className="text-amber-400 text-xs font-bold">!</span>
-                        </div>
-                        <p className="text-amber-300 text-sm font-medium">
-                          BFEnummer ikke tilgængeligt
-                        </p>
-                      </div>
-                      <p className="text-slate-400 text-xs leading-relaxed">
-                        Ejendomsvurdering kræver BFEnummer fra BBR Ejendomsrelation.
-                        <br />
-                        Aktivér <strong className="text-slate-300">
-                          Ejendomsvurdering
-                        </strong> og <strong className="text-slate-300">BBRPublic</strong> på
-                        datafordeler.dk.
+                    <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-4">
+                      <p className="text-amber-300 text-sm font-medium mb-1">
+                        BFEnummer ikke tilgængeligt
                       </p>
-                      <a
-                        href="https://datafordeler.dk/dataoversigt/ejendomme/"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-blue-400 text-xs hover:text-blue-300 transition-colors"
-                      >
-                        Gå til datafordeler.dk → Ejendomme →
-                      </a>
+                      <p className="text-slate-400 text-xs">
+                        Ejendomsvurdering kræver BFEnummer fra BBR Ejendomsrelation.
+                      </p>
                     </div>
                   ) : (
                     <div className="bg-slate-800/30 border border-slate-700/40 rounded-xl p-4 text-center">
-                      <BarChart3 size={24} className="text-slate-600 mx-auto mb-2" />
-                      <p className="text-slate-400 text-xs">
-                        Ingen vurderingsdata fundet via Datafordeler
+                      <p className="text-slate-500 text-xs">Ingen vurderingsdata fundet</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* ── Salgshistorik (EJF Datafordeler) ── */}
+                <div>
+                  <SectionTitle title="Salgshistorik" />
+                  {salgshistorikLoader ? (
+                    <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl p-5 text-center">
+                      <p className="text-slate-500 text-xs animate-pulse">Henter salgshistorik…</p>
+                    </div>
+                  ) : salgshistorikManglerAdgang ? (
+                    <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl p-5 text-center space-y-2">
+                      <TrendingUp size={22} className="text-slate-600 mx-auto" />
+                      <p className="text-slate-400 text-sm font-medium">
+                        Adgang afventer godkendelse
+                      </p>
+                      <p className="text-slate-500 text-xs max-w-sm mx-auto leading-relaxed">
+                        Salgshistorik kræver EJF-adgang fra Geodatastyrelsen via datafordeler.dk.
+                      </p>
+                    </div>
+                  ) : salgshistorik && salgshistorik.length > 0 ? (
+                    <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl overflow-hidden">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-slate-700/30 text-slate-500 text-xs uppercase tracking-wider">
+                            <th className="text-left px-4 py-2.5 font-medium">Dato</th>
+                            <th className="text-left px-4 py-2.5 font-medium">Type</th>
+                            <th className="text-right px-4 py-2.5 font-medium">Købesum</th>
+                            <th className="text-right px-4 py-2.5 font-medium">Kontant</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {salgshistorik.map((h, i) => {
+                            const dato = h.koebsaftaleDato ?? h.overtagelsesdato;
+                            return (
+                              <tr
+                                key={i}
+                                className="border-b border-slate-700/20 last:border-0 hover:bg-white/[0.02] transition-colors"
+                              >
+                                <td className="px-4 py-2.5 text-slate-300 tabular-nums">
+                                  {dato
+                                    ? new Date(dato).toLocaleDateString('da-DK', {
+                                        year: 'numeric',
+                                        month: 'short',
+                                        day: 'numeric',
+                                      })
+                                    : '—'}
+                                </td>
+                                <td className="px-4 py-2.5">
+                                  <span
+                                    className={`text-xs px-2 py-0.5 rounded-full ${
+                                      h.overdragelsesmaade?.toLowerCase().includes('frit')
+                                        ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20'
+                                        : h.overdragelsesmaade?.toLowerCase().includes('tvang')
+                                          ? 'text-red-400 bg-red-500/10 border border-red-500/20'
+                                          : 'text-slate-400 bg-slate-500/10 border border-slate-500/20'
+                                    }`}
+                                  >
+                                    {h.overdragelsesmaade ?? '—'}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-2.5 text-right text-white font-medium tabular-nums">
+                                  {h.samletKoebesum != null
+                                    ? `${h.samletKoebesum.toLocaleString('da-DK')} kr.`
+                                    : '—'}
+                                </td>
+                                <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums">
+                                  {h.kontantKoebesum != null
+                                    ? `${h.kontantKoebesum.toLocaleString('da-DK')} kr.`
+                                    : '—'}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl p-5 text-center">
+                      <p className="text-slate-500 text-xs">
+                        Ingen handler registreret for denne ejendom
                       </p>
                     </div>
                   )}
                 </div>
 
-                {/* ── Salgshistorik — coming soon ── */}
-                <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl p-4">
-                  <p className="text-slate-400 text-xs font-medium uppercase tracking-wider mb-1">
-                    Salgshistorik
-                  </p>
-                  <p className="text-slate-500 text-xs">
-                    Historiske handelspriser hentes via Tinglysning.dk (backlog).
-                  </p>
+                {/* ── Udbudshistorik — coming soon ── */}
+                <div>
+                  <SectionTitle title="Udbudshistorik" />
+                  <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl p-5 text-center space-y-2">
+                    <List size={22} className="text-slate-600 mx-auto" />
+                    <p className="text-slate-400 text-sm font-medium">Udbudspriser og status</p>
+                    <p className="text-slate-500 text-xs max-w-sm mx-auto leading-relaxed">
+                      Udbudshistorik med prisændringer og handelstyper kræver
+                      markedsdata-integration (backlog).
+                    </p>
+                  </div>
+                </div>
+
+                {/* ── Lignende handler — coming soon ── */}
+                <div>
+                  <SectionTitle title="Lignende handler" />
+                  <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl p-5 text-center space-y-2">
+                    <MapPin size={22} className="text-slate-600 mx-auto" />
+                    <p className="text-slate-400 text-sm font-medium">
+                      Sammenlignelige handler i området
+                    </p>
+                    <p className="text-slate-500 text-xs max-w-sm mx-auto leading-relaxed">
+                      Kvadratmeterpriser og handler for lignende ejendomme kræver
+                      markedsdata-integration (backlog).
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ══ SKAT ══ */}
+            {aktivTab === 'skatter' && (
+              <div className="space-y-5">
+                {/* ── Ejendomsskatter — baseret på foreløbige + estimerede data ── */}
+                <div>
+                  <SectionTitle title="Ejendomsskatter" />
+
+                  {(() => {
+                    /** Nyeste foreløbig vurdering (typisk 2024) */
+                    const nyeste = forelobige.length > 0 ? forelobige[0] : null;
+
+                    if (!nyeste && !vurdering?.estimereretGrundskyld) {
+                      return (
+                        <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl p-5 text-center">
+                          <p className="text-slate-500 text-xs">Ingen skattedata tilgængelig</p>
+                        </div>
+                      );
+                    }
+
+                    /** Ejendomsværdiskat = 0 for kolonihaver på lejet grund */
+                    const visEjendomsskat =
+                      !erKolonihave && nyeste?.ejendomsskat != null && nyeste.ejendomsskat > 0;
+                    const effektivGrundskyld = nyeste?.grundskyld ?? 0;
+                    const effektivEjendomsskat = erKolonihave ? 0 : (nyeste?.ejendomsskat ?? 0);
+
+                    return (
+                      <div className="space-y-4">
+                        {/* ── Nuværende beskatning (nyeste foreløbige) ── */}
+                        {nyeste && (
+                          <div>
+                            <p className="text-slate-300 text-sm font-semibold mb-2">
+                              Nuværende beskatning ({nyeste.vurderingsaar + 1})
+                            </p>
+                            <div className="grid grid-cols-2 gap-3">
+                              {/* Grundskyld */}
+                              <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                                <p className="text-white text-lg font-bold flex items-center gap-1.5">
+                                  {effektivGrundskyld > 0 ? formatDKK(effektivGrundskyld) : '–'}
+                                  <span className="text-slate-500 text-xs font-normal">DKK</span>
+                                </p>
+                                <p className="text-slate-500 text-xs mt-0.5">
+                                  Grundskyld til kommunen
+                                </p>
+                              </div>
+                              {/* Ejendomsværdiskat */}
+                              {visEjendomsskat && (
+                                <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                                  <p className="text-white text-lg font-bold">
+                                    {formatDKK(nyeste.ejendomsskat!)}
+                                    <span className="text-slate-500 text-xs font-normal ml-1">
+                                      DKK
+                                    </span>
+                                  </p>
+                                  <p className="text-slate-500 text-xs mt-0.5">Ejendomsværdiskat</p>
+                                </div>
+                              )}
+                              {/* Kolonihave: vis 0 kr med (i)-ikon tooltip */}
+                              {erKolonihave && (
+                                <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4 relative group/info">
+                                  <p className="text-white text-lg font-bold flex items-center gap-1.5">
+                                    0<span className="text-slate-500 text-xs font-normal">DKK</span>
+                                    <span className="relative">
+                                      <Info className="w-3.5 h-3.5 text-blue-400/70 cursor-help" />
+                                      <span className="absolute left-full top-1/2 -translate-y-1/2 ml-2 w-64 px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-300 leading-relaxed opacity-0 invisible group-hover/info:opacity-100 group-hover/info:visible transition-all z-50 pointer-events-none shadow-xl">
+                                        Kolonihavehuse ikke må bruges til helårsbeboelse og er
+                                        derfor undtaget ejendomsværdiskat jf. kolonihavelovens § 2.
+                                        <span className="absolute right-full top-1/2 -translate-y-1/2 border-4 border-transparent border-r-slate-700" />
+                                      </span>
+                                    </span>
+                                  </p>
+                                  <p className="text-slate-500 text-xs mt-0.5">
+                                    Ejendomsværdiskat (fritaget)
+                                  </p>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Totale skat */}
+                            {(visEjendomsskat || erKolonihave) && (
+                              <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4 mt-3">
+                                <p className="text-white text-lg font-bold">
+                                  {formatDKK(effektivGrundskyld + effektivEjendomsskat)}
+                                  <span className="text-slate-500 text-xs font-normal ml-1">
+                                    DKK
+                                  </span>
+                                </p>
+                                <p className="text-slate-500 text-xs mt-0.5">
+                                  Totale skat{' '}
+                                  {erKolonihave
+                                    ? '(kun grundskyld — ejendomsværdiskat fritaget)'
+                                    : '(grundskyld + ejendomsværdiskat)'}
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* ── Fallback: kun estimeret grundskyld fra Datafordeler ── */}
+                        {!nyeste && vurdering?.estimereretGrundskyld != null && (
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                              <p className="text-white text-lg font-bold">
+                                {formatDKK(vurdering.estimereretGrundskyld)}
+                                <span className="text-slate-500 text-xs font-normal ml-1">DKK</span>
+                              </p>
+                              <p className="text-slate-500 text-xs mt-0.5">
+                                Est. grundskyld
+                                {vurdering.grundskyldspromille !== null && (
+                                  <span className="text-slate-600 ml-1">
+                                    ({vurdering.grundskyldspromille}‰)
+                                  </span>
+                                )}
+                              </p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
             )}
 
             {/* ══ DOKUMENTER ══ */}
             {aktivTab === 'dokumenter' && (
-              <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl p-6 text-center">
-                <FileText size={32} className="text-slate-600 mx-auto mb-3" />
-                <p className="text-slate-300 text-sm font-medium mb-1">Dokumenter</p>
-                <p className="text-slate-500 text-xs leading-relaxed max-w-sm mx-auto">
-                  Tingbogsattester og BBR-meddelelser genereres automatisk når tinglysning- og
-                  BBR-abonnement er aktiveret.
-                </p>
+              <div className="space-y-2">
+                {/* ── Dokumenter (samlet kort) ── */}
+                <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden">
+                  {/* Kort-header */}
+                  <div className="px-4 py-2.5 border-b border-slate-700/30 flex items-center gap-2">
+                    <FileText size={15} className="text-slate-400" />
+                    <span className="text-sm font-semibold text-slate-200">Dokumenter</span>
+                    {(plandataLoader || energiLoader || jordLoader) && (
+                      <span className="ml-2 text-xs text-slate-500 animate-pulse">Henter…</span>
+                    )}
+                    {/* Download-knap — højrestillet */}
+                    <button
+                      onClick={handleDownloadZip}
+                      disabled={valgteDoc.size === 0 || zipLoader}
+                      className="ml-auto flex items-center gap-1.5 px-3 py-1 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 disabled:cursor-not-allowed border border-slate-600 rounded-lg text-slate-300 text-xs font-medium transition-all"
+                      title={
+                        valgteDoc.size === 0
+                          ? 'Vælg dokumenter med checkboks for at downloade'
+                          : `Download ${valgteDoc.size} valgte som ZIP`
+                      }
+                    >
+                      {zipLoader ? (
+                        <>
+                          <span className="w-3 h-3 border border-slate-400 border-t-transparent rounded-full animate-spin" />
+                          Henter…
+                        </>
+                      ) : (
+                        <>
+                          <Download size={12} />
+                          Download valgte ({valgteDoc.size})
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* ── Stamdokumenter subsection ── */}
+                  {(() => {
+                    const rel = bbrData?.ejendomsrelationer?.[0];
+                    const bfeNummer = rel?.bfeNummer;
+                    // PDF-link åbner Miljøportalens viewer i browser; ZIP-download bruger /api/jord/pdf proxy der fetcher /report/generate direkte
+                    const rapportUrl =
+                      rel?.ejerlavKode && rel?.matrikelnr
+                        ? `https://jord.miljoeportal.dk/report?elav=${rel.ejerlavKode}&matrnr=${encodeURIComponent(rel.matrikelnr)}`
+                        : null;
+
+                    const jordItem = jordData?.[0] ?? null;
+                    const jordIsV2 =
+                      jordItem?.pollutionStatusCodeValue === '08' ||
+                      jordItem?.pollutionStatusCodeValue === '13';
+                    const jordIsV1 = jordItem?.pollutionStatusCodeValue === '07';
+                    const jordIsUdgaaet =
+                      jordItem?.pollutionStatusCodeValue === '16' ||
+                      jordItem?.pollutionStatusCodeValue === '17';
+                    const jordStatusKlasse = jordIsV2
+                      ? 'bg-red-500/15 text-red-400'
+                      : jordIsV1
+                        ? 'bg-amber-500/15 text-amber-400'
+                        : jordIsUdgaaet
+                          ? 'bg-slate-700/40 text-slate-400'
+                          : 'bg-orange-500/15 text-orange-400';
+
+                    const formatDato = (iso: string | null) =>
+                      iso
+                        ? new Date(iso).toLocaleDateString('da-DK', {
+                            day: 'numeric',
+                            month: 'long',
+                            year: 'numeric',
+                          })
+                        : null;
+
+                    const jordDetaljer = jordItem
+                      ? [
+                          jordItem.pollutionStatusText && {
+                            label: 'Kortlægningsstatus',
+                            value: `${jordItem.pollutionStatusCodeValue} — ${jordItem.pollutionStatusText}`,
+                          },
+                          jordItem.pollutionNuanceStatus.length > 0 && {
+                            label: 'Nuancering',
+                            value: jordItem.pollutionNuanceStatus.join(', '),
+                          },
+                          jordItem.locationReferences.length > 0 && {
+                            label: 'Lokationsreference',
+                            value: jordItem.locationReferences.join(', '),
+                          },
+                          jordItem.locationNames.length > 0 && {
+                            label: 'Lokation',
+                            value: jordItem.locationNames[0],
+                          },
+                          jordItem.locationNames.length > 1 && {
+                            label: 'Øvrige lokationer',
+                            value: jordItem.locationNames.slice(1).join(' · '),
+                          },
+                          formatDato(jordItem.recalculationDate) && {
+                            label: 'Genvurderingsdato',
+                            value: formatDato(jordItem.recalculationDate)!,
+                          },
+                          formatDato(jordItem.modifiedDate) && {
+                            label: 'Senest ændret',
+                            value: formatDato(jordItem.modifiedDate)!,
+                          },
+                          {
+                            label: 'Matrikel',
+                            value: `${jordItem.landParcelIdentifier} (ejerlav ${jordItem.cadastralDistrictIdentifier})`,
+                          },
+                          jordItem.regionNavn && { label: 'Region', value: jordItem.regionNavn },
+                          jordItem.municipalityCode && {
+                            label: 'Kommunekode',
+                            value: String(jordItem.municipalityCode),
+                          },
+                          jordItem.housingStatementIndicator && {
+                            label: 'Boligudtalelse',
+                            value: 'Ja',
+                          },
+                        ].filter((r): r is { label: string; value: string } => Boolean(r))
+                      : [];
+
+                    const jordErUdvidet = jordItem ? expandedJord.has(jordItem.id) : false;
+
+                    return (
+                      <div className="border-b border-slate-700/30">
+                        {/* Kolonneheader — identisk med plan-tabellen */}
+                        <div className="grid grid-cols-[28px_72px_1fr_120px_80px] gap-x-3 px-4 py-1.5 border-b border-slate-700/20">
+                          <span />
+                          <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
+                            År
+                          </span>
+                          <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
+                            Dokument
+                          </span>
+                          <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
+                            Status
+                          </span>
+                          <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
+                            Dok.
+                          </span>
+                        </div>
+
+                        {/* BBR-meddelelse */}
+                        <div className="grid grid-cols-[28px_72px_1fr_120px_80px] gap-x-3 px-4 py-2 border-b border-slate-700/15 hover:bg-slate-700/10 transition-colors items-start">
+                          <span />
+                          <span className="text-sm text-slate-300 tabular-nums">
+                            {(() => {
+                              const datoer = (bbrData?.bbr ?? [])
+                                .map((b) => b.revisionsdato)
+                                .filter((d): d is string => !!d);
+                              if (!datoer.length) return '—';
+                              return Math.max(...datoer.map((d) => new Date(d).getFullYear()));
+                            })()}
+                          </span>
+                          <div>
+                            <span className="text-sm text-slate-200">BBR-meddelelse</span>
+                          </div>
+                          <span />
+                          <div className="flex items-center gap-1.5 self-start">
+                            {bfeNummer ? (
+                              <a
+                                href={`https://bbr.dk/pls/wwwdata/get_newois_pck.show_bbr_meddelelse_pdf?i_bfe=${bfeNummer}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                              >
+                                <FileText size={11} />
+                                PDF
+                              </a>
+                            ) : (
+                              <span className="text-slate-600 text-xs">—</span>
+                            )}
+                            {bfeNummer && (
+                              <label
+                                className="flex items-center cursor-pointer flex-shrink-0"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <input
+                                  type="checkbox"
+                                  className="sr-only"
+                                  checked={valgteDoc.has('std-3')}
+                                  onChange={() => toggleDoc('std-3')}
+                                />
+                                <span
+                                  className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors ${valgteDoc.has('std-3') ? 'bg-blue-500 border-blue-500' : 'bg-[#0a1020] border-slate-400'}`}
+                                >
+                                  {valgteDoc.has('std-3') && (
+                                    <svg
+                                      viewBox="0 0 10 10"
+                                      className="w-2 h-2 text-white"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      strokeWidth="2.5"
+                                    >
+                                      <path d="M1.5 5.5l2.5 2.5 4.5-4.5" />
+                                    </svg>
+                                  )}
+                                </span>
+                              </label>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Jordforureningsattest */}
+                        <div>
+                          <div
+                            className="grid grid-cols-[28px_72px_1fr_120px_80px] gap-x-3 px-4 py-2 hover:bg-slate-700/10 transition-colors cursor-pointer items-start"
+                            onClick={() => {
+                              if (!jordItem) return;
+                              setExpandedJord((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(jordItem.id)) next.delete(jordItem.id);
+                                else next.add(jordItem.id);
+                                return next;
+                              });
+                            }}
+                          >
+                            <ChevronRight
+                              size={14}
+                              className={`text-slate-500 mt-0.5 transition-transform flex-shrink-0 ${!jordItem ? 'opacity-0' : ''} ${jordErUdvidet ? 'rotate-90' : ''}`}
+                            />
+                            <span className="text-sm text-slate-300 tabular-nums">
+                              {jordItem?.modifiedDate
+                                ? new Date(jordItem.modifiedDate).getFullYear()
+                                : '—'}
+                            </span>
+                            <div>
+                              <span className="text-sm text-slate-200">Jordforureningsattest</span>
+                              {jordLoader && (
+                                <p className="text-xs text-slate-500 mt-0.5 animate-pulse">
+                                  Henter…
+                                </p>
+                              )}
+                            </div>
+                            {/* Status — alignet med plan-status kolonnen */}
+                            <div className="self-start">
+                              {!jordLoader && jordIngenData && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-emerald-500/15 text-emerald-400">
+                                  Ikke kortlagt
+                                </span>
+                              )}
+                              {!jordLoader && jordItem && (
+                                <span
+                                  className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${jordStatusKlasse}`}
+                                >
+                                  {jordItem.pollutionStatusText ??
+                                    jordItem.pollutionStatusCodeValue}
+                                </span>
+                              )}
+                              {jordFejl && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-500/15 text-red-400">
+                                  Fejl
+                                </span>
+                              )}
+                            </div>
+                            {/* PDF-link + checkbox — URL peger på intern /api/jord/pdf der konverterer via Puppeteer */}
+                            <div className="flex items-center gap-1.5 self-start">
+                              {rapportUrl ? (
+                                <a
+                                  href={rapportUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="inline-flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                                >
+                                  <FileText size={11} />
+                                  PDF
+                                </a>
+                              ) : (
+                                <span className="text-slate-600 text-xs">—</span>
+                              )}
+                              {rapportUrl && (
+                                <label
+                                  className="flex items-center cursor-pointer flex-shrink-0"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    className="sr-only"
+                                    checked={valgteDoc.has('std-7')}
+                                    onChange={() => toggleDoc('std-7')}
+                                  />
+                                  <span
+                                    className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors ${valgteDoc.has('std-7') ? 'bg-blue-500 border-blue-500' : 'bg-[#0a1020] border-slate-400'}`}
+                                  >
+                                    {valgteDoc.has('std-7') && (
+                                      <svg
+                                        viewBox="0 0 10 10"
+                                        className="w-2 h-2 text-white"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        strokeWidth="2.5"
+                                      >
+                                        <path d="M1.5 5.5l2.5 2.5 4.5-4.5" />
+                                      </svg>
+                                    )}
+                                  </span>
+                                </label>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Detaljepanel */}
+                          {jordErUdvidet && jordDetaljer.length > 0 && (
+                            <div className="ml-10 mr-4 mb-2 bg-slate-800/40 rounded-lg border border-slate-700/30 overflow-hidden">
+                              <div className="divide-y divide-slate-700/20">
+                                {jordDetaljer.map((r) => (
+                                  <div
+                                    key={r.label}
+                                    className="grid grid-cols-[180px_1fr] px-3 py-1 text-xs"
+                                  >
+                                    <span className="text-slate-500">{r.label}</span>
+                                    <span className="text-slate-300">{r.value}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Matrikelkort */}
+                        {(() => {
+                          const rel = bbrData?.ejendomsrelationer?.[0];
+                          const downloadUrl =
+                            rel?.ejerlavKode && rel?.matrikelnr
+                              ? `/api/matrikelkort?ejerlavKode=${rel.ejerlavKode}&matrikelnr=${encodeURIComponent(rel.matrikelnr)}`
+                              : null;
+                          return (
+                            <div className="grid grid-cols-[28px_72px_1fr_120px_80px] gap-x-3 px-4 py-2 border-b border-slate-700/15 hover:bg-slate-700/10 transition-colors items-start">
+                              <span />
+                              <span className="text-sm text-slate-300 tabular-nums">—</span>
+                              <div>
+                                <span className="text-sm text-slate-200">Matrikelkort</span>
+                              </div>
+                              <span />
+                              <div className="flex items-center gap-1.5 self-start">
+                                {downloadUrl ? (
+                                  <a
+                                    href={downloadUrl}
+                                    download
+                                    className="inline-flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                                  >
+                                    <FileText size={11} />
+                                    PDF
+                                  </a>
+                                ) : (
+                                  <span className="text-slate-600 text-xs">—</span>
+                                )}
+                                {downloadUrl && (
+                                  <label className="flex items-center cursor-pointer flex-shrink-0">
+                                    <input
+                                      type="checkbox"
+                                      className="sr-only"
+                                      checked={valgteDoc.has('std-5')}
+                                      onChange={() => toggleDoc('std-5')}
+                                    />
+                                    <span
+                                      className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors ${valgteDoc.has('std-5') ? 'bg-blue-500 border-blue-500' : 'bg-[#0a1020] border-slate-400'}`}
+                                    >
+                                      {valgteDoc.has('std-5') && (
+                                        <svg
+                                          viewBox="0 0 10 10"
+                                          className="w-2 h-2 text-white"
+                                          fill="none"
+                                          stroke="currentColor"
+                                          strokeWidth="2.5"
+                                        >
+                                          <path d="M1.5 5.5l2.5 2.5 4.5-4.5" />
+                                        </svg>
+                                      )}
+                                    </span>
+                                  </label>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })()}
+
+                        {/* Fredet bygning — kun hvis BBR har fredningsdata */}
+                        {bbrData?.bbr?.some((b) => b.fredning) && (
+                          <div className="grid grid-cols-[28px_72px_1fr_120px_80px] gap-x-3 px-4 py-2 border-b border-slate-700/15 hover:bg-slate-700/10 transition-colors items-start">
+                            <span />
+                            <span className="text-sm text-slate-300 tabular-nums">—</span>
+                            <div>
+                              <span className="text-sm text-slate-200">
+                                Slots- og Kulturstyrelsen
+                              </span>
+                              <p className="text-xs text-slate-500 mt-0.5">Fredet bygning</p>
+                            </div>
+                            <span className="inline-flex items-center self-start px-2 py-0.5 rounded text-xs font-medium bg-amber-500/15 text-amber-400">
+                              Fredet
+                            </span>
+                            <a
+                              href="https://www.kulturarv.dk/fbb/offentligbygningsoeg.pub?public=true"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors self-start"
+                            >
+                              <FileText size={11} />
+                              PDF
+                            </a>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  {/* ── Planer subsection ── */}
+                  <div className="border-b border-slate-700/30">
+                    <div className="px-4 py-2 flex items-center gap-2">
+                      <MapIcon size={13} className="text-slate-500" />
+                      <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">
+                        Planer
+                      </span>
+                    </div>
+
+                    {plandataFejl && (
+                      <div className="px-4 py-2 text-xs text-red-400">{plandataFejl}</div>
+                    )}
+
+                    {!plandataLoader && !plandataFejl && (!plandata || plandata.length === 0) && (
+                      <div className="px-4 py-3 text-center text-slate-500 text-xs">
+                        Ingen planer fundet for denne adresse
+                      </div>
+                    )}
+
+                    {plandata && plandata.length > 0 && (
+                      <div>
+                        {/* Header */}
+                        <div className="grid grid-cols-[28px_72px_1fr_120px_80px] gap-x-3 px-4 py-2 border-b border-slate-700/20">
+                          <span />
+                          <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
+                            År
+                          </span>
+                          <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
+                            Type
+                          </span>
+                          <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
+                            Status
+                          </span>
+                          <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
+                            Dok.
+                          </span>
+                        </div>
+
+                        {/* Rows — lokalplaner med samme doklink som et delområde vises ikke
+                          da delområdet er mere specifikt og deler samme PDF-dokument */}
+                        {(() => {
+                          const lokalplanDoklinks = new Set(
+                            plandata
+                              .filter((p) => p.type === 'Lokalplan' && p.doklink)
+                              .map((p) => p.doklink!)
+                          );
+                          const synligePlaner = plandata.filter(
+                            (p) =>
+                              !(
+                                p.type === 'Delområde' &&
+                                p.doklink &&
+                                lokalplanDoklinks.has(p.doklink)
+                              )
+                          );
+                          return synligePlaner;
+                        })().map((plan, i) => {
+                          const rowKey = `${plan.type}-${plan.id}-${i}`;
+                          const erUdvidet = expandedPlaner.has(rowKey);
+
+                          const statusColor =
+                            plan.status === 'Vedtaget'
+                              ? 'bg-emerald-500/15 text-emerald-400'
+                              : plan.status === 'Forslag'
+                                ? 'bg-amber-500/15 text-amber-400'
+                                : 'bg-red-500/15 text-red-400';
+
+                          // Byg detaljefelt-liste — kun vis felter med værdier
+                          const d = plan.detaljer;
+                          const detaljeRækker: { label: string; value: string }[] = [
+                            d.anvendelse && { label: 'Generel anvendelse', value: d.anvendelse },
+                            d.delnr && { label: 'Delområdenummer', value: d.delnr },
+                            d.bebygpct && {
+                              label: 'Maks. bebyggelsesprocent',
+                              value: `${d.bebygpct} %`,
+                            },
+                            d.maxetager && {
+                              label: 'Maks. antal etager',
+                              value: String(d.maxetager),
+                            },
+                            d.maxbygnhjd && {
+                              label: 'Maks. bygningshøjde',
+                              value: `${d.maxbygnhjd} m`,
+                            },
+                            d.minuds && {
+                              label: 'Min. grundstørrelse ved udstykning',
+                              value: `${d.minuds.toLocaleString('da-DK')} m²`,
+                            },
+                            d.datoforsl && { label: 'Forslagsdato', value: d.datoforsl },
+                            d.datovedt && { label: 'Vedtagelsesdato', value: d.datovedt },
+                            d.datoikraft && { label: 'Dato trådt i kraft', value: d.datoikraft },
+                            d.datostart && { label: 'Startdato', value: d.datostart },
+                            d.datoslut && { label: 'Slutdato', value: d.datoslut },
+                          ].filter((r): r is { label: string; value: string } => Boolean(r));
+
+                          return (
+                            <div
+                              key={rowKey}
+                              className="border-b border-slate-700/15 last:border-b-0"
+                            >
+                              {/* Hoved-række */}
+                              <div
+                                className="grid grid-cols-[28px_72px_1fr_120px_80px] gap-x-3 px-4 py-2 hover:bg-slate-700/10 transition-colors cursor-pointer items-start"
+                                onClick={() =>
+                                  setExpandedPlaner((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(rowKey)) next.delete(rowKey);
+                                    else next.add(rowKey);
+                                    return next;
+                                  })
+                                }
+                              >
+                                <ChevronRight
+                                  size={14}
+                                  className={`text-slate-500 mt-0.5 transition-transform flex-shrink-0 ${erUdvidet ? 'rotate-90' : ''}`}
+                                />
+                                <span className="text-sm text-slate-300 tabular-nums">
+                                  {plan.aar ?? '—'}
+                                </span>
+                                <div>
+                                  <span className="text-sm text-slate-200">
+                                    {plan.type} ({plan.nummer})
+                                  </span>
+                                  {plan.navn && (
+                                    <p className="text-xs text-slate-500 mt-0.5 leading-tight">
+                                      {plan.navn}
+                                    </p>
+                                  )}
+                                </div>
+                                <span
+                                  className={`inline-flex items-center self-start px-2 py-0.5 rounded text-xs font-medium ${statusColor}`}
+                                >
+                                  {plan.status}
+                                </span>
+                                <div className="flex items-center gap-1.5 self-start">
+                                  {plan.doklink ? (
+                                    <a
+                                      href={plan.doklink}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      onClick={(e) => e.stopPropagation()}
+                                      className="inline-flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                                    >
+                                      <FileText size={11} />
+                                      PDF
+                                    </a>
+                                  ) : (
+                                    <span className="text-slate-600 text-xs">—</span>
+                                  )}
+                                  {plan.doklink && (
+                                    <label
+                                      className="flex items-center cursor-pointer flex-shrink-0"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        className="sr-only"
+                                        checked={valgteDoc.has(`pla-${plan.id}`)}
+                                        onChange={() => toggleDoc(`pla-${plan.id}`)}
+                                      />
+                                      <span
+                                        className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors ${valgteDoc.has(`pla-${plan.id}`) ? 'bg-blue-500 border-blue-500' : 'bg-[#0a1020] border-slate-400'}`}
+                                      >
+                                        {valgteDoc.has(`pla-${plan.id}`) && (
+                                          <svg
+                                            viewBox="0 0 10 10"
+                                            className="w-2 h-2 text-white"
+                                            fill="none"
+                                            stroke="currentColor"
+                                            strokeWidth="2.5"
+                                          >
+                                            <path d="M1.5 5.5l2.5 2.5 4.5-4.5" />
+                                          </svg>
+                                        )}
+                                      </span>
+                                    </label>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Detalje-panel */}
+                              {erUdvidet && (
+                                <div className="ml-10 mr-4 mb-1.5 bg-slate-800/40 rounded-lg border border-slate-700/30 overflow-hidden">
+                                  {detaljeRækker.length > 0 ? (
+                                    detaljeRækker.map((r) => (
+                                      <div
+                                        key={r.label}
+                                        className="flex items-baseline justify-between px-3 py-1 border-b border-slate-700/20 last:border-b-0"
+                                      >
+                                        <span className="text-xs text-slate-400">{r.label}</span>
+                                        <span className="text-xs text-slate-200 font-medium ml-4 text-right">
+                                          {r.value}
+                                        </span>
+                                      </div>
+                                    ))
+                                  ) : (
+                                    <p className="px-3 py-1.5 text-xs text-slate-500">
+                                      Ingen yderligere detaljer tilgængelige
+                                    </p>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                  {/* end planer subsection */}
+
+                  {/* ── Energimærker subsection ── */}
+                  <div>
+                    <div className="px-4 py-2 flex items-center gap-2">
+                      <span className="text-sm leading-none">⚡</span>
+                      <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">
+                        Energimærkerapporter
+                      </span>
+                    </div>
+
+                    {energiManglerAdgang && (
+                      <div className="px-4 pb-2 text-xs text-amber-400">
+                        EMO_USERNAME / EMO_PASSWORD ikke sat i .env.local
+                      </div>
+                    )}
+
+                    {!energiManglerAdgang && energiFejl && (
+                      <div className="px-4 pb-2 text-xs text-red-400">{energiFejl}</div>
+                    )}
+
+                    {!energiLoader &&
+                      !energiFejl &&
+                      !energiManglerAdgang &&
+                      (!energimaerker || energimaerker.length === 0) && (
+                        <div className="px-4 py-3 text-center text-slate-500 text-xs">
+                          Ingen energimærker registreret for denne ejendom
+                        </div>
+                      )}
+
+                    {energimaerker && energimaerker.length > 0 && (
+                      <div>
+                        <div className="grid grid-cols-[56px_1fr_100px_130px_80px] gap-x-3 px-4 py-1.5 border-b border-slate-700/20">
+                          <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
+                            Klasse
+                          </span>
+                          <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
+                            Adresse
+                          </span>
+                          <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
+                            Status
+                          </span>
+                          <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
+                            Gyldig til
+                          </span>
+                          <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
+                            Rapport
+                          </span>
+                        </div>
+                        {energimaerker.map((m) => {
+                          // Officielle EU energimærke farver (Building Energy Performance Directive)
+                          const klasseStyle = (() => {
+                            const k = m.klasse.toUpperCase();
+                            if (k.startsWith('A'))
+                              return { backgroundColor: '#00843D', color: '#fff' };
+                            if (k === 'B') return { backgroundColor: '#4BAE33', color: '#fff' };
+                            if (k === 'C') return { backgroundColor: '#ABCB44', color: '#fff' };
+                            if (k === 'D') return { backgroundColor: '#F5E700', color: '#1a1a1a' };
+                            if (k === 'E') return { backgroundColor: '#F5AB00', color: '#fff' };
+                            if (k === 'F') return { backgroundColor: '#EF7D00', color: '#fff' };
+                            if (k === 'G') return { backgroundColor: '#EB3223', color: '#fff' };
+                            return { backgroundColor: '#475569', color: '#e2e8f0' };
+                          })();
+                          const statusKlasse =
+                            m.status === 'Gyldig'
+                              ? 'bg-emerald-500/15 text-emerald-400'
+                              : m.status === 'Ugyldig'
+                                ? 'bg-red-500/15 text-red-400'
+                                : m.status === 'Erstattet'
+                                  ? 'bg-amber-500/15 text-amber-400'
+                                  : 'bg-slate-700/40 text-slate-400';
+                          return (
+                            <div
+                              key={m.serialId}
+                              className="grid grid-cols-[56px_1fr_100px_130px_80px] gap-x-3 px-4 py-2 border-b border-slate-700/15 hover:bg-slate-700/10 transition-colors items-center"
+                            >
+                              <span
+                                style={klasseStyle}
+                                className="inline-flex items-center justify-center w-7 h-7 rounded-md text-xs font-bold"
+                              >
+                                {m.klasse}
+                              </span>
+                              <div>
+                                <p className="text-sm text-slate-200">{m.adresse ?? '—'}</p>
+                                {m.bygninger.length > 0 && (
+                                  <p className="text-xs text-slate-500 mt-0.5">
+                                    {m.bygninger.length === 1
+                                      ? `Bygning ${m.bygninger[0].bygningsnr}`
+                                      : `${m.bygninger.length} bygninger`}
+                                    {m.bygninger[0]?.opfoerelsesaar != null &&
+                                      ` · ${m.bygninger[0].opfoerelsesaar}`}
+                                  </p>
+                                )}
+                              </div>
+                              <span
+                                className={`inline-flex items-center self-start px-2 py-0.5 rounded text-xs font-medium ${statusKlasse}`}
+                              >
+                                {m.status ?? '—'}
+                              </span>
+                              <span
+                                className={`text-sm tabular-nums ${m.status === 'Ugyldig' ? 'text-red-400' : 'text-slate-300'}`}
+                              >
+                                {m.udloeber ?? '—'}
+                              </span>
+                              <div>
+                                {m.pdfUrl ? (
+                                  <a
+                                    href={m.pdfUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                                  >
+                                    <FileText size={12} />
+                                    PDF
+                                  </a>
+                                ) : (
+                                  <span className="text-xs text-slate-600">—</span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                  {/* end energimærker subsection */}
+                </div>
+                {/* end Dokumenter card */}
               </div>
             )}
           </div>
@@ -1352,23 +3401,43 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
 
         {/* Kortpanel — strækker fuld højde */}
         {visKort && (
-          <div className="flex-shrink-0" style={{ width: kortBredde }}>
-            <Suspense
-              fallback={
-                <div className="w-full h-full flex items-center justify-center bg-slate-900">
-                  <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-                </div>
-              }
+          <div className="relative flex-shrink-0 self-stretch" style={{ width: kortBredde }}>
+            {/* Åbn på fuldt kort — navigerer til /dashboard/kort?ejendom=<id> */}
+            <Link
+              href={`/dashboard/kort?ejendom=${id}`}
+              className="absolute top-3 right-3 z-20 flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-900/90 hover:bg-slate-800 border border-slate-700 rounded-lg text-slate-300 text-xs font-medium shadow-lg transition-all"
+              title="Åbn på fuldt kort"
             >
-              <PropertyMap
-                lat={dawaAdresse.y}
-                lng={dawaAdresse.x}
-                adresse={adresseStreng}
-                visMatrikel={true}
-                onAdresseValgt={(newId) => router.push(`/dashboard/ejendomme/${newId}`)}
-                bygningPunkter={bbrData?.bygningPunkter ?? undefined}
-              />
-            </Suspense>
+              <MapIcon size={12} />
+              Fuldt kort
+            </Link>
+            <div className="absolute inset-0">
+              <Suspense
+                fallback={
+                  <div className="w-full h-full flex items-center justify-center bg-slate-900">
+                    <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                  </div>
+                }
+              >
+                <PropertyMap
+                  lat={dawaAdresse.y}
+                  lng={dawaAdresse.x}
+                  adresse={adresseStreng}
+                  visMatrikel={true}
+                  onAdresseValgt={(newId) => router.push(`/dashboard/ejendomme/${newId}`)}
+                  bygningPunkter={
+                    bbrData?.bygningPunkter
+                      ? bbrData.bygningPunkter.filter(
+                          (p) =>
+                            p.status !== 'Nedrevet/slettet' &&
+                            p.status !== 'Bygning nedrevet' &&
+                            p.status !== 'Bygning bortfaldet'
+                        )
+                      : undefined
+                  }
+                />
+              </Suspense>
+            </div>
           </div>
         )}
       </div>
@@ -1416,10 +3485,60 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
             Ejendomme
           </button>
 
-          <button className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700/60 rounded-lg text-slate-300 text-sm transition-all">
-            <Bell size={14} />
-            Følg
-          </button>
+          <div
+            className="relative"
+            onMouseEnter={() => !erFulgt && setVisFoelgTooltip(true)}
+            onMouseLeave={() => setVisFoelgTooltip(false)}
+          >
+            <button
+              onClick={async () => {
+                setVisFoelgTooltip(false);
+                if (!ejendom) return;
+                const adresse = `${ejendom.adresse}, ${ejendom.postnummer} ${ejendom.by}`;
+                const nyTilstand = toggleTrackEjendom({
+                  id,
+                  adresse,
+                  postnr: ejendom.postnummer,
+                  by: ejendom.by,
+                  kommune: ejendom.kommune,
+                  anvendelse: null,
+                });
+                setErFulgt(nyTilstand);
+                window.dispatchEvent(new Event('ba-tracked-changed'));
+                try {
+                  if (nyTilstand) {
+                    await fetch('/api/tracked', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        entity_id: id,
+                        label: adresse,
+                        entity_data: {
+                          postnr: ejendom.postnummer,
+                          by: ejendom.by,
+                          kommune: ejendom.kommune,
+                          anvendelse: null,
+                        },
+                      }),
+                    });
+                  } else {
+                    await fetch(`/api/tracked?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+                  }
+                } catch {
+                  /* Supabase ikke tilgængelig */
+                }
+              }}
+              className={`flex items-center gap-2 px-3 py-1.5 border rounded-lg text-sm transition-all ${
+                erFulgt
+                  ? 'bg-blue-600/20 hover:bg-blue-600/30 border-blue-500/40 text-blue-300'
+                  : 'bg-slate-800 hover:bg-slate-700 border-slate-700/60 text-slate-300'
+              }`}
+            >
+              <Bell size={14} className={erFulgt ? 'fill-blue-400 text-blue-400' : ''} />
+              {erFulgt ? 'Følger' : 'Følg'}
+            </button>
+            <FoelgTooltip lang="da" visible={visFoelgTooltip} />
+          </div>
         </div>
 
         {/* Adresse + meta */}
@@ -1685,171 +3804,398 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
             )}
 
             {/* ══════════════════════════════════════════
-              BBR
+              BBR — Live data fra Datafordeler
           ══════════════════════════════════════════ */}
             {aktivTab === 'bbr' && (
-              <div className="space-y-6">
+              <div className="space-y-3">
+                {/* BBR-fejlbesked */}
+                {bbrData?.bbrFejl && (
+                  <div className="p-3 bg-orange-500/10 border border-orange-500/20 rounded-lg">
+                    <p className="text-orange-300 text-sm">BBR: {bbrData.bbrFejl}</p>
+                  </div>
+                )}
+
                 {/* Jordstykker */}
                 <div>
                   <SectionTitle title="Jordstykker" />
-                  {/* Stat-kort */}
-                  <div className="grid grid-cols-3 gap-3 mb-3">
-                    <DataKort label="Jordstykker" value={`${ejendom.jordstykker?.length ?? 1}`} />
+                  <div className="grid grid-cols-2 gap-3 mb-3">
+                    <DataKort label="Matrikler" value="1" />
                     <DataKort
-                      label="Registreret areal"
-                      value={`${ejendom.grundareal.toLocaleString('da-DK')} m²`}
-                    />
-                    <DataKort
-                      label="Matrikelkommunekode"
-                      value={ejendom.matrikelNummer.split(',')[0] ?? '—'}
+                      label="Grundareal"
+                      value={
+                        dawaJordstykke
+                          ? `${dawaJordstykke.areal_m2.toLocaleString('da-DK')} m²`
+                          : '–'
+                      }
                     />
                   </div>
-
-                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
-                    <table className="w-full">
-                      <thead>
-                        <tr className="text-slate-500 text-xs border-b border-slate-700/30">
-                          <th className="px-4 py-2 text-left font-medium">Matrikelnummer</th>
-                          <th className="px-4 py-2 text-left font-medium">Ejerlavsnavn</th>
-                          <th className="px-4 py-2 text-right font-medium">
-                            <span className="flex items-center justify-end gap-1">
-                              <Map size={11} />
-                              Registreret areal
-                            </span>
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(ejendom.jordstykker ?? []).map((js, i) => (
-                          <tr
-                            key={i}
-                            className="border-t border-slate-700/30 hover:bg-slate-700/20 transition-colors"
-                          >
-                            <td className="px-4 py-3 text-slate-200 text-sm font-medium">
-                              {js.matrikelNummer}
-                            </td>
-                            <td className="px-4 py-3 text-slate-300 text-sm">{js.ejerlavsnavn}</td>
-                            <td className="px-4 py-3 text-slate-300 text-sm text-right">
-                              {js.registreretAreal.toLocaleString('da-DK')} m²
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                  {dawaJordstykke && (
+                    <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
+                      <div className="flex items-center gap-4 px-4 py-3 text-sm">
+                        <MapIcon size={13} className="text-slate-500 flex-shrink-0" />
+                        <span className="text-slate-200 font-medium w-24 flex-shrink-0">
+                          {dawaJordstykke.matrikelnr}
+                        </span>
+                        <span className="text-slate-400 flex-1 truncate">
+                          {dawaJordstykke.ejerlav.navn}
+                        </span>
+                        <span className="text-slate-300 flex-shrink-0">
+                          {dawaJordstykke.areal_m2.toLocaleString('da-DK')} m²
+                        </span>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
-                {/* Bygninger */}
-                <div>
-                  <SectionTitle title="Bygninger" />
-                  <div className="grid grid-cols-3 gap-3 mb-3">
-                    <DataKort label="Bygninger" value={`${ejendom.bygninger.length}`} />
-                    <DataKort
-                      label="Samlet bygningsareal"
-                      value={`${ejendom.bygningsareal.toLocaleString('da-DK')} m²`}
-                    />
-                    <DataKort label="Opførelsesår" value={`${ejendom.opfoerelsesaar}`} />
-                  </div>
+                {/* Bygninger — live BBR data */}
+                {(() => {
+                  const bygninger = bbrData?.bbr ?? [];
+                  const totAreal = bygninger.reduce((s, b) => s + (b.samletBygningsareal ?? 0), 0);
+                  const boligAreal = bygninger.reduce((s, b) => s + (b.samletBoligareal ?? 0), 0);
+                  const erhvAreal = bygninger.reduce((s, b) => s + (b.samletErhvervsareal ?? 0), 0);
+                  return (
+                    <div>
+                      <SectionTitle title="Bygninger" />
+                      <div className="grid grid-cols-4 gap-2 mb-2">
+                        <DataKort
+                          label="Bygninger"
+                          value={bbrLoader ? '…' : `${bygninger.length}`}
+                        />
+                        <DataKort
+                          label="Bygningsareal"
+                          value={totAreal ? `${totAreal.toLocaleString('da-DK')} m²` : '–'}
+                        />
+                        <DataKort
+                          label="Beboelsesareal"
+                          value={boligAreal ? `${boligAreal.toLocaleString('da-DK')} m²` : '0 m²'}
+                        />
+                        <DataKort
+                          label="Erhvervsareal"
+                          value={erhvAreal ? `${erhvAreal.toLocaleString('da-DK')} m²` : '–'}
+                        />
+                      </div>
 
-                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
-                    <table className="w-full">
-                      <thead>
-                        <tr className="text-slate-500 text-xs border-b border-slate-700/30">
-                          <th className="px-4 py-2 text-left font-medium">Anvendelse</th>
-                          <th className="px-4 py-2 text-left font-medium">Opførelsesår</th>
-                          <th className="px-4 py-2 text-right font-medium">Bebygget areal</th>
-                          <th className="px-4 py-2 text-right font-medium">Samlet areal</th>
-                          <th className="px-2 py-2 text-right font-medium">Energi</th>
-                          <th className="px-2 py-2"></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {ejendom.bygninger.map((b) => (
-                          <tr
-                            key={b.id}
-                            className="border-t border-slate-700/30 hover:bg-slate-700/20 transition-colors"
-                          >
-                            <td className="px-4 py-3 text-slate-200 text-sm">{b.anvendelse}</td>
-                            <td className="px-4 py-3 text-slate-300 text-sm">{b.opfoerelsesaar}</td>
-                            <td className="px-4 py-3 text-slate-300 text-sm text-right">
-                              {b.bygningsareal.toLocaleString('da-DK')} m²
-                            </td>
-                            <td className="px-4 py-3 text-slate-300 text-sm text-right">
-                              {(b.bygningsareal + b.kaelder).toLocaleString('da-DK')} m²
-                            </td>
-                            <td className="px-2 py-3 text-right">
-                              <span
-                                className={`inline-flex px-1.5 py-0.5 rounded text-xs font-bold text-white ${energiColor[b.energimaerke] ?? 'bg-slate-600'}`}
+                      {bbrLoader ? (
+                        <div className="text-slate-500 text-sm text-center py-3">
+                          Henter bygningsdata…
+                        </div>
+                      ) : bygninger.length === 0 ? (
+                        <div className="text-slate-500 text-sm text-center py-3">
+                          Ingen bygningsdata tilgængeligt
+                        </div>
+                      ) : (
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
+                          {/* Kolonneheader */}
+                          <div className="grid grid-cols-[1fr_72px_100px_100px_28px] px-4 py-2 text-slate-500 text-xs font-medium border-b border-slate-700/30">
+                            <span>Anvendelse</span>
+                            <span className="text-right">Opf. år</span>
+                            <span className="text-right">Bebygget</span>
+                            <span className="text-right">Samlet</span>
+                            <span />
+                          </div>
+                          {bygninger.map((b) => {
+                            const aaben = expandedBygninger.has(b.id);
+                            const detaljer: [string, string | null][] = [
+                              ['Ydervæg', b.ydervaeg || null],
+                              ['Tagmateriale', b.tagmateriale || null],
+                              ['Varmeinstallation', b.varmeinstallation || null],
+                              ['Opvarmningsform', b.opvarmningsform || null],
+                              ['Vandforsyning', b.vandforsyning || null],
+                              ['Afløb', b.afloeb || null],
+                              ['Etager', b.antalEtager != null ? `${b.antalEtager}` : null],
+                              [
+                                'Boligareal',
+                                b.samletBoligareal
+                                  ? `${b.samletBoligareal.toLocaleString('da-DK')} m²`
+                                  : null,
+                              ],
+                              [
+                                'Erhvervsareal',
+                                b.samletErhvervsareal
+                                  ? `${b.samletErhvervsareal.toLocaleString('da-DK')} m²`
+                                  : null,
+                              ],
+                              [
+                                'Ombygningsår',
+                                b.ombygningsaar != null ? `${b.ombygningsaar}` : null,
+                              ],
+                              ['Fredning', b.fredning || null],
+                              ['Status', b.status || null],
+                            ].filter((row): row is [string, string] => row[1] !== null);
+                            return (
+                              <div
+                                key={b.id}
+                                className="border-t border-slate-700/30 first:border-0"
                               >
-                                {b.energimaerke}
-                              </span>
-                            </td>
-                            <td className="px-2 py-3 text-right">
-                              <ChevronRight size={14} className="text-slate-600 ml-auto" />
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
+                                <button
+                                  onClick={() =>
+                                    setExpandedBygninger((prev) => {
+                                      const next = new Set(prev);
+                                      aaben ? next.delete(b.id) : next.add(b.id);
+                                      return next;
+                                    })
+                                  }
+                                  className="w-full grid grid-cols-[1fr_72px_100px_100px_28px] px-4 py-3 text-sm hover:bg-slate-700/20 transition-colors text-left items-center"
+                                >
+                                  <span className="text-slate-200 truncate pr-2">
+                                    {b.anvendelse || '–'}
+                                  </span>
+                                  <span className="text-slate-400 text-right">
+                                    {b.opfoerelsesaar ?? '–'}
+                                  </span>
+                                  <span className="text-slate-300 text-right">
+                                    {b.bebyggetAreal
+                                      ? `${b.bebyggetAreal.toLocaleString('da-DK')} m²`
+                                      : '–'}
+                                  </span>
+                                  <span className="text-slate-300 text-right">
+                                    {b.samletBygningsareal
+                                      ? `${b.samletBygningsareal.toLocaleString('da-DK')} m²`
+                                      : '–'}
+                                  </span>
+                                  <ChevronRight
+                                    size={14}
+                                    className={`text-slate-500 transition-transform ml-auto ${aaben ? 'rotate-90' : ''}`}
+                                  />
+                                </button>
+                                {aaben && detaljer.length > 0 && (
+                                  <div className="px-3 pb-2 bg-slate-900/40 border-t border-slate-700/20">
+                                    <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs pt-2">
+                                      {detaljer.map(([lbl, val]) => (
+                                        <div key={lbl} className="flex justify-between gap-2">
+                                          <span className="text-slate-500">{lbl}</span>
+                                          <span className="text-slate-300 text-right">{val}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
-                {/* Enheder */}
-                <div>
-                  <SectionTitle title="Enheder" />
-                  <div className="grid grid-cols-3 gap-3 mb-3">
-                    <DataKort
-                      label="Enheder i alt"
-                      value={`${ejendom.erhvervsenheder + ejendom.beboelsesenheder}`}
-                    />
-                    <DataKort label="Erhvervsenheder" value={`${ejendom.erhvervsenheder}`} />
-                    <DataKort label="Beboelsesenheder" value={`${ejendom.beboelsesenheder}`} />
-                  </div>
+                {/* Enheder — live BBR data */}
+                {(() => {
+                  const enheder = bbrData?.enheder ?? [];
+                  const boligEnh = enheder.filter((e) => (e.arealBolig ?? 0) > 0).length;
+                  const erhvEnh = enheder.filter((e) => (e.arealErhverv ?? 0) > 0).length;
+                  const totAreal = enheder.reduce((s, e) => s + (e.areal ?? 0), 0);
+                  return (
+                    <div>
+                      <SectionTitle title="Enheder" />
+                      <div className="grid grid-cols-4 gap-2 mb-2">
+                        <DataKort
+                          label="Enheder i alt"
+                          value={bbrLoader ? '…' : `${enheder.length}`}
+                        />
+                        <DataKort label="Beboelsesenheder" value={`${boligEnh}`} />
+                        <DataKort label="Erhvervsenheder" value={`${erhvEnh}`} />
+                        <DataKort
+                          label="Samlet areal"
+                          value={totAreal ? `${totAreal.toLocaleString('da-DK')} m²` : '–'}
+                        />
+                      </div>
 
-                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
-                    <table className="w-full">
-                      <thead>
-                        <tr className="text-slate-500 text-xs border-b border-slate-700/30">
-                          <th className="px-4 py-2 text-left font-medium">Adresse</th>
-                          <th className="px-4 py-2 text-left font-medium">Anvendelse</th>
-                          <th className="px-4 py-2 text-right font-medium">Værelser</th>
-                          <th className="px-4 py-2 text-right font-medium">Samlet areal</th>
-                          <th className="px-2 py-2"></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(ejendom.enheder ?? []).map((enhed, i) => (
-                          <tr
-                            key={i}
-                            className="border-t border-slate-700/30 hover:bg-slate-700/20 transition-colors"
-                          >
-                            <td className="px-4 py-3 text-slate-200 text-sm">{enhed.adresse}</td>
-                            <td className="px-4 py-3 text-slate-300 text-sm">{enhed.anvendelse}</td>
-                            <td className="px-4 py-3 text-slate-300 text-sm text-right">
-                              {enhed.vaerelser ?? '—'}
-                            </td>
-                            <td className="px-4 py-3 text-slate-300 text-sm text-right">
-                              {enhed.samletAreal.toLocaleString('da-DK')} m²
-                            </td>
-                            <td className="px-2 py-3 text-right">
-                              <ChevronRight size={14} className="text-slate-600 ml-auto" />
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
+                      {bbrLoader ? (
+                        <div className="text-slate-500 text-sm text-center py-3">
+                          Henter enhedsdata…
+                        </div>
+                      ) : enheder.length === 0 ? (
+                        <div className="text-slate-500 text-sm text-center py-3">
+                          Ingen enheder tilgængeligt
+                        </div>
+                      ) : (
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
+                          <div className="grid grid-cols-[1fr_90px_72px_28px] px-4 py-2 text-slate-500 text-xs font-medium border-b border-slate-700/30">
+                            <span>Anvendelse</span>
+                            <span className="text-right">Areal</span>
+                            <span className="text-right">Værelser</span>
+                            <span />
+                          </div>
+                          {enheder.map((e) => {
+                            const aaben = expandedEnheder.has(e.id);
+                            const detaljer: [string, string | null][] = [
+                              ['Etage', e.etage || null],
+                              [
+                                'Boligareal',
+                                e.arealBolig ? `${e.arealBolig.toLocaleString('da-DK')} m²` : null,
+                              ],
+                              [
+                                'Erhvervsareal',
+                                e.arealErhverv
+                                  ? `${e.arealErhverv.toLocaleString('da-DK')} m²`
+                                  : null,
+                              ],
+                              ['Energimærke', e.energimaerke || null],
+                              ['Varmeinstallation', e.varmeinstallation || null],
+                            ].filter((row): row is [string, string] => row[1] !== null);
+                            return (
+                              <div
+                                key={e.id}
+                                className="border-t border-slate-700/30 first:border-0"
+                              >
+                                <button
+                                  onClick={() =>
+                                    setExpandedEnheder((prev) => {
+                                      const next = new Set(prev);
+                                      aaben ? next.delete(e.id) : next.add(e.id);
+                                      return next;
+                                    })
+                                  }
+                                  className="w-full grid grid-cols-[1fr_90px_72px_28px] px-4 py-3 text-sm hover:bg-slate-700/20 transition-colors text-left items-center"
+                                >
+                                  <span className="text-slate-200 truncate pr-2">
+                                    {e.anvendelse || '–'}
+                                  </span>
+                                  <span className="text-slate-300 text-right">
+                                    {e.areal ? `${e.areal.toLocaleString('da-DK')} m²` : '–'}
+                                  </span>
+                                  <span className="text-slate-400 text-right">
+                                    {e.vaerelser ?? '–'}
+                                  </span>
+                                  <ChevronRight
+                                    size={14}
+                                    className={`text-slate-500 transition-transform ml-auto ${aaben ? 'rotate-90' : ''}`}
+                                  />
+                                </button>
+                                {aaben && detaljer.length > 0 && (
+                                  <div className="px-3 pb-2 bg-slate-900/40 border-t border-slate-700/20">
+                                    <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs pt-2">
+                                      {detaljer.map(([lbl, val]) => (
+                                        <div key={lbl} className="flex justify-between gap-2">
+                                          <span className="text-slate-500">{lbl}</span>
+                                          <span className="text-slate-300 text-right">{val}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
-                {/* Tekniske anlæg */}
-                <div>
-                  <SectionTitle title="Tekniske anlæg" />
-                  <div className="grid grid-cols-2 gap-3">
-                    <DataKort
-                      label="Tekniske anlæg"
-                      value={`${ejendom.tekniskeAnlaeg ?? 0} Tekniske anlæg`}
-                    />
-                  </div>
+                {/* ── Matrikeloplysninger (Datafordeler MAT) ── */}
+                <div className="mt-5">
+                  <SectionTitle title="Matrikeloplysninger" />
+                  {matrikelLoader ? (
+                    <div className="flex items-center gap-2 text-slate-500 text-sm py-4">
+                      <div className="w-4 h-4 border-2 border-slate-600 border-t-blue-500 rounded-full animate-spin" />
+                      Henter matrikeldata…
+                    </div>
+                  ) : matrikelData ? (
+                    <div className="space-y-3">
+                      {/* Ejendomsinfo */}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        {matrikelData.landbrugsnotering && (
+                          <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3">
+                            <p className="text-slate-400 text-xs mb-0.5">Landbrugsnotering</p>
+                            <p className="text-white text-sm font-medium">
+                              {matrikelData.landbrugsnotering}
+                            </p>
+                          </div>
+                        )}
+                        {matrikelData.opdeltIEjerlejligheder && (
+                          <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3">
+                            <p className="text-slate-400 text-xs mb-0.5">Ejerlejligheder</p>
+                            <p className="text-white text-sm font-medium">
+                              Opdelt i ejerlejligheder
+                            </p>
+                          </div>
+                        )}
+                        {matrikelData.erFaelleslod && (
+                          <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3">
+                            <p className="text-slate-400 text-xs mb-0.5">Fælleslod</p>
+                            <p className="text-white text-sm font-medium">Ja</p>
+                          </div>
+                        )}
+                        {matrikelData.udskiltVej && (
+                          <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3">
+                            <p className="text-slate-400 text-xs mb-0.5">Udskilt vej</p>
+                            <p className="text-white text-sm font-medium">Ja</p>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Jordstykker tabel */}
+                      {matrikelData.jordstykker.length > 0 && (
+                        <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden">
+                          <div className="px-4 py-2.5 border-b border-slate-700/30">
+                            <p className="text-slate-300 text-xs font-semibold uppercase tracking-wider">
+                              Jordstykker ({matrikelData.jordstykker.length})
+                            </p>
+                          </div>
+                          <div className="divide-y divide-slate-700/20">
+                            {matrikelData.jordstykker.map((js) => (
+                              <div
+                                key={js.id}
+                                className="px-4 py-2.5 grid grid-cols-[1fr_100px_80px_auto] gap-3 items-center"
+                              >
+                                <div>
+                                  <p className="text-white text-sm font-medium">
+                                    Matr.nr. {js.matrikelnummer}
+                                    {js.ejerlavskode && (
+                                      <span className="text-slate-500 text-xs ml-2">
+                                        Ejerlav {js.ejerlavskode}
+                                      </span>
+                                    )}
+                                  </p>
+                                  {js.ejerlavsnavn && (
+                                    <p className="text-slate-500 text-xs">{js.ejerlavsnavn}</p>
+                                  )}
+                                </div>
+                                <p className="text-slate-300 text-sm tabular-nums text-right">
+                                  {js.registreretAreal != null
+                                    ? `${js.registreretAreal.toLocaleString('da-DK')} m²`
+                                    : '–'}
+                                </p>
+                                <p className="text-slate-500 text-xs text-right">
+                                  {js.vejareal != null && js.vejareal > 0
+                                    ? `Vej: ${js.vejareal.toLocaleString('da-DK')} m²`
+                                    : ''}
+                                </p>
+                                <div className="flex gap-1.5 flex-wrap justify-end">
+                                  {js.fredskov === true && (
+                                    <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-green-900/50 text-green-400 border border-green-800/40">
+                                      Fredskov
+                                    </span>
+                                  )}
+                                  {js.strandbeskyttelse === true && (
+                                    <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-blue-900/50 text-blue-400 border border-blue-800/40">
+                                      Strandbeskyttelse
+                                    </span>
+                                  )}
+                                  {js.klitfredning === true && (
+                                    <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-amber-900/50 text-amber-400 border border-amber-800/40">
+                                      Klitfredning
+                                    </span>
+                                  )}
+                                  {js.jordrente === true && (
+                                    <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-purple-900/50 text-purple-400 border border-purple-800/40">
+                                      Jordrente
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="bg-slate-800/30 border border-slate-700/40 rounded-xl p-4 text-center">
+                      <p className="text-slate-500 text-xs">Ingen matrikeldata fundet</p>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -2455,10 +4801,8 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
               </div>
             )}
 
-            {/* ══════════════════════════════════════════
-              DOKUMENTER
-          ══════════════════════════════════════════ */}
-            {aktivTab === 'dokumenter' && (
+            {/* (det separate checklist-panel er fjernet — checkboxe sidder nu direkte ved PDF-ikonerne i dokumenttabellen ovenfor) */}
+            {aktivTab === 'dokumenter' && false && (
               <div className="space-y-4 pb-4">
                 {/* ── Stamdokumenter ── */}
                 <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
@@ -2497,8 +4841,6 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                       settings: true,
                     },
                     { id: 'std-7', navn: 'Jordforureningsattest', sub: null, link: true },
-                    { id: 'std-8', navn: 'Ejendomsskat (fra OIS)', sub: null, link: false },
-                    { id: 'std-9', navn: 'SKAT Ejendomsvurdering', sub: null, link: false },
                   ].map((doc) => (
                     <div
                       key={doc.id}
@@ -2545,7 +4887,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                     { id: 'tgl-1', navn: 'Tingbogsattest', link: true, expandable: false },
                     {
                       id: 'tgl-2',
-                      navn: `Indskannet akt nr. ${ejendom.tingbogsattest?.aktNummer ?? '7_CO21'}`,
+                      navn: `Indskannet akt nr. ${ejendom?.tingbogsattest?.aktNummer ?? '7_CO21'}`,
                       link: true,
                       expandable: false,
                     },
@@ -2649,21 +4991,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
             )}
           </div>
 
-          {/* Download-bar — kun synlig på Dokumenter-tab */}
-          {aktivTab === 'dokumenter' && (
-            <div className="border-t border-slate-700/50 px-6 py-3 flex items-center justify-between bg-slate-900/80 backdrop-blur-sm">
-              <span className="text-slate-400 text-sm">
-                <span className="text-white font-semibold">{valgteDoc.size}</span> dokumenter valgt
-              </span>
-              <button
-                disabled={valgteDoc.size === 0}
-                className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 disabled:cursor-not-allowed border border-slate-600 rounded-lg text-slate-300 text-sm font-medium transition-all"
-              >
-                Download dokumenter
-                <Download size={14} />
-              </button>
-            </div>
-          )}
+          {/* Download-bar fjernet — knappen er nu i dokumenter-kortets header */}
         </div>
 
         {/* Adskillelseslinie — træk for at ændre kortpanel-bredde */}
@@ -2684,24 +5012,26 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
 
         {/* ─── Kortpanel — højre side ─── */}
         {visKort && (
-          <div className="flex flex-shrink-0" style={{ width: kortBredde }}>
-            <Suspense
-              fallback={
-                <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900 gap-3">
-                  <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-                  <p className="text-slate-500 text-xs">Indlæser kort…</p>
-                </div>
-              }
-            >
-              <PropertyMap
-                lat={ejendom.lat}
-                lng={ejendom.lng}
-                adresse={`${ejendom.adresse}, ${ejendom.postnummer} ${ejendom.by}`}
-                visMatrikel={true}
-                onAdresseValgt={(id) => router.push(`/dashboard/ejendomme/${id}`)}
-                bygningPunkter={bbrData?.bygningPunkter ?? undefined}
-              />
-            </Suspense>
+          <div className="relative flex-shrink-0 self-stretch" style={{ width: kortBredde }}>
+            <div className="absolute inset-0">
+              <Suspense
+                fallback={
+                  <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900 gap-3">
+                    <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                    <p className="text-slate-500 text-xs">Indlæser kort…</p>
+                  </div>
+                }
+              >
+                <PropertyMap
+                  lat={ejendom.lat}
+                  lng={ejendom.lng}
+                  adresse={`${ejendom.adresse}, ${ejendom.postnummer} ${ejendom.by}`}
+                  visMatrikel={true}
+                  onAdresseValgt={(id) => router.push(`/dashboard/ejendomme/${id}`)}
+                  bygningPunkter={bbrData?.bygningPunkter ?? undefined}
+                />
+              </Suspense>
+            </div>
           </div>
         )}
       </div>

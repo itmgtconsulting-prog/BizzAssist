@@ -19,6 +19,13 @@ const eslintConfig = defineConfig([
       // Standard React data-fetching mønster (fetch i useEffect → setState i callback)
       // er ikke en cascade-render risiko og er dokumenteret i React docs.
       'react-hooks/set-state-in-effect': 'off',
+      // Ubrugte imports/variabler skal give fejl — fanger stale imports der
+      // crasher Turbopack runtime (som AlertTriangle-buggen 2026-03-28).
+      '@typescript-eslint/no-unused-vars': ['error', {
+        argsIgnorePattern: '^_',
+        varsIgnorePattern: '^_',
+        ignoreRestSiblings: true,
+      }],
     },
   },
 ]);

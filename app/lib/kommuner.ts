@@ -1,0 +1,123 @@
+/**
+ * Dansk kommunekode → kommunenavn mapping (98 kommuner).
+ *
+ * Bruges af DAR og DAWA til at konvertere numeriske kommunekoder
+ * til læsbare kommunenavne. Delt fil for at undgå cirkulære imports.
+ *
+ * @see https://danmarksadresser.dk/adressedata/kommunekoder
+ */
+
+export const KOMMUNE_NAVN: Record<string, string> = {
+  '0101': 'København',
+  '0147': 'Frederiksberg',
+  '0151': 'Ballerup',
+  '0153': 'Brøndby',
+  '0155': 'Dragør',
+  '0157': 'Gentofte',
+  '0159': 'Gladsaxe',
+  '0161': 'Glostrup',
+  '0163': 'Herlev',
+  '0165': 'Albertslund',
+  '0167': 'Hvidovre',
+  '0169': 'Høje-Taastrup',
+  '0173': 'Lyngby-Taarbæk',
+  '0175': 'Rødovre',
+  '0183': 'Ishøj',
+  '0185': 'Tårnby',
+  '0187': 'Vallensbæk',
+  '0190': 'Furesø',
+  '0201': 'Allerød',
+  '0210': 'Fredensborg',
+  '0217': 'Helsingør',
+  '0219': 'Hillerød',
+  '0223': 'Hørsholm',
+  '0230': 'Rudersdal',
+  '0240': 'Egedal',
+  '0250': 'Frederikssund',
+  '0253': 'Greve',
+  '0259': 'Køge',
+  '0260': 'Halsnæs',
+  '0265': 'Roskilde',
+  '0269': 'Solrød',
+  '0270': 'Gribskov',
+  '0306': 'Odsherred',
+  '0316': 'Holbæk',
+  '0320': 'Faxe',
+  '0326': 'Kalundborg',
+  '0329': 'Ringsted',
+  '0330': 'Slagelse',
+  '0336': 'Stevns',
+  '0340': 'Sorø',
+  '0350': 'Lejre',
+  '0360': 'Lolland',
+  '0370': 'Næstved',
+  '0376': 'Guldborgsund',
+  '0390': 'Vordingborg',
+  '0400': 'Bornholm',
+  '0410': 'Christiansø',
+  '0420': 'Fanø',
+  '0430': 'Faaborg-Midtfyn',
+  '0440': 'Kerteminde',
+  '0450': 'Nyborg',
+  '0461': 'Odense',
+  '0479': 'Svendborg',
+  '0480': 'Nordfyns',
+  '0482': 'Langeland',
+  '0492': 'Ærø',
+  '0510': 'Haderslev',
+  '0530': 'Billund',
+  '0540': 'Sønderborg',
+  '0550': 'Tønder',
+  '0561': 'Esbjerg',
+  '0563': 'Fanø',
+  '0573': 'Varde',
+  '0575': 'Vejen',
+  '0580': 'Aabenraa',
+  '0607': 'Fredericia',
+  '0615': 'Horsens',
+  '0621': 'Kolding',
+  '0625': 'Middelfart',
+  '0630': 'Vejle',
+  '0657': 'Herning',
+  '0661': 'Holstebro',
+  '0665': 'Lemvig',
+  '0671': 'Struer',
+  '0706': 'Syddjurs',
+  '0707': 'Norddjurs',
+  '0710': 'Favrskov',
+  '0727': 'Odder',
+  '0730': 'Randers',
+  '0740': 'Silkeborg',
+  '0741': 'Samsø',
+  '0746': 'Skanderborg',
+  '0751': 'Aarhus',
+  '0756': 'Ikast-Brande',
+  '0760': 'Ringkøbing-Skjern',
+  '0766': 'Hedensted',
+  '0773': 'Morsø',
+  '0779': 'Skive',
+  '0787': 'Thisted',
+  '0791': 'Viborg',
+  '0810': 'Brønderslev',
+  '0813': 'Frederikshavn',
+  '0820': 'Vesthimmerlands',
+  '0825': 'Læsø',
+  '0840': 'Rebild',
+  '0846': 'Mariagerfjord',
+  '0849': 'Jammerbugt',
+  '0851': 'Aalborg',
+  '0860': 'Hjørring',
+};
+
+/**
+ * Slår kommunenavn op fra kommunekode.
+ * Accepterer koder med og uden leading zeros (f.eks. "101" og "0101").
+ *
+ * @param kode - Kommunekode som string eller number
+ * @returns Kommunenavn eller tom streng hvis ukendt
+ */
+export function kommunenavnFraKode(kode: string | number | null | undefined): string {
+  if (kode == null) return '';
+  const padded = String(kode).padStart(4, '0');
+  return KOMMUNE_NAVN[padded] ?? '';
+}

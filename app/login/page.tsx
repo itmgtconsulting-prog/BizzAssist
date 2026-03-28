@@ -17,7 +17,7 @@
  *   unexpected_error      — catch-all
  */
 
-import { useState, FormEvent, Suspense } from 'react';
+import { useState, useEffect, FormEvent, Suspense } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { Eye, EyeOff, ArrowLeft, Loader2, AlertCircle } from 'lucide-react';
@@ -35,6 +35,18 @@ const errorMessages: Record<string, { da: string; en: string }> = {
   email_not_confirmed: {
     da: 'Bekræft din e-mail først. Tjek din indbakke.',
     en: 'Please confirm your email first. Check your inbox.',
+  },
+  no_subscription: {
+    da: 'Du har ikke et aktivt abonnement. Opret en konto først, eller kontakt administrator.',
+    en: 'You do not have an active subscription. Please sign up first or contact your administrator.',
+  },
+  subscription_pending: {
+    da: 'Din demo-anmodning afventer godkendelse af en administrator. Du vil modtage besked, når den er behandlet.',
+    en: 'Your demo request is awaiting administrator approval. You will be notified when it has been processed.',
+  },
+  subscription_cancelled: {
+    da: 'Dit abonnement er blevet annulleret. Kontakt administrator for at genaktivere.',
+    en: 'Your subscription has been cancelled. Contact your administrator to reactivate.',
   },
   unexpected_error: {
     da: 'Noget gik galt. Prøv igen.',
@@ -57,7 +69,15 @@ function LoginForm() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState<'google' | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  /** Error from form submission or from URL query param (e.g. subscription_pending) */
+  const [error, setError] = useState<string | null>(searchParams.get('error'));
+
+  /** Clear the error query param from URL so refreshing doesn't show stale errors */
+  useEffect(() => {
+    if (searchParams.get('error')) {
+      window.history.replaceState({}, '', '/login');
+    }
+  }, [searchParams]);
 
   /**
    * Initiates an OAuth sign-in flow via Supabase.
@@ -99,12 +119,17 @@ function LoginForm() {
       const result = await signIn(email, password, redirectTo);
       if (result?.error) {
         setError(result.error);
+      } else {
+        // Login succeeded — redirect client-side so cookies are properly set.
+        // Hard redirect (window.location) ensures proxy.ts runs and session is valid.
+        window.location.href = redirectTo;
+        return; // Keep loading state while redirecting
       }
     } catch {
-      // signIn redirects on success which throws internally in Next.js — ignore
-    } finally {
-      setLoading(false);
+      // Unexpected error
+      setError('unexpected_error');
     }
+    setLoading(false);
   };
 
   const errorMsg = error
@@ -206,13 +231,27 @@ function LoginForm() {
               <div className="flex-1 border-t border-white/10" />
             </div>
 
-            {/* Error banner */}
-            {errorMsg && (
-              <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 mb-4">
-                <AlertCircle size={16} className="text-red-400 shrink-0" />
-                <p className="text-red-300 text-sm">{errorMsg}</p>
-              </div>
-            )}
+            {/* Error banner — amber for subscription issues, red for auth errors */}
+            {errorMsg &&
+              (() => {
+                const isSubError =
+                  error === 'subscription_pending' ||
+                  error === 'no_subscription' ||
+                  error === 'subscription_cancelled';
+                return (
+                  <div
+                    className={`flex items-start gap-2 ${isSubError ? 'bg-amber-500/10 border-amber-500/30' : 'bg-red-500/10 border-red-500/30'} border rounded-xl px-4 py-3 mb-4`}
+                  >
+                    <AlertCircle
+                      size={16}
+                      className={`${isSubError ? 'text-amber-400' : 'text-red-400'} shrink-0 mt-0.5`}
+                    />
+                    <p className={`${isSubError ? 'text-amber-300' : 'text-red-300'} text-sm`}>
+                      {errorMsg}
+                    </p>
+                  </div>
+                );
+              })()}
 
             {/* Email/password form */}
             <form onSubmit={handleSubmit} className="space-y-4">

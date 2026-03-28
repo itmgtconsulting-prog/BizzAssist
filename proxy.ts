@@ -194,7 +194,14 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
     }
 
     // ── 5. Auth route guard (redirect authenticated users away from /login) ──
-    if (isAuthenticated && AUTH_ROUTES.some((route) => pathname.startsWith(route))) {
+    // Skip this redirect if the login page has an error param (e.g. subscription_pending,
+    // no_subscription) — the user was sent here deliberately by the dashboard access gate.
+    const hasLoginError = req.nextUrl.searchParams.has('error');
+    if (
+      isAuthenticated &&
+      !hasLoginError &&
+      AUTH_ROUTES.some((route) => pathname.startsWith(route))
+    ) {
       const dashboardUrl = req.nextUrl.clone();
       dashboardUrl.pathname = '/dashboard';
       return NextResponse.redirect(dashboardUrl);

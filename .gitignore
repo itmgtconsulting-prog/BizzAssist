@@ -24,6 +24,12 @@
 .DS_Store
 *.pem
 
+# Certifikater og nøgler — må aldrig committes
+*.p12
+*.pfx
+*.key
+/certs/
+
 # debug
 npm-debug.log*
 yarn-debug.log*

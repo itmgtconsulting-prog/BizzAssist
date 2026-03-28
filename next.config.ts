@@ -58,6 +58,9 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   devIndicators: false,
+  // pdfkit bruger __dirname til at finde font-filer — bundling bryder dette,
+  // så vi loader pakken som native Node.js-modul uden transpilering.
+  serverExternalPackages: ['pdfkit'],
   async headers() {
     return [
       {

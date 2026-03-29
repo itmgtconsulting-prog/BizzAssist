@@ -41,8 +41,6 @@ export default function Navbar() {
             {[
               { href: '#features', label: nav.features },
               { href: '#use-cases', label: nav.useCases },
-              { href: '#pricing', label: nav.pricing },
-              { href: '#about', label: nav.about },
             ].map((item) => (
               <a
                 key={item.href}
@@ -52,6 +50,12 @@ export default function Navbar() {
                 {item.label}
               </a>
             ))}
+            <Link
+              href="/signup"
+              className="bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold px-5 py-2.5 rounded-lg transition-colors"
+            >
+              {nav.getStarted}
+            </Link>
           </nav>
 
           {/* Right side */}
@@ -82,12 +86,6 @@ export default function Navbar() {
             >
               {nav.login}
             </Link>
-            <Link
-              href="/login"
-              className="bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold px-5 py-2.5 rounded-lg transition-colors"
-            >
-              {nav.getStarted}
-            </Link>
           </div>
 
           {/* Mobile menu button */}
@@ -104,8 +102,6 @@ export default function Navbar() {
             {[
               { href: '#features', label: nav.features },
               { href: '#use-cases', label: nav.useCases },
-              { href: '#pricing', label: nav.pricing },
-              { href: '#about', label: nav.about },
             ].map((item) => (
               <a
                 key={item.href}

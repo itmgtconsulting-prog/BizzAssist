@@ -1,6 +1,5 @@
 import Navbar from '@/app/components/Navbar';
 import Hero from '@/app/components/Hero';
-import Stats from '@/app/components/Stats';
 import Features from '@/app/components/Features';
 import UseCases from '@/app/components/UseCases';
 import CTABanner from '@/app/components/CTABanner';
@@ -10,7 +9,6 @@ export default function HomePage() {
     <main className="flex flex-col min-h-screen">
       <Navbar />
       <Hero />
-      <Stats />
       <Features />
       <UseCases />
       <CTABanner />

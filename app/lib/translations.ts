@@ -12,10 +12,10 @@ export const translations = {
     },
     hero: {
       badge: 'Danmarks #1 forretningsintelligens platform',
-      title: 'Kend alt om',
-      titleHighlight: 'virksomheder, ejendomme & ejere',
+      title: 'Data om',
+      titleHighlight: 'ejendomme, virksomheder og deres ejere',
       subtitle:
-        'BizzAssist samler data fra hundredvis af offentlige og private kilder og lader dig analysere det med AI — på sekunder.',
+        'BizzAssist samler data fra offentlige data kilder og lader dig analysere det med AI.',
       searchPlaceholder: 'Søg på virksomhed, CVR-nummer, ejer eller adresse...',
       ctaPrimary: 'Start gratis',
       ctaSecondary: 'Se demo',
@@ -96,13 +96,13 @@ export const translations = {
       ],
     },
     cta: {
-      title: 'Klar til at vide alt?',
-      subtitle: 'Prøv BizzAssist gratis i 14 dage. Intet kreditkort kræves.',
+      title: 'Klar til at prøve BizzAssist?',
+      subtitle: 'Prøv BizzAssist gratis i 7 dage.',
       button: 'Start din gratis prøveperiode',
       secondary: 'Book en demo',
     },
     footer: {
-      tagline: 'Danmarks mest komplette forretningsintelligens platform.',
+      tagline: 'AI baseret forretningsintelligens platform.',
       product: 'Produkt',
       company: 'Virksomhed',
       legal: 'Juridisk',
@@ -237,13 +237,13 @@ export const translations = {
       ],
     },
     cta: {
-      title: 'Ready to know everything?',
-      subtitle: 'Try BizzAssist free for 14 days. No credit card required.',
+      title: 'Ready to try BizzAssist?',
+      subtitle: 'Try BizzAssist free for 7 days.',
       button: 'Start your free trial',
       secondary: 'Book a demo',
     },
     footer: {
-      tagline: "Denmark's most comprehensive business intelligence platform.",
+      tagline: 'AI-powered business intelligence platform.',
       product: 'Product',
       company: 'Company',
       legal: 'Legal',

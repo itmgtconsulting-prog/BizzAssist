@@ -39,28 +39,18 @@ export default function Footer() {
             </ul>
           </div>
 
-          {/* Company */}
-          <div>
-            <h4 className="text-white font-semibold mb-4">{footer.company}</h4>
-            <ul className="space-y-3 text-sm">
-              {[footer.links.about, footer.links.blog, footer.links.careers].map((l) => (
-                <li key={l}>
-                  <Link href="#" className="hover:text-white transition-colors">
-                    {l}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </div>
-
           {/* Legal */}
           <div>
             <h4 className="text-white font-semibold mb-4">{footer.legal}</h4>
             <ul className="space-y-3 text-sm">
-              {[footer.links.privacy, footer.links.terms, footer.links.cookies].map((l) => (
-                <li key={l}>
-                  <Link href="#" className="hover:text-white transition-colors">
-                    {l}
+              {[
+                { label: footer.links.privacy, href: '/privacy' },
+                { label: footer.links.terms, href: '/terms' },
+                { label: footer.links.cookies, href: '/cookies' },
+              ].map((l) => (
+                <li key={l.href}>
+                  <Link href={l.href} className="hover:text-white transition-colors">
+                    {l.label}
                   </Link>
                 </li>
               ))}
@@ -71,12 +61,6 @@ export default function Footer() {
           <div>
             <h4 className="text-white font-semibold mb-4">{footer.contact}</h4>
             <ul className="space-y-3 text-sm">
-              <li>
-                <span className="text-slate-500 block text-xs mb-0.5">{footer.links.business}</span>
-                <a href="mailto:info@pecuniait.com" className="hover:text-white transition-colors">
-                  info@pecuniait.com
-                </a>
-              </li>
               <li>
                 <span className="text-slate-500 block text-xs mb-0.5">{footer.links.support}</span>
                 <a
@@ -102,10 +86,6 @@ export default function Footer() {
               {' · '}
               <span className="text-slate-600">{footer.supplier.address}</span>
             </p>
-          </div>
-          <div className="flex items-center gap-2 text-slate-500 text-sm">
-            <span className="w-2 h-2 bg-green-400 rounded-full" />
-            {lang === 'da' ? 'Alle systemer kører' : 'All systems operational'}
           </div>
         </div>
       </div>

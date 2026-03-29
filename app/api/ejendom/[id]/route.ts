@@ -15,6 +15,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import {
   tagMaterialeTekst,
   ydervaegMaterialeTekst,
@@ -189,8 +190,9 @@ async function fetchBygningPunkter(bygningIds: string[]): Promise<BBRBygningPunk
     `&apikey=${DF_API_KEY}`;
 
   try {
-    const res = await fetch(url, {
-      signal: AbortSignal.timeout(8000),
+    const res = await fetch(proxyUrl(url), {
+      headers: { ...proxyHeaders() },
+      signal: AbortSignal.timeout(proxyTimeout()),
       next: { revalidate: 3600 },
     });
     if (!res.ok) {
@@ -260,14 +262,15 @@ async function fetchDatafordelerGraphQL(
 ): Promise<unknown[] | null> {
   if (!DF_API_KEY) return null;
 
-  const url = `${base}?apiKey=${DF_API_KEY}`;
+  const directUrl = `${base}?apiKey=${DF_API_KEY}`;
+  const url = proxyUrl(directUrl);
 
   try {
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...proxyHeaders() },
       body: JSON.stringify({ query, variables }),
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(proxyTimeout()),
       cache: 'no-store',
     });
 

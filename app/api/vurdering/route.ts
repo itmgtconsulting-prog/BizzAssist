@@ -18,6 +18,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -311,11 +312,11 @@ async function getOAuthToken(): Promise<string | null> {
   if (!clientId || !clientSecret) return null;
 
   try {
-    const res = await fetch(TOKEN_URL, {
+    const res = await fetch(proxyUrl(TOKEN_URL), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...proxyHeaders() },
       body: `grant_type=client_credentials&client_id=${clientId}&client_secret=${encodeURIComponent(clientSecret)}`,
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(proxyTimeout()),
       cache: 'no-store',
     });
     if (!res.ok) return null;
@@ -343,14 +344,15 @@ async function fetchVURGraphQL(
   token: string
 ): Promise<Record<string, unknown> | null> {
   try {
-    const res = await fetch(VUR_GQL_URL, {
+    const res = await fetch(proxyUrl(VUR_GQL_URL), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
+        ...proxyHeaders(),
       },
       body: JSON.stringify({ query, variables: {} }),
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(proxyTimeout()),
       next: { revalidate: 86400 },
     });
     if (!res.ok) return null;

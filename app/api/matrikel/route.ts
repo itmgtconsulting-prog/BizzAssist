@@ -18,6 +18,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -121,14 +122,14 @@ function nowISOTimestamp(): string {
 async function fetchMATGraphQL(query: string): Promise<Record<string, unknown> | null> {
   if (!DF_API_KEY) return null;
 
-  const url = `${MAT_GQL_URL}?apiKey=${DF_API_KEY}`;
+  const url = proxyUrl(`${MAT_GQL_URL}?apiKey=${DF_API_KEY}`);
 
   try {
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...proxyHeaders() },
       body: JSON.stringify({ query, variables: {} }),
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(proxyTimeout()),
       next: { revalidate: 86400 },
     });
 

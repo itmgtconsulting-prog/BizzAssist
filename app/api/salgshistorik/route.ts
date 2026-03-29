@@ -15,6 +15,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -71,11 +72,11 @@ async function getOAuthToken(): Promise<string | null> {
   if (!clientId || !clientSecret) return null;
 
   try {
-    const res = await fetch(TOKEN_URL, {
+    const res = await fetch(proxyUrl(TOKEN_URL), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...proxyHeaders() },
       body: `grant_type=client_credentials&client_id=${clientId}&client_secret=${encodeURIComponent(clientSecret)}`,
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(proxyTimeout()),
       cache: 'no-store',
     });
     if (!res.ok) return null;
@@ -132,14 +133,15 @@ async function queryEJF<T>(
   token: string
 ): Promise<{ nodes: T[]; authError: boolean } | null> {
   try {
-    const res = await fetch(EJF_GQL_URL, {
+    const res = await fetch(proxyUrl(EJF_GQL_URL), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
+        ...proxyHeaders(),
       },
       body: JSON.stringify({ query }),
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(proxyTimeout()),
       next: { revalidate: 3600 },
     });
 

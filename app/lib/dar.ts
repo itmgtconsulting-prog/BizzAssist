@@ -20,9 +20,11 @@ import {
   rensAdresseStreng,
   dawaHentAdresse as _dawaHentAdresse,
   dawaHentJordstykke as _dawaHentJordstykke,
+  dawaAutocomplete as _dawaAutocomplete,
 } from './dawa';
 export { rensAdresseStreng } from './dawa';
 import { KOMMUNE_NAVN, kommunenavnFraKode } from './kommuner';
+import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 
 // Re-export existing interfaces so consuming code doesn't need changes
 export type { DawaAutocompleteResult, DawaAdresse, DawaJordstykke } from './dawa';
@@ -72,11 +74,11 @@ async function darQuery<T = Record<string, unknown>>(query: string): Promise<T |
   }
 
   try {
-    const res = await fetch(url, {
+    const res = await fetch(proxyUrl(url), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...proxyHeaders() },
       body: JSON.stringify({ query }),
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(proxyTimeout()),
     });
     if (!res.ok) {
       console.error(`DAR GraphQL error: ${res.status} ${res.statusText}`);
@@ -451,7 +453,11 @@ export async function darAutocomplete(q: string): Promise<DawaAutocompleteResult
         }
       }
     }
-    if (nodes.length === 0) return [];
+    if (nodes.length === 0) {
+      // DAR returned no results — may be IP-blocked; fall back to DAWA
+      console.warn('darAutocomplete: DAR returned 0 results, trying DAWA fallback');
+      return _dawaAutocomplete(q);
+    }
 
     return nodes.slice(0, 8).map((h): DawaAutocompleteResult => {
       const parsed = parseAdresseBetegnelse(h.adgangsadressebetegnelse);
@@ -471,8 +477,9 @@ export async function darAutocomplete(q: string): Promise<DawaAutocompleteResult
       };
     });
   } catch (err) {
-    console.error('darAutocomplete fejl:', err);
-    return [];
+    console.error('darAutocomplete fejl, falder tilbage til DAWA:', err);
+    // Fallback til DAWA (gratis, ingen auth/IP-krav) — virker indtil 1. juli 2026
+    return _dawaAutocomplete(q);
   }
 }
 
@@ -672,8 +679,9 @@ export async function darHentJordstykke(lng: number, lat: number): Promise<DawaJ
         apiKey,
       });
 
-      const res = await fetch(`${MAT_WFS_ENDPOINT}?${params.toString()}`, {
-        signal: AbortSignal.timeout(10000),
+      const res = await fetch(proxyUrl(`${MAT_WFS_ENDPOINT}?${params.toString()}`), {
+        headers: { ...proxyHeaders() },
+        signal: AbortSignal.timeout(proxyTimeout()),
       });
 
       if (res.ok) {

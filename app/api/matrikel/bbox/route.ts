@@ -9,6 +9,7 @@
  * @returns GeoJSON FeatureCollection med matrikel polygoner
  */
 import { NextRequest, NextResponse } from 'next/server';
+import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 
 /**
  * Henter matrikelpolygoner for en bounding box via Datafordeler MAT WFS.
@@ -45,7 +46,10 @@ export async function GET(request: NextRequest) {
         `&count=1000` +
         `&apiKey=${encodeURIComponent(apiKey)}`;
 
-      const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
+      const res = await fetch(proxyUrl(url), {
+        headers: { ...proxyHeaders() },
+        signal: AbortSignal.timeout(proxyTimeout()),
+      });
       if (res.ok) {
         const json = await res.json();
         if (json?.type === 'FeatureCollection') {

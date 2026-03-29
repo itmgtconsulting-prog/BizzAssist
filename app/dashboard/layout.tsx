@@ -38,6 +38,7 @@ import {
   type UserSubscription,
 } from '@/app/lib/subscriptions';
 import { createClient } from '@/lib/supabase/client';
+import { hasMigrated, migrateLocalStorageToSupabase } from '@/app/lib/migrateLocalStorage';
 
 /** Navigation items — 'adminOnly' items are only shown for admin users */
 const navItems = [
@@ -125,6 +126,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     const gateAccess = async (status: 'ok' | 'pending' | 'cancelled' | 'no_subscription') => {
       if (status === 'ok') {
         setAccessGranted(true);
+        // Migrate localStorage data to Supabase on first authenticated access
+        if (!hasMigrated()) {
+          migrateLocalStorageToSupabase().catch(() => {});
+        }
         return;
       }
       clearActiveSubscription();

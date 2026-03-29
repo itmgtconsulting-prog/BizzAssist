@@ -1,14 +1,14 @@
 /**
- * Admin users API — GET /api/admin/users
+ * Admin users API — /api/admin/users
  *
- * Returns all Supabase Auth users for the admin panel.
+ * Returns all Supabase Auth users with their subscription data from app_metadata.
+ * All data comes directly from Supabase — no localStorage involved.
+ *
+ * GET    — list all users with subscription info
+ * POST   — create a new user (bypasses rate limits)
+ * DELETE — permanently delete a user
+ *
  * Only accessible by the admin user (verified via Supabase session).
- *
- * Each user object includes:
- *   - id, email, full_name, created_at, last_sign_in_at
- *   - Whether they are confirmed (email verified)
- *
- * The admin page merges this with localStorage subscription data.
  *
  * @see app/dashboard/admin/users/page.tsx — admin user management UI
  */
@@ -20,7 +20,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 /** Admin email — must match the one in subscriptions.ts */
 const ADMIN_EMAIL = 'jjrchefen@hotmail.com';
 
-/** Shape returned per user */
+/** Shape returned per user — includes subscription from app_metadata */
 interface AdminUserRow {
   id: string;
   email: string;
@@ -28,26 +28,44 @@ interface AdminUserRow {
   createdAt: string;
   lastSignIn: string | null;
   emailConfirmed: boolean;
+  subscription: {
+    planId: string;
+    status: string;
+    createdAt: string;
+    approvedAt: string | null;
+    tokensUsedThisMonth: number;
+    periodStart: string;
+    bonusTokens: number;
+  } | null;
 }
 
 /**
- * GET /api/admin/users — list all Supabase Auth users.
+ * Verify the caller is the admin user.
+ * Returns the authenticated user or null if not admin.
+ */
+async function verifyAdmin() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user?.email || user.email !== ADMIN_EMAIL) return null;
+  return user;
+}
+
+/**
+ * GET /api/admin/users — list all Supabase Auth users with subscription data.
+ *
+ * Returns users from Supabase Auth, including their subscription from app_metadata.
+ * This is the single source of truth — no localStorage sync needed.
  *
  * @returns JSON array of AdminUserRow
  */
 export async function GET(): Promise<NextResponse> {
   try {
-    // Verify the caller is admin
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (!user?.email || user.email !== ADMIN_EMAIL) {
+    if (!(await verifyAdmin())) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    // Use admin client to list all users
     const admin = createAdminClient();
     const { data, error } = await admin.auth.admin.listUsers({ perPage: 1000 });
 
@@ -56,14 +74,28 @@ export async function GET(): Promise<NextResponse> {
       return NextResponse.json({ error: 'Failed to list users' }, { status: 500 });
     }
 
-    const users: AdminUserRow[] = data.users.map((u) => ({
-      id: u.id,
-      email: u.email ?? '',
-      fullName: (u.user_metadata?.full_name as string) ?? '',
-      createdAt: u.created_at,
-      lastSignIn: u.last_sign_in_at ?? null,
-      emailConfirmed: !!u.email_confirmed_at,
-    }));
+    const users: AdminUserRow[] = data.users.map((u) => {
+      const sub = u.app_metadata?.subscription as AdminUserRow['subscription'] | undefined;
+      return {
+        id: u.id,
+        email: u.email ?? '',
+        fullName: (u.user_metadata?.full_name as string) ?? '',
+        createdAt: u.created_at,
+        lastSignIn: u.last_sign_in_at ?? null,
+        emailConfirmed: !!u.email_confirmed_at,
+        subscription: sub
+          ? {
+              planId: sub.planId ?? 'demo',
+              status: sub.status ?? 'pending',
+              createdAt: sub.createdAt ?? u.created_at,
+              approvedAt: sub.approvedAt ?? null,
+              tokensUsedThisMonth: sub.tokensUsedThisMonth ?? 0,
+              periodStart: sub.periodStart ?? u.created_at,
+              bonusTokens: sub.bonusTokens ?? 0,
+            }
+          : null,
+      };
+    });
 
     return NextResponse.json(users);
   } catch (err) {
@@ -76,19 +108,13 @@ export async function GET(): Promise<NextResponse> {
  * POST /api/admin/users — create a new user via the admin client.
  *
  * Bypasses Supabase's signup rate limiting. The user is created with a
- * confirmed email (no verification needed) and an optional subscription
- * in app_metadata.
+ * confirmed email (no verification needed) and subscription in app_metadata.
  *
  * Body: { email: string, password: string, fullName?: string, subscription?: object }
  */
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
-    // Verify caller is admin
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user?.email || user.email !== ADMIN_EMAIL) {
+    if (!(await verifyAdmin())) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -137,18 +163,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
  *   1. Invalidates all active sessions (ban trick)
  *   2. Clears subscription from app_metadata
  *   3. Deletes the user from Supabase Auth entirely
- *   4. Client-side: admin page also removes from localStorage subscriptions
  *
  * Cannot delete the admin user.
  */
 export async function DELETE(req: NextRequest): Promise<NextResponse> {
   try {
-    // Verify caller is admin
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user?.email || user.email !== ADMIN_EMAIL) {
+    if (!(await verifyAdmin())) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -174,7 +194,6 @@ export async function DELETE(req: NextRequest): Promise<NextResponse> {
     // Step 1: Invalidate all sessions by temporarily banning the user
     try {
       await admin.auth.admin.updateUserById(targetUser.id, { ban_duration: '1s' });
-      // Small delay to ensure ban takes effect
       await new Promise((r) => setTimeout(r, 500));
     } catch {
       // Non-critical — continue with deletion

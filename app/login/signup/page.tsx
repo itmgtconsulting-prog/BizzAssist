@@ -13,7 +13,6 @@ import Link from 'next/link';
 import { Eye, EyeOff, ArrowLeft, Loader2, AlertCircle, CheckCircle2, Clock } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { signUp } from '@/app/auth/actions';
-import { registerSubscription, PLANS, type UserSubscription } from '@/app/lib/subscriptions';
 
 const errorMessages: Record<string, { da: string; en: string }> = {
   email_rate_limit: {
@@ -97,22 +96,9 @@ export default function SignupPage() {
     }
     setLoading(true);
     try {
-      // Register demo subscription in global list (NOT in ba-subscription — that
-      // gets set by switchActiveUser when the user logs in to the dashboard)
-      if (isDemo) {
-        const now = new Date().toISOString();
-        const sub: UserSubscription = {
-          email,
-          planId: 'demo',
-          status: PLANS.demo.requiresApproval ? 'pending' : 'active',
-          createdAt: now,
-          approvedAt: PLANS.demo.requiresApproval ? null : now,
-          tokensUsedThisMonth: 0,
-          periodStart: now,
-        };
-        registerSubscription(sub);
-      }
-      const result = await signUp(email, password, fullName);
+      // Pass planId to signUp — subscription is set server-side in Supabase app_metadata
+      const planId = isDemo ? 'demo' : 'basis';
+      const result = await signUp(email, password, fullName, planId);
       if (result?.error) setError(result.error);
     } catch {
       // signUp redirects on success

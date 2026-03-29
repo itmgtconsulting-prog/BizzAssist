@@ -27,8 +27,12 @@ const MAX_RECENTS: Record<string, number> = {
  */
 async function getTenantSchema(tenantId: string): Promise<string | null> {
   const admin = createAdminClient();
-  const { data } = await admin.from('tenants').select('schema_name').eq('id', tenantId).single();
-  return data?.schema_name ?? null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data } = await (admin.from('tenants') as any)
+    .select('schema_name')
+    .eq('id', tenantId)
+    .single();
+  return ((data as Record<string, unknown>)?.schema_name as string) ?? null;
 }
 
 /**
@@ -48,8 +52,8 @@ export async function GET(request: NextRequest) {
     if (!schema) return NextResponse.json({ recents: [] });
 
     const admin = createAdminClient();
-    const { data, error } = await admin
-      .from(`${schema}.recent_entities`)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (admin.from(`${schema}.recent_entities`) as any)
       .select('*')
       .eq('user_id', auth.userId)
       .eq('entity_type', entityType)
@@ -97,7 +101,8 @@ export async function POST(request: NextRequest) {
     const table = `${schema}.recent_entities`;
 
     // Upsert: update visited_at if already exists, insert if new
-    const { error: upsertError } = await admin.from(table).upsert(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error: upsertError } = await (admin.from(table) as any).upsert(
       {
         tenant_id: auth.tenantId,
         user_id: auth.userId,
@@ -119,16 +124,18 @@ export async function POST(request: NextRequest) {
 
     // Prune: keep only the most recent N entries for this type
     const maxItems = MAX_RECENTS[body.entity_type] ?? 6;
-    const { data: allRecents } = await admin
-      .from(table)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: allRecents } = await (admin.from(table) as any)
       .select('id, visited_at')
       .eq('user_id', auth.userId)
       .eq('entity_type', body.entity_type)
       .order('visited_at', { ascending: false });
 
     if (allRecents && allRecents.length > maxItems) {
-      const idsToDelete = allRecents.slice(maxItems).map((r) => r.id);
-      await admin.from(table).delete().in('id', idsToDelete);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const idsToDelete = allRecents.slice(maxItems).map((r: any) => r.id);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (admin.from(table) as any).delete().in('id', idsToDelete);
     }
 
     return NextResponse.json({ ok: true });
@@ -161,8 +168,8 @@ export async function DELETE(request: NextRequest) {
     }
 
     const admin = createAdminClient();
-    await admin
-      .from(`${schema}.recent_entities`)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (admin.from(`${schema}.recent_entities`) as any)
       .delete()
       .eq('user_id', auth.userId)
       .eq('entity_type', entityType);

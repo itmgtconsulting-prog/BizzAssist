@@ -10,11 +10,14 @@
  *   - Ændre abonnementsplan
  *   - Tildele ekstra AI-tokens
  *   - Nulstille månedligt tokenforbrug
+ *   - Oprette nye brugere
+ *   - Slette brugere
  *
  * Kun tilgængelig for admin-brugere (jjrchefen@hotmail.com).
- * Data gemmes i localStorage som demo — flyttes til Supabase når klar.
+ * Alle data læses/skrives direkte til Supabase — ingen localStorage.
  *
- * @see app/lib/subscriptions.ts — plan-definitioner og subscription helpers
+ * @see app/api/admin/users/route.ts — user CRUD API
+ * @see app/api/admin/subscription/route.ts — subscription mutations API
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -35,28 +38,39 @@ import {
   ChevronDown,
   Coins,
   Trash2,
-  RefreshCw,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import {
-  getAllSubscriptions,
-  getSubscription,
-  approveSubscription,
-  rejectSubscription,
-  updateSubscriptionPlan,
-  updateSubscriptionStatus,
-  addBonusTokens,
-  resetTokenUsage,
-  registerSubscription,
-  removeSubscription,
   PLANS,
   PLAN_LIST,
   ADMIN_EMAIL,
   formatTokens,
-  type UserSubscription,
   type SubStatus,
   type PlanId,
 } from '@/app/lib/subscriptions';
+
+// ─── Types ──────────────────────────────────────────────────────────────────
+
+/** User from the admin API — includes subscription from Supabase app_metadata */
+interface AdminUser {
+  id: string;
+  email: string;
+  fullName: string;
+  createdAt: string;
+  lastSignIn: string | null;
+  emailConfirmed: boolean;
+  subscription: {
+    planId: PlanId;
+    status: SubStatus;
+    createdAt: string;
+    approvedAt: string | null;
+    tokensUsedThisMonth: number;
+    periodStart: string;
+    bonusTokens: number;
+  } | null;
+}
+
+// ─── Helper components ──────────────────────────────────────────────────────
 
 /**
  * Status badge component for subscription status.
@@ -111,87 +125,127 @@ function PlanIcon({ planId, size = 14 }: { planId: string; size?: number }) {
   }
 }
 
+// ─── Admin API helpers ──────────────────────────────────────────────────────
+
+/**
+ * Call the admin subscription API to perform an action.
+ * All mutations go directly to Supabase app_metadata.
+ */
+async function adminAction(
+  email: string,
+  action: string,
+  data?: Record<string, unknown>
+): Promise<boolean> {
+  try {
+    const res = await fetch('/api/admin/subscription', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, action, ...data }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+// ─── User detail panel ──────────────────────────────────────────────────────
+
 /**
  * User detail panel — slide-out panel for editing a user's subscription.
+ * All actions are performed directly on Supabase via the admin API.
  *
- * @param sub - The user subscription to edit
+ * @param user - The user to edit
  * @param da - Whether to use Danish labels
  * @param onClose - Close handler
  * @param onRefresh - Refresh data handler
  */
 function UserDetailPanel({
-  sub,
+  user,
   da,
   onClose,
   onRefresh,
 }: {
-  sub: UserSubscription;
+  user: AdminUser;
   da: boolean;
   onClose: () => void;
   onRefresh: () => void;
 }) {
-  const plan = PLANS[sub.planId];
+  const sub = user.subscription;
+  const plan = sub ? PLANS[sub.planId] : PLANS.demo;
   const isUnlimited = plan.aiTokensPerMonth === -1;
-  const totalTokens = isUnlimited ? -1 : plan.aiTokensPerMonth + (sub.bonusTokens ?? 0);
+  const totalTokens = isUnlimited ? -1 : plan.aiTokensPerMonth + (sub?.bonusTokens ?? 0);
   const usagePercent = isUnlimited
     ? 0
     : totalTokens > 0
-      ? Math.min(100, (sub.tokensUsedThisMonth / totalTokens) * 100)
+      ? Math.min(100, ((sub?.tokensUsedThisMonth ?? 0) / totalTokens) * 100)
       : 0;
 
   const [showPlanPicker, setShowPlanPicker] = useState(false);
   const [tokenAmount, setTokenAmount] = useState('');
   const [showTokenInput, setShowTokenInput] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
 
-  /** Handle plan change — updates localStorage + syncs to Supabase */
+  /** Execute an admin action and refresh */
+  const doAction = async (action: string, data?: Record<string, unknown>) => {
+    setActionLoading(true);
+    await adminAction(user.email, action, data);
+    onRefresh();
+    setActionLoading(false);
+  };
+
+  /** Handle plan change */
   const handlePlanChange = (planId: PlanId) => {
-    const updated = updateSubscriptionPlan(sub.email, planId);
-    if (updated) syncToSupabase(sub.email, updated);
+    doAction('changePlan', { planId });
     setShowPlanPicker(false);
-    onRefresh();
   };
 
-  /** Handle status toggle — updates localStorage + syncs to Supabase */
+  /** Handle status toggle */
   const handleToggleStatus = () => {
-    const updated =
-      sub.status === 'active'
-        ? updateSubscriptionStatus(sub.email, 'cancelled')
-        : updateSubscriptionStatus(sub.email, 'active');
-    if (updated) syncToSupabase(sub.email, updated);
-    onRefresh();
+    const newStatus = sub?.status === 'active' ? 'cancelled' : 'active';
+    doAction('changeStatus', { status: newStatus });
   };
 
-  /** Handle approve — updates localStorage + syncs to Supabase */
-  const handleApprove = () => {
-    const updated = approveSubscription(sub.email);
-    if (updated) syncToSupabase(sub.email, updated);
-    onRefresh();
-  };
+  /** Handle approve */
+  const handleApprove = () => doAction('approve');
 
-  /** Handle reject — updates localStorage + syncs to Supabase */
-  const handleReject = () => {
-    const updated = rejectSubscription(sub.email);
-    if (updated) syncToSupabase(sub.email, updated);
-    onRefresh();
-  };
+  /** Handle reject */
+  const handleReject = () => doAction('reject');
 
-  /** Handle adding bonus tokens — updates localStorage + syncs to Supabase */
+  /** Handle adding bonus tokens */
   const handleAddTokens = () => {
     const amount = parseInt(tokenAmount, 10);
     if (!amount || amount <= 0) return;
-    const updated = addBonusTokens(sub.email, amount);
-    if (updated) syncToSupabase(sub.email, updated);
+    doAction('addTokens', { tokens: amount });
     setTokenAmount('');
     setShowTokenInput(false);
-    onRefresh();
   };
 
-  /** Handle resetting token usage — updates localStorage + syncs to Supabase */
-  const handleResetUsage = () => {
-    const updated = resetTokenUsage(sub.email);
-    if (updated) syncToSupabase(sub.email, updated);
-    onRefresh();
-  };
+  /** Handle resetting token usage */
+  const handleResetUsage = () => doAction('resetTokens');
+
+  if (!sub) {
+    return (
+      <div className="fixed inset-0 z-50 flex justify-end">
+        <div className="absolute inset-0 bg-black/60" onClick={onClose} />
+        <div className="relative w-full max-w-md bg-slate-900 border-l border-slate-700/50 overflow-y-auto">
+          <div className="sticky top-0 bg-slate-900/95 backdrop-blur-sm border-b border-slate-700/50 px-6 py-4 flex items-center justify-between z-10">
+            <h2 className="text-white font-bold text-base">{user.email}</h2>
+            <button
+              onClick={onClose}
+              className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700/50 rounded-lg transition-colors"
+            >
+              <X size={18} />
+            </button>
+          </div>
+          <div className="px-6 py-5">
+            <p className="text-slate-400 text-sm">
+              {da ? 'Denne bruger har intet abonnement.' : 'This user has no subscription.'}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
@@ -211,7 +265,9 @@ function UserDetailPanel({
           </button>
         </div>
 
-        <div className="px-6 py-5 space-y-6">
+        <div
+          className={`px-6 py-5 space-y-6 ${actionLoading ? 'opacity-60 pointer-events-none' : ''}`}
+        >
           {/* ─── User info ─── */}
           <div>
             <div className="flex items-center gap-3 mb-3">
@@ -219,17 +275,18 @@ function UserDetailPanel({
                 <Users size={18} className="text-blue-400" />
               </div>
               <div className="min-w-0 flex-1">
-                <p className="text-white font-semibold text-sm truncate">{sub.email}</p>
+                <p className="text-white font-semibold text-sm truncate">{user.email}</p>
                 <p className="text-slate-500 text-xs">
+                  {user.fullName && <span className="text-slate-400">{user.fullName} · </span>}
                   {da ? 'Oprettet' : 'Created'}{' '}
-                  {new Date(sub.createdAt).toLocaleDateString(da ? 'da-DK' : 'en-GB', {
+                  {new Date(user.createdAt).toLocaleDateString(da ? 'da-DK' : 'en-GB', {
                     day: 'numeric',
                     month: 'long',
                     year: 'numeric',
                   })}
                 </p>
               </div>
-              {sub.email === ADMIN_EMAIL && (
+              {user.email === ADMIN_EMAIL && (
                 <span className="bg-blue-500/20 text-blue-400 border border-blue-500/30 px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0">
                   Admin
                 </span>
@@ -241,7 +298,7 @@ function UserDetailPanel({
           <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-3">
             <div className="flex items-center justify-between">
               <p className="text-slate-400 text-xs font-medium uppercase tracking-wider">Status</p>
-              <StatusBadge status={sub.status} da={da} />
+              <StatusBadge status={sub.status as SubStatus} da={da} />
             </div>
 
             {/* Pending — approve/reject buttons */}
@@ -505,9 +562,8 @@ function UserDetailPanel({
                   <button
                     key={amount}
                     onClick={() => {
-                      addBonusTokens(sub.email, amount);
+                      doAction('addTokens', { tokens: amount });
                       setShowTokenInput(false);
-                      onRefresh();
                     }}
                     className="px-2.5 py-1 bg-slate-800/60 hover:bg-slate-700 border border-slate-700/50 text-slate-300 text-[10px] font-medium rounded-md transition-colors"
                   >
@@ -552,7 +608,7 @@ function UserDetailPanel({
           </div>
 
           {/* ─── Delete user (danger zone) ─── */}
-          {sub.email !== ADMIN_EMAIL && (
+          {user.email !== ADMIN_EMAIL && (
             <div className="border border-red-500/20 rounded-xl p-4">
               <p className="text-red-400 text-xs font-medium uppercase tracking-wider mb-2">
                 {da ? 'Farezone' : 'Danger zone'}
@@ -561,17 +617,14 @@ function UserDetailPanel({
                 onClick={async () => {
                   const confirmed = window.confirm(
                     da
-                      ? `Er du sikker på at du vil slette ${sub.email} permanent? Dette kan ikke fortrydes.`
-                      : `Are you sure you want to permanently delete ${sub.email}? This cannot be undone.`
+                      ? `Er du sikker på at du vil slette ${user.email} permanent? Dette kan ikke fortrydes.`
+                      : `Are you sure you want to permanently delete ${user.email}? This cannot be undone.`
                   );
                   if (!confirmed) return;
-                  // Remove from localStorage
-                  removeSubscription(sub.email);
-                  // Remove from Supabase Auth
                   await fetch('/api/admin/users', {
                     method: 'DELETE',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email: sub.email }),
+                    body: JSON.stringify({ email: user.email }),
                   });
                   onClose();
                   onRefresh();
@@ -589,71 +642,25 @@ function UserDetailPanel({
   );
 }
 
-/**
- * Sync a subscription to Supabase app_metadata so it persists across browsers.
- * Fires-and-forgets — localStorage is the immediate source, Supabase is the backup.
- *
- * @param email - User email
- * @param sub - Subscription data to sync
- */
-async function syncToSupabase(email: string, sub: UserSubscription): Promise<boolean> {
-  try {
-    const res = await fetch('/api/admin/subscription', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email,
-        planId: sub.planId,
-        status: sub.status,
-        createdAt: sub.createdAt,
-        approvedAt: sub.approvedAt,
-        tokensUsedThisMonth: sub.tokensUsedThisMonth,
-        periodStart: sub.periodStart,
-        bonusTokens: sub.bonusTokens ?? 0,
-      }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      console.error('[syncToSupabase] Failed for', email, '— status:', res.status, err);
-      return false;
-    }
-    console.log('[syncToSupabase] OK for', email);
-    return true;
-  } catch (err) {
-    console.error('[syncToSupabase] Network error for', email, err);
-    return false;
-  }
-}
-
-/** Supabase Auth user from API */
-interface AuthUser {
-  id: string;
-  email: string;
-  fullName: string;
-  createdAt: string;
-  lastSignIn: string | null;
-  emailConfirmed: boolean;
-}
+// ─── Main page ──────────────────────────────────────────────────────────────
 
 /**
  * Admin user management page.
  *
- * Lists all registered users with their subscription details.
- * Fetches users from Supabase Auth and merges with localStorage subscriptions.
- * Users without a subscription are shown separately so admin can assign one.
- * Click on a user to open the edit panel with full admin controls.
+ * All data is fetched from Supabase via /api/admin/users.
+ * All mutations go directly to Supabase via /api/admin/subscription.
+ * No localStorage is used — what you see is what the database has.
  */
 export default function AdminUsersPage() {
   const router = useRouter();
   const { lang } = useLanguage();
   const da = lang === 'da';
 
-  const [subs, setSubs] = useState<UserSubscription[]>([]);
-  /** Auth users from Supabase that have NO subscription */
-  const [unsubscribedUsers, setUnsubscribedUsers] = useState<AuthUser[]>([]);
+  const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedEmail, setSelectedEmail] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
+
   /** Add user form state */
   const [showAddUser, setShowAddUser] = useState(false);
   const [newEmail, setNewEmail] = useState('');
@@ -664,37 +671,35 @@ export default function AdminUsersPage() {
   const [createLoading, setCreateLoading] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
-  /** Check admin access — redirect non-admin users to dashboard */
+  /** Check admin access via API — no localStorage needed */
   useEffect(() => {
-    const currentSub = getSubscription();
-    if (!currentSub || currentSub.email !== ADMIN_EMAIL) {
-      setIsAdmin(false);
-      router.replace('/dashboard');
-    } else {
-      setIsAdmin(true);
-    }
+    fetch('/api/subscription')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data?.email === ADMIN_EMAIL) {
+          setIsAdmin(true);
+        } else {
+          setIsAdmin(false);
+          router.replace('/dashboard');
+        }
+      })
+      .catch(() => {
+        setIsAdmin(false);
+        router.replace('/dashboard');
+      });
   }, [router]);
 
-  /** Load subscriptions from localStorage + auth users from Supabase API */
+  /** Load all users from Supabase via API */
   const refresh = useCallback(async () => {
-    // Local subscriptions
-    const allSubs = getAllSubscriptions();
-    setSubs(allSubs);
-
-    // Fetch Supabase Auth users
     try {
       const res = await fetch('/api/admin/users');
       if (res.ok) {
-        const authUsers: AuthUser[] = await res.json();
-        const subEmails = new Set(allSubs.map((s) => s.email.toLowerCase()));
-        // Filter to only users WITHOUT a subscription
-        const noSub = authUsers.filter((u) => !subEmails.has(u.email.toLowerCase()));
-        setUnsubscribedUsers(noSub);
+        const data: AdminUser[] = await res.json();
+        setUsers(data);
       }
     } catch {
-      // API unavailable — just show localStorage data
+      // API unavailable
     }
-
     setLoading(false);
   }, []);
 
@@ -716,16 +721,21 @@ export default function AdminUsersPage() {
     );
   }
 
-  /** Currently selected subscription for the detail panel */
-  const selectedSub = subs.find((s) => s.email === selectedEmail) ?? null;
+  /** Selected user for the detail panel */
+  const selectedUser = users.find((u) => u.email === selectedEmail) ?? null;
 
-  // Separate pending from others for priority display
-  const pending = subs.filter((s) => s.status === 'pending');
-  const others = subs.filter((s) => s.status !== 'pending');
+  // Separate users by subscription state
+  const withSub = users.filter((u) => u.subscription);
+  const pending = withSub.filter((u) => u.subscription?.status === 'pending');
+  const others = withSub.filter((u) => u.subscription?.status !== 'pending');
+  const noSub = users.filter((u) => !u.subscription);
 
   /** Stats */
-  const activeCount = subs.filter((s) => s.status === 'active').length;
-  const totalTokensUsed = subs.reduce((sum, s) => sum + s.tokensUsedThisMonth, 0);
+  const activeCount = withSub.filter((u) => u.subscription?.status === 'active').length;
+  const totalTokensUsed = withSub.reduce(
+    (sum, u) => sum + (u.subscription?.tokensUsedThisMonth ?? 0),
+    0
+  );
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -747,8 +757,8 @@ export default function AdminUsersPage() {
             </h1>
             <p className="text-slate-400 text-sm">
               {da
-                ? `${subs.length + unsubscribedUsers.length} brugere · ${activeCount} aktive · ${pending.length} afventer · ${unsubscribedUsers.length} uden abonnement`
-                : `${subs.length + unsubscribedUsers.length} users · ${activeCount} active · ${pending.length} pending · ${unsubscribedUsers.length} no subscription`}
+                ? `${users.length} brugere · ${activeCount} aktive · ${pending.length} afventer · ${noSub.length} uden abonnement`
+                : `${users.length} users · ${activeCount} active · ${pending.length} pending · ${noSub.length} no subscription`}
             </p>
           </div>
         </div>
@@ -773,27 +783,6 @@ export default function AdminUsersPage() {
             </p>
             <p className="text-blue-400 text-sm font-bold">{formatTokens(totalTokensUsed)}</p>
           </div>
-          <button
-            onClick={async () => {
-              const allSubs = getAllSubscriptions();
-              let ok = 0;
-              let fail = 0;
-              for (const sub of allSubs) {
-                const success = await syncToSupabase(sub.email, sub);
-                if (success) ok++;
-                else fail++;
-              }
-              alert(
-                da
-                  ? `Synkroniseret ${ok} af ${allSubs.length} abonnementer til Supabase.${fail > 0 ? ` ${fail} fejlede.` : ''}`
-                  : `Synced ${ok} of ${allSubs.length} subscriptions to Supabase.${fail > 0 ? ` ${fail} failed.` : ''}`
-              );
-            }}
-            className="flex items-center gap-1.5 px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white text-xs font-medium rounded-lg transition-colors shrink-0 self-center"
-          >
-            <RefreshCw size={14} />
-            {da ? 'Synk til Supabase' : 'Sync to Supabase'}
-          </button>
           <button
             onClick={() => setShowAddUser(!showAddUser)}
             className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium rounded-lg transition-colors shrink-0 self-center"
@@ -908,7 +897,7 @@ export default function AdminUsersPage() {
                   };
 
                   try {
-                    // Create user in Supabase Auth via admin API (bypasses rate limits)
+                    // Create user in Supabase Auth via admin API
                     const res = await fetch('/api/admin/users', {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
@@ -927,9 +916,17 @@ export default function AdminUsersPage() {
                       return;
                     }
 
-                    // Also save to localStorage for admin panel view
-                    const sub: UserSubscription = { email, ...subscription };
-                    registerSubscription(sub);
+                    // Send notification email (best-effort)
+                    fetch('/api/notify-signup', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        fullName: newFullName.trim() || email.split('@')[0],
+                        email,
+                        planId: newPlan,
+                        status: newStatus,
+                      }),
+                    }).catch(() => {});
 
                     setNewEmail('');
                     setNewPassword('');
@@ -970,35 +967,34 @@ export default function AdminUsersPage() {
               </span>
             </h2>
             <div className="space-y-2">
-              {pending.map((sub) => {
-                const plan = PLANS[sub.planId];
+              {pending.map((u) => {
+                const plan = PLANS[u.subscription!.planId as PlanId];
                 return (
                   <div
-                    key={sub.email}
-                    onClick={() => setSelectedEmail(sub.email)}
+                    key={u.email}
+                    onClick={() => setSelectedEmail(u.email)}
                     className="bg-amber-500/5 border border-amber-500/20 rounded-xl px-5 py-4 flex items-center justify-between gap-4 cursor-pointer hover:bg-amber-500/10 transition-colors"
                   >
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-0.5">
-                        <p className="text-white font-semibold text-sm truncate">{sub.email}</p>
-                        <StatusBadge status={sub.status} da={da} />
+                        <p className="text-white font-semibold text-sm truncate">{u.email}</p>
+                        <StatusBadge status={u.subscription!.status as SubStatus} da={da} />
                       </div>
                       <div className="flex items-center gap-2 text-xs text-slate-400">
-                        <PlanIcon planId={sub.planId} />
+                        <PlanIcon planId={u.subscription!.planId} />
                         <span>{da ? plan.nameDa : plan.nameEn}</span>
                         <span className="text-slate-600">·</span>
                         <span>
                           {da ? 'Oprettet' : 'Created'}{' '}
-                          {new Date(sub.createdAt).toLocaleDateString(da ? 'da-DK' : 'en-GB')}
+                          {new Date(u.createdAt).toLocaleDateString(da ? 'da-DK' : 'en-GB')}
                         </span>
                       </div>
                     </div>
                     <div className="flex gap-2 shrink-0">
                       <button
-                        onClick={(e) => {
+                        onClick={async (e) => {
                           e.stopPropagation();
-                          const u = approveSubscription(sub.email);
-                          if (u) syncToSupabase(sub.email, u);
+                          await adminAction(u.email, 'approve');
                           refresh();
                         }}
                         className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium rounded-lg transition-colors"
@@ -1007,10 +1003,9 @@ export default function AdminUsersPage() {
                         {da ? 'Godkend' : 'Approve'}
                       </button>
                       <button
-                        onClick={(e) => {
+                        onClick={async (e) => {
                           e.stopPropagation();
-                          const u = rejectSubscription(sub.email);
-                          if (u) syncToSupabase(sub.email, u);
+                          await adminAction(u.email, 'reject');
                           refresh();
                         }}
                         className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600/20 hover:bg-red-600/40 text-red-400 text-xs font-medium rounded-lg transition-colors border border-red-500/30"
@@ -1041,8 +1036,9 @@ export default function AdminUsersPage() {
             </div>
           ) : (
             <div className="space-y-2">
-              {others.map((sub) => {
-                const plan = PLANS[sub.planId];
+              {others.map((u) => {
+                const sub = u.subscription!;
+                const plan = PLANS[sub.planId as PlanId];
                 const isUnlim = plan.aiTokensPerMonth === -1;
                 const totalT = isUnlim ? -1 : plan.aiTokensPerMonth + (sub.bonusTokens ?? 0);
                 const usedPct = isUnlim
@@ -1052,19 +1048,19 @@ export default function AdminUsersPage() {
                     : 0;
                 return (
                   <div
-                    key={sub.email}
-                    onClick={() => setSelectedEmail(sub.email)}
+                    key={u.email}
+                    onClick={() => setSelectedEmail(u.email)}
                     className="bg-white/5 border border-white/8 rounded-xl px-5 py-4 flex items-center justify-between gap-4 cursor-pointer hover:bg-white/8 transition-colors"
                   >
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <p className="text-white text-sm font-medium truncate">{sub.email}</p>
-                        {sub.email === ADMIN_EMAIL && (
+                        <p className="text-white text-sm font-medium truncate">{u.email}</p>
+                        {u.email === ADMIN_EMAIL && (
                           <span className="bg-blue-500/20 text-blue-400 border border-blue-500/30 px-1.5 py-0.5 rounded-full text-[10px] font-bold">
                             Admin
                           </span>
                         )}
-                        <StatusBadge status={sub.status} da={da} />
+                        <StatusBadge status={sub.status as SubStatus} da={da} />
                       </div>
                       <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5">
                         <PlanIcon planId={sub.planId} />
@@ -1078,7 +1074,7 @@ export default function AdminUsersPage() {
                         <span className="text-slate-600">·</span>
                         <span>
                           {da ? 'Siden' : 'Since'}{' '}
-                          {new Date(sub.createdAt).toLocaleDateString(da ? 'da-DK' : 'en-GB')}
+                          {new Date(u.createdAt).toLocaleDateString(da ? 'da-DK' : 'en-GB')}
                         </span>
                       </div>
                     </div>
@@ -1117,33 +1113,31 @@ export default function AdminUsersPage() {
         </div>
 
         {/* Unsubscribed users from Supabase Auth */}
-        {unsubscribedUsers.length > 0 && (
+        {noSub.length > 0 && (
           <div>
             <h2 className="text-red-400 text-sm font-semibold uppercase tracking-wider mb-3 flex items-center gap-2">
               <AlertTriangle size={14} />
               {da ? 'Uden abonnement' : 'No subscription'}
               <span className="bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded-full text-[10px] font-bold">
-                {unsubscribedUsers.length}
+                {noSub.length}
               </span>
             </h2>
             <div className="space-y-2">
-              {unsubscribedUsers.map((authUser) => (
+              {noSub.map((u) => (
                 <div
-                  key={authUser.id}
+                  key={u.id}
                   className="bg-red-500/5 border border-red-500/20 rounded-xl px-5 py-4 flex items-center justify-between gap-4"
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-0.5">
-                      <p className="text-white font-semibold text-sm truncate">{authUser.email}</p>
-                      {authUser.fullName && (
-                        <span className="text-slate-500 text-xs truncate">
-                          ({authUser.fullName})
-                        </span>
+                      <p className="text-white font-semibold text-sm truncate">{u.email}</p>
+                      {u.fullName && (
+                        <span className="text-slate-500 text-xs truncate">({u.fullName})</span>
                       )}
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border bg-red-500/20 text-red-400 border-red-500/30">
                         <XCircle size={12} /> {da ? 'Intet abonnement' : 'No subscription'}
                       </span>
-                      {!authUser.emailConfirmed && (
+                      {!u.emailConfirmed && (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border bg-slate-500/20 text-slate-400 border-slate-500/30">
                           {da ? 'Email ikke bekræftet' : 'Email not confirmed'}
                         </span>
@@ -1152,16 +1146,14 @@ export default function AdminUsersPage() {
                     <div className="flex items-center gap-2 text-xs text-slate-500">
                       <span>
                         {da ? 'Oprettet' : 'Created'}{' '}
-                        {new Date(authUser.createdAt).toLocaleDateString(da ? 'da-DK' : 'en-GB')}
+                        {new Date(u.createdAt).toLocaleDateString(da ? 'da-DK' : 'en-GB')}
                       </span>
-                      {authUser.lastSignIn && (
+                      {u.lastSignIn && (
                         <>
                           <span className="text-slate-600">·</span>
                           <span>
                             {da ? 'Sidst logget ind' : 'Last sign in'}{' '}
-                            {new Date(authUser.lastSignIn).toLocaleDateString(
-                              da ? 'da-DK' : 'en-GB'
-                            )}
+                            {new Date(u.lastSignIn).toLocaleDateString(da ? 'da-DK' : 'en-GB')}
                           </span>
                         </>
                       )}
@@ -1172,14 +1164,14 @@ export default function AdminUsersPage() {
                       onClick={async () => {
                         const confirmed = window.confirm(
                           da
-                            ? `Er du sikker på at du vil slette ${authUser.email} permanent?`
-                            : `Are you sure you want to permanently delete ${authUser.email}?`
+                            ? `Er du sikker på at du vil slette ${u.email} permanent?`
+                            : `Are you sure you want to permanently delete ${u.email}?`
                         );
                         if (!confirmed) return;
                         await fetch('/api/admin/users', {
                           method: 'DELETE',
                           headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ email: authUser.email }),
+                          body: JSON.stringify({ email: u.email }),
                         });
                         refresh();
                       }}
@@ -1190,20 +1182,11 @@ export default function AdminUsersPage() {
                     </button>
                     <button
                       onClick={async () => {
-                        const now = new Date().toISOString();
-                        const sub: UserSubscription = {
-                          email: authUser.email,
+                        await adminAction(u.email, 'set', {
                           planId: 'demo',
                           status: 'pending',
-                          createdAt: authUser.createdAt,
-                          approvedAt: null,
-                          tokensUsedThisMonth: 0,
-                          periodStart: now,
-                        };
-                        registerSubscription(sub);
-                        const ok = await syncToSupabase(authUser.email, sub);
-                        if (!ok)
-                          alert(`Fejl: Kunne ikke synkronisere ${authUser.email} til Supabase`);
+                          createdAt: u.createdAt,
+                        });
                         refresh();
                       }}
                       className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600/20 hover:bg-amber-600/40 text-amber-400 text-xs font-medium rounded-lg transition-colors border border-amber-500/30"
@@ -1213,20 +1196,12 @@ export default function AdminUsersPage() {
                     </button>
                     <button
                       onClick={async () => {
-                        const now = new Date().toISOString();
-                        const sub: UserSubscription = {
-                          email: authUser.email,
+                        await adminAction(u.email, 'set', {
                           planId: 'demo',
                           status: 'active',
-                          createdAt: authUser.createdAt,
-                          approvedAt: now,
-                          tokensUsedThisMonth: 0,
-                          periodStart: now,
-                        };
-                        registerSubscription(sub);
-                        const ok = await syncToSupabase(authUser.email, sub);
-                        if (!ok)
-                          alert(`Fejl: Kunne ikke synkronisere ${authUser.email} til Supabase`);
+                          createdAt: u.createdAt,
+                          approvedAt: new Date().toISOString(),
+                        });
                         refresh();
                       }}
                       className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium rounded-lg transition-colors"
@@ -1249,9 +1224,9 @@ export default function AdminUsersPage() {
       </div>
 
       {/* ─── User detail panel (slide-out) ─── */}
-      {selectedSub && (
+      {selectedUser && (
         <UserDetailPanel
-          sub={selectedSub}
+          user={selectedUser}
           da={da}
           onClose={() => setSelectedEmail(null)}
           onRefresh={refresh}

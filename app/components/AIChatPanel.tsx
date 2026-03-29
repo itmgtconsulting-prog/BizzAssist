@@ -16,8 +16,6 @@ import { ChevronDown, Send, Bot, Sparkles, Square } from 'lucide-react';
 import {
   getSubscription,
   saveSubscription,
-  getAllSubscriptions,
-  saveAllSubscriptions,
   PLANS,
   formatTokens,
   type UserSubscription,
@@ -38,78 +36,38 @@ const COLLAPSED_HEIGHT = 48;
 // ─── Token usage tracking ────────────────────────────────────────────────────
 
 /**
- * Get the current user's subscription, synced between local and global list.
- * Ensures both localStorage keys stay in sync — uses the higher tokensUsedThisMonth
- * and merges bonusTokens from the global list (set by admin).
+ * Get the current user's subscription from localStorage cache.
+ * The cache is populated from Supabase on login (dashboard layout).
  *
- * @returns Synced subscription or null
+ * @returns Cached subscription or null
  */
 function getSyncedSubscription(): UserSubscription | null {
-  const local = getSubscription();
-  if (!local) return null;
-
-  // Find the same user in the global admin list
-  const allSubs = getAllSubscriptions();
-  const global = allSubs.find((s) => s.email === local.email);
-
-  if (global) {
-    // Sync: use highest tokensUsedThisMonth (covers any write that only hit one key)
-    const maxUsed = Math.max(local.tokensUsedThisMonth, global.tokensUsedThisMonth);
-    // Sync bonusTokens from global list (admin sets it there)
-    const bonusTokens = global.bonusTokens ?? local.bonusTokens ?? 0;
-
-    if (local.tokensUsedThisMonth !== maxUsed || (local.bonusTokens ?? 0) !== bonusTokens) {
-      local.tokensUsedThisMonth = maxUsed;
-      local.bonusTokens = bonusTokens;
-      saveSubscription(local);
-    }
-
-    if (global.tokensUsedThisMonth !== maxUsed) {
-      global.tokensUsedThisMonth = maxUsed;
-      const idx = allSubs.findIndex((s) => s.email === local.email);
-      if (idx >= 0) allSubs[idx] = global;
-      saveAllSubscriptions(allSubs);
-    }
-
-    // Also sync plan changes made by admin
-    if (global.planId !== local.planId) {
-      local.planId = global.planId;
-      saveSubscription(local);
-    }
-
-    // Sync status changes made by admin
-    if (global.status !== local.status) {
-      local.status = global.status;
-      local.approvedAt = global.approvedAt;
-      saveSubscription(local);
-    }
-  }
-
-  return local;
+  return getSubscription();
 }
 
 /**
- * Update the current user's token usage in localStorage after an AI chat response.
- * Updates both the user's own subscription and the global admin list.
+ * Update the current user's token usage after an AI chat response.
+ * Updates localStorage cache immediately and syncs to Supabase in background.
  *
  * @param tokensUsed - Number of tokens consumed in this request
  */
 function updateTokenUsage(tokensUsed: number) {
   if (tokensUsed <= 0) return;
 
-  // Update user's own subscription
+  // Update localStorage cache immediately for UI responsiveness
   const sub = getSubscription();
   if (!sub) return;
   sub.tokensUsedThisMonth += tokensUsed;
   saveSubscription(sub);
 
-  // Also update the global admin list so admin panel shows correct usage
-  const allSubs = getAllSubscriptions();
-  const idx = allSubs.findIndex((s) => s.email === sub.email);
-  if (idx >= 0) {
-    allSubs[idx].tokensUsedThisMonth = sub.tokensUsedThisMonth;
-    saveAllSubscriptions(allSubs);
-  }
+  // Sync to Supabase in background (fire-and-forget)
+  fetch('/api/subscription/track-tokens', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tokensUsed }),
+  }).catch(() => {
+    /* silent — localStorage is the fallback */
+  });
 }
 
 // ─── Component ──────────────────────────────────────────────────────────────

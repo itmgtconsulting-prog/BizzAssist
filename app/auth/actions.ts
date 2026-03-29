@@ -140,11 +140,12 @@ export async function signIn(
 export async function signUp(
   email: string,
   password: string,
-  fullName: string
+  fullName: string,
+  planId: string = 'demo'
 ): Promise<AuthResult> {
   const supabase = await createClient();
 
-  const { error } = await supabase.auth.signUp({
+  const { data: signupData, error } = await supabase.auth.signUp({
     email,
     password,
     options: {
@@ -176,6 +177,42 @@ export async function signUp(
     }
     return { error: 'unexpected_error' };
   }
+
+  // Set subscription in app_metadata via admin client (so it's in the database)
+  const now = new Date().toISOString();
+  const requiresApproval = planId === 'demo';
+  const status = requiresApproval ? 'pending' : 'active';
+
+  if (signupData?.user?.id) {
+    try {
+      const admin = createAdminClient();
+      await admin.auth.admin.updateUserById(signupData.user.id, {
+        app_metadata: {
+          subscription: {
+            planId,
+            status,
+            createdAt: now,
+            approvedAt: requiresApproval ? null : now,
+            tokensUsedThisMonth: 0,
+            periodStart: now,
+            bonusTokens: 0,
+          },
+        },
+      });
+    } catch (err) {
+      console.error('[signUp] Failed to set subscription in app_metadata:', err);
+    }
+  }
+
+  // Send notification email to support (fire-and-forget)
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+  fetch(`${appUrl}/api/notify-signup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fullName, email, planId, status }),
+  }).catch((err) => {
+    console.error('[signUp] Failed to send notification:', err);
+  });
 
   redirect(`/login/verify-email?email=${encodeURIComponent(email)}`);
 }

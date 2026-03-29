@@ -27,8 +27,8 @@ export async function GET() {
 
   try {
     const admin = createAdminClient();
-    const { data, error } = await admin
-      .from('users')
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (admin.from('users') as any)
       .select('preferred_language, preferences')
       .eq('id', userId)
       .single();
@@ -40,9 +40,10 @@ export async function GET() {
       });
     }
 
+    const row = data as Record<string, unknown>;
     return NextResponse.json({
-      language: data.preferred_language ?? 'da',
-      preferences: data.preferences ?? {},
+      language: row.preferred_language ?? 'da',
+      preferences: row.preferences ?? {},
     });
   } catch (err) {
     console.error('[preferences GET]', err);
@@ -77,13 +78,14 @@ export async function PUT(request: NextRequest) {
     // Everything else merges into the preferences JSONB
     if (body.mapStyle || body.preferences) {
       // Fetch current preferences to merge
-      const { data: current } = await admin
-        .from('users')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: current } = await (admin.from('users') as any)
         .select('preferences')
         .eq('id', userId)
         .single();
 
-      const currentPrefs = (current?.preferences as Record<string, unknown>) ?? {};
+      const currentRow = current as Record<string, unknown> | null;
+      const currentPrefs = (currentRow?.preferences as Record<string, unknown>) ?? {};
       const newPrefs = { ...currentPrefs };
 
       if (body.mapStyle) {
@@ -100,7 +102,8 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Ingen ændringer' }, { status: 400 });
     }
 
-    const { error } = await admin.from('users').update(updates).eq('id', userId);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (admin.from('users') as any).update(updates).eq('id', userId);
 
     if (error) {
       console.error('[preferences PUT] Supabase error:', error);

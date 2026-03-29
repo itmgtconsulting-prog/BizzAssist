@@ -153,56 +153,38 @@ export function getSubscription(): UserSubscription | null {
 }
 
 /**
- * Look up a subscription by email in the global list.
- * Used to load the correct subscription when a user logs in.
- *
- * @param email - User email to look up
- * @returns UserSubscription or null if not found
- */
-export function getSubscriptionForEmail(email: string): UserSubscription | null {
-  const all = getAllSubscriptions();
-  return all.find((s) => s.email === email) ?? null;
-}
-
-/**
  * Switch the active local subscription to match the given email.
- * Looks up the email in the global list and saves it as the current user's subscription.
- * If the email is the admin and has no subscription yet, seeds one.
+ * Checks if a cached subscription exists in localStorage for the email.
+ * If the email is the admin and has no subscription, creates a default one.
+ *
+ * Note: The primary subscription source is now Supabase app_metadata
+ * (fetched via /api/subscription). This is a client-side fallback only.
  *
  * @param email - The email of the user who just logged in
- * @returns The active subscription
+ * @returns The active subscription or null
  */
 export function switchActiveUser(email: string): UserSubscription | null {
-  // Look up existing subscription in the global list
-  let sub = getSubscriptionForEmail(email);
+  // Check if there's already a cached subscription for this user
+  const existing = getSubscription();
+  if (existing?.email === email) return existing;
 
+  // Admin fallback — create default subscription locally
   if (email === ADMIN_EMAIL) {
     const now = new Date().toISOString();
-    if (!sub) {
-      // Admin has no subscription yet — create one
-      sub = {
-        email: ADMIN_EMAIL,
-        planId: 'enterprise',
-        status: 'active',
-        createdAt: now,
-        approvedAt: now,
-        tokensUsedThisMonth: 0,
-        periodStart: now,
-      };
-    } else {
-      // Admin exists — always ensure active + enterprise
-      sub.status = 'active';
-      sub.planId = 'enterprise';
-      if (!sub.approvedAt) sub.approvedAt = now;
-    }
-    registerSubscription(sub);
-  }
-
-  if (sub) {
+    const sub: UserSubscription = {
+      email: ADMIN_EMAIL,
+      planId: 'enterprise',
+      status: 'active',
+      createdAt: now,
+      approvedAt: now,
+      tokensUsedThisMonth: 0,
+      periodStart: now,
+    };
     saveSubscription(sub);
+    return sub;
   }
 
-  return sub;
+  return null;
 }
 
 /**
@@ -266,223 +248,11 @@ export function formatTokens(tokens: number): string {
   return String(tokens).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 }
 
-// ─── Admin: all subscriptions (localStorage for demo) ────────────────────────
-
-const ALL_SUBS_KEY = 'ba-all-subscriptions';
-
-/**
- * Get all subscriptions (admin view).
- *
- * @returns Array of all user subscriptions
- */
-export function getAllSubscriptions(): UserSubscription[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const raw = localStorage.getItem(ALL_SUBS_KEY);
-    if (!raw) return [];
-    return JSON.parse(raw) as UserSubscription[];
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Save all subscriptions (admin view).
- *
- * @param subs - Array of all user subscriptions
- */
-export function saveAllSubscriptions(subs: UserSubscription[]): void {
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.setItem(ALL_SUBS_KEY, JSON.stringify(subs));
-  } catch {
-    // ignore
-  }
-}
-
-/**
- * Register a new subscription in the global list (called on sign-up).
- *
- * @param sub - New subscription to register
- */
-export function registerSubscription(sub: UserSubscription): void {
-  const all = getAllSubscriptions();
-  // Replace if same email exists
-  const idx = all.findIndex((s) => s.email === sub.email);
-  if (idx >= 0) {
-    all[idx] = sub;
-  } else {
-    all.push(sub);
-  }
-  saveAllSubscriptions(all);
-}
-
-/**
- * Remove a subscription from the global list (admin action).
- *
- * @param email - Email of the user to remove
- */
-export function removeSubscription(email: string): void {
-  const all = getAllSubscriptions();
-  const filtered = all.filter((s) => s.email !== email);
-  saveAllSubscriptions(filtered);
-
-  // If it's the active user, clear their local sub too
-  const current = getSubscription();
-  if (current?.email === email) {
-    clearActiveSubscription();
-  }
-}
-
-/**
- * Approve a pending subscription (admin action).
- *
- * @param email - Email of the user to approve
- * @returns Updated subscription or null
- */
-export function approveSubscription(email: string): UserSubscription | null {
-  const all = getAllSubscriptions();
-  const sub = all.find((s) => s.email === email);
-  if (!sub) return null;
-  sub.status = 'active';
-  sub.approvedAt = new Date().toISOString();
-  saveAllSubscriptions(all);
-
-  // If it's the current user, update their local sub too
-  const current = getSubscription();
-  if (current?.email === email) {
-    current.status = 'active';
-    current.approvedAt = sub.approvedAt;
-    saveSubscription(current);
-  }
-
-  return sub;
-}
-
-/**
- * Reject/cancel a subscription (admin action).
- *
- * @param email - Email of the user to reject
- * @returns Updated subscription or null
- */
-export function rejectSubscription(email: string): UserSubscription | null {
-  const all = getAllSubscriptions();
-  const sub = all.find((s) => s.email === email);
-  if (!sub) return null;
-  sub.status = 'cancelled';
-  saveAllSubscriptions(all);
-  return sub;
-}
-
-/**
- * Update a user's subscription plan (admin action).
- *
- * @param email - Email of the user to update
- * @param planId - New plan ID
- * @returns Updated subscription or null
- */
-export function updateSubscriptionPlan(email: string, planId: PlanId): UserSubscription | null {
-  const all = getAllSubscriptions();
-  const sub = all.find((s) => s.email === email);
-  if (!sub) return null;
-  sub.planId = planId;
-  saveAllSubscriptions(all);
-
-  // Sync current user's local sub
-  const current = getSubscription();
-  if (current?.email === email) {
-    current.planId = planId;
-    saveSubscription(current);
-  }
-
-  return sub;
-}
-
-/**
- * Update a user's subscription status (admin action).
- *
- * @param email - Email of the user to update
- * @param status - New status
- * @returns Updated subscription or null
- */
-export function updateSubscriptionStatus(
-  email: string,
-  status: SubStatus
-): UserSubscription | null {
-  const all = getAllSubscriptions();
-  const sub = all.find((s) => s.email === email);
-  if (!sub) return null;
-
-  sub.status = status;
-  if (status === 'active' && !sub.approvedAt) {
-    sub.approvedAt = new Date().toISOString();
-  }
-  saveAllSubscriptions(all);
-
-  // Sync current user's local sub
-  const current = getSubscription();
-  if (current?.email === email) {
-    current.status = status;
-    if (status === 'active' && !current.approvedAt) {
-      current.approvedAt = sub.approvedAt;
-    }
-    saveSubscription(current);
-  }
-
-  return sub;
-}
-
-/**
- * Add extra AI tokens to a user's subscription (admin action).
- *
- * @param email - Email of the user
- * @param tokens - Number of tokens to add (added to monthly limit as bonus)
- * @returns Updated subscription or null
- */
-export function addBonusTokens(email: string, tokens: number): UserSubscription | null {
-  const all = getAllSubscriptions();
-  const sub = all.find((s) => s.email === email);
-  if (!sub) return null;
-
-  // Store bonus tokens as a separate field
-  sub.bonusTokens = (sub.bonusTokens ?? 0) + tokens;
-  saveAllSubscriptions(all);
-
-  // Sync current user's local sub
-  const current = getSubscription();
-  if (current?.email === email) {
-    current.bonusTokens = sub.bonusTokens;
-    saveSubscription(current);
-  }
-
-  return sub;
-}
-
-/**
- * Reset a user's monthly token usage to 0 (admin action).
- *
- * @param email - Email of the user
- * @returns Updated subscription or null
- */
-export function resetTokenUsage(email: string): UserSubscription | null {
-  const all = getAllSubscriptions();
-  const sub = all.find((s) => s.email === email);
-  if (!sub) return null;
-
-  sub.tokensUsedThisMonth = 0;
-  sub.periodStart = new Date().toISOString();
-  saveAllSubscriptions(all);
-
-  // Sync current user's local sub
-  const current = getSubscription();
-  if (current?.email === email) {
-    current.tokensUsedThisMonth = 0;
-    current.periodStart = sub.periodStart;
-    saveSubscription(current);
-  }
-
-  return sub;
-}
+// ─── Admin ───────────────────────────────────────────────────────────────────
+// Admin subscription management is now fully database-driven.
+// All admin actions go through /api/admin/subscription and /api/admin/users.
+// No localStorage is used for admin data.
+// ─────────────────────────────────────────────────────────────────────────────
 
 /** Admin email that can approve demo subscriptions */
 export const ADMIN_EMAIL = 'jjrchefen@hotmail.com';

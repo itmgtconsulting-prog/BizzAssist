@@ -33,7 +33,6 @@ import {
   switchActiveUser,
   clearActiveSubscription,
   saveSubscription,
-  registerSubscription,
   ADMIN_EMAIL,
   type UserSubscription,
 } from '@/app/lib/subscriptions';
@@ -183,7 +182,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 bonusTokens: serverSub.bonusTokens ?? 0,
               };
               saveSubscription(sub);
-              registerSubscription(sub);
               console.log('[checkAccess] Server sub:', sub.status, '/', sub.planId);
               gateAccess(checkSub(sub));
               return;

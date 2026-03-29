@@ -247,7 +247,7 @@ export default function VirksomhedDetalje({ params }: PageProps) {
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* ─── Sticky Header ─── */}
-      <div className="px-6 pt-5 pb-0 border-b border-slate-700/50 bg-slate-900/30">
+      <div className="px-3 sm:px-6 pt-5 pb-0 border-b border-slate-700/50 bg-slate-900/30">
         {/* Top row: back button + actions */}
         <div className="flex items-center justify-between mb-3">
           <button
@@ -350,7 +350,7 @@ export default function VirksomhedDetalje({ params }: PageProps) {
         </div>
 
         {/* Tab bar */}
-        <div className="flex gap-1 -mb-px">
+        <div className="flex gap-1 -mb-px overflow-x-auto scrollbar-hide">
           {tabOrder.map((tabId) => (
             <button
               key={tabId}
@@ -369,7 +369,7 @@ export default function VirksomhedDetalje({ params }: PageProps) {
       </div>
 
       {/* ─── Scrollable Content Area ─── */}
-      <div className="flex-1 overflow-y-auto px-6 py-5">
+      <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-5">
         {/* ══ OVERSIGT ══ */}
         {aktivTab === 'oversigt' && (
           <div className="space-y-6">

@@ -952,7 +952,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
         {/* ─── Venstre: header + tabs + indhold ─── */}
         <div className="flex-1 flex flex-col overflow-hidden min-w-0">
           {/* ─── Header ─── */}
-          <div className="px-6 pt-5 pb-0 border-b border-slate-700/50 bg-slate-900/30">
+          <div className="px-3 sm:px-6 pt-5 pb-0 border-b border-slate-700/50 bg-slate-900/30">
             <div className="flex items-center justify-between mb-3">
               <button
                 onClick={() => router.push('/dashboard/ejendomme')}
@@ -1068,7 +1068,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
             </div>
 
             {/* Tabs */}
-            <div className="flex gap-1 -mb-px">
+            <div className="flex gap-1 -mb-px overflow-x-auto scrollbar-hide">
               {tabs.map((tab) => (
                 <button
                   key={tab.id}
@@ -1086,12 +1086,12 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto px-6 py-5">
+          <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-5">
             {/* ══ OVERBLIK ══ */}
             {aktivTab === 'overblik' && (
               <div className="space-y-2">
                 {/* 2-spalte layout: ejendomsdata (venstre) + økonomi (højre) */}
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                   {/* ─── Rad 1: Matrikel (v) + Ejendomsvurdering (h)
                        CSS grid sikrer automatisk ens højde på disse to bokse ─── */}
 
@@ -1469,7 +1469,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                     </div>
                   </div>
                 ) : cvrVirksomheder.length > 0 ? (
-                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
+                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden overflow-x-auto">
                     <div className="px-4 py-3 border-b border-slate-700/40 flex items-center justify-between">
                       <p className="text-slate-200 text-sm font-semibold">
                         Virksomheder på adressen
@@ -1481,7 +1481,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                       </span>
                     </div>
                     {/* Tabelheader */}
-                    <div className="grid grid-cols-[1fr_1fr_120px_72px] px-4 py-2 text-slate-500 text-xs font-medium border-b border-slate-700/30">
+                    <div className="min-w-[500px] grid grid-cols-[1fr_1fr_120px_72px] px-4 py-2 text-slate-500 text-xs font-medium border-b border-slate-700/30">
                       <span>Virksomhed</span>
                       <span>Industri</span>
                       <span className="text-right">Periode</span>
@@ -1504,7 +1504,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                         return (
                           <div
                             key={v.cvr}
-                            className={`grid grid-cols-[1fr_1fr_120px_72px] px-4 py-3 items-center gap-2 hover:bg-slate-700/10 transition-colors ${!v.aktiv ? 'opacity-50' : ''}`}
+                            className={`min-w-[500px] grid grid-cols-[1fr_1fr_120px_72px] px-4 py-3 items-center gap-2 hover:bg-slate-700/10 transition-colors ${!v.aktiv ? 'opacity-50' : ''}`}
                           >
                             {/* Virksomhed */}
                             <div className="min-w-0 flex items-center gap-2">
@@ -1665,9 +1665,9 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                           Ingen aktive bygninger tilgængeligt
                         </div>
                       ) : (
-                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden overflow-x-auto">
                           {/* Kolonneheader: ▶ | Byg# | Anvendelse | Opf.år | Bebygget | Samlet | Geo | Status */}
-                          <div className="grid grid-cols-[28px_40px_1fr_68px_96px_96px_52px_90px] px-3 py-2 text-slate-500 text-xs font-medium border-b border-slate-700/30">
+                          <div className="min-w-[700px] grid grid-cols-[28px_40px_1fr_68px_96px_96px_52px_90px] px-3 py-2 text-slate-500 text-xs font-medium border-b border-slate-700/30">
                             <span />
                             <span className="text-center">Nr.</span>
                             <span>Anvendelse</span>
@@ -1721,7 +1721,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                                       return next;
                                     })
                                   }
-                                  className="w-full grid grid-cols-[28px_40px_1fr_68px_96px_96px_52px_90px] px-3 py-1.5 text-sm hover:bg-slate-700/20 transition-colors text-left items-center"
+                                  className="w-full min-w-[700px] grid grid-cols-[28px_40px_1fr_68px_96px_96px_52px_90px] px-3 py-1.5 text-sm hover:bg-slate-700/20 transition-colors text-left items-center"
                                 >
                                   {/* Chevron til venstre */}
                                   <ChevronRight
@@ -1835,9 +1835,9 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                           Ingen enheder tilgængeligt
                         </div>
                       ) : (
-                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden overflow-x-auto">
                           {/* Kolonneheader: ▶ | Byg.nr | Anvendelse | Areal | Værelser */}
-                          <div className="grid grid-cols-[28px_44px_1fr_96px_72px] px-3 py-2 text-slate-500 text-xs font-medium border-b border-slate-700/30">
+                          <div className="min-w-[500px] grid grid-cols-[28px_44px_1fr_96px_72px] px-3 py-2 text-slate-500 text-xs font-medium border-b border-slate-700/30">
                             <span />
                             <span className="text-center">Byg.</span>
                             <span>Anvendelse</span>
@@ -1889,7 +1889,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                                       return next;
                                     })
                                   }
-                                  className="w-full grid grid-cols-[28px_44px_1fr_96px_72px] px-3 py-1.5 text-sm hover:bg-slate-700/20 transition-colors text-left items-center"
+                                  className="w-full min-w-[500px] grid grid-cols-[28px_44px_1fr_96px_72px] px-3 py-1.5 text-sm hover:bg-slate-700/20 transition-colors text-left items-center"
                                 >
                                   <ChevronRight
                                     size={14}
@@ -1995,7 +1995,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
 
                       {/* Jordstykker tabel */}
                       {matrikelData.jordstykker.length > 0 && (
-                        <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden">
+                        <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden overflow-x-auto">
                           <div className="px-4 py-2.5 border-b border-slate-700/30">
                             <p className="text-slate-300 text-xs font-semibold uppercase tracking-wider">
                               Jordstykker ({matrikelData.jordstykker.length})
@@ -2005,7 +2005,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                             {matrikelData.jordstykker.map((js) => (
                               <div
                                 key={js.id}
-                                className="px-4 py-2.5 grid grid-cols-[1fr_100px_80px_auto] gap-3 items-center"
+                                className="min-w-[450px] px-4 py-2.5 grid grid-cols-[1fr_100px_80px_auto] gap-3 items-center"
                               >
                                 <div>
                                   <p className="text-white text-sm font-medium">
@@ -2295,7 +2295,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
 
                       {/* Vurderingshistorik — collapsible tabel med forelobige prepended */}
                       {(alleVurderinger.length > 1 || forelobige.length > 0) && (
-                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden overflow-x-auto">
                           <button
                             onClick={() => setVisVurderingHistorik((v) => !v)}
                             className="w-full flex items-center gap-2 px-4 py-3 hover:bg-slate-700/20 transition-colors"
@@ -2316,7 +2316,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                           {visVurderingHistorik && (
                             <>
                               {/* Header */}
-                              <div className="grid grid-cols-[140px_1fr_1fr_100px] px-4 py-2 text-slate-500 text-xs font-medium border-t border-slate-700/30 bg-slate-900/30">
+                              <div className="min-w-[550px] grid grid-cols-[140px_1fr_1fr_100px] px-4 py-2 text-slate-500 text-xs font-medium border-t border-slate-700/30 bg-slate-900/30">
                                 <span>Aar</span>
                                 <span>Ejendomsvaerdi</span>
                                 <span>Grundvaerdi</span>
@@ -2327,7 +2327,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                               {forelobige.map((fv, i) => (
                                 <div
                                   key={`forelobig-${fv.vurderingsaar}-${i}`}
-                                  className="grid grid-cols-[140px_1fr_1fr_100px] px-4 py-2.5 text-sm border-t border-amber-500/10 bg-amber-500/[0.02] hover:bg-amber-500/5 items-center"
+                                  className="min-w-[550px] grid grid-cols-[140px_1fr_1fr_100px] px-4 py-2.5 text-sm border-t border-amber-500/10 bg-amber-500/[0.02] hover:bg-amber-500/5 items-center"
                                 >
                                   <div className="flex items-center gap-2">
                                     <span className="text-amber-200 font-medium">
@@ -2354,7 +2354,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                                 return (
                                   <div
                                     key={`${v.aar}-${i}`}
-                                    className="grid grid-cols-[140px_1fr_1fr_100px] px-4 py-2.5 text-sm border-t border-slate-700/20 hover:bg-slate-700/10 items-center"
+                                    className="min-w-[550px] grid grid-cols-[140px_1fr_1fr_100px] px-4 py-2.5 text-sm border-t border-slate-700/20 hover:bg-slate-700/10 items-center"
                                   >
                                     <div className="flex items-center gap-2">
                                       <span className="text-slate-200 font-medium">
@@ -2549,7 +2549,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                             <p className="text-slate-300 text-sm font-semibold mb-2">
                               Nuværende beskatning ({nyeste.vurderingsaar + 1})
                             </p>
-                            <div className="grid grid-cols-2 gap-3">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                               {/* Grundskyld */}
                               <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
                                 <p className="text-white text-lg font-bold flex items-center gap-1.5">
@@ -2615,7 +2615,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
 
                         {/* ── Fallback: kun estimeret grundskyld fra Datafordeler ── */}
                         {!nyeste && vurdering?.estimereretGrundskyld != null && (
-                          <div className="grid grid-cols-2 gap-3">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
                               <p className="text-white text-lg font-bold">
                                 {formatDKK(vurdering.estimereretGrundskyld)}
@@ -2643,7 +2643,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
             {aktivTab === 'dokumenter' && (
               <div className="space-y-2">
                 {/* ── Dokumenter (samlet kort) ── */}
-                <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden">
+                <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden overflow-x-auto">
                   {/* Kort-header */}
                   <div className="px-4 py-2.5 border-b border-slate-700/30 flex items-center gap-2">
                     <FileText size={15} className="text-slate-400" />
@@ -2762,7 +2762,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                     return (
                       <div className="border-b border-slate-700/30">
                         {/* Kolonneheader — identisk med plan-tabellen */}
-                        <div className="grid grid-cols-[28px_72px_1fr_120px_80px] gap-x-3 px-4 py-1.5 border-b border-slate-700/20">
+                        <div className="min-w-[500px] grid grid-cols-[28px_72px_1fr_120px_80px] gap-x-3 px-4 py-1.5 border-b border-slate-700/20">
                           <span />
                           <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
                             År
@@ -2779,7 +2779,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                         </div>
 
                         {/* BBR-meddelelse */}
-                        <div className="grid grid-cols-[28px_72px_1fr_120px_80px] gap-x-3 px-4 py-2 border-b border-slate-700/15 hover:bg-slate-700/10 transition-colors items-start">
+                        <div className="min-w-[500px] grid grid-cols-[28px_72px_1fr_120px_80px] gap-x-3 px-4 py-2 border-b border-slate-700/15 hover:bg-slate-700/10 transition-colors items-start">
                           <span />
                           <span className="text-sm text-slate-300 tabular-nums">
                             {(() => {
@@ -2842,7 +2842,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                         {/* Jordforureningsattest */}
                         <div>
                           <div
-                            className="grid grid-cols-[28px_72px_1fr_120px_80px] gap-x-3 px-4 py-2 hover:bg-slate-700/10 transition-colors cursor-pointer items-start"
+                            className="min-w-[500px] grid grid-cols-[28px_72px_1fr_120px_80px] gap-x-3 px-4 py-2 hover:bg-slate-700/10 transition-colors cursor-pointer items-start"
                             onClick={() => {
                               if (!jordItem) return;
                               setExpandedJord((prev) => {
@@ -2964,7 +2964,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                               ? `/api/matrikelkort?ejerlavKode=${rel.ejerlavKode}&matrikelnr=${encodeURIComponent(rel.matrikelnr)}`
                               : null;
                           return (
-                            <div className="grid grid-cols-[28px_72px_1fr_120px_80px] gap-x-3 px-4 py-2 border-b border-slate-700/15 hover:bg-slate-700/10 transition-colors items-start">
+                            <div className="min-w-[500px] grid grid-cols-[28px_72px_1fr_120px_80px] gap-x-3 px-4 py-2 border-b border-slate-700/15 hover:bg-slate-700/10 transition-colors items-start">
                               <span />
                               <span className="text-sm text-slate-300 tabular-nums">—</span>
                               <div>
@@ -3016,7 +3016,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
 
                         {/* Fredet bygning — kun hvis BBR har fredningsdata */}
                         {bbrData?.bbr?.some((b) => b.fredning) && (
-                          <div className="grid grid-cols-[28px_72px_1fr_120px_80px] gap-x-3 px-4 py-2 border-b border-slate-700/15 hover:bg-slate-700/10 transition-colors items-start">
+                          <div className="min-w-[500px] grid grid-cols-[28px_72px_1fr_120px_80px] gap-x-3 px-4 py-2 border-b border-slate-700/15 hover:bg-slate-700/10 transition-colors items-start">
                             <span />
                             <span className="text-sm text-slate-300 tabular-nums">—</span>
                             <div>
@@ -3065,7 +3065,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                     {plandata && plandata.length > 0 && (
                       <div>
                         {/* Header */}
-                        <div className="grid grid-cols-[28px_72px_1fr_120px_80px] gap-x-3 px-4 py-2 border-b border-slate-700/20">
+                        <div className="min-w-[500px] grid grid-cols-[28px_72px_1fr_120px_80px] gap-x-3 px-4 py-2 border-b border-slate-700/20">
                           <span />
                           <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
                             År
@@ -3144,7 +3144,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                             >
                               {/* Hoved-række */}
                               <div
-                                className="grid grid-cols-[28px_72px_1fr_120px_80px] gap-x-3 px-4 py-2 hover:bg-slate-700/10 transition-colors cursor-pointer items-start"
+                                className="min-w-[500px] grid grid-cols-[28px_72px_1fr_120px_80px] gap-x-3 px-4 py-2 hover:bg-slate-700/10 transition-colors cursor-pointer items-start"
                                 onClick={() =>
                                   setExpandedPlaner((prev) => {
                                     const next = new Set(prev);
@@ -3282,7 +3282,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
 
                     {energimaerker && energimaerker.length > 0 && (
                       <div>
-                        <div className="grid grid-cols-[56px_1fr_100px_130px_80px] gap-x-3 px-4 py-1.5 border-b border-slate-700/20">
+                        <div className="min-w-[550px] grid grid-cols-[56px_1fr_100px_130px_80px] gap-x-3 px-4 py-1.5 border-b border-slate-700/20">
                           <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
                             Klasse
                           </span>
@@ -3324,7 +3324,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                           return (
                             <div
                               key={m.serialId}
-                              className="grid grid-cols-[56px_1fr_100px_130px_80px] gap-x-3 px-4 py-2 border-b border-slate-700/15 hover:bg-slate-700/10 transition-colors items-center"
+                              className="min-w-[550px] grid grid-cols-[56px_1fr_100px_130px_80px] gap-x-3 px-4 py-2 border-b border-slate-700/15 hover:bg-slate-700/10 transition-colors items-center"
                             >
                               <span
                                 style={klasseStyle}
@@ -3589,7 +3589,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
       <div className="flex flex-1 overflow-hidden">
         {/* Venstre kolonne: scrollbart indhold + evt. download-bar */}
         <div className="flex-1 flex flex-col overflow-hidden">
-          <div className="flex-1 overflow-y-auto px-6 py-5">
+          <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-5">
             {/* ══════════════════════════════════════════
               OVERBLIK
           ══════════════════════════════════════════ */}
@@ -3698,7 +3698,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                     <p className="text-slate-400 text-xs font-medium uppercase tracking-wide mb-3">
                       Seneste handel
                     </p>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
                         <p className="text-white text-2xl font-bold">
                           {formatDKK(ejendom.senesteHandel.pris)}
@@ -3818,7 +3818,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                 {/* Jordstykker */}
                 <div>
                   <SectionTitle title="Jordstykker" />
-                  <div className="grid grid-cols-2 gap-3 mb-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
                     <DataKort label="Matrikler" value="1" />
                     <DataKort
                       label="Grundareal"
@@ -3884,9 +3884,9 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                           Ingen bygningsdata tilgængeligt
                         </div>
                       ) : (
-                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden overflow-x-auto">
                           {/* Kolonneheader */}
-                          <div className="grid grid-cols-[1fr_72px_100px_100px_28px] px-4 py-2 text-slate-500 text-xs font-medium border-b border-slate-700/30">
+                          <div className="min-w-[500px] grid grid-cols-[1fr_72px_100px_100px_28px] px-4 py-2 text-slate-500 text-xs font-medium border-b border-slate-700/30">
                             <span>Anvendelse</span>
                             <span className="text-right">Opf. år</span>
                             <span className="text-right">Bebygget</span>
@@ -3935,7 +3935,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                                       return next;
                                     })
                                   }
-                                  className="w-full grid grid-cols-[1fr_72px_100px_100px_28px] px-4 py-3 text-sm hover:bg-slate-700/20 transition-colors text-left items-center"
+                                  className="w-full min-w-[500px] grid grid-cols-[1fr_72px_100px_100px_28px] px-4 py-3 text-sm hover:bg-slate-700/20 transition-colors text-left items-center"
                                 >
                                   <span className="text-slate-200 truncate pr-2">
                                     {b.anvendelse || '–'}
@@ -4010,8 +4010,8 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                           Ingen enheder tilgængeligt
                         </div>
                       ) : (
-                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
-                          <div className="grid grid-cols-[1fr_90px_72px_28px] px-4 py-2 text-slate-500 text-xs font-medium border-b border-slate-700/30">
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden overflow-x-auto">
+                          <div className="min-w-[400px] grid grid-cols-[1fr_90px_72px_28px] px-4 py-2 text-slate-500 text-xs font-medium border-b border-slate-700/30">
                             <span>Anvendelse</span>
                             <span className="text-right">Areal</span>
                             <span className="text-right">Værelser</span>
@@ -4047,7 +4047,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                                       return next;
                                     })
                                   }
-                                  className="w-full grid grid-cols-[1fr_90px_72px_28px] px-4 py-3 text-sm hover:bg-slate-700/20 transition-colors text-left items-center"
+                                  className="w-full min-w-[400px] grid grid-cols-[1fr_90px_72px_28px] px-4 py-3 text-sm hover:bg-slate-700/20 transition-colors text-left items-center"
                                 >
                                   <span className="text-slate-200 truncate pr-2">
                                     {e.anvendelse || '–'}
@@ -4128,7 +4128,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
 
                       {/* Jordstykker tabel */}
                       {matrikelData.jordstykker.length > 0 && (
-                        <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden">
+                        <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden overflow-x-auto">
                           <div className="px-4 py-2.5 border-b border-slate-700/30">
                             <p className="text-slate-300 text-xs font-semibold uppercase tracking-wider">
                               Jordstykker ({matrikelData.jordstykker.length})
@@ -4138,7 +4138,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                             {matrikelData.jordstykker.map((js) => (
                               <div
                                 key={js.id}
-                                className="px-4 py-2.5 grid grid-cols-[1fr_100px_80px_auto] gap-3 items-center"
+                                className="min-w-[450px] px-4 py-2.5 grid grid-cols-[1fr_100px_80px_auto] gap-3 items-center"
                               >
                                 <div>
                                   <p className="text-white text-sm font-medium">
@@ -4389,7 +4389,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                   <div>
                     <SectionTitle title="Tingbogsattest" onDownload={() => undefined} />
                     <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                      <div className="grid grid-cols-2 gap-4 mb-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
                         <div>
                           <p className="text-slate-500 text-xs mb-1">BFE-nr.</p>
                           <p className="text-white font-semibold text-sm">{ejendom.bfe}</p>

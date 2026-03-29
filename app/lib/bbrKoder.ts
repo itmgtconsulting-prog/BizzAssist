@@ -115,6 +115,18 @@ const afloebsforhold: Record<number, string> = {
   29: 'Ingen oplysning',
 };
 
+// ─── Supplerende varme (BYG_SUPPLERENDE_VARME) ──────────────────────────
+const supplerendeVarme: Record<number, string> = {
+  1: 'Varmepumpe',
+  2: 'Brændeovn / pejs',
+  3: 'Solpaneler / solfangere',
+  4: 'Gasradiator(er)',
+  5: 'Elradiator(er)',
+  6: 'Biogasanlæg',
+  7: 'Andet',
+  99: 'Ingen oplysning',
+};
+
 // ─── Bygningsanvendelse (BYG_BYGANVENDELSE) ───────────────────────────────
 const bygAnvendelse: Record<number, string> = {
   110: 'Stuehus til landbrugsejendom',
@@ -327,6 +339,14 @@ export function afloebsforholdTekst(kode: number | null | undefined): string {
 }
 
 /**
+ * Oversætter et BBR supplerende varme-kode til tekst.
+ * @param kode - Numerisk kode fra BBR (byg058SupplerendeVarme)
+ */
+export function supplerendeVarmeTekst(kode: number | null | undefined): string {
+  return lookup(supplerendeVarme, kode);
+}
+
+/**
  * Oversætter et BBR bygningsanvendelseskode til tekst.
  * @param kode - Numerisk kode fra BBR
  */
@@ -406,4 +426,64 @@ const koekkforhold: Record<number, string> = {
  */
 export function koekkforholdTekst(kode: number | null | undefined): string {
   return lookup(koekkforhold, kode);
+}
+
+// ─── Boligtype (ENH_BOLIGTYPE) ──────────────────────────────────────────────
+const boligtype: Record<string, string> = {
+  '1': 'Egentlig beboelseslejlighed',
+  '2': 'Blandet bolig og erhverv',
+  '3': 'Enkeltværelse',
+  '4': 'Fællesbolig',
+  '5': 'Sommer-/fritidsbolig',
+  E: 'Andet (erhverv/institution)',
+};
+
+/**
+ * Oversætter et BBR boligtypekode til tekst.
+ * @param kode - Kode fra BBR (enh023Boligtype) — streng ("1"-"5" eller "E")
+ */
+export function boligtypeTekst(kode: string | null | undefined): string {
+  if (!kode) return '–';
+  return boligtype[kode] ?? `Ukendt (${kode})`;
+}
+
+// ─── Energiforsyning (ENH_ENERGIFORSYNING) ──────────────────────────────────
+const energiforsyning: Record<number, string> = {
+  1: 'Gas fra værk',
+  2: '230 V el fra værk',
+  3: '400 V el fra værk',
+  4: '230 V el + gas fra værk',
+  5: '400 V el + gas fra værk',
+  6: 'Hverken el eller gas',
+};
+
+/**
+ * Oversætter et BBR energiforsyningskode til tekst.
+ * @param kode - Numerisk kode fra BBR (enh035Energiforsyning)
+ */
+export function energiforsyningTekst(kode: number | null | undefined): string {
+  return lookup(energiforsyning, kode);
+}
+
+// ─── Ejerforholdskode (EJF) ────────────────────────────────────────────────
+const ejerforhold: Record<string, string> = {
+  '10': 'Privatpersoner eller I/S',
+  '20': 'A/S, ApS eller P/S',
+  '30': 'Forening, legat eller selvejende institution',
+  '40': 'Offentlig myndighed',
+  '41': 'Staten',
+  '50': 'Andelsboligforening',
+  '60': 'Almennyttigt boligselskab',
+  '70': 'Fond',
+  '80': 'Andet',
+  '90': 'Ikke oplyst',
+};
+
+/**
+ * Oversætter en ejerforholdskode fra Datafordeler til tekst.
+ * @param kode - Ejerforholdskode streng (f.eks. "10", "20")
+ */
+export function ejerforholdTekst(kode: string | null | undefined): string {
+  if (!kode) return '–';
+  return ejerforhold[kode] ?? `Ukendt (${kode})`;
 }

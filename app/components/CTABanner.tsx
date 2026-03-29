@@ -22,7 +22,7 @@ export default function CTABanner() {
             <p className="text-slate-400 text-xl mb-10 max-w-xl mx-auto">{cta.subtitle}</p>
             <div className="flex justify-center">
               <Link
-                href="/signup"
+                href="/login/signup"
                 className="inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 text-white font-bold text-lg px-8 py-4 rounded-xl transition-colors"
               >
                 {cta.button}

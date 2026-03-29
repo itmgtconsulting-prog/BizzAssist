@@ -21,11 +21,14 @@ import {
   ydervaegMaterialeTekst,
   varmeInstallationTekst,
   opvarmningsmiddelTekst,
+  supplerendeVarmeTekst,
   vandforsyningTekst,
   afloebsforholdTekst,
   bygAnvendelseTekst,
   bygStatusTekst,
   enhedAnvendelseTekst,
+  boligtypeTekst,
+  energiforsyningTekst,
 } from '@/app/lib/bbrKoder';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
@@ -100,6 +103,10 @@ export interface LiveBBRBygning {
   anvendelseskode: number | null;
   energimaerke: string | null;
   fredning: string | null;
+  /** Supplerende varme (byg058), f.eks. "Brændeovn / pejs" */
+  supplerendeVarme: string | null;
+  /** Bevaringsværdighedsreference (byg071) — SAVE-registrering */
+  bevaringsvaerdighed: string | null;
   status: string | null;
   bygningsnr: number | null;
   /** Seneste revisionsdato fra BBR (byg094Revisionsdato) — ISO-dato-streng */
@@ -121,6 +128,10 @@ export interface LiveBBREnhed {
   arealErhverv: number | null;
   vaerelser: number | null;
   anvendelse: string;
+  /** Boligtype (enh023), f.eks. "Egentlig beboelseslejlighed" */
+  boligtype: string | null;
+  /** Energiforsyning (enh035), f.eks. "230 V el fra værk" */
+  energiforsyning: string | null;
   status: string | null;
   energimaerke: string | null;
   varmeinstallation: string;
@@ -454,6 +465,10 @@ export function normaliseBygning(raw: RawBBRBygning): LiveBBRBygning {
     anvendelseskode: parseCode(raw.byg021BygningensAnvendelse) ?? null,
     energimaerke: null,
     fredning: raw.byg070Fredning ?? null,
+    supplerendeVarme: raw.byg058SupplerendeVarme
+      ? supplerendeVarmeTekst(parseInt(raw.byg058SupplerendeVarme, 10))
+      : null,
+    bevaringsvaerdighed: raw.byg071BevaringsvaerdighedReference ?? null,
     status: raw.status != null ? bygStatusTekst(parseInt(raw.status, 10)) : null,
     bygningsnr: null, // udfyldes fra WFS bygningPunkter efter fetch
     revisionsdato: raw.byg094Revisionsdato ?? null,
@@ -486,6 +501,10 @@ export function normaliseEnhed(raw: RawBBREnhed): LiveBBREnhed {
     arealErhverv: raw.enh028ArealTilErhverv ?? null,
     vaerelser: raw.enh031AntalVaerelser ?? null,
     anvendelse: enhedAnvendelseTekst(parseCode(raw.enh020EnhedensAnvendelse)),
+    boligtype: raw.enh023Boligtype ? boligtypeTekst(raw.enh023Boligtype) : null,
+    energiforsyning: raw.enh035Energiforsyning
+      ? energiforsyningTekst(parseCode(raw.enh035Energiforsyning))
+      : null,
     status: raw.status ?? null,
     energimaerke: null,
     varmeinstallation: varmeInstallationTekst(parseCode(raw.enh051Varmeinstallation)),

@@ -12,7 +12,7 @@ export const translations = {
     },
     hero: {
       badge: 'Danmarks #1 forretningsintelligens platform',
-      title: 'Data om',
+      title: 'Data og Information om',
       titleHighlight: 'ejendomme, virksomheder og deres ejere',
       subtitle:
         'BizzAssist samler data fra offentlige data kilder og lader dig analysere det med AI.',

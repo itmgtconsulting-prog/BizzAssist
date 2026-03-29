@@ -76,7 +76,7 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: 'hent_bbr_data',
     description:
-      'Hent BBR-bygningsdata (opførelsesår, areal, materialer, etager, opvarmning, enheder, energimærke) for en ejendom via DAWA-adresse-ID. Returnerer også ejendomsrelationer med BFE-nummer.',
+      'Hent BBR-bygningsdata (opførelsesår, areal, materialer, etager, opvarmning, supplerende varme, vandforsyning, bevaringsværdighed, enheder med boligtype og energiforsyning) for en ejendom via DAWA-adresse-ID. Returnerer også ejendomsrelationer med BFE-nummer.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -114,7 +114,7 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: 'hent_ejerskab',
     description:
-      'Hent ejerskabsdata (ejertype, ejerandel, CVR for selskaber) fra Datafordeler. Kræver BFE-nummer.',
+      'Hent ejerskabsdata (ejertype, ejerforholdskode, ejerandel som brøk, CVR for selskaber, ejerskab-startdato) fra Datafordeler. Kræver BFE-nummer.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -138,7 +138,7 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: 'hent_energimaerke',
     description:
-      'Hent energimærke (energiklasse A-G, gyldighed) fra Energistyrelsen. Kræver BFE-nummer.',
+      'Hent energimærke (energiklasse A-G, gyldig fra/til dato, status, adresse, bygningsdata med varmeforsyning, PDF-link) fra Energistyrelsen. Kræver BFE-nummer.',
     input_schema: {
       type: 'object' as const,
       properties: {

@@ -1,5 +1,7 @@
 'use client';
 
+import Link from 'next/link';
+import { ArrowRight } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';
 
@@ -41,6 +43,17 @@ export default function Hero() {
           <p className="text-xl text-slate-400 max-w-2xl mx-auto mb-10 leading-relaxed">
             {hero.subtitle}
           </p>
+
+          {/* CTA button */}
+          <div className="flex justify-center">
+            <Link
+              href="/login/signup"
+              className="inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 text-white font-bold text-lg px-8 py-4 rounded-xl transition-colors shadow-lg shadow-blue-600/25"
+            >
+              {translations[lang].nav.getStarted}
+              <ArrowRight size={20} />
+            </Link>
+          </div>
         </div>
 
         {/* App preview — real dashboard screenshot */}

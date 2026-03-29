@@ -732,6 +732,11 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
           tagmateriale: b.tagmateriale,
           ydervaeggene: b.ydervaeg,
           energimaerke: b.energimaerke,
+          varmeinstallation: b.varmeinstallation !== '–' ? b.varmeinstallation : null,
+          opvarmningsform: b.opvarmningsform !== '–' ? b.opvarmningsform : null,
+          supplerendeVarme: b.supplerendeVarme,
+          vandforsyning: b.vandforsyning !== '–' ? b.vandforsyning : null,
+          bevaringsvaerdighed: b.bevaringsvaerdighed,
         })),
         vurdering: vurdering
           ? {
@@ -1166,9 +1171,18 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                       )}
                     </p>
                     {vurderingLoader ? (
-                      <div className="flex items-center gap-2 text-slate-500 text-xs">
-                        <div className="w-3 h-3 border border-slate-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
-                        Henter vurdering…
+                      <div className="space-y-2 animate-pulse">
+                        <div className="grid grid-cols-2 gap-x-3">
+                          <div>
+                            <div className="h-3 w-20 bg-slate-700/60 rounded mb-1.5" />
+                            <div className="h-5 w-28 bg-slate-700/40 rounded" />
+                          </div>
+                          <div>
+                            <div className="h-3 w-16 bg-slate-700/60 rounded mb-1.5" />
+                            <div className="h-5 w-24 bg-slate-700/40 rounded" />
+                          </div>
+                        </div>
+                        <div className="h-3 w-32 bg-slate-700/40 rounded" />
                       </div>
                     ) : vurdering ? (
                       <div className="space-y-2">
@@ -1638,7 +1652,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                   return (
                     <div>
                       <SectionTitle title="Bygninger" />
-                      <div className="grid grid-cols-4 gap-2 mb-2">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-2">
                         <DataKort
                           label="Bygninger"
                           value={bbrLoader ? '…' : `${bygninger.length}`}
@@ -1657,8 +1671,19 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                         />
                       </div>
                       {bbrLoader ? (
-                        <div className="text-slate-500 text-sm text-center py-3">
-                          Henter bygningsdata…
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden animate-pulse">
+                          {[1, 2, 3].map((n) => (
+                            <div
+                              key={n}
+                              className="px-3 py-2.5 border-b border-slate-700/20 flex items-center gap-3"
+                            >
+                              <div className="w-4 h-4 bg-slate-700/50 rounded" />
+                              <div className="h-3 w-8 bg-slate-700/50 rounded" />
+                              <div className="h-3 flex-1 bg-slate-700/30 rounded" />
+                              <div className="h-3 w-12 bg-slate-700/40 rounded" />
+                              <div className="h-3 w-16 bg-slate-700/40 rounded" />
+                            </div>
+                          ))}
                         </div>
                       ) : bygninger.length === 0 ? (
                         <div className="text-slate-500 text-sm text-center py-3">
@@ -1686,6 +1711,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                                 ['Tagmateriale', b.tagmateriale || null],
                                 ['Varmeinstallation', b.varmeinstallation || null],
                                 ['Opvarmningsform', b.opvarmningsform || null],
+                                ['Supplerende varme', b.supplerendeVarme || null],
                                 ['Vandforsyning', b.vandforsyning || null],
                                 ['Afløb', b.afloeb || null],
                                 ['Etager', b.antalEtager != null ? `${b.antalEtager}` : null],
@@ -1702,10 +1728,17 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                                     : null,
                                 ],
                                 [
+                                  'Erhvervsenheder',
+                                  b.antalErhvervsenheder != null && b.antalErhvervsenheder > 0
+                                    ? `${b.antalErhvervsenheder}`
+                                    : null,
+                                ],
+                                [
                                   'Ombygningsår',
                                   b.ombygningsaar != null ? `${b.ombygningsaar}` : null,
                                 ],
                                 ['Fredning', b.fredning || null],
+                                ['Bevaringsværdighed', b.bevaringsvaerdighed || null],
                               ] as [string, string | null][]
                             ).filter((row): row is [string, string] => row[1] !== null);
                             return (
@@ -1814,7 +1847,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                   return (
                     <div>
                       <SectionTitle title="Enheder" />
-                      <div className="grid grid-cols-4 gap-2 mb-2">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-2">
                         <DataKort
                           label="Enheder i alt"
                           value={bbrLoader ? '…' : `${enheder.length}`}
@@ -1827,8 +1860,18 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                         />
                       </div>
                       {bbrLoader ? (
-                        <div className="text-slate-500 text-sm text-center py-3">
-                          Henter enhedsdata…
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden animate-pulse">
+                          {[1, 2].map((n) => (
+                            <div
+                              key={n}
+                              className="px-3 py-2.5 border-b border-slate-700/20 flex items-center gap-3"
+                            >
+                              <div className="w-4 h-4 bg-slate-700/50 rounded" />
+                              <div className="h-3 w-8 bg-slate-700/50 rounded" />
+                              <div className="h-3 flex-1 bg-slate-700/30 rounded" />
+                              <div className="h-3 w-14 bg-slate-700/40 rounded" />
+                            </div>
+                          ))}
                         </div>
                       ) : enheder.length === 0 ? (
                         <div className="text-slate-500 text-sm text-center py-3">
@@ -1857,6 +1900,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                                 ['Adresse', e.adressebetegnelse || null],
                                 ['Etage', e.etage || null],
                                 ['Dør', e.doer || null],
+                                ['Boligtype', e.boligtype || null],
                                 ['Status', e.status || null],
                                 [
                                   'Boligareal',
@@ -1874,6 +1918,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                                   'Varmeinstallation',
                                   e.varmeinstallation !== '–' ? e.varmeinstallation : null,
                                 ],
+                                ['Energiforsyning', e.energiforsyning || null],
                               ] as [string, string | null][]
                             ).filter((row): row is [string, string] => row[1] !== null);
                             return (
@@ -2164,6 +2209,21 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                           ejer.ejerandel_taeller != null && ejer.ejerandel_naevner
                             ? Math.round((ejer.ejerandel_taeller / ejer.ejerandel_naevner) * 100)
                             : null;
+                        /** Ejerforholdskode som forklarende tekst */
+                        const ejerforholdMap: Record<string, string> = {
+                          '10': 'Privatpersoner eller I/S',
+                          '20': 'A/S, ApS eller P/S',
+                          '30': 'Forening, legat eller selvejende inst.',
+                          '40': 'Offentlig myndighed',
+                          '41': 'Staten',
+                          '50': 'Andelsboligforening',
+                          '60': 'Almennyttigt boligselskab',
+                          '70': 'Fond',
+                          '80': 'Andet',
+                        };
+                        const ejerforholdTxt = ejer.ejerforholdskode
+                          ? (ejerforholdMap[ejer.ejerforholdskode] ?? null)
+                          : null;
                         return (
                           <div
                             key={i}
@@ -2171,7 +2231,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                           >
                             <div className="flex items-start justify-between gap-3">
                               <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2 mb-1">
+                                <div className="flex items-center gap-2 mb-1 flex-wrap">
                                   <span
                                     className={`px-2 py-0.5 rounded-full text-xs font-medium ${
                                       ejer.ejertype === 'selskab'
@@ -2181,6 +2241,11 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                                   >
                                     {ejer.ejertype === 'selskab' ? 'Selskab' : 'Person'}
                                   </span>
+                                  {ejerforholdTxt && (
+                                    <span className="px-2 py-0.5 rounded-full text-xs text-slate-400 bg-slate-700/40 border border-slate-600/30">
+                                      {ejerforholdTxt}
+                                    </span>
+                                  )}
                                 </div>
                                 {ejer.cvr ? (
                                   <Link
@@ -2192,15 +2257,23 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                                 ) : (
                                   <p className="text-slate-400 text-sm">Privat person</p>
                                 )}
-                                {ejer.virkningFra && (
-                                  <p className="text-slate-500 text-xs mt-1">
-                                    Ejer siden{' '}
-                                    {new Date(ejer.virkningFra).toLocaleDateString('da-DK')}
-                                  </p>
-                                )}
+                                <div className="flex items-center gap-3 mt-1 flex-wrap">
+                                  {ejer.virkningFra && (
+                                    <p className="text-slate-500 text-xs">
+                                      Ejer siden{' '}
+                                      {new Date(ejer.virkningFra).toLocaleDateString('da-DK')}
+                                    </p>
+                                  )}
+                                  {ejer.ejerandel_taeller != null &&
+                                    ejer.ejerandel_naevner != null && (
+                                      <p className="text-slate-500 text-xs">
+                                        Andel: {ejer.ejerandel_taeller}/{ejer.ejerandel_naevner}
+                                      </p>
+                                    )}
+                                </div>
                               </div>
                               {ejerandelPct != null && (
-                                <span className="text-white text-sm font-semibold flex-shrink-0">
+                                <span className="text-white text-lg font-semibold flex-shrink-0">
                                   {ejerandelPct}%
                                 </span>
                               )}
@@ -3282,7 +3355,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
 
                     {energimaerker && energimaerker.length > 0 && (
                       <div>
-                        <div className="min-w-[550px] grid grid-cols-[56px_1fr_100px_130px_80px] gap-x-3 px-4 py-1.5 border-b border-slate-700/20">
+                        <div className="min-w-[650px] grid grid-cols-[56px_1fr_100px_120px_120px_80px] gap-x-3 px-4 py-1.5 border-b border-slate-700/20">
                           <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
                             Klasse
                           </span>
@@ -3291,6 +3364,9 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                           </span>
                           <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
                             Status
+                          </span>
+                          <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
+                            Gyldig fra
                           </span>
                           <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
                             Gyldig til
@@ -3324,7 +3400,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                           return (
                             <div
                               key={m.serialId}
-                              className="min-w-[550px] grid grid-cols-[56px_1fr_100px_130px_80px] gap-x-3 px-4 py-2 border-b border-slate-700/15 hover:bg-slate-700/10 transition-colors items-center"
+                              className="min-w-[650px] grid grid-cols-[56px_1fr_100px_120px_120px_80px] gap-x-3 px-4 py-2 border-b border-slate-700/15 hover:bg-slate-700/10 transition-colors items-center"
                             >
                               <span
                                 style={klasseStyle}
@@ -3341,6 +3417,8 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                                       : `${m.bygninger.length} bygninger`}
                                     {m.bygninger[0]?.opfoerelsesaar != null &&
                                       ` · ${m.bygninger[0].opfoerelsesaar}`}
+                                    {m.bygninger[0]?.varmeforsyning &&
+                                      ` · ${m.bygninger[0].varmeforsyning}`}
                                   </p>
                                 )}
                               </div>
@@ -3348,6 +3426,9 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                                 className={`inline-flex items-center self-start px-2 py-0.5 rounded text-xs font-medium ${statusKlasse}`}
                               >
                                 {m.status ?? '—'}
+                              </span>
+                              <span className="text-sm tabular-nums text-slate-400">
+                                {m.gyldigFra ?? '—'}
                               </span>
                               <span
                                 className={`text-sm tabular-nums ${m.status === 'Ugyldig' ? 'text-red-400' : 'text-slate-300'}`}
@@ -3856,7 +3937,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                   return (
                     <div>
                       <SectionTitle title="Bygninger" />
-                      <div className="grid grid-cols-4 gap-2 mb-2">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-2">
                         <DataKort
                           label="Bygninger"
                           value={bbrLoader ? '…' : `${bygninger.length}`}
@@ -3876,8 +3957,19 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                       </div>
 
                       {bbrLoader ? (
-                        <div className="text-slate-500 text-sm text-center py-3">
-                          Henter bygningsdata…
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden animate-pulse">
+                          {[1, 2, 3].map((n) => (
+                            <div
+                              key={n}
+                              className="px-3 py-2.5 border-b border-slate-700/20 flex items-center gap-3"
+                            >
+                              <div className="w-4 h-4 bg-slate-700/50 rounded" />
+                              <div className="h-3 w-8 bg-slate-700/50 rounded" />
+                              <div className="h-3 flex-1 bg-slate-700/30 rounded" />
+                              <div className="h-3 w-12 bg-slate-700/40 rounded" />
+                              <div className="h-3 w-16 bg-slate-700/40 rounded" />
+                            </div>
+                          ))}
                         </div>
                       ) : bygninger.length === 0 ? (
                         <div className="text-slate-500 text-sm text-center py-3">
@@ -3988,7 +4080,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                   return (
                     <div>
                       <SectionTitle title="Enheder" />
-                      <div className="grid grid-cols-4 gap-2 mb-2">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-2">
                         <DataKort
                           label="Enheder i alt"
                           value={bbrLoader ? '…' : `${enheder.length}`}
@@ -4002,8 +4094,18 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                       </div>
 
                       {bbrLoader ? (
-                        <div className="text-slate-500 text-sm text-center py-3">
-                          Henter enhedsdata…
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden animate-pulse">
+                          {[1, 2].map((n) => (
+                            <div
+                              key={n}
+                              className="px-3 py-2.5 border-b border-slate-700/20 flex items-center gap-3"
+                            >
+                              <div className="w-4 h-4 bg-slate-700/50 rounded" />
+                              <div className="h-3 w-8 bg-slate-700/50 rounded" />
+                              <div className="h-3 flex-1 bg-slate-700/30 rounded" />
+                              <div className="h-3 w-14 bg-slate-700/40 rounded" />
+                            </div>
+                          ))}
                         </div>
                       ) : enheder.length === 0 ? (
                         <div className="text-slate-500 text-sm text-center py-3">

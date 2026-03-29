@@ -413,6 +413,13 @@ export default function VirksomhedDetalje({ params }: PageProps) {
                   ) : null
                 }
               />
+              {data.creditstartdate && (
+                <InfoKort
+                  ikon={<Calendar size={16} className="text-blue-400" />}
+                  label={lang === 'da' ? 'Kreditopl. siden' : 'Credit info since'}
+                  vaerdi={data.creditstartdate}
+                />
+              )}
               {data.enddate && (
                 <InfoKort
                   ikon={<XCircle size={16} className="text-red-400" />}
@@ -568,16 +575,113 @@ export default function VirksomhedDetalje({ params }: PageProps) {
 
         {/* ══ ØKONOMI ══ */}
         {aktivTab === 'oekonomi' && (
-          <div className="text-center py-16">
-            <BarChart3 size={40} className="mx-auto text-slate-600 mb-4" />
-            <h3 className="text-white font-semibold text-lg mb-2">
-              {lang === 'da' ? 'Økonomiske nøgletal' : 'Financial Key Figures'}
-            </h3>
-            <p className="text-slate-400 text-sm max-w-md mx-auto">
-              {lang === 'da'
-                ? 'Økonomiske data og nøgletal vil snart blive tilgængelige her. Vi arbejder på integration med regnskabsdata.'
-                : 'Financial data and key figures will be available here soon. We are working on integrating accounting data.'}
-            </p>
+          <div className="space-y-6">
+            {/* Tilgængelige kreditoplysninger */}
+            {(data.creditstatus || data.creditstartdate || data.employees) && (
+              <section className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-6">
+                <h2 className="text-white font-semibold text-base mb-4 flex items-center gap-2">
+                  <CreditCard size={16} className="text-blue-400" />
+                  {lang === 'da' ? 'Kreditoplysninger' : 'Credit Information'}
+                </h2>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {data.creditstatus && (
+                    <div className="bg-slate-900/40 rounded-lg p-3">
+                      <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">
+                        {lang === 'da' ? 'Kreditstatus' : 'Credit status'}
+                      </p>
+                      <p className="text-white text-sm font-medium flex items-center gap-2">
+                        <span
+                          className={`inline-block w-2 h-2 rounded-full ${
+                            data.creditstatus === 'NORMAL' ? 'bg-emerald-400' : 'bg-red-400'
+                          }`}
+                        />
+                        {data.creditstatus}
+                      </p>
+                    </div>
+                  )}
+                  {data.creditstartdate && (
+                    <div className="bg-slate-900/40 rounded-lg p-3">
+                      <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">
+                        {lang === 'da' ? 'Kreditoplysninger siden' : 'Credit info since'}
+                      </p>
+                      <p className="text-white text-sm font-medium">{data.creditstartdate}</p>
+                    </div>
+                  )}
+                  {data.employees && (
+                    <div className="bg-slate-900/40 rounded-lg p-3">
+                      <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">
+                        {lang === 'da' ? 'Antal ansatte' : 'Employees'}
+                      </p>
+                      <p className="text-white text-sm font-medium">{data.employees}</p>
+                    </div>
+                  )}
+                  {data.companydesc && (
+                    <div className="bg-slate-900/40 rounded-lg p-3">
+                      <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">
+                        {lang === 'da' ? 'Virksomhedsform' : 'Company type'}
+                      </p>
+                      <p className="text-white text-sm font-medium">{data.companydesc}</p>
+                    </div>
+                  )}
+                  {data.industrycode && (
+                    <div className="bg-slate-900/40 rounded-lg p-3">
+                      <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">
+                        {lang === 'da' ? 'Branchekode (DB07)' : 'Industry code (DB07)'}
+                      </p>
+                      <p className="text-white text-sm font-medium">
+                        {data.industrycode} — {data.industrydesc ?? ''}
+                      </p>
+                    </div>
+                  )}
+                  {data.startdate && (
+                    <div className="bg-slate-900/40 rounded-lg p-3">
+                      <p className="text-slate-500 text-xs uppercase tracking-wide mb-1">
+                        {lang === 'da' ? 'Stiftet' : 'Founded'}
+                      </p>
+                      <p className="text-white text-sm font-medium">{data.startdate}</p>
+                    </div>
+                  )}
+                </div>
+              </section>
+            )}
+
+            {/* Link til regnskab på virk.dk */}
+            <section className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-6">
+              <h2 className="text-white font-semibold text-base mb-4 flex items-center gap-2">
+                <BarChart3 size={16} className="text-blue-400" />
+                {lang === 'da' ? 'Regnskabsdata' : 'Financial Statements'}
+              </h2>
+              <div className="space-y-4">
+                <a
+                  href={`https://datacvr.virk.dk/enhed/virksomhed/${data.vat}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-3 bg-slate-900/40 rounded-lg p-4 hover:bg-slate-700/30 transition-colors group"
+                >
+                  <div className="w-10 h-10 rounded-lg bg-blue-600/20 flex items-center justify-center flex-shrink-0">
+                    <ExternalLink size={18} className="text-blue-400" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-white text-sm font-medium group-hover:text-blue-300 transition-colors">
+                      {lang === 'da' ? 'Se på Virk.dk' : 'View on Virk.dk'}
+                    </p>
+                    <p className="text-slate-500 text-xs mt-0.5">
+                      {lang === 'da'
+                        ? 'Årsrapporter, regnskaber og nøgletal fra Erhvervsstyrelsen'
+                        : 'Annual reports, accounts and key figures from Danish Business Authority'}
+                    </p>
+                  </div>
+                </a>
+
+                <div className="px-4 py-3 bg-blue-500/5 border border-blue-500/10 rounded-lg">
+                  <p className="text-slate-400 text-xs">
+                    {lang === 'da'
+                      ? 'Regnskabsdata (omsætning, resultat, egenkapital, årsrapporter) kræver system-til-system adgang til Virk.dk. Vi afventer godkendelse fra Erhvervsstyrelsen.'
+                      : 'Financial data (revenue, profit, equity, annual reports) requires system-to-system access to Virk.dk. We are awaiting approval from the Danish Business Authority.'}
+                  </p>
+                </div>
+              </div>
+            </section>
           </div>
         )}
       </div>

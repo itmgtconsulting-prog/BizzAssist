@@ -23,6 +23,11 @@ interface RapportBygning {
   tagmateriale?: string | null;
   ydervaeggene?: string | null;
   energimaerke?: string | null;
+  varmeinstallation?: string | null;
+  opvarmningsform?: string | null;
+  supplerendeVarme?: string | null;
+  vandforsyning?: string | null;
+  bevaringsvaerdighed?: string | null;
 }
 
 interface RapportVurdering {
@@ -261,6 +266,11 @@ export async function POST(request: NextRequest) {
         if (byg.etager) kvLine('Etager', String(byg.etager));
         if (byg.tagmateriale) kvLine('Tagmateriale', byg.tagmateriale);
         if (byg.ydervaeggene) kvLine('Ydervægge', byg.ydervaeggene);
+        if (byg.varmeinstallation) kvLine('Varmeinstallation', byg.varmeinstallation);
+        if (byg.opvarmningsform) kvLine('Opvarmningsform', byg.opvarmningsform);
+        if (byg.supplerendeVarme) kvLine('Supplerende varme', byg.supplerendeVarme);
+        if (byg.vandforsyning) kvLine('Vandforsyning', byg.vandforsyning);
+        if (byg.bevaringsvaerdighed) kvLine('Bevaringsværdighed', byg.bevaringsvaerdighed);
         if (byg.energimaerke) kvLine('Energimærke', byg.energimaerke);
       });
     }

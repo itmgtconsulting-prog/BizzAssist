@@ -51,7 +51,7 @@ export default function Navbar() {
               </a>
             ))}
             <Link
-              href="/signup"
+              href="/login/signup"
               className="bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold px-5 py-2.5 rounded-lg transition-colors"
             >
               {nav.getStarted}

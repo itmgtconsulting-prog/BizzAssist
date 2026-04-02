@@ -28,6 +28,10 @@ import { resolvePlan, type PlanId } from '@/app/lib/subscriptions';
  * @returns JSON with { url: string } (Stripe Checkout URL) or error
  */
 export async function POST(req: NextRequest): Promise<NextResponse> {
+  if (!stripe) {
+    return NextResponse.json({ error: 'Stripe is not configured' }, { status: 503 });
+  }
+
   try {
     // ── 1. Authenticate ──
     const supabase = await createClient();

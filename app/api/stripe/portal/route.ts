@@ -24,6 +24,10 @@ import { stripe } from '@/app/lib/stripe';
  * @returns JSON with { url: string } (Stripe Portal URL) or error
  */
 export async function POST(): Promise<NextResponse> {
+  if (!stripe) {
+    return NextResponse.json({ error: 'Stripe is not configured' }, { status: 503 });
+  }
+
   try {
     // ── 1. Authenticate ──
     const supabase = await createClient();

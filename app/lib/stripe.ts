@@ -13,21 +13,14 @@
 
 import Stripe from 'stripe';
 
-if (!process.env.STRIPE_SECRET_KEY) {
-  throw new Error(
-    'STRIPE_SECRET_KEY is not set. ' +
-      'Add it to .env.local (never commit this value). ' +
-      'Get it from: https://dashboard.stripe.com/apikeys'
-  );
-}
-
 /**
  * Singleton Stripe server client.
- * Uses API version 2025-04-30 for latest features.
+ * Returns null if STRIPE_SECRET_KEY is not configured — Stripe-routes
+ * should check for null and return 503 gracefully.
  */
-export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
-  typescript: true,
-});
+export const stripe = process.env.STRIPE_SECRET_KEY
+  ? new Stripe(process.env.STRIPE_SECRET_KEY, { typescript: true })
+  : null;
 
 /**
  * Resolve the Stripe Price ID for a BizzAssist plan.

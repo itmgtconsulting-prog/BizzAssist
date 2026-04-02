@@ -20,6 +20,10 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { stripe } from '@/app/lib/stripe';
 
 export async function POST(_req: NextRequest): Promise<NextResponse> {
+  if (!stripe) {
+    return NextResponse.json({ error: 'Stripe is not configured' }, { status: 503 });
+  }
+
   try {
     // 1. Authenticate
     const supabase = await createClient();

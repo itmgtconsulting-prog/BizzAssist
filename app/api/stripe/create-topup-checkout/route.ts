@@ -29,6 +29,10 @@ interface TokenPackRow {
  * POST /api/stripe/create-topup-checkout — create one-time checkout for token pack.
  */
 export async function POST(req: NextRequest): Promise<NextResponse> {
+  if (!stripe) {
+    return NextResponse.json({ error: 'Stripe is not configured' }, { status: 503 });
+  }
+
   try {
     // Authenticate user
     const supabase = await createClient();

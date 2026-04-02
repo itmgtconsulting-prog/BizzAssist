@@ -17,6 +17,10 @@ import { resolvePlan } from '@/app/lib/subscriptions';
 import { sendPaymentConfirmationEmail } from '@/app/lib/email';
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
+  if (!stripe) {
+    return NextResponse.json({ error: 'Stripe is not configured' }, { status: 503 });
+  }
+
   try {
     // 1. Authenticate
     const supabase = await createClient();

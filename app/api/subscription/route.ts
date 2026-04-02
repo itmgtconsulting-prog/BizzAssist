@@ -68,6 +68,7 @@ interface StripeBillingInfo {
  * @returns StripeBillingInfo or null
  */
 async function fetchStripeBilling(customerId: string): Promise<StripeBillingInfo | null> {
+  if (!stripe) return null;
   try {
     const subscriptions = await stripe.subscriptions.list({
       customer: customerId,
@@ -124,6 +125,10 @@ async function fetchStripeBilling(customerId: string): Promise<StripeBillingInfo
  * @returns JSON with subscription data or { subscription: null }
  */
 export async function GET(): Promise<NextResponse> {
+  if (!stripe) {
+    return NextResponse.json({ error: 'Stripe is not configured' }, { status: 503 });
+  }
+
   try {
     // Step 1: Authenticate the caller via their JWT
     const supabase = await createClient();

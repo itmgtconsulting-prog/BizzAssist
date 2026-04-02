@@ -35,6 +35,10 @@ export const runtime = 'nodejs';
  * Receives Stripe events, verifies signature, and updates Supabase.
  */
 export async function POST(req: NextRequest): Promise<NextResponse> {
+  if (!stripe) {
+    return NextResponse.json({ error: 'Stripe is not configured' }, { status: 503 });
+  }
+
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
   if (!webhookSecret) {
     console.error('[stripe/webhook] STRIPE_WEBHOOK_SECRET not configured');
@@ -269,7 +273,7 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice): Promise<void> {
   }
 
   // Get subscription to find user ID and plan
-  const sub = await stripe.subscriptions.retrieve(subscriptionId);
+  const sub = await stripe!.subscriptions.retrieve(subscriptionId);
   const userId = sub.metadata?.supabase_user_id;
   if (!userId) {
     console.error(
@@ -339,7 +343,7 @@ async function handlePaymentFailed(invoice: Stripe.Invoice): Promise<void> {
     return;
   }
 
-  const sub = await stripe.subscriptions.retrieve(subscriptionId);
+  const sub = await stripe!.subscriptions.retrieve(subscriptionId);
   const userId = sub.metadata?.supabase_user_id;
   if (!userId) {
     console.error('[stripe/webhook] invoice.payment_failed: subscription missing supabase_user_id');

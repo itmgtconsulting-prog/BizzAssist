@@ -411,7 +411,7 @@ export async function GET(request: NextRequest) {
   const [addresses, companies, people] = await Promise.all([
     searchAddresses(q, normQ),
     searchCompanies(q, normQ, baseUrl),
-    searchPeople(q, normQ),
+    searchPeople(q, normQ, baseUrl),
   ]);
 
   // Group by type — max 5 per category, sorted by score within each group

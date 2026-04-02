@@ -387,8 +387,8 @@ export async function GET(request: NextRequest): Promise<NextResponse<CvrSalgshi
     }
 
     // ── Sammenkobl data ──
-    const handler: CvrHandelData[] = ejerskifter
-      .map((e) => {
+    const handler = ejerskifter
+      .map((e): CvrHandelData | null => {
         const bfe = e.bestemtFastEjendomBFENr;
         if (bfe == null) return null;
 

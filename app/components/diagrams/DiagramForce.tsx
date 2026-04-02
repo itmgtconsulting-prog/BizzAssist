@@ -101,7 +101,7 @@ interface ForceLink extends SimulationLinkDatum<ForceNode> {
  *
  * @param props - graph + lang
  */
-export default function DiagramForce({ graph, lang: _lang }: DiagramVariantProps) {
+export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
   const router = useRouter();
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);

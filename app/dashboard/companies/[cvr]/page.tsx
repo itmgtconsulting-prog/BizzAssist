@@ -4600,13 +4600,15 @@ function RegnskabstalTable({ years, lang }: RegnskabstalTableProps) {
                     fontSize: '12px',
                   }}
                   labelStyle={{ color: '#94a3b8' }}
-                  formatter={(value: number, name: string) => {
-                    const row = alleRows.find((r) => r.id === name);
-                    const label = row?.label ?? name;
+                  formatter={(value: unknown, name: unknown) => {
+                    const numVal = typeof value === 'number' ? value : 0;
+                    const nameStr = String(name ?? '');
+                    const row = alleRows.find((r) => r.id === nameStr);
+                    const label = row?.label ?? nameStr;
                     const formatted = row?.isPercent
-                      ? `${value}%`
-                      : (value?.toLocaleString('da-DK') ?? '—');
-                    return [formatted, label];
+                      ? `${numVal}%`
+                      : (numVal?.toLocaleString('da-DK') ?? '—');
+                    return [formatted, label] as [string, string];
                   }}
                 />
                 {Array.from(chartRows).map((id, idx) => (

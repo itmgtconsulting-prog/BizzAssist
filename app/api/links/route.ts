@@ -236,7 +236,7 @@ export async function POST(req: NextRequest) {
       await supabase
         .from('verified_links')
         .update({
-          verify_count: supabase.rpc ? undefined : 1,
+          verify_count: 1,
           updated_at: new Date().toISOString(),
         })
         .eq('id', linkId);

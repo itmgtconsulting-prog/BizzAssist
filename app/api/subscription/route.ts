@@ -215,7 +215,8 @@ export async function GET(): Promise<NextResponse> {
       : null;
 
     // Compute whether subscription is functional (paid / free / trial)
-    const isFunctional = isSubscriptionFunctional(typedSub, plan);
+    // Admins always have full access regardless of payment status
+    const isFunctional = isAdmin || isSubscriptionFunctional(typedSub, plan);
 
     // Step 4: Fetch Stripe billing details (next payment, card, cancellation)
     const stripeCustomerId = freshUser.user.app_metadata?.stripe_customer_id as string | undefined;

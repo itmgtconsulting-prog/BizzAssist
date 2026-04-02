@@ -25,6 +25,7 @@
 
 import { NextRequest } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
+import { rateLimit, AI_CHAT_LIMIT } from '@/app/lib/rateLimit';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -436,6 +437,10 @@ async function executeTool(
 // ─── Handler ────────────────────────────────────────────────────────────────
 
 export async function POST(request: NextRequest): Promise<Response> {
+  // Rate limit: 20 req/min for AI chat
+  const limited = rateLimit(request, AI_CHAT_LIMIT);
+  if (limited) return limited;
+
   const apiKey = process.env.BIZZASSIST_CLAUDE_KEY;
   if (!apiKey) {
     return Response.json(

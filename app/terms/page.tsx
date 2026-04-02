@@ -29,7 +29,7 @@ export default function TermsPage() {
             {lang === 'da' ? 'Vilkår og betingelser' : 'Terms & Conditions'}
           </h1>
           <p className="text-slate-500 text-sm mb-10">
-            {lang === 'da' ? 'Sidst opdateret: 29. marts 2026' : 'Last updated: March 29, 2026'}
+            {lang === 'da' ? 'Sidst opdateret: 30. marts 2026' : 'Last updated: March 30, 2026'}
           </p>
 
           <div className="prose prose-invert prose-slate max-w-none space-y-8 text-slate-300 leading-relaxed">
@@ -87,15 +87,30 @@ function DanishTerms() {
       </section>
 
       <section>
-        <h2 className="text-xl font-semibold text-white mb-3">4. Prøveperiode og betaling</h2>
+        <h2 className="text-xl font-semibold text-white mb-3">4. Abonnementer og betaling</h2>
         <p>
-          BizzAssist tilbyder en gratis prøveperiode på 7 dage. Efter prøveperioden kræves et betalt
-          abonnement for fortsat adgang. Priser fremgår af vores hjemmeside og kan ændres med 30
-          dages varsel.
+          BizzAssist tilbyder forskellige abonnementsplaner med varierende funktionalitet, AI-adgang
+          og token-grænser. De tilgængelige planer og deres priser fremgår ved oprettelse samt i
+          applikationens indstillinger. Priser kan ændres med 30 dages varsel.
         </p>
         <ul className="list-disc pl-6 space-y-1">
-          <li>Abonnementer fornyes automatisk, medmindre de opsiges inden udløb.</li>
+          <li>
+            Visse planer kan tilbyde en gratis prøveperiode. Varigheden fremgår af den konkrete plan
+            ved oprettelse.
+          </li>
+          <li>
+            Abonnementer fornyes automatisk ved udløb af faktureringsperioden, medmindre de opsiges
+            inden.
+          </li>
           <li>Opsigelse kan ske til enhver tid med virkning fra næste faktureringsperiode.</li>
+          <li>
+            Ved op- eller nedgradering af abonnement træder den nye plan i kraft fra næste
+            faktureringsperiode.
+          </li>
+          <li>
+            Betaling sker via Stripe. Vi opbevarer ikke dine betalingskortoplysninger — disse
+            håndteres udelukkende af Stripe i henhold til PCI DSS-standarden.
+          </li>
           <li>
             Der ydes ikke refusion for allerede betalte perioder, medmindre lovgivningen kræver det.
           </li>
@@ -103,7 +118,76 @@ function DanishTerms() {
       </section>
 
       <section>
-        <h2 className="text-xl font-semibold text-white mb-3">5. Datakilder og nøjagtighed</h2>
+        <h2 className="text-xl font-semibold text-white mb-3">5. Køb af AI-tokens</h2>
+        <p>
+          Ud over de tokens, der er inkluderet i dit abonnement, kan du tilkøbe ekstra
+          AI-token-pakker som engangskøb. Token-pakkerne og deres priser fremgår i applikationen.
+        </p>
+        <ul className="list-disc pl-6 space-y-1">
+          <li>Tilkøbte tokens udløber ikke og kan bruges, så længe du har et aktivt abonnement.</li>
+          <li>
+            Tilkøbte tokens er ikke-refunderbare. Ved køb accepterer du, at der ikke ydes
+            fortrydelsesret, jf. forbrugeraftalelovens § 18, stk. 2, nr. 13, da det digitale indhold
+            leveres umiddelbart efter køb.
+          </li>
+          <li>Tokens kan ikke overføres mellem konti eller ombyttes til kontant betaling.</li>
+          <li>
+            Vi forbeholder os retten til at ændre priser og indhold af token-pakker. Ændringer
+            påvirker ikke allerede købte tokens.
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h2 className="text-xl font-semibold text-white mb-3">
+          6. Platform under udvikling — forbehold for fejl og nedetid
+        </h2>
+        <p>
+          BizzAssist er en ny platform under aktiv udvikling. Selvom vi bestræber os på at levere en
+          stabil og pålidelig tjeneste, tager vi udtrykkeligt forbehold for:
+        </p>
+        <ul className="list-disc pl-6 space-y-1">
+          <li>
+            <strong className="text-white">Fejl og mangler:</strong> Platformen kan indeholde fejl
+            (bugs), unøjagtigheder i data eller funktioner, der endnu ikke er fuldt implementeret.
+            Vi arbejder løbende på at identificere og rette fejl.
+          </li>
+          <li>
+            <strong className="text-white">Planlagt og uplanlagt nedetid:</strong> Der kan forekomme
+            driftsafbrydelser i forbindelse med opdateringer, vedligeholdelse eller uforudsete
+            tekniske problemer. Vi tilstræber at minimere nedetid og varsle planlagt
+            vedligeholdelse, men kan ikke garantere uafbrudt tilgængelighed.
+          </li>
+          <li>
+            <strong className="text-white">Ændringer i funktionalitet:</strong> Vi kan tilføje,
+            ændre eller fjerne funktioner uden forudgående varsel som led i den løbende udvikling af
+            platformen.
+          </li>
+          <li>
+            <strong className="text-white">AI-begrænsninger:</strong> AI-assistenten er et
+            hjælpeværktøj og kan producere unøjagtige, ufuldstændige eller misvisende svar.
+            AI-genereret indhold bør altid verificeres og må ikke bruges som eneste
+            beslutningsgrundlag.
+          </li>
+          <li>
+            <strong className="text-white">Eksterne datakilder:</strong> Vi er afhængige af
+            tredjeparters API-tjenester og offentlige datakilder, som kan opleve nedetid eller
+            levere forældede data uden for vores kontrol.
+          </li>
+        </ul>
+        <p>
+          Ved at bruge BizzAssist accepterer du, at platformen leveres &quot;som den er&quot; (as
+          is), og at der kan forekomme fejl, nedetid og ændringer. Vi opfordrer til at rapportere
+          fejl til{' '}
+          <a href="mailto:support@pecuniait.com" className="text-blue-400 hover:underline">
+            support@pecuniait.com
+          </a>
+          , så vi kan forbedre tjenesten.
+        </p>
+      </section>
+
+      <section>
+        <h2 className="text-xl font-semibold text-white mb-3">7. Datakilder og nøjagtighed</h2>
         <p>
           BizzAssist aggregerer data fra offentligt tilgængelige kilder, herunder Datafordeler.dk,
           CVR-registret, Tinglysning.dk, BBR og andre. Vi bestræber os på at levere nøjagtige og
@@ -120,7 +204,7 @@ function DanishTerms() {
       </section>
 
       <section>
-        <h2 className="text-xl font-semibold text-white mb-3">6. Tilladt brug</h2>
+        <h2 className="text-xl font-semibold text-white mb-3">8. Tilladt brug</h2>
         <p>Du må bruge BizzAssist til lovlige forretningsformål. Du må ikke:</p>
         <ul className="list-disc pl-6 space-y-1">
           <li>Systematisk scrape, kopiere eller videredistribuere data fra platformen.</li>
@@ -134,7 +218,7 @@ function DanishTerms() {
       </section>
 
       <section>
-        <h2 className="text-xl font-semibold text-white mb-3">7. Immaterielle rettigheder</h2>
+        <h2 className="text-xl font-semibold text-white mb-3">9. Immaterielle rettigheder</h2>
         <p>
           Alt indhold på BizzAssist, herunder design, kode, logoer og AI-modeller, tilhører Pecunia
           IT ApS eller vores licensgivere. Data hentet fra offentlige registre er underlagt de
@@ -143,7 +227,7 @@ function DanishTerms() {
       </section>
 
       <section>
-        <h2 className="text-xl font-semibold text-white mb-3">8. Ansvarsbegrænsning</h2>
+        <h2 className="text-xl font-semibold text-white mb-3">10. Ansvarsbegrænsning</h2>
         <p>I det omfang det er tilladt ved lov, er Pecunia IT ApS ikke ansvarlig for:</p>
         <ul className="list-disc pl-6 space-y-1">
           <li>Tab opstået som følge af unøjagtige data eller AI-analyser.</li>
@@ -157,7 +241,7 @@ function DanishTerms() {
       </section>
 
       <section>
-        <h2 className="text-xl font-semibold text-white mb-3">9. Ændringer</h2>
+        <h2 className="text-xl font-semibold text-white mb-3">11. Ændringer</h2>
         <p>
           Vi forbeholder os retten til at ændre disse vilkår. Væsentlige ændringer meddeles via
           e-mail eller i applikationen med mindst 30 dages varsel. Fortsat brug efter
@@ -166,7 +250,7 @@ function DanishTerms() {
       </section>
 
       <section>
-        <h2 className="text-xl font-semibold text-white mb-3">10. Lovvalg og tvistløsning</h2>
+        <h2 className="text-xl font-semibold text-white mb-3">12. Lovvalg og tvistløsning</h2>
         <p>
           Disse vilkår er underlagt dansk ret. Tvister, der ikke kan løses i mindelighed, afgøres
           ved Københavns Byret som første instans.
@@ -174,7 +258,7 @@ function DanishTerms() {
       </section>
 
       <section>
-        <h2 className="text-xl font-semibold text-white mb-3">11. Kontakt</h2>
+        <h2 className="text-xl font-semibold text-white mb-3">13. Kontakt</h2>
         <p>
           Ved spørgsmål om disse vilkår, kontakt os på{' '}
           <a href="mailto:support@pecuniait.com" className="text-blue-400 hover:underline">
@@ -230,21 +314,106 @@ function EnglishTerms() {
       </section>
 
       <section>
-        <h2 className="text-xl font-semibold text-white mb-3">4. Trial period and payment</h2>
+        <h2 className="text-xl font-semibold text-white mb-3">4. Subscriptions and payment</h2>
         <p>
-          BizzAssist offers a free 7-day trial period. After the trial, a paid subscription is
-          required for continued access. Prices are listed on our website and may change with 30
-          days&apos; notice.
+          BizzAssist offers various subscription plans with different functionality, AI access and
+          token limits. Available plans and their prices are displayed during sign-up and in the
+          application settings. Prices may change with 30 days&apos; notice.
         </p>
         <ul className="list-disc pl-6 space-y-1">
-          <li>Subscriptions renew automatically unless cancelled before expiry.</li>
+          <li>
+            Certain plans may offer a free trial period. The duration is specified for the
+            particular plan at sign-up.
+          </li>
+          <li>
+            Subscriptions renew automatically at the end of the billing period unless cancelled
+            before expiry.
+          </li>
           <li>Cancellation is possible at any time, effective from the next billing period.</li>
+          <li>
+            When upgrading or downgrading a subscription, the new plan takes effect from the next
+            billing period.
+          </li>
+          <li>
+            Payment is processed via Stripe. We do not store your payment card details — these are
+            handled exclusively by Stripe in accordance with the PCI DSS standard.
+          </li>
           <li>No refunds are provided for already paid periods, unless required by law.</li>
         </ul>
       </section>
 
       <section>
-        <h2 className="text-xl font-semibold text-white mb-3">5. Data sources and accuracy</h2>
+        <h2 className="text-xl font-semibold text-white mb-3">5. Purchase of AI tokens</h2>
+        <p>
+          In addition to the tokens included in your subscription, you may purchase additional AI
+          token packs as one-time purchases. Token packs and their prices are displayed in the
+          application.
+        </p>
+        <ul className="list-disc pl-6 space-y-1">
+          <li>
+            Purchased tokens do not expire and can be used as long as you have an active
+            subscription.
+          </li>
+          <li>
+            Purchased tokens are non-refundable. By purchasing, you accept that the right of
+            withdrawal does not apply, as the digital content is delivered immediately after
+            purchase.
+          </li>
+          <li>Tokens cannot be transferred between accounts or exchanged for monetary payment.</li>
+          <li>
+            We reserve the right to change prices and content of token packs. Changes do not affect
+            tokens already purchased.
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h2 className="text-xl font-semibold text-white mb-3">
+          6. Platform under development — disclaimer for errors and downtime
+        </h2>
+        <p>
+          BizzAssist is a new platform under active development. While we strive to deliver a stable
+          and reliable service, we expressly reserve the right regarding:
+        </p>
+        <ul className="list-disc pl-6 space-y-1">
+          <li>
+            <strong className="text-white">Errors and defects:</strong> The platform may contain
+            bugs, inaccuracies in data, or features that are not yet fully implemented. We
+            continuously work to identify and fix issues.
+          </li>
+          <li>
+            <strong className="text-white">Planned and unplanned downtime:</strong> Service
+            interruptions may occur due to updates, maintenance, or unforeseen technical issues. We
+            aim to minimize downtime and provide notice of planned maintenance, but cannot guarantee
+            uninterrupted availability.
+          </li>
+          <li>
+            <strong className="text-white">Changes to functionality:</strong> We may add, modify or
+            remove features without prior notice as part of the ongoing development of the platform.
+          </li>
+          <li>
+            <strong className="text-white">AI limitations:</strong> The AI assistant is a support
+            tool and may produce inaccurate, incomplete, or misleading answers. AI-generated content
+            should always be verified and must not be used as the sole basis for decisions.
+          </li>
+          <li>
+            <strong className="text-white">External data sources:</strong> We depend on third-party
+            API services and public data sources that may experience downtime or deliver outdated
+            data beyond our control.
+          </li>
+        </ul>
+        <p>
+          By using BizzAssist, you accept that the platform is provided &quot;as is&quot; and that
+          errors, downtime and changes may occur. We encourage you to report issues to{' '}
+          <a href="mailto:support@pecuniait.com" className="text-blue-400 hover:underline">
+            support@pecuniait.com
+          </a>{' '}
+          so we can improve the service.
+        </p>
+      </section>
+
+      <section>
+        <h2 className="text-xl font-semibold text-white mb-3">7. Data sources and accuracy</h2>
         <p>
           BizzAssist aggregates data from publicly available sources, including Datafordeler.dk, the
           CVR register, Tinglysning.dk, BBR and others. We strive to deliver accurate and up-to-date
@@ -261,7 +430,7 @@ function EnglishTerms() {
       </section>
 
       <section>
-        <h2 className="text-xl font-semibold text-white mb-3">6. Permitted use</h2>
+        <h2 className="text-xl font-semibold text-white mb-3">8. Permitted use</h2>
         <p>You may use BizzAssist for lawful business purposes. You may not:</p>
         <ul className="list-disc pl-6 space-y-1">
           <li>Systematically scrape, copy or redistribute data from the platform.</li>
@@ -275,7 +444,7 @@ function EnglishTerms() {
       </section>
 
       <section>
-        <h2 className="text-xl font-semibold text-white mb-3">7. Intellectual property</h2>
+        <h2 className="text-xl font-semibold text-white mb-3">9. Intellectual property</h2>
         <p>
           All content on BizzAssist, including design, code, logos and AI models, belongs to Pecunia
           IT ApS or our licensors. Data sourced from public registries is subject to the respective
@@ -284,7 +453,7 @@ function EnglishTerms() {
       </section>
 
       <section>
-        <h2 className="text-xl font-semibold text-white mb-3">8. Limitation of liability</h2>
+        <h2 className="text-xl font-semibold text-white mb-3">10. Limitation of liability</h2>
         <p>To the extent permitted by law, Pecunia IT ApS is not liable for:</p>
         <ul className="list-disc pl-6 space-y-1">
           <li>Losses arising from inaccurate data or AI analyses.</li>
@@ -298,7 +467,7 @@ function EnglishTerms() {
       </section>
 
       <section>
-        <h2 className="text-xl font-semibold text-white mb-3">9. Changes</h2>
+        <h2 className="text-xl font-semibold text-white mb-3">11. Changes</h2>
         <p>
           We reserve the right to modify these terms. Material changes will be communicated via
           email or in the application with at least 30 days&apos; notice. Continued use after the
@@ -307,7 +476,7 @@ function EnglishTerms() {
       </section>
 
       <section>
-        <h2 className="text-xl font-semibold text-white mb-3">10. Governing law and disputes</h2>
+        <h2 className="text-xl font-semibold text-white mb-3">12. Governing law and disputes</h2>
         <p>
           These terms are governed by Danish law. Disputes that cannot be resolved amicably shall be
           decided by the Copenhagen City Court as the court of first instance.
@@ -315,7 +484,7 @@ function EnglishTerms() {
       </section>
 
       <section>
-        <h2 className="text-xl font-semibold text-white mb-3">11. Contact</h2>
+        <h2 className="text-xl font-semibold text-white mb-3">13. Contact</h2>
         <p>
           For questions about these terms, contact us at{' '}
           <a href="mailto:support@pecuniait.com" className="text-blue-400 hover:underline">

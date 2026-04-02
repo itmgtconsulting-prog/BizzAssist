@@ -4,15 +4,42 @@
  * Signup page — app/login/signup/page.tsx
  *
  * Allows new users to create a BizzAssist account with email + password.
+ * User selects a plan from the active plans fetched via /api/plans.
+ * Must accept terms of service before creating account.
  * On success, Supabase sends a verification email and the user is redirected
  * to /login/verify-email to wait for confirmation.
  */
 
-import { useState, FormEvent } from 'react';
+import { useState, useEffect, FormEvent } from 'react';
 import Link from 'next/link';
-import { Eye, EyeOff, ArrowLeft, Loader2, AlertCircle, CheckCircle2, Clock } from 'lucide-react';
+import {
+  Eye,
+  EyeOff,
+  ArrowLeft,
+  Loader2,
+  AlertCircle,
+  CheckCircle2,
+  Clock,
+  Zap,
+} from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { signUp } from '@/app/auth/actions';
+import { formatTokens } from '@/app/lib/subscriptions';
+
+/** Plan data from /api/plans */
+interface PlanOption {
+  id: string;
+  nameDa: string;
+  nameEn: string;
+  descDa: string;
+  descEn: string;
+  priceDkk: number;
+  aiTokensPerMonth: number;
+  aiEnabled: boolean;
+  requiresApproval: boolean;
+  freeTrialDays: number;
+  color: string;
+}
 
 const errorMessages: Record<string, { da: string; en: string }> = {
   email_rate_limit: {
@@ -30,6 +57,10 @@ const errorMessages: Record<string, { da: string; en: string }> = {
   passwords_mismatch: {
     da: 'Adgangskoderne er ikke ens.',
     en: 'Passwords do not match.',
+  },
+  terms_not_accepted: {
+    da: 'Du skal acceptere betingelserne for at oprette en konto.',
+    en: 'You must accept the terms to create an account.',
   },
   unexpected_error: {
     da: 'Noget gik galt. Prøv igen.',
@@ -64,28 +95,68 @@ const strengthColours = [
   'bg-emerald-500',
 ];
 
+/** Color map for plan borders */
+const PLAN_COLORS: Record<string, { border: string; ring: string }> = {
+  amber: { border: 'border-amber-500/40', ring: 'ring-amber-500/30' },
+  slate: { border: 'border-slate-400/40', ring: 'ring-slate-400/30' },
+  blue: { border: 'border-blue-500/40', ring: 'ring-blue-500/30' },
+  purple: { border: 'border-purple-500/40', ring: 'ring-purple-500/30' },
+};
+
 /**
  * Signup page component.
  *
- * @returns The signup form with real-time password strength feedback.
+ * @returns The signup form with plan selection, terms acceptance, and password strength feedback.
  */
 export default function SignupPage() {
   const { lang, setLang } = useLanguage();
+  const da = lang === 'da';
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const [isDemo, setIsDemo] = useState(true);
+  const [selectedPlan, setSelectedPlan] = useState<string>('demo');
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  /** Available plans from API */
+  const [plans, setPlans] = useState<PlanOption[]>([]);
+  const [plansLoading, setPlansLoading] = useState(true);
+
   const strength = passwordStrength(password);
+
+  /** Fetch active plans on mount */
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch('/api/plans');
+        if (res.ok) {
+          const data: PlanOption[] = await res.json();
+          setPlans(data);
+          if (data.length > 0 && !data.find((p) => p.id === selectedPlan)) {
+            setSelectedPlan(data[0].id);
+          }
+        }
+      } catch {
+        /* fallback: plans stays empty, user gets default */
+      } finally {
+        setPlansLoading(false);
+      }
+    })();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const currentPlan = plans.find((p) => p.id === selectedPlan);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
+    if (!acceptedTerms) {
+      setError('terms_not_accepted');
+      return;
+    }
     if (password.length < 8) {
       setError('password_too_weak');
       return;
@@ -96,9 +167,7 @@ export default function SignupPage() {
     }
     setLoading(true);
     try {
-      // Pass planId to signUp — subscription is set server-side in Supabase app_metadata
-      const planId = isDemo ? 'demo' : 'basis';
-      const result = await signUp(email, password, fullName, planId);
+      const result = await signUp(email, password, fullName, selectedPlan);
       if (result?.error) setError(result.error);
     } catch {
       // signUp redirects on success
@@ -143,14 +212,14 @@ export default function SignupPage() {
       </div>
 
       <div className="flex-1 flex items-center justify-center px-4 py-12">
-        <div className="w-full max-w-md">
+        <div className="w-full max-w-lg">
           <div className="bg-[#1e293b] border border-white/10 rounded-2xl p-8 shadow-2xl">
             <div className="text-center mb-8">
               <h1 className="text-2xl font-bold text-white mb-2">
-                {lang === 'da' ? 'Opret din konto' : 'Create your account'}
+                {da ? 'Opret din konto' : 'Create your account'}
               </h1>
               <p className="text-slate-400 text-sm">
-                {lang === 'da' ? 'Kom i gang med BizzAssist' : 'Get started with BizzAssist'}
+                {da ? 'Kom i gang med BizzAssist' : 'Get started with BizzAssist'}
               </p>
             </div>
 
@@ -166,7 +235,7 @@ export default function SignupPage() {
                         href="/login"
                         className="text-blue-400 hover:text-blue-300 underline font-medium"
                       >
-                        {lang === 'da' ? 'Log ind i stedet' : 'Log in instead'}
+                        {da ? 'Log ind i stedet' : 'Log in instead'}
                       </Link>
                     </>
                   )}
@@ -178,13 +247,13 @@ export default function SignupPage() {
               {/* Full name */}
               <div>
                 <label className="block text-slate-300 text-sm font-medium mb-2">
-                  {lang === 'da' ? 'Fulde navn' : 'Full name'}
+                  {da ? 'Fulde navn' : 'Full name'}
                 </label>
                 <input
                   type="text"
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
-                  placeholder={lang === 'da' ? 'Jakob Juul Rasmussen' : 'Jane Smith'}
+                  placeholder={da ? 'Jakob Juul Rasmussen' : 'Jane Smith'}
                   autoComplete="name"
                   required
                   disabled={loading}
@@ -195,13 +264,13 @@ export default function SignupPage() {
               {/* Email */}
               <div>
                 <label className="block text-slate-300 text-sm font-medium mb-2">
-                  {lang === 'da' ? 'E-mail' : 'Email'}
+                  {da ? 'E-mail' : 'Email'}
                 </label>
                 <input
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder={lang === 'da' ? 'navn@virksomhed.dk' : 'name@company.com'}
+                  placeholder={da ? 'navn@virksomhed.dk' : 'name@company.com'}
                   autoComplete="email"
                   required
                   disabled={loading}
@@ -212,7 +281,7 @@ export default function SignupPage() {
               {/* Password + strength */}
               <div>
                 <label className="block text-slate-300 text-sm font-medium mb-2">
-                  {lang === 'da' ? 'Adgangskode' : 'Password'}
+                  {da ? 'Adgangskode' : 'Password'}
                 </label>
                 <div className="relative">
                   <input
@@ -253,7 +322,7 @@ export default function SignupPage() {
               {/* Confirm password */}
               <div>
                 <label className="block text-slate-300 text-sm font-medium mb-2">
-                  {lang === 'da' ? 'Bekræft adgangskode' : 'Confirm password'}
+                  {da ? 'Bekræft adgangskode' : 'Confirm password'}
                 </label>
                 <div className="relative">
                   <input
@@ -281,22 +350,106 @@ export default function SignupPage() {
                 </div>
                 {confirmPassword.length > 0 && password !== confirmPassword && (
                   <p className="text-red-400 text-xs mt-1">
-                    {lang === 'da' ? 'Adgangskoderne er ikke ens' : 'Passwords do not match'}
+                    {da ? 'Adgangskoderne er ikke ens' : 'Passwords do not match'}
                   </p>
                 )}
               </div>
 
-              {/* Demo checkbox */}
+              {/* ─── Plan selection ─── */}
+              <div>
+                <label className="block text-slate-300 text-sm font-medium mb-2">
+                  {da ? 'Vælg abonnement' : 'Choose plan'}
+                </label>
+
+                {plansLoading ? (
+                  <div className="flex items-center justify-center gap-2 text-slate-500 py-4">
+                    <Loader2 size={14} className="animate-spin" />
+                    <span className="text-xs">{da ? 'Henter planer…' : 'Loading plans…'}</span>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2">
+                    {plans.map((plan) => {
+                      const isSelected = selectedPlan === plan.id;
+                      const colors = PLAN_COLORS[plan.color] || PLAN_COLORS.slate;
+
+                      return (
+                        <button
+                          key={plan.id}
+                          type="button"
+                          onClick={() => setSelectedPlan(plan.id)}
+                          className={`text-left rounded-xl p-3 border-2 transition-all ${
+                            isSelected
+                              ? `${colors.border} bg-white/5 ring-2 ${colors.ring}`
+                              : 'border-white/10 hover:border-white/20 bg-white/[0.02]'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-white text-sm font-semibold">
+                              {da ? plan.nameDa : plan.nameEn}
+                            </span>
+                            {isSelected && <CheckCircle2 size={14} className="text-blue-400" />}
+                          </div>
+                          <p className="text-white text-base font-bold">
+                            {plan.priceDkk === 0 ? (da ? 'Gratis' : 'Free') : `${plan.priceDkk} kr`}
+                            {plan.priceDkk > 0 && (
+                              <span className="text-slate-500 text-xs font-normal">/md</span>
+                            )}
+                          </p>
+                          {plan.aiEnabled && (
+                            <div className="flex items-center gap-1 mt-1">
+                              <Zap size={10} className="text-blue-400" />
+                              <span className="text-slate-400 text-[11px]">
+                                AI — {formatTokens(plan.aiTokensPerMonth)} tokens
+                              </span>
+                            </div>
+                          )}
+                          {plan.freeTrialDays > 0 && (
+                            <span className="text-emerald-400 text-[11px]">
+                              {plan.freeTrialDays} {da ? 'dage gratis' : 'days free'}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Info box for selected plan */}
+                {currentPlan?.requiresApproval && (
+                  <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-3 mt-2 space-y-1">
+                    <div className="flex items-center gap-2">
+                      <Clock size={14} className="text-amber-400 shrink-0" />
+                      <span className="text-amber-300 text-xs font-medium">
+                        {da ? 'Denne plan kræver godkendelse' : 'This plan requires approval'}
+                      </span>
+                    </div>
+                    <p className="text-slate-500 text-xs leading-relaxed pl-[22px]">
+                      {da
+                        ? 'Din konto oprettes med det samme, men du får begrænset adgang indtil en administrator godkender din anmodning.'
+                        : 'Your account is created immediately, but you will have limited access until an administrator approves your request.'}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* ─── Terms acceptance ─── */}
               <label className="flex items-start gap-3 cursor-pointer group">
                 <div className="relative mt-0.5 shrink-0">
                   <input
                     type="checkbox"
-                    checked={isDemo}
-                    onChange={(e) => setIsDemo(e.target.checked)}
+                    checked={acceptedTerms}
+                    onChange={(e) => {
+                      setAcceptedTerms(e.target.checked);
+                      if (error === 'terms_not_accepted') setError(null);
+                    }}
                     className="sr-only peer"
                   />
-                  <div className="w-5 h-5 rounded-md border-2 border-slate-600 bg-white/5 peer-checked:bg-blue-600 peer-checked:border-blue-600 transition-colors flex items-center justify-center">
-                    {isDemo && (
+                  <div
+                    className={`w-5 h-5 rounded-md border-2 bg-white/5 peer-checked:bg-blue-600 peer-checked:border-blue-600 transition-colors flex items-center justify-center ${
+                      error === 'terms_not_accepted' ? 'border-red-500' : 'border-slate-600'
+                    }`}
+                  >
+                    {acceptedTerms && (
                       <svg
                         width="12"
                         height="12"
@@ -313,55 +466,27 @@ export default function SignupPage() {
                   </div>
                 </div>
                 <div>
-                  <span className="text-white text-sm font-medium">
-                    {lang === 'da' ? 'Anmod om demo-adgang' : 'Request demo access'}
+                  <span className="text-slate-300 text-sm">
+                    {da ? (
+                      <>
+                        Jeg accepterer{' '}
+                        <Link href="/terms" className="text-blue-400 hover:text-blue-300 underline">
+                          betingelserne for brug
+                        </Link>{' '}
+                        af BizzAssist
+                      </>
+                    ) : (
+                      <>
+                        I accept the{' '}
+                        <Link href="/terms" className="text-blue-400 hover:text-blue-300 underline">
+                          terms of service
+                        </Link>{' '}
+                        for BizzAssist
+                      </>
+                    )}
                   </span>
-                  <p className="text-slate-500 text-xs mt-0.5 leading-relaxed">
-                    {lang === 'da'
-                      ? 'Gratis prøveperiode med AI-adgang. Kræver godkendelse af administrator.'
-                      : 'Free trial with AI access. Requires administrator approval.'}
-                  </p>
                 </div>
               </label>
-
-              {/* Demo pending info */}
-              {isDemo && (
-                <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-4 space-y-2">
-                  <div className="flex items-center gap-2">
-                    <Clock size={14} className="text-amber-400 shrink-0" />
-                    <span className="text-amber-300 text-xs font-medium">
-                      {lang === 'da'
-                        ? 'Demo-konto kræver godkendelse'
-                        : 'Demo account requires approval'}
-                    </span>
-                  </div>
-                  <p className="text-slate-500 text-xs leading-relaxed pl-[22px]">
-                    {lang === 'da'
-                      ? 'Din konto oprettes med det samme, men du får begrænset adgang indtil en administrator godkender din anmodning.'
-                      : 'Your account is created immediately, but you will have limited access until an administrator approves your request.'}
-                  </p>
-                </div>
-              )}
-
-              {/* What you get (non-demo) */}
-              {!isDemo && (
-                <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl p-4 space-y-2">
-                  {[
-                    lang === 'da' ? 'Adgang til basisdata' : 'Access to basic data',
-                    lang === 'da'
-                      ? 'Ejendomme, virksomheder og ejere'
-                      : 'Properties, companies and owners',
-                    lang === 'da'
-                      ? 'Vælg abonnement efter oprettelse'
-                      : 'Choose subscription after signup',
-                  ].map((item) => (
-                    <div key={item} className="flex items-center gap-2">
-                      <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />
-                      <span className="text-slate-400 text-xs">{item}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
 
               <button
                 type="submit"
@@ -369,17 +494,17 @@ export default function SignupPage() {
                 className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-blue-600/50 text-white font-semibold py-3.5 rounded-xl transition-colors flex items-center justify-center gap-2"
               >
                 {loading && <Loader2 size={16} className="animate-spin" />}
-                {lang === 'da' ? 'Opret konto' : 'Create account'}
+                {da ? 'Opret konto' : 'Create account'}
               </button>
             </form>
 
             <p className="text-center text-slate-500 text-sm mt-6">
-              {lang === 'da' ? 'Har du allerede en konto?' : 'Already have an account?'}{' '}
+              {da ? 'Har du allerede en konto?' : 'Already have an account?'}{' '}
               <Link
                 href="/login"
                 className="text-blue-400 hover:text-blue-300 font-medium transition-colors"
               >
-                {lang === 'da' ? 'Log ind' : 'Log in'}
+                {da ? 'Log ind' : 'Log in'}
               </Link>
             </p>
           </div>

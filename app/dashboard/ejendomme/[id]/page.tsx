@@ -23,6 +23,7 @@ import {
   List,
   MapPin,
   Building2,
+  ChevronDown,
   ChevronRight,
   TrendingUp,
   FileText,
@@ -36,6 +37,7 @@ import {
   CheckCircle,
   XCircle,
   Info,
+  Loader2,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -62,6 +64,7 @@ import type { PlandataItem, PlandataResponse } from '@/app/api/plandata/route';
 import type { EnergimaerkeItem, EnergimaerkeResponse } from '@/app/api/energimaerke/route';
 import type { JordParcelItem, JordResponse } from '@/app/api/jord/route';
 import type { HandelData, SalgshistorikResponse } from '@/app/api/salgshistorik/route';
+import type { TLEjer, TLHaeftelse } from '@/app/api/tinglysning/summarisk/route';
 import type {
   ForelobigVurdering,
   ForelobigVurderingResponse,
@@ -70,6 +73,13 @@ import type { MatrikelEjendom, MatrikelResponse } from '@/app/api/matrikel/route
 import { gemRecentEjendom } from '@/app/lib/recentEjendomme';
 import { erTracked, toggleTrackEjendom } from '@/app/lib/trackedEjendomme';
 import FoelgTooltip from '@/app/components/FoelgTooltip';
+import { useLanguage } from '@/app/context/LanguageContext';
+import dynamic from 'next/dynamic';
+import type { DiagramGraph } from '@/app/components/diagrams/DiagramData';
+
+const DiagramForce = dynamic(() => import('@/app/components/diagrams/DiagramForce'), {
+  ssr: false,
+});
 
 type Tab =
   | 'overblik'
@@ -80,15 +90,22 @@ type Tab =
   | 'skatter'
   | 'dokumenter';
 
-const tabs: { id: Tab; label: string; ikon: React.ReactNode }[] = [
-  { id: 'overblik', label: 'Oversigt', ikon: <Building2 size={14} /> },
-  { id: 'bbr', label: 'BBR', ikon: <FileText size={14} /> },
-  { id: 'ejerforhold', label: 'Ejerskab', ikon: <Users size={14} /> },
-  { id: 'tinglysning', label: 'Tinglysning', ikon: <Landmark size={14} /> },
-  { id: 'oekonomi', label: 'Økonomi', ikon: <BarChart3 size={14} /> },
-  { id: 'skatter', label: 'SKAT', ikon: <Landmark size={14} /> },
-  { id: 'dokumenter', label: 'Dokumenter', ikon: <FileText size={14} /> },
-];
+/** Bygger tab-liste med oversatte labels */
+function buildTabs(da: boolean): { id: Tab; label: string; ikon: React.ReactNode }[] {
+  return [
+    { id: 'overblik', label: da ? 'Oversigt' : 'Overview', ikon: <Building2 size={14} /> },
+    { id: 'bbr', label: 'BBR', ikon: <FileText size={14} /> },
+    { id: 'ejerforhold', label: da ? 'Ejerskab' : 'Ownership', ikon: <Users size={14} /> },
+    {
+      id: 'tinglysning',
+      label: da ? 'Tinglysning' : 'Land Registry',
+      ikon: <Landmark size={14} />,
+    },
+    { id: 'oekonomi', label: da ? 'Økonomi' : 'Financials', ikon: <BarChart3 size={14} /> },
+    { id: 'skatter', label: da ? 'SKAT' : 'Tax', ikon: <Landmark size={14} /> },
+    { id: 'dokumenter', label: da ? 'Dokumenter' : 'Documents', ikon: <FileText size={14} /> },
+  ];
+}
 
 /** Miljøindikator statusfarve */
 const miljoStatusColor: Record<string, string> = {
@@ -140,7 +157,7 @@ function SectionTitle({ title, onDownload }: { title: string; onDownload?: () =>
  *
  * @param noder - Array af EjerstrukturNode der bygger træet
  */
-function EjerstrukturTrae({ noder }: { noder: EjerstrukturNode[] }) {
+function _EjerstrukturTrae({ noder }: { noder: EjerstrukturNode[] }) {
   // Opbyg kolonner: ingen forælder = kolonne 0, dybde stiger mod højre
   const getDepth = (node: EjerstrukturNode, depth = 0): number => {
     if (!node.foraeldreId) return depth;
@@ -275,6 +292,427 @@ function EjerstrukturTrae({ noder }: { noder: EjerstrukturNode[] }) {
 export default function EjendomDetalje({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
+  const { lang } = useLanguage();
+  const da = lang === 'da';
+  const tabs = buildTabs(da);
+
+  /** Lokalt oversættelsesobjekt — alle brugervendte strenge på siden */
+  const t = {
+    // Navigation
+    back: da ? 'Ejendomme' : 'Properties',
+    backToProperties: da ? 'Tilbage til ejendomme' : 'Back to properties',
+    // Header
+    report: da ? 'Rapport' : 'Report',
+    generating: da ? 'Genererer…' : 'Generating…',
+    following: da ? 'Følger' : 'Following',
+    follow: da ? 'Følg' : 'Follow',
+    fullMap: da ? 'Fuldt kort' : 'Full map',
+    openFullMap: da ? 'Åbn på fuldt kort' : 'Open full map',
+    // Loading states
+    loadingAddress: da ? 'Henter adressedata…' : 'Loading address data…',
+    loadingMap: da ? 'Henter kort…' : 'Loading map…',
+    addressNotFound: da ? 'Adresse ikke fundet' : 'Address not found',
+    addressNotFoundDesc: da
+      ? 'Adressen kunne ikke hentes fra DAWA.'
+      : 'The address could not be retrieved from DAWA.',
+    propertyNotFound: da ? 'Ejendom ikke fundet' : 'Property not found',
+    propertyNotFoundDesc: da
+      ? 'BFE-nummeret findes ikke i systemet.'
+      : 'The BFE number does not exist in the system.',
+    // Overblik — Matrikel
+    cadastre: da ? 'matrikel' : 'cadastre',
+    builtUp: da ? 'bebygget' : 'built-up',
+    plotArea: da ? 'Grundareal' : 'Plot area',
+    cadastreNr: da ? 'Matrikelnr.' : 'Cadastre no.',
+    ejerlav: da ? 'Ejerlav' : 'Land registry district',
+    municipality: da ? 'Kommune' : 'Municipality',
+    buildingCoverage: da ? 'Bebyggelsesprocent' : 'Building coverage',
+    // Overblik — Vurdering
+    propertyValuation: da ? 'Ejendomsvurdering' : 'Property valuation',
+    propertyValue: da ? 'Ejendomsværdi' : 'Property value',
+    landValue: da ? 'Grundværdi' : 'Land value',
+    assessedArea: da ? 'Vurderet areal' : 'Assessed area',
+    groundTax: da ? 'Grundskyld' : 'Land tax',
+    estGroundTax: da ? 'Est. grundskyld' : 'Est. land tax',
+    notAssessed: da ? 'Fastsættes ikke' : 'Not assessed',
+    taxable: da ? 'Afgiftspligtig' : 'Taxable',
+    perYear: da ? '/ år' : '/ year',
+    awaitingBBR: da ? 'Afventer BBR-data…' : 'Awaiting BBR data…',
+    bfeNotFound: da ? 'BFEnummer ikke fundet' : 'BFE number not found',
+    noValuationData: da ? 'Ingen vurderingsdata' : 'No valuation data',
+    preliminary: da ? 'FORELØBIG' : 'PRELIMINARY',
+    newSystem: da ? 'NY' : 'NEW',
+    // Overblik — Bygninger
+    buildings: da ? 'bygninger' : 'buildings',
+    buildingArea: da ? 'Bygningsareal' : 'Building area',
+    residentialArea: da ? 'Beboelsesareal' : 'Residential area',
+    commercialArea: da ? 'Erhvervsareal' : 'Commercial area',
+    basement: da ? 'Kælder' : 'Basement',
+    // Overblik — Enheder
+    units: da ? 'enheder' : 'units',
+    residentialUnits: da ? 'Beboelsesenheder' : 'Residential units',
+    commercialUnits: da ? 'Erhvervsenheder' : 'Commercial units',
+    totalUnitArea: da ? 'Samlet enhedsareal' : 'Total unit area',
+    // Lejligheder (ejerlejligheder i ejendom)
+    apartments: da ? 'Lejligheder' : 'Apartments',
+    loadingApartments: da ? 'Henter lejlighedsdata…' : 'Loading apartment data…',
+    apartmentAddress: da ? 'Adresse' : 'Address',
+    apartmentDescription: da ? 'Type' : 'Type',
+    apartmentOwner: da ? 'Ejer' : 'Owner',
+    apartmentArea: da ? 'Areal' : 'Area',
+    apartmentPrice: da ? 'Købspris' : 'Purchase price',
+    apartmentDate: da ? 'Købsdato' : 'Purchase date',
+    noApartments: da ? 'Ingen ejerlejligheder fundet.' : 'No condominiums found.',
+    // CVR
+    companiesAtAddress: da ? 'Virksomheder på adressen' : 'Companies at address',
+    cvrAccessRequired: da
+      ? 'CVR-opslag kræver gratis adgang til Erhvervsstyrelsens CVR OpenData.'
+      : 'CVR lookup requires free access to the Danish Business Authority CVR OpenData.',
+    restartDevServer: da ? 'Genstart dev-serveren bagefter.' : 'Restart the dev server afterwards.',
+    loadingCVR: da ? 'Henter CVR-data…' : 'Loading CVR data…',
+    active: da ? 'aktive' : 'active',
+    ceased: da ? 'ophørte' : 'ceased',
+    company: da ? 'Virksomhed' : 'Company',
+    industry: da ? 'Industri' : 'Industry',
+    period: da ? 'Periode' : 'Period',
+    employees: da ? 'Ansatte' : 'Employees',
+    lessThan1Month: da ? 'Under 1 md.' : 'Less than 1 mo.',
+    monthsToNow: da ? 'md. til nu' : 'mo. to date',
+    yearsToNow: da ? 'år til nu' : 'yr. to date',
+    noCVRFound: da
+      ? 'Ingen CVR-registrerede virksomheder fundet på denne adresse.'
+      : 'No CVR-registered companies found at this address.',
+    historical: da ? 'historiske' : 'historical',
+    showHistorical: da ? 'Vis historiske' : 'Show historical',
+    hideHistorical: da ? 'Skjul historiske' : 'Hide historical',
+    // BBR
+    bbrUnavailable: da ? 'BBR-data utilgængelig' : 'BBR data unavailable',
+    openDatafordeler: da ? 'Åbn datafordeler.dk →' : 'Open datafordeler.dk →',
+    information: da ? 'Information' : 'Information',
+    noActiveBuildings: da ? 'Ingen aktive bygninger tilgængelige' : 'No active buildings available',
+    nr: da ? 'Nr.' : 'No.',
+    usage: da ? 'Anvendelse' : 'Usage',
+    builtYear: da ? 'Opf. år' : 'Built',
+    builtArea: da ? 'Bebygget' : 'Built area',
+    totalArea: da ? 'Samlet' : 'Total',
+    geodata: da ? 'Geodata' : 'Geodata',
+    status: da ? 'Status' : 'Status',
+    erected: da ? 'Opført' : 'Erected',
+    projected: da ? 'Projekteret' : 'Projected',
+    underConstruction: da ? 'Under opførelse' : 'Under construction',
+    temporary: da ? 'Midlertidig' : 'Temporary',
+    condemned: da ? 'Kondemneret' : 'Condemned',
+    // BBR detaljer
+    outerWall: da ? 'Ydervæg' : 'Outer wall',
+    roofMaterial: da ? 'Tagmateriale' : 'Roof material',
+    heatingInstallation: da ? 'Varmeinstallation' : 'Heating installation',
+    heatingForm: da ? 'Opvarmningsform' : 'Heating type',
+    supplementaryHeat: da ? 'Supplerende varme' : 'Supplementary heat',
+    waterSupply: da ? 'Vandforsyning' : 'Water supply',
+    drainage: da ? 'Afløb' : 'Drainage',
+    floors: da ? 'Etager' : 'Floors',
+    residentialAreaLabel: da ? 'Boligareal' : 'Residential area',
+    commercialAreaLabel: da ? 'Erhvervsareal' : 'Commercial area',
+    commercialUnitsLabel: da ? 'Erhvervsenheder' : 'Commercial units',
+    renovationYear: da ? 'Ombygningsår' : 'Renovation year',
+    preservation: da ? 'Fredning' : 'Preservation',
+    conservationValue: da ? 'Bevaringsværdighed' : 'Conservation value',
+    // Enheder
+    totalUnits: da ? 'Enheder i alt' : 'Total units',
+    totalAreaLabel: da ? 'Samlet areal' : 'Total area',
+    noUnitsAvailable: da ? 'Ingen enheder tilgængelige' : 'No units available',
+    bldg: da ? 'Byg.' : 'Bldg.',
+    area: da ? 'Areal' : 'Area',
+    rooms: da ? 'Værelser' : 'Rooms',
+    address: da ? 'Adresse' : 'Address',
+    floor: da ? 'Etage' : 'Floor',
+    door: da ? 'Dør' : 'Door',
+    housingType: da ? 'Boligtype' : 'Housing type',
+    energySupply: da ? 'Energiforsyning' : 'Energy supply',
+    // BBR — ingen data
+    bbrDataUnavailable: da ? 'BBR-data utilgængelig' : 'BBR data unavailable',
+    bbrSubscriptionRequired: da
+      ? 'BBR-data kræver et aktivt abonnement på BBRPublic-tjenesten på datafordeler.dk.'
+      : 'BBR data requires an active subscription to the BBRPublic service on datafordeler.dk.',
+    // Matrikel
+    cadastreInfo: da ? 'Matrikeloplysninger' : 'Cadastre information',
+    loadingCadastre: da ? 'Henter matrikeldata…' : 'Loading cadastre data…',
+    agriculturalNote: da ? 'Landbrugsnotering' : 'Agricultural note',
+    condominiums: da ? 'Ejerlejligheder' : 'Condominiums',
+    dividedIntoCondominiums: da ? 'Opdelt i ejerlejligheder' : 'Divided into condominiums',
+    commonLot: da ? 'Fælleslod' : 'Common lot',
+    yes: da ? 'Ja' : 'Yes',
+    separatedRoad: da ? 'Udskilt vej' : 'Separated road',
+    parcels: da ? 'Jordstykker' : 'Parcels',
+    noCadastreData: da ? 'Ingen matrikeldata fundet' : 'No cadastre data found',
+    protectedForest: da ? 'Fredskov' : 'Protected forest',
+    coastalProtection: da ? 'Strandbeskyttelse' : 'Coastal protection',
+    duneProtection: da ? 'Klitfredning' : 'Dune protection',
+    groundRent: da ? 'Jordrente' : 'Ground rent',
+    road: da ? 'Vej' : 'Road',
+    // Ejerforhold
+    ownerRegistry: da ? 'Ejerfortegnelse · Datafordeler' : 'Owner Registry · Datafordeler',
+    loadingOwners: da ? 'Henter ejerdata…' : 'Loading owner data…',
+    bfeUnavailable: da ? 'BFEnummer ikke tilgængeligt' : 'BFE number unavailable',
+    bbrMissing: da
+      ? 'BBR-data mangler — DATAFORDELER_API_KEY er sandsynligvis ikke sat i .env.local'
+      : 'BBR data missing — DATAFORDELER_API_KEY is likely not set in .env.local',
+    bbrRelationFailed: da
+      ? 'BBR ejendomsrelation mislykkedes — tjenesten er muligvis ikke aktiveret'
+      : 'BBR property relation query failed — the service may not be activated',
+    noRelationFound: da
+      ? 'Ingen ejendomsrelation fundet for denne adresse'
+      : 'No property relation found for this address',
+    checkThreePoints: da
+      ? 'Tjek disse 3 punkter på datafordeler.dk:'
+      : 'Check these 3 points on datafordeler.dk:',
+    bbrPublicActivated: da
+      ? 'BBRPublic — aktiveret i Datafordeler-bruger'
+      : 'BBRPublic — activated in Datafordeler user',
+    propertyLocationAddress: da
+      ? 'EjendomsBeliggenhedsAdresse — aktiveret under Ejerfortegnelse'
+      : 'PropertyLocationAddress — activated under Owner Registry',
+    propertyValuationActivated: da
+      ? 'Ejendomsvurdering — aktiveret under HentEjendomsvurdering'
+      : 'Property valuation — activated under HentEjendomsvurdering',
+    goToDatafordeler: da
+      ? 'Gå til datafordeler.dk → Ejendomme →'
+      : 'Go to datafordeler.dk → Properties →',
+    accessMissing: da
+      ? 'Dataadgang mangler — Ejerfortegnelse (EJF)'
+      : 'Data access missing — Owner Registry (EJF)',
+    oauthValid: da
+      ? 'OAuth-token er gyldigt, men adgang til EJF kræver en godkendt Dataadgang-ansøgning hos Geodatastyrelsen.'
+      : 'OAuth token is valid, but access to EJF requires an approved Data Access application from the Geodatastyrelsen.',
+    applyAccess: da
+      ? 'Ansøg om adgang til EJF på datafordeler.dk →'
+      : 'Apply for access to EJF on datafordeler.dk →',
+    companyType: da ? 'Selskab' : 'Company',
+    personType: da ? 'Person' : 'Person',
+    privatePerson: da ? 'Privat person' : 'Private person',
+    ownerSince: da ? 'Ejer siden' : 'Owner since',
+    share: da ? 'Andel' : 'Share',
+    noOwnerDataFound: da
+      ? 'Ingen ejerdata fundet via Datafordeler'
+      : 'No owner data found via Datafordeler',
+    // Tinglysning
+    landRegistry: da ? 'Tinglysning' : 'Land Registry',
+    landRegistryDesc: da
+      ? 'Historiske adkomster og skøder kræver adgang til Tinglysning.dk REST API (backlog).'
+      : 'Historical deeds and titles require access to the Tinglysning.dk REST API (backlog).',
+    landRegistryFullDesc: da
+      ? 'Hæftelser, pantegæld og servitutter hentes via Tinglysning.dk. Kræver abonnement på tingbogsattest-tjenesten.'
+      : 'Encumbrances, mortgages and easements are fetched via Tinglysning.dk. Requires subscription to the land register service.',
+    // Økonomi
+    loadingValuation: da ? 'Henter vurderingsdata…' : 'Loading valuation data…',
+    valuationHistory: da ? 'Vurderingshistorik' : 'Valuation history',
+    yearCol: da ? 'Aar' : 'Year',
+    propertyValueCol: da ? 'Ejendomsvaerdi' : 'Property value',
+    landValueCol: da ? 'Grundvaerdi' : 'Land value',
+    plotAreaCol: da ? 'Grundareal' : 'Plot area',
+    bfeRequired: da
+      ? '{da ? "Ejendomsvurdering kræver BFEnummer fra BBR Ejendomsrelation." : "Property valuation requires BFE number from BBR property relation."}'
+      : 'Property valuation requires BFE number from BBR Property Relation.',
+    noValuationFound: da ? 'Ingen vurderingsdata fundet' : 'No valuation data found',
+    // Salgshistorik
+    salesHistory: da ? 'Salgshistorik' : 'Sales history',
+    loadingSalesHistory: da ? 'Henter salgshistorik…' : 'Loading sales history…',
+    accessAwaitingApproval: da ? 'Adgang afventer godkendelse' : 'Access awaiting approval',
+    salesHistoryEJF: da
+      ? 'Salgshistorik kræver EJF-adgang fra Geodatastyrelsen via datafordeler.dk.'
+      : 'Sales history requires EJF access from Geodatastyrelsen via datafordeler.dk.',
+    date: da ? 'Dato' : 'Date',
+    type: da ? 'Type' : 'Type',
+    purchasePrice: da ? 'Købesum' : 'Purchase price',
+    cashPrice: da ? 'Kontant' : 'Cash',
+    noTransactions: da
+      ? 'Ingen handler registreret for denne ejendom'
+      : 'No transactions recorded for this property',
+    buyerName: da ? 'Køber' : 'Buyer',
+    deedType: da ? 'Adkomst' : 'Deed type',
+    registrationDate: da ? 'Tinglyst' : 'Registered',
+    registrationFee: da ? 'Tinglysningsafgift' : 'Registration fee',
+    mortgages: da ? 'Hæftelser & Pantebreve' : 'Mortgages & Charges',
+    noMortgages: da ? 'Ingen hæftelser tinglyst' : 'No mortgages registered',
+    principalAmount: da ? 'Hovedstol' : 'Principal',
+    interestRate: da ? 'Rente' : 'Interest',
+    loanType: da ? 'Låntype' : 'Loan type',
+    totalDebt: da ? 'Samlet pantegæld' : 'Total mortgage debt',
+    loanToValue: da ? 'Belåningsgrad' : 'Loan-to-value',
+    loadingTinglysning: da ? 'Henter tinglysningsdata…' : 'Loading land registry data…',
+    // Udbudshistorik
+    listingHistory: da ? 'Udbudshistorik' : 'Listing history',
+    listingPricesAndStatus: da ? 'Udbudspriser og status' : 'Listing prices and status',
+    listingHistoryDesc: da
+      ? 'Udbudshistorik med prisændringer og handelstyper kræver markedsdata-integration (backlog).'
+      : 'Listing history with price changes and deal types requires market data integration (backlog).',
+    noListingHistory: da ? 'Ingen udbudshistorik registreret' : 'No listing history recorded',
+    // Lignende handler
+    comparableSales: da ? 'Lignende handler' : 'Comparable sales',
+    comparableSalesInArea: da
+      ? 'Sammenlignelige handler i området'
+      : 'Comparable sales in the area',
+    comparableSalesDesc: da
+      ? 'Kvadratmeterpriser og handler for lignende ejendomme kræver markedsdata-integration (backlog).'
+      : 'Square metre prices and sales for comparable properties require market data integration (backlog).',
+    // SKAT
+    propertyTaxes: da ? 'Ejendomsskatter' : 'Property taxes',
+    noTaxData: da ? 'Ingen skattedata tilgængelig' : 'No tax data available',
+    currentTaxation: da ? 'Nuværende beskatning' : 'Current taxation',
+    groundTaxToMunicipality: da ? 'Grundskyld til kommunen' : 'Land tax to municipality',
+    propertyValueTax: da ? 'Ejendomsværdiskat' : 'Property value tax',
+    propertyValueTaxExempt: da ? 'Ejendomsværdiskat (fritaget)' : 'Property value tax (exempt)',
+    totalTax: da ? 'Totale skat' : 'Total tax',
+    taxBreakdownKoloni: da
+      ? '(kun grundskyld — fritaget for ejendomsværdiskat)'
+      : '(land tax only — property value tax exempt)',
+    taxBreakdownNormal: da ? '(grundskyld + ejendomsværdiskat)' : '(land tax + property value tax)',
+    koloniTooltip: da
+      ? 'Kolonihavehuse ikke må bruges til helårsbeboelse og er derfor undtaget ejendomsværdiskat jf. kolonihavelovens § 2.'
+      : 'Allotment houses may not be used for year-round habitation and are therefore exempt from property value tax per the Allotment Act § 2.',
+    // Dokumenter
+    documents: da ? 'Dokumenter' : 'Documents',
+    loading: da ? 'Henter…' : 'Loading…',
+    selectDocsToDownload: da
+      ? 'Vælg dokumenter med checkboks for at downloade'
+      : 'Select documents with checkbox to download',
+    downloadSelected: da ? 'Download valgte' : 'Download selected',
+    yearLabel: da ? 'År' : 'Year',
+    document: da ? 'Dokument' : 'Document',
+    statusLabel: da ? 'Status' : 'Status',
+    docLabel: da ? 'Dok.' : 'Doc.',
+    bbrNotice: da ? 'BBR-meddelelse' : 'BBR notice',
+    soilContamination: da ? 'Jordforureningsattest' : 'Soil contamination certificate',
+    notMapped: da ? 'Ikke kortlagt' : 'Not mapped',
+    error: da ? 'Fejl' : 'Error',
+    cadastreMap: da ? 'Matrikelkort' : 'Cadastre map',
+    protectedBuilding: da ? 'Fredet bygning' : 'Protected building',
+    protected: da ? 'Fredet' : 'Protected',
+    plans: da ? 'Planer' : 'Plans',
+    noPlansFound: da ? 'Ingen planer fundet for denne adresse' : 'No plans found for this address',
+    generalUsage: da ? 'Generel anvendelse' : 'General usage',
+    subAreaNo: da ? 'Delområdenummer' : 'Sub-area number',
+    maxBuildingCoverage: da ? 'Maks. bebyggelsesprocent' : 'Max. building coverage',
+    maxFloors: da ? 'Maks. antal etager' : 'Max. floors',
+    maxBuildingHeight: da ? 'Maks. bygningshøjde' : 'Max. building height',
+    minPlotSubdivision: da
+      ? 'Min. grundstørrelse ved udstykning'
+      : 'Min. plot size for subdivision',
+    proposalDate: da ? 'Forslagsdato' : 'Proposal date',
+    approvalDate: da ? 'Vedtagelsesdato' : 'Approval date',
+    effectiveDate: da ? 'Dato trådt i kraft' : 'Effective date',
+    startDate: da ? 'Startdato' : 'Start date',
+    endDate: da ? 'Slutdato' : 'End date',
+    noAdditionalDetails: da
+      ? 'Ingen yderligere detaljer tilgængelige'
+      : 'No additional details available',
+    // Energi
+    energyReports: da ? 'Energimærkerapporter' : 'Energy label reports',
+    noEnergyLabels: da
+      ? 'Ingen energimærker registreret for denne ejendom'
+      : 'No energy labels registered for this property',
+    classLabel: da ? 'Klasse' : 'Class',
+    validFrom: da ? 'Gyldig fra' : 'Valid from',
+    validTo: da ? 'Gyldig til' : 'Valid to',
+    reportLabel: da ? 'Rapport' : 'Report',
+    buildingLabel: da ? 'Bygning' : 'Building',
+    buildingsLabel: da ? 'bygninger' : 'buildings',
+    // Jordforurening detaljer
+    mappingStatus: da ? 'Kortlægningsstatus' : 'Mapping status',
+    nuance: da ? 'Nuancering' : 'Nuance',
+    locationRef: da ? 'Lokationsreference' : 'Location reference',
+    location: da ? 'Lokation' : 'Location',
+    otherLocations: da ? 'Øvrige lokationer' : 'Other locations',
+    reevalDate: da ? 'Genvurderingsdato' : 'Re-evaluation date',
+    lastModified: da ? 'Senest ændret' : 'Last modified',
+    cadastreLabel: da ? 'Matrikel' : 'Cadastre',
+    region: da ? 'Region' : 'Region',
+    municipalityCode: da ? 'Kommunekode' : 'Municipality code',
+    housingStatement: da ? 'Boligudtalelse' : 'Housing statement',
+    // Mock-specifikke
+    landPlots: da ? 'Jordstykker' : 'Land plots',
+    cadastres: da ? 'Matrikler' : 'Cadastres',
+    atticUsed: da ? 'Udnyttet tagetage' : 'Attic used',
+    unit: da ? 'enhed' : 'unit',
+    building: da ? 'bygning' : 'building',
+    owners: da ? 'Ejere' : 'Owners',
+    latestTransaction: da ? 'Seneste handel' : 'Latest transaction',
+    pricePerSqm: da ? 'Pris/m²' : 'Price/m²',
+    annualTax: da ? 'Årlig' : 'Annual',
+    latestValuation: da ? 'Seneste vurdering' : 'Latest valuation',
+    totalTaxLabel: da ? 'Skat i alt' : 'Total tax',
+    environmentalIndicators: da ? 'Miljøindikatorer' : 'Environmental indicators',
+    companies: da ? 'virksomheder' : 'companies',
+    // Mock — Ejerforhold
+    owner: da ? 'Ejer' : 'Owner',
+    primaryContact: da ? 'Primær kontakt' : 'Primary contact',
+    adBlocked: da ? 'Reklamebeskyttet' : 'Ad-protected',
+    acquisitionDate: da ? 'Overtagelsesdato' : 'Acquisition date',
+    ownerType: da ? 'Ejertype' : 'Owner type',
+    branchName: da ? 'Branchenavn' : 'Industry',
+    phone: da ? 'Telefon' : 'Phone',
+    email: da ? 'E-mail' : 'Email',
+    signingRule: da ? 'Tegningsregel' : 'Signing rule',
+    ownershipStructure: da ? 'Ejerstruktur' : 'Ownership structure',
+    keyFigures: da ? 'Nøgletal' : 'Key figures',
+    incomeStatement: da ? 'Resultatopgørelse' : 'Income statement',
+    profitBeforeTax: da ? 'Resultat før skat' : 'Profit before tax',
+    result: da ? 'Resultat' : 'Result',
+    currentOwners: da ? 'Nuværende ejere' : 'Current owners',
+    privatPerson: da ? 'Privatperson' : 'Private person',
+    acquired: da ? 'Erhvervet' : 'Acquired',
+    ownershipShare: da ? 'ejerandel' : 'ownership share',
+    // Mock — Tinglysning
+    landRegisterCert: da ? 'Tingbogsattest' : 'Land register certificate',
+    titleHolder: da ? 'Adkomsthaver' : 'Title holder',
+    historicalTitles: da ? 'Historiske adkomster' : 'Historical titles',
+    encumbrances: da ? 'Hæftelser' : 'Encumbrances',
+    priority: da ? 'Prioritet' : 'Priority',
+    creditor: da ? 'Kreditor' : 'Creditor',
+    debtor: da ? 'Debitor' : 'Debtor',
+    principal: da ? 'Hovedstol' : 'Principal',
+    amount: da ? 'Beløb' : 'Amount',
+    // Mock — Økonomi
+    priceHistory: da ? 'Prishistorik' : 'Price history',
+    buyer: da ? 'Køber' : 'Buyer',
+    priceChange: da ? 'Prisændring' : 'Price change',
+    price: da ? 'Pris' : 'Price',
+    // Mock — Dokumenter
+    standardDocs: da ? 'Stamdokumenter' : 'Standard documents',
+    name: da ? 'Navn' : 'Name',
+    servitutNote: da
+      ? 'Servitutter: Ejendommen har ingen elektroniske servitutdokumenter at downloade...'
+      : 'Easements: The property has no electronic easement documents to download...',
+    // Rapport download fejl
+    reportDownloadFailed: da ? 'Rapport-download fejlede' : 'Report download failed',
+    unknownError: da ? 'Ukendt fejl' : 'Unknown error',
+    unknownAddress: da ? 'Ukendt adresse' : 'Unknown address',
+    zipDownloadFailed: da ? 'ZIP-download fejlede' : 'ZIP download failed',
+    noDirectPdfLinks: da
+      ? 'De valgte dokumenter har ingen direkte PDF-links der kan downloades.'
+      : 'The selected documents have no direct PDF links that can be downloaded.',
+    zipDownloaded: da
+      ? 'ZIP-filen er hentet, men følgende dokumenter kunne ikke inkluderes (ikke en gyldig PDF):'
+      : 'The ZIP file has been downloaded, but the following documents could not be included (not a valid PDF):',
+    tryOpenInBrowser: da
+      ? 'Prøv at åbne dem direkte i browseren.'
+      : 'Try opening them directly in the browser.',
+    // Ejerforhold koder
+    ownerRelation10: da ? 'Privatpersoner eller I/S' : 'Private persons or partnership',
+    ownerRelation20: da ? 'A/S, ApS eller P/S' : 'Corp., Ltd., or partnership',
+    ownerRelation30: da
+      ? 'Forening, legat eller selvejende inst.'
+      : 'Association, trust or self-governing inst.',
+    ownerRelation40: da ? 'Offentlig myndighed' : 'Public authority',
+    ownerRelation41: da ? 'Staten' : 'The State',
+    ownerRelation50: da ? 'Andelsboligforening' : 'Housing cooperative',
+    ownerRelation60: da ? 'Almennyttigt boligselskab' : 'Public housing association',
+    ownerRelation70: da ? 'Fond' : 'Foundation',
+    ownerRelation80: da ? 'Andet' : 'Other',
+    // Slots- og kulturstyrelsen
+    slotsOgKultur: da ? 'Slots- og Kulturstyrelsen' : 'Agency for Culture and Palaces',
+  };
+
   const [aktivTab, setAktivTab] = useState<Tab>('overblik');
   const [valgteDoc, setValgteDoc] = useState<Set<string>>(new Set());
 
@@ -346,10 +784,38 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
   /** True mens BBR-data hentes */
   const [bbrLoader, setBbrLoader] = useState(false);
 
+  /** Tinglysningsdata — tinglyst areal, fordelingstal, ejerlejlighedsnr */
+  const [tinglysningData, setTinglysningData] = useState<{
+    tinglystAreal: number | null;
+    ejerlejlighedNr: number | null;
+    fordelingstal: { taeller: number; naevner: number } | null;
+  } | null>(null);
+
+  /** ESR-nummer (kommuneNummer-ejendomsnummer) fra Tinglysning */
+  const [esrNummer, setEsrNummer] = useState<string | null>(null);
+
+  /** Tinglysning adkomster (ejerskifter) — bruges til at berige salgshistorik med købernavne */
+  const [tlEjere, setTlEjere] = useState<TLEjer[]>([]);
+  /** Tinglysning hæftelser — pantebreve og lån tinglyst på ejendommen */
+  const [tlHaeftelser, setTlHaeftelser] = useState<TLHaeftelse[]>([]);
+  /** True mens tinglysning summarisk data hentes */
+  const [tlSumLoader, setTlSumLoader] = useState(false);
+  /** True når tinglysningsdata er fra test-fallback BFE (ikke den rigtige ejendom) */
+  const [tlTestFallback, setTlTestFallback] = useState(false);
+
   /** CVR-virksomheder registreret på adressen */
   const [cvrVirksomheder, setCvrVirksomheder] = useState<CVRVirksomhed[] | null>(null);
   /** True hvis CVR_ES_USER/PASS mangler i .env.local */
   const [cvrTokenMangler, setCvrTokenMangler] = useState(false);
+  /** Vis ophørte virksomheder i CVR-sektionen */
+  const [visOphoerte, setVisOphoerte] = useState(false);
+
+  /** Ejerlejligheder i ejendommen (null = ikke hentet, [] = ingen fundet) */
+  const [lejligheder, setLejligheder] = useState<
+    import('@/app/api/ejerlejligheder/route').Ejerlejlighed[] | null
+  >(null);
+  /** True mens lejlighedsdata hentes */
+  const [lejlighederLoader, setLejlighederLoader] = useState(false);
 
   /** Ejendomsvurderingsdata fra Datafordeler — null = ikke hentet endnu */
   const [vurdering, setVurdering] = useState<VurderingData | null>(null);
@@ -363,9 +829,9 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
   /** Ejere fra Ejerfortegnelsen (Datafordeler) */
   const [ejere, setEjere] = useState<EjerData[] | null>(null);
   /** True mens ejerdata hentes */
-  const [ejereLoader, setEjereLoader] = useState(false);
+  const [_ejereLoader, setEjereLoader] = useState(false);
   /** True hvis Datafordeler returnerer 403 — Dataadgang-ansøgning mangler for EJF */
-  const [manglerEjereAdgang, setManglerEjereAdgang] = useState(false);
+  const [_manglerEjereAdgang, setManglerEjereAdgang] = useState(false);
 
   /** BBR-tab: ID'er på bygningsrækker der er foldet ud */
   const [expandedBygninger, setExpandedBygninger] = useState<Set<string>>(new Set());
@@ -475,7 +941,9 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
         // Gem besøget i "seneste sete ejendomme"-historikken
         gemRecentEjendom({
           id,
-          adresse: adr.adressebetegnelse.split(',')[0],
+          adresse: adr.etage
+            ? `${adr.vejnavn} ${adr.husnr}, ${adr.etage}.${adr.dør ? ` ${adr.dør}` : ''}`
+            : adr.adressebetegnelse.split(',')[0],
           postnr: adr.postnr,
           by: adr.postnrnavn,
           kommune: adr.kommunenavn,
@@ -501,6 +969,55 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
   }, [id, erDAWA, dawaStatus]);
 
   /**
+   * Henter tinglysningsdata (tinglyst areal, ejerlejlighedsnr, fordelingstal) når BFE er klar.
+   * Henter også summariske data (ejere/adkomster, hæftelser) til brug i Økonomi-tab.
+   * Bruger ejerlejligheds-BFE hvis tilgængelig.
+   */
+  useEffect(() => {
+    const bfe = bbrData?.ejerlejlighedBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer;
+    if (!bfe) return;
+    setTlSumLoader(true);
+    fetch(`/api/tinglysning?bfe=${bfe}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data && !data.error) {
+          setTlTestFallback(!!data.testFallback);
+          setTinglysningData({
+            tinglystAreal: data.tinglystAreal ?? null,
+            ejerlejlighedNr: data.ejerlejlighedNr ?? null,
+            fordelingstal: data.fordelingstal ?? null,
+          });
+          // ESR-nummer = kommuneNummer-ejendomsnummer
+          if (data.ejendomsnummer && data.kommuneNummer) {
+            setEsrNummer(`${data.kommuneNummer}-${data.ejendomsnummer}`);
+          }
+          // Hent summarisk data (adkomster + hæftelser) for Økonomi-tab
+          if (data.uuid) {
+            fetch(`/api/tinglysning/summarisk?uuid=${data.uuid}`)
+              .then((r) => (r.ok ? r.json() : null))
+              .then((sum) => {
+                if (sum) {
+                  setTlEjere(sum.ejere ?? []);
+                  setTlHaeftelser(sum.haeftelser ?? []);
+                }
+              })
+              .catch(() => {
+                /* Summarisk er valgfri */
+              })
+              .finally(() => setTlSumLoader(false));
+          } else {
+            setTlSumLoader(false);
+          }
+        } else {
+          setTlSumLoader(false);
+        }
+      })
+      .catch(() => {
+        setTlSumLoader(false);
+      });
+  }, [bbrData]);
+
+  /**
    * Henter CVR-virksomheder på adressen via /api/cvr når DAWA-adressen er klar.
    * Fejler stille — viser tom liste hvis ingen resultater eller fejl.
    */
@@ -511,6 +1028,9 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
       husnr: dawaAdresse.husnr,
       postnr: dawaAdresse.postnr,
     });
+    // For ejerlejligheder: filtrer på etage+dør for præcise resultater
+    if (dawaAdresse.etage) params.set('etage', dawaAdresse.etage);
+    if (dawaAdresse.dør) params.set('doer', dawaAdresse.dør);
     fetch(`/api/cvr?${params}`)
       .then((r) => (r.ok ? r.json() : { virksomheder: [], tokenMangler: false }))
       .then((data: CVRResponse) => {
@@ -519,6 +1039,33 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
       })
       .catch(() => setCvrVirksomheder([]));
   }, [id, erDAWA, dawaStatus, dawaAdresse]);
+
+  /**
+   * Henter alle ejerlejligheder for ejendommen fra /api/ejerlejligheder.
+   * Søger via matrikel (ejerlavKode + matrikelnr) for at finde ALLE lejligheder
+   * på tværs af opgange på samme matrikel.
+   * Aktiveres kun for adresser UDEN etage/dør (dvs. moderejendommen).
+   */
+  useEffect(() => {
+    if (!erDAWA || dawaStatus !== 'ok' || !dawaAdresse) return;
+    // Kun hent for adresser uden etage/dør (dvs. potentielle moderejendomme)
+    if (dawaAdresse.etage) return;
+    // Kræver matrikeldata fra BBR ejendomsrelationer
+    const rel = bbrData?.ejendomsrelationer?.[0];
+    if (!rel?.ejerlavKode || !rel?.matrikelnr) return;
+    setLejlighederLoader(true);
+    const params = new URLSearchParams({
+      ejerlavKode: String(rel.ejerlavKode),
+      matrikelnr: rel.matrikelnr,
+    });
+    fetch(`/api/ejerlejligheder?${params}`)
+      .then((r) => (r.ok ? r.json() : { lejligheder: [] }))
+      .then((data: { lejligheder: import('@/app/api/ejerlejligheder/route').Ejerlejlighed[] }) => {
+        setLejligheder(data.lejligheder);
+      })
+      .catch(() => setLejligheder([]))
+      .finally(() => setLejlighederLoader(false));
+  }, [id, erDAWA, dawaStatus, dawaAdresse, bbrData]);
 
   /**
    * Henter ejendomsvurdering og ejerskabsdata fra Datafordeler når BFEnummer
@@ -634,7 +1181,11 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
         setEnergiManglerAdgang(data?.manglerAdgang ?? false);
         setEnergiFejl(data?.fejl ?? null);
       })
-      .catch(() => setEnergiFejl('Netværksfejl ved hentning af energimærker'))
+      .catch(() =>
+        setEnergiFejl(
+          da ? 'Netværksfejl ved hentning af energimærker' : 'Network error fetching energy labels'
+        )
+      )
       .finally(() => setEnergiLoader(false));
   }, [id, erDAWA, bbrData]);
 
@@ -661,7 +1212,13 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
         setJordIngenData(data?.ingenData ?? false);
         setJordFejl(data?.fejl ?? null);
       })
-      .catch(() => setJordFejl('Netværksfejl ved hentning af jordforureningsdata'))
+      .catch(() =>
+        setJordFejl(
+          da
+            ? 'Netværksfejl ved hentning af jordforureningsdata'
+            : 'Network error fetching contamination data'
+        )
+      )
       .finally(() => setJordLoader(false));
   }, [id, erDAWA, bbrData]);
 
@@ -679,7 +1236,11 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
         setPlandata(data?.planer ?? null);
         if (data?.fejl) setPlandataFejl(data.fejl);
       })
-      .catch(() => setPlandataFejl('Netværksfejl ved hentning af plandata'))
+      .catch(() =>
+        setPlandataFejl(
+          da ? 'Netværksfejl ved hentning af plandata' : 'Network error fetching plan data'
+        )
+      )
       .finally(() => setPlandataLoader(false));
   }, [id, erDAWA, dawaStatus]);
 
@@ -711,7 +1272,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
       const rel = bbrData?.ejendomsrelationer?.[0];
       const adresse = dawaAdresse
         ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
-        : (ejendom?.adresse ?? 'Ukendt adresse');
+        : (ejendom?.adresse ?? t.unknownAddress);
 
       const payload = {
         adresse,
@@ -794,7 +1355,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
       });
 
       if (!res.ok) {
-        const err = (await res.json().catch(() => ({ fejl: 'Ukendt fejl' }))) as { fejl?: string };
+        const err = (await res.json().catch(() => ({ fejl: t.unknownError }))) as { fejl?: string };
         alert(`Rapport-download fejlede: ${err.fejl ?? res.statusText}`);
         return;
       }
@@ -808,7 +1369,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
       a.click();
       URL.revokeObjectURL(url);
     } catch (err) {
-      alert(`Rapport-download fejlede: ${err instanceof Error ? err.message : 'Ukendt fejl'}`);
+      alert(`Rapport-download fejlede: ${err instanceof Error ? err.message : t.unknownError}`);
     } finally {
       setRapportLoader(false);
     }
@@ -867,7 +1428,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
     }
 
     if (docs.length === 0) {
-      alert('De valgte dokumenter har ingen direkte PDF-links der kan downloades.');
+      alert(t.noDirectPdfLinks);
       return;
     }
 
@@ -885,7 +1446,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
       });
 
       if (!res.ok) {
-        const err = (await res.json().catch(() => ({ fejl: 'Ukendt fejl' }))) as { fejl?: string };
+        const err = (await res.json().catch(() => ({ fejl: t.unknownError }))) as { fejl?: string };
         alert(`ZIP-download fejlede: ${err.fejl ?? res.statusText}`);
         return;
       }
@@ -908,16 +1469,111 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
           .split(' | ')
           .map((s) => `• ${s}`)
           .join('\n');
-        alert(
-          `ZIP-filen er hentet, men følgende dokumenter kunne ikke inkluderes (ikke en gyldig PDF):\n\n${liste}\n\nPrøv at åbne dem direkte i browseren.`
-        );
+        alert(`${t.zipDownloaded}\n\n${liste}\n\n${t.tryOpenInBrowser}`);
       }
     } catch (err) {
-      alert(`ZIP-download fejlede: ${err instanceof Error ? err.message : 'Ukendt fejl'}`);
+      alert(`ZIP-download fejlede: ${err instanceof Error ? err.message : t.unknownError}`);
     } finally {
       setZipLoader(false);
     }
   };
+
+  // ── Kombineret salgshistorik: EJF + Tinglysning adkomster ──
+
+  /** En samlet handel der kan stamme fra EJF, tinglysning eller begge */
+  interface MergedHandel {
+    kontantKoebesum: number | null;
+    samletKoebesum: number | null;
+    koebsaftaleDato: string | null;
+    overtagelsesdato: string | null;
+    overdragelsesmaade: string | null;
+    koeber: string | null;
+    koebercvr: string | null;
+    adkomstType: string | null;
+    andel: string | null;
+    tinglysningsdato: string | null;
+    tinglysningsafgift: number | null;
+    kilde: 'ejf' | 'tinglysning' | 'begge';
+  }
+
+  /**
+   * Merger EJF-salgshistorik med tinglysning-adkomster.
+   * Matcher på overtagelsesdato (±30 dage) for at samle data fra begge kilder.
+   * Tinglysning bidrager med købernavn, adkomsttype, andel og tinglysningsafgift.
+   */
+  const mergedSalgshistorik: MergedHandel[] = (() => {
+    const merged: MergedHandel[] = [];
+    const brugteTlIdx = new Set<number>();
+
+    // Trin 1: Start med EJF-data og berig med tinglysning
+    for (const h of salgshistorik ?? []) {
+      const ejfDato = h.overtagelsesdato ?? h.koebsaftaleDato ?? '';
+      let bestMatch: TLEjer | null = null;
+      let bestIdx = -1;
+      let bestDiff = Infinity;
+
+      for (let i = 0; i < tlEjere.length; i++) {
+        if (brugteTlIdx.has(i)) continue;
+        const tlDato = tlEjere[i].overtagelsesdato ?? tlEjere[i].koebsaftaledato ?? '';
+        if (!ejfDato || !tlDato) continue;
+        const diff = Math.abs(new Date(ejfDato).getTime() - new Date(tlDato).getTime());
+        if (diff < 30 * 24 * 60 * 60 * 1000 && diff < bestDiff) {
+          bestDiff = diff;
+          bestMatch = tlEjere[i];
+          bestIdx = i;
+        }
+      }
+
+      if (bestMatch && bestIdx >= 0) brugteTlIdx.add(bestIdx);
+
+      merged.push({
+        kontantKoebesum: h.kontantKoebesum,
+        samletKoebesum: h.samletKoebesum,
+        koebsaftaleDato: h.koebsaftaleDato,
+        overtagelsesdato: h.overtagelsesdato,
+        overdragelsesmaade: h.overdragelsesmaade,
+        koeber: bestMatch?.navn ?? null,
+        koebercvr: bestMatch?.cvr ?? null,
+        adkomstType: bestMatch?.adkomstType ?? null,
+        andel: bestMatch?.andel ?? null,
+        tinglysningsdato: bestMatch?.tinglysningsdato ?? null,
+        tinglysningsafgift: bestMatch?.tinglysningsafgift ?? null,
+        kilde: bestMatch ? 'begge' : 'ejf',
+      });
+    }
+
+    // Trin 2: Tilføj tinglysning-adkomster der ikke matchede EJF
+    for (let i = 0; i < tlEjere.length; i++) {
+      if (brugteTlIdx.has(i)) continue;
+      const e = tlEjere[i];
+      merged.push({
+        kontantKoebesum: e.kontantKoebesum ?? e.koebesum,
+        samletKoebesum: e.iAltKoebesum ?? e.koebesum,
+        koebsaftaleDato: e.koebsaftaledato,
+        overtagelsesdato: e.overtagelsesdato,
+        overdragelsesmaade: e.adkomstType,
+        koeber: e.navn,
+        koebercvr: e.cvr,
+        adkomstType: e.adkomstType,
+        andel: e.andel,
+        tinglysningsdato: e.tinglysningsdato,
+        tinglysningsafgift: e.tinglysningsafgift,
+        kilde: 'tinglysning',
+      });
+    }
+
+    // Sortér nyeste først
+    merged.sort((a, b) => {
+      const da2 = a.overtagelsesdato ?? a.koebsaftaleDato ?? '';
+      const db = b.overtagelsesdato ?? b.koebsaftaleDato ?? '';
+      return db.localeCompare(da2);
+    });
+
+    return merged;
+  })();
+
+  /** Samlet pantegæld fra tinglysning-hæftelser (DKK) */
+  const _samletPantegaeld = tlHaeftelser.reduce((sum, h) => sum + (h.beloeb ?? 0), 0);
 
   const ejendom = erDAWA ? null : getEjendomById(id);
 
@@ -926,7 +1582,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
     return (
       <div className="flex flex-col items-center justify-center h-full gap-4">
         <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-        <p className="text-slate-400 text-sm">Henter adressedata…</p>
+        <p className="text-slate-400 text-sm">{t.loadingAddress}</p>
       </div>
     );
   }
@@ -936,13 +1592,13 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
     return (
       <div className="flex flex-col items-center justify-center h-full text-center px-6">
         <MapPin size={40} className="text-slate-600 mb-4" />
-        <h2 className="text-white text-xl font-semibold mb-2">Adresse ikke fundet</h2>
-        <p className="text-slate-400 text-sm mb-6">Adressen kunne ikke hentes fra DAWA.</p>
+        <h2 className="text-white text-xl font-semibold mb-2">{t.addressNotFound}</h2>
+        <p className="text-slate-400 text-sm mb-6">{t.addressNotFoundDesc}</p>
         <Link
           href="/dashboard/ejendomme"
           className="text-blue-400 hover:text-blue-300 flex items-center gap-2 text-sm"
         >
-          <ArrowLeft size={16} /> Tilbage til ejendomme
+          <ArrowLeft size={16} /> {t.backToProperties}
         </Link>
       </div>
     );
@@ -963,24 +1619,26 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                 onClick={() => router.push('/dashboard/ejendomme')}
                 className="flex items-center gap-2 text-slate-400 hover:text-white text-sm transition-colors"
               >
-                <ArrowLeft size={16} /> Ejendomme
+                <ArrowLeft size={16} /> {t.back}
               </button>
               <div className="flex items-center gap-2">
                 <button
                   onClick={handleDownloadRapport}
                   disabled={rapportLoader}
                   className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-wait border border-blue-500/60 rounded-lg text-white text-sm font-medium transition-all"
-                  title="Download ejendomsrapport som PDF"
+                  title={
+                    da ? 'Download ejendomsrapport som PDF' : 'Download property report as PDF'
+                  }
                 >
                   {rapportLoader ? (
                     <>
                       <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                      Genererer…
+                      {t.generating}
                     </>
                   ) : (
                     <>
                       <Download size={14} />
-                      Rapport
+                      {t.report}
                     </>
                   )}
                 </button>
@@ -1034,15 +1692,51 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                     }`}
                   >
                     <Bell size={14} className={erFulgt ? 'fill-blue-400 text-blue-400' : ''} />
-                    {erFulgt ? 'Følger' : 'Følg'}
+                    {erFulgt ? t.following : t.follow}
                   </button>
-                  <FoelgTooltip lang="da" visible={visFoelgTooltip} />
+                  <FoelgTooltip lang={da ? 'da' : 'en'} visible={visFoelgTooltip} />
                 </div>
               </div>
             </div>
 
             <div className="mb-3">
-              <h1 className="text-white text-xl font-bold">{adresseStreng}</h1>
+              <div className="flex items-center gap-3">
+                <h1 className="text-white text-xl font-bold">{adresseStreng}</h1>
+                {bbrData?.ejerlejlighedBfe && bbrData?.moderBfe && (
+                  <button
+                    onClick={async () => {
+                      try {
+                        const jsRes = await fetch(
+                          `/api/adresse/jordstykke?bfe=${bbrData.moderBfe}`
+                        );
+                        if (jsRes.ok) {
+                          const js = await jsRes.json();
+                          if (js?.adgangsadresseId) {
+                            router.push(`/dashboard/ejendomme/${js.adgangsadresseId}`);
+                            return;
+                          }
+                        }
+                      } catch {
+                        /* ignore */
+                      }
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1 bg-amber-500/15 border border-amber-500/30 rounded-lg text-amber-400 text-xs font-medium hover:bg-amber-500/25 transition-colors flex-shrink-0"
+                    title={
+                      lang === 'da'
+                        ? `Gå til moderejendommen (BFE ${bbrData.moderBfe})`
+                        : `Go to parent property (BFE ${bbrData.moderBfe})`
+                    }
+                  >
+                    <Building2 size={12} />
+                    {lang === 'da' ? 'Moderejendom' : 'Parent property'}
+                  </button>
+                )}
+                {bbrData?.ejerlejlighedBfe && (
+                  <span className="flex items-center gap-1 px-2 py-0.5 bg-purple-500/15 border border-purple-500/30 rounded-full text-purple-400 text-[10px] font-medium flex-shrink-0">
+                    {lang === 'da' ? 'Ejerlejlighed' : 'Condominium'}
+                  </span>
+                )}
+              </div>
               <div className="flex items-center gap-2 mt-2 flex-wrap">
                 <span className="flex items-center gap-1 px-2 py-0.5 bg-slate-800 border border-slate-700/50 rounded-full text-xs text-slate-300">
                   <MapPin size={11} />
@@ -1067,6 +1761,16 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                     }`}
                   >
                     {dawaAdresse.zone}
+                  </span>
+                )}
+                {bbrData?.ejendomsrelationer?.[0]?.bfeNummer && (
+                  <span className="px-2 py-0.5 bg-slate-800 border border-slate-700/50 rounded-full text-xs text-slate-300">
+                    BFE: {bbrData.ejendomsrelationer[0].bfeNummer}
+                  </span>
+                )}
+                {esrNummer && (
+                  <span className="px-2 py-0.5 bg-slate-800 border border-slate-700/50 rounded-full text-xs text-slate-300">
+                    ESR: {esrNummer}
                   </span>
                 )}
               </div>
@@ -1100,8 +1804,10 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                   {/* ─── Rad 1: Matrikel (v) + Ejendomsvurdering (h)
                        CSS grid sikrer automatisk ens højde på disse to bokse ─── */}
 
-                  {/* Matrikel */}
+                  {/* Matrikel / Lejlighedsinfo */}
                   {(() => {
+                    const erLejlighed = !!bbrData?.ejerlejlighedBfe;
+                    const enhed = erLejlighed ? (bbrData?.enheder ?? [])[0] : null;
                     // Grundareal: brug DAWA jordstykke → VUR vurderet areal som fallback
                     const grundareal =
                       (dawaJordstykke?.areal_m2 || null) ?? vurdering?.vurderetAreal ?? null;
@@ -1109,9 +1815,9 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                       bbrData?.bbr?.reduce((s, b) => s + (b.bebyggetAreal ?? 0), 0) ?? 0;
                     // Bebyggelsesprocent: fra VUR hvis tilgængeligt, ellers beregnet
                     const bebyggPct =
-                      vurdering?.bebyggelsesprocent != null
+                      !erLejlighed && vurdering?.bebyggelsesprocent != null
                         ? vurdering.bebyggelsesprocent
-                        : grundareal && bygAreal
+                        : !erLejlighed && grundareal && bygAreal
                           ? Math.round((bygAreal / grundareal) * 100)
                           : null;
                     // Kommunenavn: DAWA → jordstykke som fallback
@@ -1121,40 +1827,98 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                       <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-2.5">
                         <div className="flex items-baseline justify-between mb-1.5">
                           <div className="flex items-baseline gap-1">
-                            <span className="text-white font-bold text-lg">1</span>
-                            <span className="text-slate-400 text-xs">matrikel</span>
+                            <span className="text-white font-bold text-lg">
+                              {erLejlighed ? '' : '1'}
+                            </span>
+                            <span className="text-slate-400 text-xs">
+                              {erLejlighed ? (da ? 'Lejlighed' : 'Apartment') : t.cadastre}
+                            </span>
+                            {erLejlighed && tinglysningData?.ejerlejlighedNr && (
+                              <span className="text-slate-500 text-xs ml-1">
+                                nr. {tinglysningData.ejerlejlighedNr}
+                              </span>
+                            )}
                           </div>
                           {bebyggPct !== null && (
                             <span className="text-slate-400 text-xs font-medium">
-                              {bebyggPct}% bebygget
+                              {bebyggPct}% {t.builtUp}
                             </span>
                           )}
                         </div>
                         <div className="grid grid-cols-2 gap-x-2 gap-y-1">
-                          <div>
-                            <p className="text-slate-500 text-xs leading-none mb-0.5">Grundareal</p>
-                            <p className="text-white text-sm font-medium">
-                              {grundareal ? `${grundareal.toLocaleString('da-DK')} m²` : '–'}
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-slate-500 text-xs leading-none mb-0.5">
-                              Matrikelnr.
-                            </p>
-                            <p className="text-white text-sm font-medium">
-                              {dawaJordstykke?.matrikelnr ?? dawaAdresse.matrikelnr ?? '–'}
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-slate-500 text-xs leading-none mb-0.5">Ejerlav</p>
-                            <p className="text-white text-sm truncate">
-                              {dawaJordstykke?.ejerlav.navn ?? '–'}
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-slate-500 text-xs leading-none mb-0.5">Kommune</p>
-                            <p className="text-white text-sm">{kommunenavn ?? '–'}</p>
-                          </div>
+                          {erLejlighed ? (
+                            <>
+                              {/* Lejligheds-specifik info */}
+                              <div>
+                                <p className="text-slate-500 text-xs leading-none mb-0.5">
+                                  {da ? 'Tinglyst areal' : 'Registered area'}
+                                </p>
+                                <p className="text-white text-sm font-medium">
+                                  {tinglysningData?.tinglystAreal
+                                    ? `${tinglysningData.tinglystAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
+                                    : '–'}
+                                </p>
+                              </div>
+                              <div>
+                                <p className="text-slate-500 text-xs leading-none mb-0.5">
+                                  {da ? 'Værelser' : 'Rooms'}
+                                </p>
+                                <p className="text-white text-sm font-medium">
+                                  {enhed?.vaerelser ?? '–'}
+                                </p>
+                              </div>
+                              <div>
+                                <p className="text-slate-500 text-xs leading-none mb-0.5">
+                                  {t.cadastreNr}
+                                </p>
+                                <p className="text-white text-sm font-medium">
+                                  {dawaJordstykke?.matrikelnr ?? dawaAdresse.matrikelnr ?? '–'}
+                                </p>
+                              </div>
+                              <div>
+                                <p className="text-slate-500 text-xs leading-none mb-0.5">
+                                  {t.municipality}
+                                </p>
+                                <p className="text-white text-sm">{kommunenavn ?? '–'}</p>
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              {/* Standard matrikel-info */}
+                              <div>
+                                <p className="text-slate-500 text-xs leading-none mb-0.5">
+                                  {t.plotArea}
+                                </p>
+                                <p className="text-white text-sm font-medium">
+                                  {grundareal
+                                    ? `${grundareal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
+                                    : '–'}
+                                </p>
+                              </div>
+                              <div>
+                                <p className="text-slate-500 text-xs leading-none mb-0.5">
+                                  {t.cadastreNr}
+                                </p>
+                                <p className="text-white text-sm font-medium">
+                                  {dawaJordstykke?.matrikelnr ?? dawaAdresse.matrikelnr ?? '–'}
+                                </p>
+                              </div>
+                              <div>
+                                <p className="text-slate-500 text-xs leading-none mb-0.5">
+                                  {t.ejerlav}
+                                </p>
+                                <p className="text-white text-sm truncate">
+                                  {dawaJordstykke?.ejerlav.navn ?? '–'}
+                                </p>
+                              </div>
+                              <div>
+                                <p className="text-slate-500 text-xs leading-none mb-0.5">
+                                  {t.municipality}
+                                </p>
+                                <p className="text-white text-sm">{kommunenavn ?? '–'}</p>
+                              </div>
+                            </>
+                          )}
                         </div>
                       </div>
                     );
@@ -1163,7 +1927,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                   {/* Ejendomsvurdering */}
                   <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-2.5">
                     <p className="text-slate-400 text-xs font-medium uppercase tracking-wide mb-1.5 flex items-center gap-2">
-                      <span>Ejendomsvurdering</span>
+                      <span>{t.propertyValuation}</span>
                       {vurdering?.erNytSystem && (
                         <span className="px-1.5 py-0.5 bg-blue-500/10 border border-blue-500/20 rounded text-[10px] text-blue-400 font-medium normal-case tracking-normal">
                           NY
@@ -1190,7 +1954,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                         <div className="grid grid-cols-2 gap-x-3">
                           <div>
                             <p className="text-slate-500 text-xs leading-none mb-0.5">
-                              Ejendomsværdi
+                              {t.propertyValue}
                               {vurdering.aar && (
                                 <span className="ml-1 text-slate-600">({vurdering.aar})</span>
                               )}
@@ -1198,20 +1962,19 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                             <p className="text-white text-base font-bold">
                               {vurdering.ejendomsvaerdi
                                 ? formatDKK(vurdering.ejendomsvaerdi)
-                                : 'Fastsættes ikke'}
+                                : t.notAssessed}
                             </p>
                             {vurdering.afgiftspligtigEjendomsvaerdi !== null &&
                               vurdering.afgiftspligtigEjendomsvaerdi !==
                                 vurdering.ejendomsvaerdi && (
                                 <p className="text-slate-500 text-xs mt-0.5">
-                                  Afgiftspligtig:{' '}
-                                  {formatDKK(vurdering.afgiftspligtigEjendomsvaerdi)}
+                                  {t.taxable}: {formatDKK(vurdering.afgiftspligtigEjendomsvaerdi)}
                                 </p>
                               )}
                           </div>
                           <div>
                             <p className="text-slate-500 text-xs leading-none mb-0.5">
-                              Grundværdi
+                              {t.landValue}
                               {vurdering.aar && (
                                 <span className="ml-1 text-slate-600">({vurdering.aar})</span>
                               )}
@@ -1222,7 +1985,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                             {vurdering.afgiftspligtigGrundvaerdi !== null &&
                               vurdering.afgiftspligtigGrundvaerdi !== vurdering.grundvaerdi && (
                                 <p className="text-slate-500 text-xs mt-0.5">
-                                  Afgiftspligtig: {formatDKK(vurdering.afgiftspligtigGrundvaerdi)}
+                                  {t.taxable}: {formatDKK(vurdering.afgiftspligtigGrundvaerdi)}
                                 </p>
                               )}
                           </div>
@@ -1231,11 +1994,11 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                         <div className="grid grid-cols-2 gap-x-3 pt-1.5 border-t border-slate-700/30">
                           <div>
                             <p className="text-slate-500 text-xs leading-none mb-0.5">
-                              Vurderet areal
+                              {t.assessedArea}
                             </p>
                             <p className="text-white text-sm font-medium">
                               {vurdering.vurderetAreal
-                                ? `${vurdering.vurderetAreal.toLocaleString('da-DK')} m²`
+                                ? `${vurdering.vurderetAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
                                 : '–'}
                             </p>
                           </div>
@@ -1247,14 +2010,14 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                               return (
                                 <div>
                                   <p className="text-slate-500 text-xs leading-none mb-0.5">
-                                    Grundskyld
+                                    {t.groundTax}
                                     <span className="text-slate-600 ml-1">
                                       ({nyesteFrl!.vurderingsaar})
                                     </span>
                                   </p>
                                   <p className="text-white text-sm font-medium flex items-center gap-1">
                                     {formatDKK(faktiskGrundskyld)}
-                                    <span className="text-slate-500 text-xs">/ år</span>
+                                    <span className="text-slate-500 text-xs">{t.perYear}</span>
                                   </p>
                                 </div>
                               );
@@ -1263,7 +2026,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                               return (
                                 <div>
                                   <p className="text-slate-500 text-xs leading-none mb-0.5">
-                                    Est. grundskyld
+                                    {t.estGroundTax}
                                     {vurdering.grundskyldspromille !== null && (
                                       <span className="text-slate-600 ml-1">
                                         ({vurdering.grundskyldspromille}‰)
@@ -1272,7 +2035,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                                   </p>
                                   <p className="text-white text-sm font-medium">
                                     {formatDKK(vurdering.estimereretGrundskyld)}
-                                    <span className="text-slate-500 text-xs ml-1">/ år</span>
+                                    <span className="text-slate-500 text-xs ml-1">{t.perYear}</span>
                                   </p>
                                 </div>
                               );
@@ -1284,9 +2047,9 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                     ) : (
                       <p className="text-slate-500 text-xs">
                         {bbrLoader || !bbrData
-                          ? 'Afventer BBR-data…'
+                          ? t.awaitingBBR
                           : !bbrData.ejendomsrelationer?.[0]?.bfeNummer
-                            ? 'BFEnummer ikke fundet'
+                            ? t.bfeNotFound
                             : 'Ingen vurderingsdata'}
                       </p>
                     )}
@@ -1302,13 +2065,13 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                         <div className="mt-2 bg-amber-500/5 border border-amber-500/20 rounded-xl p-3">
                           <div className="flex items-center gap-2 mb-1.5">
                             <span className="px-1.5 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded text-[10px] text-amber-400 font-medium">
-                              FORELØBIG
+                              {t.preliminary}
                             </span>
                           </div>
                           <div className="grid grid-cols-2 gap-x-2 gap-y-1">
                             <div>
                               <p className="text-slate-500 text-xs leading-none mb-0.5">
-                                Ejendomsværdi
+                                {t.propertyValue}
                                 <span className="ml-1 text-slate-600">
                                   ({nyesteForelobig.vurderingsaar})
                                 </span>
@@ -1316,12 +2079,12 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                               <p className="text-amber-200 text-sm font-medium">
                                 {nyesteForelobig.ejendomsvaerdi
                                   ? formatDKK(nyesteForelobig.ejendomsvaerdi)
-                                  : 'Fastsættes ikke'}
+                                  : t.notAssessed}
                               </p>
                             </div>
                             <div>
                               <p className="text-slate-500 text-xs leading-none mb-0.5">
-                                Grundværdi
+                                {t.landValue}
                                 <span className="ml-1 text-slate-600">
                                   ({nyesteForelobig.vurderingsaar})
                                 </span>
@@ -1341,69 +2104,83 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                   {/* ─── Rad 2: Bygninger (v) + Enheder (h)
                        self-start: boksene strækkes ikke til at matche hinanden ─── */}
 
-                  {/* Bygninger — ekskluder nedrevne/historiske */}
-                  {(() => {
-                    const bygninger = (bbrData?.bbr ?? [])
-                      .filter(
-                        (b) =>
-                          b.status !== 'Nedrevet/slettet' &&
-                          b.status !== 'Bygning nedrevet' &&
-                          b.status !== 'Bygning bortfaldet'
-                      )
-                      .sort((a, b) => (a.bygningsnr ?? 9999) - (b.bygningsnr ?? 9999));
-                    const totAreal = bygninger.reduce(
-                      (s, b) => s + (b.samletBygningsareal ?? 0),
-                      0
-                    );
-                    const boligAreal = bygninger.reduce((s, b) => s + (b.samletBoligareal ?? 0), 0);
-                    const erhvAreal = bygninger.reduce(
-                      (s, b) => s + (b.samletErhvervsareal ?? 0),
-                      0
-                    );
-                    const kaelder = bygninger.reduce((s, b) => s + (b.kaelder ?? 0), 0);
-                    return (
-                      <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-2.5 self-start">
-                        <div className="flex items-baseline gap-1 mb-1.5">
-                          <span className="text-white font-bold text-lg">
-                            {bbrLoader ? '…' : bygninger.length || '–'}
-                          </span>
-                          <span className="text-slate-400 text-xs">bygninger</span>
+                  {/* Bygninger — skjul for ejerlejligheder, ekskluder nedrevne/historiske */}
+                  {!bbrData?.ejerlejlighedBfe &&
+                    (() => {
+                      const bygninger = (bbrData?.bbr ?? [])
+                        .filter(
+                          (b) =>
+                            b.status !== 'Nedrevet/slettet' &&
+                            b.status !== 'Bygning nedrevet' &&
+                            b.status !== 'Bygning bortfaldet'
+                        )
+                        .sort((a, b) => (a.bygningsnr ?? 9999) - (b.bygningsnr ?? 9999));
+                      const totAreal = bygninger.reduce(
+                        (s, b) => s + (b.samletBygningsareal ?? 0),
+                        0
+                      );
+                      const boligAreal = bygninger.reduce(
+                        (s, b) => s + (b.samletBoligareal ?? 0),
+                        0
+                      );
+                      const erhvAreal = bygninger.reduce(
+                        (s, b) => s + (b.samletErhvervsareal ?? 0),
+                        0
+                      );
+                      const kaelder = bygninger.reduce((s, b) => s + (b.kaelder ?? 0), 0);
+                      return (
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-2.5 self-start">
+                          <div className="flex items-baseline gap-1 mb-1.5">
+                            <span className="text-white font-bold text-lg">
+                              {bbrLoader ? '…' : bygninger.length || '–'}
+                            </span>
+                            <span className="text-slate-400 text-xs">{t.buildings}</span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+                            <div>
+                              <p className="text-slate-500 text-xs leading-none mb-0.5">
+                                {t.buildingArea}
+                              </p>
+                              <p className="text-white text-sm font-medium">
+                                {totAreal
+                                  ? `${totAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
+                                  : '–'}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-slate-500 text-xs leading-none mb-0.5">
+                                {t.residentialArea}
+                              </p>
+                              <p className="text-white text-sm font-medium">
+                                {boligAreal
+                                  ? `${boligAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
+                                  : '0 m²'}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-slate-500 text-xs leading-none mb-0.5">
+                                {t.commercialArea}
+                              </p>
+                              <p className="text-white text-sm font-medium">
+                                {erhvAreal
+                                  ? `${erhvAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
+                                  : '–'}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-slate-500 text-xs leading-none mb-0.5">
+                                {t.basement}
+                              </p>
+                              <p className="text-white text-sm font-medium">
+                                {kaelder
+                                  ? `${kaelder.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
+                                  : '0 m²'}
+                              </p>
+                            </div>
+                          </div>
                         </div>
-                        <div className="grid grid-cols-2 gap-x-2 gap-y-1">
-                          <div>
-                            <p className="text-slate-500 text-xs leading-none mb-0.5">
-                              Bygningsareal
-                            </p>
-                            <p className="text-white text-sm font-medium">
-                              {totAreal ? `${totAreal.toLocaleString('da-DK')} m²` : '–'}
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-slate-500 text-xs leading-none mb-0.5">
-                              Beboelsesareal
-                            </p>
-                            <p className="text-white text-sm font-medium">
-                              {boligAreal ? `${boligAreal.toLocaleString('da-DK')} m²` : '0 m²'}
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-slate-500 text-xs leading-none mb-0.5">
-                              Erhvervsareal
-                            </p>
-                            <p className="text-white text-sm font-medium">
-                              {erhvAreal ? `${erhvAreal.toLocaleString('da-DK')} m²` : '–'}
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-slate-500 text-xs leading-none mb-0.5">Kælder</p>
-                            <p className="text-white text-sm font-medium">
-                              {kaelder ? `${kaelder.toLocaleString('da-DK')} m²` : '0 m²'}
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })()}
+                      );
+                    })()}
 
                   {/* Enheder */}
                   {(() => {
@@ -1417,27 +2194,29 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                           <span className="text-white font-bold text-lg">
                             {bbrLoader ? '…' : enheder.length || '–'}
                           </span>
-                          <span className="text-slate-400 text-xs">enheder</span>
+                          <span className="text-slate-400 text-xs">{t.units}</span>
                         </div>
                         <div className="grid grid-cols-2 gap-x-2 gap-y-1">
                           <div>
                             <p className="text-slate-500 text-xs leading-none mb-0.5">
-                              Beboelsesenheder
+                              {t.residentialUnits}
                             </p>
                             <p className="text-white text-sm font-medium">{boligEnh}</p>
                           </div>
                           <div>
                             <p className="text-slate-500 text-xs leading-none mb-0.5">
-                              Erhvervsenheder
+                              {t.commercialUnits}
                             </p>
                             <p className="text-white text-sm font-medium">{erhvEnh}</p>
                           </div>
                           <div className="col-span-2">
                             <p className="text-slate-500 text-xs leading-none mb-0.5">
-                              Samlet enhedsareal
+                              {t.totalUnitArea}
                             </p>
                             <p className="text-white text-sm font-medium">
-                              {totAreal ? `${totAreal.toLocaleString('da-DK')} m²` : '–'}
+                              {totAreal
+                                ? `${totAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
+                                : '–'}
                             </p>
                           </div>
                         </div>
@@ -1446,119 +2225,230 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                   })()}
                 </div>
 
-                {/* Virksomheder på adressen — CVR OpenData */}
-                {cvrTokenMangler ? (
-                  <div className="bg-amber-500/8 border border-amber-500/20 rounded-xl p-4">
-                    <p className="text-amber-300 text-xs font-medium uppercase tracking-wide mb-2">
-                      Virksomheder på adressen
-                    </p>
-                    <p className="text-slate-400 text-sm mb-3">
-                      CVR-opslag kræver gratis adgang til Erhvervsstyrelsens CVR OpenData.
-                    </p>
-                    <ol className="text-slate-400 text-xs space-y-1 list-decimal list-inside leading-relaxed">
-                      <li>
-                        Gå til{' '}
-                        <span className="text-blue-400 font-medium">
-                          datacvr.virk.dk/data/login
-                        </span>{' '}
-                        → opret gratis bruger
-                      </li>
-                      <li>
-                        Tilføj til <code className="bg-slate-800 px-1 rounded">.env.local</code>:
-                      </li>
-                    </ol>
-                    <code className="block bg-slate-900 rounded-lg px-3 py-2 mt-2 text-xs text-emerald-400 font-mono">
-                      CVR_ES_USER=din@email.dk{'\n'}CVR_ES_PASS=dit_password
-                    </code>
-                    <p className="text-slate-500 text-xs mt-2">Genstart dev-serveren bagefter.</p>
-                  </div>
-                ) : cvrVirksomheder === null ? (
-                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                    <p className="text-slate-400 text-xs font-medium uppercase tracking-wide mb-2">
-                      Virksomheder på adressen
-                    </p>
-                    <div className="flex items-center gap-2 text-slate-500 text-sm">
-                      <div className="w-3.5 h-3.5 border border-slate-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
-                      Henter CVR-data…
-                    </div>
-                  </div>
-                ) : cvrVirksomheder.length > 0 ? (
+                {/* Lejligheder — vises i stedet for CVR når ejendommen er opdelt i ejerlejligheder */}
+                {lejligheder !== null && lejligheder.length > 0 ? (
                   <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden overflow-x-auto">
-                    <div className="px-4 py-3 border-b border-slate-700/40 flex items-center justify-between">
-                      <p className="text-slate-200 text-sm font-semibold">
-                        Virksomheder på adressen
-                      </p>
-                      <span className="text-slate-500 text-xs">
-                        {cvrVirksomheder.filter((v) => v.aktiv).length} aktive
-                        {cvrVirksomheder.some((v) => !v.aktiv) &&
-                          ` · ${cvrVirksomheder.filter((v) => !v.aktiv).length} ophørte`}
+                    <div className="px-3 py-2.5 border-b border-slate-700/40 flex items-center justify-between">
+                      <p className="text-slate-200 text-xs font-semibold">{t.apartments}</p>
+                      <span className="text-slate-500 text-[10px]">
+                        {lejligheder.length} {da ? 'lejligheder' : 'apartments'}
                       </span>
                     </div>
                     {/* Tabelheader */}
-                    <div className="min-w-[500px] grid grid-cols-[1fr_1fr_120px_72px] px-4 py-2 text-slate-500 text-xs font-medium border-b border-slate-700/30">
-                      <span>Virksomhed</span>
-                      <span>Industri</span>
-                      <span className="text-right">Periode</span>
-                      <span className="text-right">Ansatte</span>
+                    <div className="min-w-[720px] grid grid-cols-[1fr_120px_60px_100px_80px] px-3 py-1.5 text-slate-500 text-[10px] font-medium border-b border-slate-700/30">
+                      <span>{t.apartmentAddress}</span>
+                      <span>{t.apartmentOwner}</span>
+                      <span className="text-right">{t.apartmentArea}</span>
+                      <span className="text-right">{t.apartmentPrice}</span>
+                      <span className="text-right">{t.apartmentDate}</span>
                     </div>
                     <div className="divide-y divide-slate-700/20">
-                      {cvrVirksomheder.map((v) => {
-                        // Beregn relativ tid fra aktivFra
-                        const periode = (() => {
-                          if (!v.aktivFra) return '–';
-                          const fra = new Date(v.aktivFra);
-                          const nu = new Date();
-                          const mdr =
-                            (nu.getFullYear() - fra.getFullYear()) * 12 +
-                            (nu.getMonth() - fra.getMonth());
-                          if (mdr < 1) return 'Under 1 md.';
-                          if (mdr < 12) return `${mdr} md. til nu`;
-                          return `${Math.floor(mdr / 12)} år til nu`;
-                        })();
-                        return (
-                          <div
-                            key={v.cvr}
-                            className={`min-w-[500px] grid grid-cols-[1fr_1fr_120px_72px] px-4 py-3 items-center gap-2 hover:bg-slate-700/10 transition-colors ${!v.aktiv ? 'opacity-50' : ''}`}
+                      {lejligheder.map((lej) => (
+                        <Link
+                          key={lej.bfe}
+                          href={lej.dawaId ? `/dashboard/ejendomme/${lej.dawaId}` : '#'}
+                          onClick={
+                            lej.dawaId ? undefined : (e: React.MouseEvent) => e.preventDefault()
+                          }
+                          className={`min-w-[720px] grid grid-cols-[1fr_120px_60px_100px_80px] px-3 py-1.5 items-center gap-1 hover:bg-slate-700/15 transition-colors block ${lej.dawaId ? 'cursor-pointer' : 'cursor-default'}`}
+                        >
+                          {/* Adresse */}
+                          <span
+                            className="text-slate-200 text-[11px] font-medium truncate"
+                            title={lej.adresse}
                           >
-                            {/* Virksomhed */}
-                            <div className="min-w-0 flex items-center gap-2">
-                              <div
-                                className={`w-2 h-2 rounded-full flex-shrink-0 ${v.aktiv ? 'bg-emerald-400' : 'bg-slate-500'}`}
-                              />
-                              <div className="min-w-0">
-                                <Link
-                                  href={`/dashboard/companies/${v.cvr}`}
-                                  className="text-slate-200 text-sm font-medium hover:text-blue-400 transition-colors truncate block"
-                                >
-                                  {v.navn}
-                                </Link>
-                                <p className="text-slate-500 text-xs truncate">{v.adresse}</p>
-                              </div>
-                            </div>
-                            {/* Industri */}
-                            <span className="text-slate-400 text-xs truncate pr-2">
-                              {v.branche ?? '–'}
-                            </span>
-                            {/* Periode */}
-                            <span className="text-slate-400 text-xs text-right">{periode}</span>
-                            {/* Ansatte */}
-                            <span className="text-slate-300 text-sm text-right font-medium">
-                              {v.ansatte ?? '–'}
-                            </span>
-                          </div>
-                        );
-                      })}
+                            {lej.adresse.split(',').slice(0, 2).join(',')}
+                          </span>
+                          {/* Ejer */}
+                          <span className="text-slate-400 text-[10px] truncate" title={lej.ejer}>
+                            {lej.ejer}
+                          </span>
+                          {/* Areal */}
+                          <span className="text-slate-300 text-[10px] text-right">
+                            {lej.areal ? `${lej.areal} m²` : '–'}
+                          </span>
+                          {/* Købspris */}
+                          <span className="text-slate-300 text-[10px] text-right font-medium">
+                            {lej.koebspris ? `${lej.koebspris.toLocaleString('da-DK')} DKK` : '–'}
+                          </span>
+                          {/* Købsdato */}
+                          <span className="text-slate-400 text-[10px] text-right">
+                            {lej.koebsdato
+                              ? new Date(lej.koebsdato).toLocaleDateString('da-DK', {
+                                  day: 'numeric',
+                                  month: 'short',
+                                  year: 'numeric',
+                                })
+                              : '–'}
+                          </span>
+                        </Link>
+                      ))}
+                    </div>
+                  </div>
+                ) : lejlighederLoader ? (
+                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                    <p className="text-slate-400 text-xs font-medium uppercase tracking-wide mb-2">
+                      {t.apartments}
+                    </p>
+                    <div className="flex items-center gap-2 text-slate-500 text-sm">
+                      <div className="w-3.5 h-3.5 border border-slate-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                      {t.loadingApartments}
                     </div>
                   </div>
                 ) : (
-                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                    <p className="text-slate-400 text-xs font-medium uppercase tracking-wide mb-1">
-                      Virksomheder på adressen
-                    </p>
-                    <p className="text-slate-500 text-sm">
-                      Ingen CVR-registrerede virksomheder fundet på denne adresse.
-                    </p>
-                  </div>
+                  <>
+                    {/* Virksomheder på adressen — CVR OpenData (skjult for ejerlejlighedsejendomme) */}
+                    {cvrTokenMangler ? (
+                      <div className="bg-amber-500/8 border border-amber-500/20 rounded-xl p-4">
+                        <p className="text-amber-300 text-xs font-medium uppercase tracking-wide mb-2">
+                          {t.companiesAtAddress}
+                        </p>
+                        <p className="text-slate-400 text-sm mb-3">{t.cvrAccessRequired}</p>
+                        <ol className="text-slate-400 text-xs space-y-1 list-decimal list-inside leading-relaxed">
+                          <li>
+                            {da ? 'Gå til' : 'Go to'}{' '}
+                            <span className="text-blue-400 font-medium">
+                              datacvr.virk.dk/data/login
+                            </span>{' '}
+                            {da ? '→ opret gratis bruger' : '→ create free account'}
+                          </li>
+                          <li>
+                            {da ? 'Tilføj til' : 'Add to'}{' '}
+                            <code className="bg-slate-800 px-1 rounded">.env.local</code>:
+                          </li>
+                        </ol>
+                        <code className="block bg-slate-900 rounded-lg px-3 py-2 mt-2 text-xs text-emerald-400 font-mono">
+                          CVR_ES_USER=din@email.dk{'\n'}CVR_ES_PASS=dit_password
+                        </code>
+                        <p className="text-slate-500 text-xs mt-2">{t.restartDevServer}</p>
+                      </div>
+                    ) : cvrVirksomheder === null ? (
+                      <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                        <p className="text-slate-400 text-xs font-medium uppercase tracking-wide mb-2">
+                          {t.companiesAtAddress}
+                        </p>
+                        <div className="flex items-center gap-2 text-slate-500 text-sm">
+                          <div className="w-3.5 h-3.5 border border-slate-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                          {t.loadingCVR}
+                        </div>
+                      </div>
+                    ) : cvrVirksomheder.length > 0 ? (
+                      (() => {
+                        // Aktive = virksomheden er aktiv OG stadig registreret på denne adresse
+                        // Historiske = ophørte ELLER flyttet til en anden adresse
+                        const aktive = cvrVirksomheder.filter((v) => v.aktiv && v.påAdressen);
+                        const historiske = cvrVirksomheder.filter((v) => !v.aktiv || !v.påAdressen);
+                        const visteVirksomheder = visOphoerte ? [...aktive, ...historiske] : aktive;
+
+                        /** Beregn adresseperiode (fra–til for hvornår virksomheden var/er på adressen) */
+                        const beregnPeriode = (v: CVRVirksomhed) => {
+                          const fra = v.adresseFra ?? v.aktivFra;
+                          if (!fra) return '–';
+                          const fraDate = new Date(fra);
+                          const fraStr = fraDate.toLocaleDateString('da-DK', {
+                            day: 'numeric',
+                            month: 'short',
+                            year: 'numeric',
+                          });
+                          if (v.adresseTil) {
+                            const tilDate = new Date(v.adresseTil);
+                            const tilStr = tilDate.toLocaleDateString('da-DK', {
+                              day: 'numeric',
+                              month: 'short',
+                              year: 'numeric',
+                            });
+                            return `${fraStr} – ${tilStr}`;
+                          }
+                          return `${fraStr} –`;
+                        };
+
+                        return (
+                          <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden overflow-x-auto">
+                            <div className="px-4 py-3 border-b border-slate-700/40 flex items-center justify-between">
+                              <p className="text-slate-200 text-sm font-semibold">
+                                {t.companiesAtAddress}
+                              </p>
+                              <div className="flex items-center gap-3">
+                                <span className="text-slate-500 text-xs">
+                                  {aktive.length} {t.active}
+                                  {historiske.length > 0 &&
+                                    ` · ${historiske.length} ${t.historical}`}
+                                </span>
+                                {/* Toggle historiske virksomheder (ophørte + flyttede) */}
+                                {historiske.length > 0 && (
+                                  <button
+                                    onClick={() => setVisOphoerte(!visOphoerte)}
+                                    className="flex items-center gap-1 text-slate-500 hover:text-slate-300 text-xs transition-colors"
+                                  >
+                                    {visOphoerte ? (
+                                      <ChevronDown size={13} />
+                                    ) : (
+                                      <ChevronRight size={13} />
+                                    )}
+                                    {visOphoerte
+                                      ? t.hideHistorical
+                                      : `${t.showHistorical} (${historiske.length})`}
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                            {/* Tabelheader */}
+                            <div className="min-w-[500px] grid grid-cols-[1fr_1fr_120px_72px] px-4 py-2 text-slate-500 text-xs font-medium border-b border-slate-700/30">
+                              <span>{t.company}</span>
+                              <span>{t.industry}</span>
+                              <span className="text-right">{t.period}</span>
+                              <span className="text-right">{t.employees}</span>
+                            </div>
+                            <div className="divide-y divide-slate-700/20">
+                              {visteVirksomheder.map((v) => (
+                                <div
+                                  key={v.cvr}
+                                  className={`min-w-[500px] grid grid-cols-[1fr_1fr_120px_72px] px-4 py-3 items-center gap-2 hover:bg-slate-700/10 transition-colors ${!v.aktiv || !v.påAdressen ? 'opacity-50' : ''}`}
+                                >
+                                  {/* Virksomhed */}
+                                  <div className="min-w-0 flex items-center gap-2">
+                                    <div
+                                      className={`w-2 h-2 rounded-full flex-shrink-0 ${v.aktiv && v.påAdressen ? 'bg-emerald-400' : 'bg-slate-500'}`}
+                                    />
+                                    <div className="min-w-0">
+                                      <Link
+                                        href={`/dashboard/companies/${v.cvr}`}
+                                        className="text-slate-200 text-sm font-medium hover:text-blue-400 transition-colors truncate block"
+                                      >
+                                        {v.navn}
+                                      </Link>
+                                      <p className="text-slate-500 text-xs truncate">
+                                        {v.type ? `${v.type} · ` : ''}CVR {v.cvr}
+                                      </p>
+                                    </div>
+                                  </div>
+                                  {/* Industri */}
+                                  <span className="text-slate-400 text-xs truncate pr-2">
+                                    {v.branche ?? '–'}
+                                  </span>
+                                  {/* Periode */}
+                                  <span className="text-slate-400 text-xs text-right">
+                                    {beregnPeriode(v)}
+                                  </span>
+                                  {/* Ansatte */}
+                                  <span className="text-slate-300 text-sm text-right font-medium">
+                                    {v.ansatte ?? '–'}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })()
+                    ) : (
+                      <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                        <p className="text-slate-400 text-xs font-medium uppercase tracking-wide mb-1">
+                          {t.companiesAtAddress}
+                        </p>
+                        <p className="text-slate-500 text-sm">{t.noCVRFound}</p>
+                      </div>
+                    )}
+                  </>
                 )}
 
                 {/* BBR-fejlbesked */}
@@ -1568,7 +2458,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                       <span className="text-orange-400 text-xs">!</span>
                     </div>
                     <div>
-                      <p className="text-orange-300 text-sm font-medium">BBR-data utilgængeligt</p>
+                      <p className="text-orange-300 text-sm font-medium">{t.bbrUnavailable}</p>
                       <p className="text-slate-400 text-xs mt-1">{bbrData.bbrFejl}</p>
                       <a
                         href="https://datafordeler.dk"
@@ -1576,7 +2466,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                         rel="noopener noreferrer"
                         className="text-blue-400 text-xs hover:text-blue-300 mt-1 inline-block"
                       >
-                        Åbn datafordeler.dk →
+                        {t.openDatafordeler}
                       </a>
                     </div>
                   </div>
@@ -1595,7 +2485,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
 
                 {/* Information */}
                 <div>
-                  <SectionTitle title="Information" />
+                  <SectionTitle title={t.information} />
                   {(() => {
                     const grundareal =
                       (dawaJordstykke?.areal_m2 || null) ?? vurdering?.vurderetAreal ?? null;
@@ -1622,7 +2512,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                             <>
                               <span className="text-slate-500">·</span>
                               <span className="text-slate-300 flex-shrink-0 font-medium">
-                                {grundareal.toLocaleString('da-DK')} m²
+                                {grundareal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²
                               </span>
                             </>
                           )}
@@ -1651,23 +2541,33 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                   const erhvAreal = bygninger.reduce((s, b) => s + (b.samletErhvervsareal ?? 0), 0);
                   return (
                     <div>
-                      <SectionTitle title="Bygninger" />
+                      <SectionTitle title={t.buildings} />
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-2">
                         <DataKort
-                          label="Bygninger"
+                          label={t.buildings}
                           value={bbrLoader ? '…' : `${bygninger.length}`}
                         />
                         <DataKort
-                          label="Bygningsareal"
-                          value={totAreal ? `${totAreal.toLocaleString('da-DK')} m²` : '–'}
+                          label={t.buildingArea}
+                          value={
+                            totAreal ? `${totAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²` : '–'
+                          }
                         />
                         <DataKort
-                          label="Beboelsesareal"
-                          value={boligAreal ? `${boligAreal.toLocaleString('da-DK')} m²` : '0 m²'}
+                          label={t.residentialArea}
+                          value={
+                            boligAreal
+                              ? `${boligAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
+                              : '0 m²'
+                          }
                         />
                         <DataKort
-                          label="Erhvervsareal"
-                          value={erhvAreal ? `${erhvAreal.toLocaleString('da-DK')} m²` : '–'}
+                          label={t.commercialArea}
+                          value={
+                            erhvAreal
+                              ? `${erhvAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
+                              : '–'
+                          }
                         />
                       </div>
                       {bbrLoader ? (
@@ -1687,44 +2587,44 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                         </div>
                       ) : bygninger.length === 0 ? (
                         <div className="text-slate-500 text-sm text-center py-3">
-                          Ingen aktive bygninger tilgængeligt
+                          {t.noActiveBuildings}
                         </div>
                       ) : (
                         <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden overflow-x-auto">
                           {/* Kolonneheader: ▶ | Byg# | Anvendelse | Opf.år | Bebygget | Samlet | Geo | Status */}
                           <div className="min-w-[700px] grid grid-cols-[28px_40px_1fr_68px_96px_96px_52px_90px] px-3 py-2 text-slate-500 text-xs font-medium border-b border-slate-700/30">
                             <span />
-                            <span className="text-center">Nr.</span>
-                            <span>Anvendelse</span>
-                            <span className="text-right">Opf. år</span>
-                            <span className="text-right">Bebygget</span>
-                            <span className="text-right">Samlet</span>
-                            <span className="text-center">Geodata</span>
-                            <span className="text-center">Status</span>
+                            <span className="text-center">{t.nr}</span>
+                            <span>{t.usage}</span>
+                            <span className="text-right">{t.builtYear}</span>
+                            <span className="text-right">{t.builtArea}</span>
+                            <span className="text-right">{t.totalArea}</span>
+                            <span className="text-center">{t.geodata}</span>
+                            <span className="text-center">{t.status}</span>
                           </div>
                           {bygninger.map((b, i) => {
                             const rowId = b.id || String(i);
                             const aaben = expandedBygninger.has(rowId);
                             const detaljer: [string, string][] = (
                               [
-                                ['Ydervæg', b.ydervaeg || null],
-                                ['Tagmateriale', b.tagmateriale || null],
-                                ['Varmeinstallation', b.varmeinstallation || null],
-                                ['Opvarmningsform', b.opvarmningsform || null],
-                                ['Supplerende varme', b.supplerendeVarme || null],
-                                ['Vandforsyning', b.vandforsyning || null],
-                                ['Afløb', b.afloeb || null],
-                                ['Etager', b.antalEtager != null ? `${b.antalEtager}` : null],
+                                [t.outerWall, b.ydervaeg || null],
+                                [t.roofMaterial, b.tagmateriale || null],
+                                [t.heatingInstallation, b.varmeinstallation || null],
+                                [t.heatingForm, b.opvarmningsform || null],
+                                [t.supplementaryHeat, b.supplerendeVarme || null],
+                                [t.waterSupply, b.vandforsyning || null],
+                                [t.drainage, b.afloeb || null],
+                                [t.floors, b.antalEtager != null ? `${b.antalEtager}` : null],
                                 [
                                   'Boligareal',
                                   b.samletBoligareal
-                                    ? `${b.samletBoligareal.toLocaleString('da-DK')} m²`
+                                    ? `${b.samletBoligareal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
                                     : null,
                                 ],
                                 [
                                   'Erhvervsareal',
                                   b.samletErhvervsareal
-                                    ? `${b.samletErhvervsareal.toLocaleString('da-DK')} m²`
+                                    ? `${b.samletErhvervsareal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
                                     : null,
                                 ],
                                 [
@@ -1734,11 +2634,11 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                                     : null,
                                 ],
                                 [
-                                  'Ombygningsår',
+                                  da ? 'Ombygningsår' : 'Renovation year',
                                   b.ombygningsaar != null ? `${b.ombygningsaar}` : null,
                                 ],
-                                ['Fredning', b.fredning || null],
-                                ['Bevaringsværdighed', b.bevaringsvaerdighed || null],
+                                [t.preservation, b.fredning || null],
+                                [t.conservationValue, b.bevaringsvaerdighed || null],
                               ] as [string, string | null][]
                             ).filter((row): row is [string, string] => row[1] !== null);
                             return (
@@ -1773,12 +2673,12 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                                   </span>
                                   <span className="text-slate-300 text-right">
                                     {b.bebyggetAreal
-                                      ? `${b.bebyggetAreal.toLocaleString('da-DK')} m²`
+                                      ? `${b.bebyggetAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
                                       : '–'}
                                   </span>
                                   <span className="text-slate-300 text-right">
                                     {b.samletBygningsareal
-                                      ? `${b.samletBygningsareal.toLocaleString('da-DK')} m²`
+                                      ? `${b.samletBygningsareal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
                                       : '–'}
                                   </span>
                                   {/* Geodata-status: grøn ✓ hvis koordinater kendes, rød ✗ hvis mangler */}
@@ -1792,17 +2692,17 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                                   {/* Status badge */}
                                   <span className="flex justify-center">
                                     {b.status == null || b.status.startsWith('Bygning opført') ? (
-                                      <span className="text-emerald-400 text-xs">Opført</span>
+                                      <span className="text-emerald-400 text-xs">{t.erected}</span>
                                     ) : b.status === 'Projekteret bygning' ? (
-                                      <span className="text-amber-400 text-xs">Projekteret</span>
+                                      <span className="text-amber-400 text-xs">{t.projected}</span>
                                     ) : b.status === 'Bygning under opførelse' ? (
                                       <span className="text-amber-400 text-xs">
-                                        Under opførelse
+                                        {t.underConstruction}
                                       </span>
                                     ) : b.status === 'Midlertidig opførelse' ? (
-                                      <span className="text-amber-400 text-xs">Midlertidig</span>
+                                      <span className="text-amber-400 text-xs">{t.temporary}</span>
                                     ) : b.status === 'Kondemneret' ? (
-                                      <span className="text-red-400 text-xs">Kondemneret</span>
+                                      <span className="text-red-400 text-xs">{t.condemned}</span>
                                     ) : (
                                       <span className="text-slate-400 text-xs truncate">
                                         {b.status}
@@ -1846,17 +2746,19 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                   const totAreal = enheder.reduce((s, e) => s + (e.areal ?? 0), 0);
                   return (
                     <div>
-                      <SectionTitle title="Enheder" />
+                      <SectionTitle title={t.units} />
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-2">
                         <DataKort
-                          label="Enheder i alt"
+                          label={t.totalUnits}
                           value={bbrLoader ? '…' : `${enheder.length}`}
                         />
-                        <DataKort label="Beboelsesenheder" value={`${boligEnh}`} />
-                        <DataKort label="Erhvervsenheder" value={`${erhvEnh}`} />
+                        <DataKort label={t.residentialUnits} value={`${boligEnh}`} />
+                        <DataKort label={t.commercialUnits} value={`${erhvEnh}`} />
                         <DataKort
-                          label="Samlet areal"
-                          value={totAreal ? `${totAreal.toLocaleString('da-DK')} m²` : '–'}
+                          label={t.totalAreaLabel}
+                          value={
+                            totAreal ? `${totAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²` : '–'
+                          }
                         />
                       </div>
                       {bbrLoader ? (
@@ -1875,17 +2777,17 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                         </div>
                       ) : enheder.length === 0 ? (
                         <div className="text-slate-500 text-sm text-center py-3">
-                          Ingen enheder tilgængeligt
+                          {t.noUnitsAvailable}
                         </div>
                       ) : (
                         <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden overflow-x-auto">
                           {/* Kolonneheader: ▶ | Byg.nr | Anvendelse | Areal | Værelser */}
                           <div className="min-w-[500px] grid grid-cols-[28px_44px_1fr_96px_72px] px-3 py-2 text-slate-500 text-xs font-medium border-b border-slate-700/30">
                             <span />
-                            <span className="text-center">Byg.</span>
-                            <span>Anvendelse</span>
-                            <span className="text-right">Areal</span>
-                            <span className="text-right">Værelser</span>
+                            <span className="text-center">{t.bldg}</span>
+                            <span>{t.usage}</span>
+                            <span className="text-right">{t.area}</span>
+                            <span className="text-right">{t.rooms}</span>
                           </div>
                           {enheder.map((e, i) => {
                             const rowId = e.id || String(i);
@@ -1897,28 +2799,28 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                               : null;
                             const detaljer: [string, string][] = (
                               [
-                                ['Adresse', e.adressebetegnelse || null],
-                                ['Etage', e.etage || null],
-                                ['Dør', e.doer || null],
-                                ['Boligtype', e.boligtype || null],
-                                ['Status', e.status || null],
+                                [t.address, e.adressebetegnelse || null],
+                                [t.floor, e.etage || null],
+                                [t.door, e.doer || null],
+                                [t.housingType, e.boligtype || null],
+                                [t.status, e.status || null],
                                 [
                                   'Boligareal',
                                   e.arealBolig
-                                    ? `${e.arealBolig.toLocaleString('da-DK')} m²`
+                                    ? `${e.arealBolig.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
                                     : null,
                                 ],
                                 [
                                   'Erhvervsareal',
                                   e.arealErhverv
-                                    ? `${e.arealErhverv.toLocaleString('da-DK')} m²`
+                                    ? `${e.arealErhverv.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
                                     : null,
                                 ],
                                 [
                                   'Varmeinstallation',
                                   e.varmeinstallation !== '–' ? e.varmeinstallation : null,
                                 ],
-                                ['Energiforsyning', e.energiforsyning || null],
+                                [t.energySupply, e.energiforsyning || null],
                               ] as [string, string | null][]
                             ).filter((row): row is [string, string] => row[1] !== null);
                             return (
@@ -1956,7 +2858,9 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                                     )}
                                   </span>
                                   <span className="text-slate-300 text-right">
-                                    {e.areal ? `${e.areal.toLocaleString('da-DK')} m²` : '–'}
+                                    {e.areal
+                                      ? `${e.areal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
+                                      : '–'}
                                   </span>
                                   <span className="text-slate-400 text-right">
                                     {e.vaerelser ?? '–'}
@@ -1987,22 +2891,21 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                 {!bbrLoader && !bbrData?.bbr && (
                   <div className="bg-orange-500/8 border border-orange-500/20 rounded-xl p-5">
                     <p className="text-orange-300 text-sm font-medium mb-1">
-                      BBR-data ikke tilgængeligt
+                      {t.bbrDataUnavailable}
                     </p>
                     <p className="text-slate-400 text-xs leading-relaxed">
-                      {bbrData?.bbrFejl ??
-                        'BBR-data kræver et aktivt abonnement på BBRPublic-tjenesten på datafordeler.dk.'}
+                      {bbrData?.bbrFejl ?? t.bbrSubscriptionRequired}
                     </p>
                   </div>
                 )}
 
                 {/* ── Matrikeloplysninger (Datafordeler MAT) ── */}
                 <div className="mt-5">
-                  <SectionTitle title="Matrikeloplysninger" />
+                  <SectionTitle title={t.cadastreInfo} />
                   {matrikelLoader ? (
                     <div className="flex items-center gap-2 text-slate-500 text-sm py-4">
                       <div className="w-4 h-4 border-2 border-slate-600 border-t-blue-500 rounded-full animate-spin" />
-                      Henter matrikeldata…
+                      {t.loadingCadastre}
                     </div>
                   ) : matrikelData ? (
                     <div className="space-y-3">
@@ -2010,7 +2913,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                         {matrikelData.landbrugsnotering && (
                           <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3">
-                            <p className="text-slate-400 text-xs mb-0.5">Landbrugsnotering</p>
+                            <p className="text-slate-400 text-xs mb-0.5">{t.agriculturalNote}</p>
                             <p className="text-white text-sm font-medium">
                               {matrikelData.landbrugsnotering}
                             </p>
@@ -2018,22 +2921,22 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                         )}
                         {matrikelData.opdeltIEjerlejligheder && (
                           <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3">
-                            <p className="text-slate-400 text-xs mb-0.5">Ejerlejligheder</p>
+                            <p className="text-slate-400 text-xs mb-0.5">{t.condominiums}</p>
                             <p className="text-white text-sm font-medium">
-                              Opdelt i ejerlejligheder
+                              {t.dividedIntoCondominiums}
                             </p>
                           </div>
                         )}
                         {matrikelData.erFaelleslod && (
                           <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3">
-                            <p className="text-slate-400 text-xs mb-0.5">Fælleslod</p>
-                            <p className="text-white text-sm font-medium">Ja</p>
+                            <p className="text-slate-400 text-xs mb-0.5">{t.commonLot}</p>
+                            <p className="text-white text-sm font-medium">{t.yes}</p>
                           </div>
                         )}
                         {matrikelData.udskiltVej && (
                           <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3">
-                            <p className="text-slate-400 text-xs mb-0.5">Udskilt vej</p>
-                            <p className="text-white text-sm font-medium">Ja</p>
+                            <p className="text-slate-400 text-xs mb-0.5">{t.separatedRoad}</p>
+                            <p className="text-white text-sm font-medium">{t.yes}</p>
                           </div>
                         )}
                       </div>
@@ -2043,7 +2946,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                         <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden overflow-x-auto">
                           <div className="px-4 py-2.5 border-b border-slate-700/30">
                             <p className="text-slate-300 text-xs font-semibold uppercase tracking-wider">
-                              Jordstykker ({matrikelData.jordstykker.length})
+                              {t.parcels} ({matrikelData.jordstykker.length})
                             </p>
                           </div>
                           <div className="divide-y divide-slate-700/20">
@@ -2054,10 +2957,10 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                               >
                                 <div>
                                   <p className="text-white text-sm font-medium">
-                                    Matr.nr. {js.matrikelnummer}
+                                    {da ? 'Matr.nr.' : 'Cad. no.'} {js.matrikelnummer}
                                     {js.ejerlavskode && (
                                       <span className="text-slate-500 text-xs ml-2">
-                                        Ejerlav {js.ejerlavskode}
+                                        {da ? 'Ejerlav' : 'District'} {js.ejerlavskode}
                                       </span>
                                     )}
                                   </p>
@@ -2067,33 +2970,33 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                                 </div>
                                 <p className="text-slate-300 text-sm tabular-nums text-right">
                                   {js.registreretAreal != null
-                                    ? `${js.registreretAreal.toLocaleString('da-DK')} m²`
+                                    ? `${js.registreretAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
                                     : '–'}
                                 </p>
                                 <p className="text-slate-500 text-xs text-right">
                                   {js.vejareal != null && js.vejareal > 0
-                                    ? `Vej: ${js.vejareal.toLocaleString('da-DK')} m²`
+                                    ? `${t.road}: ${js.vejareal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
                                     : ''}
                                 </p>
                                 <div className="flex gap-1.5 flex-wrap justify-end">
                                   {js.fredskov === true && (
                                     <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-green-900/50 text-green-400 border border-green-800/40">
-                                      Fredskov
+                                      {t.protectedForest}
                                     </span>
                                   )}
                                   {js.strandbeskyttelse === true && (
                                     <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-blue-900/50 text-blue-400 border border-blue-800/40">
-                                      Strandbeskyttelse
+                                      {t.coastalProtection}
                                     </span>
                                   )}
                                   {js.klitfredning === true && (
                                     <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-amber-900/50 text-amber-400 border border-amber-800/40">
-                                      Klitfredning
+                                      {t.duneProtection}
                                     </span>
                                   )}
                                   {js.jordrente === true && (
                                     <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-purple-900/50 text-purple-400 border border-purple-800/40">
-                                      Jordrente
+                                      {t.groundRent}
                                     </span>
                                   )}
                                 </div>
@@ -2105,7 +3008,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                     </div>
                   ) : (
                     <div className="bg-slate-800/30 border border-slate-700/40 rounded-xl p-4 text-center">
-                      <p className="text-slate-500 text-xs">Ingen matrikeldata fundet</p>
+                      <p className="text-slate-500 text-xs">{t.noCadastreData}</p>
                     </div>
                   )}
                 </div>
@@ -2115,211 +3018,36 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
             {/* ══ EJERFORHOLD ══ */}
             {aktivTab === 'ejerforhold' && (
               <div className="space-y-4">
-                {/* ── Ejere fra Ejerfortegnelsen ── */}
-                <div>
-                  <p className="text-slate-400 text-xs font-medium uppercase tracking-wider mb-3">
-                    Ejerfortegnelsen · Datafordeler
-                  </p>
-                  {ejereLoader ? (
-                    <div className="flex items-center gap-2 text-slate-500 text-sm">
-                      <div className="w-4 h-4 border-2 border-slate-600 border-t-blue-500 rounded-full animate-spin" />
-                      Henter ejerdata…
+                {/* ── Ejerskabsdiagram (fra Tinglysning) ── */}
+                {(() => {
+                  const bfeForDiagram =
+                    bbrData?.ejerlejlighedBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer;
+                  if (!bfeForDiagram) return null;
+                  return (
+                    <div>
+                      <PropertyOwnerDiagram
+                        bfe={bfeForDiagram}
+                        adresse={
+                          dawaAdresse
+                            ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
+                            : `BFE ${bfeForDiagram}`
+                        }
+                        lang={lang}
+                      />
                     </div>
-                  ) : !bbrData?.ejendomsrelationer?.[0]?.bfeNummer ? (
-                    <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-4 space-y-3">
-                      <div className="flex items-center gap-2">
-                        <div className="w-5 h-5 rounded-full bg-amber-500/20 flex items-center justify-center flex-shrink-0">
-                          <span className="text-amber-400 text-xs font-bold">!</span>
-                        </div>
-                        <p className="text-amber-300 text-sm font-medium">
-                          BFEnummer ikke tilgængeligt
-                        </p>
-                      </div>
-                      <p className="text-slate-400 text-xs leading-relaxed">
-                        {!bbrData
-                          ? 'BBR-data mangler — DATAFORDELER_API_KEY er sandsynligvis ikke sat i .env.local'
-                          : bbrData.ejendomsrelationer === null
-                            ? 'BBR Ejendomsrelation-forespørgslen fejlede — tjenesten er muligvis ikke aktiveret'
-                            : 'Ingen Ejendomsrelation fundet for denne adresse'}
-                      </p>
-                      <div className="space-y-1.5 text-xs text-slate-400">
-                        <p className="font-medium text-slate-300">
-                          Tjek disse 3 punkter på datafordeler.dk:
-                        </p>
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] flex-shrink-0 ${bbrData?.bbr ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-700 text-slate-500'}`}
-                          >
-                            {bbrData?.bbr ? '✓' : '○'}
-                          </span>
-                          <span className={bbrData?.bbr ? 'text-emerald-400' : ''}>
-                            BBRPublic — aktiveret i Datafordeler bruger
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="w-4 h-4 rounded-full bg-slate-700 text-slate-500 flex items-center justify-center text-[10px] flex-shrink-0">
-                            ○
-                          </span>
-                          <span>EjendomBeliggenhedsadresse — aktiveret under Ejerfortegnelsen</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="w-4 h-4 rounded-full bg-slate-700 text-slate-500 flex items-center justify-center text-[10px] flex-shrink-0">
-                            ○
-                          </span>
-                          <span>Ejendomsvurdering — aktiveret under HentEjendomsvurdering</span>
-                        </div>
-                      </div>
-                      <a
-                        href="https://datafordeler.dk/dataoversigt/ejendomme/"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-blue-400 text-xs hover:text-blue-300 transition-colors"
-                      >
-                        Gå til datafordeler.dk → Ejendomme →
-                      </a>
-                    </div>
-                  ) : manglerEjereAdgang ? (
-                    <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-4 space-y-2">
-                      <div className="flex items-center gap-2">
-                        <div className="w-5 h-5 rounded-full bg-amber-500/20 flex items-center justify-center flex-shrink-0">
-                          <span className="text-amber-400 text-xs font-bold">!</span>
-                        </div>
-                        <p className="text-amber-300 text-sm font-medium">
-                          Dataadgang mangler — Ejerfortegnelsen (EJF)
-                        </p>
-                      </div>
-                      <p className="text-slate-400 text-xs leading-relaxed">
-                        OAuth-token er gyldigt, men adgang til EJF kræver en godkendt
-                        Dataadgang-ansøgning hos Geodatastyrelsen.
-                      </p>
-                      <a
-                        href="https://datafordeler.dk/vejledning/brugeradgang/anmodning-om-adgang/ejerfortegnelsen-ejf/"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-blue-400 text-xs hover:text-blue-300 transition-colors"
-                      >
-                        Ansøg om adgang til EJF på datafordeler.dk →
-                      </a>
-                    </div>
-                  ) : ejere && ejere.length > 0 ? (
-                    <div className="space-y-2">
-                      {ejere.map((ejer, i) => {
-                        /** Beregn ejerandel i procent fra brøk */
-                        const ejerandelPct =
-                          ejer.ejerandel_taeller != null && ejer.ejerandel_naevner
-                            ? Math.round((ejer.ejerandel_taeller / ejer.ejerandel_naevner) * 100)
-                            : null;
-                        /** Ejerforholdskode som forklarende tekst */
-                        const ejerforholdMap: Record<string, string> = {
-                          '10': 'Privatpersoner eller I/S',
-                          '20': 'A/S, ApS eller P/S',
-                          '30': 'Forening, legat eller selvejende inst.',
-                          '40': 'Offentlig myndighed',
-                          '41': 'Staten',
-                          '50': 'Andelsboligforening',
-                          '60': 'Almennyttigt boligselskab',
-                          '70': 'Fond',
-                          '80': 'Andet',
-                        };
-                        const ejerforholdTxt = ejer.ejerforholdskode
-                          ? (ejerforholdMap[ejer.ejerforholdskode] ?? null)
-                          : null;
-                        return (
-                          <div
-                            key={i}
-                            className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4"
-                          >
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2 mb-1 flex-wrap">
-                                  <span
-                                    className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                                      ejer.ejertype === 'selskab'
-                                        ? 'bg-blue-500/15 text-blue-400 border border-blue-500/25'
-                                        : 'bg-purple-500/15 text-purple-400 border border-purple-500/25'
-                                    }`}
-                                  >
-                                    {ejer.ejertype === 'selskab' ? 'Selskab' : 'Person'}
-                                  </span>
-                                  {ejerforholdTxt && (
-                                    <span className="px-2 py-0.5 rounded-full text-xs text-slate-400 bg-slate-700/40 border border-slate-600/30">
-                                      {ejerforholdTxt}
-                                    </span>
-                                  )}
-                                </div>
-                                {ejer.cvr ? (
-                                  <Link
-                                    href={`/dashboard/companies/${ejer.cvr}`}
-                                    className="text-blue-400 hover:text-blue-300 text-xs transition-colors"
-                                  >
-                                    CVR {ejer.cvr} →
-                                  </Link>
-                                ) : (
-                                  <p className="text-slate-400 text-sm">Privat person</p>
-                                )}
-                                <div className="flex items-center gap-3 mt-1 flex-wrap">
-                                  {ejer.virkningFra && (
-                                    <p className="text-slate-500 text-xs">
-                                      Ejer siden{' '}
-                                      {new Date(ejer.virkningFra).toLocaleDateString('da-DK')}
-                                    </p>
-                                  )}
-                                  {ejer.ejerandel_taeller != null &&
-                                    ejer.ejerandel_naevner != null && (
-                                      <p className="text-slate-500 text-xs">
-                                        Andel: {ejer.ejerandel_taeller}/{ejer.ejerandel_naevner}
-                                      </p>
-                                    )}
-                                </div>
-                              </div>
-                              {ejerandelPct != null && (
-                                <span className="text-white text-lg font-semibold flex-shrink-0">
-                                  {ejerandelPct}%
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                      {bbrData?.ejendomsrelationer?.[0]?.bfeNummer && (
-                        <p className="text-slate-600 text-xs text-right">
-                          BFE {bbrData.ejendomsrelationer[0].bfeNummer}
-                        </p>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="bg-slate-800/30 border border-slate-700/40 rounded-xl p-4 text-center">
-                      <Users size={24} className="text-slate-600 mx-auto mb-2" />
-                      <p className="text-slate-400 text-xs">
-                        Ingen ejerdata fundet via Datafordeler
-                      </p>
-                    </div>
-                  )}
-                </div>
-
-                {/* ── Tinglysning — coming soon ── */}
-                <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl p-4">
-                  <p className="text-slate-400 text-xs font-medium uppercase tracking-wider mb-1">
-                    Tinglysning
-                  </p>
-                  <p className="text-slate-500 text-xs">
-                    Historiske adkomster og skøder kræver adgang til Tinglysning.dk REST API
-                    (backlog).
-                  </p>
-                </div>
+                  );
+                })()}
               </div>
             )}
 
             {/* ══ TINGLYSNING ══ */}
             {aktivTab === 'tinglysning' && (
-              <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl p-6 text-center">
-                <Landmark size={32} className="text-slate-600 mx-auto mb-3" />
-                <p className="text-slate-300 text-sm font-medium mb-1">Tinglysning</p>
-                <p className="text-slate-500 text-xs leading-relaxed max-w-sm mx-auto">
-                  Hæftelser, pantegæld og servitutter hentes via Tinglysning.dk. Kræver abonnement
-                  på tingbogsattest-tjenesten.
-                </p>
-              </div>
+              <TinglysningTab
+                bfe={
+                  bbrData?.ejerlejlighedBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer ?? null
+                }
+                lang={lang}
+              />
             )}
 
             {/* ══ ØKONOMI ══ */}
@@ -2327,11 +3055,11 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
               <div className="space-y-5">
                 {/* ── Ejendomsvurdering ── */}
                 <div>
-                  <SectionTitle title="Ejendomsvurdering" />
+                  <SectionTitle title={t.propertyValuation} />
                   {vurderingLoader ? (
                     <div className="flex items-center gap-2 text-slate-500 text-sm py-4">
                       <div className="w-4 h-4 border-2 border-slate-600 border-t-blue-500 rounded-full animate-spin" />
-                      Henter vurderingsdata…
+                      {t.loadingValuation}
                     </div>
                   ) : vurdering ? (
                     <>
@@ -2339,7 +3067,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                       <div className="grid grid-cols-3 gap-3 mb-3">
                         <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
                           <p className="text-slate-400 text-xs mb-1">
-                            Ejendomsværdi
+                            {t.propertyValue}
                             {vurdering.aar && (
                               <span className="ml-1 text-slate-500">({vurdering.aar})</span>
                             )}
@@ -2347,20 +3075,20 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                           <p className="text-white text-lg font-bold">
                             {vurdering.ejendomsvaerdi != null
                               ? formatDKK(vurdering.ejendomsvaerdi)
-                              : 'Fastsættes ikke'}
+                              : t.notAssessed}
                           </p>
                         </div>
                         <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                          <p className="text-slate-400 text-xs mb-1">Grundværdi</p>
+                          <p className="text-slate-400 text-xs mb-1">{t.landValue}</p>
                           <p className="text-white text-lg font-bold">
                             {vurdering.grundvaerdi != null ? formatDKK(vurdering.grundvaerdi) : '–'}
                           </p>
                         </div>
                         <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                          <p className="text-slate-400 text-xs mb-1">Grundareal</p>
+                          <p className="text-slate-400 text-xs mb-1">{t.plotArea}</p>
                           <p className="text-white text-lg font-bold">
                             {vurdering.vurderetAreal != null
-                              ? `${vurdering.vurderetAreal.toLocaleString('da-DK')} m²`
+                              ? `${vurdering.vurderetAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
                               : '–'}
                           </p>
                         </div>
@@ -2378,11 +3106,12 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                               className={`text-slate-500 transition-transform flex-shrink-0 ${visVurderingHistorik ? 'rotate-90' : ''}`}
                             />
                             <span className="text-slate-300 text-sm font-medium">
-                              Vurderingshistorik
+                              {t.valuationHistory}
                             </span>
                             {forelobige.length > 0 && (
                               <span className="px-1.5 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded text-[10px] text-amber-400 font-medium">
-                                {forelobige.length} FORELOBIG{forelobige.length > 1 ? 'E' : ''}
+                                {forelobige.length} {t.preliminary}
+                                {forelobige.length > 1 ? 'E' : ''}
                               </span>
                             )}
                           </button>
@@ -2390,10 +3119,10 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                             <>
                               {/* Header */}
                               <div className="min-w-[550px] grid grid-cols-[140px_1fr_1fr_100px] px-4 py-2 text-slate-500 text-xs font-medium border-t border-slate-700/30 bg-slate-900/30">
-                                <span>Aar</span>
-                                <span>Ejendomsvaerdi</span>
-                                <span>Grundvaerdi</span>
-                                <span className="text-right">Grundareal</span>
+                                <span>{t.yearCol}</span>
+                                <span>{t.propertyValueCol}</span>
+                                <span>{t.landValueCol}</span>
+                                <span className="text-right">{t.plotArea}</span>
                               </div>
 
                               {/* Forelobige vurderinger — prepended med amber badge */}
@@ -2407,13 +3136,13 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                                       {fv.vurderingsaar}
                                     </span>
                                     <span className="px-1.5 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded text-[10px] text-amber-400 font-medium">
-                                      FORELOBIG
+                                      {t.preliminary}
                                     </span>
                                   </div>
                                   <span className="text-amber-200/80">
                                     {fv.ejendomsvaerdi
                                       ? formatDKK(fv.ejendomsvaerdi)
-                                      : 'Fastsaettes ikke'}
+                                      : t.notAssessed}
                                   </span>
                                   <span className="text-amber-200/80">
                                     {fv.grundvaerdi ? formatDKK(fv.grundvaerdi) : '0 DKK'}
@@ -2442,14 +3171,14 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                                     <span className="text-slate-300">
                                       {v.ejendomsvaerdi != null
                                         ? formatDKK(v.ejendomsvaerdi)
-                                        : 'Fastsaettes ikke'}
+                                        : t.notAssessed}
                                     </span>
                                     <span className="text-slate-300">
                                       {v.grundvaerdi != null ? formatDKK(v.grundvaerdi) : '0 DKK'}
                                     </span>
                                     <span className="text-slate-400 text-right">
                                       {v.vurderetAreal != null
-                                        ? `${v.vurderetAreal.toLocaleString('da-DK')} m²`
+                                        ? `${v.vurderetAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
                                         : '–'}
                                     </span>
                                   </div>
@@ -2462,59 +3191,61 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                     </>
                   ) : !bbrData?.ejendomsrelationer?.[0]?.bfeNummer ? (
                     <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-4">
-                      <p className="text-amber-300 text-sm font-medium mb-1">
-                        BFEnummer ikke tilgængeligt
-                      </p>
+                      <p className="text-amber-300 text-sm font-medium mb-1">{t.bfeUnavailable}</p>
                       <p className="text-slate-400 text-xs">
                         Ejendomsvurdering kræver BFEnummer fra BBR Ejendomsrelation.
                       </p>
                     </div>
                   ) : (
                     <div className="bg-slate-800/30 border border-slate-700/40 rounded-xl p-4 text-center">
-                      <p className="text-slate-500 text-xs">Ingen vurderingsdata fundet</p>
+                      <p className="text-slate-500 text-xs">{t.noValuationFound}</p>
                     </div>
                   )}
                 </div>
 
-                {/* ── Salgshistorik (EJF Datafordeler) ── */}
+                {/* ── Salgshistorik (EJF + Tinglysning) ── */}
                 <div>
-                  <SectionTitle title="Salgshistorik" />
-                  {salgshistorikLoader ? (
+                  <div className="flex items-center gap-2 mb-1">
+                    <SectionTitle title={t.salesHistory} />
+                    {tlTestFallback && mergedSalgshistorik.length > 0 && (
+                      <span className="px-2 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded text-[10px] text-amber-400 font-medium">
+                        TESTDATA
+                      </span>
+                    )}
+                  </div>
+                  {salgshistorikLoader || tlSumLoader ? (
                     <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl p-5 text-center">
-                      <p className="text-slate-500 text-xs animate-pulse">Henter salgshistorik…</p>
-                    </div>
-                  ) : salgshistorikManglerAdgang ? (
-                    <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl p-5 text-center space-y-2">
-                      <TrendingUp size={22} className="text-slate-600 mx-auto" />
-                      <p className="text-slate-400 text-sm font-medium">
-                        Adgang afventer godkendelse
-                      </p>
-                      <p className="text-slate-500 text-xs max-w-sm mx-auto leading-relaxed">
-                        Salgshistorik kræver EJF-adgang fra Geodatastyrelsen via datafordeler.dk.
+                      <p className="text-slate-500 text-xs animate-pulse">
+                        {t.loadingSalesHistory}
                       </p>
                     </div>
-                  ) : salgshistorik && salgshistorik.length > 0 ? (
-                    <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl overflow-hidden">
-                      <table className="w-full text-sm">
+                  ) : mergedSalgshistorik.length > 0 ? (
+                    <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl overflow-hidden overflow-x-auto">
+                      <table className="w-full text-sm min-w-[700px]">
                         <thead>
                           <tr className="border-b border-slate-700/30 text-slate-500 text-xs uppercase tracking-wider">
-                            <th className="text-left px-4 py-2.5 font-medium">Dato</th>
-                            <th className="text-left px-4 py-2.5 font-medium">Type</th>
-                            <th className="text-right px-4 py-2.5 font-medium">Købesum</th>
-                            <th className="text-right px-4 py-2.5 font-medium">Kontant</th>
+                            <th className="text-left px-4 py-2.5 font-medium">{t.date}</th>
+                            <th className="text-left px-4 py-2.5 font-medium">{t.buyerName}</th>
+                            <th className="text-left px-4 py-2.5 font-medium">{t.type}</th>
+                            <th className="text-right px-4 py-2.5 font-medium">
+                              {t.purchasePrice}
+                            </th>
+                            <th className="text-right px-4 py-2.5 font-medium">{t.cashPrice}</th>
+                            <th className="text-right px-4 py-2.5 font-medium">{t.share}</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {salgshistorik.map((h, i) => {
+                          {mergedSalgshistorik.map((h, i) => {
                             const dato = h.koebsaftaleDato ?? h.overtagelsesdato;
+                            const overdragelse = h.overdragelsesmaade ?? h.adkomstType;
                             return (
                               <tr
                                 key={i}
                                 className="border-b border-slate-700/20 last:border-0 hover:bg-white/[0.02] transition-colors"
                               >
-                                <td className="px-4 py-2.5 text-slate-300 tabular-nums">
+                                <td className="px-4 py-2.5 text-slate-300 tabular-nums whitespace-nowrap">
                                   {dato
-                                    ? new Date(dato).toLocaleDateString('da-DK', {
+                                    ? new Date(dato).toLocaleDateString(da ? 'da-DK' : 'en-GB', {
                                         year: 'numeric',
                                         month: 'short',
                                         day: 'numeric',
@@ -2522,27 +3253,55 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                                     : '—'}
                                 </td>
                                 <td className="px-4 py-2.5">
+                                  {h.koeber ? (
+                                    <div>
+                                      <p className="text-slate-200 text-sm leading-tight">
+                                        {h.koebercvr ? (
+                                          <Link
+                                            href={`/dashboard/companies/${h.koebercvr}`}
+                                            className="hover:text-blue-400 transition-colors"
+                                          >
+                                            {h.koeber}
+                                          </Link>
+                                        ) : (
+                                          h.koeber
+                                        )}
+                                      </p>
+                                      {h.koebercvr && (
+                                        <p className="text-slate-500 text-[10px]">
+                                          CVR {h.koebercvr}
+                                        </p>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <span className="text-slate-500 text-xs">—</span>
+                                  )}
+                                </td>
+                                <td className="px-4 py-2.5">
                                   <span
                                     className={`text-xs px-2 py-0.5 rounded-full ${
-                                      h.overdragelsesmaade?.toLowerCase().includes('frit')
+                                      overdragelse?.toLowerCase().includes('frit')
                                         ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20'
-                                        : h.overdragelsesmaade?.toLowerCase().includes('tvang')
+                                        : overdragelse?.toLowerCase().includes('tvang')
                                           ? 'text-red-400 bg-red-500/10 border border-red-500/20'
                                           : 'text-slate-400 bg-slate-500/10 border border-slate-500/20'
                                     }`}
                                   >
-                                    {h.overdragelsesmaade ?? '—'}
+                                    {overdragelse ?? '—'}
                                   </span>
                                 </td>
                                 <td className="px-4 py-2.5 text-right text-white font-medium tabular-nums">
                                   {h.samletKoebesum != null
-                                    ? `${h.samletKoebesum.toLocaleString('da-DK')} kr.`
+                                    ? `${h.samletKoebesum.toLocaleString(da ? 'da-DK' : 'en-GB')} kr.`
                                     : '—'}
                                 </td>
                                 <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums">
                                   {h.kontantKoebesum != null
-                                    ? `${h.kontantKoebesum.toLocaleString('da-DK')} kr.`
+                                    ? `${h.kontantKoebesum.toLocaleString(da ? 'da-DK' : 'en-GB')} kr.`
                                     : '—'}
+                                </td>
+                                <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums text-xs">
+                                  {h.andel ?? '—'}
                                 </td>
                               </tr>
                             );
@@ -2551,38 +3310,40 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                       </table>
                     </div>
                   ) : (
-                    <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl p-5 text-center">
-                      <p className="text-slate-500 text-xs">
-                        Ingen handler registreret for denne ejendom
-                      </p>
+                    <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl p-5 text-center space-y-2">
+                      <TrendingUp size={22} className="text-slate-600 mx-auto" />
+                      <p className="text-slate-500 text-xs">{t.noTransactions}</p>
+                      {salgshistorikManglerAdgang && (
+                        <p className="text-slate-600 text-[10px] max-w-sm mx-auto leading-relaxed">
+                          {t.salesHistoryEJF}
+                        </p>
+                      )}
                     </div>
                   )}
                 </div>
 
+                {/* Hæftelser fjernet — vises nu under Tinglysning-tab */}
+
                 {/* ── Udbudshistorik — coming soon ── */}
                 <div>
-                  <SectionTitle title="Udbudshistorik" />
+                  <SectionTitle title={t.listingHistory} />
                   <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl p-5 text-center space-y-2">
                     <List size={22} className="text-slate-600 mx-auto" />
-                    <p className="text-slate-400 text-sm font-medium">Udbudspriser og status</p>
+                    <p className="text-slate-400 text-sm font-medium">{t.listingPricesAndStatus}</p>
                     <p className="text-slate-500 text-xs max-w-sm mx-auto leading-relaxed">
-                      Udbudshistorik med prisændringer og handelstyper kræver
-                      markedsdata-integration (backlog).
+                      {t.listingHistoryDesc}
                     </p>
                   </div>
                 </div>
 
                 {/* ── Lignende handler — coming soon ── */}
                 <div>
-                  <SectionTitle title="Lignende handler" />
+                  <SectionTitle title={t.comparableSales} />
                   <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl p-5 text-center space-y-2">
                     <MapPin size={22} className="text-slate-600 mx-auto" />
-                    <p className="text-slate-400 text-sm font-medium">
-                      Sammenlignelige handler i området
-                    </p>
+                    <p className="text-slate-400 text-sm font-medium">{t.comparableSalesInArea}</p>
                     <p className="text-slate-500 text-xs max-w-sm mx-auto leading-relaxed">
-                      Kvadratmeterpriser og handler for lignende ejendomme kræver
-                      markedsdata-integration (backlog).
+                      {t.comparableSalesDesc}
                     </p>
                   </div>
                 </div>
@@ -2594,7 +3355,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
               <div className="space-y-5">
                 {/* ── Ejendomsskatter — baseret på foreløbige + estimerede data ── */}
                 <div>
-                  <SectionTitle title="Ejendomsskatter" />
+                  <SectionTitle title={t.propertyTaxes} />
 
                   {(() => {
                     /** Nyeste foreløbig vurdering (typisk 2024) */
@@ -2603,7 +3364,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                     if (!nyeste && !vurdering?.estimereretGrundskyld) {
                       return (
                         <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl p-5 text-center">
-                          <p className="text-slate-500 text-xs">Ingen skattedata tilgængelig</p>
+                          <p className="text-slate-500 text-xs">{t.noTaxData}</p>
                         </div>
                       );
                     }
@@ -2616,11 +3377,11 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
 
                     return (
                       <div className="space-y-4">
-                        {/* ── Nuværende beskatning (nyeste foreløbige) ── */}
+                        {/* ── {t.currentTaxation} (nyeste foreløbige) ── */}
                         {nyeste && (
                           <div>
                             <p className="text-slate-300 text-sm font-semibold mb-2">
-                              Nuværende beskatning ({nyeste.vurderingsaar + 1})
+                              {t.currentTaxation} ({nyeste.vurderingsaar + 1})
                             </p>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                               {/* Grundskyld */}
@@ -2630,7 +3391,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                                   <span className="text-slate-500 text-xs font-normal">DKK</span>
                                 </p>
                                 <p className="text-slate-500 text-xs mt-0.5">
-                                  Grundskyld til kommunen
+                                  {t.groundTaxToMunicipality}
                                 </p>
                               </div>
                               {/* Ejendomsværdiskat */}
@@ -2642,7 +3403,9 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                                       DKK
                                     </span>
                                   </p>
-                                  <p className="text-slate-500 text-xs mt-0.5">Ejendomsværdiskat</p>
+                                  <p className="text-slate-500 text-xs mt-0.5">
+                                    {t.propertyValueTax}
+                                  </p>
                                 </div>
                               )}
                               {/* Kolonihave: vis 0 kr med (i)-ikon tooltip */}
@@ -2653,20 +3416,19 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                                     <span className="relative">
                                       <Info className="w-3.5 h-3.5 text-blue-400/70 cursor-help" />
                                       <span className="absolute left-full top-1/2 -translate-y-1/2 ml-2 w-64 px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-300 leading-relaxed opacity-0 invisible group-hover/info:opacity-100 group-hover/info:visible transition-all z-50 pointer-events-none shadow-xl">
-                                        Kolonihavehuse ikke må bruges til helårsbeboelse og er
-                                        derfor undtaget ejendomsværdiskat jf. kolonihavelovens § 2.
+                                        {t.koloniTooltip}
                                         <span className="absolute right-full top-1/2 -translate-y-1/2 border-4 border-transparent border-r-slate-700" />
                                       </span>
                                     </span>
                                   </p>
                                   <p className="text-slate-500 text-xs mt-0.5">
-                                    Ejendomsværdiskat (fritaget)
+                                    {t.propertyValueTaxExempt}
                                   </p>
                                 </div>
                               )}
                             </div>
 
-                            {/* Totale skat */}
+                            {/* {t.totalTax} */}
                             {(visEjendomsskat || erKolonihave) && (
                               <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4 mt-3">
                                 <p className="text-white text-lg font-bold">
@@ -2676,10 +3438,8 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                                   </span>
                                 </p>
                                 <p className="text-slate-500 text-xs mt-0.5">
-                                  Totale skat{' '}
-                                  {erKolonihave
-                                    ? '(kun grundskyld — ejendomsværdiskat fritaget)'
-                                    : '(grundskyld + ejendomsværdiskat)'}
+                                  {t.totalTax}{' '}
+                                  {erKolonihave ? t.taxBreakdownKoloni : t.taxBreakdownNormal}
                                 </p>
                               </div>
                             )}
@@ -2695,7 +3455,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                                 <span className="text-slate-500 text-xs font-normal ml-1">DKK</span>
                               </p>
                               <p className="text-slate-500 text-xs mt-0.5">
-                                Est. grundskyld
+                                {t.estGroundTax}
                                 {vurdering.grundskyldspromille !== null && (
                                   <span className="text-slate-600 ml-1">
                                     ({vurdering.grundskyldspromille}‰)
@@ -2720,9 +3480,9 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                   {/* Kort-header */}
                   <div className="px-4 py-2.5 border-b border-slate-700/30 flex items-center gap-2">
                     <FileText size={15} className="text-slate-400" />
-                    <span className="text-sm font-semibold text-slate-200">Dokumenter</span>
+                    <span className="text-sm font-semibold text-slate-200">{t.documents}</span>
                     {(plandataLoader || energiLoader || jordLoader) && (
-                      <span className="ml-2 text-xs text-slate-500 animate-pulse">Henter…</span>
+                      <span className="ml-2 text-xs text-slate-500 animate-pulse">{t.loading}</span>
                     )}
                     {/* Download-knap — højrestillet */}
                     <button
@@ -2731,25 +3491,25 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                       className="ml-auto flex items-center gap-1.5 px-3 py-1 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 disabled:cursor-not-allowed border border-slate-600 rounded-lg text-slate-300 text-xs font-medium transition-all"
                       title={
                         valgteDoc.size === 0
-                          ? 'Vælg dokumenter med checkboks for at downloade'
-                          : `Download ${valgteDoc.size} valgte som ZIP`
+                          ? t.selectDocsToDownload
+                          : `${t.downloadSelected} (${valgteDoc.size}) ZIP`
                       }
                     >
                       {zipLoader ? (
                         <>
                           <span className="w-3 h-3 border border-slate-400 border-t-transparent rounded-full animate-spin" />
-                          Henter…
+                          {t.loading}
                         </>
                       ) : (
                         <>
                           <Download size={12} />
-                          Download valgte ({valgteDoc.size})
+                          {t.downloadSelected} ({valgteDoc.size})
                         </>
                       )}
                     </button>
                   </div>
 
-                  {/* ── Stamdokumenter subsection ── */}
+                  {/* ── {t.standardDocs} subsection ── */}
                   {(() => {
                     const rel = bbrData?.ejendomsrelationer?.[0];
                     const bfeNummer = rel?.bfeNummer;
@@ -2777,7 +3537,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
 
                     const formatDato = (iso: string | null) =>
                       iso
-                        ? new Date(iso).toLocaleDateString('da-DK', {
+                        ? new Date(iso).toLocaleDateString(da ? 'da-DK' : 'en-GB', {
                             day: 'numeric',
                             month: 'long',
                             year: 'numeric',
@@ -2787,44 +3547,44 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                     const jordDetaljer = jordItem
                       ? [
                           jordItem.pollutionStatusText && {
-                            label: 'Kortlægningsstatus',
+                            label: t.mappingStatus,
                             value: `${jordItem.pollutionStatusCodeValue} — ${jordItem.pollutionStatusText}`,
                           },
                           jordItem.pollutionNuanceStatus.length > 0 && {
-                            label: 'Nuancering',
+                            label: t.nuance,
                             value: jordItem.pollutionNuanceStatus.join(', '),
                           },
                           jordItem.locationReferences.length > 0 && {
-                            label: 'Lokationsreference',
+                            label: t.locationRef,
                             value: jordItem.locationReferences.join(', '),
                           },
                           jordItem.locationNames.length > 0 && {
-                            label: 'Lokation',
+                            label: t.location,
                             value: jordItem.locationNames[0],
                           },
                           jordItem.locationNames.length > 1 && {
-                            label: 'Øvrige lokationer',
+                            label: t.otherLocations,
                             value: jordItem.locationNames.slice(1).join(' · '),
                           },
                           formatDato(jordItem.recalculationDate) && {
-                            label: 'Genvurderingsdato',
+                            label: t.reevalDate,
                             value: formatDato(jordItem.recalculationDate)!,
                           },
                           formatDato(jordItem.modifiedDate) && {
-                            label: 'Senest ændret',
+                            label: t.lastModified,
                             value: formatDato(jordItem.modifiedDate)!,
                           },
                           {
-                            label: 'Matrikel',
+                            label: t.cadastreLabel,
                             value: `${jordItem.landParcelIdentifier} (ejerlav ${jordItem.cadastralDistrictIdentifier})`,
                           },
-                          jordItem.regionNavn && { label: 'Region', value: jordItem.regionNavn },
+                          jordItem.regionNavn && { label: t.region, value: jordItem.regionNavn },
                           jordItem.municipalityCode && {
-                            label: 'Kommunekode',
+                            label: t.municipalityCode,
                             value: String(jordItem.municipalityCode),
                           },
                           jordItem.housingStatementIndicator && {
-                            label: 'Boligudtalelse',
+                            label: t.housingStatement,
                             value: 'Ja',
                           },
                         ].filter((r): r is { label: string; value: string } => Boolean(r))
@@ -2838,16 +3598,16 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                         <div className="min-w-[500px] grid grid-cols-[28px_72px_1fr_120px_80px] gap-x-3 px-4 py-1.5 border-b border-slate-700/20">
                           <span />
                           <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
-                            År
+                            {da ? 'År' : 'Year'}
                           </span>
                           <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
-                            Dokument
+                            {da ? 'Dokument' : 'Document'}
                           </span>
                           <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
                             Status
                           </span>
                           <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
-                            Dok.
+                            {da ? 'Dok.' : 'Doc.'}
                           </span>
                         </div>
 
@@ -2864,7 +3624,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                             })()}
                           </span>
                           <div>
-                            <span className="text-sm text-slate-200">BBR-meddelelse</span>
+                            <span className="text-sm text-slate-200">{t.bbrNotice}</span>
                           </div>
                           <span />
                           <div className="flex items-center gap-1.5 self-start">
@@ -2936,10 +3696,10 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                                 : '—'}
                             </span>
                             <div>
-                              <span className="text-sm text-slate-200">Jordforureningsattest</span>
+                              <span className="text-sm text-slate-200">{t.soilContamination}</span>
                               {jordLoader && (
                                 <p className="text-xs text-slate-500 mt-0.5 animate-pulse">
-                                  Henter…
+                                  {t.loading}
                                 </p>
                               )}
                             </div>
@@ -2947,7 +3707,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                             <div className="self-start">
                               {!jordLoader && jordIngenData && (
                                 <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-emerald-500/15 text-emerald-400">
-                                  Ikke kortlagt
+                                  {t.notMapped}
                                 </span>
                               )}
                               {!jordLoader && jordItem && (
@@ -3041,7 +3801,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                               <span />
                               <span className="text-sm text-slate-300 tabular-nums">—</span>
                               <div>
-                                <span className="text-sm text-slate-200">Matrikelkort</span>
+                                <span className="text-sm text-slate-200">{t.cadastreMap}</span>
                               </div>
                               <span />
                               <div className="flex items-center gap-1.5 self-start">
@@ -3093,10 +3853,8 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                             <span />
                             <span className="text-sm text-slate-300 tabular-nums">—</span>
                             <div>
-                              <span className="text-sm text-slate-200">
-                                Slots- og Kulturstyrelsen
-                              </span>
-                              <p className="text-xs text-slate-500 mt-0.5">Fredet bygning</p>
+                              <span className="text-sm text-slate-200">{t.slotsOgKultur}</span>
+                              <p className="text-xs text-slate-500 mt-0.5">{t.protectedBuilding}</p>
                             </div>
                             <span className="inline-flex items-center self-start px-2 py-0.5 rounded text-xs font-medium bg-amber-500/15 text-amber-400">
                               Fredet
@@ -3131,7 +3889,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
 
                     {!plandataLoader && !plandataFejl && (!plandata || plandata.length === 0) && (
                       <div className="px-4 py-3 text-center text-slate-500 text-xs">
-                        Ingen planer fundet for denne adresse
+                        {t.noPlansFound}
                       </div>
                     )}
 
@@ -3141,16 +3899,16 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                         <div className="min-w-[500px] grid grid-cols-[28px_72px_1fr_120px_80px] gap-x-3 px-4 py-2 border-b border-slate-700/20">
                           <span />
                           <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
-                            År
+                            {da ? 'År' : 'Year'}
                           </span>
                           <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
-                            Type
+                            {da ? 'Type' : 'Type'}
                           </span>
                           <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
                             Status
                           </span>
                           <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
-                            Dok.
+                            {da ? 'Dok.' : 'Doc.'}
                           </span>
                         </div>
 
@@ -3185,29 +3943,29 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                           // Byg detaljefelt-liste — kun vis felter med værdier
                           const d = plan.detaljer;
                           const detaljeRækker: { label: string; value: string }[] = [
-                            d.anvendelse && { label: 'Generel anvendelse', value: d.anvendelse },
-                            d.delnr && { label: 'Delområdenummer', value: d.delnr },
+                            d.anvendelse && { label: t.generalUsage, value: d.anvendelse },
+                            d.delnr && { label: t.subAreaNo, value: d.delnr },
                             d.bebygpct && {
-                              label: 'Maks. bebyggelsesprocent',
+                              label: t.maxBuildingCoverage,
                               value: `${d.bebygpct} %`,
                             },
                             d.maxetager && {
-                              label: 'Maks. antal etager',
+                              label: t.maxFloors,
                               value: String(d.maxetager),
                             },
                             d.maxbygnhjd && {
-                              label: 'Maks. bygningshøjde',
+                              label: t.maxBuildingHeight,
                               value: `${d.maxbygnhjd} m`,
                             },
                             d.minuds && {
-                              label: 'Min. grundstørrelse ved udstykning',
-                              value: `${d.minuds.toLocaleString('da-DK')} m²`,
+                              label: t.minPlotSubdivision,
+                              value: `${d.minuds.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`,
                             },
-                            d.datoforsl && { label: 'Forslagsdato', value: d.datoforsl },
-                            d.datovedt && { label: 'Vedtagelsesdato', value: d.datovedt },
-                            d.datoikraft && { label: 'Dato trådt i kraft', value: d.datoikraft },
-                            d.datostart && { label: 'Startdato', value: d.datostart },
-                            d.datoslut && { label: 'Slutdato', value: d.datoslut },
+                            d.datoforsl && { label: t.proposalDate, value: d.datoforsl },
+                            d.datovedt && { label: t.approvalDate, value: d.datovedt },
+                            d.datoikraft && { label: t.effectiveDate, value: d.datoikraft },
+                            d.datostart && { label: t.startDate, value: d.datostart },
+                            d.datoslut && { label: t.endDate, value: d.datoslut },
                           ].filter((r): r is { label: string; value: string } => Boolean(r));
 
                           return (
@@ -3312,7 +4070,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                                     ))
                                   ) : (
                                     <p className="px-3 py-1.5 text-xs text-slate-500">
-                                      Ingen yderligere detaljer tilgængelige
+                                      {t.noAdditionalDetails}
                                     </p>
                                   )}
                                 </div>
@@ -3330,7 +4088,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                     <div className="px-4 py-2 flex items-center gap-2">
                       <span className="text-sm leading-none">⚡</span>
                       <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">
-                        Energimærkerapporter
+                        {t.energyReports}
                       </span>
                     </div>
 
@@ -3349,7 +4107,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                       !energiManglerAdgang &&
                       (!energimaerker || energimaerker.length === 0) && (
                         <div className="px-4 py-3 text-center text-slate-500 text-xs">
-                          Ingen energimærker registreret for denne ejendom
+                          {t.noEnergyLabels}
                         </div>
                       )}
 
@@ -3413,8 +4171,8 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                                 {m.bygninger.length > 0 && (
                                   <p className="text-xs text-slate-500 mt-0.5">
                                     {m.bygninger.length === 1
-                                      ? `Bygning ${m.bygninger[0].bygningsnr}`
-                                      : `${m.bygninger.length} bygninger`}
+                                      ? `${t.buildingLabel} ${m.bygninger[0].bygningsnr}`
+                                      : `${m.bygninger.length} ${t.buildingsLabel}`}
                                     {m.bygninger[0]?.opfoerelsesaar != null &&
                                       ` · ${m.bygninger[0].opfoerelsesaar}`}
                                     {m.bygninger[0]?.varmeforsyning &&
@@ -3487,10 +4245,10 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
             <Link
               href={`/dashboard/kort?ejendom=${id}`}
               className="absolute top-3 right-3 z-20 flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-900/90 hover:bg-slate-800 border border-slate-700 rounded-lg text-slate-300 text-xs font-medium shadow-lg transition-all"
-              title="Åbn på fuldt kort"
+              title={t.openFullMap}
             >
               <MapIcon size={12} />
-              Fuldt kort
+              {t.fullMap}
             </Link>
             <div className="absolute inset-0">
               <Suspense
@@ -3525,24 +4283,24 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
     );
   }
 
-  // ── Mock: Ejendom ikke fundet ──
+  // ── Mock: {t.propertyNotFound} ──
   if (!ejendom) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-center px-6">
         <MapPin size={40} className="text-slate-600 mb-4" />
-        <h2 className="text-white text-xl font-semibold mb-2">Ejendom ikke fundet</h2>
-        <p className="text-slate-400 text-sm mb-6">BFE-nummeret eksisterer ikke i systemet.</p>
+        <h2 className="text-white text-xl font-semibold mb-2">{t.propertyNotFound}</h2>
+        <p className="text-slate-400 text-sm mb-6">{t.propertyNotFoundDesc}</p>
         <Link
           href="/dashboard/ejendomme"
           className="text-blue-400 hover:text-blue-300 flex items-center gap-2 text-sm"
         >
-          <ArrowLeft size={16} /> Tilbage til ejendomme
+          <ArrowLeft size={16} /> {t.backToProperties}
         </Link>
       </div>
     );
   }
 
-  /** Prishistorik tilpasset til Recharts */
+  /** {t.priceHistory} tilpasset til Recharts */
   const prisData = ejendom.handelHistorik
     .slice()
     .reverse()
@@ -3563,7 +4321,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
             className="flex items-center gap-2 text-slate-400 hover:text-white text-sm transition-colors"
           >
             <ArrowLeft size={16} />
-            Ejendomme
+            {t.back}
           </button>
 
           <div
@@ -3616,7 +4374,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
               }`}
             >
               <Bell size={14} className={erFulgt ? 'fill-blue-400 text-blue-400' : ''} />
-              {erFulgt ? 'Følger' : 'Følg'}
+              {erFulgt ? t.following : t.follow}
             </button>
             <FoelgTooltip lang="da" visible={visFoelgTooltip} />
           </div>
@@ -3684,15 +4442,15 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                       <span className="text-white font-bold text-base">
                         {ejendom.jordstykker?.length ?? 1}
                       </span>{' '}
-                      matrikel
+                      {t.cadastre}
                     </p>
                     <div className="space-y-2">
                       <DataKort
-                        label="Grundareal"
-                        value={`${ejendom.grundareal.toLocaleString('da-DK')} m²`}
+                        label={t.plotArea}
+                        value={`${ejendom.grundareal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`}
                       />
                       <DataKort
-                        label="Bebyggelsesprocent"
+                        label={t.buildingCoverage}
                         value={`${ejendom.bebyggelsesprocent}%`}
                       />
                     </div>
@@ -3704,15 +4462,15 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                       <span className="text-white font-bold text-base">
                         {ejendom.bygninger.length}
                       </span>{' '}
-                      bygning
+                      {t.building}
                     </p>
                     <div className="space-y-2">
                       <DataKort
-                        label="Bygningsareal"
-                        value={`${ejendom.bygningsareal.toLocaleString('da-DK')} m²`}
+                        label={t.buildingArea}
+                        value={`${ejendom.bygningsareal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`}
                       />
-                      <DataKort label="Kælder" value={`${ejendom.kaelder} m²`} />
-                      <DataKort label="Udnyttet tagetage" value="0 m²" />
+                      <DataKort label={t.basement} value={`${ejendom.kaelder} m²`} />
+                      <DataKort label={t.atticUsed} value="0 m²" />
                     </div>
                   </div>
 
@@ -3722,22 +4480,25 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                       <span className="text-white font-bold text-base">
                         {ejendom.erhvervsenheder + ejendom.beboelsesenheder}
                       </span>{' '}
-                      enhed
+                      {t.unit}
                     </p>
                     <div className="space-y-2">
                       {ejendom.beboelsesareal > 0 && (
-                        <DataKort label="Beboelsesareal" value={`${ejendom.beboelsesareal} m²`} />
+                        <DataKort
+                          label={t.residentialArea}
+                          value={`${ejendom.beboelsesareal} m²`}
+                        />
                       )}
                       <DataKort
-                        label="Erhvervsareal"
-                        value={`${ejendom.erhvervsareal.toLocaleString('da-DK')} m²`}
+                        label={t.commercialArea}
+                        value={`${ejendom.erhvervsareal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`}
                       />
-                      <DataKort label="Erhvervsenheder" value={`${ejendom.erhvervsenheder}`} />
+                      <DataKort label={t.commercialUnits} value={`${ejendom.erhvervsenheder}`} />
                     </div>
                   </div>
                 </div>
 
-                {/* Ejer + Seneste handel */}
+                {/* Ejer + {t.latestTransaction} */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {/* Ejer */}
                   <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
@@ -3774,10 +4535,10 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                     </div>
                   </div>
 
-                  {/* Seneste handel */}
+                  {/* {t.latestTransaction} */}
                   <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
                     <p className="text-slate-400 text-xs font-medium uppercase tracking-wide mb-3">
-                      Seneste handel
+                      {t.latestTransaction}
                     </p>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
@@ -3789,19 +4550,20 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                         </p>
                       </div>
                       <div className="flex flex-col justify-center">
-                        <p className="text-slate-400 text-xs">Pris/m²</p>
+                        <p className="text-slate-400 text-xs">{t.pricePerSqm}</p>
                         <p className="text-slate-200 font-semibold">
-                          {ejendom.senesteHandel.prisPerM2.toLocaleString('da-DK')} DKK
+                          {ejendom.senesteHandel.prisPerM2.toLocaleString(da ? 'da-DK' : 'en-GB')}{' '}
+                          DKK
                         </p>
                       </div>
                       <div>
-                        <p className="text-slate-400 text-xs">Ejendomsværdi</p>
+                        <p className="text-slate-400 text-xs">{t.propertyValue}</p>
                         <p className="text-slate-200 font-semibold text-sm">
                           {formatDKK(ejendom.ejendomsvaerdi)}
                         </p>
                       </div>
                       <div>
-                        <p className="text-slate-400 text-xs">Grundskyld</p>
+                        <p className="text-slate-400 text-xs">{t.groundTax}</p>
                         <p className="text-slate-200 font-semibold text-sm">
                           {formatDKK(ejendom.grundskyld)}
                         </p>
@@ -3814,18 +4576,18 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                 {ejendom.virksomhederPaaAdressen && ejendom.virksomhederPaaAdressen.length > 0 && (
                   <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
                     <div className="px-4 py-3 border-b border-slate-700/40 flex items-center justify-between">
-                      <h3 className="text-white font-semibold text-sm">Virksomheder på adressen</h3>
+                      <h3 className="text-white font-semibold text-sm">{t.companiesAtAddress}</h3>
                       <span className="text-slate-500 text-xs">
-                        {ejendom.virksomhederPaaAdressen.length} virksomheder
+                        {ejendom.virksomhederPaaAdressen.length} {t.companies}
                       </span>
                     </div>
                     <table className="w-full">
                       <thead>
                         <tr className="text-slate-500 text-xs border-b border-slate-700/30">
-                          <th className="px-4 py-2 text-left font-medium">Virksomhed</th>
-                          <th className="px-4 py-2 text-left font-medium">Industri</th>
-                          <th className="px-4 py-2 text-left font-medium">Periode</th>
-                          <th className="px-4 py-2 text-right font-medium">Ansatte</th>
+                          <th className="px-4 py-2 text-left font-medium">{t.company}</th>
+                          <th className="px-4 py-2 text-left font-medium">{t.industry}</th>
+                          <th className="px-4 py-2 text-left font-medium">{t.period}</th>
+                          <th className="px-4 py-2 text-right font-medium">{t.employees}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -3856,10 +4618,10 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                   </div>
                 )}
 
-                {/* Miljøindikatorer */}
+                {/* {t.environmentalIndicators} */}
                 <div>
                   <p className="text-slate-400 text-xs font-medium uppercase tracking-wide mb-3">
-                    Miljøindikatorer
+                    {t.environmentalIndicators}
                   </p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     {ejendom.miljoeindikatorer.map((m) => (
@@ -3898,14 +4660,14 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
 
                 {/* Jordstykker */}
                 <div>
-                  <SectionTitle title="Jordstykker" />
+                  <SectionTitle title={t.landPlots} />
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
-                    <DataKort label="Matrikler" value="1" />
+                    <DataKort label={t.cadastres} value="1" />
                     <DataKort
-                      label="Grundareal"
+                      label={t.plotArea}
                       value={
                         dawaJordstykke
-                          ? `${dawaJordstykke.areal_m2.toLocaleString('da-DK')} m²`
+                          ? `${dawaJordstykke.areal_m2.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
                           : '–'
                       }
                     />
@@ -3921,7 +4683,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                           {dawaJordstykke.ejerlav.navn}
                         </span>
                         <span className="text-slate-300 flex-shrink-0">
-                          {dawaJordstykke.areal_m2.toLocaleString('da-DK')} m²
+                          {dawaJordstykke.areal_m2.toLocaleString(da ? 'da-DK' : 'en-GB')} m²
                         </span>
                       </div>
                     </div>
@@ -3936,23 +4698,33 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                   const erhvAreal = bygninger.reduce((s, b) => s + (b.samletErhvervsareal ?? 0), 0);
                   return (
                     <div>
-                      <SectionTitle title="Bygninger" />
+                      <SectionTitle title={t.buildings} />
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-2">
                         <DataKort
-                          label="Bygninger"
+                          label={t.buildings}
                           value={bbrLoader ? '…' : `${bygninger.length}`}
                         />
                         <DataKort
-                          label="Bygningsareal"
-                          value={totAreal ? `${totAreal.toLocaleString('da-DK')} m²` : '–'}
+                          label={t.buildingArea}
+                          value={
+                            totAreal ? `${totAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²` : '–'
+                          }
                         />
                         <DataKort
-                          label="Beboelsesareal"
-                          value={boligAreal ? `${boligAreal.toLocaleString('da-DK')} m²` : '0 m²'}
+                          label={t.residentialArea}
+                          value={
+                            boligAreal
+                              ? `${boligAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
+                              : '0 m²'
+                          }
                         />
                         <DataKort
-                          label="Erhvervsareal"
-                          value={erhvAreal ? `${erhvAreal.toLocaleString('da-DK')} m²` : '–'}
+                          label={t.commercialArea}
+                          value={
+                            erhvAreal
+                              ? `${erhvAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
+                              : '–'
+                          }
                         />
                       </div>
 
@@ -3973,46 +4745,46 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                         </div>
                       ) : bygninger.length === 0 ? (
                         <div className="text-slate-500 text-sm text-center py-3">
-                          Ingen bygningsdata tilgængeligt
+                          {da ? 'Ingen bygningsdata tilgængeligt' : 'No building data available'}
                         </div>
                       ) : (
                         <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden overflow-x-auto">
                           {/* Kolonneheader */}
                           <div className="min-w-[500px] grid grid-cols-[1fr_72px_100px_100px_28px] px-4 py-2 text-slate-500 text-xs font-medium border-b border-slate-700/30">
-                            <span>Anvendelse</span>
-                            <span className="text-right">Opf. år</span>
-                            <span className="text-right">Bebygget</span>
-                            <span className="text-right">Samlet</span>
+                            <span>{t.usage}</span>
+                            <span className="text-right">{t.builtYear}</span>
+                            <span className="text-right">{t.builtArea}</span>
+                            <span className="text-right">{t.totalArea}</span>
                             <span />
                           </div>
                           {bygninger.map((b) => {
                             const aaben = expandedBygninger.has(b.id);
                             const detaljer: [string, string | null][] = [
-                              ['Ydervæg', b.ydervaeg || null],
-                              ['Tagmateriale', b.tagmateriale || null],
-                              ['Varmeinstallation', b.varmeinstallation || null],
-                              ['Opvarmningsform', b.opvarmningsform || null],
-                              ['Vandforsyning', b.vandforsyning || null],
-                              ['Afløb', b.afloeb || null],
-                              ['Etager', b.antalEtager != null ? `${b.antalEtager}` : null],
+                              [t.outerWall, b.ydervaeg || null],
+                              [t.roofMaterial, b.tagmateriale || null],
+                              [t.heatingInstallation, b.varmeinstallation || null],
+                              [t.heatingForm, b.opvarmningsform || null],
+                              [t.waterSupply, b.vandforsyning || null],
+                              [t.drainage, b.afloeb || null],
+                              [t.floors, b.antalEtager != null ? `${b.antalEtager}` : null],
                               [
                                 'Boligareal',
                                 b.samletBoligareal
-                                  ? `${b.samletBoligareal.toLocaleString('da-DK')} m²`
+                                  ? `${b.samletBoligareal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
                                   : null,
                               ],
                               [
                                 'Erhvervsareal',
                                 b.samletErhvervsareal
-                                  ? `${b.samletErhvervsareal.toLocaleString('da-DK')} m²`
+                                  ? `${b.samletErhvervsareal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
                                   : null,
                               ],
                               [
-                                'Ombygningsår',
+                                da ? 'Ombygningsår' : 'Renovation year',
                                 b.ombygningsaar != null ? `${b.ombygningsaar}` : null,
                               ],
-                              ['Fredning', b.fredning || null],
-                              ['Status', b.status || null],
+                              [t.preservation, b.fredning || null],
+                              [t.status, b.status || null],
                             ].filter((row): row is [string, string] => row[1] !== null);
                             return (
                               <div
@@ -4037,12 +4809,12 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                                   </span>
                                   <span className="text-slate-300 text-right">
                                     {b.bebyggetAreal
-                                      ? `${b.bebyggetAreal.toLocaleString('da-DK')} m²`
+                                      ? `${b.bebyggetAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
                                       : '–'}
                                   </span>
                                   <span className="text-slate-300 text-right">
                                     {b.samletBygningsareal
-                                      ? `${b.samletBygningsareal.toLocaleString('da-DK')} m²`
+                                      ? `${b.samletBygningsareal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
                                       : '–'}
                                   </span>
                                   <ChevronRight
@@ -4079,17 +4851,19 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                   const totAreal = enheder.reduce((s, e) => s + (e.areal ?? 0), 0);
                   return (
                     <div>
-                      <SectionTitle title="Enheder" />
+                      <SectionTitle title={t.units} />
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-2">
                         <DataKort
-                          label="Enheder i alt"
+                          label={t.totalUnits}
                           value={bbrLoader ? '…' : `${enheder.length}`}
                         />
-                        <DataKort label="Beboelsesenheder" value={`${boligEnh}`} />
-                        <DataKort label="Erhvervsenheder" value={`${erhvEnh}`} />
+                        <DataKort label={t.residentialUnits} value={`${boligEnh}`} />
+                        <DataKort label={t.commercialUnits} value={`${erhvEnh}`} />
                         <DataKort
-                          label="Samlet areal"
-                          value={totAreal ? `${totAreal.toLocaleString('da-DK')} m²` : '–'}
+                          label={t.totalAreaLabel}
+                          value={
+                            totAreal ? `${totAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²` : '–'
+                          }
                         />
                       </div>
 
@@ -4109,32 +4883,34 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                         </div>
                       ) : enheder.length === 0 ? (
                         <div className="text-slate-500 text-sm text-center py-3">
-                          Ingen enheder tilgængeligt
+                          {t.noUnitsAvailable}
                         </div>
                       ) : (
                         <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden overflow-x-auto">
                           <div className="min-w-[400px] grid grid-cols-[1fr_90px_72px_28px] px-4 py-2 text-slate-500 text-xs font-medium border-b border-slate-700/30">
-                            <span>Anvendelse</span>
-                            <span className="text-right">Areal</span>
-                            <span className="text-right">Værelser</span>
+                            <span>{t.usage}</span>
+                            <span className="text-right">{t.area}</span>
+                            <span className="text-right">{t.rooms}</span>
                             <span />
                           </div>
                           {enheder.map((e) => {
                             const aaben = expandedEnheder.has(e.id);
                             const detaljer: [string, string | null][] = [
-                              ['Etage', e.etage || null],
+                              [t.floor, e.etage || null],
                               [
                                 'Boligareal',
-                                e.arealBolig ? `${e.arealBolig.toLocaleString('da-DK')} m²` : null,
+                                e.arealBolig
+                                  ? `${e.arealBolig.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
+                                  : null,
                               ],
                               [
                                 'Erhvervsareal',
                                 e.arealErhverv
-                                  ? `${e.arealErhverv.toLocaleString('da-DK')} m²`
+                                  ? `${e.arealErhverv.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
                                   : null,
                               ],
-                              ['Energimærke', e.energimaerke || null],
-                              ['Varmeinstallation', e.varmeinstallation || null],
+                              [da ? 'Energimærke' : 'Energy label', e.energimaerke || null],
+                              [t.heatingInstallation, e.varmeinstallation || null],
                             ].filter((row): row is [string, string] => row[1] !== null);
                             return (
                               <div
@@ -4155,7 +4931,9 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                                     {e.anvendelse || '–'}
                                   </span>
                                   <span className="text-slate-300 text-right">
-                                    {e.areal ? `${e.areal.toLocaleString('da-DK')} m²` : '–'}
+                                    {e.areal
+                                      ? `${e.areal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
+                                      : '–'}
                                   </span>
                                   <span className="text-slate-400 text-right">
                                     {e.vaerelser ?? '–'}
@@ -4188,11 +4966,11 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
 
                 {/* ── Matrikeloplysninger (Datafordeler MAT) ── */}
                 <div className="mt-5">
-                  <SectionTitle title="Matrikeloplysninger" />
+                  <SectionTitle title={t.cadastreInfo} />
                   {matrikelLoader ? (
                     <div className="flex items-center gap-2 text-slate-500 text-sm py-4">
                       <div className="w-4 h-4 border-2 border-slate-600 border-t-blue-500 rounded-full animate-spin" />
-                      Henter matrikeldata…
+                      {t.loadingCadastre}
                     </div>
                   ) : matrikelData ? (
                     <div className="space-y-3">
@@ -4200,7 +4978,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                         {matrikelData.landbrugsnotering && (
                           <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3">
-                            <p className="text-slate-400 text-xs mb-0.5">Landbrugsnotering</p>
+                            <p className="text-slate-400 text-xs mb-0.5">{t.agriculturalNote}</p>
                             <p className="text-white text-sm font-medium">
                               {matrikelData.landbrugsnotering}
                             </p>
@@ -4208,22 +4986,22 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                         )}
                         {matrikelData.opdeltIEjerlejligheder && (
                           <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3">
-                            <p className="text-slate-400 text-xs mb-0.5">Ejerlejligheder</p>
+                            <p className="text-slate-400 text-xs mb-0.5">{t.condominiums}</p>
                             <p className="text-white text-sm font-medium">
-                              Opdelt i ejerlejligheder
+                              {t.dividedIntoCondominiums}
                             </p>
                           </div>
                         )}
                         {matrikelData.erFaelleslod && (
                           <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3">
-                            <p className="text-slate-400 text-xs mb-0.5">Fælleslod</p>
-                            <p className="text-white text-sm font-medium">Ja</p>
+                            <p className="text-slate-400 text-xs mb-0.5">{t.commonLot}</p>
+                            <p className="text-white text-sm font-medium">{t.yes}</p>
                           </div>
                         )}
                         {matrikelData.udskiltVej && (
                           <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3">
-                            <p className="text-slate-400 text-xs mb-0.5">Udskilt vej</p>
-                            <p className="text-white text-sm font-medium">Ja</p>
+                            <p className="text-slate-400 text-xs mb-0.5">{t.separatedRoad}</p>
+                            <p className="text-white text-sm font-medium">{t.yes}</p>
                           </div>
                         )}
                       </div>
@@ -4233,7 +5011,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                         <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden overflow-x-auto">
                           <div className="px-4 py-2.5 border-b border-slate-700/30">
                             <p className="text-slate-300 text-xs font-semibold uppercase tracking-wider">
-                              Jordstykker ({matrikelData.jordstykker.length})
+                              {t.parcels} ({matrikelData.jordstykker.length})
                             </p>
                           </div>
                           <div className="divide-y divide-slate-700/20">
@@ -4244,10 +5022,10 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                               >
                                 <div>
                                   <p className="text-white text-sm font-medium">
-                                    Matr.nr. {js.matrikelnummer}
+                                    {da ? 'Matr.nr.' : 'Cad. no.'} {js.matrikelnummer}
                                     {js.ejerlavskode && (
                                       <span className="text-slate-500 text-xs ml-2">
-                                        Ejerlav {js.ejerlavskode}
+                                        {da ? 'Ejerlav' : 'District'} {js.ejerlavskode}
                                       </span>
                                     )}
                                   </p>
@@ -4257,33 +5035,33 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                                 </div>
                                 <p className="text-slate-300 text-sm tabular-nums text-right">
                                   {js.registreretAreal != null
-                                    ? `${js.registreretAreal.toLocaleString('da-DK')} m²`
+                                    ? `${js.registreretAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
                                     : '–'}
                                 </p>
                                 <p className="text-slate-500 text-xs text-right">
                                   {js.vejareal != null && js.vejareal > 0
-                                    ? `Vej: ${js.vejareal.toLocaleString('da-DK')} m²`
+                                    ? `${t.road}: ${js.vejareal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
                                     : ''}
                                 </p>
                                 <div className="flex gap-1.5 flex-wrap justify-end">
                                   {js.fredskov === true && (
                                     <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-green-900/50 text-green-400 border border-green-800/40">
-                                      Fredskov
+                                      {t.protectedForest}
                                     </span>
                                   )}
                                   {js.strandbeskyttelse === true && (
                                     <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-blue-900/50 text-blue-400 border border-blue-800/40">
-                                      Strandbeskyttelse
+                                      {t.coastalProtection}
                                     </span>
                                   )}
                                   {js.klitfredning === true && (
                                     <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-amber-900/50 text-amber-400 border border-amber-800/40">
-                                      Klitfredning
+                                      {t.duneProtection}
                                     </span>
                                   )}
                                   {js.jordrente === true && (
                                     <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-purple-900/50 text-purple-400 border border-purple-800/40">
-                                      Jordrente
+                                      {t.groundRent}
                                     </span>
                                   )}
                                 </div>
@@ -4295,7 +5073,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                     </div>
                   ) : (
                     <div className="bg-slate-800/30 border border-slate-700/40 rounded-xl p-4 text-center">
-                      <p className="text-slate-500 text-xs">Ingen matrikeldata fundet</p>
+                      <p className="text-slate-500 text-xs">{t.noCadastreData}</p>
                     </div>
                   )}
                 </div>
@@ -4310,7 +5088,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                 {/* Ejer-kort */}
                 {ejendom.ejerDetaljer && (
                   <div>
-                    <SectionTitle title="Ejer" />
+                    <SectionTitle title={t.owner} />
                     <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
                       {/* Toprække: logo + navn + badges */}
                       <div className="flex items-start gap-4 mb-4">
@@ -4333,11 +5111,11 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                               </p>
                             )}
                             <span className="px-2 py-0.5 bg-blue-500/10 border border-blue-500/20 rounded-full text-xs text-blue-300">
-                              Primær kontakt
+                              {t.primaryContact}
                             </span>
                             {ejendom.ejerDetaljer.reklamebeskyttet && (
                               <span className="px-2 py-0.5 bg-orange-500/10 border border-orange-500/20 rounded-full text-xs text-orange-300">
-                                Reklamebeskyttet
+                                {t.adBlocked}
                               </span>
                             )}
                           </div>
@@ -4351,23 +5129,23 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                       <div className="grid grid-cols-1 gap-0 divide-y divide-slate-700/30">
                         {[
                           {
-                            label: 'Overtagelsesdato',
+                            label: t.acquisitionDate,
                             value: formatDato(ejendom.ejerDetaljer.overtagelsesdato),
                           },
-                          { label: 'Ejertype', value: ejendom.ejerDetaljer.ejertype },
-                          { label: 'Branchenavn', value: ejendom.ejerDetaljer.branche },
+                          { label: t.ownerType, value: ejendom.ejerDetaljer.ejertype },
+                          { label: t.branchName, value: ejendom.ejerDetaljer.branche },
                           {
-                            label: 'Telefon',
+                            label: t.phone,
                             value: ejendom.ejerDetaljer.telefon,
                             ikon: <Phone size={11} className="text-slate-500" />,
                           },
                           {
-                            label: 'E-mail',
+                            label: t.email,
                             value: ejendom.ejerDetaljer.email,
                             ikon: <Mail size={11} className="text-slate-500" />,
                           },
                           {
-                            label: 'Tegningsregel',
+                            label: t.signingRule,
                             value: ejendom.ejerDetaljer.tegningsregel,
                           },
                         ].map((row) => (
@@ -4387,30 +5165,43 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                   </div>
                 )}
 
-                {/* Ejerstruktur */}
-                {ejendom.ejerstruktur && ejendom.ejerstruktur.length > 0 && (
-                  <div>
-                    <SectionTitle title="Ejerstruktur" />
-                    <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                      <EjerstrukturTrae noder={ejendom.ejerstruktur} />
+                {/* Ejerstruktur — relationsdiagram */}
+                {(() => {
+                  const bfe =
+                    bbrData?.ejerlejlighedBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer;
+                  if (!bfe) return null;
+                  return (
+                    <div>
+                      <SectionTitle title={t.ownershipStructure} />
+                      <PropertyOwnerDiagram
+                        bfe={bfe}
+                        adresse={
+                          dawaAdresse
+                            ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}`
+                            : `BFE ${bfe}`
+                        }
+                        lang={lang}
+                      />
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
 
                 {/* Nøgletal */}
                 {ejendom.ejerDetaljer && (
                   <div>
                     <SectionTitle
-                      title={`Nøgletal ${ejendom.ejerDetaljer.noegletal.aar} for ${ejendom.ejerDetaljer.navn}`}
+                      title={`${da ? 'Nøgletal' : 'Key figures'} ${ejendom.ejerDetaljer.noegletal.aar} ${da ? 'for' : 'for'} ${ejendom.ejerDetaljer.navn}`}
                     />
                     <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
                       <div className="px-4 py-2 border-b border-slate-700/30">
-                        <p className="text-slate-400 text-xs font-medium">Resultatopgørelse</p>
+                        <p className="text-slate-400 text-xs font-medium">{t.incomeStatement}</p>
                       </div>
                       <table className="w-full">
                         <tbody>
                           <tr className="border-b border-slate-700/30 hover:bg-slate-700/20">
-                            <td className="px-4 py-3 text-slate-300 text-sm">Resultat før skat</td>
+                            <td className="px-4 py-3 text-slate-300 text-sm">
+                              {t.profitBeforeTax}
+                            </td>
                             <td className="px-4 py-3 text-right">
                               <span
                                 className={`text-sm font-semibold ${ejendom.ejerDetaljer.noegletal.resultatFoerSkat >= 0 ? 'text-green-400' : 'text-red-400'}`}
@@ -4420,7 +5211,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                             </td>
                           </tr>
                           <tr className="hover:bg-slate-700/20">
-                            <td className="px-4 py-3 text-slate-300 text-sm">Resultat</td>
+                            <td className="px-4 py-3 text-slate-300 text-sm">{t.result}</td>
                             <td className="px-4 py-3 text-right">
                               <span
                                 className={`text-sm font-semibold ${ejendom.ejerDetaljer.noegletal.resultat >= 0 ? 'text-green-400' : 'text-red-400'}`}
@@ -4439,7 +5230,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                 {!ejendom.ejerDetaljer && (
                   <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
                     <p className="text-slate-400 text-xs font-medium uppercase tracking-wide mb-3">
-                      Nuværende ejere
+                      {t.currentOwners}
                     </p>
                     <div className="space-y-3">
                       {ejendom.ejere.map((ejer, i) => (
@@ -4464,14 +5255,14 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                                 <p className="text-white font-semibold text-sm">{ejer.navn}</p>
                               )}
                               <p className="text-slate-500 text-xs">
-                                {ejer.type === 'selskab' ? `CVR ${ejer.cvr}` : 'Privatperson'} ·
-                                Erhvervet {formatDato(ejer.erhvervsdato)}
+                                {ejer.type === 'selskab' ? `CVR ${ejer.cvr}` : t.privatPerson} ·
+                                {t.acquired} {formatDato(ejer.erhvervsdato)}
                               </p>
                             </div>
                           </div>
                           <div className="text-right">
                             <p className="text-white font-bold text-lg">{ejer.ejerandel}%</p>
-                            <p className="text-slate-500 text-xs">ejerandel</p>
+                            <p className="text-slate-500 text-xs">{t.ownershipShare}</p>
                           </div>
                         </div>
                       ))}
@@ -4489,20 +5280,22 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                 {/* Tingbogsattest */}
                 {ejendom.tingbogsattest && (
                   <div>
-                    <SectionTitle title="Tingbogsattest" onDownload={() => undefined} />
+                    <SectionTitle title={t.landRegisterCert} onDownload={() => undefined} />
                     <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
                         <div>
-                          <p className="text-slate-500 text-xs mb-1">BFE-nr.</p>
+                          <p className="text-slate-500 text-xs mb-1">
+                            {da ? 'BFE-nr.' : 'BFE no.'}
+                          </p>
                           <p className="text-white font-semibold text-sm">{ejendom.bfe}</p>
                         </div>
                         <div>
-                          <p className="text-slate-500 text-xs mb-1">Matrikler</p>
+                          <p className="text-slate-500 text-xs mb-1">{t.cadastres}</p>
                           {ejendom.tingbogsattest.matrikler.map((m, i) => (
                             <p key={i} className="text-white text-sm font-medium">
                               {m.matrikelNummer}{' '}
                               <span className="text-slate-400 font-normal">
-                                ({m.areal.toLocaleString('da-DK')} m²){' '}
+                                ({m.areal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²){' '}
                               </span>
                               <span className="text-slate-500 text-xs">{m.registreringsdato}</span>
                             </p>
@@ -4511,7 +5304,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                       </div>
                       <div className="flex items-center gap-2">
                         <button className="flex items-center gap-1.5 px-3 py-1.5 border border-slate-700/60 rounded-lg text-slate-300 text-xs hover:bg-slate-700/40 transition-colors">
-                          Akt nr. {ejendom.tingbogsattest.aktNummer}
+                          {da ? 'Akt nr.' : 'Act no.'} {ejendom.tingbogsattest.aktNummer}
                         </button>
                         <button className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 rounded-lg text-white text-xs font-medium transition-colors">
                           <Download size={12} />
@@ -4525,15 +5318,15 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                 {/* Adkomsthaver */}
                 {ejendom.adkomsthaver && (
                   <div>
-                    <SectionTitle title="Adkomsthaver" />
+                    <SectionTitle title={t.titleHolder} />
                     <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
                       <table className="w-full">
                         <thead>
                           <tr className="text-slate-500 text-xs border-b border-slate-700/30">
-                            <th className="px-4 py-2 text-left font-medium">Adkomsthaver</th>
-                            <th className="px-4 py-2 text-left font-medium">Type</th>
-                            <th className="px-4 py-2 text-right font-medium">Beløb</th>
-                            <th className="px-4 py-2 text-right font-medium">Dato</th>
+                            <th className="px-4 py-2 text-left font-medium">{t.titleHolder}</th>
+                            <th className="px-4 py-2 text-left font-medium">{t.type}</th>
+                            <th className="px-4 py-2 text-right font-medium">{t.amount}</th>
+                            <th className="px-4 py-2 text-right font-medium">{t.date}</th>
                             <th className="px-2 py-2"></th>
                           </tr>
                         </thead>
@@ -4581,15 +5374,15 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                 {/* Historiske adkomster */}
                 {ejendom.historiskeAdkomster && ejendom.historiskeAdkomster.length > 0 && (
                   <div>
-                    <SectionTitle title="Historiske adkomster" />
+                    <SectionTitle title={t.historicalTitles} />
                     <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
                       <table className="w-full">
                         <thead>
                           <tr className="text-slate-500 text-xs border-b border-slate-700/30">
-                            <th className="px-4 py-2 text-left font-medium">Adkomsthaver</th>
-                            <th className="px-4 py-2 text-left font-medium">Type</th>
-                            <th className="px-4 py-2 text-right font-medium">Beløb</th>
-                            <th className="px-4 py-2 text-right font-medium">Dato</th>
+                            <th className="px-4 py-2 text-left font-medium">{t.titleHolder}</th>
+                            <th className="px-4 py-2 text-left font-medium">{t.type}</th>
+                            <th className="px-4 py-2 text-right font-medium">{t.amount}</th>
+                            <th className="px-4 py-2 text-right font-medium">{t.date}</th>
                             <th className="px-2 py-2"></th>
                           </tr>
                         </thead>
@@ -4633,17 +5426,17 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
 
                 {/* Hæftelser */}
                 <div>
-                  <SectionTitle title="Hæftelser" />
+                  <SectionTitle title={t.encumbrances} />
                   <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
                     <table className="w-full">
                       <thead>
                         <tr className="text-slate-500 text-xs border-b border-slate-700/30">
-                          <th className="px-4 py-2 text-left font-medium">Prioritet</th>
-                          <th className="px-4 py-2 text-left font-medium">Kreditor</th>
-                          <th className="px-4 py-2 text-left font-medium">Debitor</th>
-                          <th className="px-4 py-2 text-left font-medium">Type</th>
-                          <th className="px-4 py-2 text-right font-medium">Hovedstol</th>
-                          <th className="px-4 py-2 text-right font-medium">Dato</th>
+                          <th className="px-4 py-2 text-left font-medium">{t.priority}</th>
+                          <th className="px-4 py-2 text-left font-medium">{t.creditor}</th>
+                          <th className="px-4 py-2 text-left font-medium">{t.debtor}</th>
+                          <th className="px-4 py-2 text-left font-medium">{t.type}</th>
+                          <th className="px-4 py-2 text-right font-medium">{t.principal}</th>
+                          <th className="px-4 py-2 text-right font-medium">{t.date}</th>
                           <th className="px-2 py-2"></th>
                         </tr>
                       </thead>
@@ -4693,7 +5486,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                   {/* Matrikel-tæller */}
                   <p className="text-slate-500 text-xs mt-2 text-right">
                     {ejendom.jordstykker?.length ?? 1} matrikel · {ejendom.haeftelser.length}{' '}
-                    hæftelser
+                    {t.encumbrances.toLowerCase()}
                   </p>
                 </div>
               </div>
@@ -4707,23 +5500,31 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                 {/* Vurdering */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   <DataKort
-                    label="Ejendomsværdi"
+                    label={t.propertyValue}
                     value={formatDKK(ejendom.ejendomsvaerdi)}
-                    sub="Seneste vurdering"
+                    sub={t.latestValuation}
                   />
                   <DataKort
-                    label="Grundværdi"
+                    label={t.landValue}
                     value={formatDKK(ejendom.grundvaerdi)}
-                    sub="Seneste vurdering"
+                    sub={t.latestValuation}
                   />
-                  <DataKort label="Skat i alt" value={formatDKK(ejendom.skat)} sub="Årlig" />
-                  <DataKort label="Grundskyld" value={formatDKK(ejendom.grundskyld)} sub="Årlig" />
+                  <DataKort
+                    label={t.totalTaxLabel}
+                    value={formatDKK(ejendom.skat)}
+                    sub={t.annualTax}
+                  />
+                  <DataKort
+                    label={t.groundTax}
+                    value={formatDKK(ejendom.grundskyld)}
+                    sub={t.annualTax}
+                  />
                 </div>
 
-                {/* Prishistorik graf */}
+                {/* {t.priceHistory} graf */}
                 <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
                   <div className="flex items-center justify-between mb-4">
-                    <p className="text-slate-200 text-sm font-semibold">Prishistorik</p>
+                    <p className="text-slate-200 text-sm font-semibold">{t.priceHistory}</p>
                     <div className="flex items-center gap-1 text-slate-400 text-xs">
                       <TrendingUp size={12} />
                       <span>mio. DKK</span>
@@ -4758,9 +5559,10 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                           color: '#fff',
                         }}
                         formatter={
-                          ((value: number | string) => [`${value} mio. DKK`, 'Pris']) as Parameters<
-                            typeof Tooltip
-                          >[0]['formatter']
+                          ((value: number | string) => [
+                            `${value} mio. DKK`,
+                            da ? 'Pris' : 'Price',
+                          ]) as Parameters<typeof Tooltip>[0]['formatter']
                         }
                       />
                       <Area
@@ -4776,16 +5578,16 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
 
                 {/* Salgshistorik */}
                 <div>
-                  <SectionTitle title="Salgshistorik" onDownload={() => undefined} />
+                  <SectionTitle title={t.salesHistory} onDownload={() => undefined} />
                   <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
                     <table className="w-full">
                       <thead>
                         <tr className="text-slate-500 text-xs border-b border-slate-700/30">
-                          <th className="px-4 py-2 text-left font-medium">Køber</th>
-                          <th className="px-4 py-2 text-left font-medium">Type</th>
-                          <th className="px-4 py-2 text-right font-medium">Andel</th>
-                          <th className="px-4 py-2 text-right font-medium">Pris</th>
-                          <th className="px-4 py-2 text-right font-medium">Dato</th>
+                          <th className="px-4 py-2 text-left font-medium">{t.buyer}</th>
+                          <th className="px-4 py-2 text-left font-medium">{t.type}</th>
+                          <th className="px-4 py-2 text-right font-medium">{t.share}</th>
+                          <th className="px-4 py-2 text-right font-medium">{t.price}</th>
+                          <th className="px-4 py-2 text-right font-medium">{t.date}</th>
                           <th className="px-2 py-2"></th>
                         </tr>
                       </thead>
@@ -4795,11 +5597,11 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                           ejendom.handelHistorik.map((h) => ({
                             koebere: [
                               {
-                                navn: h.koeberType === 'selskab' ? 'Selskab' : 'Privatperson',
+                                navn: h.koeberType === 'selskab' ? t.companyType : t.privatPerson,
                                 andel: 100 as number | undefined,
                               },
                             ],
-                            handelstype: 'Skøde',
+                            handelstype: da ? 'Skøde' : 'Deed',
                             kilde: 'tinglysning' as const,
                             andel: 100,
                             pris: h.pris,
@@ -4847,15 +5649,15 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
 
                 {/* Udbudshistorik */}
                 <div>
-                  <SectionTitle title="Udbudshistorik" />
+                  <SectionTitle title={t.listingHistory} />
                   <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
                     <table className="w-full">
                       <thead>
                         <tr className="text-slate-500 text-xs border-b border-slate-700/30">
-                          <th className="px-4 py-2 text-left font-medium">Status</th>
-                          <th className="px-4 py-2 text-right font-medium">Prisændring</th>
-                          <th className="px-4 py-2 text-right font-medium">Pris</th>
-                          <th className="px-4 py-2 text-right font-medium">Dato</th>
+                          <th className="px-4 py-2 text-left font-medium">{t.status}</th>
+                          <th className="px-4 py-2 text-right font-medium">{t.priceChange}</th>
+                          <th className="px-4 py-2 text-right font-medium">{t.price}</th>
+                          <th className="px-4 py-2 text-right font-medium">{t.date}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -4872,7 +5674,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                                     className={`text-sm font-medium ${u.prisaendring >= 0 ? 'text-green-400' : 'text-red-400'}`}
                                   >
                                     {u.prisaendring >= 0 ? '+' : ''}
-                                    {u.prisaendring.toLocaleString('da-DK')} DKK
+                                    {u.prisaendring.toLocaleString(da ? 'da-DK' : 'en-GB')} DKK
                                   </span>
                                 ) : (
                                   <span className="text-slate-500 text-sm">—</span>
@@ -4892,7 +5694,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                               colSpan={4}
                               className="px-4 py-6 text-center text-slate-500 text-sm"
                             >
-                              Ingen udbudshistorik registreret
+                              {t.noListingHistory}
                             </td>
                           </tr>
                         )}
@@ -4906,10 +5708,10 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
             {/* (det separate checklist-panel er fjernet — checkboxe sidder nu direkte ved PDF-ikonerne i dokumenttabellen ovenfor) */}
             {aktivTab === 'dokumenter' && false && (
               <div className="space-y-4 pb-4">
-                {/* ── Stamdokumenter ── */}
+                {/* ── {t.standardDocs} ── */}
                 <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
                   <div className="px-4 py-3 border-b border-slate-700/40 flex items-center justify-between">
-                    <h3 className="text-white font-semibold text-sm">Stamdokumenter</h3>
+                    <h3 className="text-white font-semibold text-sm">{t.standardDocs}</h3>
                     <Download
                       size={14}
                       className="text-slate-600 hover:text-slate-300 cursor-pointer transition-colors"
@@ -4971,7 +5773,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                 {/* ── Tinglysning ── */}
                 <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
                   <div className="px-4 py-3 border-b border-slate-700/40 flex items-center justify-between">
-                    <h3 className="text-white font-semibold text-sm">Tinglysning</h3>
+                    <h3 className="text-white font-semibold text-sm">{t.landRegistry}</h3>
                     <Download
                       size={14}
                       className="text-slate-600 hover:text-slate-300 cursor-pointer transition-colors"
@@ -4995,13 +5797,17 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                     },
                     {
                       id: 'tgl-3',
-                      navn: 'Adkomster inkl. påtegninger og bilag',
+                      navn: da
+                        ? 'Adkomster inkl. påtegninger og bilag'
+                        : 'Title deeds incl. endorsements and annexes',
                       link: false,
                       expandable: true,
                     },
                     {
                       id: 'tgl-4',
-                      navn: 'Hæftelser inkl. påtegninger og bilag',
+                      navn: da
+                        ? 'Hæftelser inkl. påtegninger og bilag'
+                        : 'Encumbrances incl. endorsements and annexes',
                       link: false,
                       expandable: true,
                     },
@@ -5035,10 +5841,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                       className="w-3.5 h-3.5 accent-blue-500 opacity-0"
                       readOnly
                     />
-                    <span className="text-slate-500 text-sm italic">
-                      Servitutter: Ejendommen har ingen elektroniske servitutdokumenter at
-                      downloade...
-                    </span>
+                    <span className="text-slate-500 text-sm italic">{t.servitutNote}</span>
                     <FileText size={13} className="text-slate-700 ml-auto" />
                   </div>
                 </div>
@@ -5046,7 +5849,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                 {/* ── Planer ── */}
                 <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
                   <div className="px-4 py-3 border-b border-slate-700/40 flex items-center justify-between">
-                    <h3 className="text-white font-semibold text-sm">Planer</h3>
+                    <h3 className="text-white font-semibold text-sm">{t.plans}</h3>
                     <Download
                       size={14}
                       className="text-slate-600 hover:text-slate-300 cursor-pointer transition-colors"
@@ -5062,7 +5865,9 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                     {
                       id: 'pla-2',
                       navn: 'Lokalplan',
-                      sub: 'LP 110 — Erhvervsområde Risbjerg',
+                      sub: da
+                        ? 'LP 110 — Erhvervsområde Risbjerg'
+                        : 'LP 110 — Commercial area Risbjerg',
                       link: true,
                     },
                   ].map((doc) => (
@@ -5120,7 +5925,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                 fallback={
                   <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900 gap-3">
                     <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-                    <p className="text-slate-500 text-xs">Indlæser kort…</p>
+                    <p className="text-slate-500 text-xs">{t.loadingMap}</p>
                   </div>
                 }
               >
@@ -5135,6 +5940,1177 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
               </Suspense>
             </div>
           </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── PropertyOwnerDiagram ──────────────────────────────────────────────────
+
+/**
+ * Henter ejerskabskæden for en ejendom og viser den som et relationsdiagram.
+ * Ejendom = grøn, virksomheder = blå, personer = lilla.
+ */
+interface EjerDetalje {
+  navn: string;
+  cvr: string | null;
+  enhedsNummer: number | null;
+  type: 'person' | 'selskab' | 'status';
+  andel: string | null;
+  adresse: string | null;
+  overtagelsesdato: string | null;
+  adkomstType: string | null;
+  koebesum: number | null;
+}
+
+function PropertyOwnerDiagram({
+  bfe,
+  adresse,
+  lang,
+}: {
+  bfe: number;
+  adresse: string;
+  lang: 'da' | 'en';
+}) {
+  const _router = useRouter();
+  const da = lang === 'da';
+  const [graph, setGraph] = useState<DiagramGraph | null>(null);
+  const [ejerDetaljer, setEjerDetaljer] = useState<EjerDetalje[]>([]);
+  const [loading, setLoading] = useState(true);
+  const fetchedRef = useRef(false);
+
+  useEffect(() => {
+    if (fetchedRef.current) return;
+    fetchedRef.current = true;
+
+    fetch(`/api/ejerskab/chain?bfe=${bfe}&adresse=${encodeURIComponent(adresse)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data && data.nodes?.length > 0) {
+          setGraph({
+            nodes: data.nodes.map((n: Record<string, unknown>) => ({
+              id: n.id as string,
+              label: n.label as string,
+              type: n.type as 'person' | 'company' | 'property' | 'status',
+              cvr: n.cvr as number | undefined,
+              link: n.link as string | undefined,
+            })),
+            edges: data.edges.map((e: Record<string, unknown>) => ({
+              from: e.from as string,
+              to: e.to as string,
+              ejerandel: e.ejerandel as string | undefined,
+            })),
+            mainId: data.mainId as string,
+          });
+          setEjerDetaljer(data.ejerDetaljer ?? []);
+        }
+      })
+      .catch(() => {
+        /* ignore */
+      })
+      .finally(() => setLoading(false));
+  }, [bfe, adresse]);
+
+  if (loading)
+    return (
+      <div className="flex items-center justify-center py-12 bg-slate-800/40 border border-slate-700/40 rounded-xl">
+        <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
+        <span className="ml-2 text-slate-400 text-sm">
+          {da ? 'Henter ejerstruktur…' : 'Loading ownership structure…'}
+        </span>
+      </div>
+    );
+
+  if (!graph || graph.nodes.length <= 1)
+    return (
+      <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-6 text-center">
+        <p className="text-slate-500 text-sm">
+          {da ? 'Ingen ejerstruktur tilgængelig' : 'No ownership structure available'}
+        </p>
+      </div>
+    );
+
+  const adkomstTypeMap: Record<string, string> = {
+    skoede: da ? 'Skøde' : 'Deed',
+    auktionsskoede: da ? 'Auktionsskøde' : 'Auction deed',
+    arv: da ? 'Arv' : 'Inheritance',
+    gave: da ? 'Gave' : 'Gift',
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Ejer info-bokse */}
+      {ejerDetaljer.map((ejer, i) => (
+        <div key={i} className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div
+                className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                  ejer.type === 'selskab'
+                    ? 'bg-blue-500/20 border border-blue-500/30'
+                    : ejer.type === 'status'
+                      ? 'bg-slate-600/20 border border-slate-600/30'
+                      : 'bg-purple-500/20 border border-purple-500/30'
+                }`}
+              >
+                {ejer.type === 'selskab' ? (
+                  <Building2 size={18} className="text-blue-400" />
+                ) : ejer.type === 'status' ? (
+                  <Building2 size={18} className="text-slate-400" />
+                ) : (
+                  <Users size={18} className="text-purple-400" />
+                )}
+              </div>
+              <div>
+                {ejer.type === 'status' ? (
+                  <p className="text-slate-300 font-semibold text-sm">{ejer.navn}</p>
+                ) : ejer.cvr ? (
+                  <Link
+                    href={`/dashboard/companies/${ejer.cvr}`}
+                    className="text-blue-300 font-semibold text-sm hover:text-blue-200 transition-colors flex items-center gap-1 underline decoration-blue-500/30 hover:decoration-blue-400/50"
+                  >
+                    {ejer.navn} {ejer.andel ? `(${ejer.andel})` : ''}
+                    <ChevronRight size={13} />
+                  </Link>
+                ) : ejer.enhedsNummer ? (
+                  <Link
+                    href={`/dashboard/owners/${ejer.enhedsNummer}`}
+                    className="text-purple-300 font-semibold text-sm hover:text-purple-200 transition-colors flex items-center gap-1 underline decoration-purple-500/30 hover:decoration-purple-400/50"
+                  >
+                    {ejer.navn} {ejer.andel ? `(${ejer.andel})` : ''}
+                    <ChevronRight size={13} />
+                  </Link>
+                ) : (
+                  <p className="text-white font-semibold text-sm">
+                    {ejer.navn} {ejer.andel ? `(${ejer.andel})` : ''}
+                  </p>
+                )}
+                {ejer.adresse && (
+                  <p className="text-slate-400 text-xs mt-0.5 break-words">{ejer.adresse}</p>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {ejer.type === 'status' ? (
+            <p className="text-slate-500 text-xs mt-3 pt-3 border-t border-slate-700/30">
+              {da
+                ? 'Ejerskab registreret på de enkelte ejerlejligheder'
+                : 'Ownership registered on the individual condominiums'}
+            </p>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2 mt-3 pt-3 border-t border-slate-700/30">
+              {ejer.overtagelsesdato && (
+                <div>
+                  <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                    {da ? 'Overtagelsesdato' : 'Acquisition date'}
+                  </p>
+                  <p className="text-slate-200 text-xs">
+                    {new Date(ejer.overtagelsesdato.split('+')[0]).toLocaleDateString('da-DK', {
+                      day: 'numeric',
+                      month: 'long',
+                      year: 'numeric',
+                    })}
+                  </p>
+                </div>
+              )}
+              <div>
+                <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                  {da ? 'Ejertype' : 'Owner type'}
+                </p>
+                <p className="text-slate-200 text-xs">
+                  {ejer.type === 'selskab'
+                    ? da
+                      ? 'Selskab'
+                      : 'Company'
+                    : da
+                      ? 'Privatperson'
+                      : 'Private person'}
+                </p>
+              </div>
+              {ejer.adkomstType && (
+                <div>
+                  <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                    {da ? 'Adkomsttype' : 'Title type'}
+                  </p>
+                  <p className="text-slate-200 text-xs">
+                    {adkomstTypeMap[ejer.adkomstType] ?? ejer.adkomstType}
+                  </p>
+                </div>
+              )}
+              {ejer.koebesum != null && ejer.koebesum > 0 && (
+                <div>
+                  <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                    {da ? 'Købesum' : 'Purchase price'}
+                  </p>
+                  <p className="text-slate-200 text-xs">
+                    {ejer.koebesum.toLocaleString('da-DK')} DKK
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      ))}
+
+      {/* Ejerskabsdiagram */}
+      <DiagramForce graph={graph} lang={lang} />
+    </div>
+  );
+}
+
+// ─── TinglysningTab ────────────────────────────────────────────────────────
+
+/**
+ * Tinglysning-tab — viser tingbogsattest-data: ejere, hæftelser, servitutter.
+ * Data hentes fra /api/tinglysning (søgning) + /api/tinglysning/summarisk (detaljer).
+ */
+function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }) {
+  const da = lang === 'da';
+  const router = useRouter();
+
+  const [loading, setLoading] = useState(true);
+  interface TLItem {
+    [key: string]: string | number | boolean | string[] | null | undefined;
+  }
+  interface TLTingbogsattest {
+    bfeNr: string | null;
+    ejerlejlighedNr: string | null;
+    hovedNotering: string | null;
+    fordelingstal: { taeller: number; naevner: number } | null;
+    matrikler: {
+      districtName: string;
+      districtId: string;
+      matrikelnr: string;
+      areal: number | null;
+      vejAreal: number | null;
+      regDato: string | null;
+    }[];
+    noteringer: { tekst: string; dato: string | null }[];
+    tillaegstekster: { overskrift: string | null; tekst: string | null }[];
+  }
+  const [ejere, setEjere] = useState<TLItem[]>([]);
+  const [haeftelser, setHaeftelser] = useState<TLItem[]>([]);
+  const [servitutter, setServitutter] = useState<TLItem[]>([]);
+  const [tingbogsattest, setTingbogsattest] = useState<TLTingbogsattest | null>(null);
+  /** Tinglysning ejendoms-UUID — bruges til PDF-download af tingbogsattest */
+  const [tlUuid, setTlUuid] = useState<string | null>(null);
+  const [showAllServitutter, setShowAllServitutter] = useState(false);
+  const [expandedAdkomst, setExpandedAdkomst] = useState<Set<number>>(new Set());
+  const [expandedHaeftelser, setExpandedHaeftelser] = useState<Set<number>>(new Set());
+  const [expandedServitutter, setExpandedServitutter] = useState<Set<number>>(new Set());
+  const [bilagRefs, setBilagRefs] = useState<{ id: string; tekst: string }[]>([]);
+  const [selectedDocs, setSelectedDocs] = useState<Set<string>>(new Set());
+  const [showMatrikler, setShowMatrikler] = useState(false);
+  const [showNoteringer, setShowNoteringer] = useState(false);
+  const [showTillaeg, setShowTillaeg] = useState(false);
+
+  const toggleDoc = (docId: string) => {
+    setSelectedDocs((prev) => {
+      const n = new Set(prev);
+      if (n.has(docId)) n.delete(docId);
+      else n.add(docId);
+      return n;
+    });
+  };
+  const [fejl, setFejl] = useState<string | null>(null);
+  const fetchedRef = useRef(false);
+
+  useEffect(() => {
+    if (!bfe || fetchedRef.current) {
+      setLoading(false);
+      return;
+    }
+    fetchedRef.current = true;
+
+    // Trin 1: Hent UUID via tinglysning søgning
+    fetch(`/api/tinglysning?bfe=${bfe}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((tlData) => {
+        if (!tlData?.uuid) {
+          setFejl(da ? 'Ejendom ikke fundet i tingbogen' : 'Property not found');
+          setLoading(false);
+          return;
+        }
+        setTlUuid(tlData.uuid);
+        // Trin 2: Hent summariske data
+        return fetch(`/api/tinglysning/summarisk?uuid=${tlData.uuid}`).then((r) =>
+          r.ok ? r.json() : null
+        );
+      })
+      .then((data) => {
+        if (data) {
+          setEjere(data.ejere ?? []);
+          setHaeftelser(data.haeftelser ?? []);
+          setServitutter(data.servitutter ?? []);
+          setBilagRefs(data.bilagRefs ?? []);
+          setTingbogsattest(data.tingbogsattest ?? null);
+        }
+      })
+      .catch(() => setFejl(da ? 'Kunne ikke hente tingbogsdata' : 'Failed to load registry data'))
+      .finally(() => setLoading(false));
+  }, [bfe, da]);
+
+  const formatDato = (iso: string | null) => {
+    if (!iso) return '–';
+    try {
+      return new Date(iso.split('+')[0]).toLocaleDateString('da-DK', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+      });
+    } catch {
+      return iso;
+    }
+  };
+
+  const haeftelseTypeMap: Record<string, string> = {
+    realkreditpantebrev: da ? 'Realkreditpantebrev' : 'Mortgage deed',
+    ejerpantebrev: da ? 'Ejerpantebrev' : 'Owner mortgage deed',
+    pantebrev: da ? 'Pantebrev' : 'Mortgage deed',
+    anden: da ? 'Anden hæftelse' : 'Other charge',
+    skadesloebrev: da ? 'Skadesløsbrev' : 'Indemnity bond',
+  };
+
+  const servitutTypeMap: Record<string, string> = {
+    andenServitut: da ? 'Servitut' : 'Easement',
+    tillaeg: da ? 'Tillæg' : 'Amendment',
+    paatalegning: da ? 'Påtegning' : 'Endorsement',
+  };
+
+  if (loading)
+    return (
+      <div className="flex items-center justify-center py-16">
+        <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
+        <span className="ml-2 text-slate-400 text-sm">
+          {da ? 'Henter tingbogsdata…' : 'Loading registry data…'}
+        </span>
+      </div>
+    );
+
+  if (fejl || !bfe)
+    return (
+      <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl p-6 text-center">
+        <Landmark size={32} className="text-slate-600 mx-auto mb-3" />
+        <p className="text-slate-400 text-sm">
+          {fejl ?? (da ? 'BFE-nummer mangler' : 'BFE number missing')}
+        </p>
+      </div>
+    );
+
+  const visServitutter = showAllServitutter ? servitutter : servitutter.slice(0, 5);
+
+  const hovedNoteringMap: Record<string, string> = {
+    samletEjendom: da ? 'Samlet ejendom' : 'Combined property',
+    enfamilieshus: da ? 'Enfamilieshus' : 'Single-family house',
+    ejerlejlighed: da ? 'Ejerlejlighed' : 'Condominium',
+    landbrugsejendom: da ? 'Landbrugsejendom' : 'Agricultural property',
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* ── Tingbogsattest ── */}
+      {tingbogsattest && (
+        <div>
+          <div className="flex items-center gap-2 mb-3">
+            <FileText size={15} className="text-blue-400" />
+            <p className="text-slate-300 text-sm font-semibold">
+              {da ? 'Tingbogsattest' : 'Land Registry Certificate'}
+            </p>
+          </div>
+          <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4 relative">
+            {tlUuid && (
+              <a
+                href={`/api/tinglysning/dokument?uuid=${tlUuid}&type=tingbogsattest`}
+                download={`tingbogsattest-${tingbogsattest.bfeNr ?? bfe}.pdf`}
+                className="absolute top-3 right-3 inline-flex items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
+              >
+                <FileText size={11} />
+                PDF
+              </a>
+            )}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-3">
+              {tingbogsattest.bfeNr && (
+                <div>
+                  <p className="text-slate-500 text-[10px] uppercase tracking-wider">BFE-nr.</p>
+                  <p className="text-white text-sm font-medium">{tingbogsattest.bfeNr}</p>
+                </div>
+              )}
+              {tingbogsattest.ejerlejlighedNr && (
+                <div>
+                  <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                    {da ? 'Ejerlejlighed nr.' : 'Unit no.'}
+                  </p>
+                  <p className="text-white text-sm font-medium">{tingbogsattest.ejerlejlighedNr}</p>
+                </div>
+              )}
+              {tingbogsattest.hovedNotering && (
+                <div>
+                  <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                    {da ? 'Hovednotering' : 'Main notation'}
+                  </p>
+                  <p className="text-white text-sm">
+                    {hovedNoteringMap[tingbogsattest.hovedNotering] ?? tingbogsattest.hovedNotering}
+                  </p>
+                </div>
+              )}
+              {tingbogsattest.fordelingstal && (
+                <div>
+                  <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                    {da ? 'Fordelingstal' : 'Distribution ratio'}
+                  </p>
+                  <p className="text-white text-sm font-medium">
+                    {tingbogsattest.fordelingstal.taeller.toLocaleString('da-DK')} /{' '}
+                    {tingbogsattest.fordelingstal.naevner.toLocaleString('da-DK')}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Matrikler — klappet sammen */}
+            {tingbogsattest.matrikler.length > 0 && (
+              <div className="mt-3 pt-3 border-t border-slate-700/30">
+                <button
+                  onClick={() => setShowMatrikler(!showMatrikler)}
+                  className="flex items-center gap-1.5 text-slate-500 text-[10px] uppercase tracking-wider hover:text-slate-300 transition-colors w-full text-left"
+                >
+                  {showMatrikler ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+                  {da ? 'Matrikler' : 'Cadastral parcels'} ({tingbogsattest.matrikler.length})
+                </button>
+                {showMatrikler && (
+                  <div className="mt-1.5">
+                    {tingbogsattest.matrikler.map((m, i) => (
+                      <p key={i} className="text-slate-300 text-xs">
+                        {m.districtId} {m.districtName}, {m.matrikelnr}
+                        {m.areal ? ` (${m.areal.toLocaleString('da-DK')} m²)` : ''}
+                        {m.regDato ? ` · ${formatDato(m.regDato)}` : ''}
+                      </p>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Noteringer — klappet sammen */}
+            {tingbogsattest.noteringer.length > 0 && (
+              <div className="mt-3 pt-3 border-t border-slate-700/30">
+                <button
+                  onClick={() => setShowNoteringer(!showNoteringer)}
+                  className="flex items-center gap-1.5 text-slate-500 text-[10px] uppercase tracking-wider hover:text-slate-300 transition-colors w-full text-left"
+                >
+                  {showNoteringer ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+                  {da ? 'Noteringstekst' : 'Notation text'} ({tingbogsattest.noteringer.length})
+                </button>
+                {showNoteringer && (
+                  <div className="mt-1.5">
+                    {tingbogsattest.noteringer.map((n, i) => (
+                      <p key={i} className="text-slate-400 text-xs">
+                        {n.tekst}
+                        {n.dato ? ` (${formatDato(n.dato)})` : ''}
+                      </p>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Tillægstekster — klappet sammen */}
+            {tingbogsattest.tillaegstekster.length > 0 && (
+              <div className="mt-3 pt-3 border-t border-slate-700/30">
+                <button
+                  onClick={() => setShowTillaeg(!showTillaeg)}
+                  className="flex items-center gap-1.5 text-slate-500 text-[10px] uppercase tracking-wider hover:text-slate-300 transition-colors w-full text-left"
+                >
+                  {showTillaeg ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+                  {da ? 'Tillægstekst' : 'Supplementary text'} (
+                  {
+                    tingbogsattest.tillaegstekster.filter(
+                      (t) => t.overskrift && !t.overskrift.includes('Bilagsreference')
+                    ).length
+                  }
+                  )
+                </button>
+                {showTillaeg && (
+                  <div className="mt-1.5 space-y-1">
+                    {tingbogsattest.tillaegstekster
+                      .filter((t) => t.overskrift && !t.overskrift.includes('Bilagsreference'))
+                      .map((t, i) => (
+                        <div key={i} className="flex gap-2 text-xs">
+                          {t.overskrift && (
+                            <span className="text-slate-400 flex-shrink-0">{t.overskrift}:</span>
+                          )}
+                          {t.tekst && <span className="text-slate-300">{t.tekst}</span>}
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Tinglyste dokumenter — dokument-tab format ── */}
+      <div
+        className="bg-slate-800/20 border border-slate-700/30 rounded-2xl"
+        style={{ contain: 'layout' }}
+      >
+        <div className="px-4 py-2.5 border-b border-slate-700/30 flex items-center gap-2">
+          <Landmark size={15} className="text-slate-400" />
+          <span className="text-sm font-semibold text-slate-200">
+            {da ? 'Tinglyste dokumenter' : 'Registered documents'}
+          </span>
+          <span className="text-slate-600 text-xs">
+            ({ejere.length + haeftelser.length + servitutter.length})
+          </span>
+          <button
+            onClick={async () => {
+              for (const docId of selectedDocs) {
+                const isBilag = docId.startsWith('bilag-');
+                const url = isBilag
+                  ? `/api/tinglysning/dokument?bilag=${docId.replace('bilag-', '')}`
+                  : `/api/tinglysning/dokument?uuid=${docId}`;
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `tinglysning-${docId.slice(0, 14)}.pdf`;
+                a.click();
+                await new Promise((r) => setTimeout(r, 500));
+              }
+            }}
+            disabled={selectedDocs.size === 0}
+            className="ml-auto flex items-center gap-1.5 px-3 py-1 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 disabled:cursor-not-allowed border border-slate-600 rounded-lg text-slate-300 text-xs font-medium transition-all"
+          >
+            <Download size={12} />
+            {da ? 'Download valgte' : 'Download selected'} ({selectedDocs.size})
+          </button>
+        </div>
+
+        {/* Kolonneheader: Expand | Pri | Dato | Dokument | Beløb | Type | PDF | Check */}
+        <div className="grid grid-cols-[24px_36px_90px_1fr_100px_100px_50px_28px] gap-x-2 px-4 py-1.5 border-b border-slate-700/20">
+          <span />
+          <span className="text-[10px] font-medium text-slate-500 uppercase">Pri.</span>
+          <span className="text-[10px] font-medium text-slate-500 uppercase">
+            {da ? 'Dato' : 'Date'}
+          </span>
+          <span className="text-[10px] font-medium text-slate-500 uppercase">
+            {da ? 'Dokument' : 'Document'}
+          </span>
+          <span className="text-[10px] font-medium text-slate-500 uppercase">
+            {da ? 'Beløb' : 'Amount'}
+          </span>
+          <span className="text-[10px] font-medium text-slate-500 uppercase">Type</span>
+          <span className="text-[10px] font-medium text-slate-500 uppercase">
+            {da ? 'Dok.' : 'Doc.'}
+          </span>
+          <span />
+        </div>
+
+        {/* ── ADKOMST ── */}
+        {ejere.length > 0 && (
+          <>
+            <div className="px-4 py-1.5 bg-purple-500/5 border-b border-slate-700/20">
+              <span className="text-[10px] font-semibold text-purple-400 uppercase tracking-wider">
+                {da ? 'Adkomst' : 'Title'} ({ejere.length})
+              </span>
+            </div>
+            {ejere.map((e, i) => {
+              const isOpen = expandedAdkomst.has(i);
+              const docId = String(e.dokumentId ?? '');
+              const typeMap: Record<string, string> = {
+                skoede: da ? 'Skøde' : 'Deed',
+                auktionsskoede: 'Auktionsskøde',
+                arv: 'Arv',
+                gave: 'Gave',
+              };
+              return (
+                <div key={`a-${i}`} className="border-b border-slate-700/15">
+                  <div
+                    className="grid grid-cols-[24px_36px_90px_1fr_100px_100px_50px_28px] gap-x-2 px-4 py-2 hover:bg-slate-700/10 transition-colors items-center cursor-pointer"
+                    onClick={() =>
+                      setExpandedAdkomst((prev) => {
+                        const n = new Set(prev);
+                        if (n.has(i)) n.delete(i);
+                        else n.add(i);
+                        return n;
+                      })
+                    }
+                  >
+                    {isOpen ? (
+                      <ChevronDown size={12} className="text-slate-500" />
+                    ) : (
+                      <ChevronRight size={12} className="text-slate-500" />
+                    )}
+                    <span />
+                    <span className="text-xs text-slate-400 tabular-nums whitespace-nowrap">
+                      {formatDato(String(e.tinglysningsdato ?? e.dato ?? ''))}
+                    </span>
+                    <span className="text-sm text-slate-200 truncate">
+                      {String(e.navn)} {e.andel ? `(${e.andel})` : ''}
+                    </span>
+                    <span className="text-xs text-slate-300 tabular-nums text-right">
+                      {e.iAltKoebesum != null && Number(e.iAltKoebesum) > 0
+                        ? `${Number(e.iAltKoebesum).toLocaleString('da-DK')} DKK`
+                        : ''}
+                    </span>
+                    <span className="text-xs text-slate-400 truncate">
+                      {typeMap[String(e.adkomstType ?? '')] ?? String(e.adkomstType ?? '')}
+                    </span>
+                    <div
+                      className="flex items-center gap-1.5"
+                      onClick={(ev) => ev.stopPropagation()}
+                    >
+                      {docId && (
+                        <a
+                          href={`/api/tinglysning/dokument?uuid=${docId}`}
+                          download
+                          className="inline-flex items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
+                        >
+                          <FileText size={11} />
+                          PDF
+                        </a>
+                      )}
+                    </div>
+                    {docId ? (
+                      <label
+                        className="flex items-center cursor-pointer flex-shrink-0"
+                        onClick={(ev) => ev.stopPropagation()}
+                      >
+                        <input
+                          type="checkbox"
+                          className="sr-only"
+                          checked={selectedDocs.has(docId)}
+                          onChange={() => toggleDoc(docId)}
+                        />
+                        <span
+                          className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors ${selectedDocs.has(docId) ? 'bg-blue-500 border-blue-500' : 'bg-[#0a1020] border-slate-400'}`}
+                        >
+                          {selectedDocs.has(docId) && (
+                            <svg
+                              viewBox="0 0 10 10"
+                              className="w-2 h-2 text-white"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2.5"
+                            >
+                              <path d="M1.5 5.5l2.5 2.5 4.5-4.5" />
+                            </svg>
+                          )}
+                        </span>
+                      </label>
+                    ) : (
+                      <span />
+                    )}
+                  </div>
+                  {isOpen && (
+                    <div className="px-4 pb-3 ml-10 border-l-2 border-purple-500/20">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 mt-1 text-xs">
+                        {e.tinglysningsafgift != null && Number(e.tinglysningsafgift) > 0 && (
+                          <div>
+                            <p className="text-slate-500 text-[10px] uppercase">
+                              {da ? 'Tinglysningsafgift' : 'Reg. fee'}
+                            </p>
+                            <p className="text-slate-200">
+                              {Number(e.tinglysningsafgift).toLocaleString('da-DK')} DKK
+                            </p>
+                          </div>
+                        )}
+                        {e.kontantKoebesum != null && Number(e.kontantKoebesum) > 0 && (
+                          <div>
+                            <p className="text-slate-500 text-[10px] uppercase">
+                              {da ? 'Købesum kontant' : 'Cash'}
+                            </p>
+                            <p className="text-slate-200">
+                              {Number(e.kontantKoebesum).toLocaleString('da-DK')} DKK
+                            </p>
+                          </div>
+                        )}
+                        {e.iAltKoebesum != null && Number(e.iAltKoebesum) > 0 && (
+                          <div>
+                            <p className="text-slate-500 text-[10px] uppercase">
+                              {da ? 'Købesum i alt' : 'Total'}
+                            </p>
+                            <p className="text-slate-200">
+                              {Number(e.iAltKoebesum).toLocaleString('da-DK')} DKK
+                            </p>
+                          </div>
+                        )}
+                        {e.koebsaftaledato && (
+                          <div>
+                            <p className="text-slate-500 text-[10px] uppercase">
+                              {da ? 'Købsaftaledato' : 'Agreement'}
+                            </p>
+                            <p className="text-slate-200">
+                              {formatDato(String(e.koebsaftaledato))}
+                            </p>
+                          </div>
+                        )}
+                        {e.overtagelsesdato && (
+                          <div>
+                            <p className="text-slate-500 text-[10px] uppercase">
+                              {da ? 'Overtagelsesdato' : 'Acquisition'}
+                            </p>
+                            <p className="text-slate-200">
+                              {formatDato(String(e.overtagelsesdato))}
+                            </p>
+                          </div>
+                        )}
+                        {e.ejendomKategori && (
+                          <div>
+                            <p className="text-slate-500 text-[10px] uppercase">
+                              {da ? 'Ejendomskategori' : 'Category'}
+                            </p>
+                            <p className="text-slate-200">{String(e.ejendomKategori)}</p>
+                          </div>
+                        )}
+                        {e.handelKode && (
+                          <div>
+                            <p className="text-slate-500 text-[10px] uppercase">
+                              {da ? 'Handelsmetode' : 'Trade'}
+                            </p>
+                            <p className="text-slate-200">{String(e.handelKode)}</p>
+                          </div>
+                        )}
+                      </div>
+                      {(e.anmelderNavn || e.anmelderEmail) && (
+                        <div className="mt-2 pt-2 border-t border-slate-700/20 text-xs">
+                          <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                            {da ? 'Anmelder' : 'Registrant'}
+                          </p>
+                          {e.anmelderNavn && (
+                            <p className="text-slate-300">{String(e.anmelderNavn)}</p>
+                          )}
+                          {e.anmelderEmail && (
+                            <p className="text-slate-400">{String(e.anmelderEmail)}</p>
+                          )}
+                        </div>
+                      )}
+                      {e.skoedeTekst && (
+                        <div className="mt-2 pt-2 border-t border-slate-700/20 text-xs">
+                          <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                            {da ? 'Skødetekst' : 'Deed text'}
+                          </p>
+                          <p className="text-slate-400 leading-relaxed">{String(e.skoedeTekst)}</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </>
+        )}
+
+        {/* ── HÆFTELSER ── */}
+        {haeftelser.length > 0 && (
+          <>
+            <div className="px-4 py-1.5 bg-amber-500/5 border-b border-slate-700/20">
+              <span className="text-[10px] font-semibold text-amber-400 uppercase tracking-wider">
+                {da ? 'Hæftelser' : 'Charges'} ({haeftelser.length})
+              </span>
+            </div>
+            {haeftelser.map((h, i) => {
+              const isOpen = expandedHaeftelser.has(i);
+              const docId = String(h.dokumentId ?? '');
+              return (
+                <div key={`h-${i}`} className="border-b border-slate-700/15">
+                  <div
+                    className="grid grid-cols-[24px_36px_90px_1fr_100px_100px_50px_28px] gap-x-2 px-4 py-2 hover:bg-slate-700/10 transition-colors items-center cursor-pointer"
+                    onClick={() =>
+                      setExpandedHaeftelser((prev) => {
+                        const n = new Set(prev);
+                        if (n.has(i)) n.delete(i);
+                        else n.add(i);
+                        return n;
+                      })
+                    }
+                  >
+                    {isOpen ? (
+                      <ChevronDown size={12} className="text-slate-500" />
+                    ) : (
+                      <ChevronRight size={12} className="text-slate-500" />
+                    )}
+                    <span className="text-xs text-slate-400 tabular-nums">
+                      {String(h.prioritet ?? '')}
+                    </span>
+                    <span className="text-xs text-slate-400 tabular-nums whitespace-nowrap">
+                      {formatDato(h.dato as string | null)}
+                    </span>
+                    <span className="text-sm text-slate-200 truncate">
+                      {haeftelseTypeMap[String(h.type)] ?? String(h.type)}
+                    </span>
+                    <span className="text-xs text-slate-300 tabular-nums text-right">
+                      {h.beloeb != null && Number(h.beloeb) > 0
+                        ? `${Number(h.beloeb).toLocaleString('da-DK')} ${String(h.valuta ?? 'DKK')}`
+                        : ''}
+                    </span>
+                    <span className="text-xs text-slate-400 truncate">
+                      {String(h.kreditor ?? '')}
+                    </span>
+                    <div
+                      className="flex items-center gap-1.5"
+                      onClick={(ev) => ev.stopPropagation()}
+                    >
+                      {docId && (
+                        <a
+                          href={`/api/tinglysning/dokument?uuid=${docId}`}
+                          download
+                          className="inline-flex items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
+                        >
+                          <FileText size={11} />
+                          PDF
+                        </a>
+                      )}
+                    </div>
+                    {docId ? (
+                      <label
+                        className="flex items-center cursor-pointer flex-shrink-0"
+                        onClick={(ev) => ev.stopPropagation()}
+                      >
+                        <input
+                          type="checkbox"
+                          className="sr-only"
+                          checked={selectedDocs.has(docId)}
+                          onChange={() => toggleDoc(docId)}
+                        />
+                        <span
+                          className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors ${selectedDocs.has(docId) ? 'bg-blue-500 border-blue-500' : 'bg-[#0a1020] border-slate-400'}`}
+                        >
+                          {selectedDocs.has(docId) && (
+                            <svg
+                              viewBox="0 0 10 10"
+                              className="w-2 h-2 text-white"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2.5"
+                            >
+                              <path d="M1.5 5.5l2.5 2.5 4.5-4.5" />
+                            </svg>
+                          )}
+                        </span>
+                      </label>
+                    ) : (
+                      <span />
+                    )}
+                  </div>
+                  {isOpen && (
+                    <div className="px-4 pb-3 ml-10 border-l-2 border-amber-500/20 text-xs">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 mt-1">
+                        {h.kreditor && (
+                          <div>
+                            <p className="text-slate-500 text-[10px] uppercase">
+                              {da ? 'Kreditor' : 'Creditor'}
+                            </p>
+                            {h.kreditorCvr ? (
+                              <button
+                                onClick={() => router.push(`/dashboard/companies/${h.kreditorCvr}`)}
+                                className="text-blue-400 hover:text-blue-300"
+                              >
+                                {String(h.kreditor)} →
+                              </button>
+                            ) : (
+                              <p className="text-slate-300">{String(h.kreditor)}</p>
+                            )}
+                          </div>
+                        )}
+                        {h.debitor && (
+                          <div>
+                            <p className="text-slate-500 text-[10px] uppercase">
+                              {da ? 'Debitor' : 'Debtor'}
+                            </p>
+                            <p className="text-slate-300">{String(h.debitor)}</p>
+                          </div>
+                        )}
+                        {h.rente != null && (
+                          <div>
+                            <p className="text-slate-500 text-[10px] uppercase">
+                              {da ? 'Rente' : 'Interest'}
+                            </p>
+                            <p className="text-slate-300">{Number(h.rente).toFixed(4)}%</p>
+                          </div>
+                        )}
+                        {h.laantype && (
+                          <div>
+                            <p className="text-slate-500 text-[10px] uppercase">
+                              {da ? 'Låntype' : 'Loan type'}
+                            </p>
+                            <p className="text-slate-300">{String(h.laantype)}</p>
+                          </div>
+                        )}
+                        {h.pantebrevFormular && (
+                          <div>
+                            <p className="text-slate-500 text-[10px] uppercase">
+                              {da ? 'Pantebrevformular' : 'Mortgage form'}
+                            </p>
+                            <p className="text-slate-300">{String(h.pantebrevFormular)}</p>
+                          </div>
+                        )}
+                        {h.tinglysningsafgift != null && Number(h.tinglysningsafgift) > 0 && (
+                          <div>
+                            <p className="text-slate-500 text-[10px] uppercase">
+                              {da ? 'Tinglysningsafgift' : 'Reg. fee'}
+                            </p>
+                            <p className="text-slate-300">
+                              {Number(h.tinglysningsafgift).toLocaleString('da-DK')} DKK
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                      {h.laanevilkaar &&
+                        Array.isArray(h.laanevilkaar) &&
+                        h.laanevilkaar.length > 0 && (
+                          <div className="mt-2 pt-2 border-t border-slate-700/20">
+                            <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                              {da ? 'Lånevilkår' : 'Loan terms'}
+                            </p>
+                            <p className="text-slate-400">
+                              {(Array.isArray(h.laanevilkaar) ? h.laanevilkaar : []).join(', ')}
+                            </p>
+                          </div>
+                        )}
+                      {h.laaneTekst && (
+                        <div className="mt-2 pt-2 border-t border-slate-700/20">
+                          <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                            {da ? 'Beskrivelse' : 'Description'}
+                          </p>
+                          <p className="text-slate-400 leading-relaxed">{String(h.laaneTekst)}</p>
+                        </div>
+                      )}
+                      {h.dokumentAlias && (
+                        <p className="text-slate-600 text-[10px] mt-2">
+                          Dok: {String(h.dokumentAlias)}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </>
+        )}
+
+        {/* ── SERVITUTTER ── */}
+        {servitutter.length > 0 && (
+          <>
+            <div className="px-4 py-1.5 bg-teal-500/5 border-b border-slate-700/20">
+              <span className="text-[10px] font-semibold text-teal-400 uppercase tracking-wider">
+                {da ? 'Servitutter' : 'Easements'} ({servitutter.length})
+              </span>
+            </div>
+            {visServitutter.map((s, i) => {
+              const docId = String(s.dokumentId ?? '');
+              const isOpen = expandedServitutter.has(i);
+              const hasDetails =
+                s.tillaegsTekst ||
+                s.paataleberettiget ||
+                (s.indholdKoder && Array.isArray(s.indholdKoder) && s.indholdKoder.length > 0) ||
+                s.tinglysningsafgift;
+              return (
+                <div key={`s-${i}`} className="border-b border-slate-700/15">
+                  <div
+                    className="grid grid-cols-[24px_36px_90px_1fr_100px_100px_50px_28px] gap-x-2 px-4 py-2 hover:bg-slate-700/10 transition-colors items-center cursor-pointer"
+                    onClick={() =>
+                      hasDetails &&
+                      setExpandedServitutter((prev) => {
+                        const n = new Set(prev);
+                        if (n.has(i)) n.delete(i);
+                        else n.add(i);
+                        return n;
+                      })
+                    }
+                  >
+                    {hasDetails ? (
+                      isOpen ? (
+                        <ChevronDown size={12} className="text-slate-500" />
+                      ) : (
+                        <ChevronRight size={12} className="text-slate-500" />
+                      )
+                    ) : (
+                      <span />
+                    )}
+                    <span className="text-xs text-slate-400 tabular-nums">
+                      {String(s.prioritet ?? '')}
+                    </span>
+                    <span className="text-xs text-slate-400 tabular-nums whitespace-nowrap">
+                      {formatDato(s.dato as string | null)}
+                    </span>
+                    <span className="text-sm text-slate-300 truncate">
+                      {s.tekst ?? servitutTypeMap[String(s.type)] ?? String(s.type)}
+                      {s.ogsaaLystPaa != null && Number(s.ogsaaLystPaa) > 1 && (
+                        <span className="text-slate-600 text-[10px] ml-1">
+                          ({s.ogsaaLystPaa} ejd.)
+                        </span>
+                      )}
+                    </span>
+                    <span />
+                    <span className="text-xs text-slate-500 truncate">
+                      {servitutTypeMap[String(s.type)] ?? String(s.type)}
+                    </span>
+                    <div
+                      className="flex items-center gap-1.5"
+                      onClick={(ev) => ev.stopPropagation()}
+                    >
+                      {(() => {
+                        const bilagRefs = Array.isArray(s.bilagRefs)
+                          ? (s.bilagRefs as string[])
+                          : [];
+                        const pdfUrl =
+                          bilagRefs.length > 0
+                            ? `/api/tinglysning/dokument?bilag=${bilagRefs[0]}`
+                            : docId
+                              ? `/api/tinglysning/dokument?uuid=${docId}`
+                              : null;
+                        return (
+                          pdfUrl && (
+                            <a
+                              href={pdfUrl}
+                              download
+                              className="inline-flex items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
+                            >
+                              <FileText size={11} />
+                              PDF
+                            </a>
+                          )
+                        );
+                      })()}
+                    </div>
+                    {docId ? (
+                      <label
+                        className="flex items-center cursor-pointer flex-shrink-0"
+                        onClick={(ev) => ev.stopPropagation()}
+                      >
+                        <input
+                          type="checkbox"
+                          className="sr-only"
+                          checked={selectedDocs.has(docId)}
+                          onChange={() => toggleDoc(docId)}
+                        />
+                        <span
+                          className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors ${selectedDocs.has(docId) ? 'bg-blue-500 border-blue-500' : 'bg-[#0a1020] border-slate-400'}`}
+                        >
+                          {selectedDocs.has(docId) && (
+                            <svg
+                              viewBox="0 0 10 10"
+                              className="w-2 h-2 text-white"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2.5"
+                            >
+                              <path d="M1.5 5.5l2.5 2.5 4.5-4.5" />
+                            </svg>
+                          )}
+                        </span>
+                      </label>
+                    ) : (
+                      <span />
+                    )}
+                  </div>
+                  {isOpen && hasDetails && (
+                    <div className="px-4 pb-3 ml-10 border-l-2 border-teal-500/20 text-xs">
+                      {s.tillaegsTekst && (
+                        <p className="text-slate-400 text-xs">{String(s.tillaegsTekst)}</p>
+                      )}
+                      {s.paataleberettiget && (
+                        <p className="text-slate-400 text-xs">
+                          {da ? 'Påtaleberettiget' : 'Enforcement'}: {String(s.paataleberettiget)}
+                        </p>
+                      )}
+                      {s.indholdKoder &&
+                        Array.isArray(s.indholdKoder) &&
+                        s.indholdKoder.length > 0 && (
+                          <p className="text-slate-400 text-xs">
+                            {da ? 'Indhold' : 'Content'}: {s.indholdKoder.join(', ')}
+                          </p>
+                        )}
+                      {s.tinglysningsafgift != null && Number(s.tinglysningsafgift) > 0 && (
+                        <p className="text-slate-400 text-xs">
+                          {da ? 'Afgift' : 'Fee'}:{' '}
+                          {Number(s.tinglysningsafgift).toLocaleString('da-DK')} DKK
+                        </p>
+                      )}
+                      {s.dokumentAlias && (
+                        <p className="text-slate-600 text-[10px] mt-1">
+                          Dok: {String(s.dokumentAlias)}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {servitutter.length > 5 && (
+              <button
+                onClick={() => setShowAllServitutter(!showAllServitutter)}
+                className="w-full text-center py-2 text-xs text-blue-400 hover:text-blue-300 transition-colors border-t border-slate-700/20"
+              >
+                {showAllServitutter
+                  ? da
+                    ? '▲ Vis færre'
+                    : '▲ Show less'
+                  : da
+                    ? `▼ Vis alle ${servitutter.length}`
+                    : `▼ Show all ${servitutter.length}`}
+              </button>
+            )}
+          </>
+        )}
+
+        {/* ── BILAG (originale PDF'er fra Tinglysningen) ── */}
+        {bilagRefs.length > 0 && (
+          <>
+            <div className="px-4 py-1.5 bg-blue-500/5 border-b border-slate-700/20">
+              <span className="text-[10px] font-semibold text-blue-400 uppercase tracking-wider">
+                {da ? 'Bilag — originale dokumenter' : 'Attachments — original documents'} (
+                {bilagRefs.length})
+              </span>
+            </div>
+            {bilagRefs.map((b, i) => (
+              <div
+                key={`b-${i}`}
+                className="grid grid-cols-[24px_36px_90px_1fr_100px_100px_50px_28px] gap-x-2 px-4 py-2 border-b border-slate-700/15 hover:bg-slate-700/10 transition-colors items-center"
+              >
+                <span />
+                <span />
+                <span />
+                <span className="text-sm text-slate-300 truncate">{b.tekst || 'Bilag'}</span>
+                <span />
+                <span className="text-xs text-slate-500">PDF</span>
+                <div className="flex items-center gap-1.5">
+                  <a
+                    href={`/api/tinglysning/dokument?bilag=${b.id}`}
+                    download
+                    className="inline-flex items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
+                  >
+                    <FileText size={11} />
+                    PDF
+                  </a>
+                </div>
+                <label className="flex items-center cursor-pointer flex-shrink-0">
+                  <input
+                    type="checkbox"
+                    className="sr-only"
+                    checked={selectedDocs.has(`bilag-${b.id}`)}
+                    onChange={() => toggleDoc(`bilag-${b.id}`)}
+                  />
+                  <span
+                    className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors ${selectedDocs.has(`bilag-${b.id}`) ? 'bg-blue-500 border-blue-500' : 'bg-[#0a1020] border-slate-400'}`}
+                  >
+                    {selectedDocs.has(`bilag-${b.id}`) && (
+                      <svg
+                        viewBox="0 0 10 10"
+                        className="w-2 h-2 text-white"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.5"
+                      >
+                        <path d="M1.5 5.5l2.5 2.5 4.5-4.5" />
+                      </svg>
+                    )}
+                  </span>
+                </label>
+              </div>
+            ))}
+          </>
         )}
       </div>
     </div>

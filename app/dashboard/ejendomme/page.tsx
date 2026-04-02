@@ -25,6 +25,8 @@ import {
 } from 'lucide-react';
 import { erDawaId, type DawaAutocompleteResult } from '@/app/lib/dawa';
 import { hentRecentEjendomme, type RecentEjendom } from '@/app/lib/recentEjendomme';
+import { useLanguage } from '@/app/context/LanguageContext';
+import { translations } from '@/app/lib/translations';
 
 const RECENT_KEY = 'ba-ejendomme-recent';
 const MAX_RECENT = 5;
@@ -32,17 +34,29 @@ const MAX_RECENT = 5;
 /**
  * Kort for én senest set ejendom.
  * Viser adresse, kommune, tidspunkt for besøg og evt. BBR-anvendelse.
+ *
+ * @param ejendom - Ejendomsdata fra localStorage
+ * @param now - Tidsstempel for rendering (undgår impure Date.now() i render)
+ * @param p - Oversat strenge fra translations.properties
  */
-function RecentEjendomCard({ ejendom, now }: { ejendom: RecentEjendom; now: number }) {
+function RecentEjendomCard({
+  ejendom,
+  now,
+  p,
+}: {
+  ejendom: RecentEjendom;
+  now: number;
+  p: typeof translations.da.properties;
+}) {
   const minSiden = Math.round((now - ejendom.senestiSet) / 60000);
   const tidTekst =
     minSiden < 1
-      ? 'Lige nu'
+      ? p.timeJustNow
       : minSiden < 60
-        ? `${minSiden} min. siden`
+        ? `${minSiden} ${p.timeMinAgo}`
         : minSiden < 1440
-          ? `${Math.round(minSiden / 60)} t. siden`
-          : `${Math.round(minSiden / 1440)} d. siden`;
+          ? `${Math.round(minSiden / 60)} ${p.timeHoursAgo}`
+          : `${Math.round(minSiden / 1440)} ${p.timeDaysAgo}`;
 
   return (
     <Link
@@ -75,15 +89,24 @@ function RecentEjendomCard({ ejendom, now }: { ejendom: RecentEjendom; now: numb
   );
 }
 
-/** Et enkelt DAWA-resultat i dropdown */
+/**
+ * Et enkelt DAWA-resultat i dropdown.
+ *
+ * @param result - Autocomplete-resultat fra DAWA
+ * @param onVælg - Callback ved valg af resultat
+ * @param aktiv - Om dette element er tastatur-markeret
+ * @param p - Oversat strenge fra translations.properties
+ */
 function DawaResultItem({
   result,
   onVælg,
   aktiv,
+  p,
 }: {
   result: DawaAutocompleteResult;
   onVælg: (r: DawaAutocompleteResult) => void;
   aktiv?: boolean;
+  p: typeof translations.da.properties;
 }) {
   return (
     <button
@@ -112,10 +135,10 @@ function DawaResultItem({
         <p className="text-white text-sm font-medium truncate">{result.tekst}</p>
         <p className="text-slate-500 text-xs">
           {result.type === 'vejnavn'
-            ? 'Vej — tilføj husnummer'
+            ? p.roadAddNumber
             : result.adresse.postnr
               ? `${result.adresse.postnr} ${result.adresse.postnrnavn}`
-              : 'Danmark'}
+              : p.denmark}
         </p>
       </div>
       <ArrowRight
@@ -142,6 +165,7 @@ interface DropdownPortalProps {
   seneste: DawaAutocompleteResult[];
   markeret: number;
   onVælg: (r: DawaAutocompleteResult) => void;
+  p: typeof translations.da.properties;
 }
 
 /**
@@ -153,6 +177,7 @@ interface DropdownPortalProps {
  *
  * @param inputRef - Ref til søgeinput — position beregnes relativt hertil
  * @param dropdownRef - Ref til dropdown-div — bruges til klik-uden-for detection
+ * @param p - Oversat strenge fra translations.properties
  */
 function DropdownPortal({
   inputRef,
@@ -164,6 +189,7 @@ function DropdownPortal({
   seneste,
   markeret,
   onVælg,
+  p,
 }: DropdownPortalProps) {
   const [pos, setPos] = useState<DropdownPos | null>(null);
 
@@ -206,13 +232,13 @@ function DropdownPortal({
           <div className="flex items-center gap-2 px-4 py-2.5 border-b border-slate-700/40">
             <Clock size={12} className="text-slate-500" />
             <span className="text-slate-500 text-xs font-medium uppercase tracking-wide">
-              Seneste søgninger
+              {p.recentSearches}
             </span>
           </div>
           {seneste
             .filter((r) => r.adresse?.id)
             .map((r) => (
-              <DawaResultItem key={r.adresse.id} result={r} onVælg={onVælg} />
+              <DawaResultItem key={r.adresse.id} result={r} onVælg={onVælg} p={p} />
             ))}
         </div>
       )}
@@ -223,12 +249,12 @@ function DropdownPortal({
           {søgerDAWA && (
             <div className="flex items-center gap-3 px-4 py-3 text-slate-500 text-sm">
               <Loader2 size={14} className="animate-spin" />
-              Søger i alle danske adresser…
+              {p.searchingAll}
             </div>
           )}
           {!søgerDAWA && søgningFærdig && resultater.length === 0 && (
             <div className="px-4 py-4 text-slate-500 text-sm text-center">
-              Ingen adresser fundet for &ldquo;{søgning}&rdquo;
+              {p.noAddressesFound} &ldquo;{søgning}&rdquo;
             </div>
           )}
           {resultater
@@ -239,13 +265,12 @@ function DropdownPortal({
                 result={r}
                 onVælg={onVælg}
                 aktiv={i === markeret}
+                p={p}
               />
             ))}
           {resultater.length === 8 && (
             <div className="px-4 py-2 border-t border-slate-700/40">
-              <p className="text-slate-600 text-xs text-center">
-                Viser de 8 bedste resultater — præcisér søgningen for flere
-              </p>
+              <p className="text-slate-600 text-xs text-center">{p.showingBestResults}</p>
             </div>
           )}
         </>
@@ -260,6 +285,8 @@ function DropdownPortal({
  * Kombinerer DAWA live-søgning med mock-ejendomme som inspiration.
  */
 export default function EjendommeListeside() {
+  const { lang } = useLanguage();
+  const p = translations[lang].properties;
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -279,6 +306,10 @@ export default function EjendommeListeside() {
   useEffect(() => {
     setSenesteEjendomme(hentRecentEjendomme());
     setRenderNow(Date.now());
+    // Re-render when Supabase cache is populated
+    const handler = () => setSenesteEjendomme(hentRecentEjendomme());
+    window.addEventListener('ba-recents-updated', handler);
+    return () => window.removeEventListener('ba-recents-updated', handler);
   }, []);
 
   /** Lazy initialisering fra localStorage — filtrerer evt. korrupt/forældet data fra */
@@ -377,8 +408,8 @@ export default function EjendommeListeside() {
     <div className="flex-1 flex flex-col bg-[#0a1628]">
       {/* ─── Header ─── */}
       <div className="px-8 pt-8 pb-6 border-b border-slate-700/40">
-        <h1 className="text-2xl font-bold text-emerald-400 mb-1">Ejendomme</h1>
-        <p className="text-slate-400 text-sm">Søg på alle ~2,8 mio. danske adresser</p>
+        <h1 className="text-2xl font-bold text-emerald-400 mb-1">{p.title}</h1>
+        <p className="text-slate-400 text-sm">{p.subtitle}</p>
 
         {/* Søgeboks med DAWA autocomplete */}
         <div className="relative mt-5">
@@ -412,7 +443,7 @@ export default function EjendommeListeside() {
                   setMarkeret(-1);
                 }
               }}
-              placeholder="Søg på adresse, vejnavn eller postnummer…"
+              placeholder={p.searchPlaceholder}
               className="w-full bg-slate-800/60 border border-slate-600/50 focus:border-blue-500/60 rounded-2xl pl-11 pr-12 py-4 text-white placeholder:text-slate-500 outline-none transition-all text-base shadow-lg"
             />
             {/* Loader / Ryd-knap */}
@@ -448,6 +479,7 @@ export default function EjendommeListeside() {
               seneste={seneste}
               markeret={markeret}
               onVælg={vælgAdresse}
+              p={p}
             />
           )}
         </div>
@@ -461,22 +493,22 @@ export default function EjendommeListeside() {
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
                 <Clock size={15} className="text-slate-400" />
-                <h2 className="text-white font-semibold text-base">Seneste sete ejendomme</h2>
+                <h2 className="text-white font-semibold text-base">{p.recentlyViewed}</h2>
               </div>
               <button
                 type="button"
                 onClick={() => {
-                  window.localStorage.removeItem('ba-seneste-ejendomme');
+                  fetch('/api/recents?type=property', { method: 'DELETE' }).catch(() => {});
                   setSenesteEjendomme([]);
                 }}
                 className="text-slate-600 hover:text-slate-400 text-xs transition-colors"
               >
-                Ryd historik
+                {p.clearHistory}
               </button>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
               {senesteEjendomme.map((e) => (
-                <RecentEjendomCard key={e.id} ejendom={e} now={renderNow} />
+                <RecentEjendomCard key={e.id} ejendom={e} now={renderNow} p={p} />
               ))}
             </div>
           </div>
@@ -485,10 +517,8 @@ export default function EjendommeListeside() {
             <div className="p-4 bg-slate-800/40 rounded-2xl">
               <Building2 size={28} className="text-slate-600" />
             </div>
-            <p className="text-slate-400 text-sm font-medium">Ingen ejendomme set endnu</p>
-            <p className="text-slate-600 text-xs max-w-xs leading-relaxed">
-              Søg på en adresse ovenfor — ejendomme du besøger vises her
-            </p>
+            <p className="text-slate-400 text-sm font-medium">{p.noPropertiesYet}</p>
+            <p className="text-slate-600 text-xs max-w-xs leading-relaxed">{p.noPropertiesHint}</p>
           </div>
         )}
       </div>

@@ -4,28 +4,22 @@
  * Dashboard hovedside — viser overblik over brugerens aktivitet.
  *
  * Datakilde:
- *   - Seneste ejendomme: localStorage via recentEjendomme.ts
+ *   - Seneste ejendomme: Supabase via recentEjendomme.ts
  *   - Fulgte ejendomme: localStorage via trackedEjendomme.ts
- *   - Seneste virksomheder: localStorage (ba-companies-recent)
+ *   - Seneste virksomheder: Supabase via recentCompanies.ts
  *
- * Lytter på 'ba-tracked-changed' og 'storage' events for at opdatere data.
+ * Lytter på 'ba-tracked-changed', 'ba-recents-updated' og 'storage' events.
  */
 
 import { useState, useEffect, useCallback } from 'react';
 import { Building2, Users, Briefcase, ChevronRight, Eye, MapPin } from 'lucide-react';
 import Link from 'next/link';
 import { useLanguage } from '@/app/context/LanguageContext';
+import { translations } from '@/app/lib/translations';
 import { hentRecentEjendomme, type RecentEjendom } from '@/app/lib/recentEjendomme';
 import { hentTrackedEjendomme, type TrackedEjendom } from '@/app/lib/trackedEjendomme';
-
-/** Seneste virksomhed gemt i localStorage */
-interface RecentCompany {
-  cvr: string;
-  name: string;
-  industry?: string;
-  city?: string;
-  ts: number;
-}
+import { getRecentCompanies, type RecentCompany } from '@/app/lib/recentCompanies';
+import { getRecentPersons, type RecentPerson } from '@/app/lib/recentPersons';
 
 /** Fulgt virksomhed gemt i localStorage (ba-tracked-companies) */
 interface TrackedCompany {
@@ -36,7 +30,8 @@ interface TrackedCompany {
 
 export default function DashboardPage() {
   const { lang } = useLanguage();
-  const da = lang === 'da';
+  const t = translations[lang];
+  const d = t.dashboard;
 
   /* ------------------------------------------------------------------ */
   /*  State                                                              */
@@ -46,6 +41,7 @@ export default function DashboardPage() {
   const [trackedCompanies, setTrackedCompanies] = useState<TrackedCompany[]>([]);
   const [recentEjendomme, setRecentEjendomme] = useState<RecentEjendom[]>([]);
   const [recentCompanies, setRecentCompanies] = useState<RecentCompany[]>([]);
+  const [recentPersons, setRecentPersons] = useState<RecentPerson[]>([]);
 
   /** Collapsible sections — all collapsed by default */
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
@@ -72,16 +68,11 @@ export default function DashboardPage() {
       setTrackedCompanies([]);
     }
 
-    // Seneste virksomheder fra localStorage
-    try {
-      const raw = localStorage.getItem('ba-companies-recent');
-      if (raw) {
-        const parsed = JSON.parse(raw) as RecentCompany[];
-        setRecentCompanies(Array.isArray(parsed) ? parsed.slice(0, 8) : []);
-      }
-    } catch {
-      setRecentCompanies([]);
-    }
+    // Seneste virksomheder fra Supabase (in-memory cache)
+    setRecentCompanies(getRecentCompanies());
+
+    // Seneste ejere fra Supabase (in-memory cache)
+    setRecentPersons(getRecentPersons());
   }, []);
 
   /** Indlæs data ved mount og lyt efter ændringer */
@@ -91,9 +82,11 @@ export default function DashboardPage() {
     const handler = () => refreshData();
     window.addEventListener('storage', handler);
     window.addEventListener('ba-tracked-changed', handler);
+    window.addEventListener('ba-recents-updated', handler);
     return () => {
       window.removeEventListener('storage', handler);
       window.removeEventListener('ba-tracked-changed', handler);
+      window.removeEventListener('ba-recents-updated', handler);
     };
   }, [refreshData]);
 
@@ -101,44 +94,34 @@ export default function DashboardPage() {
     <div className="flex-1 overflow-y-auto p-6 space-y-6">
       {/* Welcome */}
       <div>
-        <h1 className="text-2xl font-bold text-white">
-          {da ? 'Velkommen til BizzAssist' : 'Welcome to BizzAssist'}
-        </h1>
-        <p className="text-slate-400 mt-1">
-          {da
-            ? 'Her er et overblik over din aktivitet og de seneste data.'
-            : "Here's an overview of your activity and the latest data."}
-        </p>
+        <h1 className="text-2xl font-bold text-white">{d.welcome}</h1>
+        <p className="text-slate-400 mt-1">{d.welcomeSub}</p>
       </div>
 
       {/* Quick actions — 4 navigation cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
         {[
           {
             icon: Building2,
-            labelDa: 'Ejendomme',
-            labelEn: 'Properties',
+            label: d.properties,
             href: '/dashboard/ejendomme',
             color: 'bg-emerald-500/10 text-emerald-400',
           },
           {
             icon: Briefcase,
-            labelDa: 'Virksomheder',
-            labelEn: 'Companies',
+            label: d.companies,
             href: '/dashboard/companies',
             color: 'bg-blue-500/10 text-blue-400',
           },
           {
             icon: Users,
-            labelDa: 'Ejere',
-            labelEn: 'Owners',
+            label: d.owners,
             href: '/dashboard/owners',
             color: 'bg-purple-500/10 text-purple-400',
           },
           {
             icon: MapPin,
-            labelDa: 'Kort',
-            labelEn: 'Map',
+            label: d.map,
             href: '/dashboard/kort',
             color: 'bg-amber-500/10 text-amber-400',
           },
@@ -156,7 +139,7 @@ export default function DashboardPage() {
                 <Icon size={22} />
               </div>
               <span className="text-sm font-medium text-slate-400 group-hover:text-white transition-colors">
-                {da ? action.labelDa : action.labelEn}
+                {action.label}
               </span>
             </Link>
           );
@@ -167,22 +150,18 @@ export default function DashboardPage() {
       <div className="space-y-4">
         {/* ─── Seneste ejendomme (collapsible) ─── */}
         <CollapsibleSection
-          title={da ? 'Seneste ejendomme' : 'Recent properties'}
+          title={d.recentProperties}
           count={recentEjendomme.length}
           titleColor="text-emerald-400"
           open={!!openSections['recent-props']}
           onToggle={() => toggle('recent-props')}
           linkHref="/dashboard/ejendomme"
-          linkLabel={da ? 'Se alle' : 'View all'}
+          linkLabel={d.viewAll}
         >
           {recentEjendomme.length === 0 ? (
             <EmptyState
               icon={<Building2 size={24} className="mx-auto mb-2 text-slate-600" />}
-              text={
-                da
-                  ? 'Ingen seneste ejendomme — søg efter en adresse for at komme i gang.'
-                  : 'No recent properties — search for an address to get started.'
-              }
+              text={d.emptyProperties}
             />
           ) : (
             recentEjendomme.map((ej) => (
@@ -212,22 +191,18 @@ export default function DashboardPage() {
 
         {/* ─── Seneste virksomheder (collapsible) ─── */}
         <CollapsibleSection
-          title={da ? 'Seneste virksomheder' : 'Recent companies'}
+          title={d.recentCompanies}
           count={recentCompanies.length}
           titleColor="text-blue-400"
           open={!!openSections['recent-companies']}
           onToggle={() => toggle('recent-companies')}
           linkHref="/dashboard/companies"
-          linkLabel={da ? 'Se alle' : 'View all'}
+          linkLabel={d.viewAll}
         >
           {recentCompanies.length === 0 ? (
             <EmptyState
               icon={<Briefcase size={24} className="mx-auto mb-2 text-slate-600" />}
-              text={
-                da
-                  ? 'Ingen seneste virksomheder — søg efter et CVR-nummer eller virksomhedsnavn.'
-                  : 'No recent companies — search for a CVR number or company name.'
-              }
+              text={d.emptyCompanies}
             />
           ) : (
             recentCompanies.map((c) => (
@@ -258,43 +233,62 @@ export default function DashboardPage() {
 
         {/* ─── Seneste ejere (collapsible) ─── */}
         <CollapsibleSection
-          title={da ? 'Seneste ejere' : 'Recent owners'}
-          count={0}
+          title={d.recentOwners}
+          count={recentPersons.length}
           titleColor="text-purple-400"
           open={!!openSections['recent-owners']}
           onToggle={() => toggle('recent-owners')}
           linkHref="/dashboard/owners"
-          linkLabel={da ? 'Se alle' : 'View all'}
+          linkLabel={d.viewAll}
         >
-          <EmptyState
-            icon={<Users size={24} className="mx-auto mb-2 text-slate-600" />}
-            text={
-              da
-                ? 'Ejersøgning er under udvikling — her vil dine seneste ejere blive vist.'
-                : 'Owner search is under development — your recent owners will appear here.'
-            }
-          />
+          {recentPersons.length === 0 ? (
+            <EmptyState
+              icon={<Users size={24} className="mx-auto mb-2 text-slate-600" />}
+              text={d.emptyOwners}
+            />
+          ) : (
+            recentPersons.map((p) => (
+              <Link
+                key={p.enhedsNummer}
+                href={`/dashboard/owners/${p.enhedsNummer}`}
+                className="group flex items-center gap-3 rounded-lg px-3 py-2.5 hover:bg-slate-800/60 transition-colors"
+              >
+                <Users
+                  size={16}
+                  className="text-purple-400/70 group-hover:text-purple-300 shrink-0"
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm text-slate-200 group-hover:text-white truncate font-medium">
+                    {p.name}
+                  </p>
+                  <p className="text-xs text-slate-500 truncate">
+                    {p.antalVirksomheder} {lang === 'da' ? 'virksomheder' : 'companies'}
+                  </p>
+                </div>
+                <ChevronRight
+                  size={14}
+                  className="text-slate-600 group-hover:text-slate-400 shrink-0"
+                />
+              </Link>
+            ))
+          )}
         </CollapsibleSection>
 
         {/* ─── Fulgte (ejendomme + virksomheder + ejere, grupperet) ─── */}
         <CollapsibleSection
-          title={da ? 'Fulgte' : 'Tracked'}
+          title={d.tracked}
           count={trackedEjendomme.length + trackedCompanies.length}
           titleColor="text-amber-400"
           open={!!openSections['tracked']}
           onToggle={() => toggle('tracked')}
           linkHref="/dashboard/settings"
-          linkLabel={da ? 'Administrer' : 'Manage'}
+          linkLabel={d.manage}
           badgeColor="bg-amber-500/20 text-amber-400"
         >
           {trackedEjendomme.length === 0 && trackedCompanies.length === 0 ? (
             <EmptyState
               icon={<Eye size={24} className="mx-auto mb-2 text-slate-600" />}
-              text={
-                da
-                  ? 'Du følger ingenting endnu — tryk "Følg" på en ejendoms- eller virksomhedsside.'
-                  : 'You are not tracking anything yet — click "Follow" on a property or company page.'
-              }
+              text={d.emptyTracked}
             />
           ) : (
             <>
@@ -303,7 +297,7 @@ export default function DashboardPage() {
                 <>
                   <div className="px-6 py-2 bg-white/3">
                     <span className="text-[11px] font-semibold text-emerald-400 uppercase tracking-wider">
-                      {da ? 'Ejendomme' : 'Properties'}
+                      {d.properties}
                     </span>
                   </div>
                   {trackedEjendomme.map((ej) => (
@@ -338,7 +332,7 @@ export default function DashboardPage() {
                 <>
                   <div className="px-6 py-2 bg-white/3">
                     <span className="text-[11px] font-semibold text-blue-400 uppercase tracking-wider">
-                      {da ? 'Virksomheder' : 'Companies'}
+                      {d.companies}
                     </span>
                   </div>
                   {trackedCompanies.map((c) => (

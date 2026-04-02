@@ -21,56 +21,33 @@ import {
   Loader2,
   ArrowRight,
   Shield,
+  Lock,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
+import { translations } from '@/app/lib/translations';
 import { erDawaId } from '@/app/lib/dawa';
 import { gemRecentEjendom } from '@/app/lib/recentEjendomme';
+import { getRecentSearches, saveRecentSearch, type RecentSearch } from '@/app/lib/recentSearches';
 import type { UnifiedSearchResult } from '@/app/api/search/route';
 import AIChatPanel from '@/app/components/AIChatPanel';
 import NotifikationsDropdown from '@/app/components/NotifikationsDropdown';
-import {
-  getSubscription,
-  switchActiveUser,
-  clearActiveSubscription,
-  saveSubscription,
-  ADMIN_EMAIL,
-  type UserSubscription,
-} from '@/app/lib/subscriptions';
+import OnboardingModal from '@/app/components/OnboardingModal';
+import SubscriptionGate from '@/app/components/SubscriptionGate';
+import { cachePlans, type UserSubscription, type PlanDef } from '@/app/lib/subscriptions';
+import { SubscriptionProvider, useSubscription } from '@/app/context/SubscriptionContext';
 import { createClient } from '@/lib/supabase/client';
 import { hasMigrated, migrateLocalStorageToSupabase } from '@/app/lib/migrateLocalStorage';
 
-/** Navigation items — 'adminOnly' items are only shown for admin users */
+/** Navigation items — 'adminOnly' items are only shown for admin users.
+ *  'key' maps to translations[lang].sidebar[key] for the label.
+ */
 const navItems = [
-  {
-    icon: LayoutDashboard,
-    labelDa: 'Oversigt',
-    labelEn: 'Overview',
-    href: '/dashboard',
-    adminOnly: false,
-  },
-  {
-    icon: Building2,
-    labelDa: 'Ejendomme',
-    labelEn: 'Properties',
-    href: '/dashboard/ejendomme',
-    adminOnly: false,
-  },
-  {
-    icon: Briefcase,
-    labelDa: 'Virksomheder',
-    labelEn: 'Companies',
-    href: '/dashboard/companies',
-    adminOnly: false,
-  },
-  { icon: Users, labelDa: 'Ejere', labelEn: 'Owners', href: '/dashboard/owners', adminOnly: false },
-  { icon: Map, labelDa: 'Kort', labelEn: 'Map', href: '/dashboard/kort', adminOnly: false },
-  {
-    icon: Shield,
-    labelDa: 'Admin',
-    labelEn: 'Admin',
-    href: '/dashboard/admin/users',
-    adminOnly: true,
-  },
+  { icon: LayoutDashboard, key: 'overview' as const, href: '/dashboard', adminOnly: false },
+  { icon: Building2, key: 'properties' as const, href: '/dashboard/ejendomme', adminOnly: false },
+  { icon: Briefcase, key: 'companies' as const, href: '/dashboard/companies', adminOnly: false },
+  { icon: Users, key: 'owners' as const, href: '/dashboard/owners', adminOnly: false },
+  { icon: Map, key: 'map' as const, href: '/dashboard/kort', adminOnly: false },
+  { icon: Shield, key: 'admin' as const, href: '/dashboard/admin/users', adminOnly: true },
 ];
 
 /** Standard sidebarbredde i px */
@@ -80,8 +57,22 @@ const SIDEBAR_MIN = 180;
 /** Maximum sidebarbredde */
 const SIDEBAR_MAX = 480;
 
+/**
+ * Outer wrapper that provides SubscriptionContext to the entire dashboard.
+ * Delegates all rendering to DashboardLayoutInner.
+ */
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <SubscriptionProvider>
+      <DashboardLayoutInner>{children}</DashboardLayoutInner>
+    </SubscriptionProvider>
+  );
+}
+
+function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
   const { lang, setLang } = useLanguage();
+  const t = translations[lang];
+  const s = t.sidebar;
   const pathname = usePathname();
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -90,12 +81,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [isAdmin, setIsAdmin] = useState(false);
   /** Blocks dashboard rendering until subscription check passes */
   const [accessGranted, setAccessGranted] = useState(false);
+  /** Whether user has an active paid subscription (gates search + AI) */
+  const [_hasActiveSub, setHasActiveSub] = useState(false);
+  /** Whether the subscription is functional (paid, free, or within trial) — gates features */
+  const [isFunctional, setIsFunctional] = useState(false);
   /** Current user profile from Supabase auth */
   const [userProfile, setUserProfile] = useState<{
     name: string;
     email: string;
     initials: string;
   } | null>(null);
+
+  /** Subscription context — replaces localStorage for subscription state */
+  const { initialize: initSub } = useSubscription();
 
   /** Helper: set profile UI from email + optional name */
   const setProfile = useCallback((email: string, fullName?: string) => {
@@ -106,7 +104,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
         : name.slice(0, 2).toUpperCase();
     setUserProfile({ name, email, initials });
-    setIsAdmin(email === ADMIN_EMAIL);
+    // Admin status is set from server response (app_metadata.isAdmin) in checkAccess
   }, []);
 
   /**
@@ -122,16 +120,24 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     const supabase = createClient();
 
     /** Redirect to login if subscription check fails, or grant access. */
-    const gateAccess = async (status: 'ok' | 'pending' | 'cancelled' | 'no_subscription') => {
+    const gateAccess = async (
+      status: 'ok' | 'pending' | 'cancelled' | 'no_subscription',
+      functional = true,
+      sub: UserSubscription | null = null,
+      admin = false
+    ) => {
       if (status === 'ok') {
         setAccessGranted(true);
+        setHasActiveSub(true);
+        setIsFunctional(functional);
+        // Initialize subscription context (replaces localStorage)
+        initSub({ subscription: sub, isAdmin: admin, isFunctional: functional });
         // Migrate localStorage data to Supabase on first authenticated access
         if (!hasMigrated()) {
           migrateLocalStorageToSupabase().catch(() => {});
         }
         return;
       }
-      clearActiveSubscription();
       await supabase.auth.signOut();
       if (status === 'pending') {
         window.location.href = '/login?error=subscription_pending';
@@ -170,6 +176,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           if (email) {
             setProfile(email, json.fullName || '');
 
+            // Admin users bypass all subscription gates
+            if (json.isAdmin) {
+              setIsAdmin(true);
+            }
+
             if (serverSub && serverSub.planId) {
               const sub: UserSubscription = {
                 email,
@@ -180,24 +191,32 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 tokensUsedThisMonth: serverSub.tokensUsedThisMonth ?? 0,
                 periodStart: serverSub.periodStart,
                 bonusTokens: serverSub.bonusTokens ?? 0,
+                isPaid: serverSub.isPaid ?? false,
               };
-              saveSubscription(sub);
-              console.log('[checkAccess] Server sub:', sub.status, '/', sub.planId);
-              gateAccess(checkSub(sub));
+              console.log(
+                '[checkAccess] Server sub:',
+                sub.status,
+                '/',
+                sub.planId,
+                '/ isFunctional:',
+                json.isFunctional,
+                '/ isAdmin:',
+                json.isAdmin
+              );
+              // Admin users always have functional access; otherwise use server-computed flag
+              const functional = json.isAdmin ? true : (json.isFunctional ?? true);
+              gateAccess(checkSub(sub), functional, sub, !!json.isAdmin);
               return;
             }
 
-            // Authenticated but no subscription in Supabase — try localStorage
-            const localSub = switchActiveUser(email);
-            if (localSub) {
-              console.log('[checkAccess] localStorage sub:', localSub.status, '/', localSub.planId);
-              gateAccess(checkSub(localSub));
-              return;
+            // No subscription in Supabase — but admins still get access
+            if (json.isAdmin) {
+              console.log('[checkAccess] No subscription but isAdmin → granting access');
+              gateAccess('ok', true, null, true);
+            } else {
+              console.log('[checkAccess] No subscription → no_subscription');
+              gateAccess('no_subscription');
             }
-
-            // No subscription anywhere
-            console.log('[checkAccess] No subscription → no_subscription');
-            gateAccess('no_subscription');
             return;
           }
         }
@@ -219,11 +238,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         console.log('[checkAccess] client getUser email:', email);
         if (email) {
           setProfile(email);
-          const localSub = switchActiveUser(email);
-          if (localSub) {
-            gateAccess(checkSub(localSub));
-            return;
-          }
           gateAccess('no_subscription');
           return;
         }
@@ -231,20 +245,23 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         // ignore
       }
 
-      // Last resort: existing localStorage
-      const existing = getSubscription();
-      if (existing?.email) {
-        setProfile(existing.email);
-        gateAccess(checkSub(existing));
-        return;
-      }
-
       // No session, no data — go to login
       window.location.href = '/login';
     };
 
     checkAccess();
-  }, [setProfile, router]);
+  }, [setProfile, router, initSub]);
+
+  /** Fetch plan definitions from DB and populate the plan cache */
+  useEffect(() => {
+    if (!accessGranted) return;
+    fetch('/api/plans')
+      .then((res) => (res.ok ? res.json() : []))
+      .then((plans: PlanDef[]) => {
+        if (Array.isArray(plans) && plans.length > 0) cachePlans(plans);
+      })
+      .catch(() => {});
+  }, [accessGranted]);
 
   /** Sidebarbredde — kan trækkes af brugeren */
   const [sidebarBredde, setSidebarBredde] = useState(SIDEBAR_DEFAULT);
@@ -282,6 +299,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [søgerDAWA, setSøgerDAWA] = useState(false);
   const [søgÅben, setSøgÅben] = useState(false);
   const [markeret, setMarkeret] = useState(-1);
+  const [recentSearches, setRecentSearches] = useState<RecentSearch[]>([]);
   /** Cached position of the search input for portal dropdown positioning */
   const [searchRect, setSearchRect] = useState<{ top: number; left: number; width: number }>({
     top: 0,
@@ -350,12 +368,21 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           anvendelse: null,
         });
       }
+      // Save to recent searches
+      saveRecentSearch({
+        query: søgning,
+        ts: Date.now(),
+        resultType: result.type as RecentSearch['resultType'],
+        resultTitle: result.title,
+        resultHref: result.href,
+      });
+
       setSøgning('');
       setSøgÅben(false);
       setResultater([]);
       router.push(result.href);
     },
-    [router]
+    [router, søgning]
   );
 
   /* ── Access gate — block dashboard until subscription verified ── */
@@ -364,9 +391,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       <div className="flex h-screen bg-[#0a1020] items-center justify-center">
         <div className="text-center">
           <Loader2 size={28} className="mx-auto mb-3 text-blue-400 animate-spin" />
-          <p className="text-slate-500 text-sm">
-            {lang === 'da' ? 'Kontrollerer adgang…' : 'Checking access…'}
-          </p>
+          <p className="text-slate-500 text-sm">{t.dashboard.checkingAccess}</p>
         </div>
       </div>
     );
@@ -414,21 +439,28 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               .filter((item) => !item.adminOnly || isAdmin)
               .map((item) => {
                 const Icon = item.icon;
-                const label = lang === 'da' ? item.labelDa : item.labelEn;
+                const label = s[item.key];
                 const active = pathname === item.href;
+                /** Only overview and admin are accessible without a functional subscription */
+                const requiresFunctional =
+                  item.href !== '/dashboard' && !item.href.startsWith('/dashboard/admin');
+                const locked = requiresFunctional && !isFunctional;
                 return (
                   <Link
                     key={item.href}
-                    href={item.href}
+                    href={locked ? '/dashboard/settings' : item.href}
                     onClick={() => setSidebarOpen(false)}
                     className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
-                      active
-                        ? 'bg-blue-600 text-white'
-                        : 'text-slate-400 hover:text-white hover:bg-white/5'
+                      locked
+                        ? 'text-slate-600 cursor-not-allowed'
+                        : active
+                          ? 'bg-blue-600 text-white'
+                          : 'text-slate-400 hover:text-white hover:bg-white/5'
                     }`}
                   >
-                    <Icon size={18} />
+                    <Icon size={18} className={locked ? 'opacity-40' : ''} />
                     <span className="truncate">{label}</span>
+                    {locked && <Lock size={12} className="ml-auto text-slate-600" />}
                   </Link>
                 );
               })}
@@ -442,7 +474,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <div
           onMouseDown={onSidebarDragStart}
           className="hidden lg:flex w-1.5 cursor-col-resize items-center justify-center group hover:bg-blue-500/20 transition-colors shrink-0"
-          title="Træk for at justere menubredde"
+          title={s.resizeHandle}
         >
           <div className="w-0.5 h-10 rounded-full bg-slate-700 group-hover:bg-blue-400 transition-colors" />
         </div>
@@ -459,16 +491,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             >
               <Menu size={22} />
             </button>
-            {/* Global adressesøgning med DAWA autocomplete */}
+            {/* Global adressesøgning med DAWA autocomplete — disabled without active subscription */}
             <div className="relative hidden sm:block">
               <Search
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none"
+                className={`absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none ${isFunctional ? 'text-slate-500' : 'text-slate-700'}`}
                 size={16}
               />
               <input
                 ref={searchInputRef}
                 type="text"
                 value={søgning}
+                disabled={!isFunctional}
                 onChange={(e) => {
                   setSøgning(e.target.value);
                   setSøgÅben(true);
@@ -483,6 +516,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 }}
                 onFocus={() => {
                   setSøgÅben(true);
+                  setRecentSearches(getRecentSearches());
                   const rect = searchInputRef.current?.getBoundingClientRect();
                   if (rect)
                     setSearchRect({
@@ -494,7 +528,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 onKeyDown={(e) => {
                   if (e.key === 'ArrowDown') {
                     e.preventDefault();
-                    setMarkeret((m) => Math.min(m + 1, Math.min(resultater.length, 15) - 1));
+                    setMarkeret((m) => Math.min(m + 1, Math.min(resultater.length, 15) - 1)); // max 15 = 5 per category
                   } else if (e.key === 'ArrowUp') {
                     e.preventDefault();
                     setMarkeret((m) => Math.max(m - 1, -1));
@@ -507,9 +541,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   }
                 }}
                 placeholder={
-                  lang === 'da' ? 'Søg adresse, CVR, virksomhed…' : 'Search address, CVR, company…'
+                  isFunctional
+                    ? s.searchPlaceholder
+                    : lang === 'da'
+                      ? 'Søgning kræver betalt abonnement'
+                      : 'Search requires paid subscription'
                 }
-                className="pl-10 pr-8 py-2 bg-white/5 border border-white/10 rounded-xl text-sm text-slate-300 placeholder-slate-600 focus:outline-none focus:border-blue-500/60 w-80 transition-colors"
+                className={`pl-10 pr-8 py-2 border rounded-xl text-sm focus:outline-none w-80 transition-colors ${
+                  isFunctional
+                    ? 'bg-white/5 border-white/10 text-slate-300 placeholder-slate-600 focus:border-blue-500/60'
+                    : 'bg-white/3 border-white/5 text-slate-600 placeholder-slate-700 cursor-not-allowed'
+                }`}
               />
               {/* Loader / ryd */}
               <div className="absolute right-3 top-1/2 -translate-y-1/2">
@@ -546,119 +588,225 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     }}
                     className="bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl overflow-hidden max-h-[70vh] overflow-y-auto"
                   >
-                    {resultater.slice(0, 15).map((r, i) => {
-                      /** Section header when type changes */
-                      const prevType = i > 0 ? resultater[i - 1].type : null;
-                      const showHeader = r.type !== prevType;
-                      const sectionConfig =
-                        r.type === 'company'
-                          ? {
-                              label: lang === 'da' ? 'Virksomheder' : 'Companies',
-                              headerColor: 'text-blue-400',
-                            }
-                          : r.type === 'person'
-                            ? {
-                                label: lang === 'da' ? 'Ejere' : 'Owners',
-                                headerColor: 'text-purple-400',
-                              }
-                            : {
-                                label: lang === 'da' ? 'Adresser' : 'Addresses',
-                                headerColor: 'text-emerald-400',
-                              };
-                      /** Icon and color per result type */
-                      const iconConfig =
-                        r.type === 'company'
-                          ? {
-                              Icon: Briefcase,
-                              color: 'text-blue-400',
-                              bg: 'bg-blue-600/30',
-                              bgIdle: 'bg-blue-900/40',
-                            }
-                          : r.type === 'person'
-                            ? {
-                                Icon: Users,
-                                color: 'text-purple-400',
-                                bg: 'bg-purple-600/30',
-                                bgIdle: 'bg-purple-900/40',
-                              }
-                            : r.meta?.dawaType === 'vejnavn'
-                              ? {
-                                  Icon: Navigation,
-                                  color: 'text-emerald-400',
-                                  bg: 'bg-emerald-600/30',
-                                  bgIdle: 'bg-slate-800',
-                                }
-                              : {
-                                  Icon: MapPin,
-                                  color: 'text-emerald-400',
-                                  bg: 'bg-emerald-600/30',
-                                  bgIdle: 'bg-slate-800',
-                                };
-                      const {
-                        Icon: ResultIcon,
-                        color: iconColor,
-                        bg: iconBgActive,
-                        bgIdle: iconBgIdle,
-                      } = iconConfig;
+                    {/* Group results by type — max 5 per category */}
+                    {(() => {
+                      const adresser = resultater.filter((r) => r.type === 'address').slice(0, 5);
+                      const virksomheder = resultater
+                        .filter((r) => r.type === 'company')
+                        .slice(0, 5);
+                      const personer = resultater.filter((r) => r.type === 'person').slice(0, 5);
+                      /** Flat list for keyboard navigation index */
+                      const flat = [...adresser, ...virksomheder, ...personer];
 
-                      /** Type label prefix for subtitle */
-                      const typeLabel =
-                        r.type === 'company'
-                          ? lang === 'da'
-                            ? 'Virksomhed'
-                            : 'Company'
-                          : r.type === 'person'
-                            ? lang === 'da'
-                              ? 'Ejer'
-                              : 'Owner'
-                            : r.meta?.dawaType === 'vejnavn'
-                              ? lang === 'da'
-                                ? 'Vej'
-                                : 'Road'
-                              : lang === 'da'
-                                ? 'Ejendom'
-                                : 'Property';
+                      const sections: {
+                        key: string;
+                        label: string;
+                        headerColor: string;
+                        items: UnifiedSearchResult[];
+                      }[] = [];
+                      if (adresser.length > 0)
+                        sections.push({
+                          key: 'addr',
+                          label: s.sectionAddresses,
+                          headerColor: 'text-emerald-400',
+                          items: adresser,
+                        });
+                      if (virksomheder.length > 0)
+                        sections.push({
+                          key: 'comp',
+                          label: s.sectionCompanies,
+                          headerColor: 'text-blue-400',
+                          items: virksomheder,
+                        });
+                      if (personer.length > 0)
+                        sections.push({
+                          key: 'pers',
+                          label: s.sectionOwners,
+                          headerColor: 'text-purple-400',
+                          items: personer,
+                        });
 
-                      return (
-                        <div key={`${r.type}-${r.id}-${i}`}>
-                          {showHeader && (
-                            <div
-                              className={`px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider ${sectionConfig.headerColor} bg-slate-800/40 border-t border-slate-700/30 first:border-t-0`}
-                            >
-                              {sectionConfig.label}
-                            </div>
-                          )}
-                          <button
-                            type="button"
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              vælgResultat(r);
-                            }}
-                            className={`w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors ${i === markeret ? 'bg-blue-600/20' : 'hover:bg-slate-800/80'}`}
+                      let globalIdx = 0;
+
+                      return sections.map((sec, si) => (
+                        <div key={sec.key}>
+                          <div
+                            className={`px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider ${sec.headerColor} bg-slate-800/40 ${si > 0 ? 'border-t border-slate-700/30' : ''}`}
                           >
-                            <div
-                              className={`p-1.5 rounded-lg flex-shrink-0 ${i === markeret ? iconBgActive : iconBgIdle}`}
-                            >
-                              <ResultIcon
-                                size={12}
-                                className={i === markeret ? iconColor : 'text-slate-400'}
-                              />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-white text-sm font-medium truncate">{r.title}</p>
-                              <p className="text-slate-500 text-xs truncate">
-                                {typeLabel}
-                                {r.subtitle ? ` \u00b7 ${r.subtitle}` : ''}
-                              </p>
-                            </div>
-                            <ArrowRight
-                              size={12}
-                              className={i === markeret ? 'text-blue-400' : 'text-slate-600'}
-                            />
-                          </button>
+                            {sec.label}
+                          </div>
+                          {sec.items.map((r) => {
+                            const idx = globalIdx++;
+                            const isActive = idx === markeret;
+
+                            /** Type-specific hover/active colors */
+                            const hoverBg =
+                              r.type === 'company'
+                                ? 'hover:bg-blue-600/10'
+                                : r.type === 'person'
+                                  ? 'hover:bg-purple-600/10'
+                                  : 'hover:bg-emerald-600/10';
+                            const activeBg =
+                              r.type === 'company'
+                                ? 'bg-blue-600/20'
+                                : r.type === 'person'
+                                  ? 'bg-purple-600/20'
+                                  : 'bg-emerald-600/10';
+                            const accentColor =
+                              r.type === 'company'
+                                ? 'text-blue-400'
+                                : r.type === 'person'
+                                  ? 'text-purple-400'
+                                  : 'text-emerald-400';
+                            const iconBgActive =
+                              r.type === 'company'
+                                ? 'bg-blue-600/30'
+                                : r.type === 'person'
+                                  ? 'bg-purple-600/30'
+                                  : 'bg-emerald-600/30';
+                            const arrowIdle =
+                              r.type === 'company'
+                                ? 'text-slate-600 group-hover:text-blue-400'
+                                : r.type === 'person'
+                                  ? 'text-slate-600 group-hover:text-purple-400'
+                                  : 'text-slate-600 group-hover:text-emerald-400';
+
+                            /** Icon per type */
+                            const ResultIcon =
+                              r.type === 'company'
+                                ? Briefcase
+                                : r.type === 'person'
+                                  ? Users
+                                  : r.meta?.dawaType === 'vejnavn'
+                                    ? Navigation
+                                    : MapPin;
+
+                            return (
+                              <button
+                                key={`${r.type}-${r.id}-${idx}`}
+                                type="button"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  vælgResultat(flat[idx]);
+                                }}
+                                className={`w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors group ${isActive ? activeBg : hoverBg}`}
+                              >
+                                <div
+                                  className={`p-1.5 rounded-lg flex-shrink-0 transition-colors ${isActive ? iconBgActive : iconBgActive.replace('/30', '/15')}`}
+                                >
+                                  <ResultIcon size={13} className={accentColor} />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  {r.type === 'company' ? (
+                                    <>
+                                      <div className="flex items-center gap-2">
+                                        <p className="text-white text-sm font-medium truncate">
+                                          {r.title}
+                                        </p>
+                                        {r.meta?.active && (
+                                          <span
+                                            className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium flex-shrink-0 ${r.meta.active === 'true' ? 'bg-emerald-600/20 text-emerald-400' : 'bg-red-600/20 text-red-400'}`}
+                                          >
+                                            {r.meta.active === 'true'
+                                              ? lang === 'da'
+                                                ? 'Aktiv'
+                                                : 'Active'
+                                              : lang === 'da'
+                                                ? 'Ophørt'
+                                                : 'Inactive'}
+                                          </span>
+                                        )}
+                                      </div>
+                                      <p className="text-slate-500 text-xs truncate">
+                                        CVR {r.id}
+                                        {r.meta?.industry ? ` \u00b7 ${r.meta.industry}` : ''}
+                                        {r.meta?.city ? ` \u00b7 ${r.meta.city}` : ''}
+                                      </p>
+                                    </>
+                                  ) : r.type === 'person' ? (
+                                    <>
+                                      <p className="text-white text-sm font-medium truncate">
+                                        {r.title}
+                                      </p>
+                                      {r.subtitle && (
+                                        <p className="text-slate-500 text-xs truncate">
+                                          {r.subtitle}
+                                        </p>
+                                      )}
+                                    </>
+                                  ) : (
+                                    <>
+                                      <p className="text-white text-sm font-medium truncate">
+                                        {r.title}
+                                      </p>
+                                      <p className="text-slate-500 text-xs truncate">
+                                        {r.meta?.dawaType === 'vejnavn'
+                                          ? s.typeRoad
+                                          : s.typeProperty}
+                                        {r.subtitle ? ` \u00b7 ${r.subtitle}` : ''}
+                                      </p>
+                                    </>
+                                  )}
+                                </div>
+                                <ArrowRight
+                                  size={13}
+                                  className={isActive ? accentColor : arrowIdle}
+                                />
+                              </button>
+                            );
+                          })}
                         </div>
-                      );
-                    })}
+                      ));
+                    })()}
+                  </div>,
+                  document.body
+                )}
+
+              {/* Recent searches — shown when focused with empty search and no results */}
+              {søgÅben &&
+                resultater.length === 0 &&
+                søgning.trim().length < 2 &&
+                recentSearches.length > 0 &&
+                typeof document !== 'undefined' &&
+                createPortal(
+                  <div
+                    ref={searchDropdownRef}
+                    style={{
+                      position: 'fixed',
+                      top: searchRect.top,
+                      left: searchRect.left,
+                      width: searchRect.width,
+                      zIndex: 9999,
+                    }}
+                    className="bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl overflow-hidden max-h-[50vh] overflow-y-auto"
+                  >
+                    <div className="px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500 bg-slate-800/40">
+                      {lang === 'da' ? 'Seneste søgninger' : 'Recent searches'}
+                    </div>
+                    {recentSearches.slice(0, 6).map((rs, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          if (rs.resultHref) {
+                            setSøgning('');
+                            setSøgÅben(false);
+                            router.push(rs.resultHref);
+                          } else {
+                            setSøgning(rs.query);
+                          }
+                        }}
+                        className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-slate-800/80 transition-colors"
+                      >
+                        <Search size={12} className="text-slate-600 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-slate-300 truncate">
+                            {rs.resultTitle ?? rs.query}
+                          </p>
+                        </div>
+                      </button>
+                    ))}
                   </div>,
                   document.body
                 )}
@@ -709,19 +857,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                       className="flex items-center gap-3 px-4 py-2.5 text-sm text-slate-300 hover:text-white hover:bg-white/5 transition-colors"
                     >
                       <Settings size={15} />
-                      {lang === 'da' ? 'Indstillinger' : 'Settings'}
+                      {s.settings}
                     </Link>
                   </div>
                   <div className="py-1.5 border-t border-white/10">
                     <button
                       onClick={() => {
-                        clearActiveSubscription();
                         signOut();
                       }}
                       className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-400 hover:text-red-300 hover:bg-red-500/5 transition-colors"
                     >
                       <LogOut size={15} />
-                      {lang === 'da' ? 'Log ud' : 'Log out'}
+                      {s.logOut}
                     </button>
                   </div>
                 </div>
@@ -730,9 +877,21 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
         </header>
 
-        {/* Page content — flex container så children strækker til fuld højde uden h-full */}
-        <main className="flex-1 flex overflow-hidden">{children}</main>
+        {/* Page content — gated by subscription for non-free pages */}
+        <main className="flex-1 flex overflow-hidden">
+          {pathname === '/dashboard' ||
+          pathname.startsWith('/dashboard/settings') ||
+          pathname.startsWith('/dashboard/admin') ||
+          pathname === '/dashboard/tokens' ? (
+            children
+          ) : (
+            <SubscriptionGate isFunctional={isFunctional}>{children}</SubscriptionGate>
+          )}
+        </main>
       </div>
+
+      {/* Onboarding modal — shown once for new users */}
+      <OnboardingModal />
     </div>
   );
 }

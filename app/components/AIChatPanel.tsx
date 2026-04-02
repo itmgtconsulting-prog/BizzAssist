@@ -11,15 +11,14 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { ChevronDown, Send, Bot, Sparkles, Square } from 'lucide-react';
-import {
-  getSubscription,
-  saveSubscription,
-  PLANS,
-  formatTokens,
-  type UserSubscription,
-} from '@/app/lib/subscriptions';
+import { useLanguage } from '@/app/context/LanguageContext';
+import { translations } from '@/app/lib/translations';
+import { resolvePlan, isSubscriptionFunctional, formatTokens } from '@/app/lib/subscriptions';
+import { useSubscriptionAccess } from '@/app/components/SubscriptionGate';
+import { useSubscription } from '@/app/context/SubscriptionContext';
+import { Lock } from 'lucide-react';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -36,29 +35,13 @@ const COLLAPSED_HEIGHT = 48;
 // ─── Token usage tracking ────────────────────────────────────────────────────
 
 /**
- * Get the current user's subscription from localStorage cache.
- * The cache is populated from Supabase on login (dashboard layout).
- *
- * @returns Cached subscription or null
- */
-function getSyncedSubscription(): UserSubscription | null {
-  return getSubscription();
-}
-
-/**
- * Update the current user's token usage after an AI chat response.
- * Updates localStorage cache immediately and syncs to Supabase in background.
+ * Sync token usage to Supabase in background (fire-and-forget).
+ * In-memory state is updated via SubscriptionContext.addTokenUsage().
  *
  * @param tokensUsed - Number of tokens consumed in this request
  */
-function updateTokenUsage(tokensUsed: number) {
+function syncTokenUsageToServer(tokensUsed: number) {
   if (tokensUsed <= 0) return;
-
-  // Update localStorage cache immediately for UI responsiveness
-  const sub = getSubscription();
-  if (!sub) return;
-  sub.tokensUsedThisMonth += tokensUsed;
-  saveSubscription(sub);
 
   // Sync to Supabase in background (fire-and-forget)
   fetch('/api/subscription/track-tokens', {
@@ -78,7 +61,14 @@ function updateTokenUsage(tokensUsed: number) {
  * Tæller tokens fra Claude API-svar og opdaterer brugerens abonnement.
  */
 export default function AIChatPanel() {
+  const { lang } = useLanguage();
+  const a = translations[lang].ai;
   const pathname = usePathname();
+  const router = useRouter();
+  /** Subscription gate — disables AI when user has no active plan */
+  const { isActive: subActive } = useSubscriptionAccess('ai');
+  /** Subscription context — server-authoritative, no localStorage */
+  const { subscription: ctxSub, addTokenUsage } = useSubscription();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -94,22 +84,22 @@ export default function AIChatPanel() {
   /** AbortController for at kunne stoppe streaming */
   const abortRef = useRef<AbortController | null>(null);
 
-  /** Refresh token info from localStorage */
+  /** Refresh token info from subscription context (server-authoritative) */
   const refreshTokenInfo = useCallback(() => {
-    const sub = getSyncedSubscription();
-    if (!sub) {
+    if (!ctxSub) {
       setTokenInfo(null);
       return;
     }
-    const plan = PLANS[sub.planId];
+    const plan = resolvePlan(ctxSub.planId);
     if (!plan.aiEnabled) {
       setTokenInfo(null);
       return;
     }
     // -1 means unlimited tokens
-    const limit = plan.aiTokensPerMonth < 0 ? -1 : plan.aiTokensPerMonth + (sub.bonusTokens ?? 0);
-    setTokenInfo({ used: sub.tokensUsedThisMonth, limit });
-  }, []);
+    const limit =
+      plan.aiTokensPerMonth < 0 ? -1 : plan.aiTokensPerMonth + (ctxSub.bonusTokens ?? 0);
+    setTokenInfo({ used: ctxSub.tokensUsedThisMonth, limit });
+  }, [ctxSub]);
 
   /** Load token info on mount and when panel opens */
   useEffect(() => {
@@ -146,25 +136,25 @@ export default function AIChatPanel() {
     if (!pathname) return undefined;
     if (pathname.startsWith('/dashboard/ejendomme/')) {
       const id = pathname.split('/').pop();
-      return `Ejendomsside for DAWA-adresse ${id}`;
+      return a.contextProperty.replace('{id}', id ?? '');
     }
-    if (pathname === '/dashboard/kort') return 'Kortvisning (fuldt kort)';
-    if (pathname === '/dashboard/ejendomme') return 'Ejendomsoversigt (søgning)';
-    if (pathname.startsWith('/dashboard/companies')) return 'Virksomhedsoversigt';
-    if (pathname.startsWith('/dashboard/owners')) return 'Ejeroversigt';
-    if (pathname === '/dashboard') return 'Dashboard-oversigt';
-    return `Side: ${pathname}`;
-  }, [pathname]);
+    if (pathname === '/dashboard/kort') return a.contextMap;
+    if (pathname === '/dashboard/ejendomme') return a.contextPropertySearch;
+    if (pathname.startsWith('/dashboard/companies')) return a.contextCompanies;
+    if (pathname.startsWith('/dashboard/owners')) return a.contextOwners;
+    if (pathname === '/dashboard') return a.contextDashboard;
+    return a.contextPage.replace('{path}', pathname);
+  }, [pathname, a]);
 
   /** Send besked til AI og stream svar — blokerer hvis token-grænsen er nået */
   const sendMessage = useCallback(async () => {
     const text = input.trim();
     if (!text || isLoading) return;
 
-    // ── Token limit check (syncs local + global localStorage before checking) ──
-    const sub = getSyncedSubscription();
+    // ── Token limit check (uses in-memory subscription context) ──
+    const sub = ctxSub;
     if (sub) {
-      const plan = PLANS[sub.planId];
+      const plan = resolvePlan(sub.planId);
 
       // Block if user's subscription is not active
       if (sub.status !== 'active') {
@@ -173,10 +163,24 @@ export default function AIChatPanel() {
           { role: 'user', content: text },
           {
             role: 'assistant',
+            content: sub.status === 'pending' ? a.subPending : a.subInactive,
+          },
+        ]);
+        setInput('');
+        return;
+      }
+
+      // Block if subscription is not functional (unpaid, no trial)
+      if (!isSubscriptionFunctional(sub, plan)) {
+        setMessages((prev) => [
+          ...prev,
+          { role: 'user', content: text },
+          {
+            role: 'assistant',
             content:
-              sub.status === 'pending'
-                ? 'Dit abonnement afventer godkendelse. Kontakt en administrator.'
-                : 'Dit abonnement er ikke aktivt. Kontakt en administrator.',
+              lang === 'da'
+                ? 'Dit abonnement mangler betaling. Gå til indstillinger for at gennemføre betalingen.'
+                : 'Your subscription requires payment. Go to settings to complete payment.',
           },
         ]);
         setInput('');
@@ -190,8 +194,7 @@ export default function AIChatPanel() {
           { role: 'user', content: text },
           {
             role: 'assistant',
-            content:
-              'AI-assistenten er ikke inkluderet i dit abonnement. Opgrader til Professionel eller Enterprise for at bruge AI.',
+            content: a.aiNotIncluded,
           },
         ]);
         setInput('');
@@ -209,7 +212,7 @@ export default function AIChatPanel() {
           { role: 'user', content: text },
           {
             role: 'assistant',
-            content: `Du har brugt alle dine AI-tokens denne måned (${used} / ${limit}). Kontakt en administrator for at få tildelt ekstra tokens, eller vent til næste måned.`,
+            content: a.tokensExhausted.replace('{used}', used).replace('{limit}', limit),
           },
         ]);
         setInput('');
@@ -242,10 +245,10 @@ export default function AIChatPanel() {
 
       // ── Ikke-streaming fejl (manglende API-nøgle etc.) ──
       if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: 'Serverfejl' }));
+        const err = await res.json().catch(() => ({ error: a.serverError }));
         setMessages((prev) => [
           ...prev,
-          { role: 'assistant', content: err.error ?? 'Der opstod en fejl.' },
+          { role: 'assistant', content: err.error ?? a.genericError },
         ]);
         setIsLoading(false);
         return;
@@ -253,7 +256,7 @@ export default function AIChatPanel() {
 
       // ── Parse SSE stream ──
       const reader = res.body?.getReader();
-      if (!reader) throw new Error('Ingen stream');
+      if (!reader) throw new Error(a.noStream);
 
       const decoder = new TextDecoder();
       let accumulated = '';
@@ -286,8 +289,9 @@ export default function AIChatPanel() {
               accumulated += `\n⚠️ ${parsed.error}`;
               setStreamText(accumulated);
             } else if (parsed.usage) {
-              // Update subscription token usage in localStorage
-              updateTokenUsage(parsed.usage.totalTokens);
+              // Update token usage in-memory + sync to server
+              addTokenUsage(parsed.usage.totalTokens);
+              syncTokenUsageToServer(parsed.usage.totalTokens);
             } else if (parsed.status) {
               setToolStatus(parsed.status);
             } else if (parsed.t) {
@@ -309,13 +313,10 @@ export default function AIChatPanel() {
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') {
         // Brugeren stoppede streaming — gem hvad vi har
-        const current = streamText || '*(stoppet)*';
+        const current = streamText || a.stopped;
         setMessages((prev) => [...prev, { role: 'assistant', content: current }]);
       } else {
-        setMessages((prev) => [
-          ...prev,
-          { role: 'assistant', content: 'Der opstod en forbindelsesfejl. Prøv igen.' },
-        ]);
+        setMessages((prev) => [...prev, { role: 'assistant', content: a.connectionError }]);
       }
     } finally {
       setStreamText('');
@@ -324,7 +325,7 @@ export default function AIChatPanel() {
       abortRef.current = null;
       refreshTokenInfo();
     }
-  }, [input, isLoading, messages, buildContext, streamText, refreshTokenInfo]);
+  }, [input, isLoading, messages, buildContext, streamText, refreshTokenInfo, a]);
 
   return (
     <div
@@ -343,7 +344,7 @@ export default function AIChatPanel() {
             <div className="w-6 h-6 bg-blue-600/25 rounded-md flex items-center justify-center shrink-0">
               <Sparkles size={11} className="text-blue-400" />
             </div>
-            <span className="text-slate-300 text-sm font-medium">AI Bizzness Assistent</span>
+            <span className="text-slate-300 text-sm font-medium">{a.title}</span>
             {messages.length > 0 && !isOpen && (
               <span className="w-1.5 h-1.5 bg-blue-500 rounded-full shrink-0" />
             )}
@@ -355,49 +356,86 @@ export default function AIChatPanel() {
         </div>
 
         {/* ── Token status — mini bar under overskriften ── */}
-        {tokenInfo && (tokenInfo.limit > 0 || tokenInfo.limit === -1) && (
-          <div className="flex items-center gap-2 px-4 pb-2">
-            <span className="text-[10px] text-slate-600 whitespace-nowrap">Token status</span>
-            {tokenInfo.limit === -1 ? (
-              <>
-                <div className="flex-1 h-1 bg-slate-800 rounded-full overflow-hidden">
-                  <div className="h-full rounded-full bg-purple-500 w-full" />
-                </div>
-                <span className="text-[10px] font-medium text-purple-400 whitespace-nowrap">∞</span>
-              </>
-            ) : (
-              <>
-                <div className="flex-1 h-1 bg-slate-800 rounded-full overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all ${
-                      tokenInfo.used / tokenInfo.limit > 0.9
-                        ? 'bg-red-500'
-                        : tokenInfo.used / tokenInfo.limit > 0.7
-                          ? 'bg-amber-500'
-                          : 'bg-blue-500'
-                    }`}
-                    style={{ width: `${Math.min(100, (tokenInfo.used / tokenInfo.limit) * 100)}%` }}
-                  />
-                </div>
-                <span
-                  className={`text-[10px] font-medium whitespace-nowrap ${
-                    tokenInfo.used / tokenInfo.limit > 0.9
-                      ? 'text-red-400'
-                      : tokenInfo.used / tokenInfo.limit > 0.7
-                        ? 'text-amber-400'
-                        : 'text-slate-600'
-                  }`}
-                >
-                  {Math.min(100, Math.round((tokenInfo.used / tokenInfo.limit) * 100))}%
+        {tokenInfo &&
+          (tokenInfo.limit > 0 || tokenInfo.limit === -1) &&
+          (() => {
+            const isRed = tokenInfo.limit > 0 && tokenInfo.used / tokenInfo.limit > 0.9;
+            const Wrapper = isRed ? 'button' : 'div';
+            return (
+              <Wrapper
+                className={`flex items-center gap-2 px-4 pb-2 w-full ${isRed ? 'cursor-pointer hover:bg-white/3 rounded-lg transition-colors group' : ''}`}
+                {...(isRed
+                  ? {
+                      onClick: () => router.push('/dashboard/tokens'),
+                      title: lang === 'da' ? 'Køb flere tokens' : 'Buy more tokens',
+                    }
+                  : {})}
+              >
+                <span className="text-[10px] text-slate-600 whitespace-nowrap">
+                  {a.tokenStatus}
                 </span>
-              </>
-            )}
-          </div>
-        )}
+                {tokenInfo.limit === -1 ? (
+                  <>
+                    <div className="flex-1 h-1 bg-slate-800 rounded-full overflow-hidden">
+                      <div className="h-full rounded-full bg-purple-500 w-full" />
+                    </div>
+                    <span className="text-[10px] font-medium text-purple-400 whitespace-nowrap">
+                      ∞
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex-1 h-1 bg-slate-800 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all ${
+                          tokenInfo.used / tokenInfo.limit > 0.9
+                            ? 'bg-red-500'
+                            : tokenInfo.used / tokenInfo.limit > 0.7
+                              ? 'bg-amber-500'
+                              : 'bg-blue-500'
+                        }`}
+                        style={{
+                          width: `${Math.min(100, (tokenInfo.used / tokenInfo.limit) * 100)}%`,
+                        }}
+                      />
+                    </div>
+                    <span
+                      className={`text-[10px] font-medium whitespace-nowrap ${
+                        tokenInfo.used / tokenInfo.limit > 0.9
+                          ? 'text-red-400'
+                          : tokenInfo.used / tokenInfo.limit > 0.7
+                            ? 'text-amber-400'
+                            : 'text-slate-600'
+                      }`}
+                    >
+                      {Math.min(100, Math.round((tokenInfo.used / tokenInfo.limit) * 100))}%
+                    </span>
+                    {isRed && (
+                      <span className="text-[9px] text-red-400 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity">
+                        {lang === 'da' ? 'Køb mere →' : 'Buy more →'}
+                      </span>
+                    )}
+                  </>
+                )}
+              </Wrapper>
+            );
+          })()}
       </div>
 
       {/* ── Chat-indhold ─────────────────────────────────────────────────── */}
-      {isOpen && (
+      {isOpen && !subActive && (
+        <div className="flex-1 flex flex-col items-center justify-center text-center px-4 py-6">
+          <div className="w-10 h-10 bg-amber-500/10 rounded-xl flex items-center justify-center mb-3">
+            <Lock size={18} className="text-amber-400" />
+          </div>
+          <p className="text-slate-400 text-xs leading-relaxed max-w-[180px]">
+            {lang === 'da'
+              ? 'AI-assistenten kræver et aktivt abonnement.'
+              : 'The AI assistant requires an active subscription.'}
+          </p>
+        </div>
+      )}
+      {isOpen && subActive && (
         <>
           {/* Beskeder */}
           <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2.5 min-h-0">
@@ -407,7 +445,7 @@ export default function AIChatPanel() {
                   <Bot size={20} className="text-blue-400" />
                 </div>
                 <p className="text-slate-400 text-xs leading-relaxed max-w-[180px]">
-                  Spørg om den ejendom, virksomhed eller person du kigger på.
+                  {a.emptyPrompt}
                 </p>
               </div>
             ) : (
@@ -483,14 +521,14 @@ export default function AIChatPanel() {
                     sendMessage();
                   }
                 }}
-                placeholder="Stil et spørgsmål…"
+                placeholder={a.inputPlaceholder}
                 className="flex-1 bg-transparent text-slate-300 text-xs placeholder-slate-600 focus:outline-none"
               />
               {isLoading ? (
                 <button
                   onClick={stopStreaming}
                   className="text-red-400 hover:text-red-300 transition-colors shrink-0"
-                  aria-label="Stop streaming"
+                  aria-label={a.stopLabel}
                 >
                   <Square size={13} />
                 </button>
@@ -499,7 +537,7 @@ export default function AIChatPanel() {
                   onClick={sendMessage}
                   disabled={!input.trim()}
                   className="text-blue-400 hover:text-blue-300 disabled:text-slate-600 transition-colors shrink-0"
-                  aria-label="Send besked"
+                  aria-label={a.sendLabel}
                 >
                   <Send size={13} />
                 </button>

@@ -17,9 +17,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 
-/** Admin email — must match the one in subscriptions.ts */
-const ADMIN_EMAIL = 'jjrchefen@hotmail.com';
-
 /** Shape returned per user — includes subscription from app_metadata */
 interface AdminUserRow {
   id: string;
@@ -28,6 +25,7 @@ interface AdminUserRow {
   createdAt: string;
   lastSignIn: string | null;
   emailConfirmed: boolean;
+  isAdmin: boolean;
   subscription: {
     planId: string;
     status: string;
@@ -36,6 +34,7 @@ interface AdminUserRow {
     tokensUsedThisMonth: number;
     periodStart: string;
     bonusTokens: number;
+    isPaid?: boolean;
   } | null;
 }
 
@@ -48,8 +47,11 @@ async function verifyAdmin() {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user?.email || user.email !== ADMIN_EMAIL) return null;
-  return user;
+  if (!user) return null;
+  const admin = createAdminClient();
+  const { data: freshUser } = await admin.auth.admin.getUserById(user.id);
+  if (freshUser?.user?.app_metadata?.isAdmin) return user;
+  return null;
 }
 
 /**
@@ -83,6 +85,7 @@ export async function GET(): Promise<NextResponse> {
         createdAt: u.created_at,
         lastSignIn: u.last_sign_in_at ?? null,
         emailConfirmed: !!u.email_confirmed_at,
+        isAdmin: !!u.app_metadata?.isAdmin,
         subscription: sub
           ? {
               planId: sub.planId ?? 'demo',
@@ -92,6 +95,7 @@ export async function GET(): Promise<NextResponse> {
               tokensUsedThisMonth: sub.tokensUsedThisMonth ?? 0,
               periodStart: sub.periodStart ?? u.created_at,
               bonusTokens: sub.bonusTokens ?? 0,
+              isPaid: sub.isPaid ?? false,
             }
           : null,
       };
@@ -177,11 +181,6 @@ export async function DELETE(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Email required' }, { status: 400 });
     }
 
-    // Prevent deleting admin
-    if (email === ADMIN_EMAIL) {
-      return NextResponse.json({ error: 'Cannot delete admin user' }, { status: 400 });
-    }
-
     // Find user by email
     const admin = createAdminClient();
     const { data: listData } = await admin.auth.admin.listUsers({ perPage: 1000 });
@@ -189,6 +188,11 @@ export async function DELETE(req: NextRequest): Promise<NextResponse> {
 
     if (!targetUser) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    }
+
+    // Prevent deleting admin users
+    if (targetUser.app_metadata?.isAdmin) {
+      return NextResponse.json({ error: 'Cannot delete admin user' }, { status: 400 });
     }
 
     // Step 1: Invalidate all sessions by temporarily banning the user

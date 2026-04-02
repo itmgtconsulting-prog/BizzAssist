@@ -12,7 +12,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 
-const NOTIFY_EMAIL = 'support@pecuniait.com';
+const NOTIFY_EMAIL = process.env.SUPPORT_NOTIFICATION_EMAIL || 'support@pecuniait.com';
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 
 /**

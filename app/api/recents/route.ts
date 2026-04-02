@@ -20,6 +20,7 @@ const MAX_RECENTS: Record<string, number> = {
   property: 6,
   company: 8,
   person: 6,
+  search: 10,
 };
 
 /**

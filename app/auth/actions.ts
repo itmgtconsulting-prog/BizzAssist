@@ -52,6 +52,7 @@ export async function signIn(
   const { error } = await supabase.auth.signInWithPassword({ email, password });
 
   if (error) {
+    console.error('[signIn] Supabase auth error:', error.message, '| status:', error.status);
     // Do not expose internal error details — map to user-safe messages
     if (error.message.toLowerCase().includes('invalid')) {
       return { error: 'invalid_credentials' };
@@ -88,28 +89,33 @@ export async function signIn(
         JSON.stringify(freshUser?.user?.app_metadata)
       );
 
-      const sub = freshUser?.user?.app_metadata?.subscription as
-        | { status?: string; planId?: string }
-        | undefined;
+      const appMeta = freshUser?.user?.app_metadata ?? {};
+      const role = appMeta.role as string | undefined;
+      const sub = appMeta.subscription as { status?: string; planId?: string } | undefined;
 
-      console.log('[signIn] subscription:', JSON.stringify(sub));
+      console.log('[signIn] role:', role, 'subscription:', JSON.stringify(sub));
 
-      if (!sub || !sub.planId) {
-        console.log('[signIn] → BLOCKED: no_subscription');
-        await supabase.auth.signOut();
-        redirect('/login?error=no_subscription');
+      // Admin users bypass subscription checks entirely
+      if (role === 'admin') {
+        console.log('[signIn] → ALLOWED: admin role bypass');
+      } else {
+        if (!sub || !sub.planId) {
+          console.log('[signIn] → BLOCKED: no_subscription');
+          await supabase.auth.signOut();
+          return { error: 'no_subscription' };
+        }
+        if (sub.status === 'pending') {
+          console.log('[signIn] → BLOCKED: subscription_pending');
+          await supabase.auth.signOut();
+          return { error: 'subscription_pending' };
+        }
+        if (sub.status === 'cancelled') {
+          console.log('[signIn] → BLOCKED: subscription_cancelled');
+          await supabase.auth.signOut();
+          return { error: 'subscription_cancelled' };
+        }
+        console.log('[signIn] → ALLOWED: subscription active');
       }
-      if (sub.status === 'pending') {
-        console.log('[signIn] → BLOCKED: subscription_pending');
-        await supabase.auth.signOut();
-        redirect('/login?error=subscription_pending');
-      }
-      if (sub.status === 'cancelled') {
-        console.log('[signIn] → BLOCKED: subscription_cancelled');
-        await supabase.auth.signOut();
-        redirect('/login?error=subscription_cancelled');
-      }
-      console.log('[signIn] → ALLOWED: subscription active');
     } catch (err) {
       // If admin client fails, let user through — dashboard will re-check
       console.error('[signIn] Subscription check error:', err);
@@ -180,7 +186,28 @@ export async function signUp(
 
   // Set subscription in app_metadata via admin client (so it's in the database)
   const now = new Date().toISOString();
-  const requiresApproval = planId === 'demo';
+
+  // Check if plan requires approval from DB config, fallback to hardcoded check
+  let requiresApproval = planId === 'demo';
+  if (signupData?.user?.id) {
+    try {
+      const admin = createAdminClient();
+
+      // Look up plan config from DB
+      const { data: planRow } = (await admin
+        .from('plan_configs')
+        .select('requires_approval')
+        .eq('plan_id', planId)
+        .limit(1)
+        .single()) as { data: { requires_approval: boolean } | null; error: unknown };
+      if (planRow) {
+        requiresApproval = planRow.requires_approval;
+      }
+    } catch {
+      // Fallback to hardcoded check
+    }
+  }
+
   const status = requiresApproval ? 'pending' : 'active';
 
   if (signupData?.user?.id) {

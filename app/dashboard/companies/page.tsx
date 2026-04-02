@@ -3,16 +3,18 @@
 /**
  * Virksomheder listeside — søg efter danske virksomheder via CVR-nummer eller navn.
  *
- * Bruger /api/cvr-public (cvrapi.dk) til opslag. Gemmer seneste søgninger
- * i localStorage og viser dem som genveje. Matcher det visuelle design
- * fra ejendomme-listesiden.
+ * Bruger /api/cvr-search til autocomplete-søgning i CVR ES.
+ * Gemmer seneste besøgte virksomheder i Supabase via /api/recents.
+ * Matcher interaktionsmønsteret fra ejendomme-listesiden (dropdown autocomplete).
  *
- * @see /api/cvr-public — server-side proxy til cvrapi.dk
+ * @see /api/cvr-search — server-side multi-result søgning i CVR ES
  * @see /dashboard/companies/[cvr] — virksomhedsdetaljeside
  */
 
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   Search,
   Building2,
@@ -23,15 +25,11 @@ import {
   Briefcase,
   CheckCircle,
   XCircle,
-  MapPin,
+  ArrowRight,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
-import type { CVRPublicData } from '@/app/api/cvr-public/route';
-
-// ─── Constants ──────────────────────────────────────────────────────────────
-
-const RECENT_KEY = 'ba-companies-recent';
-const MAX_RECENT = 8;
+import type { CVRSearchResult } from '@/app/api/cvr-search/route';
+import { getRecentCompanies, type RecentCompany } from '@/app/lib/recentCompanies';
 
 // ─── Translations ───────────────────────────────────────────────────────────
 
@@ -39,69 +37,47 @@ const t = {
   da: {
     title: 'Virksomheder',
     subtitle: 'Søg på CVR-nummer eller virksomhedsnavn',
-    placeholder: 'Indtast 8-cifret CVR-nummer eller virksomhedsnavn...',
+    placeholder: 'Indtast CVR-nummer eller virksomhedsnavn...',
     searching: 'Søger i CVR-registret...',
     noResults: 'Ingen virksomhed fundet for',
     invalidCvr: 'CVR-nummer skal være 8 cifre',
-    recentSearches: 'Seneste søgninger',
+    recentSearches: 'Seneste besøgte',
     clearHistory: 'Ryd historik',
-    emptyTitle: 'Ingen virksomheder søgt endnu',
+    emptyTitle: 'Ingen virksomheder besøgt endnu',
     emptyDesc:
       'Søg på et CVR-nummer eller virksomhedsnavn ovenfor — virksomheder du besøger vises her',
     active: 'Aktiv',
     inactive: 'Ophørt',
-    employees: 'ansatte',
-    infoBanner: 'Søg via CVR-nummer for præcise resultater',
-    infoBannerDesc:
-      'Indtast et 8-cifret CVR-nummer for at slå en virksomhed op direkte. Du kan også prøve et virksomhedsnavn — men CVR-opslag giver mest præcise data.',
     networkError: 'Netværksfejl — prøv igen',
-    exampleSearches: ['Novo Nordisk', 'Mærsk', 'Carlsberg', 'LEGO', 'Danske Bank'],
+    showingBest: 'Viser de bedste resultater',
   },
   en: {
     title: 'Companies',
     subtitle: 'Search by CVR number or company name',
-    placeholder: 'Enter 8-digit CVR number or company name...',
+    placeholder: 'Enter CVR number or company name...',
     searching: 'Searching CVR registry...',
     noResults: 'No company found for',
     invalidCvr: 'CVR number must be 8 digits',
-    recentSearches: 'Recent searches',
+    recentSearches: 'Recently visited',
     clearHistory: 'Clear history',
-    emptyTitle: 'No companies searched yet',
+    emptyTitle: 'No companies visited yet',
     emptyDesc:
       'Search for a CVR number or company name above — companies you visit will appear here',
     active: 'Active',
     inactive: 'Ceased',
-    employees: 'employees',
-    infoBanner: 'Search by CVR number for precise results',
-    infoBannerDesc:
-      'Enter an 8-digit CVR number to look up a company directly. You can also try a company name — but CVR lookup provides the most accurate data.',
     networkError: 'Network error — try again',
-    exampleSearches: ['Novo Nordisk', 'Mærsk', 'Carlsberg', 'LEGO', 'Danske Bank'],
+    showingBest: 'Showing best results',
   },
 } as const;
-
-// ─── Types ──────────────────────────────────────────────────────────────────
-
-/** Cached recent company entry stored in localStorage */
-interface RecentCompany {
-  cvr: number;
-  name: string;
-  industry: string | null;
-  address: string;
-  zipcode: string;
-  city: string;
-  active: boolean;
-  visitedAt: number;
-}
 
 // ─── Helper components ──────────────────────────────────────────────────────
 
 /**
  * Card for a single recently visited company.
- * Shows name, CVR, industry, address, and time since last visit.
  *
  * @param company - The cached company data
  * @param lang - Current language for translations
+ * @param now - Stable timestamp for relative time
  */
 function RecentCompanyCard({
   company,
@@ -175,66 +151,179 @@ function RecentCompanyCard({
 }
 
 /**
- * A single search result row for a CVR lookup result.
+ * Et enkelt CVR-resultat i dropdown.
  *
- * @param data - Company data from the API
- * @param lang - Current language
+ * @param data - Virksomhedsresultat fra /api/cvr-search
+ * @param aktiv - Om rækken er tastatur-markeret
+ * @param lang - Sprog
+ * @param onVælg - Callback ved valg
  */
-function CompanyResultRow({ data, lang }: { data: CVRPublicData; lang: 'da' | 'en' }) {
-  const isActive = !data.enddate;
-
+function DropdownResultItem({
+  data,
+  aktiv,
+  lang,
+  onVælg,
+}: {
+  data: CVRSearchResult;
+  aktiv?: boolean;
+  lang: 'da' | 'en';
+  onVælg: (r: CVRSearchResult) => void;
+}) {
   return (
-    <Link
-      href={`/dashboard/companies/${data.vat}`}
-      className="group flex items-center gap-4 px-5 py-4 bg-slate-800/40 border border-slate-700/40 hover:border-blue-500/40 rounded-2xl transition-all hover:bg-slate-800/60"
+    <button
+      type="button"
+      onClick={() => onVælg(data)}
+      className={`w-full flex items-center gap-3 px-4 py-3 transition-colors text-left group ${
+        aktiv ? 'bg-blue-600/20' : 'hover:bg-slate-700/50'
+      }`}
     >
-      <div className="p-2.5 rounded-xl text-blue-400 bg-blue-400/10 flex-shrink-0">
-        <Briefcase size={20} />
+      <div
+        className={`p-1.5 rounded-lg flex-shrink-0 transition-colors ${
+          aktiv ? 'bg-blue-600/30' : 'bg-slate-700 group-hover:bg-blue-600/20'
+        }`}
+      >
+        <Briefcase
+          size={13}
+          className={aktiv ? 'text-blue-400' : 'text-slate-400 group-hover:text-blue-400'}
+        />
       </div>
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 flex-wrap">
-          <p className="text-white font-semibold text-sm truncate">{data.name}</p>
+        <div className="flex items-center gap-2">
+          <p className="text-white text-sm font-medium truncate">{data.name}</p>
           <span
-            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium flex-shrink-0 ${
-              isActive ? 'bg-emerald-600/20 text-emerald-400' : 'bg-red-600/20 text-red-400'
+            className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-medium flex-shrink-0 ${
+              data.active ? 'bg-emerald-600/20 text-emerald-400' : 'bg-red-600/20 text-red-400'
             }`}
           >
-            {isActive ? (
-              <>
-                <CheckCircle size={10} />
-                {t[lang].active}
-              </>
-            ) : (
-              <>
-                <XCircle size={10} />
-                {t[lang].inactive}
-              </>
-            )}
+            {data.active ? t[lang].active : t[lang].inactive}
           </span>
-        </div>
-        <div className="flex items-center gap-3 mt-1 text-xs text-slate-400">
-          <span className="font-mono">CVR {data.vat}</span>
-          {data.industrydesc && (
-            <>
-              <span className="text-slate-600">|</span>
-              <span className="truncate">{data.industrydesc}</span>
-            </>
+          {data.companyType && (
+            <span className="text-[10px] text-slate-500 flex-shrink-0">{data.companyType}</span>
           )}
         </div>
-        {data.address && (
-          <div className="flex items-center gap-1 mt-1 text-xs text-slate-500">
-            <MapPin size={11} className="flex-shrink-0" />
-            <span className="truncate">
-              {data.address}, {data.zipcode} {data.city}
-            </span>
-          </div>
-        )}
+        <p className="text-slate-500 text-xs truncate">
+          CVR {data.cvr}
+          {data.industry ? ` · ${data.industry}` : ''}
+          {data.address ? ` · ${data.address}, ${data.zipcode} ${data.city}` : ''}
+        </p>
       </div>
-      <ChevronRight
-        size={18}
-        className="text-slate-600 group-hover:text-blue-400 transition-colors flex-shrink-0"
+      <ArrowRight
+        size={13}
+        className={aktiv ? 'text-blue-400' : 'text-slate-600 group-hover:text-blue-400'}
       />
-    </Link>
+    </button>
+  );
+}
+
+// ─── Dropdown Portal ────────────────────────────────────────────────────────
+
+interface DropdownPos {
+  top: number;
+  left: number;
+  width: number;
+}
+
+/**
+ * Portal-komponent til autocomplete-dropdown.
+ * Renderes i document.body for at undgå overflow:hidden klipning.
+ *
+ * @param inputRef - Ref til søgeinput — position beregnes herfra
+ * @param dropdownRef - Ref til dropdown-div — bruges til klik-udenfor detection
+ */
+function DropdownPortal({
+  inputRef,
+  dropdownRef,
+  query,
+  results,
+  searching,
+  searchDone,
+  error,
+  markeret,
+  onVælg,
+  lang,
+}: {
+  inputRef: React.RefObject<HTMLInputElement | null>;
+  dropdownRef: React.RefObject<HTMLDivElement | null>;
+  query: string;
+  results: CVRSearchResult[];
+  searching: boolean;
+  searchDone: boolean;
+  error: string | null;
+  markeret: number;
+  onVælg: (r: CVRSearchResult) => void;
+  lang: 'da' | 'en';
+}) {
+  const [pos, setPos] = useState<DropdownPos | null>(null);
+
+  useEffect(() => {
+    function opdater() {
+      if (!inputRef.current) return;
+      const r = inputRef.current.getBoundingClientRect();
+      if (r.width > 0) setPos({ top: r.bottom + 8, left: r.left, width: r.width });
+    }
+    opdater();
+    window.addEventListener('resize', opdater);
+    window.addEventListener('scroll', opdater, true);
+    return () => {
+      window.removeEventListener('resize', opdater);
+      window.removeEventListener('scroll', opdater, true);
+    };
+  }, [inputRef]);
+
+  if (!pos) return null;
+
+  const txt = t[lang];
+
+  return createPortal(
+    <div
+      ref={dropdownRef}
+      style={{
+        position: 'fixed',
+        top: pos.top,
+        left: pos.left,
+        width: pos.width,
+        zIndex: 9999,
+        maxHeight: '60vh',
+        overflowY: 'auto',
+      }}
+      className="bg-slate-800 border border-slate-700/60 rounded-2xl overflow-hidden shadow-2xl"
+    >
+      {/* Loading */}
+      {searching && (
+        <div className="flex items-center gap-3 px-4 py-3 text-slate-500 text-sm">
+          <Loader2 size={14} className="animate-spin" />
+          {txt.searching}
+        </div>
+      )}
+
+      {/* Results */}
+      {!searching && results.length > 0 && (
+        <>
+          {results.map((r, i) => (
+            <DropdownResultItem
+              key={r.cvr}
+              data={r}
+              aktiv={i === markeret}
+              lang={lang}
+              onVælg={onVælg}
+            />
+          ))}
+          {results.length >= 15 && (
+            <div className="px-4 py-2 border-t border-slate-700/40">
+              <p className="text-slate-600 text-xs text-center">{txt.showingBest}</p>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* No results */}
+      {!searching && searchDone && results.length === 0 && error && (
+        <div className="px-4 py-4 text-slate-500 text-sm text-center">
+          {txt.noResults} &ldquo;{query}&rdquo;
+        </div>
+      )}
+    </div>,
+    document.body
   );
 }
 
@@ -243,72 +332,63 @@ function CompanyResultRow({ data, lang }: { data: CVRPublicData; lang: 'da' | 'e
 /**
  * VirksomhederListeside — Companies search and list page.
  *
- * Provides a search bar for CVR number or company name lookup,
- * displays search results, and shows recently visited companies
- * from localStorage. Supports bilingual DA/EN.
+ * Autocomplete-dropdown søgning (som ejendomme) + seneste besøgte virksomheder.
+ * Understøtter tastatur-navigation (pil op/ned, enter, escape).
  */
 export default function VirksomhederListeside() {
   const { lang } = useLanguage();
   const txt = t[lang];
   const inputRef = useRef<HTMLInputElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
 
-  /** Stable timestamp for relative time display — avoids Date.now() during render */
+  /** Stable timestamp for relative time display */
   const now = useMemo(() => Date.now(), []);
 
   const [query, setQuery] = useState('');
-  const [result, setResult] = useState<CVRPublicData | null>(null);
+  const [results, setResults] = useState<CVRSearchResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchDone, setSearchDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [åben, setÅben] = useState(false);
+  const [markeret, setMarkeret] = useState(-1);
 
-  /** Recent companies loaded from localStorage */
-  const [recentCompanies, setRecentCompanies] = useState<RecentCompany[]>(() => {
-    if (typeof window === 'undefined') return [];
-    try {
-      const raw = localStorage.getItem(RECENT_KEY);
-      const parsed = raw ? (JSON.parse(raw) as RecentCompany[]) : [];
-      return Array.isArray(parsed) ? parsed.filter((c) => c?.cvr && c?.name) : [];
-    } catch {
-      return [];
-    }
-  });
+  /** Recent companies loaded from Supabase (in-memory cache) */
+  const [recentCompanies, setRecentCompanies] = useState<RecentCompany[]>(() =>
+    getRecentCompanies()
+  );
 
-  /**
-   * Save a company to the recent searches list in localStorage.
-   * Deduplicates by CVR and keeps only the most recent MAX_RECENT entries.
-   */
-  const saveRecent = useCallback((data: CVRPublicData) => {
-    setRecentCompanies((prev) => {
-      const entry: RecentCompany = {
-        cvr: data.vat,
-        name: data.name,
-        industry: data.industrydesc,
-        address: data.address,
-        zipcode: data.zipcode,
-        city: data.city,
-        active: !data.enddate,
-        visitedAt: Date.now(),
-      };
-      const filtered = prev.filter((c) => c.cvr !== data.vat);
-      const updated = [entry, ...filtered].slice(0, MAX_RECENT);
-      try {
-        localStorage.setItem(RECENT_KEY, JSON.stringify(updated));
-      } catch {
-        /* ignore quota errors */
+  /** Listen for cache updates from background fetch */
+  useEffect(() => {
+    const handler = () => setRecentCompanies(getRecentCompanies());
+    window.addEventListener('ba-recents-updated', handler);
+    return () => window.removeEventListener('ba-recents-updated', handler);
+  }, []);
+
+  /** Luk dropdown ved klik udenfor */
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(e.target as Node) &&
+        inputRef.current &&
+        !inputRef.current.contains(e.target as Node)
+      ) {
+        setÅben(false);
       }
-      return updated;
-    });
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
   /**
-   * Debounced search — supports both CVR number (8 digits) and company name.
-   * CVR: calls /api/cvr-public?vat=...
-   * Name: calls /api/search?q=... (unified search, filters company results)
+   * Debounced search — calls /api/cvr-search?q=...
+   * Virksomheder gemmes IKKE i historikken her — kun når detaljesiden åbnes.
    */
   useEffect(() => {
     setSearchDone(false);
     setError(null);
-    setResult(null);
+    setResults([]);
 
     const trimmed = query.trim();
     if (trimmed.length < 2) {
@@ -324,50 +404,27 @@ export default function VirksomhederListeside() {
       return;
     }
 
-    const isCvr = /^\d{8}$/.test(trimmed);
-
     const timer = setTimeout(async () => {
       setSearching(true);
       try {
-        if (isCvr) {
-          // Direct CVR lookup
-          const res = await fetch(`/api/cvr-public?vat=${encodeURIComponent(trimmed)}`);
-          const json = await res.json();
-          if (!res.ok || json.error) {
-            setError(json.error ?? txt.networkError);
-            setResult(null);
-          } else {
-            const data = json as CVRPublicData;
-            setResult(data);
-            setError(null);
-            saveRecent(data);
-          }
+        const res = await fetch(`/api/cvr-search?q=${encodeURIComponent(trimmed)}`);
+        if (!res.ok) {
+          setError(txt.networkError);
+          setResults([]);
         } else {
-          // Name search via unified search API (filter company results)
-          const res = await fetch(`/api/search?q=${encodeURIComponent(trimmed)}`);
-          const results = res.ok ? await res.json() : [];
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const company = results.find((r: any) => r.type === 'company');
-          if (company) {
-            // Fetch full company data from CVR
-            const cvrRes = await fetch(`/api/cvr-public?vat=${company.id}`);
-            const cvrJson = await cvrRes.json();
-            if (cvrRes.ok && !cvrJson.error) {
-              setResult(cvrJson as CVRPublicData);
-              setError(null);
-              saveRecent(cvrJson as CVRPublicData);
-            } else {
-              setError(`${txt.noResults} "${trimmed}"`);
-              setResult(null);
-            }
+          const json = await res.json();
+          const list = (json.results ?? []) as CVRSearchResult[];
+          if (list.length > 0) {
+            setResults(list);
+            setError(null);
           } else {
             setError(`${txt.noResults} "${trimmed}"`);
-            setResult(null);
+            setResults([]);
           }
         }
       } catch {
         setError(txt.networkError);
-        setResult(null);
+        setResults([]);
       } finally {
         setSearching(false);
         setSearchDone(true);
@@ -375,17 +432,25 @@ export default function VirksomhederListeside() {
     }, 400);
 
     return () => clearTimeout(timer);
-  }, [query, txt.invalidCvr, txt.networkError, txt.noResults, saveRecent]);
+  }, [query, txt.invalidCvr, txt.networkError, txt.noResults]);
 
-  /** Clear recent searches from localStorage and state */
+  /** Håndterer valg af virksomhed fra dropdown — navigerer til detaljeside */
+  function vælgVirksomhed(r: CVRSearchResult) {
+    setÅben(false);
+    setQuery('');
+    router.push(`/dashboard/companies/${r.cvr}`);
+  }
+
+  /** Clear recent companies from Supabase and state */
   function clearRecent() {
-    try {
-      localStorage.removeItem(RECENT_KEY);
-    } catch {
+    fetch('/api/recents?type=company', { method: 'DELETE' }).catch(() => {
       /* ignore */
-    }
+    });
     setRecentCompanies([]);
   }
+
+  const visDropdown =
+    åben && query.trim().length >= 2 && (results.length > 0 || searching || searchDone);
 
   return (
     <div className="flex-1 flex flex-col bg-[#0a1628]">
@@ -405,7 +470,27 @@ export default function VirksomhederListeside() {
               ref={inputRef}
               type="text"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setÅben(true);
+                setMarkeret(-1);
+              }}
+              onFocus={() => setÅben(true)}
+              onKeyDown={(e) => {
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault();
+                  setMarkeret((m) => Math.min(m + 1, results.length - 1));
+                } else if (e.key === 'ArrowUp') {
+                  e.preventDefault();
+                  setMarkeret((m) => Math.max(m - 1, -1));
+                } else if (e.key === 'Enter') {
+                  const valgt = markeret >= 0 ? results[markeret] : results[0];
+                  if (valgt) vælgVirksomhed(valgt);
+                } else if (e.key === 'Escape') {
+                  setÅben(false);
+                  setMarkeret(-1);
+                }
+              }}
               placeholder={txt.placeholder}
               className="w-full bg-slate-800/60 border border-slate-600/50 focus:border-blue-500/60 rounded-2xl pl-11 pr-12 py-4 text-white placeholder:text-slate-500 outline-none transition-all text-base shadow-lg"
             />
@@ -418,9 +503,10 @@ export default function VirksomhederListeside() {
                   type="button"
                   onClick={() => {
                     setQuery('');
-                    setResult(null);
+                    setResults([]);
                     setError(null);
                     setSearchDone(false);
+                    setÅben(false);
                     inputRef.current?.focus();
                   }}
                   className="text-slate-500 hover:text-slate-300 transition-colors"
@@ -430,37 +516,27 @@ export default function VirksomhederListeside() {
               ) : null}
             </div>
           </div>
+
+          {/* Dropdown via Portal */}
+          {visDropdown && typeof document !== 'undefined' && (
+            <DropdownPortal
+              inputRef={inputRef}
+              dropdownRef={dropdownRef}
+              query={query}
+              results={results}
+              searching={searching}
+              searchDone={searchDone}
+              error={error}
+              markeret={markeret}
+              onVælg={vælgVirksomhed}
+              lang={lang}
+            />
+          )}
         </div>
       </div>
 
       {/* ─── Content ─── */}
       <div className="flex-1 overflow-y-auto px-8 py-6">
-        {/* Search loading state */}
-        {searching && (
-          <div className="flex items-center gap-3 px-4 py-6 text-slate-400 text-sm">
-            <Loader2 size={16} className="animate-spin text-blue-400" />
-            {txt.searching}
-          </div>
-        )}
-
-        {/* Search result */}
-        {!searching && searchDone && result && (
-          <div className="mb-8 space-y-3">
-            <CompanyResultRow data={result} lang={lang} />
-          </div>
-        )}
-
-        {/* Search error */}
-        {!searching && searchDone && error && (
-          <div className="mb-8 px-5 py-4 bg-slate-800/40 border border-slate-700/40 rounded-2xl text-center">
-            <p className="text-slate-400 text-sm">
-              {error.includes('fundet') || error.includes('found')
-                ? `${txt.noResults} "${query}"`
-                : error}
-            </p>
-          </div>
-        )}
-
         {/* Recent companies */}
         {recentCompanies.length > 0 ? (
           <div>
@@ -484,26 +560,14 @@ export default function VirksomhederListeside() {
             </div>
           </div>
         ) : (
-          !searching &&
-          !searchDone && (
-            <div className="flex flex-col items-center justify-center py-16 text-center gap-3">
-              <div className="p-4 bg-slate-800/40 rounded-2xl">
-                <Building2 size={28} className="text-slate-600" />
-              </div>
-              <p className="text-slate-400 text-sm font-medium">{txt.emptyTitle}</p>
-              <p className="text-slate-600 text-xs max-w-xs leading-relaxed">{txt.emptyDesc}</p>
+          <div className="flex flex-col items-center justify-center py-16 text-center gap-3">
+            <div className="p-4 bg-slate-800/40 rounded-2xl">
+              <Building2 size={28} className="text-slate-600" />
             </div>
-          )
-        )}
-
-        {/* Info banner */}
-        <div className="mt-8 flex items-start gap-3 bg-blue-600/8 border border-blue-500/20 rounded-2xl px-5 py-4">
-          <Briefcase size={18} className="text-blue-400 flex-shrink-0 mt-0.5" />
-          <div>
-            <p className="text-blue-300 text-sm font-medium">{txt.infoBanner}</p>
-            <p className="text-slate-400 text-xs mt-0.5 leading-relaxed">{txt.infoBannerDesc}</p>
+            <p className="text-slate-400 text-sm font-medium">{txt.emptyTitle}</p>
+            <p className="text-slate-600 text-xs max-w-xs leading-relaxed">{txt.emptyDesc}</p>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

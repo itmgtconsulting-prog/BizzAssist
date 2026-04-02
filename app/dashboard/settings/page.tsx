@@ -11,7 +11,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
   Bell,
   BellOff,
@@ -32,6 +32,8 @@ import {
   EyeOff,
   Pencil,
   KeyRound,
+  ExternalLink,
+  AlertTriangle,
 } from 'lucide-react';
 import {
   hentTrackedEjendomme,
@@ -41,13 +43,13 @@ import {
 import { useLanguage } from '@/app/context/LanguageContext';
 import SecuritySettingsPage from './security/page';
 import {
-  getSubscription,
-  PLANS,
   PLAN_LIST,
+  resolvePlan,
   formatTokens,
-  ADMIN_EMAIL,
   type UserSubscription,
+  type PlanDef,
 } from '@/app/lib/subscriptions';
+import { useSubscription } from '@/app/context/SubscriptionContext';
 
 // ─── Profile Tab Component ──────────────────────────────────────────────────
 
@@ -347,12 +349,58 @@ type EntityFilter = 'all' | 'property' | 'company' | 'person';
  */
 export default function SettingsPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { lang } = useLanguage();
   const [tab, setTab] = useState<SettingsTab>('profil');
   const [filter, setFilter] = useState<EntityFilter>('all');
   const [tracked, setTracked] = useState<TrackedEjendom[]>([]);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  /** Subscription context — server-authoritative */
+  const { subscription: ctxSub, isAdmin: ctxIsAdmin } = useSubscription();
   const [subscription, setSubscription] = useState<UserSubscription | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  /** Seed local state from context on mount */
+  useEffect(() => {
+    if (ctxSub) setSubscription(ctxSub);
+    setIsAdmin(ctxIsAdmin);
+  }, [ctxSub, ctxIsAdmin]);
+
+  /** Stripe billing details (next payment, card, cancellation) */
+  const [billing, setBilling] = useState<{
+    nextPaymentDate: string | null;
+    cardLast4: string | null;
+    cardBrand: string | null;
+    cancelAtPeriodEnd: boolean;
+    cancelAt: string | null;
+    stripeStatus: string | null;
+  } | null>(null);
+
+  /** Plans fetched from API (only active plans) */
+  const [availablePlans, setAvailablePlans] = useState<PlanDef[]>(PLAN_LIST);
+
+  /** Stripe checkout / portal loading state */
+  const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
+  const [portalLoading, setPortalLoading] = useState(false);
+  const [stripeError, setStripeError] = useState<string | null>(null);
+
+  /** Cancel subscription state */
+  const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
+  const [cancelLoading, setCancelLoading] = useState(false);
+  const [cancelSuccess, setCancelSuccess] = useState<string | null>(null);
+
+  /** Payment result from URL params (after Stripe redirect) */
+  const paymentResult = searchParams.get('payment') as 'success' | 'cancelled' | null;
+
+  /** Open specific tab if ?tab= is present in URL */
+  const VALID_TABS: SettingsTab[] = ['profil', 'foelger', 'abonnement', 'sikkerhed'];
+  const tabParam = searchParams.get('tab') as SettingsTab | null;
+  useEffect(() => {
+    if (tabParam && VALID_TABS.includes(tabParam)) {
+      setTab(tabParam);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabParam]);
 
   /** Genindlæs data fra localStorage + Supabase */
   const refresh = useCallback(async () => {
@@ -381,8 +429,55 @@ export default function SettingsPage() {
       /* localStorage allerede sat */
     }
 
-    // Load subscription
-    setSubscription(getSubscription());
+    // Load subscription from server (context has initial value, refresh from API)
+    try {
+      const subRes = await fetch('/api/subscription');
+      if (subRes.ok) {
+        const subJson = await subRes.json();
+        if (subJson.subscription?.planId) {
+          const freshSub: UserSubscription = {
+            email: subJson.email ?? '',
+            planId: subJson.subscription.planId,
+            status: subJson.subscription.status ?? 'pending',
+            createdAt: subJson.subscription.createdAt ?? '',
+            approvedAt: subJson.subscription.approvedAt ?? null,
+            tokensUsedThisMonth: subJson.subscription.tokensUsedThisMonth ?? 0,
+            periodStart: subJson.subscription.periodStart ?? '',
+            bonusTokens: subJson.subscription.bonusTokens ?? 0,
+            isPaid: subJson.subscription.isPaid ?? false,
+            cancelAtPeriodEnd: subJson.subscription.cancelAtPeriodEnd ?? false,
+            cancelAt: subJson.subscription.cancelAt ?? null,
+          };
+          setSubscription(freshSub);
+        } else {
+          // API returned no subscription — clear local state
+          setSubscription(null);
+        }
+        // Set admin flag from API response
+        if (subJson.isAdmin) {
+          setIsAdmin(true);
+        } else {
+          setIsAdmin(false);
+        }
+        // Store billing details from Stripe
+        if (subJson.billing) {
+          setBilling(subJson.billing);
+        }
+      }
+    } catch {
+      /* fallback to localStorage */
+    }
+
+    // Fetch active plans from API
+    try {
+      const planRes = await fetch('/api/plans');
+      if (planRes.ok) {
+        const planData = await planRes.json();
+        setAvailablePlans(planData);
+      }
+    } catch {
+      /* fallback to hardcoded PLAN_LIST */
+    }
   }, []);
 
   useEffect(() => {
@@ -395,6 +490,137 @@ export default function SettingsPage() {
       window.removeEventListener('storage', handler);
     };
   }, [refresh]);
+
+  /** Auto-switch to subscription tab if returning from Stripe payment */
+  useEffect(() => {
+    if (paymentResult === 'success' || paymentResult === 'cancelled') {
+      setTab('abonnement');
+    }
+    // Verify payment session and refresh subscription data
+    if (paymentResult === 'success') {
+      const sessionId = searchParams.get('session_id');
+      const verify = async () => {
+        if (sessionId) {
+          try {
+            await fetch('/api/stripe/verify-session', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ sessionId }),
+            });
+          } catch {
+            /* webhook will handle it eventually */
+          }
+        }
+        // Refresh after verify (or after short delay if no session_id)
+        await refresh();
+      };
+      const timer = setTimeout(verify, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [paymentResult, searchParams, refresh]);
+
+  /**
+   * Initiate Stripe Checkout for a given plan.
+   * Calls /api/stripe/create-checkout and redirects to the Stripe-hosted page.
+   */
+  const handleCheckout = async (planId: string) => {
+    setCheckoutLoading(planId);
+    setStripeError(null);
+    try {
+      const res = await fetch('/api/stripe/create-checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ planId }),
+      });
+      const data = await res.json();
+      if (res.ok && data.url) {
+        window.location.href = data.url;
+      } else {
+        console.error('[checkout] Error:', data.error);
+        setStripeError(
+          data.error || (da ? 'Kunne ikke oprette betaling' : 'Could not create checkout')
+        );
+        setCheckoutLoading(null);
+      }
+    } catch (err) {
+      console.error('[checkout] Network error:', err);
+      setStripeError(da ? 'Netværksfejl — prøv igen' : 'Network error — please try again');
+      setCheckoutLoading(null);
+    }
+  };
+
+  /**
+   * Open the Stripe Customer Portal for billing management.
+   * Calls /api/stripe/portal and redirects to the portal page.
+   */
+  const handlePortal = async () => {
+    setPortalLoading(true);
+    setStripeError(null);
+    try {
+      const res = await fetch('/api/stripe/portal', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok && data.url) {
+        window.location.href = data.url;
+      } else {
+        console.error('[portal] Error:', data.error);
+        setStripeError(
+          data.error || (da ? 'Kunne ikke åbne betalingsportal' : 'Could not open billing portal')
+        );
+      }
+    } catch (err) {
+      console.error('[portal] Network error:', err);
+      setStripeError(da ? 'Netværksfejl — prøv igen' : 'Network error — please try again');
+    }
+    setPortalLoading(false);
+  };
+
+  /**
+   * Cancel the user's Stripe subscription at the end of the current billing period.
+   * Calls /api/stripe/cancel-subscription and refreshes subscription data.
+   */
+  const handleCancelSubscription = async () => {
+    setCancelLoading(true);
+    setStripeError(null);
+    try {
+      const res = await fetch('/api/stripe/cancel-subscription', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        const cancelDate = new Date(data.cancelAt).toLocaleDateString(
+          lang === 'da' ? 'da-DK' : 'en-GB',
+          { day: 'numeric', month: 'long', year: 'numeric' }
+        );
+        setCancelSuccess(cancelDate);
+        setCancelConfirmOpen(false);
+        await refresh();
+      } else if (
+        data.error?.includes('No Stripe customer') ||
+        data.error?.includes('No active subscription')
+      ) {
+        // No Stripe subscription (admin-assigned plan) — cancel via self-service endpoint
+        const cancelRes = await fetch('/api/subscription/cancel', { method: 'POST' });
+        const cancelData = await cancelRes.json();
+        if (cancelRes.ok && cancelData.ok) {
+          setCancelSuccess(da ? 'nu' : 'now');
+          setCancelConfirmOpen(false);
+          await refresh();
+        } else {
+          setStripeError(
+            cancelData.error ||
+              (da ? 'Kunne ikke opsige abonnement' : 'Could not cancel subscription')
+          );
+        }
+      } else {
+        console.error('[cancel] Error:', data.error);
+        setStripeError(
+          data.error || (da ? 'Kunne ikke opsige abonnement' : 'Could not cancel subscription')
+        );
+      }
+    } catch (err) {
+      console.error('[cancel] Network error:', err);
+      setStripeError(da ? 'Netværksfejl — prøv igen' : 'Network error — please try again');
+    }
+    setCancelLoading(false);
+  };
 
   /** Stop tracking */
   const handleUntrack = async (id: string) => {
@@ -435,42 +661,102 @@ export default function SettingsPage() {
     ).length,
   };
 
+  const da = lang === 'da';
   const t = {
-    titel: lang === 'da' ? 'Indstillinger' : 'Settings',
-    foelger: lang === 'da' ? 'Følger' : 'Tracked',
-    sikkerhed: lang === 'da' ? 'Sikkerhed' : 'Security',
-    alle: lang === 'da' ? 'Alle' : 'All',
-    ejendomme: lang === 'da' ? 'Ejendomme' : 'Properties',
-    virksomheder: lang === 'da' ? 'Virksomheder' : 'Companies',
-    ejere: lang === 'da' ? 'Ejere' : 'Owners',
-    ingenFulgte:
-      lang === 'da'
-        ? 'Du følger ingen ejendomme, virksomheder eller ejere endnu.'
-        : 'You are not tracking any properties, companies or owners yet.',
-    ingenFulgteHint:
-      lang === 'da'
-        ? 'Tryk "Følg" på en ejendoms- eller virksomhedsside for at modtage notifikationer om ændringer.'
-        : 'Click "Follow" on a property or company page to receive change notifications.',
-    stopFoelg: lang === 'da' ? 'Stop følg' : 'Unfollow',
-    ja: lang === 'da' ? 'Ja, fjern' : 'Yes, remove',
-    nej: lang === 'da' ? 'Annuller' : 'Cancel',
-    fulgtSiden: lang === 'da' ? 'Fulgt siden' : 'Tracked since',
-    overvaagetData:
-      lang === 'da'
-        ? 'Du får besked når følgende data ændres:'
-        : 'You will be notified when the following data changes:',
-    ingenIKategori:
-      lang === 'da' ? 'Ingen fulgte i denne kategori.' : 'Nothing tracked in this category.',
+    titel: da ? 'Indstillinger' : 'Settings',
+    back: da ? 'Tilbage' : 'Back',
+    profil: da ? 'Profil' : 'Profile',
+    foelger: da ? 'Følger' : 'Tracked',
+    abonnement: da ? 'Abonnement' : 'Subscription',
+    sikkerhed: da ? 'Sikkerhed' : 'Security',
+    alle: da ? 'Alle' : 'All',
+    ejendomme: da ? 'Ejendomme' : 'Properties',
+    virksomheder: da ? 'Virksomheder' : 'Companies',
+    ejere: da ? 'Ejere' : 'Owners',
+    ingenFulgte: da
+      ? 'Du følger ingen ejendomme, virksomheder eller ejere endnu.'
+      : 'You are not tracking any properties, companies or owners yet.',
+    ingenFulgteHint: da
+      ? 'Tryk "Følg" på en ejendoms- eller virksomhedsside for at modtage notifikationer om ændringer.'
+      : 'Click "Follow" on a property or company page to receive change notifications.',
+    stopFoelg: da ? 'Stop følg' : 'Unfollow',
+    ja: da ? 'Ja, fjern' : 'Yes, remove',
+    nej: da ? 'Annuller' : 'Cancel',
+    fulgtSiden: da ? 'Fulgt siden' : 'Tracked since',
+    overvaagetData: da
+      ? 'Du får besked når følgende data ændres:'
+      : 'You will be notified when the following data changes:',
+    ingenIKategori: da ? 'Ingen fulgte i denne kategori.' : 'Nothing tracked in this category.',
+    bbrDesc: da ? 'Areal, byggeår, status, anvendelse' : 'Area, build year, status, usage',
+    valuation: da ? 'Vurdering' : 'Valuation',
+    valuationDesc: da ? 'Ejendomsværdi, grundværdi' : 'Property value, land value',
+    ownership: da ? 'Ejerskab' : 'Ownership',
+    ownershipDesc: da ? 'Ejerskifte, nye ejere' : 'Ownership transfer, new owners',
+    manageUsers: da ? 'Administrer brugere' : 'Manage users',
+    yourSub: da ? 'Dit abonnement' : 'Your subscription',
+    statusActive: da ? 'Aktiv' : 'Active',
+    statusPending: da ? 'Afventer godkendelse' : 'Pending approval',
+    statusCancelled: da ? 'Annulleret' : 'Cancelled',
+    free: da ? 'Gratis' : 'Free',
+    notIncluded: da ? 'Ikke inkluderet' : 'Not included',
+    export: da ? 'Eksport' : 'Export',
+    aiUsage: da ? 'AI-forbrug denne måned' : 'AI usage this month',
+    pendingWarning: da
+      ? 'Dit abonnement afventer godkendelse af en administrator. Du har begrænset adgang indtil det er godkendt.'
+      : 'Your subscription is pending administrator approval. You have limited access until approved.',
+    memberSince: da ? 'Medlem siden' : 'Member since',
+    noSub: da ? 'Intet abonnement' : 'No subscription',
+    noSubHint: da
+      ? 'Du har endnu ikke valgt et abonnement. Kontakt en administrator for adgang.'
+      : 'You have not selected a subscription yet. Contact an administrator for access.',
+    availablePlans: da ? 'Tilgængelige planer' : 'Available plans',
+    current: da ? 'Nuværende' : 'Current',
+    unlimitedSearches: da ? 'Ubegrænsede søgninger' : 'Unlimited searches',
+    noAI: da ? 'Ingen AI' : 'No AI',
+    pdfExport: da ? 'PDF + CSV eksport' : 'PDF + CSV export',
+    requiresApproval: da ? 'Kræver admin-godkendelse' : 'Requires admin approval',
+    contactChange: da
+      ? 'Demo-planen er gratis og kræver ingen betaling.'
+      : 'The demo plan is free and requires no payment.',
+    upgrade: da ? 'Opgrader' : 'Upgrade',
+    downgrade: da ? 'Skift til denne' : 'Switch to this',
+    soldOut: da ? 'Udsolgt' : 'Sold out',
+    spotsLeft: da ? 'pladser tilbage' : 'spots left',
+    switchPlan: da ? 'Skift plan' : 'Switch plan',
+    manageBilling: da ? 'Administrer betaling' : 'Manage billing',
+    paymentSuccess: da
+      ? 'Betaling gennemført! Dit abonnement er nu aktivt.'
+      : 'Payment successful! Your subscription is now active.',
+    paymentCancelled: da
+      ? 'Betalingen blev annulleret. Du kan prøve igen.'
+      : 'Payment was cancelled. You can try again.',
+    paymentFailed: da
+      ? 'Der er et problem med din betaling. Opdater din betalingsmetode.'
+      : 'There is a problem with your payment. Please update your payment method.',
+    cancelSubscription: da ? 'Opsig abonnement' : 'Cancel subscription',
+    cancelConfirmTitle: da ? 'Opsig dit abonnement?' : 'Cancel your subscription?',
+    cancelConfirmBody: da
+      ? 'Dit abonnement vil forblive aktivt indtil slutningen af den nuvaerende faktureringsperiode. Herefter mister du adgang til betalte funktioner.'
+      : 'Your subscription will remain active until the end of the current billing period. After that, you will lose access to paid features.',
+    cancelConfirmButton: da ? 'Ja, opsig abonnement' : 'Yes, cancel subscription',
+    cancelKeep: da ? 'Behold abonnement' : 'Keep subscription',
+    cancelledAt: da
+      ? 'Dit abonnement er opsagt. Du har adgang indtil'
+      : 'Your subscription has been cancelled. You have access until',
+    nextPayment: da ? 'Næste betaling' : 'Next payment',
+    paymentMethod: da ? 'Betalingsmetode' : 'Payment method',
+    subscriptionDetails: da ? 'Abonnementsdetaljer' : 'Subscription details',
+    plan: da ? 'Plan' : 'Plan',
+    price: da ? 'Pris' : 'Price',
+    status: da ? 'Status' : 'Status',
+    approvedOn: da ? 'Godkendt' : 'Approved',
+    cancelPending: da ? 'Opsigelse afventer — adgang til' : 'Cancellation pending — access until',
   };
 
   const tabs: { key: SettingsTab; label: string; icon: React.ReactNode }[] = [
-    { key: 'profil', label: lang === 'da' ? 'Profil' : 'Profile', icon: <User size={14} /> },
+    { key: 'profil', label: t.profil, icon: <User size={14} /> },
     { key: 'foelger', label: t.foelger, icon: <Bell size={14} /> },
-    {
-      key: 'abonnement',
-      label: lang === 'da' ? 'Abonnement' : 'Subscription',
-      icon: <CreditCard size={14} />,
-    },
+    { key: 'abonnement', label: t.abonnement, icon: <CreditCard size={14} /> },
     { key: 'sikkerhed', label: t.sikkerhed, icon: <Shield size={14} /> },
   ];
 
@@ -534,7 +820,7 @@ export default function SettingsPage() {
             onClick={() => router.back()}
             className="flex items-center gap-2 text-slate-400 hover:text-white text-sm transition-colors"
           >
-            <ArrowLeft size={16} /> {lang === 'da' ? 'Tilbage' : 'Back'}
+            <ArrowLeft size={16} /> {t.back}
           </button>
         </div>
         <h1 className="text-white text-xl font-bold mb-3">{t.titel}</h1>
@@ -604,21 +890,15 @@ export default function SettingsPage() {
                     <Building2 size={14} className="text-blue-400 mt-0.5 flex-shrink-0" />
                     <div>
                       <p className="text-white text-xs font-medium">BBR</p>
-                      <p className="text-slate-400 text-[11px] leading-relaxed">
-                        {lang === 'da'
-                          ? 'Areal, byggeår, status, anvendelse'
-                          : 'Area, build year, status, usage'}
-                      </p>
+                      <p className="text-slate-400 text-[11px] leading-relaxed">{t.bbrDesc}</p>
                     </div>
                   </div>
                   <div className="flex items-start gap-2">
                     <span className="text-blue-400 mt-0.5 flex-shrink-0 text-[13px]">kr</span>
                     <div>
-                      <p className="text-white text-xs font-medium">
-                        {lang === 'da' ? 'Vurdering' : 'Valuation'}
-                      </p>
+                      <p className="text-white text-xs font-medium">{t.valuation}</p>
                       <p className="text-slate-400 text-[11px] leading-relaxed">
-                        {lang === 'da' ? 'Ejendomsværdi, grundværdi' : 'Property value, land value'}
+                        {t.valuationDesc}
                       </p>
                     </div>
                   </div>
@@ -627,11 +907,9 @@ export default function SettingsPage() {
                       <User size={13} />
                     </span>
                     <div>
-                      <p className="text-white text-xs font-medium">
-                        {lang === 'da' ? 'Ejerskab' : 'Ownership'}
-                      </p>
+                      <p className="text-white text-xs font-medium">{t.ownership}</p>
                       <p className="text-slate-400 text-[11px] leading-relaxed">
-                        {lang === 'da' ? 'Ejerskifte, nye ejere' : 'Ownership transfer, new owners'}
+                        {t.ownershipDesc}
                       </p>
                     </div>
                   </div>
@@ -729,14 +1007,28 @@ export default function SettingsPage() {
         {/* ═══ Abonnement tab ═══ */}
         {tab === 'abonnement' && (
           <div className="space-y-6">
+            {/* Payment result banner */}
+            {paymentResult === 'success' && (
+              <div className="flex items-center gap-3 p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-xl">
+                <CheckCircle size={18} className="text-emerald-400 shrink-0" />
+                <p className="text-emerald-300 text-sm">{t.paymentSuccess}</p>
+              </div>
+            )}
+            {paymentResult === 'cancelled' && (
+              <div className="flex items-center gap-3 p-4 bg-amber-500/10 border border-amber-500/20 rounded-xl">
+                <AlertTriangle size={18} className="text-amber-400 shrink-0" />
+                <p className="text-amber-300 text-sm">{t.paymentCancelled}</p>
+              </div>
+            )}
+
             {/* Admin link (only for admin user) */}
-            {subscription?.email === ADMIN_EMAIL && (
+            {isAdmin && (
               <button
                 onClick={() => router.push('/dashboard/admin/users')}
                 className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 rounded-xl text-blue-400 text-sm font-medium transition-colors"
               >
                 <Shield size={16} />
-                {lang === 'da' ? 'Administrer brugere' : 'Manage users'}
+                {t.manageUsers}
               </button>
             )}
 
@@ -744,9 +1036,7 @@ export default function SettingsPage() {
             {subscription ? (
               <div className="bg-white/5 border border-white/8 rounded-2xl p-6">
                 <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-white font-semibold text-sm">
-                    {lang === 'da' ? 'Dit abonnement' : 'Your subscription'}
-                  </h3>
+                  <h3 className="text-white font-semibold text-sm">{t.yourSub}</h3>
                   <span
                     className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${
                       subscription.status === 'active'
@@ -759,23 +1049,59 @@ export default function SettingsPage() {
                     {subscription.status === 'active' && <CheckCircle size={12} />}
                     {subscription.status === 'pending' && <Clock size={12} />}
                     {subscription.status === 'active'
-                      ? lang === 'da'
-                        ? 'Aktiv'
-                        : 'Active'
+                      ? t.statusActive
                       : subscription.status === 'pending'
-                        ? lang === 'da'
-                          ? 'Afventer godkendelse'
-                          : 'Pending approval'
-                        : lang === 'da'
-                          ? 'Annulleret'
-                          : 'Cancelled'}
+                        ? t.statusPending
+                        : t.statusCancelled}
                   </span>
                 </div>
 
                 {(() => {
-                  const plan = PLANS[subscription.planId];
+                  const plan = resolvePlan(subscription.planId);
+                  const needsPayment = plan.priceDkk > 0 && !subscription.isPaid;
                   return (
                     <div className="space-y-4">
+                      {/* Payment required banner — shown when plan costs money but user hasn't paid */}
+                      {needsPayment && (
+                        <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 space-y-3">
+                          <div className="flex items-start gap-3">
+                            <AlertTriangle size={20} className="text-amber-400 shrink-0 mt-0.5" />
+                            <div>
+                              <p className="text-amber-300 font-semibold text-sm">
+                                {da ? 'Betaling påkrævet' : 'Payment required'}
+                              </p>
+                              <p className="text-amber-300/70 text-xs mt-1">
+                                {da
+                                  ? 'Dit abonnement er aktivt, men der mangler betaling. Gennemfør betalingen for at få fuld adgang til søgning, AI og alle funktioner.'
+                                  : 'Your subscription is active but payment is pending. Complete payment to unlock search, AI, and all features.'}
+                              </p>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => handleCheckout(subscription.planId)}
+                            disabled={checkoutLoading === subscription.planId}
+                            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-black text-sm font-bold rounded-xl transition-colors"
+                          >
+                            {checkoutLoading === subscription.planId ? (
+                              <Loader2 size={16} className="animate-spin" />
+                            ) : (
+                              <CreditCard size={16} />
+                            )}
+                            {da
+                              ? `Betal nu — ${plan.priceDkk} kr/md`
+                              : `Pay now — ${plan.priceDkk} kr/month`}
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Stripe error banner */}
+                      {stripeError && (
+                        <div className="flex items-center gap-3 p-4 bg-red-500/10 border border-red-500/20 rounded-xl">
+                          <AlertTriangle size={18} className="text-red-400 shrink-0" />
+                          <p className="text-red-300 text-sm">{stripeError}</p>
+                        </div>
+                      )}
+
                       <div className="flex items-center gap-3">
                         <div
                           className={`w-10 h-10 rounded-xl flex items-center justify-center ${
@@ -800,55 +1126,137 @@ export default function SettingsPage() {
                         </div>
                         <div>
                           <p className="text-white font-semibold">
-                            {lang === 'da' ? plan.nameDa : plan.nameEn}
+                            {da ? plan.nameDa : plan.nameEn}
                           </p>
                           <p className="text-slate-400 text-xs">
-                            {plan.priceDkk === 0
-                              ? lang === 'da'
-                                ? 'Gratis'
-                                : 'Free'
-                              : `${plan.priceDkk} kr/md`}
+                            {plan.priceDkk === 0 ? t.free : `${plan.priceDkk} kr/md`}
                           </p>
                         </div>
                       </div>
 
-                      {/* Features */}
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="bg-slate-800/40 rounded-xl p-3">
-                          <p className="text-slate-500 text-[10px] uppercase tracking-wider mb-1">
-                            AI
-                          </p>
-                          <p className="text-white text-sm font-semibold">
-                            {plan.aiEnabled
-                              ? `${formatTokens(plan.aiTokensPerMonth)} tokens/md`
-                              : lang === 'da'
-                                ? 'Ikke inkluderet'
-                                : 'Not included'}
-                          </p>
-                        </div>
-                        <div className="bg-slate-800/40 rounded-xl p-3">
-                          <p className="text-slate-500 text-[10px] uppercase tracking-wider mb-1">
-                            {lang === 'da' ? 'Eksport' : 'Export'}
-                          </p>
-                          <p className="text-white text-sm font-semibold">
-                            {plan.exportEnabled
-                              ? lang === 'da'
-                                ? 'PDF + CSV'
-                                : 'PDF + CSV'
-                              : lang === 'da'
-                                ? 'Ikke inkluderet'
-                                : 'Not included'}
-                          </p>
+                      {/* ─── Subscription details grid ─── */}
+                      <div className="bg-slate-800/40 rounded-xl p-4 space-y-3">
+                        <p className="text-slate-500 text-[10px] uppercase tracking-wider font-semibold">
+                          {t.subscriptionDetails}
+                        </p>
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+                          {/* Price */}
+                          <div>
+                            <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                              {t.price}
+                            </p>
+                            <p className="text-white text-sm font-medium">
+                              {plan.priceDkk === 0 ? t.free : `${plan.priceDkk} kr/md`}
+                            </p>
+                          </div>
+
+                          {/* Status */}
+                          <div>
+                            <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                              {t.status}
+                            </p>
+                            <p
+                              className={`text-sm font-medium ${
+                                subscription.status === 'active'
+                                  ? 'text-emerald-400'
+                                  : subscription.status === 'pending'
+                                    ? 'text-amber-400'
+                                    : 'text-red-400'
+                              }`}
+                            >
+                              {subscription.status === 'active'
+                                ? t.statusActive
+                                : subscription.status === 'pending'
+                                  ? t.statusPending
+                                  : t.statusCancelled}
+                            </p>
+                          </div>
+
+                          {/* Next payment date */}
+                          {billing?.nextPaymentDate && !billing.cancelAtPeriodEnd && (
+                            <div>
+                              <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                                {t.nextPayment}
+                              </p>
+                              <p className="text-white text-sm font-medium">
+                                {new Date(billing.nextPaymentDate).toLocaleDateString(
+                                  da ? 'da-DK' : 'en-GB',
+                                  { day: 'numeric', month: 'long', year: 'numeric' }
+                                )}
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Payment method */}
+                          {billing?.cardLast4 && (
+                            <div>
+                              <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                                {t.paymentMethod}
+                              </p>
+                              <p className="text-white text-sm font-medium flex items-center gap-1.5">
+                                <CreditCard size={14} className="text-slate-400" />
+                                {(billing.cardBrand ?? 'card').charAt(0).toUpperCase() +
+                                  (billing.cardBrand ?? 'card').slice(1)}{' '}
+                                •••• {billing.cardLast4}
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Approved date */}
+                          {subscription.approvedAt && (
+                            <div>
+                              <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                                {t.approvedOn}
+                              </p>
+                              <p className="text-white text-sm font-medium">
+                                {new Date(subscription.approvedAt).toLocaleDateString(
+                                  da ? 'da-DK' : 'en-GB',
+                                  { day: 'numeric', month: 'long', year: 'numeric' }
+                                )}
+                              </p>
+                            </div>
+                          )}
+
+                          {/* AI */}
+                          <div>
+                            <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                              AI
+                            </p>
+                            <p className="text-white text-sm font-medium">
+                              {plan.aiEnabled
+                                ? plan.aiTokensPerMonth === -1
+                                  ? da
+                                    ? 'Ubegrænset'
+                                    : 'Unlimited'
+                                  : `${formatTokens(plan.aiTokensPerMonth)} tokens/md`
+                                : t.notIncluded}
+                            </p>
+                          </div>
                         </div>
                       </div>
+
+                      {/* Cancellation pending banner */}
+                      {(billing?.cancelAtPeriodEnd || subscription.cancelAtPeriodEnd) && (
+                        <div className="flex items-center gap-3 p-4 bg-amber-500/10 border border-amber-500/20 rounded-xl">
+                          <AlertTriangle size={18} className="text-amber-400 shrink-0" />
+                          <p className="text-amber-300 text-sm">
+                            {t.cancelPending}{' '}
+                            {new Date(
+                              billing?.nextPaymentDate ?? subscription.cancelAt ?? ''
+                            ).toLocaleDateString(da ? 'da-DK' : 'en-GB', {
+                              day: 'numeric',
+                              month: 'long',
+                              year: 'numeric',
+                            })}
+                          </p>
+                        </div>
+                      )}
 
                       {/* AI token usage (if AI enabled) */}
                       {plan.aiEnabled && plan.aiTokensPerMonth > 0 && (
                         <div className="bg-slate-800/40 rounded-xl p-4">
                           <div className="flex items-center justify-between mb-2">
-                            <p className="text-slate-400 text-xs font-medium">
-                              {lang === 'da' ? 'AI-forbrug denne måned' : 'AI usage this month'}
-                            </p>
+                            <p className="text-slate-400 text-xs font-medium">{t.aiUsage}</p>
                             <p className="text-white text-xs font-semibold">
                               {formatTokens(subscription.tokensUsedThisMonth)} /{' '}
                               {formatTokens(plan.aiTokensPerMonth)}
@@ -874,17 +1282,89 @@ export default function SettingsPage() {
                       {/* Pending warning */}
                       {subscription.status === 'pending' && (
                         <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl px-4 py-3">
+                          <p className="text-amber-300 text-sm">{t.pendingWarning}</p>
+                        </div>
+                      )}
+
+                      {/* Payment failed warning */}
+                      {subscription.status === ('payment_failed' as string) && (
+                        <div className="bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3">
+                          <p className="text-red-300 text-sm">{t.paymentFailed}</p>
+                        </div>
+                      )}
+
+                      {/* Manage billing button — only for users who have already paid via Stripe */}
+                      {subscription.planId !== 'demo' &&
+                        subscription.status === 'active' &&
+                        subscription.isPaid && (
+                          <button
+                            onClick={handlePortal}
+                            disabled={portalLoading}
+                            className="flex items-center justify-center gap-2 w-full px-4 py-2.5 bg-slate-700/60 hover:bg-slate-700 disabled:opacity-50 text-white text-sm font-medium rounded-xl border border-slate-600/40 transition-colors"
+                          >
+                            {portalLoading ? (
+                              <Loader2 size={14} className="animate-spin" />
+                            ) : (
+                              <ExternalLink size={14} />
+                            )}
+                            {t.manageBilling}
+                          </button>
+                        )}
+
+                      {/* Cancel subscription success banner */}
+                      {cancelSuccess && (
+                        <div className="flex items-center gap-3 p-4 bg-amber-500/10 border border-amber-500/20 rounded-xl">
+                          <AlertTriangle size={18} className="text-amber-400 shrink-0" />
                           <p className="text-amber-300 text-sm">
-                            {lang === 'da'
-                              ? 'Dit abonnement afventer godkendelse af en administrator. Du har begrænset adgang indtil det er godkendt.'
-                              : 'Your subscription is pending administrator approval. You have limited access until approved.'}
+                            {t.cancelledAt} {cancelSuccess}.
                           </p>
                         </div>
                       )}
 
+                      {/* Cancel subscription — only for paid active subscriptions */}
+                      {subscription.planId !== 'demo' &&
+                        subscription.status === 'active' &&
+                        subscription.isPaid && (
+                          <>
+                            {!cancelConfirmOpen ? (
+                              <button
+                                onClick={() => setCancelConfirmOpen(true)}
+                                className="text-red-400/60 hover:text-red-400 text-xs font-medium transition-colors mt-1"
+                              >
+                                {t.cancelSubscription}
+                              </button>
+                            ) : (
+                              <div className="bg-red-500/5 border border-red-500/20 rounded-xl p-4 space-y-3">
+                                <p className="text-white text-sm font-semibold">
+                                  {t.cancelConfirmTitle}
+                                </p>
+                                <p className="text-slate-400 text-xs">{t.cancelConfirmBody}</p>
+                                <div className="flex items-center gap-3">
+                                  <button
+                                    onClick={handleCancelSubscription}
+                                    disabled={cancelLoading}
+                                    className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white text-xs font-medium rounded-lg transition-colors"
+                                  >
+                                    {cancelLoading && (
+                                      <Loader2 size={12} className="animate-spin" />
+                                    )}
+                                    {t.cancelConfirmButton}
+                                  </button>
+                                  <button
+                                    onClick={() => setCancelConfirmOpen(false)}
+                                    className="px-4 py-2 bg-slate-700/60 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-lg transition-colors"
+                                  >
+                                    {t.cancelKeep}
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </>
+                        )}
+
                       {/* Member since */}
                       <p className="text-slate-600 text-xs">
-                        {lang === 'da' ? 'Medlem siden' : 'Member since'}{' '}
+                        {t.memberSince}{' '}
                         {new Date(subscription.createdAt).toLocaleDateString(
                           lang === 'da' ? 'da-DK' : 'en-GB',
                           {
@@ -901,54 +1381,63 @@ export default function SettingsPage() {
             ) : (
               <div className="text-center py-16">
                 <CreditCard size={32} className="mx-auto mb-3 text-slate-600" />
-                <p className="text-slate-400 text-sm mb-1">
-                  {lang === 'da' ? 'Intet abonnement' : 'No subscription'}
-                </p>
-                <p className="text-slate-500 text-xs max-w-sm mx-auto">
-                  {lang === 'da'
-                    ? 'Du har endnu ikke valgt et abonnement. Kontakt en administrator for adgang.'
-                    : 'You have not selected a subscription yet. Contact an administrator for access.'}
-                </p>
+                <p className="text-slate-400 text-sm mb-1">{t.noSub}</p>
+                <p className="text-slate-500 text-xs max-w-sm mx-auto">{t.noSubHint}</p>
               </div>
             )}
 
             {/* Available plans */}
             <div>
               <h3 className="text-slate-400 text-sm font-semibold uppercase tracking-wider mb-3">
-                {lang === 'da' ? 'Tilgængelige planer' : 'Available plans'}
+                {t.availablePlans}
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {PLAN_LIST.map((plan) => {
+                {availablePlans.map((plan) => {
                   const isActive =
                     subscription?.planId === plan.id && subscription?.status === 'active';
+                  const isSoldOut =
+                    plan.maxSales != null && (plan.salesCount ?? 0) >= plan.maxSales;
+                  const remaining =
+                    plan.maxSales != null ? plan.maxSales - (plan.salesCount ?? 0) : null;
+                  const showRemaining = remaining != null && remaining > 0 && remaining <= 10;
                   return (
                     <div
                       key={plan.id}
                       className={`bg-white/5 border rounded-2xl p-5 transition-all ${
                         isActive
                           ? 'border-blue-500/40 bg-blue-500/5'
-                          : 'border-white/8 hover:border-slate-600'
+                          : isSoldOut
+                            ? 'border-white/5 opacity-60'
+                            : 'border-white/8 hover:border-slate-600'
                       }`}
                     >
                       <div className="flex items-center justify-between mb-2">
                         <p className="text-white font-semibold text-sm">
-                          {lang === 'da' ? plan.nameDa : plan.nameEn}
+                          {da ? plan.nameDa : plan.nameEn}
                         </p>
-                        {isActive && (
-                          <span className="bg-blue-500/20 text-blue-400 border border-blue-500/30 px-2 py-0.5 rounded-full text-[10px] font-bold">
-                            {lang === 'da' ? 'Nuværende' : 'Current'}
-                          </span>
-                        )}
+                        <div className="flex items-center gap-2">
+                          {isSoldOut && !isActive && (
+                            <span className="bg-red-500/20 text-red-400 border border-red-500/30 px-2 py-0.5 rounded-full text-[10px] font-bold">
+                              {t.soldOut}
+                            </span>
+                          )}
+                          {showRemaining && !isActive && !isSoldOut && (
+                            <span className="bg-amber-500/20 text-amber-400 border border-amber-500/30 px-2 py-0.5 rounded-full text-[10px] font-bold">
+                              {remaining} {t.spotsLeft}
+                            </span>
+                          )}
+                          {isActive && (
+                            <span className="bg-blue-500/20 text-blue-400 border border-blue-500/30 px-2 py-0.5 rounded-full text-[10px] font-bold">
+                              {t.current}
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <p className="text-slate-400 text-xs mb-3">
-                        {lang === 'da' ? plan.descDa : plan.descEn}
+                        {da ? plan.descDa : plan.descEn}
                       </p>
                       <p className="text-white text-lg font-bold">
-                        {plan.priceDkk === 0
-                          ? lang === 'da'
-                            ? 'Gratis'
-                            : 'Free'
-                          : `${plan.priceDkk} kr`}
+                        {plan.priceDkk === 0 ? t.free : `${plan.priceDkk} kr`}
                         {plan.priceDkk > 0 && (
                           <span className="text-slate-500 text-xs font-normal">/md</span>
                         )}
@@ -956,7 +1445,7 @@ export default function SettingsPage() {
                       <ul className="mt-3 space-y-1.5">
                         <li className="flex items-center gap-2 text-xs text-slate-400">
                           <CheckCircle size={12} className="text-emerald-400 shrink-0" />
-                          {lang === 'da' ? 'Ubegrænsede søgninger' : 'Unlimited searches'}
+                          {t.unlimitedSearches}
                         </li>
                         <li
                           className={`flex items-center gap-2 text-xs ${plan.aiEnabled ? 'text-slate-400' : 'text-slate-600'}`}
@@ -968,32 +1457,58 @@ export default function SettingsPage() {
                           )}
                           {plan.aiEnabled
                             ? `AI — ${formatTokens(plan.aiTokensPerMonth)} tokens/md`
-                            : lang === 'da'
-                              ? 'Ingen AI'
-                              : 'No AI'}
+                            : t.noAI}
                         </li>
-                        {plan.exportEnabled && (
-                          <li className="flex items-center gap-2 text-xs text-slate-400">
-                            <CheckCircle size={12} className="text-emerald-400 shrink-0" />
-                            {lang === 'da' ? 'PDF + CSV eksport' : 'PDF + CSV export'}
-                          </li>
-                        )}
                         {plan.requiresApproval && (
                           <li className="flex items-center gap-2 text-xs text-amber-400">
                             <Clock size={12} className="shrink-0" />
-                            {lang === 'da' ? 'Kræver admin-godkendelse' : 'Requires admin approval'}
+                            {t.requiresApproval}
                           </li>
                         )}
                       </ul>
+
+                      {/* Switch plan button — show for non-current paid plans, or free plans without approval */}
+                      {!isActive &&
+                        !isSoldOut &&
+                        (plan.priceDkk > 0 || !plan.requiresApproval) &&
+                        (() => {
+                          const currentPlanPrice =
+                            availablePlans.find((p) => p.id === subscription?.planId)?.priceDkk ??
+                            0;
+                          const isUpgrade = plan.priceDkk > currentPlanPrice;
+                          return (
+                            <button
+                              onClick={() => handleCheckout(plan.id)}
+                              disabled={checkoutLoading === plan.id}
+                              className={`mt-4 flex items-center justify-center gap-2 w-full px-4 py-2.5 disabled:opacity-50 text-white text-sm font-medium rounded-xl transition-colors ${
+                                isUpgrade
+                                  ? 'bg-blue-600 hover:bg-blue-500'
+                                  : 'bg-slate-700 hover:bg-slate-600'
+                              }`}
+                            >
+                              {checkoutLoading === plan.id ? (
+                                <Loader2 size={14} className="animate-spin" />
+                              ) : (
+                                <Zap size={14} />
+                              )}
+                              {isUpgrade ? t.upgrade : t.downgrade}
+                            </button>
+                          );
+                        })()}
+                      {/* Sold out button (disabled) */}
+                      {!isActive && isSoldOut && (plan.priceDkk > 0 || !plan.requiresApproval) && (
+                        <button
+                          disabled
+                          className="mt-4 flex items-center justify-center gap-2 w-full px-4 py-2.5 bg-slate-800 text-slate-500 text-sm font-medium rounded-xl cursor-not-allowed"
+                        >
+                          {t.soldOut}
+                        </button>
+                      )}
                     </div>
                   );
                 })}
               </div>
-              <p className="text-slate-600 text-xs mt-4 text-center">
-                {lang === 'da'
-                  ? 'Kontakt os for at ændre dit abonnement eller købe ekstra AI-tokens.'
-                  : 'Contact us to change your subscription or purchase additional AI tokens.'}
-              </p>
+              <p className="text-slate-600 text-xs mt-4 text-center">{t.contactChange}</p>
             </div>
           </div>
         )}

@@ -43,6 +43,7 @@ import {
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { useRouter } from 'next/navigation';
 import { type DawaAutocompleteResult, type DawaAdresse } from '@/app/lib/dawa';
+import { useLanguage } from '@/app/context/LanguageContext';
 
 // ─── Konstanter ───────────────────────────────────────────────────────────────
 
@@ -567,10 +568,31 @@ function MapLegends({ visLag }: { visLag: LagSynlighed }) {
  */
 function KortInner() {
   const router = useRouter();
+  const { lang } = useLanguage();
+  const da = lang === 'da';
   const searchParams = useSearchParams();
   const mapRef = useRef<MapRef>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  /** Bilingual UI strings */
+  const mt = {
+    searchPlaceholder: da ? 'Søg adresse…' : 'Search address…',
+    roadAddNumber: da ? 'Vej — tilføj husnummer' : 'Road — add house number',
+    street: da ? 'Gade' : 'Street',
+    aerial: da ? 'Luftfoto' : 'Aerial',
+    layers: da ? 'Lag' : 'Layers',
+    mapLayers: da ? 'Kortlag' : 'Map layers',
+    fetching: da ? 'Henter…' : 'Loading…',
+    parcels: da ? 'Matrikler' : 'Parcels',
+    houseNumbers: da ? 'Husnumre' : 'House numbers',
+    houseNumbersShort: da ? 'Husnr.' : 'House no.',
+    fetchingAddress: da ? 'Henter adresse…' : 'Loading address…',
+    parcelNo: da ? 'Matrikelnr.' : 'Parcel no.',
+    cadastre: da ? 'Ejerlav' : 'Cadastre',
+    landArea: da ? 'Grundareal' : 'Land area',
+    propertyData: da ? 'Ejendomsdata' : 'Property data',
+  };
 
   const [kortStyle, setKortStyle] = useState<KortStyle>('dark');
 
@@ -1179,7 +1201,7 @@ function KortInner() {
               value={søgeTekst}
               onChange={(e) => handleSøgning(e.target.value)}
               onKeyDown={handleTastatur}
-              placeholder="Søg adresse…"
+              placeholder={mt.searchPlaceholder}
               className="flex-1 bg-transparent text-white placeholder-slate-500 text-sm outline-none"
             />
             {søgeTekst && (
@@ -1230,7 +1252,7 @@ function KortInner() {
                     <p className="text-sm font-medium truncate">{r.tekst}</p>
                     <p className="text-slate-500 text-xs">
                       {r.type === 'vejnavn'
-                        ? 'Vej — tilføj husnummer'
+                        ? mt.roadAddNumber
                         : `${r.adresse.postnr} ${r.adresse.postnrnavn}`}
                     </p>
                   </div>
@@ -1258,7 +1280,7 @@ function KortInner() {
             }`}
           >
             {s === 'dark' ? <MapIcon size={13} /> : <Satellite size={13} />}
-            {s === 'dark' ? 'Gade' : 'Luftfoto'}
+            {s === 'dark' ? mt.street : mt.aerial}
           </button>
         ))}
       </div>
@@ -1274,7 +1296,7 @@ function KortInner() {
           }`}
         >
           <Layers size={13} />
-          Lag
+          {mt.layers}
         </button>
       </div>
 
@@ -1285,7 +1307,7 @@ function KortInner() {
           className="absolute top-14 right-4 z-30 w-56 bg-[#0d1625]/98 border border-white/10 rounded-xl shadow-2xl backdrop-blur-sm overflow-hidden"
         >
           <div className="flex items-center justify-between px-3 py-2 border-b border-white/5">
-            <span className="text-white text-xs font-semibold">Kortlag</span>
+            <span className="text-white text-xs font-semibold">{mt.mapLayers}</span>
             <button
               onClick={() => setLagPanel(false)}
               className="text-slate-500 hover:text-slate-300 transition-colors p-0.5 rounded hover:bg-white/5"
@@ -1386,10 +1408,10 @@ function KortInner() {
           )}
           <span className={`text-xs ${matrikelAktiv ? 'text-slate-300' : 'text-slate-600'}`}>
             {henterMatrikel
-              ? 'Henter…'
+              ? mt.fetching
               : matrikelAktiv
-                ? 'Matrikler'
-                : `Matrikler zoom ${MIN_ZOOM_MATRIKEL}+`}
+                ? mt.parcels
+                : `${mt.parcels} zoom ${MIN_ZOOM_MATRIKEL}+`}
           </span>
         </div>
         <div
@@ -1403,7 +1425,11 @@ function KortInner() {
             <MapPin size={11} className={husnrAktiv ? 'text-emerald-400' : 'text-slate-600'} />
           )}
           <span className={`text-xs ${husnrAktiv ? 'text-slate-300' : 'text-slate-600'}`}>
-            {henterHusnr ? 'Henter…' : husnrAktiv ? 'Husnumre' : `Husnr. zoom ${MIN_ZOOM_HUSNR}+`}
+            {henterHusnr
+              ? mt.fetching
+              : husnrAktiv
+                ? mt.houseNumbers
+                : `${mt.houseNumbersShort} zoom ${MIN_ZOOM_HUSNR}+`}
           </span>
         </div>
       </div>
@@ -1418,7 +1444,7 @@ function KortInner() {
                 {henterAdresse ? (
                   <div className="flex items-center gap-2 text-slate-400 text-sm py-1">
                     <Loader2 size={13} className="animate-spin" />
-                    <span>Henter adresse…</span>
+                    <span>{mt.fetchingAddress}</span>
                   </div>
                 ) : (
                   <>
@@ -1450,19 +1476,21 @@ function KortInner() {
             <div className="px-5 pb-4 grid grid-cols-3 gap-4 border-t border-white/5 pt-3">
               <div>
                 <p className="text-slate-500 text-[10px] uppercase tracking-wider mb-1">
-                  Matrikelnr.
+                  {mt.parcelNo}
                 </p>
                 <p className="text-white text-sm font-semibold">{popup.matrikelnr}</p>
               </div>
               <div>
-                <p className="text-slate-500 text-[10px] uppercase tracking-wider mb-1">Ejerlav</p>
+                <p className="text-slate-500 text-[10px] uppercase tracking-wider mb-1">
+                  {mt.cadastre}
+                </p>
                 <p className="text-white text-sm font-semibold truncate">
                   {popup.titel.includes(',') ? popup.titel.split(',')[0].trim() : '—'}
                 </p>
               </div>
               <div>
                 <p className="text-slate-500 text-[10px] uppercase tracking-wider mb-1">
-                  Grundareal
+                  {mt.landArea}
                 </p>
                 <p className="text-white text-sm font-semibold">
                   {popup.grundareal != null
@@ -1479,7 +1507,7 @@ function KortInner() {
                 disabled={!popup.dawaId || henterAdresse}
                 className="w-full flex items-center justify-between bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-xl px-5 py-3 transition-colors group"
               >
-                <span>Ejendomsdata</span>
+                <span>{mt.propertyData}</span>
                 <ArrowRight
                   size={16}
                   className="group-hover:translate-x-0.5 transition-transform"

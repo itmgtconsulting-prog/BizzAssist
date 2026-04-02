@@ -3,7 +3,7 @@ import { Geist } from 'next/font/google';
 import './globals.css';
 import { LanguageProvider } from '@/app/context/LanguageContext';
 import ServiceWorkerRegistration from '@/app/components/ServiceWorkerRegistration';
-import FeedbackButton from '@/app/components/FeedbackButton';
+import SupportChatWidget from '@/app/components/SupportChatWidget';
 import HideNextDevIndicator from '@/app/components/HideNextDevIndicator';
 import CookieBanner from '@/app/components/CookieBanner';
 
@@ -46,7 +46,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <LanguageProvider>
           {children}
           <CookieBanner />
-          <FeedbackButton />
+          <SupportChatWidget />
           <HideNextDevIndicator />
           <ServiceWorkerRegistration />
         </LanguageProvider>

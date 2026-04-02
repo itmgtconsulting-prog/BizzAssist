@@ -13,7 +13,7 @@
  *   - Oprette nye brugere
  *   - Slette brugere
  *
- * Kun tilgængelig for admin-brugere (jjrchefen@hotmail.com).
+ * Kun tilgængelig for admin-brugere (app_metadata.isAdmin).
  * Alle data læses/skrives direkte til Supabase — ingen localStorage.
  *
  * @see app/api/admin/users/route.ts — user CRUD API
@@ -22,6 +22,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import {
   ArrowLeft,
   Users,
@@ -38,12 +39,16 @@ import {
   ChevronDown,
   Coins,
   Trash2,
+  BarChart3,
+  CreditCard,
+  Settings,
+  Search,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import {
   PLANS,
   PLAN_LIST,
-  ADMIN_EMAIL,
+  resolvePlan,
   formatTokens,
   type SubStatus,
   type PlanId,
@@ -59,6 +64,7 @@ interface AdminUser {
   createdAt: string;
   lastSignIn: string | null;
   emailConfirmed: boolean;
+  isAdmin: boolean;
   subscription: {
     planId: PlanId;
     status: SubStatus;
@@ -67,6 +73,7 @@ interface AdminUser {
     tokensUsedThisMonth: number;
     periodStart: string;
     bonusTokens: number;
+    isPaid?: boolean;
   } | null;
 }
 
@@ -164,14 +171,16 @@ function UserDetailPanel({
   da,
   onClose,
   onRefresh,
+  allPlans,
 }: {
   user: AdminUser;
   da: boolean;
   onClose: () => void;
   onRefresh: () => void;
+  allPlans: typeof PLAN_LIST;
 }) {
   const sub = user.subscription;
-  const plan = sub ? PLANS[sub.planId] : PLANS.demo;
+  const plan = sub ? resolvePlan(sub.planId) : PLANS.demo;
   const isUnlimited = plan.aiTokensPerMonth === -1;
   const totalTokens = isUnlimited ? -1 : plan.aiTokensPerMonth + (sub?.bonusTokens ?? 0);
   const usagePercent = isUnlimited
@@ -193,9 +202,13 @@ function UserDetailPanel({
     setActionLoading(false);
   };
 
-  /** Handle plan change */
-  const handlePlanChange = (planId: PlanId) => {
-    doAction('changePlan', { planId });
+  /** Handle plan change — 'none' removes the subscription entirely */
+  const handlePlanChange = (planId: string) => {
+    if (planId === 'none') {
+      doAction('removePlan', {});
+    } else {
+      doAction('changePlan', { planId });
+    }
     setShowPlanPicker(false);
   };
 
@@ -223,6 +236,12 @@ function UserDetailPanel({
   /** Handle resetting token usage */
   const handleResetUsage = () => doAction('resetTokens');
 
+  /** Toggle payment status */
+  const handleTogglePaid = () => doAction('markPaid', { isPaid: !sub?.isPaid });
+
+  /** Toggle admin role */
+  const handleToggleAdmin = () => doAction('toggleAdmin', { isAdmin: !user.isAdmin });
+
   if (!sub) {
     return (
       <div className="fixed inset-0 z-50 flex justify-end">
@@ -237,10 +256,62 @@ function UserDetailPanel({
               <X size={18} />
             </button>
           </div>
-          <div className="px-6 py-5">
+          <div
+            className={`px-6 py-5 space-y-5 ${actionLoading ? 'opacity-60 pointer-events-none' : ''}`}
+          >
             <p className="text-slate-400 text-sm">
               {da ? 'Denne bruger har intet abonnement.' : 'This user has no subscription.'}
             </p>
+
+            {/* Assign plan */}
+            <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4 space-y-3">
+              <p className="text-white text-sm font-semibold">
+                {da ? 'Tildel plan' : 'Assign plan'}
+              </p>
+              <div className="space-y-1.5">
+                {allPlans.map((p) => (
+                  <button
+                    key={p.id}
+                    onClick={() => {
+                      doAction('set', {
+                        planId: p.id,
+                        status: 'active',
+                        approvedAt: new Date().toISOString(),
+                        isPaid: p.priceDkk === 0,
+                      });
+                    }}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left bg-slate-800/40 hover:bg-slate-800/80 border border-transparent transition-colors"
+                  >
+                    <PlanIcon planId={p.id} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-white text-xs font-medium">{da ? p.nameDa : p.nameEn}</p>
+                      <p className="text-slate-500 text-[10px]">
+                        {p.priceDkk === 0 ? (da ? 'Gratis' : 'Free') : `${p.priceDkk} kr/md`}
+                      </p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Admin toggle */}
+            <button
+              onClick={handleToggleAdmin}
+              className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-colors ${
+                user.isAdmin
+                  ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30 hover:bg-purple-500/30'
+                  : 'bg-slate-700/60 text-slate-300 border border-slate-600/40 hover:bg-slate-700'
+              }`}
+            >
+              <Shield size={14} />
+              {user.isAdmin
+                ? da
+                  ? 'Fjern admin-rolle'
+                  : 'Remove admin role'
+                : da
+                  ? 'Giv admin-rolle'
+                  : 'Grant admin role'}
+            </button>
           </div>
         </div>
       </div>
@@ -286,7 +357,7 @@ function UserDetailPanel({
                   })}
                 </p>
               </div>
-              {user.email === ADMIN_EMAIL && (
+              {user.isAdmin && (
                 <span className="bg-blue-500/20 text-blue-400 border border-blue-500/30 px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0">
                   Admin
                 </span>
@@ -295,7 +366,7 @@ function UserDetailPanel({
           </div>
 
           {/* ─── Status section ─── */}
-          <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-3">
+          <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4 space-y-3">
             <div className="flex items-center justify-between">
               <p className="text-slate-400 text-xs font-medium uppercase tracking-wider">Status</p>
               <StatusBadge status={sub.status as SubStatus} da={da} />
@@ -343,6 +414,40 @@ function UserDetailPanel({
               </button>
             )}
 
+            {/* Payment status toggle */}
+            <button
+              onClick={handleTogglePaid}
+              disabled={actionLoading}
+              className={`w-full flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg transition-colors ${
+                sub.isPaid
+                  ? 'bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-400 border border-emerald-500/30'
+                  : 'bg-amber-600/20 hover:bg-amber-600/40 text-amber-400 border border-amber-500/30'
+              }`}
+            >
+              <CreditCard size={13} />
+              {sub.isPaid
+                ? da
+                  ? 'Betalt ✓'
+                  : 'Paid ✓'
+                : da
+                  ? 'Markér som betalt'
+                  : 'Mark as paid'}
+            </button>
+
+            {/* Admin role toggle */}
+            <button
+              onClick={handleToggleAdmin}
+              disabled={actionLoading}
+              className={`w-full flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg transition-colors ${
+                user.isAdmin
+                  ? 'bg-purple-600/20 hover:bg-purple-600/40 text-purple-400 border border-purple-500/30'
+                  : 'bg-slate-600/20 hover:bg-slate-600/40 text-slate-400 border border-slate-500/30'
+              }`}
+            >
+              <Shield size={13} />
+              {user.isAdmin ? (da ? 'Admin ✓' : 'Admin ✓') : da ? 'Gør til admin' : 'Make admin'}
+            </button>
+
             {sub.approvedAt && (
               <p className="text-slate-600 text-[11px]">
                 {da ? 'Godkendt' : 'Approved'}{' '}
@@ -356,7 +461,7 @@ function UserDetailPanel({
           </div>
 
           {/* ─── Plan section ─── */}
-          <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-3">
+          <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4 space-y-3">
             <div className="flex items-center justify-between">
               <p className="text-slate-400 text-xs font-medium uppercase tracking-wider">
                 {da ? 'Abonnement' : 'Plan'}
@@ -399,7 +504,22 @@ function UserDetailPanel({
             {/* Plan picker dropdown */}
             {showPlanPicker && (
               <div className="space-y-1.5 pt-1">
-                {PLAN_LIST.map((p) => (
+                {/* Remove plan option */}
+                <button
+                  onClick={() => handlePlanChange('none')}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors bg-red-500/5 hover:bg-red-500/10 border border-red-500/20"
+                >
+                  <X size={14} className="text-red-400 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-red-300 text-xs font-medium">
+                      {da ? 'Fjern plan' : 'Remove plan'}
+                    </p>
+                    <p className="text-slate-500 text-[10px]">
+                      {da ? 'Fjerner brugerens abonnement' : "Removes the user's subscription"}
+                    </p>
+                  </div>
+                </button>
+                {allPlans.map((p) => (
                   <button
                     key={p.id}
                     onClick={() => handlePlanChange(p.id)}
@@ -429,7 +549,7 @@ function UserDetailPanel({
           </div>
 
           {/* ─── AI Tokens section ─── */}
-          <div className="bg-white/5 border border-white/8 rounded-xl p-4 space-y-3">
+          <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4 space-y-3">
             <div className="flex items-center justify-between">
               <p className="text-slate-400 text-xs font-medium uppercase tracking-wider">
                 AI Tokens
@@ -574,41 +694,8 @@ function UserDetailPanel({
             )}
           </div>
 
-          {/* ─── Features overview ─── */}
-          <div className="bg-white/5 border border-white/8 rounded-xl p-4">
-            <p className="text-slate-400 text-xs font-medium uppercase tracking-wider mb-3">
-              {da ? 'Funktioner' : 'Features'}
-            </p>
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-400">
-                  {da ? 'Ubegransede sogninger' : 'Unlimited searches'}
-                </span>
-                <CheckCircle size={13} className="text-emerald-400" />
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-400">AI</span>
-                {plan.aiEnabled ? (
-                  <CheckCircle size={13} className="text-emerald-400" />
-                ) : (
-                  <XCircle size={13} className="text-slate-600" />
-                )}
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-400">
-                  {da ? 'Eksport (PDF/CSV)' : 'Export (PDF/CSV)'}
-                </span>
-                {plan.exportEnabled ? (
-                  <CheckCircle size={13} className="text-emerald-400" />
-                ) : (
-                  <XCircle size={13} className="text-slate-600" />
-                )}
-              </div>
-            </div>
-          </div>
-
           {/* ─── Delete user (danger zone) ─── */}
-          {user.email !== ADMIN_EMAIL && (
+          {!user.isAdmin && (
             <div className="border border-red-500/20 rounded-xl p-4">
               <p className="text-red-400 text-xs font-medium uppercase tracking-wider mb-2">
                 {da ? 'Farezone' : 'Danger zone'}
@@ -671,12 +758,19 @@ export default function AdminUsersPage() {
   const [createLoading, setCreateLoading] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
+  /** Search & filter state */
+  const [searchQuery, setSearchQuery] = useState('');
+  const [planFilter, setPlanFilter] = useState<string>('all');
+
+  /** All plans (hardcoded + DB custom plans) for plan pickers */
+  const [allPlans, setAllPlans] = useState(PLAN_LIST);
+
   /** Check admin access via API — no localStorage needed */
   useEffect(() => {
     fetch('/api/subscription')
       .then((res) => res.json())
       .then((data) => {
-        if (data?.email === ADMIN_EMAIL) {
+        if (data?.isAdmin) {
           setIsAdmin(true);
         } else {
           setIsAdmin(false);
@@ -687,6 +781,16 @@ export default function AdminUsersPage() {
         setIsAdmin(false);
         router.replace('/dashboard');
       });
+
+    // Fetch all plans (including custom DB plans)
+    fetch('/api/plans')
+      .then((res) => res.json())
+      .then((plans) => {
+        if (Array.isArray(plans) && plans.length > 0) {
+          setAllPlans(plans);
+        }
+      })
+      .catch(() => {});
   }, [router]);
 
   /** Load all users from Supabase via API */
@@ -724,11 +828,24 @@ export default function AdminUsersPage() {
   /** Selected user for the detail panel */
   const selectedUser = users.find((u) => u.email === selectedEmail) ?? null;
 
-  // Separate users by subscription state
-  const withSub = users.filter((u) => u.subscription);
+  // Apply search + plan filter
+  const q = searchQuery.toLowerCase().trim();
+  const filtered = users.filter((u) => {
+    // Search filter
+    if (q && !u.email.toLowerCase().includes(q) && !u.fullName?.toLowerCase().includes(q)) {
+      return false;
+    }
+    // Plan filter
+    if (planFilter === 'none') return !u.subscription;
+    if (planFilter !== 'all') return u.subscription?.planId === planFilter;
+    return true;
+  });
+
+  // Separate filtered users by subscription state
+  const withSub = filtered.filter((u) => u.subscription);
   const pending = withSub.filter((u) => u.subscription?.status === 'pending');
   const others = withSub.filter((u) => u.subscription?.status !== 'pending');
-  const noSub = users.filter((u) => !u.subscription);
+  const noSub = filtered.filter((u) => !u.subscription);
 
   /** Stats */
   const activeCount = withSub.filter((u) => u.subscription?.status === 'active').length;
@@ -740,7 +857,7 @@ export default function AdminUsersPage() {
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* ─── Header ─── */}
-      <div className="px-6 pt-5 pb-4 border-b border-slate-700/50 bg-slate-900/30">
+      <div className="sticky top-0 z-20 px-3 sm:px-6 pt-5 pb-0 border-b border-slate-700/50 bg-slate-900/30 backdrop-blur-sm">
         <div className="flex items-center gap-3 mb-3">
           <button
             onClick={() => router.back()}
@@ -749,7 +866,7 @@ export default function AdminUsersPage() {
             <ArrowLeft size={16} /> {da ? 'Tilbage' : 'Back'}
           </button>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 mb-1">
           <Users size={22} className="text-blue-400" />
           <div>
             <h1 className="text-white text-xl font-bold">
@@ -763,29 +880,81 @@ export default function AdminUsersPage() {
           </div>
         </div>
 
+        {/* Tab navigation */}
+        <div className="flex gap-1 -mb-px overflow-x-auto mt-4">
+          <span className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-blue-500 text-blue-300 font-medium cursor-default">
+            <Users size={14} /> {da ? 'Brugere' : 'Users'}
+          </span>
+          <Link
+            href="/dashboard/admin/billing"
+            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors"
+          >
+            <CreditCard size={14} /> {da ? 'Fakturering' : 'Billing'}
+          </Link>
+          <Link
+            href="/dashboard/admin/plans"
+            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors"
+          >
+            <Settings size={14} /> {da ? 'Planer' : 'Plans'}
+          </Link>
+          <Link
+            href="/dashboard/admin/analytics"
+            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors"
+          >
+            <BarChart3 size={14} /> {da ? 'Analyse' : 'Analytics'}
+          </Link>
+        </div>
+
+        {/* Search + plan filter */}
+        <div className="flex gap-3 mt-4 items-center">
+          <div className="relative flex-1 max-w-xs">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={da ? 'Søg navn eller email…' : 'Search name or email…'}
+              className="w-full bg-slate-800/60 border border-slate-700/50 rounded-lg pl-9 pr-3 py-2 text-white text-xs placeholder:text-slate-500 focus:border-blue-500 focus:outline-none"
+            />
+          </div>
+          <select
+            value={planFilter}
+            onChange={(e) => setPlanFilter(e.target.value)}
+            className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-3 py-2 text-white text-xs focus:border-blue-500 focus:outline-none"
+          >
+            <option value="all">{da ? 'Alle planer' : 'All plans'}</option>
+            <option value="none">{da ? 'Uden plan' : 'No plan'}</option>
+            {allPlans.map((p) => (
+              <option key={p.id} value={p.id}>
+                {da ? p.nameDa : p.nameEn}
+              </option>
+            ))}
+          </select>
+        </div>
+
         {/* Quick stats + add user button */}
         <div className="flex gap-3 mt-3">
-          <div className="bg-white/5 border border-white/8 rounded-lg px-3 py-2 flex-1">
-            <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+          <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl px-3 py-2.5 flex-1">
+            <p className="text-slate-500 text-xs uppercase tracking-wide">
               {da ? 'Aktive' : 'Active'}
             </p>
             <p className="text-emerald-400 text-sm font-bold">{activeCount}</p>
           </div>
-          <div className="bg-white/5 border border-white/8 rounded-lg px-3 py-2 flex-1">
-            <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+          <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl px-3 py-2.5 flex-1">
+            <p className="text-slate-500 text-xs uppercase tracking-wide">
               {da ? 'Afventer' : 'Pending'}
             </p>
             <p className="text-amber-400 text-sm font-bold">{pending.length}</p>
           </div>
-          <div className="bg-white/5 border border-white/8 rounded-lg px-3 py-2 flex-1">
-            <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+          <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl px-3 py-2.5 flex-1">
+            <p className="text-slate-500 text-xs uppercase tracking-wide">
               {da ? 'Tokens brugt' : 'Tokens used'}
             </p>
             <p className="text-blue-400 text-sm font-bold">{formatTokens(totalTokensUsed)}</p>
           </div>
           <button
             onClick={() => setShowAddUser(!showAddUser)}
-            className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium rounded-lg transition-colors shrink-0 self-center"
+            className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 border border-blue-500/60 text-white text-sm font-medium rounded-lg transition-colors shrink-0 self-center"
           >
             <Plus size={14} />
             {da ? 'Tilføj bruger' : 'Add user'}
@@ -794,7 +963,7 @@ export default function AdminUsersPage() {
 
         {/* Add user form — creates user in Supabase Auth + sets subscription */}
         {showAddUser && (
-          <div className="mt-3 bg-white/5 border border-white/8 rounded-xl p-4 space-y-3">
+          <div className="mt-3 bg-slate-800/40 border border-slate-700/40 rounded-xl p-4 space-y-3">
             <p className="text-white text-sm font-semibold">
               {da
                 ? 'Opret ny bruger (via admin — omgår rate-limits)'
@@ -840,7 +1009,7 @@ export default function AdminUsersPage() {
                   onChange={(e) => setNewPlan(e.target.value as PlanId)}
                   className="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-2 py-2 text-white text-xs focus:border-blue-500 focus:outline-none"
                 >
-                  {PLAN_LIST.map((p) => (
+                  {allPlans.map((p) => (
                     <option key={p.id} value={p.id}>
                       {da ? p.nameDa : p.nameEn}
                     </option>
@@ -955,12 +1124,12 @@ export default function AdminUsersPage() {
       </div>
 
       {/* ─── Content ─── */}
-      <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
+      <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-5 space-y-6">
         {/* Pending approvals section */}
         {pending.length > 0 && (
           <div>
-            <h2 className="text-amber-400 text-sm font-semibold uppercase tracking-wider mb-3 flex items-center gap-2">
-              <Clock size={14} />
+            <h2 className="text-white font-semibold text-base mb-4 flex items-center gap-2">
+              <Clock size={16} className="text-amber-400" />
               {da ? 'Afventer godkendelse' : 'Pending approval'}
               <span className="bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded-full text-[10px] font-bold">
                 {pending.length}
@@ -968,12 +1137,12 @@ export default function AdminUsersPage() {
             </h2>
             <div className="space-y-2">
               {pending.map((u) => {
-                const plan = PLANS[u.subscription!.planId as PlanId];
+                const plan = resolvePlan(u.subscription!.planId);
                 return (
                   <div
                     key={u.email}
                     onClick={() => setSelectedEmail(u.email)}
-                    className="bg-amber-500/5 border border-amber-500/20 rounded-xl px-5 py-4 flex items-center justify-between gap-4 cursor-pointer hover:bg-amber-500/10 transition-colors"
+                    className="bg-slate-800/40 border border-amber-500/30 rounded-xl px-5 py-4 flex items-center justify-between gap-4 cursor-pointer hover:bg-slate-800/60 transition-colors"
                   >
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-0.5">
@@ -1023,8 +1192,8 @@ export default function AdminUsersPage() {
 
         {/* All users section */}
         <div>
-          <h2 className="text-slate-400 text-sm font-semibold uppercase tracking-wider mb-3 flex items-center gap-2">
-            <Users size={14} />
+          <h2 className="text-white font-semibold text-base mb-4 flex items-center gap-2">
+            <Users size={16} className="text-blue-400" />
             {da ? 'Alle brugere' : 'All users'}
           </h2>
           {others.length === 0 && pending.length === 0 ? (
@@ -1038,7 +1207,7 @@ export default function AdminUsersPage() {
             <div className="space-y-2">
               {others.map((u) => {
                 const sub = u.subscription!;
-                const plan = PLANS[sub.planId as PlanId];
+                const plan = resolvePlan(sub.planId);
                 const isUnlim = plan.aiTokensPerMonth === -1;
                 const totalT = isUnlim ? -1 : plan.aiTokensPerMonth + (sub.bonusTokens ?? 0);
                 const usedPct = isUnlim
@@ -1050,17 +1219,22 @@ export default function AdminUsersPage() {
                   <div
                     key={u.email}
                     onClick={() => setSelectedEmail(u.email)}
-                    className="bg-white/5 border border-white/8 rounded-xl px-5 py-4 flex items-center justify-between gap-4 cursor-pointer hover:bg-white/8 transition-colors"
+                    className="bg-slate-800/40 border border-slate-700/40 rounded-xl px-5 py-4 flex items-center justify-between gap-4 cursor-pointer hover:bg-slate-800/60 transition-colors"
                   >
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <p className="text-white text-sm font-medium truncate">{u.email}</p>
-                        {u.email === ADMIN_EMAIL && (
-                          <span className="bg-blue-500/20 text-blue-400 border border-blue-500/30 px-1.5 py-0.5 rounded-full text-[10px] font-bold">
+                        {u.isAdmin && (
+                          <span className="bg-purple-500/20 text-purple-400 border border-purple-500/30 px-1.5 py-0.5 rounded-full text-[10px] font-bold">
                             Admin
                           </span>
                         )}
                         <StatusBadge status={sub.status as SubStatus} da={da} />
+                        {plan.priceDkk > 0 && !sub.isPaid && (
+                          <span className="bg-amber-500/20 text-amber-400 border border-amber-500/30 px-1.5 py-0.5 rounded-full text-[10px] font-bold">
+                            {da ? 'Ikke betalt' : 'Unpaid'}
+                          </span>
+                        )}
                       </div>
                       <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5">
                         <PlanIcon planId={sub.planId} />
@@ -1115,8 +1289,8 @@ export default function AdminUsersPage() {
         {/* Unsubscribed users from Supabase Auth */}
         {noSub.length > 0 && (
           <div>
-            <h2 className="text-red-400 text-sm font-semibold uppercase tracking-wider mb-3 flex items-center gap-2">
-              <AlertTriangle size={14} />
+            <h2 className="text-white font-semibold text-base mb-4 flex items-center gap-2">
+              <AlertTriangle size={16} className="text-red-400" />
               {da ? 'Uden abonnement' : 'No subscription'}
               <span className="bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded-full text-[10px] font-bold">
                 {noSub.length}
@@ -1126,7 +1300,8 @@ export default function AdminUsersPage() {
               {noSub.map((u) => (
                 <div
                   key={u.id}
-                  className="bg-red-500/5 border border-red-500/20 rounded-xl px-5 py-4 flex items-center justify-between gap-4"
+                  onClick={() => setSelectedEmail(u.email)}
+                  className="bg-slate-800/40 border border-red-500/30 rounded-xl px-5 py-4 flex items-center justify-between gap-4 cursor-pointer hover:bg-slate-800/60 transition-colors"
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-0.5">
@@ -1230,6 +1405,7 @@ export default function AdminUsersPage() {
           da={da}
           onClose={() => setSelectedEmail(null)}
           onRefresh={refresh}
+          allPlans={allPlans}
         />
       )}
     </div>

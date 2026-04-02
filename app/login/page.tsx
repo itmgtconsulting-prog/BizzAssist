@@ -72,10 +72,12 @@ function LoginForm() {
   /** Error from form submission or from URL query param (e.g. subscription_pending) */
   const [error, setError] = useState<string | null>(searchParams.get('error'));
 
-  /** Clear the error query param from URL so refreshing doesn't show stale errors */
+  /** Clear the error query param from URL after displaying it, so refreshing doesn't show stale errors */
   useEffect(() => {
     if (searchParams.get('error')) {
-      window.history.replaceState({}, '', '/login');
+      // Delay cleanup so the error message is visible first
+      const timer = setTimeout(() => window.history.replaceState({}, '', '/login'), 2000);
+      return () => clearTimeout(timer);
     }
   }, [searchParams]);
 

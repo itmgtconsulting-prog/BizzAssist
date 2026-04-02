@@ -168,6 +168,10 @@ export interface EjendomApiResponse {
   enheder: LiveBBREnhed[] | null;
   bygningPunkter: BBRBygningPunkt[] | null;
   ejendomsrelationer: BBREjendomsrelation[] | null;
+  /** BFE-nummer for ejerlejlighed (null hvis det ikke er en ejerlejlighed) */
+  ejerlejlighedBfe: number | null;
+  /** BFE-nummer for moderejendommen (null hvis det ikke er en ejerlejlighed) */
+  moderBfe: number | null;
   bbrFejl: string | null;
 }
 
@@ -343,6 +347,8 @@ async function fetchBBRGraphQL(
  */
 async function fetchBFENummer(dawaId: string): Promise<{
   bfeNummer: number | null;
+  ejerlejlighedBfe: number | null;
+  moderBfe: number | null;
   adgangsadresseId: string;
   ejerlavKode: number | null;
   matrikelnr: string | null;
@@ -351,6 +357,10 @@ async function fetchBFENummer(dawaId: string): Promise<{
     let ejerlavKode: number | undefined;
     let matrikelnr: string | undefined;
     let adgangsadresseId = dawaId;
+    let harEtage = false;
+    let adresseTekst: string | null = null;
+    let etage: string | null = null;
+    let doer: string | null = null;
 
     // Trin 1a: Forsøg direkte som adgangsadresse
     const adgRes = await fetch(`${DAWA_BASE}/adgangsadresser/${dawaId}`, {
@@ -371,46 +381,118 @@ async function fetchBFENummer(dawaId: string): Promise<{
         next: { revalidate: 3600 },
       });
       if (!adrRes.ok)
-        return { bfeNummer: null, adgangsadresseId: dawaId, ejerlavKode: null, matrikelnr: null };
+        return {
+          bfeNummer: null,
+          ejerlejlighedBfe: null,
+          moderBfe: null,
+          adgangsadresseId: dawaId,
+          ejerlavKode: null,
+          matrikelnr: null,
+        };
 
       const adr = (await adrRes.json()) as {
+        etage?: string;
+        dør?: string;
         adgangsadresse?: {
           id?: string;
           jordstykke?: { ejerlav?: { kode?: number }; matrikelnr?: string };
         };
+        adressebetegnelse?: string;
       };
       adgangsadresseId = adr?.adgangsadresse?.id ?? dawaId;
       ejerlavKode = adr?.adgangsadresse?.jordstykke?.ejerlav?.kode;
       matrikelnr = adr?.adgangsadresse?.jordstykke?.matrikelnr;
+      harEtage = !!(adr?.etage || adr?.dør);
+      adresseTekst = adr?.adressebetegnelse ?? null;
+      etage = adr?.etage ?? null;
+      doer = adr?.dør ?? null;
     }
 
     if (!ejerlavKode || !matrikelnr) {
-      return { bfeNummer: null, adgangsadresseId, ejerlavKode: null, matrikelnr: null };
+      return {
+        bfeNummer: null,
+        ejerlejlighedBfe: null,
+        moderBfe: null,
+        adgangsadresseId,
+        ejerlavKode: null,
+        matrikelnr: null,
+      };
     }
 
-    // Trin 2: Hent BFEnummer fra jordstykker-endpoint
+    // Trin 2: Hent BFEnummer fra jordstykker-endpoint (= moderejendommens BFE)
     const jsRes = await fetch(`${DAWA_BASE}/jordstykker/${ejerlavKode}/${matrikelnr}`, {
       signal: AbortSignal.timeout(5000),
       next: { revalidate: 3600 },
     });
-    if (!jsRes.ok) {
-      return {
-        bfeNummer: null,
-        adgangsadresseId,
-        ejerlavKode: ejerlavKode ?? null,
-        matrikelnr: matrikelnr ?? null,
-      };
+    let jordBfe: number | null = null;
+    if (jsRes.ok) {
+      const js = (await jsRes.json()) as { bfenummer?: number };
+      jordBfe = js?.bfenummer ?? null;
     }
 
-    const js = (await jsRes.json()) as { bfenummer?: number };
+    // Trin 3: Hvis adressen har etage/dør → find ejerlejlighedens BFE via Vurderingsportalen ES
+    let ejerlejlighedBfe: number | null = null;
+    if (harEtage && adresseTekst) {
+      try {
+        const esUrl = 'https://api-fs.vurderingsportalen.dk/preliminaryproperties/_search';
+        const addrParts = adresseTekst.split(',')[0]; // "Vejnavn Nr" uden etage
+        const esQuery: Record<string, unknown> = {
+          size: 20,
+          query: { bool: { must: [{ match_phrase: { address: addrParts } }] } },
+        };
+        const esRes = await fetch(esUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          },
+          body: JSON.stringify(esQuery),
+          signal: AbortSignal.timeout(8000),
+        });
+        if (esRes.ok) {
+          const esData = (await esRes.json()) as {
+            hits?: { hits?: { _source: Record<string, unknown> }[] };
+          };
+          const hits = esData?.hits?.hits ?? [];
+          // Match etage + dør
+          for (const hit of hits) {
+            const s = hit._source;
+            const hitFloor = String(s.floor ?? '').toLowerCase();
+            const hitDoor = String(s.door ?? '').toLowerCase();
+            const matchFloor = etage ? hitFloor === etage.toLowerCase() : !hitFloor;
+            const matchDoor = doer ? hitDoor === doer.toLowerCase() : !hitDoor;
+            if (matchFloor && matchDoor && s.bfeNumbers) {
+              ejerlejlighedBfe = parseInt(String(s.bfeNumbers), 10);
+              if (!isNaN(ejerlejlighedBfe)) break;
+              ejerlejlighedBfe = null;
+            }
+          }
+        }
+      } catch {
+        /* Vurderingsportalen er valgfri */
+      }
+    }
+
+    // Bestem primær BFE: ejerlejlighed hvis fundet, ellers jordstykke
+    const primaryBfe = ejerlejlighedBfe ?? jordBfe;
+
     return {
-      bfeNummer: js?.bfenummer ?? null,
+      bfeNummer: primaryBfe,
+      ejerlejlighedBfe,
+      moderBfe: ejerlejlighedBfe ? jordBfe : null, // Kun sæt moderBfe hvis det er en ejerlejlighed
       adgangsadresseId,
       ejerlavKode: ejerlavKode ?? null,
       matrikelnr: matrikelnr ?? null,
     };
   } catch {
-    return { bfeNummer: null, adgangsadresseId: dawaId, ejerlavKode: null, matrikelnr: null };
+    return {
+      bfeNummer: null,
+      ejerlejlighedBfe: null,
+      moderBfe: null,
+      adgangsadresseId: dawaId,
+      ejerlavKode: null,
+      matrikelnr: null,
+    };
   }
 }
 
@@ -636,6 +718,8 @@ export async function GET(
         enheder: null,
         bygningPunkter: null,
         ejendomsrelationer: null,
+        ejerlejlighedBfe: null,
+        moderBfe: null,
         bbrFejl: 'Ugyldigt adresse-id',
       },
       { status: 400 }
@@ -648,7 +732,8 @@ export async function GET(
   // Nødvendigt fordi DAWA-ID kan være enten en adresse- eller adgangsadresse-UUID.
   // BBR_Bygning.husnummer kræver adgangsadresse-UUID; BBR_Enhed.adresseIdentificerer
   // accepterer begge typer, så vi bruger original id for enheder.
-  const { bfeNummer, adgangsadresseId, ejerlavKode, matrikelnr } = await fetchBFENummer(id);
+  const { bfeNummer, ejerlejlighedBfe, moderBfe, adgangsadresseId, ejerlavKode, matrikelnr } =
+    await fetchBFENummer(id);
 
   // Hent bygninger og enheder parallelt med korrekte UUIDs.
   const [rawBygninger, rawEnheder] = await Promise.all([
@@ -742,7 +827,16 @@ export async function GET(
       : null;
 
   return NextResponse.json(
-    { dawaId: id, bbr, enheder, bygningPunkter, ejendomsrelationer, bbrFejl },
+    {
+      dawaId: id,
+      bbr,
+      enheder,
+      bygningPunkter,
+      ejendomsrelationer,
+      ejerlejlighedBfe,
+      moderBfe,
+      bbrFejl,
+    },
     {
       status: 200,
       headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },

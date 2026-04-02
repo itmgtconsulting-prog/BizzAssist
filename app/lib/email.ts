@@ -1,0 +1,242 @@
+/**
+ * Email helper — app/lib/email.ts
+ *
+ * Sends transactional emails via the Resend API.
+ * Falls back silently (log-only) when RESEND_API_KEY is not configured.
+ *
+ * RESTRICTED — SERVER-SIDE ONLY. Never import in Client Components.
+ *
+ * @see /api/stripe/verify-session — sends payment confirmation after checkout
+ */
+
+const RESEND_ENDPOINT = 'https://api.resend.com/emails';
+const FROM_ADDRESS = process.env.EMAIL_FROM_ADDRESS || 'BizzAssist <noreply@bizzassist.dk>';
+
+// ─── Payment confirmation ──────────────────────────────────────────────────
+
+/** Parameters for the payment confirmation email */
+export interface PaymentConfirmationParams {
+  /** Recipient email address */
+  to: string;
+  /** Display name of the plan (localised) */
+  planName: string;
+  /** Monthly price in DKK */
+  priceDkk: number;
+  /** End of the current billing period (= next payment date) */
+  periodEnd: Date;
+  /** URL where the user can cancel their subscription */
+  cancelUrl: string;
+}
+
+/**
+ * Send a payment confirmation email after a successful Stripe subscription payment.
+ * Silently skips if RESEND_API_KEY is not set (dev/staging environments).
+ *
+ * @param params - Email parameters including recipient, plan details, and cancel URL
+ */
+export async function sendPaymentConfirmationEmail(
+  params: PaymentConfirmationParams
+): Promise<void> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    console.log('[email] RESEND_API_KEY not set, skipping payment confirmation email');
+    return;
+  }
+
+  const { to, planName, priceDkk, periodEnd, cancelUrl } = params;
+
+  const nextPaymentDa = periodEnd.toLocaleDateString('da-DK', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+  const nextPaymentEn = periodEnd.toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+
+  // Bilingual email — Danish primary, English secondary
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; background: #0f172a; color: #e2e8f0; padding: 40px; border-radius: 12px;">
+      <h1 style="color: #ffffff; font-size: 24px; margin: 0 0 8px 0;">BizzAssist</h1>
+      <p style="color: #64748b; font-size: 12px; margin: 0 0 24px 0;">Danmarks forretningsintelligens platform</p>
+
+      <h2 style="color: #22c55e; font-size: 18px; margin: 0 0 16px 0;">&#10003; Betaling gennemf&oslash;rt / Payment confirmed</h2>
+
+      <p style="margin: 0 0 4px 0; font-size: 14px;">Din betaling er registreret og dit abonnement er nu aktivt.</p>
+      <p style="margin: 0 0 20px 0; font-size: 13px; color: #94a3b8;">Your payment has been received and your subscription is now active.</p>
+
+      <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+        <tr>
+          <td style="padding: 10px 0; color: #94a3b8; font-size: 13px; border-bottom: 1px solid #1e293b;">Plan</td>
+          <td style="padding: 10px 0; text-align: right; font-size: 13px; border-bottom: 1px solid #1e293b;">${planName}</td>
+        </tr>
+        <tr>
+          <td style="padding: 10px 0; color: #94a3b8; font-size: 13px; border-bottom: 1px solid #1e293b;">Pris / Price</td>
+          <td style="padding: 10px 0; text-align: right; font-size: 13px; border-bottom: 1px solid #1e293b;">${priceDkk} kr/md</td>
+        </tr>
+        <tr>
+          <td style="padding: 10px 0; color: #94a3b8; font-size: 13px;">N&aelig;ste betaling / Next payment</td>
+          <td style="padding: 10px 0; text-align: right; font-size: 13px;">${nextPaymentDa}<br/><span style="color: #64748b; font-size: 11px;">${nextPaymentEn}</span></td>
+        </tr>
+      </table>
+
+      <p style="margin: 30px 0 12px 0; font-size: 13px; color: #94a3b8;">
+        Hvis du &oslash;nsker at opsige dit abonnement kan du g&oslash;re det fra dine indstillinger:
+      </p>
+      <p style="margin: 0 0 12px 0; font-size: 12px; color: #64748b;">
+        To cancel your subscription, visit your settings page:
+      </p>
+      <a href="${cancelUrl}" style="display: inline-block; background: #334155; color: #e2e8f0; padding: 10px 24px; border-radius: 8px; text-decoration: none; font-size: 13px; border: 1px solid #475569;">
+        Administrer abonnement / Manage subscription
+      </a>
+
+      <hr style="border: none; border-top: 1px solid #1e293b; margin: 30px 0;" />
+      <p style="color: #475569; font-size: 11px; margin: 0;">BizzAssist &mdash; Pecunia IT ApS &mdash; S&oslash;byvej 11, 2650 Hvidovre &mdash; CVR 44718502</p>
+    </div>
+  `;
+
+  try {
+    const res = await fetch(RESEND_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: FROM_ADDRESS,
+        to,
+        subject: 'Betaling gennemfort — BizzAssist',
+        html,
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text();
+      console.error('[email] Resend API error:', res.status, body);
+    } else {
+      console.log('[email] Payment confirmation sent to', to);
+    }
+  } catch (err) {
+    console.error('[email] Failed to send payment confirmation:', err);
+  }
+}
+
+// ─── Recurring payment confirmation ──────────────────────────────────────────
+
+/** Parameters for the recurring payment email */
+export interface RecurringPaymentParams {
+  /** Recipient email address */
+  to: string;
+  /** Display name of the plan */
+  planName: string;
+  /** Amount paid in DKK */
+  priceDkk: number;
+  /** End of the current billing period (= next payment date) */
+  periodEnd: Date;
+  /** URL where the user can manage/cancel their subscription */
+  cancelUrl: string;
+}
+
+/**
+ * Send a recurring payment confirmation email when Stripe successfully
+ * charges a subscription renewal. Called from the webhook handler.
+ *
+ * @param params - Email parameters
+ */
+export async function sendRecurringPaymentEmail(params: RecurringPaymentParams): Promise<void> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    console.log('[email] RESEND_API_KEY not set, skipping recurring payment email');
+    return;
+  }
+
+  const { to, planName, priceDkk, periodEnd, cancelUrl } = params;
+
+  const paymentDateDa = new Date().toLocaleDateString('da-DK', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+
+  const nextPaymentDa = periodEnd.toLocaleDateString('da-DK', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+  const nextPaymentEn = periodEnd.toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; background: #0f172a; color: #e2e8f0; padding: 40px; border-radius: 12px;">
+      <h1 style="color: #ffffff; font-size: 24px; margin: 0 0 8px 0;">BizzAssist</h1>
+      <p style="color: #64748b; font-size: 12px; margin: 0 0 24px 0;">Danmarks forretningsintelligens platform</p>
+
+      <h2 style="color: #22c55e; font-size: 18px; margin: 0 0 16px 0;">&#10003; Abonnement fornyet / Subscription renewed</h2>
+
+      <p style="margin: 0 0 4px 0; font-size: 14px;">Dit abonnement er blevet fornyet og betaling er gennemf&oslash;rt.</p>
+      <p style="margin: 0 0 20px 0; font-size: 13px; color: #94a3b8;">Your subscription has been renewed and payment was successful.</p>
+
+      <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+        <tr>
+          <td style="padding: 10px 0; color: #94a3b8; font-size: 13px; border-bottom: 1px solid #1e293b;">Plan</td>
+          <td style="padding: 10px 0; text-align: right; font-size: 13px; border-bottom: 1px solid #1e293b;">${planName}</td>
+        </tr>
+        <tr>
+          <td style="padding: 10px 0; color: #94a3b8; font-size: 13px; border-bottom: 1px solid #1e293b;">Betalt / Paid</td>
+          <td style="padding: 10px 0; text-align: right; font-size: 13px; border-bottom: 1px solid #1e293b;">${priceDkk} kr</td>
+        </tr>
+        <tr>
+          <td style="padding: 10px 0; color: #94a3b8; font-size: 13px; border-bottom: 1px solid #1e293b;">Betalingsdato / Payment date</td>
+          <td style="padding: 10px 0; text-align: right; font-size: 13px; border-bottom: 1px solid #1e293b;">${paymentDateDa}</td>
+        </tr>
+        <tr>
+          <td style="padding: 10px 0; color: #94a3b8; font-size: 13px;">N&aelig;ste betaling / Next payment</td>
+          <td style="padding: 10px 0; text-align: right; font-size: 13px;">${nextPaymentDa}<br/><span style="color: #64748b; font-size: 11px;">${nextPaymentEn}</span></td>
+        </tr>
+      </table>
+
+      <p style="margin: 30px 0 12px 0; font-size: 13px; color: #94a3b8;">
+        Du kan administrere dit abonnement fra dine indstillinger:
+      </p>
+      <p style="margin: 0 0 12px 0; font-size: 12px; color: #64748b;">
+        You can manage your subscription from your settings:
+      </p>
+      <a href="${cancelUrl}" style="display: inline-block; background: #334155; color: #e2e8f0; padding: 10px 24px; border-radius: 8px; text-decoration: none; font-size: 13px; border: 1px solid #475569;">
+        Administrer abonnement / Manage subscription
+      </a>
+
+      <hr style="border: none; border-top: 1px solid #1e293b; margin: 30px 0;" />
+      <p style="color: #475569; font-size: 11px; margin: 0;">BizzAssist &mdash; Pecunia IT ApS &mdash; S&oslash;byvej 11, 2650 Hvidovre &mdash; CVR 44718502</p>
+    </div>
+  `;
+
+  try {
+    const res = await fetch(RESEND_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: FROM_ADDRESS,
+        to,
+        subject: 'Abonnement fornyet — BizzAssist',
+        html,
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text();
+      console.error('[email] Resend API error (recurring):', res.status, body);
+    } else {
+      console.log('[email] Recurring payment confirmation sent to', to);
+    }
+  } catch (err) {
+    console.error('[email] Failed to send recurring payment email:', err);
+  }
+}

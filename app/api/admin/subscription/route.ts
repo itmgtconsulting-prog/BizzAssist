@@ -9,6 +9,7 @@
  *   - 'approve'      — approve a pending subscription
  *   - 'reject'       — reject/cancel a subscription
  *   - 'changePlan'   — change the user's plan
+ *   - 'removePlan'   — remove the user's subscription entirely
  *   - 'changeStatus' — change subscription status
  *   - 'addTokens'    — add bonus AI tokens
  *   - 'resetTokens'  — reset monthly token usage
@@ -22,8 +23,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 
-const ADMIN_EMAIL = 'jjrchefen@hotmail.com';
-
 /** Subscription shape stored in app_metadata */
 interface SubData {
   planId: string;
@@ -33,6 +32,7 @@ interface SubData {
   tokensUsedThisMonth: number;
   periodStart: string;
   bonusTokens: number;
+  isPaid: boolean;
 }
 
 /**
@@ -72,6 +72,7 @@ async function updateSubscription(
     tokensUsedThisMonth: subUpdates.tokensUsedThisMonth ?? currentSub.tokensUsedThisMonth ?? 0,
     periodStart: subUpdates.periodStart ?? currentSub.periodStart ?? new Date().toISOString(),
     bonusTokens: subUpdates.bonusTokens ?? currentSub.bonusTokens ?? 0,
+    isPaid: subUpdates.isPaid ?? currentSub.isPaid ?? false,
   };
 
   const { error } = await admin.auth.admin.updateUserById(userId, {
@@ -106,7 +107,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const {
       data: { user },
     } = await supabase.auth.getUser();
-    if (!user?.email || user.email !== ADMIN_EMAIL) {
+    if (!user) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+    // Check admin role in app_metadata
+    const adminClient = createAdminClient();
+    const { data: freshCaller } = await adminClient.auth.admin.getUserById(user.id);
+    if (!freshCaller?.user?.app_metadata?.isAdmin) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -117,7 +124,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Email required' }, { status: 400 });
     }
 
-    const admin = createAdminClient();
+    const admin = adminClient;
     const targetUser = await findUserByEmail(admin, email);
     if (!targetUser) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
@@ -152,6 +159,18 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         });
         break;
 
+      case 'removePlan': {
+        // Set subscription to null explicitly — Supabase shallow-merges app_metadata,
+        // so omitting the key won't remove it. We must set it to null.
+        const { error: removeErr } = await admin.auth.admin.updateUserById(targetUser.id, {
+          app_metadata: { ...metadata, subscription: null },
+        });
+        if (removeErr) {
+          return NextResponse.json({ error: removeErr.message }, { status: 500 });
+        }
+        return NextResponse.json({ ok: true, subscription: null });
+      }
+
       case 'changeStatus':
         if (!rest.status) {
           return NextResponse.json({ error: 'status required' }, { status: 400 });
@@ -180,6 +199,27 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         });
         break;
 
+      case 'markPaid':
+        result = await updateSubscription(admin, targetUser.id, metadata, {
+          isPaid: rest.isPaid !== false,
+        });
+        break;
+
+      case 'toggleAdmin': {
+        // Set isAdmin flag directly on app_metadata (not inside subscription)
+        const newIsAdmin = rest.isAdmin !== false;
+        const { error: adminErr } = await admin.auth.admin.updateUserById(targetUser.id, {
+          app_metadata: {
+            ...metadata,
+            isAdmin: newIsAdmin,
+          },
+        });
+        if (adminErr) {
+          return NextResponse.json({ error: adminErr.message }, { status: 500 });
+        }
+        return NextResponse.json({ ok: true, isAdmin: newIsAdmin });
+      }
+
       case 'set':
       default:
         // Full set — used when creating users or bulk-setting subscription
@@ -191,6 +231,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           tokensUsedThisMonth: rest.tokensUsedThisMonth ?? 0,
           periodStart: rest.periodStart ?? now,
           bonusTokens: rest.bonusTokens ?? 0,
+          isPaid: rest.isPaid ?? false,
         });
         break;
     }

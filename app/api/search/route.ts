@@ -12,6 +12,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { darAutocomplete } from '@/app/lib/dar';
+import { rateLimit, SEARCH_LIMIT } from '@/app/lib/rateLimit';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -255,14 +256,8 @@ function mapCompanyResult(
 }
 
 /**
- * Search companies via cvrapi.dk (through internal proxy). Since cvrapi.dk returns
- * only 1 result per query, we run multiple parallel searches with variations of the
- * query to gather up to 5 results.
- *
- * Strategies:
- * - Direct name search with full query
- * - Individual word searches (for multi-word queries)
- * - Name + common suffixes (A/S, ApS, I/S)
+ * Search companies via /api/cvr-search (CVR ElasticSearch multi-result).
+ * Falls back to cvrapi.dk for CVR number lookups.
  *
  * @param q - Raw query string
  * @param normQ - Normalized query for scoring
@@ -285,41 +280,46 @@ async function searchCompanies(
       return result ? [result] : [];
     }
 
-    // Build search variations to get multiple results from cvrapi.dk
-    const variations = new Set<string>();
-    variations.add(trimmed);
+    // Use /api/cvr-search for multi-result company search
+    const res = await fetch(`${baseUrl}/api/cvr-search?q=${encodeURIComponent(trimmed)}`, {
+      signal: AbortSignal.timeout(6000),
+    });
+    if (!res.ok) return [];
 
-    // Add individual words (3+ chars) for multi-word queries
-    const words = trimmed.split(/\s+/).filter((w) => w.length >= 3);
-    for (const w of words) variations.add(w);
+    const data = (await res.json()) as {
+      results?: {
+        cvr: number;
+        name: string;
+        address: string | null;
+        zipcode: string | null;
+        city: string | null;
+        industry: string | null;
+        companyType: string | null;
+        active: boolean;
+      }[];
+    };
+    const hits = data.results ?? [];
 
-    // Add common company suffixes
-    const suffixes = ['A/S', 'ApS', 'I/S', 'Holding'];
-    for (const suffix of suffixes) {
-      if (!trimmed.toLowerCase().includes(suffix.toLowerCase())) {
-        variations.add(`${trimmed} ${suffix}`);
-      }
-    }
-
-    // Run up to 8 parallel searches for more result diversity (deduplicate by CVR)
-    const searchTerms = [...variations].slice(0, 8);
-    const rawResults = await Promise.all(
-      searchTerms.map((term) => fetchCvrApi(`name=${encodeURIComponent(term)}`, baseUrl))
-    );
-
-    // Deduplicate by CVR and map to results
-    const seen = new Set<number>();
-    const results: UnifiedSearchResult[] = [];
-    for (const raw of rawResults) {
-      if (!raw) continue;
-      const vat = typeof raw.vat === 'number' ? raw.vat : 0;
-      if (seen.has(vat)) continue;
-      seen.add(vat);
-      const result = mapCompanyResult(raw, normQ, false);
-      if (result) results.push(result);
-    }
-
-    return results.sort((a, b) => b.score - a.score).slice(0, 5);
+    return hits.slice(0, 5).map((h) => {
+      const normName = normalize(h.name);
+      const score = scoreMatch(normQ, normName);
+      return {
+        type: 'company' as const,
+        id: String(h.cvr),
+        title: h.name,
+        subtitle: [h.industry, h.zipcode && h.city ? `${h.zipcode} ${h.city}` : '']
+          .filter(Boolean)
+          .join(' \u00b7 '),
+        score: Math.max(score, 40),
+        href: `/dashboard/companies/${h.cvr}`,
+        meta: {
+          cvr: String(h.cvr),
+          active: h.active ? 'true' : 'false',
+          ...(h.industry ? { industry: h.industry } : {}),
+          ...(h.city ? { city: h.city } : {}),
+        },
+      };
+    });
   } catch (err) {
     console.error('[search] Company search failed:', err);
     return [];
@@ -327,20 +327,73 @@ async function searchCompanies(
 }
 
 /**
- * Search people. Currently returns empty array (no API available).
+ * Search people via /api/person-search (CVR ES deltager index).
  *
- * @param _q - Raw query string (unused)
- * @param _normQ - Normalized query (unused)
- * @returns Empty array
+ * @param q - Raw query string
+ * @param normQ - Normalized query for scoring
+ * @param baseUrl - Base URL for internal API calls
+ * @returns Array of UnifiedSearchResult (type='person'), max 5
  */
-async function searchPeople(_q: string, _normQ: string): Promise<UnifiedSearchResult[]> {
-  // No people API available yet — placeholder for future integration
-  return [];
+async function searchPeople(
+  q: string,
+  normQ: string,
+  baseUrl: string
+): Promise<UnifiedSearchResult[]> {
+  try {
+    const res = await fetch(`${baseUrl}/api/person-search?q=${encodeURIComponent(q.trim())}`, {
+      signal: AbortSignal.timeout(6000),
+    });
+    if (!res.ok) return [];
+
+    const data = (await res.json()) as {
+      results?: {
+        enhedsNummer: number;
+        name: string;
+        erVirksomhed: boolean;
+        antalVirksomheder: number;
+        roller?: { virksomhedNavn: string; rolle: string | null }[];
+      }[];
+    };
+    const hits = data.results ?? [];
+
+    return hits.slice(0, 5).map((h) => {
+      const normName = normalize(h.name);
+      const score = scoreMatch(normQ, normName);
+      const rolleText =
+        h.roller && h.roller.length > 0
+          ? h.roller
+              .slice(0, 2)
+              .map((r) => (r.rolle ? `${r.rolle}, ${r.virksomhedNavn}` : r.virksomhedNavn))
+              .join(' · ')
+          : h.antalVirksomheder > 0
+            ? `${h.antalVirksomheder} virksomheder`
+            : '';
+      return {
+        type: 'person' as const,
+        id: String(h.enhedsNummer),
+        title: h.name,
+        subtitle: rolleText,
+        score: Math.max(score, 35),
+        href: `/dashboard/owners/${h.enhedsNummer}`,
+        meta: {
+          enhedsNummer: String(h.enhedsNummer),
+          erVirksomhed: h.erVirksomhed ? 'true' : 'false',
+        },
+      };
+    });
+  } catch (err) {
+    console.error('[search] People search failed:', err);
+    return [];
+  }
 }
 
 // ─── Route handler ───────────────────────────────────────────────────────────
 
 export async function GET(request: NextRequest) {
+  // Rate limit: 60 req/min for search
+  const limited = rateLimit(request, SEARCH_LIMIT);
+  if (limited) return limited;
+
   const q = request.nextUrl.searchParams.get('q') ?? '';
 
   if (q.trim().length < 2) {

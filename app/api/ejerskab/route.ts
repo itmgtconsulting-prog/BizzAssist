@@ -20,6 +20,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
+import { getCertOAuthToken, isCertAuthConfigured } from '@/app/lib/dfCertAuth';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -143,13 +144,90 @@ function parseEjertypeFraNode(raw: RawEJFEjerskab): 'selskab' | 'person' | 'uken
   return parseEjertype(raw.ejerforholdskode ?? undefined);
 }
 
+// ─── EJF GraphQL query helper ───────────────────────────────────────────────
+
+type EJFQueryResult =
+  | { ok: true; nodes: RawEJFEjerskab[] }
+  | { ok: false; manglerAdgang: boolean; fejl: string | null };
+
+/**
+ * Sender EJF GraphQL forespørgsel med et givet Bearer token.
+ *
+ * @param bfeNummer - BFE-nummer at slå op
+ * @param token - OAuth Bearer token
+ * @returns Parsed result eller fejl-info
+ */
+async function queryEJF(bfeNummer: number, token: string): Promise<EJFQueryResult> {
+  const virkningstid = new Date().toISOString();
+
+  const query = `{
+    EJF_Ejerskab(
+      first: 500
+      virkningstid: "${virkningstid}"
+      where: {
+        bestemtFastEjendomBFENr: { eq: ${bfeNummer} }
+      }
+    ) {
+      nodes {
+        bestemtFastEjendomBFENr
+        ejendeVirksomhedCVRNr
+        ejendePersonPersonNr
+        ejerforholdskode
+        faktiskEjerandel_taeller
+        faktiskEjerandel_naevner
+        status
+        virkningFra
+      }
+    }
+  }`;
+
+  const res = await fetch(proxyUrl(EJF_GQL_URL), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+      ...proxyHeaders(),
+    },
+    body: JSON.stringify({ query }),
+    signal: AbortSignal.timeout(proxyTimeout()),
+    next: { revalidate: 3600 },
+  });
+
+  if (res.status === 403) {
+    return { ok: false, manglerAdgang: true, fejl: null };
+  }
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    return {
+      ok: false,
+      manglerAdgang: false,
+      fejl: `Datafordeler EJF svarede ${res.status}: ${text.slice(0, 200)}`,
+    };
+  }
+
+  const json = (await res.json()) as {
+    data?: { EJF_Ejerskab?: { nodes: RawEJFEjerskab[] } };
+    errors?: { message: string; extensions?: { code?: string } }[];
+  };
+
+  const authError = json.errors?.find((e) => e.extensions?.code === 'DAF-AUTH-0001');
+  if (authError) {
+    return { ok: false, manglerAdgang: true, fejl: null };
+  }
+
+  return { ok: true, nodes: json.data?.EJF_Ejerskab?.nodes ?? [] };
+}
+
 // ─── Route handler ───────────────────────────────────────────────────────────
 
 export async function GET(request: NextRequest): Promise<NextResponse<EjerskabResponse>> {
-  const clientId = process.env.DATAFORDELER_OAUTH_CLIENT_ID;
-  const clientSecret = process.env.DATAFORDELER_OAUTH_CLIENT_SECRET;
+  const hasSharedSecret = !!(
+    process.env.DATAFORDELER_OAUTH_CLIENT_ID && process.env.DATAFORDELER_OAUTH_CLIENT_SECRET
+  );
+  const hasCert = isCertAuthConfigured();
 
-  if (!clientId || !clientSecret) {
+  if (!hasSharedSecret && !hasCert) {
     return NextResponse.json(
       { bfeNummer: null, ejere: [], fejl: null, manglerNoegle: true, manglerAdgang: false },
       { status: 200 }
@@ -174,14 +252,56 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjerskabRe
 
   const bfeNummer = parseInt(bfeNummerStr, 10);
 
-  // Hent OAuth token
-  const token = await getOAuthToken();
-  if (!token) {
+  // ── Forsøg 1: OAuth Shared Secret ──
+  let result: EJFQueryResult | null = null;
+
+  if (hasSharedSecret) {
+    const token = await getOAuthToken();
+    if (token) {
+      try {
+        result = await queryEJF(bfeNummer, token);
+        if (result.ok) {
+          console.log('[ejerskab] Shared Secret: OK —', result.nodes.length, 'ejere');
+        } else if (result.manglerAdgang) {
+          console.warn('[ejerskab] Shared Secret: 403/manglerAdgang — forsøger certifikat...');
+        }
+      } catch (err) {
+        console.error('[ejerskab] Shared Secret fejl:', err instanceof Error ? err.message : err);
+      }
+    }
+  }
+
+  // ── Forsøg 2: OAuth Certifikat (mTLS) — hvis Shared Secret mangler adgang ──
+  if ((!result || (!result.ok && result.manglerAdgang)) && hasCert) {
+    console.log('[ejerskab] Forsøger OAuth Certifikat (mTLS)...');
+    const certToken = await getCertOAuthToken();
+    if (certToken) {
+      try {
+        const certResult = await queryEJF(bfeNummer, certToken);
+        if (certResult.ok) {
+          console.log('[ejerskab] Certifikat: OK —', certResult.nodes.length, 'ejere');
+        } else {
+          console.warn(
+            '[ejerskab] Certifikat:',
+            certResult.manglerAdgang ? '403/manglerAdgang' : certResult.fejl
+          );
+        }
+        result = certResult;
+      } catch (err) {
+        console.error('[ejerskab] Certifikat fejl:', err instanceof Error ? err.message : err);
+      }
+    } else {
+      console.error('[ejerskab] Certifikat: Kunne ikke hente OAuth token via mTLS');
+    }
+  }
+
+  // ── Ingen token overhovedet ──
+  if (!result) {
     return NextResponse.json(
       {
         bfeNummer,
         ejere: [],
-        fejl: 'OAuth token kunne ikke hentes',
+        fejl: 'Hverken OAuth Shared Secret eller Certifikat kunne autentificere',
         manglerNoegle: false,
         manglerAdgang: false,
       },
@@ -189,115 +309,44 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjerskabRe
     );
   }
 
-  // Aktuel virkningstid (i dag) til bitemporal forespørgsel
-  const virkningstid = new Date().toISOString();
-
-  const query = `{
-    EJF_Ejerskab(
-      first: 500
-      virkningstid: "${virkningstid}"
-      where: {
-        bestemtFastEjendomBFENr: { eq: ${bfeNummer} }
-      }
-    ) {
-      nodes {
-        bestemtFastEjendomBFENr
-        ejendeVirksomhedCVRNr
-        ejendePersonPersonNr
-        ejerforholdskode
-        faktiskEjerandel_taeller
-        faktiskEjerandel_naevner
-        status
-        virkningFra
-      }
-    }
-  }`;
-
-  try {
-    const res = await fetch(proxyUrl(EJF_GQL_URL), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-        ...proxyHeaders(),
-      },
-      body: JSON.stringify({ query }),
-      signal: AbortSignal.timeout(proxyTimeout()),
-      next: { revalidate: 3600 },
-    });
-
-    // 403 = Dataadgang-ansøgning mangler til EJF
-    if (res.status === 403) {
-      return NextResponse.json(
-        { bfeNummer, ejere: [], fejl: null, manglerNoegle: false, manglerAdgang: true },
-        { status: 200 }
-      );
-    }
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      return NextResponse.json(
-        {
-          bfeNummer,
-          ejere: [],
-          fejl: `Datafordeler EJF svarede ${res.status}: ${text.slice(0, 200)}`,
-          manglerNoegle: false,
-          manglerAdgang: false,
-        },
-        { status: 200 }
-      );
-    }
-
-    const json = (await res.json()) as {
-      data?: { EJF_Ejerskab?: { nodes: RawEJFEjerskab[] } };
-      errors?: { message: string; extensions?: { code?: string } }[];
-    };
-
-    // Tjek for DAF-AUTH fejl i GraphQL errors (kan ske selv med 200)
-    const authError = json.errors?.find((e) => e.extensions?.code === 'DAF-AUTH-0001');
-    if (authError) {
-      return NextResponse.json(
-        { bfeNummer, ejere: [], fejl: null, manglerNoegle: false, manglerAdgang: true },
-        { status: 200 }
-      );
-    }
-
-    const nodes = json.data?.EJF_Ejerskab?.nodes ?? [];
-
-    if (!nodes.length) {
-      return NextResponse.json(
-        { bfeNummer, ejere: [], fejl: null, manglerNoegle: false, manglerAdgang: false },
-        { status: 200 }
-      );
-    }
-
-    const ejere: EjerData[] = nodes.map((n) => ({
-      cvr: n.ejendeVirksomhedCVRNr != null ? String(n.ejendeVirksomhedCVRNr) : null,
-      ejerandel_taeller: n.faktiskEjerandel_taeller ?? null,
-      ejerandel_naevner: n.faktiskEjerandel_naevner ?? null,
-      ejerforholdskode: n.ejerforholdskode ?? null,
-      ejertype: parseEjertypeFraNode(n),
-      virkningFra: n.virkningFra ?? null,
-    }));
-
-    return NextResponse.json(
-      { bfeNummer, ejere, fejl: null, manglerNoegle: false, manglerAdgang: false },
-      {
-        status: 200,
-        headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
-      }
-    );
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Ukendt fejl';
+  // ── Fejl-result ──
+  if (!result.ok) {
     return NextResponse.json(
       {
         bfeNummer,
         ejere: [],
-        fejl: `Netværksfejl: ${msg}`,
+        fejl: result.fejl,
         manglerNoegle: false,
-        manglerAdgang: false,
+        manglerAdgang: result.manglerAdgang,
       },
       { status: 200 }
     );
   }
+
+  // ── Succes ──
+  const nodes = result.nodes;
+
+  if (!nodes.length) {
+    return NextResponse.json(
+      { bfeNummer, ejere: [], fejl: null, manglerNoegle: false, manglerAdgang: false },
+      { status: 200 }
+    );
+  }
+
+  const ejere: EjerData[] = nodes.map((n) => ({
+    cvr: n.ejendeVirksomhedCVRNr != null ? String(n.ejendeVirksomhedCVRNr) : null,
+    ejerandel_taeller: n.faktiskEjerandel_taeller ?? null,
+    ejerandel_naevner: n.faktiskEjerandel_naevner ?? null,
+    ejerforholdskode: n.ejerforholdskode ?? null,
+    ejertype: parseEjertypeFraNode(n),
+    virkningFra: n.virkningFra ?? null,
+  }));
+
+  return NextResponse.json(
+    { bfeNummer, ejere, fejl: null, manglerNoegle: false, manglerAdgang: false },
+    {
+      status: 200,
+      headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
+    }
+  );
 }

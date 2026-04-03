@@ -388,14 +388,14 @@ Baseret på din træningsviden, find DANSKE artikler om den angivne virksomhed f
 DR, TV2, Børsen, Berlingske, Politiken, Jyllands-Posten, Altinget, Information, FinansWatch, MedWatch, Ingeniøren, Version2, Computerworld, Weekendavisen, Zetland, BT, Ekstra Bladet, Frihedsbrevet, Danwatch, Mandag Morgen.
 
 KRITISKE REGLER FOR ARTIKLER:
-- Returner PRÆCIS 15 artikler — ikke "op til 15", ikke 10, men nøjagtigt 15
-- Spred artiklerne over FLERE forskellige medier — ét medie må max bidrage med 3 artikler
+- Returner de artikler du FAKTISK kender med 100% sikkerhed — 0 er helt acceptabelt for ukendte lokale virksomheder
+- Opfind ALDRIG artikler — brug KUN artikler du er sikker på eksisterer med korrekte URLs
+- Max 15 artikler, spred over FLERE forskellige medier (ét medie max 3 artikler)
 - Inkludér artikler fra de seneste 2 år (ikke kun seneste måned)
-- Returner KUN artikler du er 100% SIKKER på eksisterer med korrekte URLs
 - INGEN engelske, norske eller svenske artikler — kun ovenstående danske medier
 - INGEN artikler fra GlobeNewswire, Reuters, Bloomberg, AP — kun ovenstående danske medier
 - Gæt IKKE URLs — skriv kun præcise links du kender med absolut sikkerhed
-- Hvis du mangler artikler for at nå 15, søg bredere: brug ældre artikler (op til 2 år tilbage), brug flere medier
+- Hvis du er i tvivl om en artikel eksisterer, udelad den
 
 Returner KUN validt JSON uden tekst før/efter:
 
@@ -636,7 +636,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       )
       .join('\n\n');
 
-    userMessage = `Virksomhed:\n${companyContext}\n\nGoogle Search-resultater (${googleResults.length} hits):\n\n${googleSummary}\n\nRangér og filtrer disse resultater. Find også sociale medier-links.`;
+    // Byg social verification-sektion: Google CSE-fund sendes til Claude til kvalificering
+    let socialVerificationSection = '';
+    if (Object.keys(googleSocials).length > 0) {
+      const socialsStr = Object.entries(googleSocials)
+        .map(([platform, url]) => `- ${platform}: ${url}`)
+        .join('\n');
+      const locationHint = city ? ` i ${city}` : ' i Danmark';
+      socialVerificationSection =
+        `\n\nGoogle CSE har fundet disse sociale medie-profiler — verificer om de tilhører NETOP DENNE virksomhed${locationHint}:\n${socialsStr}\n` +
+        `Brug dem i din socials-output hvis de er korrekte for denne specifikke virksomhed. Hvis en profil tilhører en anden virksomhed, udelad den og brug din egen viden i stedet.`;
+    }
+
+    userMessage =
+      `Virksomhed:\n${companyContext}\n\nGoogle Search-resultater (${googleResults.length} hits):\n\n${googleSummary}\n\nRangér og filtrer disse resultater. Find også sociale medier-links.` +
+      socialVerificationSection;
     systemPrompt = SYSTEM_PROMPT_WITH_GOOGLE;
   } else {
     // Claude-only fallback
@@ -668,9 +682,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       socialAlternatives,
     } = parseArticleResponse(finalText);
 
-    // Merge: Google CSE-fundne sociale medier har prioritet da de er verificerede links.
-    // Claude's fund bruges som fallback for platforme Google ikke fandt.
-    const socials: SocialsResult = { ...claudeSocials, ...googleSocials };
+    // Merge-strategi:
+    // - google+claude tilstand: Claude har verificeret Google CSE-hits → stol på Claude's output.
+    //   Google CSE bruges kun som supplement for platforme Claude ikke inkluderede.
+    // - claude-only tilstand: Kun Claude's output.
+    const socials: SocialsResult = useGoogle
+      ? { ...googleSocials, ...claudeSocials } // Claude overskriver Google hvis Claude har verificeret
+      : claudeSocials;
 
     console.log(
       `[article-search] "${companyName}": Google CSE=${googleResults.length} rå → Claude valgte ${articles.length} artikler, tokens=${totalTokens}, source=${useGoogle ? 'google+claude' : 'claude-only'}, socials=[google:${Object.keys(googleSocials).join(',')}, claude:${Object.keys(claudeSocials).join(',')}]`

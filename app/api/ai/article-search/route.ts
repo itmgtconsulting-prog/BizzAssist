@@ -81,32 +81,55 @@ interface RawNewsArticle {
 /**
  * Whitelist af kendte danske mediedomæner.
  * Artikler fra domæner UDEN FOR denne liste filtreres fra.
+ *
+ * Kategorier:
+ *   - Daglige nyheder og politik
+ *   - Erhverv og økonomi
+ *   - Teknologi og IT
+ *   - Videnskab, kultur og debat
+ *   - Lokalt og regionalt
+ *   - Undersøgende journalistik
+ *   - Fagmedier
  */
 const DANISH_DOMAINS = new Set([
-  'dr.dk',
-  'tv2.dk',
+  // Daglige nyheder og politik
   'politiken.dk',
   'berlingske.dk',
   'jyllands-posten.dk',
   'information.dk',
+  'dr.dk',
+  'tv2.dk',
+  'nyheder.tv2.dk',
+  // Erhverv og økonomi
   'borsen.dk',
   'finans.dk',
+  'ugebrev.dk', // Økonomisk Ugebrev
+  // Teknologi og IT
   'version2.dk',
   'computerworld.dk',
-  'altinget.dk',
-  'mandag-morgen.dk',
+  'ing.dk', // Ingeniøren
+  // Videnskab, kultur og debat
+  'videnskab.dk',
   'weekendavisen.dk',
   'zetland.dk',
-  'ingenioren.dk',
-  'medwatch.dk',
-  'finanswatch.dk',
-  'energiwatch.dk',
-  'shippingwatch.dk',
-  'videnskab.dk',
+  // Lokalt og regionalt
+  'stiftstidende.dk',
+  'fyens.dk',
+  'sn.dk', // Sjællandske Medier
+  'tv2nord.dk',
+  'tv2lorry.dk',
+  'tv2east.dk',
+  'tv2fyn.dk',
+  'tvmidtvest.dk',
+  'tv2ostjylland.dk',
+  // Undersøgende journalistik
   'danwatch.dk',
   'frihedsbrevet.dk',
-  'bt.dk',
-  'ekstrabladet.dk',
+  // Fagmedier
+  'altinget.dk',
+  'mm.dk', // Mandag Morgen
+  'magisterbladet.dk',
+  'djoefbladet.dk',
 ]);
 
 /**
@@ -155,8 +178,16 @@ Returner KUN validt JSON uden tekst før/efter:
 Regler:
 - "selected": op til 8 artiklernes numre (1-baseret), sortér nyeste/mest relevante først
 - "descriptions": ét element per valgt artikel i samme rækkefølge, max 80 tegn
-- VIGTIGT: Medtag KUN artikler fra DANSKE medier (dr.dk, tv2.dk, berlingske.dk, politiken.dk, borsen.dk osv.).
-  Udelad artikler fra svenske (svt.se, dn.se, aftonbladet.se), norske (nrk.no, vg.no) eller andre ikke-danske medier.
+- KILDEPRIORITET (VIGTIGT): Medtag KUN artikler fra danske medier. Prioritér i denne rækkefølge:
+  1. Erhverv/økonomi: borsen.dk, finans.dk, ugebrev.dk
+  2. Daglige nyheder: politiken.dk, berlingske.dk, jyllands-posten.dk, information.dk, dr.dk, tv2.dk
+  3. Teknologi/IT: version2.dk, computerworld.dk, ing.dk
+  4. Videnskab/debat: videnskab.dk, weekendavisen.dk, zetland.dk
+  5. Fagmedier: altinget.dk, mm.dk, magisterbladet.dk, djoefbladet.dk
+  6. Undersøgende: danwatch.dk, frihedsbrevet.dk
+  7. Regionalt: stiftstidende.dk, fyens.dk, sn.dk, tv2nord.dk, tv2lorry.dk, tv2east.dk, tv2fyn.dk, tvmidtvest.dk, tv2ostjylland.dk
+  Kun hvis der ikke er tilstrækkeligt med resultater fra ovenstående: acceptér andre danske kilder.
+  Afvis ALTID artikler fra svenske (svt.se, dn.se, aftonbladet.se) og norske (nrk.no, vg.no) medier.
 - "socials": VIGTIGT — brug din træningsviden til at finde virksomhedens officielle links.
   Du SKAL altid inkludere de sociale profiler og hjemmeside du kender til virksomheden.
   For store/kendte virksomheder forventes minimum website + linkedin.
@@ -256,11 +287,33 @@ function decodeHtmlEntities(str: string): string {
  * Inlines logikken i stedet for at kalde /api/news for at undgå timeout-kæden.
  * Timeout: 8s — tilpasset Vercel Pro plan (60s maxDuration).
  *
+ * Søgestrategien bruger site:-operatorer for de primære danske medier
+ * så Google News prioriterer disse kilder. Whitelist-filteret sikrer
+ * at ingen ikke-danske artikler slipper igennem.
+ *
  * @param companyName - Virksomhedens navn
  * @returns Op til 15 artikler om virksomheden
  */
 async function fetchGoogleNewsArticles(companyName: string): Promise<RawNewsArticle[]> {
-  const url = `https://news.google.com/rss/search?q=${encodeURIComponent(companyName)}&hl=da&gl=DK&ceid=DK:da`;
+  // Primære danske medier brugt som site:-parametre i søgeforespørgslen
+  const primarySites = [
+    'borsen.dk',
+    'finans.dk',
+    'politiken.dk',
+    'berlingske.dk',
+    'jyllands-posten.dk',
+    'dr.dk',
+    'tv2.dk',
+    'information.dk',
+    'version2.dk',
+    'computerworld.dk',
+    'ing.dk',
+    'altinget.dk',
+    'mm.dk',
+  ];
+  const siteQuery = primarySites.map((s) => `site:${s}`).join(' OR ');
+  const q = `${companyName} (${siteQuery})`;
+  const url = `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=da&gl=DK&ceid=DK:da`;
   try {
     const res = await fetch(url, {
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; BizzAssist/1.0)' },
@@ -273,7 +326,7 @@ async function fetchGoogleNewsArticles(companyName: string): Promise<RawNewsArti
     const itemRegex = /<item>([\s\S]*?)<\/item>/g;
     let match;
 
-    while ((match = itemRegex.exec(xml)) !== null && articles.length < 15) {
+    while ((match = itemRegex.exec(xml)) !== null && articles.length < 20) {
       const item = match[1];
 
       const titleMatch =

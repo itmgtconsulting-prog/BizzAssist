@@ -21,6 +21,7 @@ import {
   Download,
   Bell,
   List,
+  X,
   MapPin,
   Building2,
   ChevronDown,
@@ -729,6 +730,19 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
     mq.addEventListener('change', handler);
     return () => mq.removeEventListener('change', handler);
   }, []);
+
+  /**
+   * Styrer om mobil-kortoverlay er åbent.
+   * Kun relevant på skærme under 900px hvor det normale kortpanel er skjult.
+   */
+  const [mobilKortAaben, setMobilKortAaben] = useState(false);
+
+  /**
+   * Styrer om kortpanelet er synligt på desktop.
+   * Brugeren kan toggle panelet via "Kort"-knappen i headeren.
+   * Har ingen effekt på mobil (mobilKortAaben styrer overlay der).
+   */
+  const [kortPanelÅben, setKortPanelÅben] = useState(true);
 
   /**
    * Kortpanel-bredde i px — kan trækkes af brugeren via adskillelseslinien.
@@ -1622,6 +1636,25 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                 <ArrowLeft size={16} /> {t.back}
               </button>
               <div className="flex items-center gap-2">
+                {/* Kort-toggle knap — åbner overlay på mobil, toggle sidepanel på desktop */}
+                <button
+                  onClick={() => {
+                    if (visKort) {
+                      setKortPanelÅben((prev) => !prev);
+                    } else {
+                      setMobilKortAaben(true);
+                    }
+                  }}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-sm transition-all ${
+                    visKort && kortPanelÅben
+                      ? 'bg-blue-600/20 hover:bg-blue-600/30 border-blue-500/40 text-blue-300'
+                      : 'bg-slate-800 hover:bg-slate-700 border-slate-700/60 text-slate-300'
+                  }`}
+                  title={da ? 'Vis/skjul kort' : 'Show/hide map'}
+                >
+                  <MapIcon size={14} />
+                  {da ? 'Kort' : 'Map'}
+                </button>
                 <button
                   onClick={handleDownloadRapport}
                   disabled={rapportLoader}
@@ -4223,7 +4256,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
         </div>
 
         {/* Adskillelseslinie */}
-        {visKort && (
+        {visKort && kortPanelÅben && (
           <div
             className={`w-1.5 flex-shrink-0 cursor-col-resize flex items-center justify-center group transition-colors ${trækker ? 'bg-blue-500/30' : 'bg-slate-800 hover:bg-blue-500/20'}`}
             onMouseDown={(e) => {
@@ -4239,7 +4272,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
         )}
 
         {/* Kortpanel — strækker fuld højde */}
-        {visKort && (
+        {visKort && kortPanelÅben && (
           <div className="relative flex-shrink-0 self-stretch" style={{ width: kortBredde }}>
             {/* Åbn på fuldt kort — navigerer til /dashboard/kort?ejendom=<id> */}
             <Link
@@ -4264,6 +4297,78 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                   adresse={adresseStreng}
                   visMatrikel={true}
                   onAdresseValgt={(newId) => router.push(`/dashboard/ejendomme/${newId}`)}
+                  bygningPunkter={
+                    bbrData?.bygningPunkter
+                      ? bbrData.bygningPunkter.filter(
+                          (p) =>
+                            p.status !== 'Nedrevet/slettet' &&
+                            p.status !== 'Bygning nedrevet' &&
+                            p.status !== 'Bygning bortfaldet'
+                        )
+                      : undefined
+                  }
+                />
+              </Suspense>
+            </div>
+          </div>
+        )}
+
+        {/* ─── Mobil: FAB-kortknap — kun synlig på skærme under 900px ─── */}
+        {!visKort && (
+          <button
+            onClick={() => setMobilKortAaben(true)}
+            className="fixed bottom-20 right-4 z-40 flex items-center gap-2 px-4 py-3 bg-blue-600 hover:bg-blue-500 active:scale-95 rounded-full text-white shadow-2xl transition-all"
+            aria-label={da ? 'Åbn kort' : 'Open map'}
+          >
+            <MapIcon size={18} />
+            <span className="text-sm font-semibold">{da ? 'Kort' : 'Map'}</span>
+          </button>
+        )}
+
+        {/* ─── Mobil: Kortoverlay — fylder hele skærmen ─── */}
+        {!visKort && mobilKortAaben && (
+          <div className="fixed inset-0 z-50 flex flex-col bg-slate-950">
+            {/* Overlay-header */}
+            <div className="flex items-center justify-between px-4 py-3 bg-slate-900 border-b border-slate-700/50 flex-shrink-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <MapIcon size={15} className="text-blue-400 flex-shrink-0" />
+                <span className="text-white text-sm font-medium truncate">{adresseStreng}</span>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0 ml-3">
+                <Link
+                  href={`/dashboard/kort?ejendom=${id}`}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-slate-300 text-xs font-medium transition-all"
+                >
+                  <MapIcon size={11} />
+                  {da ? 'Fuldt kort' : 'Full map'}
+                </Link>
+                <button
+                  onClick={() => setMobilKortAaben(false)}
+                  className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors"
+                  aria-label={da ? 'Luk kort' : 'Close map'}
+                >
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+            {/* Kortindhold */}
+            <div className="flex-1 relative">
+              <Suspense
+                fallback={
+                  <div className="absolute inset-0 flex items-center justify-center bg-slate-900">
+                    <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                  </div>
+                }
+              >
+                <PropertyMap
+                  lat={dawaAdresse.y}
+                  lng={dawaAdresse.x}
+                  adresse={adresseStreng}
+                  visMatrikel={true}
+                  onAdresseValgt={(newId) => {
+                    setMobilKortAaben(false);
+                    router.push(`/dashboard/ejendomme/${newId}`);
+                  }}
                   bygningPunkter={
                     bbrData?.bygningPunkter
                       ? bbrData.bygningPunkter.filter(
@@ -4324,59 +4429,82 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
             {t.back}
           </button>
 
-          <div
-            className="relative"
-            onMouseEnter={() => !erFulgt && setVisFoelgTooltip(true)}
-            onMouseLeave={() => setVisFoelgTooltip(false)}
-          >
+          <div className="flex items-center gap-2">
+            {/* Kort-toggle knap — åbner overlay på mobil, toggle sidepanel på desktop */}
             <button
-              onClick={async () => {
-                setVisFoelgTooltip(false);
-                if (!ejendom) return;
-                const adresse = `${ejendom.adresse}, ${ejendom.postnummer} ${ejendom.by}`;
-                const nyTilstand = toggleTrackEjendom({
-                  id,
-                  adresse,
-                  postnr: ejendom.postnummer,
-                  by: ejendom.by,
-                  kommune: ejendom.kommune,
-                  anvendelse: null,
-                });
-                setErFulgt(nyTilstand);
-                window.dispatchEvent(new Event('ba-tracked-changed'));
-                try {
-                  if (nyTilstand) {
-                    await fetch('/api/tracked', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        entity_id: id,
-                        label: adresse,
-                        entity_data: {
-                          postnr: ejendom.postnummer,
-                          by: ejendom.by,
-                          kommune: ejendom.kommune,
-                          anvendelse: null,
-                        },
-                      }),
-                    });
-                  } else {
-                    await fetch(`/api/tracked?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
-                  }
-                } catch {
-                  /* Supabase ikke tilgængelig */
+              onClick={() => {
+                if (visKort) {
+                  setKortPanelÅben((prev) => !prev);
+                } else {
+                  setMobilKortAaben(true);
                 }
               }}
-              className={`flex items-center gap-2 px-3 py-1.5 border rounded-lg text-sm transition-all ${
-                erFulgt
+              className={`flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-sm transition-all ${
+                visKort && kortPanelÅben
                   ? 'bg-blue-600/20 hover:bg-blue-600/30 border-blue-500/40 text-blue-300'
                   : 'bg-slate-800 hover:bg-slate-700 border-slate-700/60 text-slate-300'
               }`}
+              title={da ? 'Vis/skjul kort' : 'Show/hide map'}
             >
-              <Bell size={14} className={erFulgt ? 'fill-blue-400 text-blue-400' : ''} />
-              {erFulgt ? t.following : t.follow}
+              <MapIcon size={14} />
+              {da ? 'Kort' : 'Map'}
             </button>
-            <FoelgTooltip lang="da" visible={visFoelgTooltip} />
+            <div
+              className="relative"
+              onMouseEnter={() => !erFulgt && setVisFoelgTooltip(true)}
+              onMouseLeave={() => setVisFoelgTooltip(false)}
+            >
+              <button
+                onClick={async () => {
+                  setVisFoelgTooltip(false);
+                  if (!ejendom) return;
+                  const adresse = `${ejendom.adresse}, ${ejendom.postnummer} ${ejendom.by}`;
+                  const nyTilstand = toggleTrackEjendom({
+                    id,
+                    adresse,
+                    postnr: ejendom.postnummer,
+                    by: ejendom.by,
+                    kommune: ejendom.kommune,
+                    anvendelse: null,
+                  });
+                  setErFulgt(nyTilstand);
+                  window.dispatchEvent(new Event('ba-tracked-changed'));
+                  try {
+                    if (nyTilstand) {
+                      await fetch('/api/tracked', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          entity_id: id,
+                          label: adresse,
+                          entity_data: {
+                            postnr: ejendom.postnummer,
+                            by: ejendom.by,
+                            kommune: ejendom.kommune,
+                            anvendelse: null,
+                          },
+                        }),
+                      });
+                    } else {
+                      await fetch(`/api/tracked?id=${encodeURIComponent(id)}`, {
+                        method: 'DELETE',
+                      });
+                    }
+                  } catch {
+                    /* Supabase ikke tilgængelig */
+                  }
+                }}
+                className={`flex items-center gap-2 px-3 py-1.5 border rounded-lg text-sm transition-all ${
+                  erFulgt
+                    ? 'bg-blue-600/20 hover:bg-blue-600/30 border-blue-500/40 text-blue-300'
+                    : 'bg-slate-800 hover:bg-slate-700 border-slate-700/60 text-slate-300'
+                }`}
+              >
+                <Bell size={14} className={erFulgt ? 'fill-blue-400 text-blue-400' : ''} />
+                {erFulgt ? t.following : t.follow}
+              </button>
+              <FoelgTooltip lang="da" visible={visFoelgTooltip} />
+            </div>
           </div>
         </div>
 
@@ -5902,7 +6030,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
         </div>
 
         {/* Adskillelseslinie — træk for at ændre kortpanel-bredde */}
-        {visKort && (
+        {visKort && kortPanelÅben && (
           <div
             className={`w-1.5 flex-shrink-0 cursor-col-resize flex items-center justify-center group transition-colors ${trækker ? 'bg-blue-500/30' : 'bg-slate-800 hover:bg-blue-500/20'}`}
             onMouseDown={(e) => {
@@ -5918,7 +6046,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
         )}
 
         {/* ─── Kortpanel — højre side ─── */}
-        {visKort && (
+        {visKort && kortPanelÅben && (
           <div className="relative flex-shrink-0 self-stretch" style={{ width: kortBredde }}>
             <div className="absolute inset-0">
               <Suspense
@@ -5942,6 +6070,71 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
           </div>
         )}
       </div>
+
+      {/* ─── Mobil: FAB-kortknap — kun synlig på skærme under 900px ─── */}
+      {!visKort && (
+        <button
+          onClick={() => setMobilKortAaben(true)}
+          className="fixed bottom-20 right-4 z-40 flex items-center gap-2 px-4 py-3 bg-blue-600 hover:bg-blue-500 active:scale-95 rounded-full text-white shadow-2xl transition-all"
+          aria-label={da ? 'Åbn kort' : 'Open map'}
+        >
+          <MapIcon size={18} />
+          <span className="text-sm font-semibold">{da ? 'Kort' : 'Map'}</span>
+        </button>
+      )}
+
+      {/* ─── Mobil: Kortoverlay — fylder hele skærmen ─── */}
+      {!visKort && mobilKortAaben && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-slate-950">
+          {/* Overlay-header */}
+          <div className="flex items-center justify-between px-4 py-3 bg-slate-900 border-b border-slate-700/50 flex-shrink-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <MapIcon size={15} className="text-blue-400 flex-shrink-0" />
+              <span className="text-white text-sm font-medium truncate">
+                {ejendom.adresse}, {ejendom.postnummer} {ejendom.by}
+              </span>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0 ml-3">
+              <Link
+                href={`/dashboard/kort?ejendom=${id}`}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-slate-300 text-xs font-medium transition-all"
+              >
+                <MapIcon size={11} />
+                {da ? 'Fuldt kort' : 'Full map'}
+              </Link>
+              <button
+                onClick={() => setMobilKortAaben(false)}
+                className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors"
+                aria-label={da ? 'Luk kort' : 'Close map'}
+              >
+                <X size={18} />
+              </button>
+            </div>
+          </div>
+          {/* Kortindhold */}
+          <div className="flex-1 relative">
+            <Suspense
+              fallback={
+                <div className="absolute inset-0 flex items-center justify-center bg-slate-900">
+                  <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                </div>
+              }
+            >
+              <PropertyMap
+                lat={ejendom.lat}
+                lng={ejendom.lng}
+                adresse={`${ejendom.adresse}, ${ejendom.postnummer} ${ejendom.by}`}
+                visMatrikel={true}
+                onAdresseValgt={(newId) => {
+                  setMobilKortAaben(false);
+                  router.push(`/dashboard/ejendomme/${newId}`);
+                }}
+                bygningPunkter={bbrData?.bygningPunkter ?? undefined}
+              />
+            </Suspense>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

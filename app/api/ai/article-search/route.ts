@@ -3,8 +3,16 @@
  *
  * AI-drevet artikelsøgning for danske virksomheder.
  *
- * Strategi: Claude genererer artikelliste baseret på træningsviden.
- * Ingen RSS-feeds, ingen Google News — kun Claude med danske medier.
+ * Strategi:
+ * 1. Primær: Google Custom Search API — henter op til 20 reelle artikler
+ * 2. Claude: ranker, filtrerer og tilføjer beskrivelser til Google-resultater
+ *            + finder sociale medier-links
+ * 3. Fallback: Claude-only (hvis GOOGLE_CSE_API_KEY ikke er sat)
+ *
+ * Env vars:
+ * - GOOGLE_CSE_API_KEY  — Google Cloud API-nøgle
+ * - GOOGLE_CSE_ID       — Custom Search Engine ID (cx)
+ * - BIZZASSIST_CLAUDE_KEY — Anthropic API-nøgle
  *
  * @param body.companyName  - Virksomhedens navn
  * @param body.cvr          - CVR-nummer (valgfrit)
@@ -12,7 +20,7 @@
  * @param body.employees    - Antal ansatte (valgfrit)
  * @param body.city         - By (valgfrit)
  * @param body.keyPersons   - Nøglepersoner: direktører, bestyrelsesmedlemmer (valgfrit)
- * @returns { articles, socials, usage }
+ * @returns { articles, socials, socialAlternatives, tokensUsed, usage, source }
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -22,9 +30,9 @@ import { rateLimit, AI_CHAT_LIMIT } from '@/app/lib/rateLimit';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
-// ─── Types ──────────────────────────────────────────────────────────────────
+// ─── Types ───────────────────────────────────────────────────────────────────
 
-/** En nyhedsartikel fundet af Claude */
+/** En nyhedsartikel */
 interface ArticleResult {
   /** Artiklens titel */
   title: string;
@@ -38,7 +46,7 @@ interface ArticleResult {
   description?: string;
 }
 
-/** Sociale medier og hjemmeside-links fundet af Claude — primære URLs */
+/** Sociale medier og hjemmeside-links — primære URLs */
 interface SocialsResult {
   website?: string;
   facebook?: string;
@@ -48,7 +56,7 @@ interface SocialsResult {
   youtube?: string;
 }
 
-/** Alternative links per platform fundet af Claude */
+/** Alternative links per platform */
 type SocialAlternativesResult = Record<string, string[]>;
 
 /** Svar-format fra API'en */
@@ -59,6 +67,8 @@ interface ArticleSearchResponse {
   socialAlternatives: SocialAlternativesResult;
   tokensUsed: number;
   usage: { totalTokens: number };
+  /** Angiver hvilken søgestrategi der blev brugt */
+  source: 'google+claude' | 'claude-only';
 }
 
 /** Input-format til API'en */
@@ -71,13 +81,188 @@ interface CompanyInput {
   keyPersons?: string[];
 }
 
-// ─── System prompt ──────────────────────────────────────────────────────────
+/** Et Google Custom Search resultat (råformat) */
+interface GoogleSearchItem {
+  title: string;
+  link: string;
+  displayLink: string;
+  snippet?: string;
+  pagemap?: {
+    metatags?: Array<Record<string, string>>;
+  };
+}
+
+// ─── Google Custom Search ────────────────────────────────────────────────────
 
 /**
- * System prompt der beder Claude om at generere danske artikler baseret på
- * sin træningsviden. Claude returnerer artikler direkte som JSON — ingen indeks.
+ * Søger via Google Custom Search API og returnerer rå artikelresultater.
+ * Kalder API'en to gange (start=1 og start=11) for op til 20 resultater.
+ * Returnerer tomt array hvis credentials mangler eller et netværksfejl opstår.
+ *
+ * @param query - Søgeforespørgsel (typisk virksomhedsnavn + kontekst)
+ * @returns Op til 20 Google Search-resultater som ArticleResult[]
  */
-const SYSTEM_PROMPT = `Du er en dansk medieekspert med dybdegående kendskab til danske nyheder og medier.
+async function searchGoogleCSE(query: string): Promise<ArticleResult[]> {
+  const key = process.env.GOOGLE_CSE_API_KEY?.trim();
+  const cx = process.env.GOOGLE_CSE_ID?.trim();
+
+  // Fallback til Claude-only hvis credentials mangler
+  if (!key || !cx) return [];
+
+  const baseUrl = 'https://www.googleapis.com/customsearch/v1';
+  const params = new URLSearchParams({
+    key,
+    cx,
+    q: query,
+    lr: 'lang_da',
+    gl: 'dk',
+    num: '10',
+  });
+
+  const results: ArticleResult[] = [];
+
+  // Hent to sider (1-10 og 11-20) parallelt for hastighed
+  const pageStarts = [1, 11];
+
+  await Promise.allSettled(
+    pageStarts.map(async (start) => {
+      try {
+        const url = `${baseUrl}?${params.toString()}&start=${start}`;
+        const res = await fetch(url, { next: { revalidate: 0 } });
+
+        if (!res.ok) {
+          console.warn(`[article-search] Google CSE HTTP ${res.status} (start=${start})`);
+          return;
+        }
+
+        const data = (await res.json()) as { items?: GoogleSearchItem[] };
+
+        if (!Array.isArray(data.items)) return;
+
+        for (const item of data.items) {
+          // Udtræk publiceret-dato fra Open Graph metatags hvis tilgængeligt
+          const publishedTime =
+            item.pagemap?.metatags?.[0]?.['article:published_time'] ??
+            item.pagemap?.metatags?.[0]?.['og:updated_time'] ??
+            '';
+
+          results.push({
+            title: item.title?.trim() ?? '',
+            url: item.link?.trim() ?? '',
+            source: item.displayLink?.replace(/^www\./, '').trim() ?? '',
+            description: item.snippet?.trim().slice(0, 150) ?? undefined,
+            date: publishedTime ? formatGoogleDate(publishedTime) : undefined,
+          });
+        }
+      } catch (err) {
+        console.warn(`[article-search] Google CSE fejl (start=${start}):`, err);
+      }
+    })
+  );
+
+  // Fjern duplikater baseret på URL
+  const seen = new Set<string>();
+  return results.filter((r) => {
+    if (!r.url || seen.has(r.url)) return false;
+    seen.add(r.url);
+    return true;
+  });
+}
+
+/**
+ * Formaterer en ISO 8601-dato (f.eks. "2025-01-15T...") til dansk datoformat
+ * (f.eks. "15. jan. 2025"). Returnerer tom streng ved fejl.
+ *
+ * @param isoDate - ISO 8601 datotekst
+ * @returns Formateret dansk dato eller tom streng
+ */
+function formatGoogleDate(isoDate: string): string {
+  try {
+    return new Date(isoDate).toLocaleDateString('da-DK', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    });
+  } catch {
+    return '';
+  }
+}
+
+// ─── System prompts ──────────────────────────────────────────────────────────
+
+/**
+ * System prompt til Google+Claude-tilstand.
+ * Claude modtager Google-resultater som kontekst og skal:
+ * 1. Rangere + filtrere dem til max 15 relevante artikler
+ * 2. Forbedre beskrivelser hvis nødvendigt
+ * 3. Finde sociale medier-links
+ */
+const SYSTEM_PROMPT_WITH_GOOGLE = `Du er en dansk medieekspert. Du modtager Google Search-resultater om en dansk virksomhed.
+
+Din opgave:
+1. Vælg de mest relevante og informative artikler — max 15, min 5
+2. Sorter dem med nyeste/vigtigste først
+3. Forbedre snippet-beskrivelser til max 100 tegn dansk tekst hvis nødvendigt
+4. Find virksomhedens sociale medier og hjemmeside-links baseret på din viden
+
+FILTRERINGSREGLER:
+- Udelad ikke-relevante resultater (jobopslag, generiske branchesider, aggregator-spam)
+- Bevar artikler fra kendte danske medier: DR, TV2, Børsen, Berlingske, Politiken, Jyllands-Posten, Altinget, Information, FinansWatch, MedWatch, Ingeniøren, Version2, Computerworld, Weekendavisen, Zetland, BT, Ekstra Bladet, Frihedsbrevet, Danwatch, Mandag Morgen
+- Inkludér også pressemeddelelser og branchemedier hvis de er relevante
+- Ret IKKE URLs — brug præcis de URLs fra Google-resultaterne
+- Opfind IKKE nye artikler — brug KUN de givne resultater
+
+Returner KUN validt JSON uden tekst før/efter:
+
+{
+  "articles": [
+    {
+      "title": "Artiklens titel",
+      "url": "https://...",
+      "source": "Kildename",
+      "date": "15. jan. 2025",
+      "description": "Max 100 tegn beskrivelse"
+    }
+  ],
+  "socials": {
+    "website": {
+      "primary": "https://virksomhed.dk",
+      "alternatives": ["https://www.virksomhed.dk"]
+    },
+    "linkedin": {
+      "primary": "https://www.linkedin.com/company/slug",
+      "alternatives": []
+    },
+    "facebook": {
+      "primary": "https://www.facebook.com/slug",
+      "alternatives": []
+    },
+    "instagram": {
+      "primary": "https://www.instagram.com/slug",
+      "alternatives": []
+    },
+    "twitter": {
+      "primary": "https://x.com/slug",
+      "alternatives": []
+    },
+    "youtube": {
+      "primary": "https://www.youtube.com/@slug",
+      "alternatives": []
+    }
+  }
+}
+
+Regler for "socials":
+- Gæt IKKE URLs — skriv kun præcise links du kender med sikkerhed
+- Returner ALDRIG generiske roddomæner som "https://facebook.com" — kun specifikke profil-URLs
+- Udelad felter du ikke kender med sikkerhed
+- Returner altid "socials"-objektet (evt. tomt {})`;
+
+/**
+ * System prompt til Claude-only fallback.
+ * Claude genererer artikelliste + sociale medier udelukkende fra sin træningsviden.
+ */
+const SYSTEM_PROMPT_CLAUDE_ONLY = `Du er en dansk medieekspert med dybdegående kendskab til danske nyheder og medier.
 
 Baseret på din træningsviden, find DANSKE artikler om den angivne virksomhed fra de seneste 2 år. Brug disse medier:
 DR, TV2, Børsen, Berlingske, Politiken, Jyllands-Posten, Altinget, Information, FinansWatch, MedWatch, Ingeniøren, Version2, Computerworld, Weekendavisen, Zetland, BT, Ekstra Bladet, Frihedsbrevet, Danwatch, Mandag Morgen.
@@ -147,7 +332,7 @@ Regler for "socials":
 // ─── Response parser ─────────────────────────────────────────────────────────
 
 /**
- * Parser Claude's JSON-svar med direkte artikelliste og sociale medier.
+ * Parser Claude's JSON-svar med artikelliste og sociale medier.
  * Understøtter både gammel format (string) og nyt format ({ primary, alternatives }).
  *
  * @param text - Rå tekstsvar fra Claude (JSON med articles[] og socials{})
@@ -169,7 +354,7 @@ function parseArticleResponse(text: string): {
 
     const raw = JSON.parse(jsonMatch[1] ?? jsonMatch[0]);
 
-    // Parse artikler direkte fra JSON-arrayet
+    // Parse artikler fra JSON-arrayet
     const rawArticles: unknown[] = Array.isArray(raw.articles) ? raw.articles : [];
 
     const articles: ArticleResult[] = rawArticles
@@ -183,7 +368,7 @@ function parseArticleResponse(text: string): {
       )
       .filter((a) => {
         const url = String(a.url);
-        // Afvis ikke-danske medier (GlobeNewswire, Reuters, Bloomberg m.fl.)
+        // Afvis ikke-danske internationale medier
         const blocked = [
           'globenewswire',
           'reuters',
@@ -252,13 +437,14 @@ function parseArticleResponse(text: string): {
   }
 }
 
-// ─── Handler ────────────────────────────────────────────────────────────────
+// ─── Handler ─────────────────────────────────────────────────────────────────
 
 /**
  * POST /api/ai/article-search
  *
- * Beder Claude om at generere en liste af danske artikler om virksomheden
- * baseret på sin træningsviden. Ingen RSS-feeds eller Google News bruges.
+ * Søger efter danske artikler om en virksomhed.
+ * Primær: Google Custom Search API → Claude rangering.
+ * Fallback: Claude-only (hvis GOOGLE_CSE_API_KEY ikke er sat).
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
   // Rate limit — deler grænse med AI chat
@@ -294,17 +480,46 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     .filter(Boolean)
     .join('\n');
 
-  const userMessage = `Find de seneste danske artikler om denne virksomhed og returner sociale medier-links:\n\n${companyContext}`;
-
   const client = new Anthropic({ apiKey });
 
-  try {
-    console.log(`[article-search] Claude-søgning for "${companyName}"`);
+  // ── Forsøg Google CSE ────────────────────────────────────────────────────
+  const googleQuery = city
+    ? `${companyName} ${city} nyhed`
+    : `${companyName} dansk virksomhed nyhed`;
 
+  const googleResults = await searchGoogleCSE(googleQuery);
+  const useGoogle = googleResults.length > 0;
+
+  console.log(
+    `[article-search] "${companyName}": ${useGoogle ? `Google CSE ${googleResults.length} resultater` : 'Claude-only fallback'}`
+  );
+
+  // ── Byg Claude-besked ────────────────────────────────────────────────────
+  let userMessage: string;
+  let systemPrompt: string;
+
+  if (useGoogle) {
+    // Google+Claude tilstand: send Google-resultater som kontekst
+    const googleSummary = googleResults
+      .map(
+        (r, i) =>
+          `${i + 1}. ${r.title}\n   URL: ${r.url}\n   Kilde: ${r.source}${r.date ? `\n   Dato: ${r.date}` : ''}${r.description ? `\n   Snippet: ${r.description}` : ''}`
+      )
+      .join('\n\n');
+
+    userMessage = `Virksomhed:\n${companyContext}\n\nGoogle Search-resultater (${googleResults.length} hits):\n\n${googleSummary}\n\nRangér og filtrer disse resultater. Find også sociale medier-links.`;
+    systemPrompt = SYSTEM_PROMPT_WITH_GOOGLE;
+  } else {
+    // Claude-only fallback
+    userMessage = `Find de seneste danske artikler om denne virksomhed og returner sociale medier-links:\n\n${companyContext}`;
+    systemPrompt = SYSTEM_PROMPT_CLAUDE_ONLY;
+  }
+
+  try {
     const response = await client.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 4096,
-      system: SYSTEM_PROMPT,
+      system: systemPrompt,
       messages: [{ role: 'user', content: userMessage }],
     });
 
@@ -321,7 +536,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const { articles, socials, socialAlternatives } = parseArticleResponse(finalText);
 
     console.log(
-      `[article-search] "${companyName}": ${articles.length} artikler, tokens=${totalTokens}`
+      `[article-search] "${companyName}": ${articles.length} artikler, tokens=${totalTokens}, source=${useGoogle ? 'google+claude' : 'claude-only'}`
     );
 
     if (articles.length === 0) {
@@ -334,6 +549,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       socialAlternatives,
       tokensUsed: totalTokens,
       usage: { totalTokens },
+      source: useGoogle ? 'google+claude' : 'claude-only',
     };
 
     return NextResponse.json(result, { status: 200 });

@@ -3143,11 +3143,19 @@ function AIArticleSearchPanel({
       </div>
     ) : null;
 
+  /** AI disclaimer — vises altid under token-bar */
+  const aiDisclaimer = (
+    <p className="text-xs text-slate-500 mb-3">
+      ⚠️ Svar genereret af AI er ikke nødvendigvis korrekte. Verificér altid vigtig information.
+    </p>
+  );
+
   /** Go-state — søgning ikke startet endnu */
   if (!hasSearched && !loading) {
     return (
       <div>
         {tokenBar}
+        {aiDisclaimer}
         <p className="text-slate-500 text-xs mb-3 leading-relaxed">
           {da
             ? `Klik for at finde op til 30 seneste danske nyheder om ${companyData.name}.`
@@ -3169,6 +3177,7 @@ function AIArticleSearchPanel({
     return (
       <div>
         {tokenBar}
+        {aiDisclaimer}
         <div className="flex items-center gap-2 text-slate-400 text-xs py-2">
           <Loader2 size={12} className="animate-spin text-blue-400" />
           {da ? 'AI søger efter nyheder…' : 'AI searching for news…'}
@@ -3181,6 +3190,7 @@ function AIArticleSearchPanel({
   return (
     <div>
       {tokenBar}
+      {aiDisclaimer}
       {tokensUsedThisSearch > 0 && (
         <p className="text-[10px] text-slate-600 mb-3">
           {da

@@ -420,6 +420,10 @@ export default function AIChatPanel() {
               </Wrapper>
             );
           })()}
+        {/* AI disclaimer */}
+        <p className="px-4 pb-2 text-xs text-slate-500">
+          ⚠️ Svar genereret af AI er ikke nødvendigvis korrekte. Verificér altid vigtig information.
+        </p>
       </div>
 
       {/* ── Chat-indhold ─────────────────────────────────────────────────── */}

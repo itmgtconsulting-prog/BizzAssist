@@ -105,8 +105,12 @@ Returner KUN validt JSON uden tekst før/efter:
 Regler:
 - "selected": op til 8 artiklernes numre (1-baseret), sortér nyeste/mest relevante først
 - "descriptions": ét element per valgt artikel i samme rækkefølge, max 80 tegn
-- "socials": kun URL'er du kender præcist — udelad felter du er usikker på
-- Returner altid "socials" selvom selected er tom`;
+- "socials": VIGTIGT — brug din træningsviden til at finde virksomhedens officielle links.
+  Du SKAL altid inkludere de sociale profiler og hjemmeside du kender til virksomheden.
+  For store/kendte virksomheder forventes minimum website + linkedin.
+  Udelad KUN felter hvor du er helt sikker på at profilen ikke eksisterer.
+  Gæt IKKE URLs — skriv kun præcise links du kender med sikkerhed.
+- Returner altid "socials"-objektet (evt. tomt {}) selvom selected er tom`;
 
 // ─── Response parser ─────────────────────────────────────────────────────────
 
@@ -198,7 +202,7 @@ function decodeHtmlEntities(str: string): string {
 /**
  * Henter søgespecifikke artikler direkte fra Google News RSS.
  * Inlines logikken i stedet for at kalde /api/news for at undgå timeout-kæden.
- * Timeout: 5s — tilpasset Vercel Hobby plan (10s total limit).
+ * Timeout: 8s — tilpasset Vercel Pro plan (60s maxDuration).
  *
  * @param companyName - Virksomhedens navn
  * @returns Op til 15 artikler om virksomheden
@@ -208,7 +212,7 @@ async function fetchGoogleNewsArticles(companyName: string): Promise<RawNewsArti
   try {
     const res = await fetch(url, {
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; BizzAssist/1.0)' },
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(8000),
     });
     if (!res.ok) return [];
     const xml = await res.text();
@@ -319,9 +323,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const client = new Anthropic({ apiKey });
 
   try {
-    // Haiku bruges for hastighed (2-3s vs. 6-8s for Sonnet) — vigtigt for Vercel timeout
+    // Sonnet bruges for bedre kvalitet til artikelfiltrering og social media-søgning (Vercel Pro: 60s timeout)
     const response = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model: 'claude-sonnet-4-6',
       max_tokens: 512,
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userMessage }],

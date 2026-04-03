@@ -2940,7 +2940,8 @@ interface AIArticleResult {
  * AIArticleSearchPanel — AI-drevet artikelsøgning i nyheds-sidepanelet.
  *
  * Viser tokens til rådighed og en "Søg"-knap. Når brugeren klikker,
- * hentes de 10 seneste nyheder om virksomheden via /api/ai/article-search.
+ * hentes op til 30 seneste nyheder om virksomheden via /api/ai/article-search.
+ * Viser første 5 og ekspanderer med 5 ad gangen via "Vis flere".
  * Resultater erstatter Søg-knappen. Token-forbrug trækkes fra brugerens konto.
  * Kalder onSocialsFound med AI-fundne sociale medier-URLs.
  *
@@ -2969,8 +2970,8 @@ function AIArticleSearchPanel({
   const [error, setError] = useState<string | null>(null);
   const [tokenInfo, setTokenInfo] = useState<{ used: number; limit: number } | null>(null);
   const [tokensUsedThisSearch, setTokensUsedThisSearch] = useState(0);
-  /** Vis alle artikler (false = kun første 5) */
-  const [showAllArticles, setShowAllArticles] = useState(false);
+  /** Antal synlige artikler — starter på 5, øges med 5 ved hvert "Vis flere"-klik */
+  const [visibleCount, setVisibleCount] = useState(5);
 
   /** Opdaterer token-info fra subscription context */
   useEffect(() => {
@@ -3036,7 +3037,7 @@ function AIArticleSearchPanel({
 
       const fetchedArticles: AIArticleResult[] = json.articles ?? [];
       setArticles(fetchedArticles);
-      setShowAllArticles(false);
+      setVisibleCount(5);
 
       // Videresend AI-fundne sociale medier til VerifiedLinks
       if (json.socials && Object.keys(json.socials).length > 0) {
@@ -3137,8 +3138,8 @@ function AIArticleSearchPanel({
         {tokenBar}
         <p className="text-slate-500 text-xs mb-3 leading-relaxed">
           {da
-            ? `Klik for at finde de 10 seneste danske nyheder om ${companyData.name}.`
-            : `Click to find the 10 latest Danish news articles about ${companyData.name}.`}
+            ? `Klik for at finde op til 30 seneste danske nyheder om ${companyData.name}.`
+            : `Click to find up to 30 latest Danish news articles about ${companyData.name}.`}
         </p>
         <button
           onClick={handleSearch}
@@ -3182,7 +3183,7 @@ function AIArticleSearchPanel({
         </p>
       ) : (
         <div className="space-y-2.5">
-          {(showAllArticles ? articles : articles.slice(0, 5)).map((a, i) => (
+          {articles.slice(0, visibleCount).map((a, i) => (
             <a
               key={i}
               href={a.url}
@@ -3208,15 +3209,15 @@ function AIArticleSearchPanel({
               </div>
             </a>
           ))}
-          {!showAllArticles && articles.length > 5 && (
+          {visibleCount < articles.length && (
             <button
-              onClick={() => setShowAllArticles(true)}
+              onClick={() => setVisibleCount((c) => Math.min(c + 5, articles.length))}
               className="mt-1 flex items-center gap-1 text-[10px] text-slate-500 hover:text-blue-400 transition-colors"
             >
               <ChevronDown size={10} />
               {da
-                ? `Vis flere (${articles.length - 5} mere)`
-                : `Show more (${articles.length - 5} more)`}
+                ? `Vis flere (${articles.length - visibleCount} mere)`
+                : `Show more (${articles.length - visibleCount} more)`}
             </button>
           )}
         </div>

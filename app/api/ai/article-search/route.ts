@@ -83,14 +83,14 @@ Baseret på din træningsviden, find DANSKE artikler om den angivne virksomhed f
 DR, TV2, Børsen, Berlingske, Politiken, Jyllands-Posten, Altinget, Information, FinansWatch, MedWatch, Ingeniøren, Version2, Computerworld, Weekendavisen, Zetland, BT, Ekstra Bladet, Frihedsbrevet, Danwatch, Mandag Morgen.
 
 KRITISKE REGLER FOR ARTIKLER:
-- Returner PRÆCIS 10 artikler — ikke "op til 10", ikke 4, men nøjagtigt 10
+- Returner PRÆCIS 30 artikler — ikke "op til 30", ikke 10, men nøjagtigt 30
 - Spred artiklerne over FLERE forskellige medier — ét medie må max bidrage med 3 artikler
 - Inkludér artikler fra de seneste 2 år (ikke kun seneste måned)
 - Returner KUN artikler du er 100% SIKKER på eksisterer med korrekte URLs
 - INGEN engelske, norske eller svenske artikler — kun ovenstående danske medier
 - INGEN artikler fra GlobeNewswire, Reuters, Bloomberg, AP — kun ovenstående danske medier
 - Gæt IKKE URLs — skriv kun præcise links du kender med absolut sikkerhed
-- Hvis du mangler artikler for at nå 10, søg bredere: brug ældre artikler (op til 2 år tilbage), brug flere medier
+- Hvis du mangler artikler for at nå 30, søg bredere: brug ældre artikler (op til 2 år tilbage), brug flere medier
 
 Returner KUN validt JSON uden tekst før/efter:
 
@@ -170,7 +170,7 @@ function parseArticleResponse(text: string): {
     const rawArticles: unknown[] = Array.isArray(raw.articles) ? raw.articles : [];
 
     const articles: ArticleResult[] = rawArticles
-      .slice(0, 10)
+      .slice(0, 30)
       .filter(
         (a): a is Record<string, unknown> =>
           typeof a === 'object' &&
@@ -300,7 +300,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const response = await client.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 4096,
+      max_tokens: 8192,
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userMessage }],
     });

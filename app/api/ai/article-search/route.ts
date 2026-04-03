@@ -76,6 +76,56 @@ interface RawNewsArticle {
   date?: string;
 }
 
+// ─── Danish media domain whitelist ──────────────────────────────────────────
+
+/**
+ * Whitelist af kendte danske mediedomæner.
+ * Artikler fra domæner UDEN FOR denne liste filtreres fra.
+ */
+const DANISH_DOMAINS = new Set([
+  'dr.dk',
+  'tv2.dk',
+  'politiken.dk',
+  'berlingske.dk',
+  'jyllands-posten.dk',
+  'information.dk',
+  'borsen.dk',
+  'finans.dk',
+  'version2.dk',
+  'computerworld.dk',
+  'altinget.dk',
+  'mandag-morgen.dk',
+  'weekendavisen.dk',
+  'zetland.dk',
+  'ingenioren.dk',
+  'medwatch.dk',
+  'finanswatch.dk',
+  'energiwatch.dk',
+  'shippingwatch.dk',
+  'videnskab.dk',
+  'danwatch.dk',
+  'frihedsbrevet.dk',
+  'bt.dk',
+  'ekstrabladet.dk',
+]);
+
+/**
+ * Returnerer true hvis URL'en stammer fra et dansk medie-domæne.
+ *
+ * @param url - Artiklens URL
+ * @returns Om domænet er på hvidlisten
+ */
+function isDanishSource(url: string): boolean {
+  try {
+    const hostname = new URL(url).hostname.replace(/^www\./, '');
+    return (
+      DANISH_DOMAINS.has(hostname) || [...DANISH_DOMAINS].some((d) => hostname.endsWith('.' + d))
+    );
+  } catch {
+    return false;
+  }
+}
+
 // ─── System prompt ──────────────────────────────────────────────────────────
 
 /**
@@ -105,6 +155,8 @@ Returner KUN validt JSON uden tekst før/efter:
 Regler:
 - "selected": op til 8 artiklernes numre (1-baseret), sortér nyeste/mest relevante først
 - "descriptions": ét element per valgt artikel i samme rækkefølge, max 80 tegn
+- VIGTIGT: Medtag KUN artikler fra DANSKE medier (dr.dk, tv2.dk, berlingske.dk, politiken.dk, borsen.dk osv.).
+  Udelad artikler fra svenske (svt.se, dn.se, aftonbladet.se), norske (nrk.no, vg.no) eller andre ikke-danske medier.
 - "socials": VIGTIGT — brug din træningsviden til at finde virksomhedens officielle links.
   Du SKAL altid inkludere de sociale profiler og hjemmeside du kender til virksomheden.
   For store/kendte virksomheder forventes minimum website + linkedin.
@@ -251,6 +303,9 @@ async function fetchGoogleNewsArticles(companyName: string): Promise<RawNewsArti
           /* ignore */
         }
       }
+
+      // Filtrer ikke-danske medier fra
+      if (!isDanishSource(articleUrl)) continue;
 
       articles.push({ title, url: articleUrl, source, date });
     }

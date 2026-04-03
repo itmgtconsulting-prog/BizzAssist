@@ -213,7 +213,18 @@ async function searchSocialProfiles(companyName: string): Promise<SocialsResult>
   const cx = process.env.GOOGLE_CSE_ID?.trim();
   if (!key || !cx) return {};
 
-  const platforms: Array<{ name: keyof SocialsResult; query: string; domainHint: string }> = [
+  // Website-søgning ekskluderer eksplicit alle sociale medier-domæner så vi ikke
+  // ender med facebook.com/virksomhed som "hjemmeside".
+  const websiteExclusions =
+    '-site:facebook.com -site:instagram.com -site:linkedin.com -site:twitter.com -site:x.com -site:youtube.com';
+
+  const platforms: Array<{
+    name: keyof SocialsResult;
+    query: string;
+    domainHint: string;
+    /** Sæt true for platforme hvor rod-URL (pathname="/") er en gyldig profil-URL */
+    skipPathCheck?: boolean;
+  }> = [
     { name: 'facebook', query: `${companyName} site:facebook.com`, domainHint: 'facebook.com' },
     { name: 'instagram', query: `${companyName} site:instagram.com`, domainHint: 'instagram.com' },
     {
@@ -227,7 +238,14 @@ async function searchSocialProfiles(companyName: string): Promise<SocialsResult>
       domainHint: 'x.com',
     },
     { name: 'youtube', query: `${companyName} site:youtube.com`, domainHint: 'youtube.com' },
-    { name: 'website', query: `${companyName} officiel hjemmeside`, domainHint: '' },
+    {
+      // Website: bred søgning der ekskluderer sociale medier.
+      // skipPathCheck=true fordi novonordisk.com/ har pathname="/" — det er en gyldig hjemmeside.
+      name: 'website',
+      query: `${companyName} officiel hjemmeside ${websiteExclusions}`,
+      domainHint: '',
+      skipPathCheck: true,
+    },
   ];
 
   const results = await Promise.allSettled(
@@ -240,14 +258,23 @@ async function searchSocialProfiles(companyName: string): Promise<SocialsResult>
         `&num=1`;
 
       const res = await fetch(url, { signal: AbortSignal.timeout(5000), next: { revalidate: 0 } });
-      const data = (await res.json()) as { items?: Array<{ link: string }> };
-      const link = data.items?.[0]?.link ?? null;
+      const data = (await res.json()) as { items?: Array<{ link: string; displayLink: string }> };
+      const item = data.items?.[0] ?? null;
+      const link = item?.link ?? null;
+
+      if (!link) return null;
+
+      // Log website-resultat for debugging
+      if (p.name === 'website') {
+        console.log(`[article-search] website CSE hit: ${link}`);
+      }
 
       // Afvis resultater der ikke matcher den forventede platform
-      if (link && p.domainHint && !link.includes(p.domainHint)) return null;
+      if (p.domainHint && !link.includes(p.domainHint)) return null;
 
-      // Afvis generiske roddomæner (ingen specifik sti)
-      if (link) {
+      // Afvis generiske roddomæner (ingen specifik sti) — KUN for sociale medier.
+      // For website er rod-URL (pathname="/") en gyldig virksomhedshjemmeside.
+      if (!p.skipPathCheck) {
         try {
           const { pathname } = new URL(link);
           if (pathname === '/' || pathname === '') return null;
@@ -256,7 +283,7 @@ async function searchSocialProfiles(companyName: string): Promise<SocialsResult>
         }
       }
 
-      return link ? { name: p.name, url: link } : null;
+      return { name: p.name, url: link };
     })
   );
 

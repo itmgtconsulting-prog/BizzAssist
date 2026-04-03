@@ -78,55 +78,50 @@ interface RawNewsArticle {
 
 // ─── System prompt ──────────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT = `Du er en AI-assistent specialiseret i at finde nyheder og officielle sociale medier-profiler for danske virksomheder.
+/**
+ * System prompt bruger index-baseret output for at minimere tokens.
+ * Claude returnerer kun indeks-numre + korte beskrivelser, IKKE fulde URLs.
+ * Det holder output under 400 tokens og undgår JSON-truncation ved max_tokens.
+ */
+const SYSTEM_PROMPT = `Du er assistent der analyserer nyhedsartikler og sociale medier for danske virksomheder.
 
-Du modtager en liste af artikler hentet fra danske RSS-feeds og virksomhedsoplysninger.
+Du modtager en nummereret liste af artikler og virksomhedsoplysninger.
 
-Din opgave:
-1. Filtrer og behold KUN artikler der direkte handler om den angivne virksomhed
-2. Sortér nyeste artikler først
-3. Tilføj en kort beskrivelse (max 120 tegn) til hver artikel baseret på titlen
-4. Returner PRÆCIS 10 af de mest relevante artikler (eller færre hvis under 10 er relevante)
-5. Find virksomhedens officielle sociale medier og hjemmeside baseret på virksomhedsnavnet
-
-For sociale medier: brug din viden om kendte danske virksomheder til at angive de officielle URL'er.
-Eksempel: Novo Nordisk → linkedin: "https://www.linkedin.com/company/novo-nordisk", website: "https://www.novonordisk.com"
-Hvis du ikke kender den præcise URL, sæt feltet til null (medtag det ikke).
-
-MEGET VIGTIGT: Returner KUN validt JSON i PRÆCIS dette format — ingen tekst før eller efter:
+Returner KUN validt JSON uden tekst før/efter:
 
 {
-  "articles": [
-    {
-      "title": "Artiklens præcise titel",
-      "url": "https://kildeUrl.dk/artikel",
-      "source": "Kildens navn",
-      "date": "Dato som tekst (bevar original format)",
-      "description": "Kort beskrivelse på max 120 tegn"
-    }
-  ],
+  "selected": [1, 3, 5],
+  "descriptions": ["Max 80 tegn beskrivelse af artikel 1", "Max 80 tegn beskrivelse af artikel 3", "Max 80 tegn beskrivelse af artikel 5"],
   "socials": {
     "website": "https://virksomhed.dk",
-    "linkedin": "https://www.linkedin.com/company/virksomhed",
-    "facebook": "https://www.facebook.com/virksomhed",
-    "instagram": "https://www.instagram.com/virksomhed",
-    "twitter": "https://x.com/virksomhed",
-    "youtube": "https://www.youtube.com/@virksomhed"
+    "linkedin": "https://www.linkedin.com/company/slug",
+    "facebook": "https://www.facebook.com/slug",
+    "instagram": "https://www.instagram.com/slug",
+    "twitter": "https://x.com/slug",
+    "youtube": "https://www.youtube.com/@slug"
   }
 }
 
-Udelad sociale medie-felter du ikke kender præcist (brug ikke google-søge-links, kun direkte profil-URLs).
-Hvis ingen artikler er relevante: sæt "articles" til [] — men returner ALTID "socials" med de kendte URLs.`;
+Regler:
+- "selected": op til 8 artiklernes numre (1-baseret), sortér nyeste/mest relevante først
+- "descriptions": ét element per valgt artikel i samme rækkefølge, max 80 tegn
+- "socials": kun URL'er du kender præcist — udelad felter du er usikker på
+- Returner altid "socials" selvom selected er tom`;
 
 // ─── Response parser ─────────────────────────────────────────────────────────
 
 /**
- * Udtrækker JSON fra Claude's tekstsvar og parser det til strukturerede data.
+ * Parser Claude's index-baserede svar og rekonstruerer artikler fra rawArticles.
+ * Index-format minimerer output-tokens: Claude returnerer kun numre + korte beskrivelser.
  *
- * @param text - Rå tekstsvar fra Claude
- * @returns Parsede artikler og sociale medier-links
+ * @param text - Rå tekstsvar fra Claude (JSON med selected[], descriptions[], socials{})
+ * @param rawArticles - De originale artikler fra Google News RSS
+ * @returns Rekonstruerede artikler og sociale medier-links
  */
-function parseArticleResponse(text: string): { articles: ArticleResult[]; socials: SocialsResult } {
+function parseArticleResponse(
+  text: string,
+  rawArticles: RawNewsArticle[]
+): { articles: ArticleResult[]; socials: SocialsResult } {
   const empty = { articles: [], socials: {} };
   try {
     const jsonMatch =
@@ -138,19 +133,26 @@ function parseArticleResponse(text: string): { articles: ArticleResult[]; social
 
     const raw = JSON.parse(jsonMatch[1] ?? jsonMatch[0]);
 
-    const articles: ArticleResult[] = (raw.articles ?? [])
-      .filter(
-        (a: Record<string, unknown>) =>
-          typeof a.title === 'string' && typeof a.url === 'string' && a.url.startsWith('http')
-      )
-      .slice(0, 10)
-      .map((a: Record<string, unknown>) => ({
-        title: String(a.title ?? '').trim(),
-        url: String(a.url ?? '').trim(),
-        source: String(a.source ?? '').trim(),
-        date: a.date ? String(a.date).trim() : undefined,
-        description: a.description ? String(a.description).trim().slice(0, 150) : undefined,
-      }));
+    // Rekonstruér artikler fra index-numre (1-baseret)
+    const selected: number[] = Array.isArray(raw.selected) ? raw.selected : [];
+    const descriptions: string[] = Array.isArray(raw.descriptions) ? raw.descriptions : [];
+
+    const articles: ArticleResult[] = selected
+      .slice(0, 8)
+      .map((idx: number, position: number) => {
+        const article = rawArticles[idx - 1]; // konvertér til 0-baseret
+        if (!article) return null;
+        return {
+          title: article.title,
+          url: article.url,
+          source: article.source,
+          date: article.date,
+          description: descriptions[position]
+            ? String(descriptions[position]).trim().slice(0, 100)
+            : undefined,
+        };
+      })
+      .filter((a): a is ArticleResult => a !== null);
 
     // Udtræk sociale medier — bevar kun felter med gyldige https-URLs
     const rawSocials = raw.socials ?? {};
@@ -176,27 +178,82 @@ function parseArticleResponse(text: string): { articles: ArticleResult[]; social
   }
 }
 
-// ─── News fetcher ────────────────────────────────────────────────────────────
+// ─── Google News RSS fetcher (inline — ingen HTTP-rundtur) ───────────────────
+
+/** Decode HTML entities fra RSS */
+function decodeHtmlEntities(str: string): string {
+  return str
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, n) => String.fromCharCode(parseInt(n, 16)))
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&oslash;/g, 'ø')
+    .replace(/&aelig;/g, 'æ')
+    .replace(/&aring;/g, 'å');
+}
 
 /**
- * Henter artikler fra den interne /api/news route (danske RSS-feeds).
- * Forsøger med fuldt virksomhedsnavn, derefter første ord som fallback.
+ * Henter søgespecifikke artikler direkte fra Google News RSS.
+ * Inlines logikken i stedet for at kalde /api/news for at undgå timeout-kæden.
+ * Timeout: 5s — tilpasset Vercel Hobby plan (10s total limit).
  *
- * @param baseUrl - App-base URL (f.eks. https://test.bizzassist.dk)
- * @param companyName - Virksomhedens navn til søgning
- * @returns Liste af råartikler
+ * @param companyName - Virksomhedens navn
+ * @returns Op til 15 artikler om virksomheden
  */
-async function fetchRssArticles(baseUrl: string, companyName: string): Promise<RawNewsArticle[]> {
+async function fetchGoogleNewsArticles(companyName: string): Promise<RawNewsArticle[]> {
+  const url = `https://news.google.com/rss/search?q=${encodeURIComponent(companyName)}&hl=da&gl=DK&ceid=DK:da`;
   try {
-    const res = await fetch(`${baseUrl}/api/news?q=${encodeURIComponent(companyName)}`, {
-      headers: { 'User-Agent': 'BizzAssist-Internal/1.0' },
-      signal: AbortSignal.timeout(12000),
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; BizzAssist/1.0)' },
+      signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return [];
-    const data = await res.json();
-    return Array.isArray(data) ? data : [];
+    const xml = await res.text();
+
+    const articles: RawNewsArticle[] = [];
+    const itemRegex = /<item>([\s\S]*?)<\/item>/g;
+    let match;
+
+    while ((match = itemRegex.exec(xml)) !== null && articles.length < 15) {
+      const item = match[1];
+
+      const titleMatch =
+        item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) ?? item.match(/<title>(.*?)<\/title>/);
+      const title = decodeHtmlEntities((titleMatch?.[1] ?? '').trim());
+      if (!title) continue;
+
+      const linkMatch = item.match(/<link>(.*?)<\/link>/) ?? item.match(/<link\s*\/?>([^<\s]+)/);
+      const articleUrl = (linkMatch?.[1] ?? '').trim();
+      if (!articleUrl || !articleUrl.startsWith('http')) continue;
+
+      // Faktisk udgiver fra <source> tag
+      let source = 'Google News';
+      const sourceMatch = item.match(/<source[^>]*url="[^"]*"[^>]*>(.*?)<\/source>/);
+      if (sourceMatch) source = decodeHtmlEntities(sourceMatch[1].trim()) || source;
+
+      let date: string | undefined;
+      const pubDateMatch = item.match(/<pubDate>(.*?)<\/pubDate>/);
+      if (pubDateMatch?.[1]) {
+        try {
+          date = new Date(pubDateMatch[1]).toLocaleDateString('da-DK', {
+            day: 'numeric',
+            month: 'short',
+            year: 'numeric',
+          });
+        } catch {
+          /* ignore */
+        }
+      }
+
+      articles.push({ title, url: articleUrl, source, date });
+    }
+
+    return articles;
   } catch (err) {
-    console.error('[article-search] fetchRssArticles fejl:', err);
+    console.error('[article-search] Google News RSS fejl:', err);
     return [];
   }
 }
@@ -231,15 +288,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'companyName er påkrævet' }, { status: 400 });
   }
 
-  // Udled base URL fra request (virker både lokalt og på Vercel)
-  const host = request.headers.get('host') ?? 'localhost:3000';
-  const protocol = host.includes('localhost') ? 'http' : 'https';
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? `${protocol}://${host}`;
-
-  // Hent artikler fra /api/news (danske RSS-feeds — gratis, ingen beta krævet)
-  const rawArticles = await fetchRssArticles(baseUrl, companyName);
+  // Hent artikler direkte fra Google News RSS (ingen HTTP-rundtur til /api/news)
+  const rawArticles = await fetchGoogleNewsArticles(companyName);
   console.log(
-    `[article-search] RSS-feed resultater for "${companyName}": ${rawArticles.length} artikler`
+    `[article-search] Google News resultater for "${companyName}": ${rawArticles.length} artikler`
   );
 
   // Byg virksomhedskontekst
@@ -254,26 +306,23 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     .filter(Boolean)
     .join('\n');
 
-  // Formatér råartikler til Claude-input
+  // Formatér råartikler til Claude-input — kun titel + kilde + dato (ingen URL = færre tokens)
   const articlesSection =
     rawArticles.length > 0
-      ? `\n\nArtikler fundet i danske medier (${rawArticles.length} stk.):\n${rawArticles
-          .map(
-            (a, i) =>
-              `${i + 1}. Titel: "${a.title}"\n   Kilde: ${a.source}${a.date ? ` (${a.date})` : ''}\n   URL: ${a.url}`
-          )
+      ? `\n\nArtikler (${rawArticles.length} stk.) — angiv numre i "selected":\n${rawArticles
+          .map((a, i) => `${i + 1}. "${a.title}" — ${a.source}${a.date ? ` (${a.date})` : ''}`)
           .join('\n')}`
-      : '\n\nIngen artikler fundet i RSS-feeds for denne søgning. Returner {"articles": []}.';
+      : '\n\nIngen artikler fundet. Returner {"selected":[],"descriptions":[],"socials":{...}}';
 
   const userMessage = `Filtrer og rangér disse nyheder om følgende virksomhed:\n\n${companyContext}${articlesSection}`;
 
   const client = new Anthropic({ apiKey });
 
   try {
-    // Enkelt Claude-kald uden tools — samme pattern som AI Business Assistent
+    // Haiku bruges for hastighed (2-3s vs. 6-8s for Sonnet) — vigtigt for Vercel timeout
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 2048,
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 512,
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userMessage }],
     });
@@ -288,7 +337,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       .map((b) => b.text)
       .join('');
 
-    const { articles, socials } = parseArticleResponse(finalText);
+    const { articles, socials } = parseArticleResponse(finalText, rawArticles);
     if (articles.length === 0) {
       console.warn(
         '[article-search] Claude svarede men ingen artikler kunne parses. Råsvar:',

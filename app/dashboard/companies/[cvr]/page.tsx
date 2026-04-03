@@ -334,11 +334,18 @@ export default function VirksomhedDetalje({ params }: PageProps) {
   /** Styrer om mobil nyheder-overlay er åbent. */
   const [mobilNyhederAaben, setMobilNyhederAaben] = useState(false);
 
-  /** AI-fundne sociale medier-URLs — udfyldes efter artikel-søgning */
-  const [aiSocials, setAiSocials] = useState<Record<string, string>>({});
+  /** AI-fundne sociale medier-URLs med confidence — udfyldes efter artikel-søgning */
+  const [aiSocials, setAiSocials] = useState<
+    Record<string, { url: string; confidence: number; reason?: string }>
+  >({});
 
-  /** AI-fundne alternative links per platform — udfyldes efter artikel-søgning */
-  const [aiAlternatives, setAiAlternatives] = useState<Record<string, string[]>>({});
+  /** AI-fundne alternative links per platform med confidence — udfyldes efter artikel-søgning */
+  const [aiAlternatives, setAiAlternatives] = useState<
+    Record<string, Array<{ url: string; confidence: number; reason?: string }>>
+  >({});
+
+  /** Confidence-tærskel fra ai_settings — default 70 */
+  const [confidenceThreshold, setConfidenceThreshold] = useState(70);
 
   /** Regnskab state — lazy-loaded when financials tab is activated */
   const [regnskaber, setRegnskaber] = useState<Regnskab[] | null>(null);
@@ -2826,6 +2833,7 @@ export default function VirksomhedDetalje({ params }: PageProps) {
                 lang={lang}
                 onSocialsFound={setAiSocials}
                 onAlternativesFound={setAiAlternatives}
+                onThresholdFound={setConfidenceThreshold}
               />
             </div>
             {/* Sociale medier & links */}
@@ -2843,6 +2851,7 @@ export default function VirksomhedDetalje({ params }: PageProps) {
                 lang={lang}
                 aiSocials={aiSocials}
                 aiAlternatives={aiAlternatives}
+                confidenceThreshold={confidenceThreshold}
               />
             </div>
           </div>
@@ -2889,6 +2898,7 @@ export default function VirksomhedDetalje({ params }: PageProps) {
                 lang={lang}
                 onSocialsFound={setAiSocials}
                 onAlternativesFound={setAiAlternatives}
+                onThresholdFound={setConfidenceThreshold}
               />
             </div>
             {/* Sociale medier & links */}
@@ -2906,6 +2916,7 @@ export default function VirksomhedDetalje({ params }: PageProps) {
                 lang={lang}
                 aiSocials={aiSocials}
                 aiAlternatives={aiAlternatives}
+                confidenceThreshold={confidenceThreshold}
               />
             </div>
           </div>
@@ -2959,20 +2970,28 @@ interface AIArticleResult {
  *
  * @param companyData - CVRPublicData for den valgte virksomhed
  * @param lang - Aktivt sprog
- * @param onSocialsFound - Callback med fundne sociale medier-URLs
+ * @param onSocialsFound - Callback med fundne sociale medier-URLs inkl. confidence
+ * @param onThresholdFound - Callback med confidence-tærskel fra ai_settings
  */
 function AIArticleSearchPanel({
   companyData,
   lang,
   onSocialsFound,
   onAlternativesFound,
+  onThresholdFound,
 }: {
   companyData: CVRPublicData;
   lang: 'da' | 'en';
-  /** Callback med primære sociale medier-URLs */
-  onSocialsFound?: (socials: Record<string, string>) => void;
-  /** Callback med alternative links per platform */
-  onAlternativesFound?: (alternatives: Record<string, string[]>) => void;
+  /** Callback med primære sociale medier-URLs inkl. confidence metadata */
+  onSocialsFound?: (
+    socials: Record<string, { url: string; confidence: number; reason?: string }>
+  ) => void;
+  /** Callback med alternative links per platform inkl. confidence metadata */
+  onAlternativesFound?: (
+    alternatives: Record<string, Array<{ url: string; confidence: number; reason?: string }>>
+  ) => void;
+  /** Callback med confidence-tærskel fra ai_settings */
+  onThresholdFound?: (threshold: number) => void;
 }) {
   const { subscription: ctxSub, addTokenUsage } = useSubscription();
   const { isActive: subActive } = useSubscriptionAccess('ai');
@@ -3051,23 +3070,35 @@ function AIArticleSearchPanel({
       setArticles(fetchedArticles);
       setVisibleCount(5);
 
-      // Videresend AI-fundne sociale medier til VerifiedLinks
-      if (json.socials && Object.keys(json.socials).length > 0) {
-        onSocialsFound?.(json.socials as Record<string, string>);
+      // Videresend AI-fundne sociale medier med confidence til VerifiedLinks
+      type SocialMeta = { url: string; confidence: number; reason?: string };
+      const socialsWithMeta = json.socialsWithMeta as Record<string, SocialMeta> | undefined;
+      if (socialsWithMeta && Object.keys(socialsWithMeta).length > 0) {
+        onSocialsFound?.(socialsWithMeta);
       }
 
-      // Videresend og gem alternative links hvis tilgængelige
-      const alts = json.socialAlternatives as Record<string, string[]> | undefined;
-      if (alts && Object.keys(alts).length > 0) {
-        onAlternativesFound?.(alts);
-        // Gem til Supabase i baggrunden (best-effort)
+      // Videresend og gem alternative links med confidence
+      type AltMeta = { url: string; confidence: number; reason?: string };
+      const altsWithMeta = json.alternativesWithMeta as Record<string, AltMeta[]> | undefined;
+      if (altsWithMeta && Object.keys(altsWithMeta).length > 0) {
+        onAlternativesFound?.(altsWithMeta);
+        // Gem string-URL-version til Supabase (backward compat)
+        const stringAlts: Record<string, string[]> = {};
+        for (const [k, arr] of Object.entries(altsWithMeta)) {
+          stringAlts[k] = arr.map((a) => a.url);
+        }
         fetch('/api/link-alternatives', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ cvr: String(companyData.vat), alternatives: alts }),
+          body: JSON.stringify({ cvr: String(companyData.vat), alternatives: stringAlts }),
         }).catch(() => {
           /* ignore — gemning af alternativer er ikke kritisk */
         });
+      }
+
+      // Videresend confidence-tærskel
+      if (typeof json.confidenceThreshold === 'number') {
+        onThresholdFound?.(json.confidenceThreshold);
       }
       const total = json.tokensUsed ?? json.usage?.totalTokens ?? 0;
       if (total > 0) {
@@ -3081,7 +3112,16 @@ function AIArticleSearchPanel({
       setHasSearched(true);
       setLoading(false);
     }
-  }, [loading, ctxSub, companyData, keyPersons, lang, addTokenUsage, onAlternativesFound]);
+  }, [
+    loading,
+    ctxSub,
+    companyData,
+    keyPersons,
+    lang,
+    addTokenUsage,
+    onAlternativesFound,
+    onThresholdFound,
+  ]);
 
   const da = lang === 'da';
 

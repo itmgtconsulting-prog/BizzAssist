@@ -334,6 +334,9 @@ export default function VirksomhedDetalje({ params }: PageProps) {
   /** Styrer om mobil nyheder-overlay er åbent. */
   const [mobilNyhederAaben, setMobilNyhederAaben] = useState(false);
 
+  /** AI-fundne sociale medier-URLs — udfyldes efter artikel-søgning */
+  const [aiSocials, setAiSocials] = useState<Record<string, string>>({});
+
   /** Regnskab state — lazy-loaded when financials tab is activated */
   const [regnskaber, setRegnskaber] = useState<Regnskab[] | null>(null);
   const [regnskabLoading, setRegnskabLoading] = useState(false);
@@ -2815,7 +2818,7 @@ export default function VirksomhedDetalje({ params }: PageProps) {
                   {lang === 'da' ? 'AI Artikel søgning' : 'AI Article Search'}
                 </p>
               </div>
-              <AIArticleSearchPanel companyData={data} lang={lang} />
+              <AIArticleSearchPanel companyData={data} lang={lang} onSocialsFound={setAiSocials} />
             </div>
             {/* Sociale medier & links */}
             <div>
@@ -2830,6 +2833,7 @@ export default function VirksomhedDetalje({ params }: PageProps) {
                 entityId={cvr}
                 entityName={data.name}
                 lang={lang}
+                aiSocials={aiSocials}
               />
             </div>
           </div>
@@ -2865,7 +2869,7 @@ export default function VirksomhedDetalje({ params }: PageProps) {
                   {lang === 'da' ? 'AI Artikel søgning' : 'AI Article Search'}
                 </p>
               </div>
-              <AIArticleSearchPanel companyData={data} lang={lang} />
+              <AIArticleSearchPanel companyData={data} lang={lang} onSocialsFound={setAiSocials} />
             </div>
             {/* Sociale medier & links */}
             <div>
@@ -2880,6 +2884,7 @@ export default function VirksomhedDetalje({ params }: PageProps) {
                 entityId={cvr}
                 entityName={data.name}
                 lang={lang}
+                aiSocials={aiSocials}
               />
             </div>
           </div>
@@ -2922,16 +2927,20 @@ interface AIArticleResult {
  * Viser tokens til rådighed og en "Søg"-knap. Når brugeren klikker,
  * hentes de 10 seneste nyheder om virksomheden via /api/ai/article-search.
  * Resultater erstatter Søg-knappen. Token-forbrug trækkes fra brugerens konto.
+ * Kalder onSocialsFound med AI-fundne sociale medier-URLs.
  *
  * @param companyData - CVRPublicData for den valgte virksomhed
  * @param lang - Aktivt sprog
+ * @param onSocialsFound - Callback med fundne sociale medier-URLs
  */
 function AIArticleSearchPanel({
   companyData,
   lang,
+  onSocialsFound,
 }: {
   companyData: CVRPublicData;
   lang: 'da' | 'en';
+  onSocialsFound?: (socials: Record<string, string>) => void;
 }) {
   const { subscription: ctxSub, addTokenUsage } = useSubscription();
   const { isActive: subActive } = useSubscriptionAccess('ai');
@@ -3005,7 +3014,11 @@ function AIArticleSearchPanel({
       }
 
       setArticles(json.articles ?? []);
-      const total = json.usage?.totalTokens ?? 0;
+      // Videresend AI-fundne sociale medier til VerifiedLinks
+      if (json.socials && Object.keys(json.socials).length > 0) {
+        onSocialsFound?.(json.socials as Record<string, string>);
+      }
+      const total = json.tokensUsed ?? json.usage?.totalTokens ?? 0;
       if (total > 0) {
         setTokensUsedThisSearch(total);
         addTokenUsage(total);

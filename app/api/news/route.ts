@@ -195,43 +195,22 @@ async function fetchRitzauNews(query: string): Promise<NewsArticle[]> {
 // ─── Google News RSS (søgespecifikt) ────────────────────────────────────────
 
 /**
- * Henter søgespecifikke artikler fra Google News RSS.
- * Disse er allerede filtreret af Google — ingen yderligere filtrering nødvendig.
+ * Returnerer true for domæner med norsk (.no) eller svensk (.se) TLD.
+ * Bruges til at filtrere Google News-resultater — vi ønsker kun danske og internationale.
+ */
+function isNorwegianOrSwedishDomain(domain: string): boolean {
+  return domain.endsWith('.no') || domain.endsWith('.se');
+}
+
+/**
+ * Henter søgespecifikke artikler fra Google News RSS (dansk locale).
+ * Filtrerer norske (.no) og svenske (.se) kilder fra.
  *
  * @param query - Søgeterm (f.eks. "Novo Nordisk")
- * @returns Artikler matchende søgetermen fra Google News
+ * @returns Artikler matchende søgetermen fra danske og internationale kilder
  */
-/**
- * Domæner fra norske og svenske medier der filtreres fra Google News-resultater.
- * Vi ønsker kun danske og internationale (engelsksprogede) kilder.
- */
-const EXCLUDED_DOMAINS = new Set([
-  'e24.no',
-  'nrk.no',
-  'vg.no',
-  'dagbladet.no',
-  'aftenposten.no',
-  'dn.no',
-  'tv2.no',
-  'abc.no',
-  'ba.no',
-  'bt.no',
-  'fvn.no',
-  'adressa.bt.no',
-  'svd.se',
-  'dn.se',
-  'aftonbladet.se',
-  'expressen.se',
-  'di.se',
-  'sydsvenskan.se',
-  'gp.se',
-  'nt.se',
-  'sr.se',
-  'svt.se',
-]);
-
 async function fetchGoogleNewsRss(query: string): Promise<NewsArticle[]> {
-  // Kun dansk locale — filtrerer naturligt mod danske og internationale kilder
+  // Kun dansk locale — giver fortrinsvis danske og internationale resultater
   const url = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=da&gl=DK&ceid=DK:da`;
 
   try {
@@ -244,8 +223,8 @@ async function fetchGoogleNewsRss(query: string): Promise<NewsArticle[]> {
     // Google News-feed er allerede søgespecifikt — tom term matcher alt
     const all = parseRssFeed(xml, 'Google News', 'news.google.com', ['']);
 
-    // Filtrer norske og svenske kilder fra — behold danske og internationale
-    return all.filter((a) => !EXCLUDED_DOMAINS.has(a.sourceDomain));
+    // Filtrer norske (.no) og svenske (.se) TLD-domæner fra
+    return all.filter((a) => !isNorwegianOrSwedishDomain(a.sourceDomain));
   } catch {
     return [];
   }

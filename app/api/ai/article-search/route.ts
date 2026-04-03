@@ -139,7 +139,10 @@ Regler for "socials":
 - Gæt IKKE URLs — skriv kun præcise links du kender med sikkerhed
 - For hvert felt: angiv "primary" (det mest sandsynlige link) og op til 5 "alternatives" (andre mulige URLs)
 - "alternatives" kan være tomt array [] hvis du kun kender ét link
-- Returner altid "socials"-objektet (evt. tomt {})`;
+- Returner altid "socials"-objektet (evt. tomt {})
+- Returner ALDRIG generiske roddomæner som "https://facebook.com", "https://linkedin.com", "https://instagram.com" — kun specifikke profil-URLs med sti (f.eks. "/company/slug" eller "/virksomhed")
+- Hvis du ikke kender den specifikke profil-URL for et felt, udelad feltet helt (sæt det til null eller udelad det fra JSON-objektet)
+- Hvis du ikke finder nogen artikler om virksomheden, returner en tom articles array — returner ikke opfundne artikler`;
 
 // ─── Response parser ─────────────────────────────────────────────────────────
 

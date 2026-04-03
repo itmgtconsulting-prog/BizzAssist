@@ -3179,7 +3179,9 @@ function AIArticleSearchPanel({
       {error && <p className="text-red-400 text-xs mb-2">{error}</p>}
       {articles.length === 0 && !error ? (
         <p className="text-slate-600 text-xs">
-          {da ? 'Ingen artikler fundet — prøv igen.' : 'No articles found — try again.'}
+          {da
+            ? 'Ingen danske medieartikler fundet for denne virksomhed.'
+            : 'No Danish media articles found for this company.'}
         </p>
       ) : (
         <div className="space-y-2.5">
@@ -3222,14 +3224,16 @@ function AIArticleSearchPanel({
           )}
         </div>
       )}
-      <button
-        onClick={handleSearch}
-        disabled={loading}
-        className="mt-3 flex items-center gap-1.5 text-[10px] text-slate-500 hover:text-blue-400 transition-colors disabled:opacity-50"
-      >
-        <Zap size={9} />
-        {da ? 'Søg igen' : 'Search again'}
-      </button>
+      {articles.length > 0 && (
+        <button
+          onClick={handleSearch}
+          disabled={loading}
+          className="mt-3 flex items-center gap-1.5 text-[10px] text-slate-500 hover:text-blue-400 transition-colors disabled:opacity-50"
+        >
+          <Zap size={9} />
+          {da ? 'Søg igen' : 'Search again'}
+        </button>
+      )}
     </div>
   );
 }

@@ -141,6 +141,21 @@ interface VerifiedLinksProps {
   aiAlternatives?: Record<string, string[]>;
 }
 
+/**
+ * Returnerer true hvis URL kun er et roddomæne uden specifik sti.
+ * Generiske links som "https://facebook.com/" vises ikke.
+ *
+ * @param url - URL der skal tjekkes
+ */
+function isGenericDomain(url: string): boolean {
+  try {
+    const { pathname } = new URL(url);
+    return pathname === '/' || pathname === '';
+  } catch {
+    return false;
+  }
+}
+
 /** State for åben Alt.-popup */
 interface AltPopupState {
   platform: string;
@@ -460,7 +475,8 @@ export default function VerifiedLinks({
         }
       }
 
-      setLinks(merged);
+      // Fjern links der kun er generiske roddomæner (f.eks. facebook.com uden profilsti)
+      setLinks(merged.filter((l) => !isGenericDomain(l.url)));
     } catch {
       /* ignore network errors */
     } finally {

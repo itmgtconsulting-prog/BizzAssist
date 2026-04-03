@@ -864,7 +864,7 @@ export default function PropertyMap({
           title="Kortlag"
         >
           <Layers size={12} />
-          <span className="hidden xs:inline sm:inline">Lag</span>
+          Lag
         </button>
 
         {/* Lag-panel dropdown */}
@@ -881,8 +881,59 @@ export default function PropertyMap({
               </button>
             </div>
             <div className="px-2 py-1.5 max-h-[60vh] overflow-y-auto">
+              {/* BBR Bygninger */}
+              <p className="text-[9px] font-bold uppercase tracking-widest px-1 pt-1.5 pb-1 text-emerald-400">
+                Bygninger
+              </p>
+              <button
+                onClick={() => {
+                  if (mapStyle === 'bbr') {
+                    setMapStyle('satellite');
+                    setAktivBygning(null);
+                  } else {
+                    setMapStyle('bbr');
+                    setAktivBygning(null);
+                  }
+                }}
+                disabled={!bygningPunkter || bygningPunkter.length === 0}
+                className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-px transition-colors text-left ${
+                  mapStyle === 'bbr' ? 'bg-white/5' : 'hover:bg-white/[0.03]'
+                } disabled:opacity-40 disabled:cursor-not-allowed`}
+              >
+                <div
+                  className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center shrink-0 border transition-colors ${
+                    mapStyle === 'bbr' ? 'bg-emerald-600 border-emerald-600' : 'border-white/20'
+                  }`}
+                >
+                  {mapStyle === 'bbr' && (
+                    <svg width="8" height="6" viewBox="0 0 10 8" fill="none">
+                      <path
+                        d="M1 4L3.5 6.5L9 1"
+                        stroke="white"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  )}
+                </div>
+                <p
+                  className={`text-xs leading-tight truncate ${mapStyle === 'bbr' ? 'text-white' : 'text-slate-400'}`}
+                >
+                  BBR Bygninger
+                  {(!bygningPunkter || bygningPunkter.length === 0) && (
+                    <span className="ml-1 text-[10px] text-slate-600">— ingen data</span>
+                  )}
+                </p>
+                {bygningPunkter && bygningPunkter.length > 0 && (
+                  <span className="ml-auto text-[10px] bg-slate-700 text-slate-300 rounded-full px-1.5 py-0.5 font-bold shrink-0">
+                    {bygningPunkter.length}
+                  </span>
+                )}
+              </button>
+
               {/* Basiskort-lag */}
-              <p className="text-[9px] font-bold uppercase tracking-widest px-1 pt-1.5 pb-1 text-blue-400">
+              <p className="text-[9px] font-bold uppercase tracking-widest px-1 pt-2 pb-1 text-blue-400">
                 Basiskort
               </p>
               {visMatrikel && (

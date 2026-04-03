@@ -4,15 +4,14 @@
  * AI-drevet artikelsøgning for danske virksomheder.
  *
  * Strategi:
- * 1. Primær: Google Custom Search API — henter op til 20 reelle artikler
- * 2. Claude: ranker, filtrerer og tilføjer beskrivelser til Google-resultater
+ * 1. Primær: Brave Search API — henter op til 20 reelle artikler
+ * 2. Claude: ranker, filtrerer og tilføjer beskrivelser til Brave-resultater
  *            + finder sociale medier-links
- * 3. Fallback: Claude-only (hvis GOOGLE_CSE_API_KEY ikke er sat)
+ * 3. Fallback: Claude-only (hvis BRAVE_SEARCH_API_KEY ikke er sat)
  *
  * Env vars:
- * - GOOGLE_CSE_API_KEY  — Google Cloud API-nøgle
- * - GOOGLE_CSE_ID       — Custom Search Engine ID (cx)
- * - BIZZASSIST_CLAUDE_KEY — Anthropic API-nøgle
+ * - BRAVE_SEARCH_API_KEY    — Brave Search Subscription Token
+ * - BIZZASSIST_CLAUDE_KEY   — Anthropic API-nøgle
  *
  * @param body.companyName  - Virksomhedens navn
  * @param body.cvr          - CVR-nummer (valgfrit)
@@ -68,7 +67,7 @@ interface ArticleSearchResponse {
   tokensUsed: number;
   usage: { totalTokens: number };
   /** Angiver hvilken søgestrategi der blev brugt */
-  source: 'google+claude' | 'claude-only';
+  source: 'brave+claude' | 'claude-only';
 }
 
 /** Input-format til API'en */
@@ -81,214 +80,112 @@ interface CompanyInput {
   keyPersons?: string[];
 }
 
-/** Et Google Custom Search resultat (råformat) */
-interface GoogleSearchItem {
+/** Et Brave Search web-resultat (råformat) */
+interface BraveWebResult {
   title: string;
-  link: string;
-  displayLink: string;
-  snippet?: string;
-  pagemap?: {
-    metatags?: Array<Record<string, string>>;
-  };
+  url: string;
+  description?: string;
+  age?: string;
+  meta_url?: { hostname?: string };
 }
 
-// ─── Google Custom Search ────────────────────────────────────────────────────
+// ─── Brave Search ─────────────────────────────────────────────────────────────
 
 /**
- * Søger via Google Custom Search API og returnerer rå artikelresultater.
- * Kalder API'en to gange (start=1 og start=11) for op til 20 resultater.
+ * Søger via Brave Search API og returnerer rå artikelresultater.
  * Returnerer tomt array hvis credentials mangler eller et netværksfejl opstår.
  *
  * @param query - Søgeforespørgsel (typisk virksomhedsnavn + kontekst)
- * @returns Op til 20 Google Search-resultater som ArticleResult[]
+ * @param count - Antal resultater (max 20 pr. kald)
+ * @returns Op til `count` Brave Search-resultater som ArticleResult[]
  */
-async function searchGoogleCSE(query: string): Promise<ArticleResult[]> {
-  const key = process.env.GOOGLE_CSE_API_KEY?.trim();
-  const cx = process.env.GOOGLE_CSE_ID?.trim();
+async function searchBrave(query: string, count = 20): Promise<ArticleResult[]> {
+  const key = process.env.BRAVE_SEARCH_API_KEY?.trim();
+  if (!key) return [];
 
-  // Fallback til Claude-only hvis credentials mangler
-  if (!key || !cx) return [];
-
-  const baseUrl = 'https://www.googleapis.com/customsearch/v1';
-  const params = new URLSearchParams({
-    key,
-    cx,
-    q: query,
-    lr: 'lang_da',
-    gl: 'dk',
-    num: '10',
-  });
-
-  const results: ArticleResult[] = [];
-
-  // Hent to sider (1-10 og 11-20) parallelt for hastighed
-  const pageStarts = [1, 11];
-
-  await Promise.allSettled(
-    pageStarts.map(async (start) => {
-      try {
-        const url = `${baseUrl}?${params.toString()}&start=${start}`;
-        const res = await fetch(url, { next: { revalidate: 0 } });
-
-        if (!res.ok) {
-          console.warn(`[article-search] Google CSE HTTP ${res.status} (start=${start})`);
-          return;
-        }
-
-        const data = (await res.json()) as { items?: GoogleSearchItem[] };
-
-        if (!Array.isArray(data.items)) {
-          console.log(
-            `[article-search] Google CSE start=${start}: ingen items i response. Response keys: ${Object.keys(data).join(', ')}`
-          );
-          return;
-        }
-
-        if (data.items.length === 0) {
-          console.log(`[article-search] Google CSE start=${start}: 0 resultater returneret`);
-          return;
-        }
-
-        for (const item of data.items) {
-          // Udtræk publiceret-dato fra Open Graph metatags hvis tilgængeligt
-          const publishedTime =
-            item.pagemap?.metatags?.[0]?.['article:published_time'] ??
-            item.pagemap?.metatags?.[0]?.['og:updated_time'] ??
-            '';
-
-          results.push({
-            title: item.title?.trim() ?? '',
-            url: item.link?.trim() ?? '',
-            source: item.displayLink?.replace(/^www\./, '').trim() ?? '',
-            description: item.snippet?.trim().slice(0, 150) ?? undefined,
-            date: publishedTime ? formatGoogleDate(publishedTime) : undefined,
-          });
-        }
-      } catch (err) {
-        console.warn(`[article-search] Google CSE fejl (start=${start}):`, err);
-      }
-    })
-  );
-
-  // Fjern duplikater baseret på URL
-  const seen = new Set<string>();
-  return results.filter((r) => {
-    if (!r.url || seen.has(r.url)) return false;
-    seen.add(r.url);
-    return true;
-  });
-}
-
-/**
- * Formaterer en ISO 8601-dato (f.eks. "2025-01-15T...") til dansk datoformat
- * (f.eks. "15. jan. 2025"). Returnerer tom streng ved fejl.
- *
- * @param isoDate - ISO 8601 datotekst
- * @returns Formateret dansk dato eller tom streng
- */
-function formatGoogleDate(isoDate: string): string {
   try {
-    return new Date(isoDate).toLocaleDateString('da-DK', {
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric',
+    const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}&country=dk&search_lang=da&ui_lang=da`;
+    const res = await fetch(url, {
+      headers: { 'X-Subscription-Token': key, Accept: 'application/json' },
     });
-  } catch {
-    return '';
+
+    if (!res.ok) {
+      console.warn(`[article-search] Brave Search HTTP ${res.status}`);
+      return [];
+    }
+
+    const data = await res.json();
+    const rawResults: BraveWebResult[] = data.web?.results ?? [];
+
+    if (rawResults.length === 0) {
+      console.log('[article-search] Brave Search: 0 resultater returneret');
+      return [];
+    }
+
+    // Dedupliker på URL
+    const seen = new Set<string>();
+    return rawResults
+      .filter((r) => {
+        if (!r.url || seen.has(r.url)) return false;
+        seen.add(r.url);
+        return true;
+      })
+      .map((r) => ({
+        title: r.title?.trim() ?? '',
+        url: r.url?.trim() ?? '',
+        source: r.meta_url?.hostname?.replace(/^www\./, '').trim() ?? '',
+        description: r.description?.trim().slice(0, 150) ?? undefined,
+        date: r.age?.trim() ?? undefined,
+      }))
+      .filter((r) => r.title && r.url);
+  } catch (err) {
+    console.warn('[article-search] Brave Search fejl:', err);
+    return [];
   }
 }
 
-// ─── Social Profile Search ────────────────────────────────────────────────────
-
 /**
- * Søger sociale medier-profiler for en virksomhed via Google Custom Search API.
+ * Søger sociale medier-profiler for en virksomhed via Brave Search API.
  * Én søgning per platform (6 total) køres parallelt for minimal latency.
- * Returnerer tomt objekt hvis GOOGLE_CSE_API_KEY eller GOOGLE_CSE_ID mangler.
+ * Returnerer tomt objekt hvis BRAVE_SEARCH_API_KEY mangler.
  *
  * @param companyName - Virksomhedens navn
  * @returns Map af platform → verificeret URL (kun hvis fundet)
  */
-async function searchSocialProfiles(companyName: string): Promise<SocialsResult> {
-  const key = process.env.GOOGLE_CSE_API_KEY?.trim();
-  const cx = process.env.GOOGLE_CSE_ID?.trim();
-  if (!key || !cx) return {};
+async function searchBraveSocials(companyName: string): Promise<SocialsResult> {
+  const key = process.env.BRAVE_SEARCH_API_KEY?.trim();
+  if (!key) return {};
 
-  // Website-søgning ekskluderer eksplicit alle sociale medier-domæner så vi ikke
-  // ender med facebook.com/virksomhed som "hjemmeside".
-  const websiteExclusions =
-    '-site:facebook.com -site:instagram.com -site:linkedin.com -site:twitter.com -site:x.com -site:youtube.com';
-
-  const platforms: Array<{
-    name: keyof SocialsResult;
-    query: string;
-    domainHint: string;
-    /** Sæt true for platforme hvor rod-URL (pathname="/") er en gyldig profil-URL */
-    skipPathCheck?: boolean;
-  }> = [
-    { name: 'facebook', query: `${companyName} site:facebook.com`, domainHint: 'facebook.com' },
-    { name: 'instagram', query: `${companyName} site:instagram.com`, domainHint: 'instagram.com' },
-    {
-      name: 'linkedin',
-      query: `${companyName} site:linkedin.com/company`,
-      domainHint: 'linkedin.com',
-    },
-    {
-      name: 'twitter',
-      query: `${companyName} site:twitter.com OR site:x.com`,
-      domainHint: 'x.com',
-    },
-    { name: 'youtube', query: `${companyName} site:youtube.com`, domainHint: 'youtube.com' },
-    {
-      // Website: bred søgning der ekskluderer sociale medier.
-      // skipPathCheck=true fordi novonordisk.com/ har pathname="/" — det er en gyldig hjemmeside.
-      name: 'website',
-      query: `${companyName} officiel hjemmeside ${websiteExclusions}`,
-      domainHint: '',
-      skipPathCheck: true,
-    },
+  const platforms: Array<{ name: keyof SocialsResult; query: string }> = [
+    { name: 'website', query: `${companyName} officiel hjemmeside` },
+    { name: 'facebook', query: `${companyName} site:facebook.com` },
+    { name: 'instagram', query: `${companyName} site:instagram.com` },
+    { name: 'linkedin', query: `${companyName} site:linkedin.com` },
+    { name: 'twitter', query: `${companyName} site:x.com OR site:twitter.com` },
+    { name: 'youtube', query: `${companyName} site:youtube.com` },
   ];
 
   const results = await Promise.allSettled(
     platforms.map(async (p) => {
-      const url =
-        `https://www.googleapis.com/customsearch/v1` +
-        `?key=${encodeURIComponent(key)}` +
-        `&cx=${encodeURIComponent(cx)}` +
-        `&q=${encodeURIComponent(p.query)}` +
-        `&num=1`;
-
-      const res = await fetch(url, { signal: AbortSignal.timeout(5000), next: { revalidate: 0 } });
-      const data = (await res.json()) as { items?: Array<{ link: string; displayLink: string }> };
-      const item = data.items?.[0] ?? null;
-      const link = item?.link ?? null;
-
-      if (!link) return null;
-
-      // Log website-resultat for debugging
-      if (p.name === 'website') {
-        console.log(`[article-search] website CSE hit: ${link}`);
-      }
-
-      // Afvis resultater der ikke matcher den forventede platform
-      if (p.domainHint && !link.includes(p.domainHint)) return null;
-
-      // Bemærk: Vi filtrerer IKKE på pathname for sociale medier.
-      // Hvis Google finder en facebook.com/side, er den sandsynligvis korrekt.
-      // Website-søgning bruger skipPathCheck=true for at tillade roddomæner.
-
-      return { name: p.name, url: link };
+      const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(p.query)}&count=1&country=dk`;
+      const res = await fetch(url, {
+        headers: { 'X-Subscription-Token': key, Accept: 'application/json' },
+        signal: AbortSignal.timeout(5000),
+      });
+      const data = await res.json();
+      return { name: p.name, url: (data.web?.results?.[0]?.url as string) || null };
     })
   );
 
   const socials: SocialsResult = {};
   for (const r of results) {
-    if (r.status === 'fulfilled' && r.value) {
+    if (r.status === 'fulfilled' && r.value.url) {
       socials[r.value.name] = r.value.url;
     }
   }
 
   console.log(
-    `[article-search] searchSocialProfiles: fandt ${Object.keys(socials).length} platforme`
+    `[article-search] searchBraveSocials: fandt ${Object.keys(socials).length} platforme`
   );
   return socials;
 }
@@ -296,15 +193,15 @@ async function searchSocialProfiles(companyName: string): Promise<SocialsResult>
 // ─── System prompts ──────────────────────────────────────────────────────────
 
 /**
- * System prompt til Google+Claude-tilstand.
- * Claude modtager ALLE Google-resultater (ufiltrerede) og kvalitetsvurderer dem:
+ * System prompt til Brave+Claude-tilstand.
+ * Claude modtager ALLE Brave-resultater (ufiltrerede) og kvalitetsvurderer dem:
  * 1. Vurderer om hvert hit er relevant for den specifikke virksomhed
  * 2. Prioriterer danske artikler, men inkluderer internationale hvis relevante
  * 3. Afviser artikler om en ANDEN virksomhed med lignende navn
  * 4. Afviser spam/generisk indhold
  * 5. Returnerer op til 15 kvalitetsvurderede artikler
  */
-const SYSTEM_PROMPT_WITH_GOOGLE = `Du er en dansk medieekspert. Du modtager ALLE Google Search-resultater om en virksomhed — ufiltrerede.
+const SYSTEM_PROMPT_WITH_BRAVE = `Du er en dansk medieekspert. Du modtager ALLE Brave Search-resultater om en virksomhed — ufiltrerede.
 
 Din opgave er at kvalitetsvurdere hvert eneste resultat og returnere de bedste:
 1. Vurdér om hvert hit handler om DENNE SPECIFIKKE virksomhed (ikke en anden med lignende navn)
@@ -328,7 +225,7 @@ INKLUDÉR disse typer (hvis relevante for virksomheden):
 - Blogindlæg og sociale medier-opslag hvis de er informative
 
 KRITISKE REGLER:
-- Ret IKKE URLs — brug præcis de URLs fra Google-resultaterne
+- Ret IKKE URLs — brug præcis de URLs fra Brave-resultaterne
 - Opfind IKKE nye artikler — brug KUN de givne resultater
 - Returner max 15, men gerne færre hvis kun 3-4 er reelt relevante
 
@@ -519,7 +416,6 @@ function parseArticleResponse(text: string): {
 
     /**
      * Returnerer true hvis URL har et gyldigt format.
-     * Vi filtrerer IKKE på pathname — Google-fundne profiler med rod-URL er gyldige.
      *
      * @param url - URL der skal valideres
      */
@@ -528,7 +424,7 @@ function parseArticleResponse(text: string): {
         new URL(url);
         return url.startsWith('https://') || url.startsWith('http://');
       } catch {
-        return false; // Ugyldig URL — afvis
+        return false;
       }
     };
 
@@ -569,8 +465,8 @@ function parseArticleResponse(text: string): {
  * POST /api/ai/article-search
  *
  * Søger efter danske artikler om en virksomhed.
- * Primær: Google Custom Search API → Claude rangering.
- * Fallback: Claude-only (hvis GOOGLE_CSE_API_KEY ikke er sat).
+ * Primær: Brave Search API → Claude rangering.
+ * Fallback: Claude-only (hvis BRAVE_SEARCH_API_KEY ikke er sat).
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
   // Rate limit — deler grænse med AI chat
@@ -608,50 +504,50 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const client = new Anthropic({ apiKey });
 
-  // ── Forsøg Google CSE + social profile-søgning parallelt ────────────────
-  const googleQuery = city
+  // ── Kør Brave-søgning og social profile-søgning parallelt ────────────────
+  const braveQuery = city
     ? `${companyName} ${city} nyhed`
     : `${companyName} dansk virksomhed nyhed`;
 
-  const [googleResults, googleSocials] = await Promise.all([
-    searchGoogleCSE(googleQuery),
-    searchSocialProfiles(companyName),
+  const [braveResults, braveSocials] = await Promise.all([
+    searchBrave(braveQuery),
+    searchBraveSocials(companyName),
   ]);
-  const useGoogle = googleResults.length > 0;
+  const useBrave = braveResults.length > 0;
 
   console.log(
-    `[article-search] "${companyName}": ${useGoogle ? `Google CSE ${googleResults.length} rå resultater (ingen programmatisk filtrering)` : 'Claude-only fallback'}`
+    `[article-search] "${companyName}": ${useBrave ? `Brave Search ${braveResults.length} rå resultater` : 'Claude-only fallback'}`
   );
 
   // ── Byg Claude-besked ────────────────────────────────────────────────────
   let userMessage: string;
   let systemPrompt: string;
 
-  if (useGoogle) {
-    // Google+Claude tilstand: send Google-resultater som kontekst
-    const googleSummary = googleResults
+  if (useBrave) {
+    // Brave+Claude tilstand: send Brave-resultater som kontekst
+    const braveSummary = braveResults
       .map(
         (r, i) =>
           `${i + 1}. ${r.title}\n   URL: ${r.url}\n   Kilde: ${r.source}${r.date ? `\n   Dato: ${r.date}` : ''}${r.description ? `\n   Snippet: ${r.description}` : ''}`
       )
       .join('\n\n');
 
-    // Byg social verification-sektion: Google CSE-fund sendes til Claude til kvalificering
+    // Byg social verification-sektion: Brave-fund sendes til Claude til kvalificering
     let socialVerificationSection = '';
-    if (Object.keys(googleSocials).length > 0) {
-      const socialsStr = Object.entries(googleSocials)
+    if (Object.keys(braveSocials).length > 0) {
+      const socialsStr = Object.entries(braveSocials)
         .map(([platform, url]) => `- ${platform}: ${url}`)
         .join('\n');
       const locationHint = city ? ` i ${city}` : ' i Danmark';
       socialVerificationSection =
-        `\n\nGoogle CSE har fundet disse sociale medie-profiler — verificer om de tilhører NETOP DENNE virksomhed${locationHint}:\n${socialsStr}\n` +
+        `\n\nBrave Search har fundet disse sociale medie-profiler — verificer om de tilhører NETOP DENNE virksomhed${locationHint}:\n${socialsStr}\n` +
         `Brug dem i din socials-output hvis de er korrekte for denne specifikke virksomhed. Hvis en profil tilhører en anden virksomhed, udelad den og brug din egen viden i stedet.`;
     }
 
     userMessage =
-      `Virksomhed:\n${companyContext}\n\nGoogle Search-resultater (${googleResults.length} hits):\n\n${googleSummary}\n\nRangér og filtrer disse resultater. Find også sociale medier-links.` +
+      `Virksomhed:\n${companyContext}\n\nBrave Search-resultater (${braveResults.length} hits):\n\n${braveSummary}\n\nRangér og filtrer disse resultater. Find også sociale medier-links.` +
       socialVerificationSection;
-    systemPrompt = SYSTEM_PROMPT_WITH_GOOGLE;
+    systemPrompt = SYSTEM_PROMPT_WITH_BRAVE;
   } else {
     // Claude-only fallback
     userMessage = `Find de seneste danske artikler om denne virksomhed og returner sociale medier-links:\n\n${companyContext}`;
@@ -683,15 +579,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     } = parseArticleResponse(finalText);
 
     // Merge-strategi:
-    // - google+claude tilstand: Claude har verificeret Google CSE-hits → stol på Claude's output.
-    //   Google CSE bruges kun som supplement for platforme Claude ikke inkluderede.
+    // - brave+claude tilstand: Claude har verificeret Brave-hits → stol på Claude's output.
+    //   Brave bruges kun som supplement for platforme Claude ikke inkluderede.
     // - claude-only tilstand: Kun Claude's output.
-    const socials: SocialsResult = useGoogle
-      ? { ...googleSocials, ...claudeSocials } // Claude overskriver Google hvis Claude har verificeret
+    const socials: SocialsResult = useBrave
+      ? { ...braveSocials, ...claudeSocials } // Claude overskriver Brave hvis Claude har verificeret
       : claudeSocials;
 
     console.log(
-      `[article-search] "${companyName}": Google CSE=${googleResults.length} rå → Claude valgte ${articles.length} artikler, tokens=${totalTokens}, source=${useGoogle ? 'google+claude' : 'claude-only'}, socials=[google:${Object.keys(googleSocials).join(',')}, claude:${Object.keys(claudeSocials).join(',')}]`
+      `[article-search] "${companyName}": Brave=${braveResults.length} rå → Claude valgte ${articles.length} artikler, tokens=${totalTokens}, source=${useBrave ? 'brave+claude' : 'claude-only'}, socials=[brave:${Object.keys(braveSocials).join(',')}, claude:${Object.keys(claudeSocials).join(',')}]`
     );
 
     if (articles.length === 0) {
@@ -704,7 +600,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       socialAlternatives,
       tokensUsed: totalTokens,
       usage: { totalTokens },
-      source: useGoogle ? 'google+claude' : 'claude-only',
+      source: useBrave ? 'brave+claude' : 'claude-only',
     };
 
     return NextResponse.json(result, { status: 200 });

@@ -152,7 +152,7 @@ function isGenericDomain(url: string): boolean {
     const { pathname } = new URL(url);
     return pathname === '/' || pathname === '';
   } catch {
-    return false;
+    return true; // Ugyldig URL — behandles som generisk og filtreres fra
   }
 }
 

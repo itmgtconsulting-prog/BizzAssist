@@ -4,10 +4,10 @@
  * AI-drevet artikelsøgning for danske virksomheder.
  *
  * Strategi:
- * 1. Primær: Brave Search API — henter op til 20 reelle artikler
- * 2. Claude: ranker, filtrerer og tilføjer beskrivelser til Brave-resultater
- *            + finder sociale medier-links
- * 3. Fallback: Claude-only (hvis BRAVE_SEARCH_API_KEY ikke er sat)
+ * 1. Brave Search API — henter op til 20 reelle artikler
+ * 2. Claude — ranker, filtrerer og tilføjer beskrivelser til Brave-resultater
+ *             + finder sociale medier-links
+ * Ingen Claude-only fallback: mangler BRAVE_SEARCH_API_KEY → HTTP 500.
  *
  * Env vars:
  * - BRAVE_SEARCH_API_KEY    — Brave Search Subscription Token
@@ -67,7 +67,7 @@ interface ArticleSearchResponse {
   tokensUsed: number;
   usage: { totalTokens: number };
   /** Angiver hvilken søgestrategi der blev brugt */
-  source: 'brave+claude' | 'claude-only';
+  source: 'brave+claude';
 }
 
 /** Input-format til API'en */
@@ -93,69 +93,61 @@ interface BraveWebResult {
 
 /**
  * Søger via Brave Search API og returnerer rå artikelresultater.
- * Returnerer tomt array hvis credentials mangler eller et netværksfejl opstår.
+ * Kaster fejl ved HTTP-fejl eller netværksproblemer — ingen stille fallback.
  *
+ * @param key   - Brave Search Subscription Token
  * @param query - Søgeforespørgsel (typisk virksomhedsnavn + kontekst)
  * @param count - Antal resultater (max 20 pr. kald)
  * @returns Op til `count` Brave Search-resultater som ArticleResult[]
+ * @throws Error ved HTTP-fejl eller netværksproblemer
  */
-async function searchBrave(query: string, count = 20): Promise<ArticleResult[]> {
-  const key = process.env.BRAVE_SEARCH_API_KEY?.trim();
-  if (!key) return [];
+async function searchBrave(key: string, query: string, count = 20): Promise<ArticleResult[]> {
+  const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}&country=dk&search_lang=da&ui_lang=da`;
+  const res = await fetch(url, {
+    headers: { 'X-Subscription-Token': key, Accept: 'application/json' },
+  });
 
-  try {
-    const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}&country=dk&search_lang=da&ui_lang=da`;
-    const res = await fetch(url, {
-      headers: { 'X-Subscription-Token': key, Accept: 'application/json' },
-    });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Brave Search HTTP ${res.status}: ${body.slice(0, 200)}`);
+  }
 
-    if (!res.ok) {
-      console.warn(`[article-search] Brave Search HTTP ${res.status}`);
-      return [];
-    }
+  const data = await res.json();
+  const rawResults: BraveWebResult[] = data.web?.results ?? [];
 
-    const data = await res.json();
-    const rawResults: BraveWebResult[] = data.web?.results ?? [];
-
-    if (rawResults.length === 0) {
-      console.log('[article-search] Brave Search: 0 resultater returneret');
-      return [];
-    }
-
-    // Dedupliker på URL
-    const seen = new Set<string>();
-    return rawResults
-      .filter((r) => {
-        if (!r.url || seen.has(r.url)) return false;
-        seen.add(r.url);
-        return true;
-      })
-      .map((r) => ({
-        title: r.title?.trim() ?? '',
-        url: r.url?.trim() ?? '',
-        source: r.meta_url?.hostname?.replace(/^www\./, '').trim() ?? '',
-        description: r.description?.trim().slice(0, 150) ?? undefined,
-        date: r.age?.trim() ?? undefined,
-      }))
-      .filter((r) => r.title && r.url);
-  } catch (err) {
-    console.warn('[article-search] Brave Search fejl:', err);
+  if (rawResults.length === 0) {
+    console.log('[article-search] Brave Search: 0 resultater returneret');
     return [];
   }
+
+  // Dedupliker på URL
+  const seen = new Set<string>();
+  return rawResults
+    .filter((r) => {
+      if (!r.url || seen.has(r.url)) return false;
+      seen.add(r.url);
+      return true;
+    })
+    .map((r) => ({
+      title: r.title?.trim() ?? '',
+      url: r.url?.trim() ?? '',
+      source: r.meta_url?.hostname?.replace(/^www\./, '').trim() ?? '',
+      description: r.description?.trim().slice(0, 150) ?? undefined,
+      date: r.age?.trim() ?? undefined,
+    }))
+    .filter((r) => r.title && r.url);
 }
 
 /**
  * Søger sociale medier-profiler for en virksomhed via Brave Search API.
  * Én søgning per platform (6 total) køres parallelt for minimal latency.
- * Returnerer tomt objekt hvis BRAVE_SEARCH_API_KEY mangler.
+ * Individuelle platform-fejl ignoreres stille — returnerer hvad der lykkes.
  *
+ * @param key         - Brave Search Subscription Token
  * @param companyName - Virksomhedens navn
  * @returns Map af platform → verificeret URL (kun hvis fundet)
  */
-async function searchBraveSocials(companyName: string): Promise<SocialsResult> {
-  const key = process.env.BRAVE_SEARCH_API_KEY?.trim();
-  if (!key) return {};
-
+async function searchBraveSocials(key: string, companyName: string): Promise<SocialsResult> {
   const platforms: Array<{ name: keyof SocialsResult; query: string }> = [
     { name: 'website', query: `${companyName} officiel hjemmeside` },
     { name: 'facebook', query: `${companyName} site:facebook.com` },
@@ -275,77 +267,6 @@ Regler for "socials":
 - Udelad felter du ikke kender med sikkerhed
 - Returner altid "socials"-objektet (evt. tomt {})`;
 
-/**
- * System prompt til Claude-only fallback.
- * Claude genererer artikelliste + sociale medier udelukkende fra sin træningsviden.
- */
-const SYSTEM_PROMPT_CLAUDE_ONLY = `Du er en dansk medieekspert med dybdegående kendskab til danske nyheder og medier.
-
-Baseret på din træningsviden, find DANSKE artikler om den angivne virksomhed fra de seneste 2 år. Brug disse medier:
-DR, TV2, Børsen, Berlingske, Politiken, Jyllands-Posten, Altinget, Information, FinansWatch, MedWatch, Ingeniøren, Version2, Computerworld, Weekendavisen, Zetland, BT, Ekstra Bladet, Frihedsbrevet, Danwatch, Mandag Morgen.
-
-KRITISKE REGLER FOR ARTIKLER:
-- Returner de artikler du FAKTISK kender med 100% sikkerhed — 0 er helt acceptabelt for ukendte lokale virksomheder
-- Opfind ALDRIG artikler — brug KUN artikler du er sikker på eksisterer med korrekte URLs
-- Max 15 artikler, spred over FLERE forskellige medier (ét medie max 3 artikler)
-- Inkludér artikler fra de seneste 2 år (ikke kun seneste måned)
-- INGEN engelske, norske eller svenske artikler — kun ovenstående danske medier
-- INGEN artikler fra GlobeNewswire, Reuters, Bloomberg, AP — kun ovenstående danske medier
-- Gæt IKKE URLs — skriv kun præcise links du kender med absolut sikkerhed
-- Hvis du er i tvivl om en artikel eksisterer, udelad den
-
-Returner KUN validt JSON uden tekst før/efter:
-
-{
-  "articles": [
-    {
-      "title": "Artiklens titel på dansk",
-      "url": "https://borsen.dk/...",
-      "source": "Børsen",
-      "date": "15. jan. 2025",
-      "description": "Max 80 tegn beskrivelse"
-    }
-  ],
-  "socials": {
-    "website": {
-      "primary": "https://virksomhed.dk",
-      "alternatives": ["https://www.virksomhed.dk", "https://virksomhed.com"]
-    },
-    "linkedin": {
-      "primary": "https://www.linkedin.com/company/slug",
-      "alternatives": ["https://www.linkedin.com/company/slug2", "https://www.linkedin.com/company/slug3"]
-    },
-    "facebook": {
-      "primary": "https://www.facebook.com/slug",
-      "alternatives": ["https://www.facebook.com/slug2"]
-    },
-    "instagram": {
-      "primary": "https://www.instagram.com/slug",
-      "alternatives": []
-    },
-    "twitter": {
-      "primary": "https://x.com/slug",
-      "alternatives": []
-    },
-    "youtube": {
-      "primary": "https://www.youtube.com/@slug",
-      "alternatives": []
-    }
-  }
-}
-
-Regler for "socials":
-- Brug din træningsviden til at finde virksomhedens officielle links
-- For store/kendte virksomheder forventes minimum website + linkedin
-- Udelad KUN felter hvor du er helt sikker på at profilen ikke eksisterer
-- Gæt IKKE URLs — skriv kun præcise links du kender med sikkerhed
-- For hvert felt: angiv "primary" (det mest sandsynlige link) og op til 5 "alternatives" (andre mulige URLs)
-- "alternatives" kan være tomt array [] hvis du kun kender ét link
-- Returner altid "socials"-objektet (evt. tomt {})
-- Returner ALDRIG generiske roddomæner som "https://facebook.com", "https://linkedin.com", "https://instagram.com" — kun specifikke profil-URLs med sti (f.eks. "/company/slug" eller "/virksomhed")
-- Hvis du ikke kender den specifikke profil-URL for et felt, udelad feltet helt (sæt det til null eller udelad det fra JSON-objektet)
-- Hvis du ikke finder nogen artikler om virksomheden, returner en tom articles array — returner ikke opfundne artikler`;
-
 // ─── Response parser ─────────────────────────────────────────────────────────
 
 /**
@@ -464,9 +385,9 @@ function parseArticleResponse(text: string): {
 /**
  * POST /api/ai/article-search
  *
- * Søger efter danske artikler om en virksomhed.
- * Primær: Brave Search API → Claude rangering.
- * Fallback: Claude-only (hvis BRAVE_SEARCH_API_KEY ikke er sat).
+ * Søger efter artikler og sociale medier om en virksomhed.
+ * Brave Search API henter rå resultater — Claude rangerer og filtrerer.
+ * Ingen Claude-only fallback: hvis Brave fejler, returneres en fejlbesked.
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
   // Rate limit — deler grænse med AI chat
@@ -476,6 +397,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const apiKey = process.env.BIZZASSIST_CLAUDE_KEY?.trim();
   if (!apiKey) {
     return NextResponse.json({ error: 'BIZZASSIST_CLAUDE_KEY ikke konfigureret' }, { status: 500 });
+  }
+
+  const braveKey = process.env.BRAVE_SEARCH_API_KEY?.trim();
+  if (!braveKey) {
+    return NextResponse.json({ error: 'BRAVE_SEARCH_API_KEY ikke konfigureret' }, { status: 500 });
   }
 
   let body: CompanyInput;
@@ -509,50 +435,50 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     ? `${companyName} ${city} nyhed`
     : `${companyName} dansk virksomhed nyhed`;
 
-  const [braveResults, braveSocials] = await Promise.all([
-    searchBrave(braveQuery),
-    searchBraveSocials(companyName),
-  ]);
-  const useBrave = braveResults.length > 0;
+  let braveResults: ArticleResult[];
+  let braveSocials: SocialsResult;
+  try {
+    [braveResults, braveSocials] = await Promise.all([
+      searchBrave(braveKey, braveQuery),
+      searchBraveSocials(braveKey, companyName),
+    ]);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Ukendt Brave Search fejl';
+    console.error('[article-search] Brave Search fejlede:', msg);
+    return NextResponse.json({ error: `Brave Search fejlede: ${msg}` }, { status: 502 });
+  }
 
   console.log(
-    `[article-search] "${companyName}": ${useBrave ? `Brave Search ${braveResults.length} rå resultater` : 'Claude-only fallback'}`
+    `[article-search] "${companyName}": Brave Search ${braveResults.length} rå resultater`
   );
 
   // ── Byg Claude-besked ────────────────────────────────────────────────────
-  let userMessage: string;
-  let systemPrompt: string;
+  const braveSummary =
+    braveResults.length > 0
+      ? braveResults
+          .map(
+            (r, i) =>
+              `${i + 1}. ${r.title}\n   URL: ${r.url}\n   Kilde: ${r.source}${r.date ? `\n   Dato: ${r.date}` : ''}${r.description ? `\n   Snippet: ${r.description}` : ''}`
+          )
+          .join('\n\n')
+      : '(Ingen Brave-resultater for denne søgning)';
 
-  if (useBrave) {
-    // Brave+Claude tilstand: send Brave-resultater som kontekst
-    const braveSummary = braveResults
-      .map(
-        (r, i) =>
-          `${i + 1}. ${r.title}\n   URL: ${r.url}\n   Kilde: ${r.source}${r.date ? `\n   Dato: ${r.date}` : ''}${r.description ? `\n   Snippet: ${r.description}` : ''}`
-      )
-      .join('\n\n');
-
-    // Byg social verification-sektion: Brave-fund sendes til Claude til kvalificering
-    let socialVerificationSection = '';
-    if (Object.keys(braveSocials).length > 0) {
-      const socialsStr = Object.entries(braveSocials)
-        .map(([platform, url]) => `- ${platform}: ${url}`)
-        .join('\n');
-      const locationHint = city ? ` i ${city}` : ' i Danmark';
-      socialVerificationSection =
-        `\n\nBrave Search har fundet disse sociale medie-profiler — verificer om de tilhører NETOP DENNE virksomhed${locationHint}:\n${socialsStr}\n` +
-        `Brug dem i din socials-output hvis de er korrekte for denne specifikke virksomhed. Hvis en profil tilhører en anden virksomhed, udelad den og brug din egen viden i stedet.`;
-    }
-
-    userMessage =
-      `Virksomhed:\n${companyContext}\n\nBrave Search-resultater (${braveResults.length} hits):\n\n${braveSummary}\n\nRangér og filtrer disse resultater. Find også sociale medier-links.` +
-      socialVerificationSection;
-    systemPrompt = SYSTEM_PROMPT_WITH_BRAVE;
-  } else {
-    // Claude-only fallback
-    userMessage = `Find de seneste danske artikler om denne virksomhed og returner sociale medier-links:\n\n${companyContext}`;
-    systemPrompt = SYSTEM_PROMPT_CLAUDE_ONLY;
+  // Byg social verification-sektion: Brave-fund sendes til Claude til kvalificering
+  let socialVerificationSection = '';
+  if (Object.keys(braveSocials).length > 0) {
+    const socialsStr = Object.entries(braveSocials)
+      .map(([platform, url]) => `- ${platform}: ${url}`)
+      .join('\n');
+    const locationHint = city ? ` i ${city}` : ' i Danmark';
+    socialVerificationSection =
+      `\n\nBrave Search har fundet disse sociale medie-profiler — verificer om de tilhører NETOP DENNE virksomhed${locationHint}:\n${socialsStr}\n` +
+      `Brug dem i din socials-output hvis de er korrekte for denne specifikke virksomhed. Hvis en profil tilhører en anden virksomhed, udelad den og brug din egen viden i stedet.`;
   }
+
+  const userMessage =
+    `Virksomhed:\n${companyContext}\n\nBrave Search-resultater (${braveResults.length} hits):\n\n${braveSummary}\n\nRangér og filtrer disse resultater. Find også sociale medier-links.` +
+    socialVerificationSection;
+  const systemPrompt = SYSTEM_PROMPT_WITH_BRAVE;
 
   try {
     const response = await client.messages.create({
@@ -578,16 +504,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       socialAlternatives,
     } = parseArticleResponse(finalText);
 
-    // Merge-strategi:
-    // - brave+claude tilstand: Claude har verificeret Brave-hits → stol på Claude's output.
-    //   Brave bruges kun som supplement for platforme Claude ikke inkluderede.
-    // - claude-only tilstand: Kun Claude's output.
-    const socials: SocialsResult = useBrave
-      ? { ...braveSocials, ...claudeSocials } // Claude overskriver Brave hvis Claude har verificeret
-      : claudeSocials;
+    // Claude overskriver Brave-socials hvis Claude har verificeret dem (kvalitetssikring).
+    // Brave-fund bruges som supplement for platforme Claude ikke inkluderede.
+    const socials: SocialsResult = { ...braveSocials, ...claudeSocials };
 
     console.log(
-      `[article-search] "${companyName}": Brave=${braveResults.length} rå → Claude valgte ${articles.length} artikler, tokens=${totalTokens}, source=${useBrave ? 'brave+claude' : 'claude-only'}, socials=[brave:${Object.keys(braveSocials).join(',')}, claude:${Object.keys(claudeSocials).join(',')}]`
+      `[article-search] "${companyName}": Brave=${braveResults.length} rå → Claude valgte ${articles.length} artikler, tokens=${totalTokens}, socials=[brave:${Object.keys(braveSocials).join(',')}, claude:${Object.keys(claudeSocials).join(',')}]`
     );
 
     if (articles.length === 0) {
@@ -600,7 +522,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       socialAlternatives,
       tokensUsed: totalTokens,
       usage: { totalTokens },
-      source: useBrave ? 'brave+claude' : 'claude-only',
+      source: 'brave+claude',
     };
 
     return NextResponse.json(result, { status: 200 });

@@ -14,6 +14,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
+import Link from 'next/link';
 import Map, {
   Marker,
   Source,
@@ -27,7 +28,15 @@ import type {
   LineLayerSpecification,
   GeoJSONSourceSpecification,
 } from 'mapbox-gl';
-import { Satellite, Map as MapIcon, Maximize2, Minimize2, Loader2, Building2 } from 'lucide-react';
+import {
+  Satellite,
+  Map as MapIcon,
+  Maximize2,
+  Minimize2,
+  Loader2,
+  Building2,
+  ExternalLink,
+} from 'lucide-react';
 import 'mapbox-gl/dist/mapbox-gl.css';
 
 /**
@@ -156,6 +165,12 @@ interface PropertyMapProps {
    * Hentes server-side fra Datafordeler WFS.
    */
   bygningPunkter?: BBRBygningPunkt[];
+  /**
+   * Valgfrit href til "Åbn på fuldt kort"-knap inde i kortet (z-30).
+   * Erstatter det tidligere overlejrede Link i forælderkomponenten (z-20),
+   * som konkurrerede med lag-knappernes z-index og blokerede klik.
+   */
+  fullMapHref?: string;
 }
 
 /** In-memory cache — gemmer { all, selected } per koordinat */
@@ -282,6 +297,7 @@ export default function PropertyMap({
   visMatrikel = true,
   onAdresseValgt,
   bygningPunkter,
+  fullMapHref,
 }: PropertyMapProps) {
   const mapRef = useRef<MapRef>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -638,9 +654,9 @@ export default function PropertyMap({
           })}
       </Map>
 
-      {/* Luftfoto / Gade / BBR toggle — BBR yderst til højre */}
-      {/* BBR | Gade | Luftfoto — BBR yderst til venstre, Luftfoto yderst til højre */}
-      <div className="absolute top-3 left-3 flex gap-1.5 z-10">
+      {/* Luftfoto / Gade / BBR toggle — BBR yderst til venstre, Luftfoto yderst til højre */}
+      {/* z-30 sikrer at knapperne er over alle overlejringer i forælderkomponenten (z-20) */}
+      <div className="absolute top-3 left-3 flex gap-1.5 z-30">
         {bygningPunkter && bygningPunkter.length > 0 && (
           <button
             onClick={() => {
@@ -686,13 +702,26 @@ export default function PropertyMap({
         </button>
       </div>
 
-      {/* Fullscreen toggle */}
-      <button
-        onClick={() => setFullscreen((f) => !f)}
-        className="absolute top-3 right-3 z-10 p-1.5 bg-slate-900/90 hover:bg-slate-800 border border-slate-700 rounded-lg text-slate-300 shadow-lg transition-all"
-      >
-        {fullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
-      </button>
+      {/* Øverst til højre: "Fuldt kort"-link (hvis angivet) + fullscreen toggle */}
+      {/* z-30 matcher lag-knapperne — ingen konflikt med forælderkomponentens z-indeks */}
+      <div className="absolute top-3 right-3 z-30 flex items-center gap-1.5">
+        {fullMapHref && (
+          <Link
+            href={fullMapHref}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-900/90 hover:bg-slate-800 border border-slate-700 rounded-lg text-slate-300 text-xs font-medium shadow-lg transition-all"
+            title="Åbn på fuldt kort"
+          >
+            <ExternalLink size={12} />
+            <span className="hidden sm:inline">Fuldt kort</span>
+          </Link>
+        )}
+        <button
+          onClick={() => setFullscreen((f) => !f)}
+          className="p-1.5 bg-slate-900/90 hover:bg-slate-800 border border-slate-700 rounded-lg text-slate-300 shadow-lg transition-all"
+        >
+          {fullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+        </button>
+      </div>
 
       {/* Loading-overlay ved korteklik */}
       {søgerAdresse && (

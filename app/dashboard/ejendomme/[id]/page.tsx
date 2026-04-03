@@ -39,8 +39,6 @@ import {
   XCircle,
   Info,
   Loader2,
-  Newspaper,
-  Globe,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -76,7 +74,6 @@ import type { MatrikelEjendom, MatrikelResponse } from '@/app/api/matrikel/route
 import { gemRecentEjendom } from '@/app/lib/recentEjendomme';
 import { erTracked, toggleTrackEjendom } from '@/app/lib/trackedEjendomme';
 import FoelgTooltip from '@/app/components/FoelgTooltip';
-import VerifiedLinks from '@/app/components/VerifiedLinks';
 import { useLanguage } from '@/app/context/LanguageContext';
 import dynamic from 'next/dynamic';
 import type { DiagramGraph } from '@/app/components/diagrams/DiagramData';
@@ -746,15 +743,6 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
    * Har ingen effekt på mobil (mobilKortAaben styrer overlay der).
    */
   const [kortPanelÅben, setKortPanelÅben] = useState(true);
-
-  /**
-   * Styrer om nyheder/sociale medier-panelet er synligt på desktop.
-   * Gensidigt eksklusivt med kortpanelet — kun ét panel ad gangen.
-   */
-  const [nyhedsPanelÅben, setNyhedsPanelÅben] = useState(false);
-
-  /** Styrer om mobil nyheder-overlay er åbent. */
-  const [mobilNyhederAaben, setMobilNyhederAaben] = useState(false);
 
   /**
    * Kortpanel-bredde i px — kan trækkes af brugeren via adskillelseslinien.
@@ -1652,9 +1640,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                 <button
                   onClick={() => {
                     if (visKort) {
-                      const åbner = !kortPanelÅben;
-                      setKortPanelÅben(åbner);
-                      if (åbner) setNyhedsPanelÅben(false);
+                      setKortPanelÅben((prev) => !prev);
                     } else {
                       setMobilKortAaben(true);
                     }
@@ -1668,27 +1654,6 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                 >
                   <MapIcon size={14} />
                   {da ? 'Kort' : 'Map'}
-                </button>
-                {/* Nyheder/sociale medier-toggle knap */}
-                <button
-                  onClick={() => {
-                    if (visKort) {
-                      const åbner = !nyhedsPanelÅben;
-                      setNyhedsPanelÅben(åbner);
-                      if (åbner) setKortPanelÅben(false);
-                    } else {
-                      setMobilNyhederAaben(true);
-                    }
-                  }}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-sm transition-all ${
-                    (visKort && nyhedsPanelÅben) || (!visKort && mobilNyhederAaben)
-                      ? 'bg-blue-600/20 hover:bg-blue-600/30 border-blue-500/40 text-blue-300'
-                      : 'bg-slate-800 hover:bg-slate-700 border-slate-700/60 text-slate-300'
-                  }`}
-                  title={da ? 'Nyheder & sociale medier' : 'News & social media'}
-                >
-                  <Newspaper size={14} />
-                  {da ? 'Nyheder' : 'News'}
                 </button>
                 <button
                   onClick={handleDownloadRapport}
@@ -1791,12 +1756,12 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                     className="flex items-center gap-1.5 px-3 py-1 bg-amber-500/15 border border-amber-500/30 rounded-lg text-amber-400 text-xs font-medium hover:bg-amber-500/25 transition-colors flex-shrink-0"
                     title={
                       lang === 'da'
-                        ? `Gå til moderejendommen (BFE ${bbrData.moderBfe})`
+                        ? `Gå til hovedejendommen (BFE ${bbrData.moderBfe})`
                         : `Go to parent property (BFE ${bbrData.moderBfe})`
                     }
                   >
                     <Building2 size={12} />
-                    {lang === 'da' ? 'Moderejendom' : 'Parent property'}
+                    {lang === 'da' ? 'Hovedejendom' : 'Parent property'}
                   </button>
                 )}
                 {bbrData?.ejerlejlighedBfe && (
@@ -4309,15 +4274,6 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
         {/* Kortpanel — strækker fuld højde */}
         {visKort && kortPanelÅben && (
           <div className="relative flex-shrink-0 self-stretch" style={{ width: kortBredde }}>
-            {/* Åbn på fuldt kort — navigerer til /dashboard/kort?ejendom=<id> */}
-            <Link
-              href={`/dashboard/kort?ejendom=${id}`}
-              className="absolute top-3 right-3 z-20 flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-900/90 hover:bg-slate-800 border border-slate-700 rounded-lg text-slate-300 text-xs font-medium shadow-lg transition-all"
-              title={t.openFullMap}
-            >
-              <MapIcon size={12} />
-              {t.fullMap}
-            </Link>
             <div className="absolute inset-0">
               <Suspense
                 fallback={
@@ -4332,6 +4288,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                   adresse={adresseStreng}
                   visMatrikel={true}
                   onAdresseValgt={(newId) => router.push(`/dashboard/ejendomme/${newId}`)}
+                  fullMapHref={`/dashboard/kort?ejendom=${id}`}
                   bygningPunkter={
                     bbrData?.bygningPunkter
                       ? bbrData.bygningPunkter.filter(
@@ -4346,18 +4303,6 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
               </Suspense>
             </div>
           </div>
-        )}
-
-        {/* ─── Mobil: FAB-kortknap — kun synlig på skærme under 900px ─── */}
-        {!visKort && (
-          <button
-            onClick={() => setMobilKortAaben(true)}
-            className="fixed bottom-20 right-4 z-40 flex items-center gap-2 px-4 py-3 bg-blue-600 hover:bg-blue-500 active:scale-95 rounded-full text-white shadow-2xl transition-all"
-            aria-label={da ? 'Åbn kort' : 'Open map'}
-          >
-            <MapIcon size={18} />
-            <span className="text-sm font-semibold">{da ? 'Kort' : 'Map'}</span>
-          </button>
         )}
 
         {/* ─── Mobil: Kortoverlay — fylder hele skærmen ─── */}
@@ -6098,6 +6043,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                   adresse={`${ejendom.adresse}, ${ejendom.postnummer} ${ejendom.by}`}
                   visMatrikel={true}
                   onAdresseValgt={(id) => router.push(`/dashboard/ejendomme/${id}`)}
+                  fullMapHref={`/dashboard/kort?ejendom=${id}`}
                   bygningPunkter={bbrData?.bygningPunkter ?? undefined}
                 />
               </Suspense>
@@ -6105,18 +6051,6 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
           </div>
         )}
       </div>
-
-      {/* ─── Mobil: FAB-kortknap — kun synlig på skærme under 900px ─── */}
-      {!visKort && (
-        <button
-          onClick={() => setMobilKortAaben(true)}
-          className="fixed bottom-20 right-4 z-40 flex items-center gap-2 px-4 py-3 bg-blue-600 hover:bg-blue-500 active:scale-95 rounded-full text-white shadow-2xl transition-all"
-          aria-label={da ? 'Åbn kort' : 'Open map'}
-        >
-          <MapIcon size={18} />
-          <span className="text-sm font-semibold">{da ? 'Kort' : 'Map'}</span>
-        </button>
-      )}
 
       {/* ─── Mobil: Kortoverlay — fylder hele skærmen ─── */}
       {!visKort && mobilKortAaben && (
@@ -6170,225 +6104,9 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
           </div>
         </div>
       )}
-
-      {/* ─── Adskillelseslinie — nyheder (desktop) ─── */}
-      {visKort && nyhedsPanelÅben && <div className="w-1.5 flex-shrink-0 bg-slate-800" />}
-
-      {/* ─── Nyheder/sociale medier panel (desktop) ─── */}
-      {visKort &&
-        nyhedsPanelÅben &&
-        (() => {
-          // Forsøg at finde selskabsejer til news-søgning
-          const tlSelskab = tlEjere.find((e) => e.type === 'selskab' && e.cvr);
-          const mockSelskab = !tlSelskab ? ejendom.ejere.find((e) => e.cvr) : null;
-          const ejerCvr = tlSelskab?.cvr ?? mockSelskab?.cvr ?? null;
-          const ejerNavn =
-            tlSelskab?.navn ??
-            (mockSelskab ? (ejendom.ejerDetaljer?.navn ?? mockSelskab.cvr) : null);
-          const nyhedsQuery = ejerNavn ?? `${ejendom.adresse} ${ejendom.by}`;
-
-          return (
-            <div
-              className="flex-shrink-0 self-stretch flex flex-col overflow-hidden border-l border-slate-700/50"
-              style={{ width: 340 }}
-            >
-              {/* Panel-header */}
-              <div className="flex items-center justify-between px-4 py-3 bg-slate-900 border-b border-slate-700/50 flex-shrink-0">
-                <div className="flex items-center gap-2">
-                  <Newspaper size={14} className="text-blue-400" />
-                  <span className="text-white text-sm font-medium">
-                    {da ? 'Nyheder & links' : 'News & links'}
-                  </span>
-                </div>
-                <button
-                  onClick={() => setNyhedsPanelÅben(false)}
-                  className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
-                  aria-label={da ? 'Luk panel' : 'Close panel'}
-                >
-                  <X size={14} />
-                </button>
-              </div>
-              {/* Panel-indhold */}
-              <div className="flex-1 overflow-y-auto p-4 space-y-6">
-                {/* Sociale medier & links — kun hvis selskabsejer */}
-                {ejerCvr && ejerNavn && (
-                  <div>
-                    <div className="flex items-center gap-2 mb-1">
-                      <Globe size={12} className="text-slate-500" />
-                      <p className="text-slate-400 text-xs font-medium uppercase tracking-wide">
-                        {da ? 'Sociale medier & hjemmeside' : 'Social media & website'}
-                      </p>
-                    </div>
-                    <p className="text-slate-600 text-[10px] mb-3 truncate">{ejerNavn}</p>
-                    <VerifiedLinks
-                      entityType="company"
-                      entityId={ejerCvr}
-                      entityName={ejerNavn}
-                      lang={da ? 'da' : 'en'}
-                    />
-                  </div>
-                )}
-                {/* Nyheder */}
-                <div>
-                  <div className="flex items-center gap-2 mb-1">
-                    <Newspaper size={12} className="text-slate-500" />
-                    <p className="text-slate-400 text-xs font-medium uppercase tracking-wide">
-                      {da ? 'Seneste nyheder' : 'Latest news'}
-                    </p>
-                  </div>
-                  <p className="text-slate-600 text-[10px] mb-3 truncate">{nyhedsQuery}</p>
-                  <EjendomNewsFeed query={nyhedsQuery} da={da} />
-                </div>
-              </div>
-            </div>
-          );
-        })()}
-
-      {/* ─── Mobil: Nyheder-overlay — fylder hele skærmen ─── */}
-      {!visKort &&
-        mobilNyhederAaben &&
-        (() => {
-          const tlSelskab = tlEjere.find((e) => e.type === 'selskab' && e.cvr);
-          const mockSelskab = !tlSelskab ? ejendom.ejere.find((e) => e.cvr) : null;
-          const ejerCvr = tlSelskab?.cvr ?? mockSelskab?.cvr ?? null;
-          const ejerNavn =
-            tlSelskab?.navn ??
-            (mockSelskab ? (ejendom.ejerDetaljer?.navn ?? mockSelskab.cvr) : null);
-          const nyhedsQuery = ejerNavn ?? `${ejendom.adresse} ${ejendom.by}`;
-
-          return (
-            <div className="fixed inset-0 z-50 flex flex-col bg-slate-950">
-              {/* Overlay-header */}
-              <div className="flex items-center justify-between px-4 py-3 bg-slate-900 border-b border-slate-700/50 flex-shrink-0">
-                <div className="flex items-center gap-2 min-w-0">
-                  <Newspaper size={15} className="text-blue-400 flex-shrink-0" />
-                  <span className="text-white text-sm font-medium truncate">
-                    {da ? 'Nyheder & links' : 'News & links'}
-                  </span>
-                </div>
-                <button
-                  onClick={() => setMobilNyhederAaben(false)}
-                  className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors flex-shrink-0"
-                  aria-label={da ? 'Luk' : 'Close'}
-                >
-                  <X size={18} />
-                </button>
-              </div>
-              {/* Indhold */}
-              <div className="flex-1 overflow-y-auto p-4 space-y-6">
-                {ejerCvr && ejerNavn && (
-                  <div>
-                    <div className="flex items-center gap-2 mb-1">
-                      <Globe size={12} className="text-slate-500" />
-                      <p className="text-slate-400 text-xs font-medium uppercase tracking-wide">
-                        {da ? 'Sociale medier & hjemmeside' : 'Social media & website'}
-                      </p>
-                    </div>
-                    <p className="text-slate-600 text-[10px] mb-3 truncate">{ejerNavn}</p>
-                    <VerifiedLinks
-                      entityType="company"
-                      entityId={ejerCvr}
-                      entityName={ejerNavn}
-                      lang={da ? 'da' : 'en'}
-                    />
-                  </div>
-                )}
-                <div>
-                  <div className="flex items-center gap-2 mb-1">
-                    <Newspaper size={12} className="text-slate-500" />
-                    <p className="text-slate-400 text-xs font-medium uppercase tracking-wide">
-                      {da ? 'Seneste nyheder' : 'Latest news'}
-                    </p>
-                  </div>
-                  <p className="text-slate-600 text-[10px] mb-3 truncate">{nyhedsQuery}</p>
-                  <EjendomNewsFeed query={nyhedsQuery} da={da} />
-                </div>
-              </div>
-            </div>
-          );
-        })()}
     </div>
   );
 }
-
-// ─── EjendomNewsFeed — søger nyheder for ejendom eller selskabsejer ───────────
-
-/**
- * Viser nyheder fra danske RSS-feeds for en given søgeterm.
- * Bruges i nyheder/sociale medier-panelet på ejendomsdetaljesiden.
- *
- * @param query - Søgeterm (virksomhedsnavn eller adresse)
- * @param da - True for dansk sprog
- */
-function EjendomNewsFeed({ query, da }: { query: string; da: boolean }) {
-  const [articles, setArticles] = useState<
-    {
-      title: string;
-      url: string;
-      source: string;
-      favicon?: string;
-      date?: string;
-    }[]
-  >([]);
-  const [loading, setLoading] = useState(true);
-  const fetchedRef = useRef(false);
-
-  useEffect(() => {
-    if (fetchedRef.current) return;
-    fetchedRef.current = true;
-    fetch(`/api/news?q=${encodeURIComponent(query)}`)
-      .then((res) => (res.ok ? res.json() : []))
-      .then((data) => setArticles(Array.isArray(data) ? data.slice(0, 8) : []))
-      .catch(() => setArticles([]))
-      .finally(() => setLoading(false));
-  }, [query]);
-
-  if (loading)
-    return (
-      <div className="flex items-center gap-2 text-slate-500 text-xs">
-        <Loader2 size={12} className="animate-spin" />
-        {da ? 'Søger nyheder…' : 'Searching news…'}
-      </div>
-    );
-  if (articles.length === 0)
-    return (
-      <p className="text-slate-600 text-xs">{da ? 'Ingen nyheder fundet' : 'No news found'}</p>
-    );
-
-  return (
-    <div className="space-y-2.5">
-      {articles.map((a, i) => (
-        <a
-          key={i}
-          href={a.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-start gap-2.5 group"
-        >
-          {a.favicon && (
-            <img
-              src={a.favicon}
-              alt=""
-              width={16}
-              height={16}
-              className="mt-0.5 rounded-sm flex-shrink-0"
-            />
-          )}
-          <div className="min-w-0">
-            <p className="text-slate-300 text-xs font-medium group-hover:text-blue-300 transition-colors leading-snug">
-              {a.title}
-            </p>
-            <p className="text-slate-600 text-[10px] mt-0.5">
-              {a.source}
-              {a.date ? ` · ${a.date}` : ''}
-            </p>
-          </div>
-        </a>
-      ))}
-    </div>
-  );
-}
-
 // ─── PropertyOwnerDiagram ──────────────────────────────────────────────────
 
 /**

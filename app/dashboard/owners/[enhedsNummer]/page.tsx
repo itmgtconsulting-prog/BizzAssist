@@ -26,6 +26,12 @@ import {
   ChevronDown,
   ChevronRight,
   User,
+  Newspaper,
+  Globe,
+  Sparkles,
+  Zap,
+  X,
+  Lock,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';
@@ -34,6 +40,10 @@ import type { RelateretVirksomhed } from '@/app/api/cvr-public/related/route';
 import { saveRecentPerson } from '@/app/lib/recentPersons';
 import { buildPersonDiagramGraph } from '@/app/components/diagrams/DiagramData';
 import dynamic from 'next/dynamic';
+import VerifiedLinks from '@/app/components/VerifiedLinks';
+import { useSubscription } from '@/app/context/SubscriptionContext';
+import { useSubscriptionAccess } from '@/app/components/SubscriptionGate';
+import { resolvePlan, formatTokens, isSubscriptionFunctional } from '@/app/lib/subscriptions';
 
 const DiagramForce = dynamic(() => import('@/app/components/diagrams/DiagramForce'), {
   ssr: false,
@@ -221,6 +231,35 @@ export default function PersonDetailPage({
   );
   const [relatedLoading, setRelatedLoading] = useState(false);
   const relatedFetchedRef = useRef(false);
+
+  /** Detekterer desktop vs. mobil — nyheder-panel vises som sidebar på desktop, overlay på mobil */
+  const [isDesktop, setIsDesktop] = useState(true);
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 900px)');
+    setIsDesktop(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+
+  /** Styrer om nyheder/sociale medier-panelet er synligt på desktop. */
+  const [nyhedsPanelÅben, setNyhedsPanelÅben] = useState(false);
+
+  /** Styrer om mobil nyheder-overlay er åbent. */
+  const [mobilNyhederAaben, setMobilNyhederAaben] = useState(false);
+
+  /** AI-fundne sociale medier-URLs med confidence — udfyldes efter artikel-søgning */
+  const [aiSocials, setAiSocials] = useState<
+    Record<string, { url: string; confidence: number; reason?: string }>
+  >({});
+
+  /** AI-fundne alternative links per platform med confidence — udfyldes efter artikel-søgning */
+  const [aiAlternatives, setAiAlternatives] = useState<
+    Record<string, Array<{ url: string; confidence: number; reason?: string }>>
+  >({});
+
+  /** Confidence-tærskel fra ai_settings — default 70 */
+  const [confidenceThreshold, setConfidenceThreshold] = useState(70);
 
   /** Side panel state */
   const [_panelBredde, setPanelBredde] = useState(360);
@@ -600,6 +639,27 @@ export default function PersonDetailPage({
             >
               <ArrowLeft size={16} /> {c.goBack}
             </button>
+            <div className="flex items-center gap-2">
+              {/* Nyheder/AI-søgning toggle knap */}
+              <button
+                onClick={() => {
+                  if (isDesktop) {
+                    setNyhedsPanelÅben((prev) => !prev);
+                  } else {
+                    setMobilNyhederAaben(true);
+                  }
+                }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-sm transition-all ${
+                  (isDesktop && nyhedsPanelÅben) || (!isDesktop && mobilNyhederAaben)
+                    ? 'bg-blue-600/20 hover:bg-blue-600/30 border-blue-500/40 text-blue-300'
+                    : 'bg-slate-800 hover:bg-slate-700 border-slate-700/60 text-slate-300'
+                }`}
+                title={lang === 'da' ? 'Nyheder & AI artikel søgning' : 'News & AI article search'}
+              >
+                <Newspaper size={14} />
+                {lang === 'da' ? 'Nyheder' : 'News'}
+              </button>
+            </div>
           </div>
 
           <h1 className="text-white text-xl sm:text-2xl font-bold mb-2">{data.navn}</h1>
@@ -1032,124 +1092,510 @@ export default function PersonDetailPage({
       </div>
       {/* END left: main content */}
 
-      {/* ─── Side Panel (hidden — aktiveres senere) ─── */}
-      {/* TODO: Genaktiver side panel med nyheder + verified links */}
-    </div>
-  );
-}
-
-// ─── PersonNewsFeed — søger nyheder for personen ─────────────────────────────
-
-/**
- * Viser nyheder fra troværdige kilder for en given person.
- */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function PersonNewsFeed({ personName, lang }: { personName: string; lang: 'da' | 'en' }) {
-  const [articles, setArticles] = useState<
-    {
-      title: string;
-      url: string;
-      source: string;
-      sourceDomain?: string;
-      favicon?: string;
-      date?: string;
-    }[]
-  >([]);
-  const [loading, setLoading] = useState(true);
-  const fetchedRef = useRef(false);
-
-  useEffect(() => {
-    if (fetchedRef.current) return;
-    fetchedRef.current = true;
-
-    fetch(`/api/news?q=${encodeURIComponent(personName)}`)
-      .then((res) => (res.ok ? res.json() : []))
-      .then((data) => setArticles(Array.isArray(data) ? data.slice(0, 8) : []))
-      .catch(() => setArticles([]))
-      .finally(() => setLoading(false));
-  }, [personName]);
-
-  if (loading)
-    return (
-      <div className="flex items-center gap-2 text-slate-500 text-xs">
-        <Loader2 size={12} className="animate-spin" />{' '}
-        {lang === 'da' ? 'Søger nyheder…' : 'Searching news…'}
-      </div>
-    );
-  if (articles.length === 0)
-    return (
-      <p className="text-slate-600 text-xs">
-        {lang === 'da' ? 'Ingen nyheder fundet' : 'No news found'}
-      </p>
-    );
-
-  return (
-    <div className="space-y-2.5">
-      {articles.map((a, i) => (
-        <a
-          key={i}
-          href={a.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-start gap-2.5 group"
+      {/* ─── Nyheder/sociale medier panel (desktop) ─── */}
+      {isDesktop && nyhedsPanelÅben && (
+        <div
+          className="flex-shrink-0 self-stretch flex flex-col overflow-hidden border-l border-slate-700/50"
+          style={{ width: 340 }}
         >
-          {a.favicon && (
-            <img
-              src={a.favicon}
-              alt=""
-              width={16}
-              height={16}
-              className="mt-0.5 rounded-sm flex-shrink-0"
-            />
-          )}
-          <div className="min-w-0">
-            <p className="text-slate-300 text-xs font-medium group-hover:text-blue-300 transition-colors leading-snug">
-              {a.title}
-            </p>
-            <p className="text-slate-600 text-[10px] mt-0.5">
-              {a.source}
-              {a.date ? ` · ${a.date}` : ''}
+          {/* Panel-header */}
+          <div className="flex items-center justify-between px-4 py-3 bg-slate-900 border-b border-slate-700/50 flex-shrink-0">
+            <div className="flex items-center gap-2">
+              <Newspaper size={14} className="text-blue-400" />
+              <span className="text-white text-sm font-medium">
+                {lang === 'da' ? 'Nyheder & links' : 'News & links'}
+              </span>
+            </div>
+            <button
+              onClick={() => setNyhedsPanelÅben(false)}
+              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
+              aria-label={lang === 'da' ? 'Luk panel' : 'Close panel'}
+            >
+              <X size={14} />
+            </button>
+          </div>
+          {/* Panel-indhold: ØVERST nyheder (AI), NEDERST sociale medier */}
+          <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-5 min-h-0">
+            {/* AI Artikel søgning */}
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <Sparkles size={12} className="text-blue-400" />
+                <p className="text-slate-400 text-xs font-medium uppercase tracking-wide">
+                  {lang === 'da' ? 'AI Artikel søgning' : 'AI Article Search'}
+                </p>
+              </div>
+              <PersonArticleSearchPanel
+                personData={data}
+                lang={lang}
+                onSocialsFound={setAiSocials}
+                onAlternativesFound={setAiAlternatives}
+                onThresholdFound={setConfidenceThreshold}
+              />
+            </div>
+            {/* Sociale medier & links */}
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <Globe size={12} className="text-slate-500" />
+                <p className="text-slate-400 text-xs font-medium uppercase tracking-wide">
+                  {lang === 'da' ? 'Sociale medier' : 'Social media'}
+                </p>
+              </div>
+              <VerifiedLinks
+                entityType="person"
+                entityId={String(data.enhedsNummer)}
+                entityName={data.navn}
+                lang={lang}
+                aiSocials={aiSocials}
+                aiAlternatives={aiAlternatives}
+                confidenceThreshold={confidenceThreshold}
+              />
+            </div>
+          </div>
+          {/* Build-nummer — diskret footer */}
+          <div className="px-4 py-2 border-t border-slate-700/30 flex-shrink-0">
+            <p className="text-slate-600 text-xs">
+              Build: {process.env.NEXT_PUBLIC_BUILD_ID ?? 'dev'}
             </p>
           </div>
-        </a>
-      ))}
+        </div>
+      )}
+
+      {/* ─── Mobil: Nyheder-overlay — fylder hele skærmen ─── */}
+      {!isDesktop && mobilNyhederAaben && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-slate-950">
+          {/* Overlay-header */}
+          <div className="flex items-center justify-between px-4 py-3 bg-slate-900 border-b border-slate-700/50 flex-shrink-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <Newspaper size={15} className="text-blue-400 flex-shrink-0" />
+              <span className="text-white text-sm font-medium truncate">
+                {lang === 'da' ? 'Nyheder & links' : 'News & links'}
+              </span>
+            </div>
+            <button
+              onClick={() => setMobilNyhederAaben(false)}
+              className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors flex-shrink-0"
+              aria-label={lang === 'da' ? 'Luk' : 'Close'}
+            >
+              <X size={18} />
+            </button>
+          </div>
+          {/* Indhold */}
+          <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-5 min-h-0">
+            {/* AI Artikel søgning */}
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <Sparkles size={12} className="text-blue-400" />
+                <p className="text-slate-400 text-xs font-medium uppercase tracking-wide">
+                  {lang === 'da' ? 'AI Artikel søgning' : 'AI Article Search'}
+                </p>
+              </div>
+              <PersonArticleSearchPanel
+                personData={data}
+                lang={lang}
+                onSocialsFound={setAiSocials}
+                onAlternativesFound={setAiAlternatives}
+                onThresholdFound={setConfidenceThreshold}
+              />
+            </div>
+            {/* Sociale medier & links */}
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <Globe size={12} className="text-slate-500" />
+                <p className="text-slate-400 text-xs font-medium uppercase tracking-wide">
+                  {lang === 'da' ? 'Sociale medier' : 'Social media'}
+                </p>
+              </div>
+              <VerifiedLinks
+                entityType="person"
+                entityId={String(data.enhedsNummer)}
+                entityName={data.navn}
+                lang={lang}
+                aiSocials={aiSocials}
+                aiAlternatives={aiAlternatives}
+                confidenceThreshold={confidenceThreshold}
+              />
+            </div>
+          </div>
+          {/* Build-nummer */}
+          <div className="px-4 py-2 border-t border-slate-700/30 flex-shrink-0">
+            <p className="text-slate-600 text-xs">
+              Build: {process.env.NEXT_PUBLIC_BUILD_ID ?? 'dev'}
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
+// ─── PersonArticleSearchPanel ─────────────────────────────────────────────────
+
 /**
- * Viser sociale profil-links for en person (LinkedIn, Facebook).
+ * Synkroniserer token-forbrug til Supabase i baggrunden (fire-and-forget).
+ *
+ * @param tokensUsed - Antal forbrugte tokens
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function PersonSocialLinks({ personName, lang: _lang }: { personName: string; lang: 'da' | 'en' }) {
-  const searchName = encodeURIComponent(personName);
+function syncPersonTokenUsageToServer(tokensUsed: number) {
+  if (tokensUsed <= 0) return;
+  fetch('/api/subscription/track-tokens', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tokensUsed }),
+  }).catch(() => {
+    /* stille fejl */
+  });
+}
 
-  const links = [
-    {
-      label: 'LinkedIn',
-      url: `https://www.linkedin.com/search/results/people/?keywords=${searchName}`,
-    },
-    { label: 'Facebook', url: `https://www.facebook.com/search/people/?q=${searchName}` },
-    { label: 'Google', url: `https://www.google.com/search?q=${searchName}` },
-  ];
+/** Et nyhedsresultat fra AI artikel søgning */
+interface PersonAIArticleResult {
+  title: string;
+  url: string;
+  source: string;
+  date?: string;
+  description?: string;
+}
 
-  return (
-    <div className="space-y-2">
-      {links.map((link, i) => (
-        <a
-          key={i}
-          href={link.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center gap-2 text-slate-400 hover:text-blue-300 transition-colors text-xs group"
+/**
+ * PersonArticleSearchPanel — AI-drevet artikelsøgning i nyheds-sidepanelet på personsiden.
+ *
+ * Viser tokens til rådighed og en "Søg"-knap. Når brugeren klikker,
+ * hentes op til 15 seneste nyheder om personen via /api/ai/person-article-search.
+ * Søger primært personens navn + virksomheder i ejerportefølje.
+ * Viser første 5 og ekspanderer med 5 ad gangen via "Vis flere".
+ * Kalder onSocialsFound med AI-fundne personlige sociale medier-URLs.
+ *
+ * @param personData - PersonPublicData for den valgte person
+ * @param lang - Aktivt sprog
+ * @param onSocialsFound - Callback med fundne sociale medier-URLs inkl. confidence
+ * @param onAlternativesFound - Callback med alternative links per platform
+ * @param onThresholdFound - Callback med confidence-tærskel fra ai_settings
+ */
+function PersonArticleSearchPanel({
+  personData,
+  lang,
+  onSocialsFound,
+  onAlternativesFound,
+  onThresholdFound,
+}: {
+  personData: PersonPublicData;
+  lang: 'da' | 'en';
+  onSocialsFound?: (
+    socials: Record<string, { url: string; confidence: number; reason?: string }>
+  ) => void;
+  onAlternativesFound?: (
+    alternatives: Record<string, Array<{ url: string; confidence: number; reason?: string }>>
+  ) => void;
+  onThresholdFound?: (threshold: number) => void;
+}) {
+  const { subscription: ctxSub, addTokenUsage } = useSubscription();
+  const { isActive: subActive } = useSubscriptionAccess('ai');
+  const [articles, setArticles] = useState<PersonAIArticleResult[]>([]);
+  const [hasSearched, setHasSearched] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [tokenInfo, setTokenInfo] = useState<{ used: number; limit: number } | null>(null);
+  const [tokensUsedThisSearch, setTokensUsedThisSearch] = useState(0);
+  /** Antal synlige artikler — starter på 5, øges med 5 ved hvert "Vis flere"-klik */
+  const [visibleCount, setVisibleCount] = useState(5);
+
+  /** Opdaterer token-info fra subscription context */
+  useEffect(() => {
+    if (!ctxSub) {
+      setTokenInfo(null);
+      return;
+    }
+    const plan = resolvePlan(ctxSub.planId);
+    if (!plan.aiEnabled) {
+      setTokenInfo(null);
+      return;
+    }
+    const limit =
+      plan.aiTokensPerMonth < 0 ? -1 : plan.aiTokensPerMonth + (ctxSub.bonusTokens ?? 0);
+    setTokenInfo({ used: ctxSub.tokensUsedThisMonth, limit });
+  }, [ctxSub]);
+
+  /**
+   * Bygger liste af virksomheder personen ejer — sendes til API som søgekontekst.
+   * Begrænset til top 5 ejervirksomheder.
+   */
+  const ownedCompanies = useMemo(() => {
+    return personData.virksomheder
+      .filter(
+        (v) =>
+          v.aktiv &&
+          v.roller.some((r) => {
+            const u = r.rolle.toUpperCase();
+            return !r.til && (u.includes('EJER') || u.includes('LEGALE') || u.includes('REEL'));
+          })
+      )
+      .slice(0, 5)
+      .map((v) => ({ cvr: v.cvr, name: v.navn }));
+  }, [personData.virksomheder]);
+
+  /** Finder personens primære by fra ejervirksomhedernes adresser */
+  const city = useMemo(() => {
+    for (const v of personData.virksomheder) {
+      if (v.aktiv && v.by) return v.by;
+    }
+    return undefined;
+  }, [personData.virksomheder]);
+
+  /** Starter AI artikel søgning */
+  const handleSearch = useCallback(async () => {
+    if (loading) return;
+
+    if (ctxSub) {
+      const plan = resolvePlan(ctxSub.planId);
+      if (!isSubscriptionFunctional(ctxSub, plan)) return;
+      if (!plan.aiEnabled) return;
+      const limit =
+        plan.aiTokensPerMonth < 0 ? -1 : plan.aiTokensPerMonth + (ctxSub.bonusTokens ?? 0);
+      if (limit > 0 && ctxSub.tokensUsedThisMonth >= limit) return;
+    }
+
+    setLoading(true);
+    setError(null);
+    setArticles([]);
+
+    try {
+      const res = await fetch('/api/ai/person-article-search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          personName: personData.navn,
+          companies: ownedCompanies,
+          city,
+        }),
+      });
+
+      const json = await res.json();
+
+      if (!res.ok || json.error) {
+        setError(json.error ?? (lang === 'da' ? 'Søgefejl' : 'Search error'));
+        return;
+      }
+
+      const fetchedArticles: PersonAIArticleResult[] = json.articles ?? [];
+      setArticles(fetchedArticles);
+      setVisibleCount(5);
+
+      // Videresend AI-fundne sociale medier med confidence til VerifiedLinks
+      type SocialMeta = { url: string; confidence: number; reason?: string };
+      const socialsWithMeta = json.socialsWithMeta as Record<string, SocialMeta> | undefined;
+      if (socialsWithMeta && Object.keys(socialsWithMeta).length > 0) {
+        onSocialsFound?.(socialsWithMeta);
+      }
+
+      // Videresend alternative links med confidence
+      type AltMeta = { url: string; confidence: number; reason?: string };
+      const altsWithMeta = json.alternativesWithMeta as Record<string, AltMeta[]> | undefined;
+      if (altsWithMeta && Object.keys(altsWithMeta).length > 0) {
+        onAlternativesFound?.(altsWithMeta);
+      }
+
+      // Videresend confidence-tærskel
+      if (typeof json.confidenceThreshold === 'number') {
+        onThresholdFound?.(json.confidenceThreshold);
+      }
+
+      const total = json.tokensUsed ?? json.usage?.totalTokens ?? 0;
+      if (total > 0) {
+        setTokensUsedThisSearch(total);
+        addTokenUsage(total);
+        syncPersonTokenUsageToServer(total);
+      }
+    } catch {
+      setError(lang === 'da' ? 'Netværksfejl — prøv igen' : 'Network error — try again');
+    } finally {
+      setHasSearched(true);
+      setLoading(false);
+    }
+  }, [
+    loading,
+    ctxSub,
+    personData,
+    ownedCompanies,
+    city,
+    lang,
+    addTokenUsage,
+    onSocialsFound,
+    onAlternativesFound,
+    onThresholdFound,
+  ]);
+
+  const da = lang === 'da';
+
+  /** Locked state — ingen AI-adgang */
+  if (!subActive) {
+    return (
+      <div className="flex flex-col items-center gap-2 py-3 text-center">
+        <div className="w-8 h-8 bg-amber-500/10 rounded-lg flex items-center justify-center">
+          <Lock size={14} className="text-amber-400" />
+        </div>
+        <p className="text-slate-500 text-xs leading-relaxed">
+          {da
+            ? 'AI-søgning kræver et aktivt abonnement.'
+            : 'AI search requires an active subscription.'}
+        </p>
+      </div>
+    );
+  }
+
+  /** Token-statusbar (vises over knap og resultater) */
+  const tokenBar =
+    tokenInfo && (tokenInfo.limit > 0 || tokenInfo.limit === -1) ? (
+      <div className="flex items-center gap-2 mb-3">
+        <span className="text-[10px] text-slate-600 whitespace-nowrap">Tokens</span>
+        {tokenInfo.limit === -1 ? (
+          <>
+            <div className="flex-1 h-1 bg-slate-800 rounded-full overflow-hidden">
+              <div className="h-full rounded-full bg-purple-500 w-full" />
+            </div>
+            <span className="text-[10px] font-medium text-purple-400">∞</span>
+          </>
+        ) : (
+          <>
+            <div className="flex-1 h-1 bg-slate-800 rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all ${
+                  tokenInfo.used / tokenInfo.limit > 0.9
+                    ? 'bg-red-500'
+                    : tokenInfo.used / tokenInfo.limit > 0.7
+                      ? 'bg-amber-500'
+                      : 'bg-blue-500'
+                }`}
+                style={{ width: `${Math.min(100, (tokenInfo.used / tokenInfo.limit) * 100)}%` }}
+              />
+            </div>
+            <span
+              className={`text-[10px] font-medium whitespace-nowrap ${
+                tokenInfo.used / tokenInfo.limit > 0.9
+                  ? 'text-red-400'
+                  : tokenInfo.used / tokenInfo.limit > 0.7
+                    ? 'text-amber-400'
+                    : 'text-slate-500'
+              }`}
+            >
+              {formatTokens(tokenInfo.used)}/{formatTokens(tokenInfo.limit)}
+            </span>
+          </>
+        )}
+      </div>
+    ) : null;
+
+  /** AI disclaimer — vises altid under token-bar */
+  const aiDisclaimer = (
+    <p className="text-xs text-slate-500 mb-3">
+      ⚠️ Svar genereret af AI er ikke nødvendigvis korrekte. Verificér altid vigtig information.
+    </p>
+  );
+
+  /** Go-state — søgning ikke startet endnu */
+  if (!hasSearched && !loading) {
+    return (
+      <div>
+        {tokenBar}
+        {aiDisclaimer}
+        <p className="text-slate-500 text-xs mb-3 leading-relaxed">
+          {da
+            ? `Klik for at finde op til 15 seneste nyheder om ${personData.navn}.`
+            : `Click to find up to 15 latest news articles about ${personData.navn}.`}
+        </p>
+        <button
+          onClick={handleSearch}
+          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 border border-blue-500/60 rounded-lg text-white text-xs font-medium transition-all"
         >
-          <ExternalLink
-            size={10}
-            className="text-slate-600 group-hover:text-blue-400 flex-shrink-0"
-          />
-          <span className="truncate">{link.label}</span>
-        </a>
-      ))}
+          <Zap size={12} />
+          {da ? 'Søg med AI' : 'Search with AI'}
+        </button>
+      </div>
+    );
+  }
+
+  /** Loading-state */
+  if (loading) {
+    return (
+      <div>
+        {tokenBar}
+        {aiDisclaimer}
+        <div className="flex items-center gap-2 text-slate-400 text-xs py-2">
+          <Loader2 size={12} className="animate-spin text-blue-400" />
+          {da ? 'AI søger efter nyheder…' : 'AI searching for news…'}
+        </div>
+      </div>
+    );
+  }
+
+  /** Resultat-state */
+  return (
+    <div>
+      {tokenBar}
+      {aiDisclaimer}
+      {tokensUsedThisSearch > 0 && (
+        <p className="text-[10px] text-slate-600 mb-3">
+          {da
+            ? `Brugte ${formatTokens(tokensUsedThisSearch)} tokens`
+            : `Used ${formatTokens(tokensUsedThisSearch)} tokens`}
+        </p>
+      )}
+      {error && <p className="text-red-400 text-xs mb-2">{error}</p>}
+      {articles.length === 0 && !error ? (
+        <p className="text-slate-600 text-xs">
+          {da
+            ? 'Ingen danske medieartikler fundet for denne person.'
+            : 'No Danish media articles found for this person.'}
+        </p>
+      ) : (
+        <div className="space-y-2.5">
+          {articles.slice(0, visibleCount).map((a, i) => (
+            <a
+              key={i}
+              href={a.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-start gap-2 group"
+            >
+              <ExternalLink
+                size={10}
+                className="text-slate-600 group-hover:text-blue-400 flex-shrink-0 mt-0.5"
+              />
+              <div className="min-w-0">
+                <p className="text-slate-300 text-xs font-medium group-hover:text-blue-300 transition-colors leading-snug">
+                  {a.title}
+                </p>
+                <p className="text-slate-600 text-[10px] mt-0.5">
+                  {a.source}
+                  {a.date ? ` · ${a.date}` : ''}
+                </p>
+                {a.description && (
+                  <p className="text-slate-600 text-[10px] mt-0.5 line-clamp-2">{a.description}</p>
+                )}
+              </div>
+            </a>
+          ))}
+          {visibleCount < articles.length && (
+            <button
+              onClick={() => setVisibleCount((c) => Math.min(c + 5, articles.length))}
+              className="mt-1 flex items-center gap-1 text-[10px] text-slate-500 hover:text-blue-400 transition-colors"
+            >
+              <ChevronDown size={10} />
+              {da
+                ? `Vis flere (${articles.length - visibleCount} mere)`
+                : `Show more (${articles.length - visibleCount} more)`}
+            </button>
+          )}
+        </div>
+      )}
+      {articles.length > 0 && (
+        <button
+          onClick={handleSearch}
+          disabled={loading}
+          className="mt-3 flex items-center gap-1.5 text-[10px] text-slate-500 hover:text-blue-400 transition-colors disabled:opacity-50"
+        >
+          <Zap size={9} />
+          {da ? 'Søg igen' : 'Search again'}
+        </button>
+      )}
     </div>
   );
 }

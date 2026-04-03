@@ -36,6 +36,8 @@ import {
   Loader2,
   Building2,
   ExternalLink,
+  Layers,
+  X,
 } from 'lucide-react';
 import 'mapbox-gl/dist/mapbox-gl.css';
 
@@ -138,6 +140,70 @@ const AKTIV_STATUS = new Set(['1', '2', '3', '6', '7']);
 const STYLE_STORAGE_KEY = 'bizzassist-map-style';
 const ZOOM_STORAGE_KEY = 'bizzassist-map-zoom';
 const DEFAULT_ZOOM = 17;
+
+// ─── Overlay-lag ──────────────────────────────────────────────────────────────
+
+/** Nøgler for PropertyMap's toggle-bare overlay-lag */
+type OverlayNøgle = 'matrikel' | 'lokalplaner' | 'zonekort' | 'kommuneplan' | 'jordforurening';
+
+/**
+ * Bygger en WMS tile-URL via server-side proxy (/api/wms).
+ * Proxyen henter tiles server-side og videresender dem til browseren,
+ * hvilket løser CORS-problemer med de danske offentlige WMS-servere.
+ *
+ * @param service - 'plandata' eller 'miljo' (whitelistet i /api/wms)
+ * @param layers  - Kommasepareret WMS LAYERS-parameter
+ */
+function buildWmsUrl(service: 'plandata' | 'miljo', layers: string): string {
+  return (
+    `/api/wms?service=${service}` +
+    `&SERVICE=WMS&VERSION=1.1.1&REQUEST=GetMap` +
+    `&LAYERS=${encodeURIComponent(layers)}` +
+    `&STYLES=&FORMAT=image%2Fpng&TRANSPARENT=true` +
+    `&WIDTH=256&HEIGHT=256&BBOX={bbox-epsg-3857}&SRS=EPSG:3857`
+  );
+}
+
+/** WMS overlay-lag tilgængelige i PropertyMap's lag-panel */
+const OVERLAY_WMS = [
+  {
+    id: 'lokalplaner' as OverlayNøgle,
+    navn: 'Lokalplaner',
+    url: buildWmsUrl('plandata', 'pdk:theme_pdk_lokalplan_vedtaget'),
+    opacity: 0.8,
+    farveClass: 'bg-violet-600 border-violet-600',
+  },
+  {
+    id: 'zonekort' as OverlayNøgle,
+    navn: 'Zonekort',
+    url: buildWmsUrl('plandata', 'pdk:theme_pdk_zonekort_samlet_v'),
+    opacity: 0.7,
+    farveClass: 'bg-amber-600 border-amber-600',
+  },
+  {
+    id: 'kommuneplan' as OverlayNøgle,
+    navn: 'Kommuneplan',
+    url: buildWmsUrl('plandata', 'pdk:theme_pdk_kommuneplanramme_vedtaget_v'),
+    opacity: 0.8,
+    farveClass: 'bg-emerald-600 border-emerald-600',
+  },
+  {
+    id: 'jordforurening' as OverlayNøgle,
+    navn: 'Jordforurening',
+    url: buildWmsUrl('miljo', 'dai:Jordforurening'),
+    opacity: 0.7,
+    farveClass: 'bg-rose-600 border-rose-600',
+  },
+] as const;
+
+/** Standard synlighedstilstand — matrikel til, WMS fra */
+const OVERLAY_START: Record<OverlayNøgle, boolean> = {
+  matrikel: true,
+  lokalplaner: false,
+  zonekort: false,
+  kommuneplan: false,
+  jordforurening: false,
+};
 
 /** Læs gemt zoom fra localStorage — fallback til DEFAULT_ZOOM */
 function læsGemtZoom(): number {
@@ -341,6 +407,24 @@ export default function PropertyMap({
   /** Debounce-timer ref til hover-kald — forhindrer for mange API-kald */
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  /** Åben/lukket tilstand for lag-panelet */
+  const [lagPanel, setLagPanel] = useState(false);
+  /**
+   * Synlighedstilstand for overlay-lag (matrikel + WMS).
+   * Initialiseres med matrikel-prop'en — brugeren kan togge via lag-panelet.
+   */
+  const [visOverlay, setVisOverlay] = useState<Record<OverlayNøgle, boolean>>({
+    ...OVERLAY_START,
+    matrikel: visMatrikel,
+  });
+  /** Ref til visOverlay — undgår stale closure i style.load-handler */
+  const visOverlayRef = useRef<Record<OverlayNøgle, boolean>>({
+    ...OVERLAY_START,
+    matrikel: visMatrikel,
+  });
+  /** Ref til lag-panel-containeren — bruges til klik-udenfor detektion */
+  const lagPanelRef = useRef<HTMLDivElement>(null);
+
   const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? '';
   const harToken = mapboxToken.startsWith('pk.');
 
@@ -459,6 +543,65 @@ export default function PropertyMap({
   }, []);
 
   /**
+   * Opsætter WMS raster-lag imperativt via Mapbox GL API.
+   * Idempotent — skippes hvis source/layer allerede eksisterer.
+   * Læser initial synlighed fra visOverlayRef (undgår stale closure ved style.load).
+   */
+  const opsætWmsLag = useCallback(() => {
+    const map = mapRef.current?.getMap();
+    if (!map) return;
+    for (const wms of OVERLAY_WMS) {
+      const srcId = `prop-wms-${wms.id}`;
+      const lyrId = `prop-wms-${wms.id}-raster`;
+      if (!map.getSource(srcId))
+        map.addSource(srcId, { type: 'raster', tiles: [wms.url], tileSize: 256 });
+      if (!map.getLayer(lyrId))
+        map.addLayer({
+          id: lyrId,
+          type: 'raster',
+          source: srcId,
+          layout: { visibility: visOverlayRef.current[wms.id] ? 'visible' : 'none' },
+          paint: { 'raster-opacity': wms.opacity },
+        });
+    }
+  }, []);
+
+  /**
+   * Synkroniserer WMS lag-synlighed fra visOverlayRef til Mapbox.
+   * Kaldes fra useEffect når visOverlay state ændres.
+   */
+  const synkWmsLagSynlighed = useCallback(() => {
+    const map = mapRef.current?.getMap();
+    if (!map) return;
+    const v = visOverlayRef.current;
+    const vis = (on: boolean): 'visible' | 'none' => (on ? 'visible' : 'none');
+    for (const wms of OVERLAY_WMS) {
+      const lyrId = `prop-wms-${wms.id}-raster`;
+      if (map.getLayer(lyrId)) map.setLayoutProperty(lyrId, 'visibility', vis(v[wms.id]));
+    }
+  }, []);
+
+  /** Synkroniserer visOverlayRef med visOverlay state — bruges i style.load-handler */
+  useEffect(() => {
+    visOverlayRef.current = visOverlay;
+  }, [visOverlay]);
+
+  /** Synkroniserer WMS lag-synlighed til Mapbox ved state-ændring */
+  useEffect(() => {
+    synkWmsLagSynlighed();
+  }, [visOverlay, synkWmsLagSynlighed]);
+
+  /** Lukker lag-panelet ved klik udenfor */
+  useEffect(() => {
+    const h = (e: MouseEvent) => {
+      if (lagPanel && lagPanelRef.current && !lagPanelRef.current.contains(e.target as Node))
+        setLagPanel(false);
+    };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [lagPanel]);
+
+  /**
    * Tilpasser navigation-night-v1 stilen ved hvert stilload.
    * Skjuler route/traffic/congestion overlay-lag (grønne/gule linjer på veje)
    * og sætter vej- og baggrundsfarver til mørk grå/blågrå.
@@ -536,15 +679,20 @@ export default function PropertyMap({
    * Dette undgår race-condition hvor useEffect-baseret registrering
    * ankommer for sent — Mapbox fyrer style.load under render-cyklussen,
    * men useEffect kører EFTER render.
+   * Opsætter også WMS overlay-lag og re-registrerer dem ved stil-skift.
    */
   const handleMapLoad = useCallback(() => {
     const map = mapRef.current?.getMap();
     if (!map) return;
-    // Anvend overrides på den allerede indlæste startsstil
+    // Anvend overrides og opsæt lag på den allerede indlæste startsstil
     anvendStilOverrides();
+    opsætWmsLag();
     // Lyt permanent — style.load fyrer ved hvert fremtidigt stilskift
-    map.on('style.load', anvendStilOverrides);
-  }, [anvendStilOverrides]);
+    map.on('style.load', () => {
+      anvendStilOverrides();
+      opsætWmsLag();
+    });
+  }, [anvendStilOverrides, opsætWmsLag]);
 
   /** Vis fallback UI hvis Mapbox-token mangler */
   if (!harToken) {
@@ -588,14 +736,14 @@ export default function PropertyMap({
         <NavigationControl position="bottom-right" showCompass={false} />
 
         {/* Alle matrikelparceller — usynligt fyld-lag til hover/klik-detektion */}
-        {visMatrikel && (
+        {visOverlay.matrikel && (
           <Source id="matrikel" type="geojson" data={matrikelData}>
             <Layer {...matrikelFillLayer} />
           </Source>
         )}
 
         {/* Valgt ejendoms matrikelparcel — fremhævet */}
-        {visMatrikel && (
+        {visOverlay.matrikel && (
           <Source id="selected-matrikel" type="geojson" data={selectedMatrikelData}>
             <Layer {...selectedFillLayer} />
             <Layer {...selectedLineLayer} />
@@ -702,9 +850,151 @@ export default function PropertyMap({
         </button>
       </div>
 
-      {/* Øverst til højre: "Fuldt kort"-link (hvis angivet) + fullscreen toggle */}
+      {/* Øverst til højre: Lag-knap + "Fuldt kort"-link (hvis angivet) + fullscreen toggle */}
       {/* z-30 matcher lag-knapperne — ingen konflikt med forælderkomponentens z-indeks */}
-      <div className="absolute top-3 right-3 z-30 flex items-center gap-1.5">
+      <div ref={lagPanelRef} className="absolute top-3 right-3 z-30 flex items-center gap-1.5">
+        {/* Lag-knap */}
+        <button
+          onClick={() => setLagPanel((p) => !p)}
+          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-all ${
+            lagPanel || Object.entries(visOverlay).some(([k, v]) => k !== 'matrikel' && v)
+              ? 'bg-blue-600 text-white'
+              : 'bg-slate-900/90 text-slate-300 hover:bg-slate-800 border border-slate-700'
+          }`}
+          title="Kortlag"
+        >
+          <Layers size={12} />
+          <span className="hidden xs:inline sm:inline">Lag</span>
+        </button>
+
+        {/* Lag-panel dropdown */}
+        {lagPanel && (
+          <div className="absolute top-9 right-0 w-52 max-w-[calc(100vw-1.5rem)] bg-slate-900/98 border border-white/10 rounded-xl shadow-2xl backdrop-blur-sm overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between px-3 py-2 border-b border-white/5">
+              <span className="text-white text-xs font-semibold">Kortlag</span>
+              <button
+                onClick={() => setLagPanel(false)}
+                className="text-slate-500 hover:text-slate-300 transition-colors p-0.5 rounded hover:bg-white/5"
+              >
+                <X size={12} />
+              </button>
+            </div>
+            <div className="px-2 py-1.5 max-h-[60vh] overflow-y-auto">
+              {/* Basiskort-lag */}
+              <p className="text-[9px] font-bold uppercase tracking-widest px-1 pt-1.5 pb-1 text-blue-400">
+                Basiskort
+              </p>
+              {visMatrikel && (
+                <button
+                  onClick={() => setVisOverlay((prev) => ({ ...prev, matrikel: !prev.matrikel }))}
+                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-px transition-colors text-left ${
+                    visOverlay.matrikel ? 'bg-white/5' : 'hover:bg-white/[0.03]'
+                  }`}
+                >
+                  <div
+                    className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center shrink-0 border transition-colors ${
+                      visOverlay.matrikel ? 'bg-blue-600 border-blue-600' : 'border-white/20'
+                    }`}
+                  >
+                    {visOverlay.matrikel && (
+                      <svg width="8" height="6" viewBox="0 0 10 8" fill="none">
+                        <path
+                          d="M1 4L3.5 6.5L9 1"
+                          stroke="white"
+                          strokeWidth="1.8"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    )}
+                  </div>
+                  <p
+                    className={`text-xs leading-tight truncate ${visOverlay.matrikel ? 'text-white' : 'text-slate-400'}`}
+                  >
+                    Matrikel
+                  </p>
+                </button>
+              )}
+
+              {/* WMS overlay-lag */}
+              <p className="text-[9px] font-bold uppercase tracking-widest px-1 pt-2 pb-1 text-violet-400">
+                Plandata
+              </p>
+              {OVERLAY_WMS.filter((w) =>
+                ['lokalplaner', 'zonekort', 'kommuneplan'].includes(w.id)
+              ).map((wms) => (
+                <button
+                  key={wms.id}
+                  onClick={() => setVisOverlay((prev) => ({ ...prev, [wms.id]: !prev[wms.id] }))}
+                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-px transition-colors text-left ${
+                    visOverlay[wms.id] ? 'bg-white/5' : 'hover:bg-white/[0.03]'
+                  }`}
+                >
+                  <div
+                    className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center shrink-0 border transition-colors ${
+                      visOverlay[wms.id] ? wms.farveClass : 'border-white/20'
+                    }`}
+                  >
+                    {visOverlay[wms.id] && (
+                      <svg width="8" height="6" viewBox="0 0 10 8" fill="none">
+                        <path
+                          d="M1 4L3.5 6.5L9 1"
+                          stroke="white"
+                          strokeWidth="1.8"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    )}
+                  </div>
+                  <p
+                    className={`text-xs leading-tight truncate ${visOverlay[wms.id] ? 'text-white' : 'text-slate-400'}`}
+                  >
+                    {wms.navn}
+                  </p>
+                </button>
+              ))}
+
+              <p className="text-[9px] font-bold uppercase tracking-widest px-1 pt-2 pb-1 text-rose-400">
+                Miljø
+              </p>
+              {OVERLAY_WMS.filter((w) => w.id === 'jordforurening').map((wms) => (
+                <button
+                  key={wms.id}
+                  onClick={() => setVisOverlay((prev) => ({ ...prev, [wms.id]: !prev[wms.id] }))}
+                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-px transition-colors text-left ${
+                    visOverlay[wms.id] ? 'bg-white/5' : 'hover:bg-white/[0.03]'
+                  }`}
+                >
+                  <div
+                    className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center shrink-0 border transition-colors ${
+                      visOverlay[wms.id] ? wms.farveClass : 'border-white/20'
+                    }`}
+                  >
+                    {visOverlay[wms.id] && (
+                      <svg width="8" height="6" viewBox="0 0 10 8" fill="none">
+                        <path
+                          d="M1 4L3.5 6.5L9 1"
+                          stroke="white"
+                          strokeWidth="1.8"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    )}
+                  </div>
+                  <p
+                    className={`text-xs leading-tight truncate ${visOverlay[wms.id] ? 'text-white' : 'text-slate-400'}`}
+                  >
+                    {wms.navn}
+                  </p>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {fullMapHref && (
           <Link
             href={fullMapHref}

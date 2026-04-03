@@ -1,12 +1,10 @@
 /**
  * POST /api/ai/article-search
  *
- * AI-drevet artikelsøgning for virksomheder.
+ * AI-drevet artikelsøgning for danske virksomheder.
  *
- * Strategi (ingen web_search beta krævet):
- *   1. Henter artikler fra /api/news (danske RSS-feeds: Børsen, Berlingske, DR m.fl.)
- *   2. Sender rådata til Claude (ingen tools) for filtrering, rangering og beskrivelse
- *   3. Returnerer struktureret JSON med max 10 artikler + token-forbrug
+ * Strategi: Claude genererer artikelliste baseret på træningsviden.
+ * Ingen RSS-feeds, ingen Google News — kun Claude med danske medier.
  *
  * @param body.companyName  - Virksomhedens navn
  * @param body.cvr          - CVR-nummer (valgfrit)
@@ -14,7 +12,7 @@
  * @param body.employees    - Antal ansatte (valgfrit)
  * @param body.city         - By (valgfrit)
  * @param body.keyPersons   - Nøglepersoner: direktører, bestyrelsesmedlemmer (valgfrit)
- * @returns { articles, usage }
+ * @returns { articles, socials, usage }
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -26,7 +24,7 @@ export const maxDuration = 60;
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-/** En nyhedsartikel fundet via AI-søgning */
+/** En nyhedsartikel fundet af Claude */
 interface ArticleResult {
   /** Artiklens titel */
   title: string;
@@ -40,7 +38,7 @@ interface ArticleResult {
   description?: string;
 }
 
-/** Sociale medier og hjemmeside-links fundet af Claude */
+/** Sociale medier og hjemmeside-links fundet af Claude — primære URLs */
 interface SocialsResult {
   website?: string;
   facebook?: string;
@@ -50,10 +48,15 @@ interface SocialsResult {
   youtube?: string;
 }
 
+/** Alternative links per platform fundet af Claude */
+type SocialAlternativesResult = Record<string, string[]>;
+
 /** Svar-format fra API'en */
 interface ArticleSearchResponse {
   articles: ArticleResult[];
   socials: SocialsResult;
+  /** Alternative links per platform — op til 5 per platform */
+  socialAlternatives: SocialAlternativesResult;
   tokensUsed: number;
   usage: { totalTokens: number };
 }
@@ -68,248 +71,91 @@ interface CompanyInput {
   keyPersons?: string[];
 }
 
-/** Råartikel fra /api/news */
-interface RawNewsArticle {
-  title: string;
-  url: string;
-  source: string;
-  date?: string;
-}
-
-// ─── Danish media domain whitelist ──────────────────────────────────────────
-
-/**
- * Whitelist af kendte danske mediedomæner.
- * Artikler fra domæner UDEN FOR denne liste filtreres fra.
- *
- * Kategorier:
- *   - Daglige nyheder og politik
- *   - Erhverv og økonomi
- *   - Teknologi og IT
- *   - Videnskab, kultur og debat
- *   - Lokalt og regionalt
- *   - Undersøgende journalistik
- *   - Fagmedier
- */
-/**
- * Eksplicit blacklist af norske og svenske mediedomæner.
- * Disse filtreres altid fra — selv i fallback-scenariet.
- */
-const BLOCKED_DOMAINS = new Set([
-  // Norske medier
-  'finansavisen.no',
-  'dn.no',
-  'dnb.no',
-  'e24.no',
-  'nrk.no',
-  'vg.no',
-  'aftenposten.no',
-  'nettavisen.no',
-  'dagbladet.no',
-  'tv2.no',
-  'abc.no',
-  'hegnar.no',
-  'kapital.no',
-  'shifter.no',
-  // Svenske medier
-  'svt.se',
-  'dn.se',
-  'di.se',
-  'svd.se',
-  'expressen.se',
-  'aftonbladet.se',
-  'realtid.se',
-  'breakit.se',
-  'va.se',
-  // Generisk international (ikke-relevant)
-  'invezz.com',
-]);
-
-/**
- * Returnerer true hvis URL'en stammer fra et blokeret domæne.
- * Blokerer eksplicit listede domæner SAMT alle .no og .se TLDs.
- * Brug af TLD-filtrering sikrer at ukendte norske/svenske domæner altid afvises.
- *
- * @param urlOrDomain - Artiklens URL eller domænenavn
- * @returns Om domænet er på blacklisten
- */
-function isBlockedSource(urlOrDomain: string): boolean {
-  if (!urlOrDomain) return false;
-  try {
-    let hostname: string;
-    if (urlOrDomain.startsWith('http')) {
-      hostname = new URL(urlOrDomain).hostname.replace(/^www\./, '');
-    } else {
-      hostname = urlOrDomain.replace(/^www\./, '').split('/')[0];
-    }
-    if (!hostname) return false;
-    // Bloker hele .no og .se TLDs — fanger alle norske/svenske domæner uanset om de er på listen
-    if (hostname.endsWith('.no') || hostname.endsWith('.se')) return true;
-    return (
-      BLOCKED_DOMAINS.has(hostname) || [...BLOCKED_DOMAINS].some((d) => hostname.endsWith('.' + d))
-    );
-  } catch {
-    return false;
-  }
-}
-
-const DANISH_DOMAINS = new Set([
-  // Daglige nyheder og politik
-  'politiken.dk',
-  'berlingske.dk',
-  'jyllands-posten.dk',
-  'information.dk',
-  'dr.dk',
-  'tv2.dk',
-  'nyheder.tv2.dk',
-  // Erhverv og økonomi
-  'borsen.dk',
-  'finans.dk',
-  'ugebrev.dk', // Økonomisk Ugebrev
-  'epn.dk', // Erhvervs Presse Nyheder
-  'euroinvestor.dk',
-  'businessreview.dk',
-  'fdih.dk',
-  // Teknologi og IT
-  'version2.dk',
-  'computerworld.dk',
-  'ing.dk', // Ingeniøren
-  // Videnskab, kultur og debat
-  'videnskab.dk',
-  'weekendavisen.dk',
-  'zetland.dk',
-  // Sundhed og pharma
-  'medwatch.dk',
-  'sundhedspolitisktidsskrift.dk',
-  // Lokalt og regionalt
-  'stiftstidende.dk',
-  'fyens.dk',
-  'sn.dk', // Sjællandske Medier
-  'tv2nord.dk',
-  'tv2lorry.dk',
-  'tv2east.dk',
-  'tv2fyn.dk',
-  'tvmidtvest.dk',
-  'tv2ostjylland.dk',
-  'jv.dk', // JydskeVestkysten
-  'nordjyske.dk',
-  'avisendanmark.dk',
-  // Undersøgende journalistik
-  'danwatch.dk',
-  'frihedsbrevet.dk',
-  // Fagmedier
-  'altinget.dk',
-  'mm.dk', // Mandag Morgen
-  'magisterbladet.dk',
-  'djoefbladet.dk',
-  'kristeligt-dagblad.dk',
-  // Officielle virksomhedskilder (.dk)
-  'novonordiskfonden.dk',
-  'thelocal.dk',
-  // Pressemeddelelser og releases (officielle kilder)
-  'businesswire.com', // Virksomheds-pressemeddelelser
-  'globenewswire.com',
-  'prnewswire.com',
-  'cision.com',
-  'news.cision.com',
-  // Internationale finansmedier — accepteres som fallback for store danske virksomheder
-  // der primært dækkes internationalt (f.eks. Novo Nordisk, Mærsk, Vestas)
-  'reuters.com',
-  'bloomberg.com',
-  'ft.com', // Financial Times
-  'ap.org', // Associated Press
-  'apnews.com',
-]);
-
-/**
- * Returnerer true hvis URL'en stammer fra et dansk medie-domæne.
- * Understøtter både fulde URLs og bare domænenavne (f.eks. fra <source url="...">).
- *
- * @param urlOrDomain - Artiklens URL eller bare domænenavnet
- * @returns Om domænet er på hvidlisten
- */
-function isDanishSource(urlOrDomain: string): boolean {
-  try {
-    // Prøv at parse som URL — hvis det fejler, behandl som bare domæne
-    let hostname: string;
-    if (urlOrDomain.startsWith('http')) {
-      hostname = new URL(urlOrDomain).hostname.replace(/^www\./, '');
-    } else {
-      hostname = urlOrDomain.replace(/^www\./, '').split('/')[0];
-    }
-    return (
-      DANISH_DOMAINS.has(hostname) || [...DANISH_DOMAINS].some((d) => hostname.endsWith('.' + d))
-    );
-  } catch {
-    return false;
-  }
-}
-
 // ─── System prompt ──────────────────────────────────────────────────────────
 
 /**
- * System prompt bruger index-baseret output for at minimere tokens.
- * Claude returnerer kun indeks-numre + korte beskrivelser, IKKE fulde URLs.
- * Det holder output under 400 tokens og undgår JSON-truncation ved max_tokens.
+ * System prompt der beder Claude om at generere danske artikler baseret på
+ * sin træningsviden. Claude returnerer artikler direkte som JSON — ingen indeks.
  */
-const SYSTEM_PROMPT = `Du er assistent der analyserer nyhedsartikler og sociale medier for danske virksomheder.
+const SYSTEM_PROMPT = `Du er en dansk medieekspert med dybdegående kendskab til danske nyheder og medier.
 
-Du modtager en nummereret liste af artikler og virksomhedsoplysninger.
+Baseret på din træningsviden, find DANSKE artikler om den angivne virksomhed fra de seneste 2 år. Brug disse medier:
+DR, TV2, Børsen, Berlingske, Politiken, Jyllands-Posten, Altinget, Information, FinansWatch, MedWatch, Ingeniøren, Version2, Computerworld, Weekendavisen, Zetland, BT, Ekstra Bladet, Frihedsbrevet, Danwatch, Mandag Morgen.
+
+KRITISKE REGLER FOR ARTIKLER:
+- Returner PRÆCIS 10 artikler — ikke "op til 10", ikke 4, men nøjagtigt 10
+- Spred artiklerne over FLERE forskellige medier — ét medie må max bidrage med 3 artikler
+- Inkludér artikler fra de seneste 2 år (ikke kun seneste måned)
+- Returner KUN artikler du er 100% SIKKER på eksisterer med korrekte URLs
+- INGEN engelske, norske eller svenske artikler — kun ovenstående danske medier
+- INGEN artikler fra GlobeNewswire, Reuters, Bloomberg, AP — kun ovenstående danske medier
+- Gæt IKKE URLs — skriv kun præcise links du kender med absolut sikkerhed
+- Hvis du mangler artikler for at nå 10, søg bredere: brug ældre artikler (op til 2 år tilbage), brug flere medier
 
 Returner KUN validt JSON uden tekst før/efter:
 
 {
-  "selected": [1, 3, 5],
-  "descriptions": ["Max 80 tegn beskrivelse af artikel 1", "Max 80 tegn beskrivelse af artikel 3", "Max 80 tegn beskrivelse af artikel 5"],
+  "articles": [
+    {
+      "title": "Artiklens titel på dansk",
+      "url": "https://borsen.dk/...",
+      "source": "Børsen",
+      "date": "15. jan. 2025",
+      "description": "Max 80 tegn beskrivelse"
+    }
+  ],
   "socials": {
-    "website": "https://virksomhed.dk",
-    "linkedin": "https://www.linkedin.com/company/slug",
-    "facebook": "https://www.facebook.com/slug",
-    "instagram": "https://www.instagram.com/slug",
-    "twitter": "https://x.com/slug",
-    "youtube": "https://www.youtube.com/@slug"
+    "website": {
+      "primary": "https://virksomhed.dk",
+      "alternatives": ["https://www.virksomhed.dk", "https://virksomhed.com"]
+    },
+    "linkedin": {
+      "primary": "https://www.linkedin.com/company/slug",
+      "alternatives": ["https://www.linkedin.com/company/slug2", "https://www.linkedin.com/company/slug3"]
+    },
+    "facebook": {
+      "primary": "https://www.facebook.com/slug",
+      "alternatives": ["https://www.facebook.com/slug2"]
+    },
+    "instagram": {
+      "primary": "https://www.instagram.com/slug",
+      "alternatives": []
+    },
+    "twitter": {
+      "primary": "https://x.com/slug",
+      "alternatives": []
+    },
+    "youtube": {
+      "primary": "https://www.youtube.com/@slug",
+      "alternatives": []
+    }
   }
 }
 
-Regler:
-- "selected": op til 8 artiklernes numre (1-baseret), sortér nyeste/mest relevante først
-- "descriptions": ét element per valgt artikel i samme rækkefølge, max 80 tegn
-- KILDEPRIORITET (VIGTIGT): Prioritér i denne rækkefølge:
-  1. Erhverv/økonomi DK: borsen.dk, finans.dk, ugebrev.dk, epn.dk, euroinvestor.dk
-  2. Daglige nyheder DK: politiken.dk, berlingske.dk, jyllands-posten.dk, information.dk, dr.dk, tv2.dk
-  3. Teknologi/IT DK: version2.dk, computerworld.dk, ing.dk
-  4. Fagmedier DK: altinget.dk, mm.dk, medwatch.dk, magisterbladet.dk
-  5. Undersøgende/Debat DK: danwatch.dk, frihedsbrevet.dk, weekendavisen.dk, zetland.dk
-  6. Regionalt DK: stiftstidende.dk, fyens.dk, jv.dk, nordjyske.dk, tv2nord.dk m.fl.
-  7. Officielle pressemeddelelser: businesswire.com, globenewswire.com, prnewswire.com, cision.com
-  8. Internationale finansmedier (kun som fallback når ingen/få danske artikler er tilgængelige):
-     reuters.com, bloomberg.com, ft.com, apnews.com, ap.org
-     — Disse er acceptable for store internationale danske virksomheder (Novo Nordisk, Mærsk, Vestas)
-  9. Du må ALDRIG inkludere artikler fra norske eller svenske medier — hverken finansavisen.no, e24.no,
-     dnb.no, dn.no, nrk.no, vg.no, svt.se, di.se, svd.se, expressen.se, aftonbladet.se
-     eller lignende. Afvis altid norske og svenske medier uden undtagelse.
-- "socials": VIGTIGT — brug din træningsviden til at finde virksomhedens officielle links.
-  Du SKAL altid inkludere de sociale profiler og hjemmeside du kender til virksomheden.
-  For store/kendte virksomheder forventes minimum website + linkedin.
-  Udelad KUN felter hvor du er helt sikker på at profilen ikke eksisterer.
-  Gæt IKKE URLs — skriv kun præcise links du kender med sikkerhed.
-- Returner altid "socials"-objektet (evt. tomt {}) selvom selected er tom`;
+Regler for "socials":
+- Brug din træningsviden til at finde virksomhedens officielle links
+- For store/kendte virksomheder forventes minimum website + linkedin
+- Udelad KUN felter hvor du er helt sikker på at profilen ikke eksisterer
+- Gæt IKKE URLs — skriv kun præcise links du kender med sikkerhed
+- For hvert felt: angiv "primary" (det mest sandsynlige link) og op til 5 "alternatives" (andre mulige URLs)
+- "alternatives" kan være tomt array [] hvis du kun kender ét link
+- Returner altid "socials"-objektet (evt. tomt {})`;
 
 // ─── Response parser ─────────────────────────────────────────────────────────
 
 /**
- * Parser Claude's index-baserede svar og rekonstruerer artikler fra rawArticles.
- * Index-format minimerer output-tokens: Claude returnerer kun numre + korte beskrivelser.
+ * Parser Claude's JSON-svar med direkte artikelliste og sociale medier.
+ * Understøtter både gammel format (string) og nyt format ({ primary, alternatives }).
  *
- * @param text - Rå tekstsvar fra Claude (JSON med selected[], descriptions[], socials{})
- * @param rawArticles - De originale artikler fra Google News RSS
- * @returns Rekonstruerede artikler og sociale medier-links
+ * @param text - Rå tekstsvar fra Claude (JSON med articles[] og socials{})
+ * @returns Parsede artikler, primære sociale medier-links og alternativer per platform
  */
-function parseArticleResponse(
-  text: string,
-  rawArticles: RawNewsArticle[]
-): { articles: ArticleResult[]; socials: SocialsResult } {
-  const empty = { articles: [], socials: {} };
+function parseArticleResponse(text: string): {
+  articles: ArticleResult[];
+  socials: SocialsResult;
+  socialAlternatives: SocialAlternativesResult;
+} {
+  const empty = { articles: [], socials: {}, socialAlternatives: {} };
   try {
     const jsonMatch =
       text.match(/```json\s*([\s\S]*?)\s*```/) ??
@@ -320,30 +166,49 @@ function parseArticleResponse(
 
     const raw = JSON.parse(jsonMatch[1] ?? jsonMatch[0]);
 
-    // Rekonstruér artikler fra index-numre (1-baseret)
-    const selected: number[] = Array.isArray(raw.selected) ? raw.selected : [];
-    const descriptions: string[] = Array.isArray(raw.descriptions) ? raw.descriptions : [];
+    // Parse artikler direkte fra JSON-arrayet
+    const rawArticles: unknown[] = Array.isArray(raw.articles) ? raw.articles : [];
 
-    const articles: ArticleResult[] = selected
-      .slice(0, 8)
-      .reduce<ArticleResult[]>((acc, idx: number, position: number) => {
-        const article = rawArticles[idx - 1]; // konvertér til 0-baseret
-        if (!article) return acc;
-        acc.push({
-          title: article.title,
-          url: article.url,
-          source: article.source,
-          date: article.date,
-          description: descriptions[position]
-            ? String(descriptions[position]).trim().slice(0, 100)
+    const articles: ArticleResult[] = rawArticles
+      .slice(0, 10)
+      .filter(
+        (a): a is Record<string, unknown> =>
+          typeof a === 'object' &&
+          a !== null &&
+          typeof (a as Record<string, unknown>).title === 'string' &&
+          typeof (a as Record<string, unknown>).url === 'string'
+      )
+      .filter((a) => {
+        const url = String(a.url);
+        // Afvis ikke-danske medier (GlobeNewswire, Reuters, Bloomberg m.fl.)
+        const blocked = [
+          'globenewswire',
+          'reuters',
+          'bloomberg',
+          'apnews',
+          'ap.org',
+          'ft.com',
+          '.no/',
+          '.se/',
+        ];
+        return url.startsWith('https://') && !blocked.some((b) => url.includes(b));
+      })
+      .map((a) => ({
+        title: String(a.title).trim(),
+        url: String(a.url).trim(),
+        source: typeof a.source === 'string' ? a.source.trim() : 'Dansk medie',
+        date: typeof a.date === 'string' ? a.date.trim() : undefined,
+        description:
+          typeof a.description === 'string'
+            ? String(a.description).trim().slice(0, 100)
             : undefined,
-        });
-        return acc;
-      }, []);
+      }))
+      .filter((a) => a.title && a.url);
 
-    // Udtræk sociale medier — bevar kun felter med gyldige https-URLs
+    // Udtræk sociale medier — understøtter både gammel (string) og nyt ({ primary, alternatives }) format
     const rawSocials = raw.socials ?? {};
     const socials: SocialsResult = {};
+    const socialAlternatives: SocialAlternativesResult = {};
     const socialKeys: (keyof SocialsResult)[] = [
       'website',
       'facebook',
@@ -352,319 +217,36 @@ function parseArticleResponse(
       'twitter',
       'youtube',
     ];
+
     for (const key of socialKeys) {
       const val = rawSocials[key];
+      if (!val) continue;
+
       if (typeof val === 'string' && val.startsWith('https://')) {
+        // Gammel format: direkte URL-streng
         socials[key] = val.trim();
+      } else if (typeof val === 'object' && val !== null) {
+        // Nyt format: { primary, alternatives }
+        const entry = val as Record<string, unknown>;
+        if (typeof entry.primary === 'string' && entry.primary.startsWith('https://')) {
+          socials[key] = entry.primary.trim();
+        }
+        if (Array.isArray(entry.alternatives)) {
+          const alts = (entry.alternatives as unknown[])
+            .filter((a): a is string => typeof a === 'string' && a.startsWith('https://'))
+            .map((a) => a.trim())
+            .slice(0, 5);
+          if (alts.length > 0) {
+            socialAlternatives[key] = alts;
+          }
+        }
       }
     }
 
-    return { articles, socials };
+    return { articles, socials, socialAlternatives };
   } catch {
     return empty;
   }
-}
-
-// ─── RSS fetching ────────────────────────────────────────────────────────────
-
-/** Decode HTML entities fra RSS */
-function decodeHtmlEntities(str: string): string {
-  return str
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, n) => String.fromCharCode(parseInt(n, 16)))
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&oslash;/g, 'ø')
-    .replace(/&aelig;/g, 'æ')
-    .replace(/&aring;/g, 'å');
-}
-
-/**
- * Parser Google News RSS XML og returnerer råartikler med kildedomæne.
- * Bruges af begge søgestrategier (primær dansk + fallback engelsk).
- *
- * @param xml - Google News RSS XML-svar
- * @param maxItems - Max antal artikler at parse (default 30)
- * @returns Parsede artikler med _sourceDomain feltet
- */
-function parseGoogleNewsXml(
-  xml: string,
-  maxItems = 30
-): (RawNewsArticle & { _sourceDomain: string })[] {
-  const articles: (RawNewsArticle & { _sourceDomain: string })[] = [];
-  const itemRegex = /<item>([\s\S]*?)<\/item>/g;
-  let match;
-
-  while ((match = itemRegex.exec(xml)) !== null && articles.length < maxItems) {
-    const item = match[1];
-
-    const titleMatch =
-      item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) ?? item.match(/<title>(.*?)<\/title>/);
-    const title = decodeHtmlEntities((titleMatch?.[1] ?? '').trim());
-    if (!title) continue;
-
-    const linkMatch = item.match(/<link>(.*?)<\/link>/) ?? item.match(/<link\s*\/?>([^<\s]+)/);
-    const articleUrl = (linkMatch?.[1] ?? '').trim();
-    if (!articleUrl || !articleUrl.startsWith('http')) continue;
-
-    // Udgiver-navn og kildedomæne fra <source url="...">-tagget
-    // VIGTIGT: source-domænet bruges til whitelist-check, IKKE Google News proxy-URL'en i <link>
-    let source = 'Google News';
-    let sourceDomain = '';
-    const sourceMatch = item.match(/<source[^>]*url="([^"]*)"[^>]*>(.*?)<\/source>/);
-    if (sourceMatch) {
-      sourceDomain = (sourceMatch[1] ?? '').trim();
-      source = decodeHtmlEntities((sourceMatch[2] ?? '').trim()) || source;
-    }
-
-    let date: string | undefined;
-    const pubDateMatch = item.match(/<pubDate>(.*?)<\/pubDate>/);
-    if (pubDateMatch?.[1]) {
-      try {
-        date = new Date(pubDateMatch[1]).toLocaleDateString('da-DK', {
-          day: 'numeric',
-          month: 'short',
-          year: 'numeric',
-        });
-      } catch {
-        /* ignore */
-      }
-    }
-
-    articles.push({ title, url: articleUrl, source, date, _sourceDomain: sourceDomain });
-  }
-
-  return articles;
-}
-
-/**
- * Filtrerer en liste råartikler til kun acceptable (ikke-blokerede, godkendte) artikler.
- * Bruger kildedomænet fra <source url> til at checke mod whitelist og blacklist.
- *
- * Filtreringslogik:
- *   1. Bloker alle .no og .se TLDs samt eksplicit listede domæner (BLOCKED_DOMAINS)
- *   2. Accepter artikler der matcher DANISH_DOMAINS (inkl. internationale finansmedier)
- *   3. Artikler uden kildedomain (manglende <source> tag) accepteres altid (can't filter)
- *
- * @param articles - Råartikler fra parseGoogleNewsXml
- * @returns Filtrerede artikler der er acceptable til Claude
- */
-function filterAcceptableArticles(
-  articles: (RawNewsArticle & { _sourceDomain: string })[]
-): (RawNewsArticle & { _sourceDomain: string })[] {
-  return articles.filter((a) => {
-    const domain = a._sourceDomain;
-    // Ingen kildedomain → lad passere (kan ikke vurdere)
-    if (!domain) return true;
-    // Bloker norske/svenske og eksplicit listede domæner
-    if (isBlockedSource(domain)) return false;
-    // Accepter kun kendte danske/internationale medier — afvis ukendte
-    return isDanishSource(domain);
-  });
-}
-
-/**
- * Parser generiske RSS-feeds (DR, TV2, Børsen, Berlingske osv.).
- * Understøtter CDATA-titler og <guid>-URLs som fallback til <link>.
- *
- * @param xml - RSS XML-svar
- * @param defaultSource - Kildnavn brugt hvis <source> ikke er til stede
- * @returns Parsede artikler
- */
-function parseGenericRssXml(xml: string, defaultSource: string): RawNewsArticle[] {
-  const articles: RawNewsArticle[] = [];
-  const itemRegex = /<item>([\s\S]*?)<\/item>/g;
-  let match;
-
-  while ((match = itemRegex.exec(xml)) !== null) {
-    const item = match[1];
-
-    const titleMatch =
-      item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) ?? item.match(/<title>(.*?)<\/title>/);
-    const title = decodeHtmlEntities((titleMatch?.[1] ?? '').trim());
-    if (!title) continue;
-
-    // <link> er oftest tom-tag i Atom/RSS 2.0 — brug <guid> som fallback
-    const linkMatch =
-      item.match(/<link>(https?:[^<]+)<\/link>/) ?? item.match(/<guid[^>]*>(https?:[^<]+)<\/guid>/);
-    const articleUrl = (linkMatch?.[1] ?? '').trim();
-    if (!articleUrl || !articleUrl.startsWith('http')) continue;
-
-    let date: string | undefined;
-    const pubDateMatch =
-      item.match(/<pubDate>(.*?)<\/pubDate>/) ?? item.match(/<dc:date>(.*?)<\/dc:date>/);
-    if (pubDateMatch?.[1]) {
-      try {
-        date = new Date(pubDateMatch[1]).toLocaleDateString('da-DK', {
-          day: 'numeric',
-          month: 'short',
-          year: 'numeric',
-        });
-      } catch {
-        /* ignore */
-      }
-    }
-
-    articles.push({ title, url: articleUrl, source: defaultSource, date });
-  }
-
-  return articles;
-}
-
-/** Konfiguration af direkte danske RSS-feeds */
-const DANISH_RSS_FEEDS: { url: string; source: string }[] = [
-  { url: 'https://www.dr.dk/nyheder/service/feeds/senestenyt', source: 'DR' },
-  { url: 'https://nyheder.tv2.dk/rss', source: 'TV 2' },
-  { url: 'https://borsen.dk/rss', source: 'Børsen' },
-  { url: 'https://www.berlingske.dk/rss', source: 'Berlingske' },
-  { url: 'https://politiken.dk/rss/senestenyt.rss', source: 'Politiken' },
-  { url: 'https://jyllands-posten.dk/rss', source: 'Jyllands-Posten' },
-  { url: 'https://www.altinget.dk/rss', source: 'Altinget' },
-  { url: 'https://www.information.dk/rss', source: 'Information' },
-];
-
-/**
- * Henter og filtrerer artikler fra direkte danske RSS-feeds parallelt.
- * Returnerer kun artikler der nævner virksomhedsnavnet.
- *
- * @param companyName - Virksomhedens navn til filtrering
- * @returns Matchende artikler fra alle feeds
- */
-async function fetchDirectDanishRss(companyName: string): Promise<RawNewsArticle[]> {
-  // Nøgleord til matching (ord > 2 tegn undgår stoppord som "og", "af")
-  const nameWords = companyName
-    .toLowerCase()
-    .split(/\s+/)
-    .filter((w) => w.length > 2);
-
-  const feedResults = await Promise.allSettled(
-    DANISH_RSS_FEEDS.map(async (feed) => {
-      const res = await fetch(feed.url, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; BizzAssist/1.0)' },
-        signal: AbortSignal.timeout(6000),
-      });
-      if (!res.ok) return [] as RawNewsArticle[];
-      const xml = await res.text();
-      return parseGenericRssXml(xml, feed.source);
-    })
-  );
-
-  const allArticles: RawNewsArticle[] = [];
-  for (const result of feedResults) {
-    if (result.status === 'fulfilled') {
-      allArticles.push(...result.value);
-    }
-  }
-
-  // Filtrer: titlen skal indeholde mindst ét nøgleord fra virksomhedsnavnet
-  const matched = allArticles.filter((a) => {
-    const text = a.title.toLowerCase();
-    return nameWords.some((w) => text.includes(w));
-  });
-
-  console.log(
-    `[article-search] Direkte dansk RSS: ${allArticles.length} rå → ${matched.length} matcher "${companyName}"`
-  );
-
-  return matched;
-}
-
-/**
- * Tre-trins strategi for artikelhentning:
- *   1. PRIMÆR: Direkte danske RSS-feeds (DR, TV2, Børsen, Berlingske, Politiken m.fl.)
- *      — hentes parallelt, filtreres på virksomhedsnavn
- *   2. SEKUNDÆR: Google News med dansk lokalisering (hl=da&gl=DK)
- *      — aktiveres hvis < 5 artikler fra direkte feeds
- *   3. FALLBACK: Google News "{navn} Denmark" — bruges for store internationale virksomheder
- *      (Novo Nordisk, Mærsk, Vestas) der primært dækkes af Reuters, Bloomberg, FT
- *
- * @param companyName - Virksomhedens navn
- * @returns Op til 20 artikler om virksomheden
- */
-async function fetchArticles(companyName: string): Promise<RawNewsArticle[]> {
-  // ── Trin 1: Direkte danske RSS-feeds ─────────────────────────────────────────
-  const directDanish = await fetchDirectDanishRss(companyName);
-
-  if (directDanish.length >= 5) {
-    return directDanish.slice(0, 20);
-  }
-
-  // ── Trin 2: Google News dansk søgning ────────────────────────────────────────
-  console.log(
-    `[article-search] < 5 fra direkte feeds (${directDanish.length}) — prøver Google News DA`
-  );
-  const gnDaUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(companyName)}&hl=da&gl=DK&ceid=DK:da`;
-  let gnDaAcceptable: (RawNewsArticle & { _sourceDomain: string })[] = [];
-
-  try {
-    const res = await fetch(gnDaUrl, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; BizzAssist/1.0)' },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (res.ok) {
-      const xml = await res.text();
-      const all = parseGoogleNewsXml(xml, 40);
-      gnDaAcceptable = filterAcceptableArticles(all);
-      console.log(
-        `[article-search] Google News DA: ${all.length} rå, ${gnDaAcceptable.length} acceptable`
-      );
-    }
-  } catch (err) {
-    console.error('[article-search] Google News DA fejl:', err);
-  }
-
-  // Merge trin 1 + 2 (URL-dedup)
-  const mergedAfterStep2 = deduplicateByUrl([...directDanish, ...gnDaAcceptable]);
-  if (mergedAfterStep2.length >= 5) {
-    return mergedAfterStep2.slice(0, 20);
-  }
-
-  // ── Trin 3: Google News engelsk fallback ─────────────────────────────────────
-  console.log(
-    `[article-search] < 5 samlet (${mergedAfterStep2.length}) — prøver Google News EN fallback`
-  );
-  const fallbackQuery = `${companyName} Denmark`;
-  const gnEnUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(fallbackQuery)}`;
-  let gnEnAcceptable: (RawNewsArticle & { _sourceDomain: string })[] = [];
-
-  try {
-    const res = await fetch(gnEnUrl, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; BizzAssist/1.0)' },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (res.ok) {
-      const xml = await res.text();
-      const all = parseGoogleNewsXml(xml, 40);
-      gnEnAcceptable = filterAcceptableArticles(all);
-      console.log(
-        `[article-search] Google News EN: ${all.length} rå, ${gnEnAcceptable.length} acceptable`
-      );
-    }
-  } catch (err) {
-    console.error('[article-search] Google News EN fejl:', err);
-  }
-
-  const final = deduplicateByUrl([...mergedAfterStep2, ...gnEnAcceptable]);
-  console.log(`[article-search] Samlet (alle trin): ${final.length} artikler`);
-  return final.slice(0, 20);
-}
-
-/**
- * Fjerner duplikerede URL'er fra en artikel-liste — beholder første forekomst.
- *
- * @param articles - Liste med potentielle dubletter
- * @returns Deduplikeret liste
- */
-function deduplicateByUrl(articles: RawNewsArticle[]): RawNewsArticle[] {
-  const seen = new Set<string>();
-  return articles.filter((a) => {
-    if (seen.has(a.url)) return false;
-    seen.add(a.url);
-    return true;
-  });
 }
 
 // ─── Handler ────────────────────────────────────────────────────────────────
@@ -672,8 +254,8 @@ function deduplicateByUrl(articles: RawNewsArticle[]): RawNewsArticle[] {
 /**
  * POST /api/ai/article-search
  *
- * Henter nyheder via /api/news (RSS) og bruger Claude til filtrering og rangering.
- * Kræver ikke web_search beta-adgang.
+ * Beder Claude om at generere en liste af danske artikler om virksomheden
+ * baseret på sin træningsviden. Ingen RSS-feeds eller Google News bruges.
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
   // Rate limit — deler grænse med AI chat
@@ -697,11 +279,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'companyName er påkrævet' }, { status: 400 });
   }
 
-  // Hent artikler via tre-trins strategi: direkte DK RSS → Google News DA → Google News EN
-  const rawArticles = await fetchArticles(companyName);
-  console.log(`[article-search] Artikler for "${companyName}": ${rawArticles.length} samlet`);
-
-  // Byg virksomhedskontekst
+  // Byg virksomhedskontekst til Claude
   const companyContext = [
     `Virksomhedsnavn: ${companyName}`,
     cvr ? `CVR-nummer: ${cvr}` : null,
@@ -713,23 +291,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     .filter(Boolean)
     .join('\n');
 
-  // Formatér råartikler til Claude-input — kun titel + kilde + dato (ingen URL = færre tokens)
-  const articlesSection =
-    rawArticles.length > 0
-      ? `\n\nArtikler (${rawArticles.length} stk.) — angiv numre i "selected":\n${rawArticles
-          .map((a, i) => `${i + 1}. "${a.title}" — ${a.source}${a.date ? ` (${a.date})` : ''}`)
-          .join('\n')}`
-      : '\n\nIngen artikler fundet. Returner {"selected":[],"descriptions":[],"socials":{...}}';
-
-  const userMessage = `Filtrer og rangér disse nyheder om følgende virksomhed:\n\n${companyContext}${articlesSection}`;
+  const userMessage = `Find de seneste danske artikler om denne virksomhed og returner sociale medier-links:\n\n${companyContext}`;
 
   const client = new Anthropic({ apiKey });
 
   try {
-    // Sonnet bruges for bedre kvalitet til artikelfiltrering og social media-søgning (Vercel Pro: 60s timeout)
+    console.log(`[article-search] Claude-søgning for "${companyName}"`);
+
     const response = await client.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 512,
+      max_tokens: 4096,
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userMessage }],
     });
@@ -744,17 +315,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       .map((b) => b.text)
       .join('');
 
-    const { articles, socials } = parseArticleResponse(finalText, rawArticles);
+    const { articles, socials, socialAlternatives } = parseArticleResponse(finalText);
+
+    console.log(
+      `[article-search] "${companyName}": ${articles.length} artikler, tokens=${totalTokens}`
+    );
+
     if (articles.length === 0) {
-      console.warn(
-        '[article-search] Claude svarede men ingen artikler kunne parses. Råsvar:',
-        finalText.slice(0, 500)
-      );
+      console.warn('[article-search] Ingen artikler parsede. Råsvar:', finalText.slice(0, 500));
     }
 
     const result: ArticleSearchResponse = {
       articles,
       socials,
+      socialAlternatives,
       tokensUsed: totalTokens,
       usage: { totalTokens },
     };

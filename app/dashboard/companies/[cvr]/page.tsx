@@ -340,6 +340,9 @@ export default function VirksomhedDetalje({ params }: PageProps) {
   /** AI-fundne sociale medier-URLs — udfyldes efter artikel-søgning */
   const [aiSocials, setAiSocials] = useState<Record<string, string>>({});
 
+  /** AI-fundne alternative links per platform — udfyldes efter artikel-søgning */
+  const [aiAlternatives, setAiAlternatives] = useState<Record<string, string[]>>({});
+
   /** Regnskab state — lazy-loaded when financials tab is activated */
   const [regnskaber, setRegnskaber] = useState<Regnskab[] | null>(null);
   const [regnskabLoading, setRegnskabLoading] = useState(false);
@@ -2821,7 +2824,12 @@ export default function VirksomhedDetalje({ params }: PageProps) {
                   {lang === 'da' ? 'AI Artikel søgning' : 'AI Article Search'}
                 </p>
               </div>
-              <AIArticleSearchPanel companyData={data} lang={lang} onSocialsFound={setAiSocials} />
+              <AIArticleSearchPanel
+                companyData={data}
+                lang={lang}
+                onSocialsFound={setAiSocials}
+                onAlternativesFound={setAiAlternatives}
+              />
             </div>
             {/* Sociale medier & links */}
             <div>
@@ -2837,6 +2845,7 @@ export default function VirksomhedDetalje({ params }: PageProps) {
                 entityName={data.name}
                 lang={lang}
                 aiSocials={aiSocials}
+                aiAlternatives={aiAlternatives}
               />
             </div>
           </div>
@@ -2872,7 +2881,12 @@ export default function VirksomhedDetalje({ params }: PageProps) {
                   {lang === 'da' ? 'AI Artikel søgning' : 'AI Article Search'}
                 </p>
               </div>
-              <AIArticleSearchPanel companyData={data} lang={lang} onSocialsFound={setAiSocials} />
+              <AIArticleSearchPanel
+                companyData={data}
+                lang={lang}
+                onSocialsFound={setAiSocials}
+                onAlternativesFound={setAiAlternatives}
+              />
             </div>
             {/* Sociale medier & links */}
             <div>
@@ -2888,6 +2902,7 @@ export default function VirksomhedDetalje({ params }: PageProps) {
                 entityName={data.name}
                 lang={lang}
                 aiSocials={aiSocials}
+                aiAlternatives={aiAlternatives}
               />
             </div>
           </div>
@@ -2947,10 +2962,14 @@ function AIArticleSearchPanel({
   companyData,
   lang,
   onSocialsFound,
+  onAlternativesFound,
 }: {
   companyData: CVRPublicData;
   lang: 'da' | 'en';
+  /** Callback med primære sociale medier-URLs */
   onSocialsFound?: (socials: Record<string, string>) => void;
+  /** Callback med alternative links per platform */
+  onAlternativesFound?: (alternatives: Record<string, string[]>) => void;
 }) {
   const { subscription: ctxSub, addTokenUsage } = useSubscription();
   const { isActive: subActive } = useSubscriptionAccess('ai');
@@ -3066,6 +3085,20 @@ function AIArticleSearchPanel({
       if (json.socials && Object.keys(json.socials).length > 0) {
         onSocialsFound?.(json.socials as Record<string, string>);
       }
+
+      // Videresend og gem alternative links hvis tilgængelige
+      const alts = json.socialAlternatives as Record<string, string[]> | undefined;
+      if (alts && Object.keys(alts).length > 0) {
+        onAlternativesFound?.(alts);
+        // Gem til Supabase i baggrunden (best-effort)
+        fetch('/api/link-alternatives', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cvr: String(companyData.vat), alternatives: alts }),
+        }).catch(() => {
+          /* ignore — gemning af alternativer er ikke kritisk */
+        });
+      }
       const total = json.tokensUsed ?? json.usage?.totalTokens ?? 0;
       if (total > 0) {
         setTokensUsedThisSearch(total);
@@ -3078,7 +3111,7 @@ function AIArticleSearchPanel({
       setHasSearched(true);
       setLoading(false);
     }
-  }, [loading, ctxSub, companyData, keyPersons, lang, addTokenUsage]);
+  }, [loading, ctxSub, companyData, keyPersons, lang, addTokenUsage, onAlternativesFound]);
 
   const da = lang === 'da';
 

@@ -91,6 +91,68 @@ interface RawNewsArticle {
  *   - Undersøgende journalistik
  *   - Fagmedier
  */
+/**
+ * Eksplicit blacklist af norske og svenske mediedomæner.
+ * Disse filtreres altid fra — selv i fallback-scenariet.
+ */
+const BLOCKED_DOMAINS = new Set([
+  // Norske medier
+  'finansavisen.no',
+  'dn.no',
+  'dnb.no',
+  'e24.no',
+  'nrk.no',
+  'vg.no',
+  'aftenposten.no',
+  'nettavisen.no',
+  'dagbladet.no',
+  'tv2.no',
+  'abc.no',
+  'hegnar.no',
+  'kapital.no',
+  'shifter.no',
+  // Svenske medier
+  'svt.se',
+  'dn.se',
+  'di.se',
+  'svd.se',
+  'expressen.se',
+  'aftonbladet.se',
+  'realtid.se',
+  'breakit.se',
+  'va.se',
+  // Generisk international (ikke-relevant)
+  'invezz.com',
+]);
+
+/**
+ * Returnerer true hvis URL'en stammer fra et blokeret domæne.
+ * Blokerer eksplicit listede domæner SAMT alle .no og .se TLDs.
+ * Brug af TLD-filtrering sikrer at ukendte norske/svenske domæner altid afvises.
+ *
+ * @param urlOrDomain - Artiklens URL eller domænenavn
+ * @returns Om domænet er på blacklisten
+ */
+function isBlockedSource(urlOrDomain: string): boolean {
+  if (!urlOrDomain) return false;
+  try {
+    let hostname: string;
+    if (urlOrDomain.startsWith('http')) {
+      hostname = new URL(urlOrDomain).hostname.replace(/^www\./, '');
+    } else {
+      hostname = urlOrDomain.replace(/^www\./, '').split('/')[0];
+    }
+    if (!hostname) return false;
+    // Bloker hele .no og .se TLDs — fanger alle norske/svenske domæner uanset om de er på listen
+    if (hostname.endsWith('.no') || hostname.endsWith('.se')) return true;
+    return (
+      BLOCKED_DOMAINS.has(hostname) || [...BLOCKED_DOMAINS].some((d) => hostname.endsWith('.' + d))
+    );
+  } catch {
+    return false;
+  }
+}
+
 const DANISH_DOMAINS = new Set([
   // Daglige nyheder og politik
   'politiken.dk',
@@ -141,12 +203,22 @@ const DANISH_DOMAINS = new Set([
   'magisterbladet.dk',
   'djoefbladet.dk',
   'kristeligt-dagblad.dk',
+  // Officielle virksomhedskilder (.dk)
+  'novonordiskfonden.dk',
+  'thelocal.dk',
   // Pressemeddelelser og releases (officielle kilder)
   'businesswire.com', // Virksomheds-pressemeddelelser
   'globenewswire.com',
   'prnewswire.com',
   'cision.com',
   'news.cision.com',
+  // Internationale finansmedier — accepteres som fallback for store danske virksomheder
+  // der primært dækkes internationalt (f.eks. Novo Nordisk, Mærsk, Vestas)
+  'reuters.com',
+  'bloomberg.com',
+  'ft.com', // Financial Times
+  'ap.org', // Associated Press
+  'apnews.com',
 ]);
 
 /**
@@ -210,9 +282,12 @@ Regler:
   5. Undersøgende/Debat DK: danwatch.dk, frihedsbrevet.dk, weekendavisen.dk, zetland.dk
   6. Regionalt DK: stiftstidende.dk, fyens.dk, jv.dk, nordjyske.dk, tv2nord.dk m.fl.
   7. Officielle pressemeddelelser: businesswire.com, globenewswire.com, prnewswire.com, cision.com
-  8. FALLBACK — kun hvis færre end 5 danske resultater: acceptér relevante Skandinaviske erhvervsmedier
-     (f.eks. finans.se, di.se, finansavisen.no, e24.no) — de er bedre end ingenting.
-  Afvis altid tabloid (vg.no, nettavisen.no, aftonbladet.se) og ikke-relevante internationale medier.
+  8. Internationale finansmedier (kun som fallback når ingen/få danske artikler er tilgængelige):
+     reuters.com, bloomberg.com, ft.com, apnews.com, ap.org
+     — Disse er acceptable for store internationale danske virksomheder (Novo Nordisk, Mærsk, Vestas)
+  9. Du må ALDRIG inkludere artikler fra norske eller svenske medier — hverken finansavisen.no, e24.no,
+     dnb.no, dn.no, nrk.no, vg.no, svt.se, di.se, svd.se, expressen.se, aftonbladet.se
+     eller lignende. Afvis altid norske og svenske medier uden undtagelse.
 - "socials": VIGTIGT — brug din træningsviden til at finde virksomhedens officielle links.
   Du SKAL altid inkludere de sociale profiler og hjemmeside du kender til virksomheden.
   For store/kendte virksomheder forventes minimum website + linkedin.
@@ -308,101 +383,170 @@ function decodeHtmlEntities(str: string): string {
 }
 
 /**
+ * Parser Google News RSS XML og returnerer råartikler med kildedomæne.
+ * Bruges af begge søgestrategier (primær dansk + fallback engelsk).
+ *
+ * @param xml - Google News RSS XML-svar
+ * @param maxItems - Max antal artikler at parse (default 30)
+ * @returns Parsede artikler med _sourceDomain feltet
+ */
+function parseGoogleNewsXml(
+  xml: string,
+  maxItems = 30
+): (RawNewsArticle & { _sourceDomain: string })[] {
+  const articles: (RawNewsArticle & { _sourceDomain: string })[] = [];
+  const itemRegex = /<item>([\s\S]*?)<\/item>/g;
+  let match;
+
+  while ((match = itemRegex.exec(xml)) !== null && articles.length < maxItems) {
+    const item = match[1];
+
+    const titleMatch =
+      item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) ?? item.match(/<title>(.*?)<\/title>/);
+    const title = decodeHtmlEntities((titleMatch?.[1] ?? '').trim());
+    if (!title) continue;
+
+    const linkMatch = item.match(/<link>(.*?)<\/link>/) ?? item.match(/<link\s*\/?>([^<\s]+)/);
+    const articleUrl = (linkMatch?.[1] ?? '').trim();
+    if (!articleUrl || !articleUrl.startsWith('http')) continue;
+
+    // Udgiver-navn og kildedomæne fra <source url="...">-tagget
+    // VIGTIGT: source-domænet bruges til whitelist-check, IKKE Google News proxy-URL'en i <link>
+    let source = 'Google News';
+    let sourceDomain = '';
+    const sourceMatch = item.match(/<source[^>]*url="([^"]*)"[^>]*>(.*?)<\/source>/);
+    if (sourceMatch) {
+      sourceDomain = (sourceMatch[1] ?? '').trim();
+      source = decodeHtmlEntities((sourceMatch[2] ?? '').trim()) || source;
+    }
+
+    let date: string | undefined;
+    const pubDateMatch = item.match(/<pubDate>(.*?)<\/pubDate>/);
+    if (pubDateMatch?.[1]) {
+      try {
+        date = new Date(pubDateMatch[1]).toLocaleDateString('da-DK', {
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric',
+        });
+      } catch {
+        /* ignore */
+      }
+    }
+
+    articles.push({ title, url: articleUrl, source, date, _sourceDomain: sourceDomain });
+  }
+
+  return articles;
+}
+
+/**
+ * Filtrerer en liste råartikler til kun acceptable (ikke-blokerede, godkendte) artikler.
+ * Bruger kildedomænet fra <source url> til at checke mod whitelist og blacklist.
+ *
+ * Filtreringslogik:
+ *   1. Bloker alle .no og .se TLDs samt eksplicit listede domæner (BLOCKED_DOMAINS)
+ *   2. Accepter artikler der matcher DANISH_DOMAINS (inkl. internationale finansmedier)
+ *   3. Artikler uden kildedomain (manglende <source> tag) accepteres altid (can't filter)
+ *
+ * @param articles - Råartikler fra parseGoogleNewsXml
+ * @returns Filtrerede artikler der er acceptable til Claude
+ */
+function filterAcceptableArticles(
+  articles: (RawNewsArticle & { _sourceDomain: string })[]
+): (RawNewsArticle & { _sourceDomain: string })[] {
+  return articles.filter((a) => {
+    const domain = a._sourceDomain;
+    // Ingen kildedomain → lad passere (kan ikke vurdere)
+    if (!domain) return true;
+    // Bloker norske/svenske og eksplicit listede domæner
+    if (isBlockedSource(domain)) return false;
+    // Accepter kun kendte danske/internationale medier — afvis ukendte
+    return isDanishSource(domain);
+  });
+}
+
+/**
  * Henter søgespecifikke artikler direkte fra Google News RSS.
  * Inlines logikken i stedet for at kalde /api/news for at undgå timeout-kæden.
- * Timeout: 8s — tilpasset Vercel Pro plan (60s maxDuration).
+ * Timeout: 8s per søgning — tilpasset Vercel Pro plan (60s maxDuration).
  *
  * To-trins strategi:
- *   1. Søg UDEN site:-filtre (lange OR-kæder bryder Google News og giver 0 resultater)
- *   2. Filtrer rå-resultater i koden mod DANISH_DOMAINS whitelist
- *   3. Hvis < 5 danske artikler, behold internationale som fallback (Claude filtrerer dem)
+ *   1. PRIMÆR: Dansk-lokaliseret søgning (hl=da&gl=DK) — bedst for de fleste danske virksomheder
+ *   2. FALLBACK: Engelsk søgning "{navn} Denmark" uden geo-filter — bruges for store danske
+ *      virksomheder (Novo Nordisk, Mærsk, Vestas) der primært dækkes af internationale medier
+ *      Returnerer Reuters, Bloomberg, FT, GlobeNewswire m.fl.
  *
  * @param companyName - Virksomhedens navn
- * @returns Op til 20 artikler om virksomheden (danske først, internationale som fallback)
+ * @returns Op til 20 artikler om virksomheden
  */
 async function fetchGoogleNewsArticles(companyName: string): Promise<RawNewsArticle[]> {
-  // Trin 1: Simpel søgning uden site:-operatorer — Google News håndterer lange OR-kæder meget dårligt
-  const url = `https://news.google.com/rss/search?q=${encodeURIComponent(companyName)}&hl=da&gl=DK&ceid=DK:da`;
+  // ── Trin 1: Dansk-lokaliseret søgning ────────────────────────────────────────
+  const primaryUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(companyName)}&hl=da&gl=DK&ceid=DK:da`;
+  let primaryAcceptable: (RawNewsArticle & { _sourceDomain: string })[] = [];
+
   try {
-    const res = await fetch(url, {
+    const res = await fetch(primaryUrl, {
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; BizzAssist/1.0)' },
       signal: AbortSignal.timeout(8000),
     });
-    if (!res.ok) return [];
-    const xml = await res.text();
-
-    const allArticles: RawNewsArticle[] = [];
-    const itemRegex = /<item>([\s\S]*?)<\/item>/g;
-    let match;
-
-    while ((match = itemRegex.exec(xml)) !== null && allArticles.length < 30) {
-      const item = match[1];
-
-      const titleMatch =
-        item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) ?? item.match(/<title>(.*?)<\/title>/);
-      const title = decodeHtmlEntities((titleMatch?.[1] ?? '').trim());
-      if (!title) continue;
-
-      // Google News RSS returnerer proxy-URLs i <link> — bevar dem som klikbart link
-      const linkMatch = item.match(/<link>(.*?)<\/link>/) ?? item.match(/<link\s*\/?>([^<\s]+)/);
-      const articleUrl = (linkMatch?.[1] ?? '').trim();
-      if (!articleUrl || !articleUrl.startsWith('http')) continue;
-
-      // Udgiver-navn og kildedomæne fra <source url="...">-tagget
-      // VIGTIGT: Brug kildedomænet (ikke proxy-URL) til Danish whitelist-check
-      let source = 'Google News';
-      let sourceDomain = '';
-      const sourceMatch = item.match(/<source[^>]*url="([^"]*)"[^>]*>(.*?)<\/source>/);
-      if (sourceMatch) {
-        sourceDomain = (sourceMatch[1] ?? '').trim();
-        source = decodeHtmlEntities((sourceMatch[2] ?? '').trim()) || source;
-      }
-
-      let date: string | undefined;
-      const pubDateMatch = item.match(/<pubDate>(.*?)<\/pubDate>/);
-      if (pubDateMatch?.[1]) {
-        try {
-          date = new Date(pubDateMatch[1]).toLocaleDateString('da-DK', {
-            day: 'numeric',
-            month: 'short',
-            year: 'numeric',
-          });
-        } catch {
-          /* ignore */
-        }
-      }
-
-      allArticles.push({
-        title,
-        url: articleUrl,
-        source,
-        date,
-        _sourceDomain: sourceDomain,
-      } as RawNewsArticle & { _sourceDomain: string });
+    if (res.ok) {
+      const xml = await res.text();
+      const all = parseGoogleNewsXml(xml, 40);
+      primaryAcceptable = filterAcceptableArticles(all);
+      console.log(
+        `[article-search] PRIMÆR (da): ${all.length} rå, ${all.length - primaryAcceptable.length} blokeret, ${primaryAcceptable.length} acceptable`
+      );
     }
-
-    // Trin 2: Brug kildedomæne (fra <source url>) til whitelist-check — ikke proxy-URL'en
-    const danishArticles = allArticles.filter((a) => {
-      const domain = (a as RawNewsArticle & { _sourceDomain?: string })._sourceDomain ?? a.url;
-      return isDanishSource(domain);
-    });
-
-    console.log(
-      `[article-search] Rå RSS-resultater: ${allArticles.length}, heraf fra danske domæner: ${danishArticles.length}`
-    );
-
-    // Trin 3: Hvis < 5 danske, behold alle som fallback (Claude filtrerer via KILDEPRIORITET-reglen)
-    // Dækker tilfælde hvor Google News server returnerer Skandinaviske/internationale resultater
-    if (danishArticles.length >= 5) {
-      return danishArticles.slice(0, 20);
-    }
-    // Fallback: returner alle artikler (inkl. ikke-danske) — max 20
-    // Claude-prompten afviser norske og svenske medier, men beholder relevante internationale
-    return allArticles.slice(0, 20);
   } catch (err) {
-    console.error('[article-search] Google News RSS fejl:', err);
-    return [];
+    console.error('[article-search] Primær Google News RSS fejl:', err);
   }
+
+  // Nok danske/acceptable artikler — returner dem direkte
+  if (primaryAcceptable.length >= 5) {
+    return primaryAcceptable.slice(0, 20);
+  }
+
+  // ── Trin 2: Engelsk fallback-søgning "{navn} Denmark" ────────────────────────
+  // Aktiveres når den danske søgning returnerer < 5 acceptable artikler.
+  // Dette sker typisk for store internationale virksomheder (Novo Nordisk, Mærsk, Vestas)
+  // der primært dækkes af Reuters, Bloomberg, FT i stedet for danske medier.
+  console.log(
+    `[article-search] < 5 acceptable fra dansk søgning (${primaryAcceptable.length}) — prøver engelsk fallback`
+  );
+
+  const fallbackQuery = `${companyName} Denmark`;
+  const fallbackUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(fallbackQuery)}`;
+  let fallbackAcceptable: (RawNewsArticle & { _sourceDomain: string })[] = [];
+
+  try {
+    const res = await fetch(fallbackUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; BizzAssist/1.0)' },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (res.ok) {
+      const xml = await res.text();
+      const all = parseGoogleNewsXml(xml, 40);
+      fallbackAcceptable = filterAcceptableArticles(all);
+      console.log(
+        `[article-search] FALLBACK (en): ${all.length} rå, ${all.length - fallbackAcceptable.length} blokeret, ${fallbackAcceptable.length} acceptable`
+      );
+    }
+  } catch (err) {
+    console.error('[article-search] Fallback Google News RSS fejl:', err);
+  }
+
+  // Merge: primære resultater først, derefter unikke fallback-resultater (URL-dedup)
+  const primaryUrls = new Set(primaryAcceptable.map((a) => a.url));
+  const merged = [
+    ...primaryAcceptable,
+    ...fallbackAcceptable.filter((a) => !primaryUrls.has(a.url)),
+  ];
+
+  console.log(
+    `[article-search] Samlet: ${merged.length} artikler (${primaryAcceptable.length} primære + ${merged.length - primaryAcceptable.length} fallback)`
+  );
+  return merged.slice(0, 20);
 }
 
 // ─── Handler ────────────────────────────────────────────────────────────────

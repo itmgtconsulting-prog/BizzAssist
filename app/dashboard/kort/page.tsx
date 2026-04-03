@@ -1187,7 +1187,8 @@ function KortInner() {
       </Map>
 
       {/* ── Søgebar ───────────────────────────────────────────────────────── */}
-      <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 w-full max-w-lg px-4">
+      {/* top-16 på mobil — undgår overlap med stil-toggle (left-4) og lag-knap (right-4) */}
+      <div className="absolute top-16 sm:top-4 left-1/2 -translate-x-1/2 z-20 w-full max-w-lg px-4">
         <div className="relative">
           <div className="flex items-center gap-2 bg-[#0f172a]/95 border border-white/10 rounded-2xl shadow-2xl px-4 py-3 backdrop-blur-sm">
             {søger ? (

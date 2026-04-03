@@ -11,7 +11,7 @@
  * @param params.cvr - 8-cifret CVR-nummer fra URL
  */
 
-import { useState, useEffect, use, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, use, useCallback, useRef, useMemo, Suspense } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -45,6 +45,8 @@ import {
   ChevronRight,
   Percent,
   Plus,
+  Map as MapIcon,
+  X,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';
@@ -70,6 +72,11 @@ import {
 
 /** Lazy-loaded diagram variants (heavy dependencies) */
 const DiagramForce = dynamic(() => import('@/app/components/diagrams/DiagramForce'), {
+  ssr: false,
+});
+
+/** Lazy-loaded kortkomponent — tung Mapbox-afhængighed */
+const PropertyMap = dynamic(() => import('@/app/components/ejendomme/PropertyMap'), {
   ssr: false,
 });
 
@@ -307,31 +314,90 @@ export default function VirksomhedDetalje({ params }: PageProps) {
   const [aktivTab, setAktivTab] = useState<TabId>('overview');
   const [erFulgt, setErFulgt] = useState(false);
 
-  /** Side panel state (resizable, nyheder + sociale links) */
-  const [_panelBredde, setPanelBredde] = useState(360);
-  const panelTraekRef = useRef<{ x: number; bredde: number } | null>(null);
-  const [panelTraekAktiv, setPanelTraekAktiv] = useState(false);
-
-  /** Panel drag handlers */
+  /**
+   * JS-baseret breakpoint detektion (≥900px).
+   * Viser kortpanel på desktop, skjuler på mobil (FAB-knap i stedet).
+   */
+  const [visKort, setVisKort] = useState(true);
   useEffect(() => {
-    if (!panelTraekAktiv) return;
-    const handleMove = (e: MouseEvent) => {
-      if (!panelTraekRef.current) return;
-      const diff = panelTraekRef.current.x - e.clientX;
-      const newW = Math.max(250, Math.min(600, panelTraekRef.current.bredde + diff));
-      setPanelBredde(newW);
-    };
-    const handleUp = () => {
-      panelTraekRef.current = null;
-      setPanelTraekAktiv(false);
-    };
-    window.addEventListener('mousemove', handleMove);
-    window.addEventListener('mouseup', handleUp);
+    const mq = window.matchMedia('(min-width: 900px)');
+    setVisKort(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setVisKort(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+
+  /** Styrer om mobil-kortoverlay er åbent. */
+  const [mobilKortAaben, setMobilKortAaben] = useState(false);
+
+  /**
+   * Styrer om kortpanelet er synligt på desktop.
+   * Brugeren kan toggle panelet via knappen i headeren.
+   * Har ingen effekt på mobil (mobilKortAaben styrer overlay der).
+   */
+  const [kortPanelÅben, setKortPanelÅben] = useState(true);
+
+  /**
+   * Kortpanel-bredde i px — kan trækkes af brugeren via adskillelseslinien.
+   * Standard 360 px, min 200 px, max 700 px.
+   */
+  const [kortBredde, setKortBredde] = useState(360);
+
+  /** True mens brugeren trækker adskillelseslinien. */
+  const [trækker, setTrækker] = useState(false);
+
+  /** Gemmer startpunktet for en drag-operation. */
+  const trækStart = useRef<{ x: number; bredde: number } | null>(null);
+
+  /**
+   * Globale drag-handlers — kun aktive mens trækker === true.
+   * Bevægelse mod venstre øger kortbredden og omvendt.
+   */
+  useEffect(() => {
+    if (!trækker) return;
+    function onMove(e: MouseEvent) {
+      if (!trækStart.current) return;
+      const delta = trækStart.current.x - e.clientX;
+      const nyBredde = Math.min(700, Math.max(200, trækStart.current.bredde + delta));
+      setKortBredde(nyBredde);
+    }
+    function onUp() {
+      setTrækker(false);
+      trækStart.current = null;
+    }
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
     return () => {
-      window.removeEventListener('mousemove', handleMove);
-      window.removeEventListener('mouseup', handleUp);
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
     };
-  }, [panelTraekAktiv]);
+  }, [trækker]);
+
+  /**
+   * Geocodede koordinater for virksomhedens adresse.
+   * Hentes via /api/adresse/autocomplete når data er tilgængeligt.
+   */
+  const [kortKoordinater, setKortKoordinater] = useState<{ lat: number; lng: number } | null>(null);
+
+  /**
+   * Geokoder virksomhedens adresse til koordinater via DAR autocomplete.
+   * Kun aktiv når data er hentet og visKort er true.
+   */
+  useEffect(() => {
+    if (!data?.address || !data.zipcode || !data.city) return;
+    const q = `${data.address}, ${data.zipcode} ${data.city}`;
+    fetch(`/api/adresse/autocomplete?q=${encodeURIComponent(q)}`)
+      .then((res) => (res.ok ? res.json() : []))
+      .then((results: { data?: { x?: number; y?: number } }[]) => {
+        const first = results[0];
+        if (first?.data?.x && first?.data?.y) {
+          setKortKoordinater({ lat: first.data.y, lng: first.data.x });
+        }
+      })
+      .catch(() => {
+        /* stille fejl — kort vises bare uden koordinater */
+      });
+  }, [data?.address, data?.zipcode, data?.city]);
 
   /** Regnskab state — lazy-loaded when financials tab is activated */
   const [regnskaber, setRegnskaber] = useState<Regnskab[] | null>(null);
@@ -940,8 +1006,12 @@ export default function VirksomhedDetalje({ params }: PageProps) {
     return acc;
   }, {});
 
+  const adresseStreng = data
+    ? `${data.address}${data.addressco ? `, ${data.addressco}` : ''}, ${data.zipcode} ${data.city}`
+    : '';
+
   return (
-    <div className="flex-1 flex overflow-hidden">
+    <div className={`flex-1 flex overflow-hidden${trækker ? ' select-none' : ''}`}>
       {/* ─── Left: Main Content ─── */}
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         {/* ─── Sticky Header ─── */}
@@ -956,6 +1026,25 @@ export default function VirksomhedDetalje({ params }: PageProps) {
               {c.title}
             </button>
             <div className="flex items-center gap-2">
+              {/* Kort-toggle knap — åbner overlay på mobil, toggle sidepanel på desktop */}
+              <button
+                onClick={() => {
+                  if (visKort) {
+                    setKortPanelÅben((prev) => !prev);
+                  } else {
+                    setMobilKortAaben(true);
+                  }
+                }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-sm transition-all ${
+                  visKort && kortPanelÅben
+                    ? 'bg-blue-600/20 hover:bg-blue-600/30 border-blue-500/40 text-blue-300'
+                    : 'bg-slate-800 hover:bg-slate-700 border-slate-700/60 text-slate-300'
+                }`}
+                title={lang === 'da' ? 'Vis/skjul kort' : 'Show/hide map'}
+              >
+                <MapIcon size={14} />
+                {lang === 'da' ? 'Kort' : 'Map'}
+              </button>
               {/* Følg button */}
               <button
                 onClick={async () => {
@@ -2760,8 +2849,138 @@ export default function VirksomhedDetalje({ params }: PageProps) {
       </div>
       {/* END left: main content */}
 
-      {/* ─── Side Panel (hidden — aktiveres senere) ─── */}
-      {/* TODO: Genaktiver side panel med nyheder + verified links */}
+      {/* ─── Adskillelseslinie (desktop) ─── */}
+      {visKort && kortPanelÅben && (
+        <div
+          className={`w-1.5 flex-shrink-0 cursor-col-resize flex items-center justify-center group transition-colors ${trækker ? 'bg-blue-500/30' : 'bg-slate-800 hover:bg-blue-500/20'}`}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            trækStart.current = { x: e.clientX, bredde: kortBredde };
+            setTrækker(true);
+          }}
+        >
+          <div
+            className={`w-0.5 h-10 rounded-full transition-colors ${trækker ? 'bg-blue-400' : 'bg-slate-600 group-hover:bg-blue-400'}`}
+          />
+        </div>
+      )}
+
+      {/* ─── Kortpanel (desktop) — strækker fuld højde ─── */}
+      {visKort && kortPanelÅben && (
+        <div className="relative flex-shrink-0 self-stretch" style={{ width: kortBredde }}>
+          {/* Åbn på fuldt kort */}
+          <Link
+            href={kortKoordinater ? `/dashboard/kort` : '/dashboard/kort'}
+            className="absolute top-3 right-3 z-20 flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-900/90 hover:bg-slate-800 border border-slate-700 rounded-lg text-slate-300 text-xs font-medium shadow-lg transition-all"
+            title={lang === 'da' ? 'Åbn fuldt kort' : 'Open full map'}
+          >
+            <MapIcon size={12} />
+            {lang === 'da' ? 'Fuldt kort' : 'Full map'}
+          </Link>
+          <div className="absolute inset-0">
+            {kortKoordinater ? (
+              <Suspense
+                fallback={
+                  <div className="w-full h-full flex items-center justify-center bg-slate-900">
+                    <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                  </div>
+                }
+              >
+                <PropertyMap
+                  lat={kortKoordinater.lat}
+                  lng={kortKoordinater.lng}
+                  adresse={adresseStreng}
+                  visMatrikel={false}
+                />
+              </Suspense>
+            ) : (
+              <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900 gap-3">
+                {loading ? (
+                  <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <>
+                    <MapPin size={32} className="text-slate-600" />
+                    <p className="text-slate-500 text-xs text-center px-4">
+                      {lang === 'da'
+                        ? 'Kortkoordinater ikke tilgængelige'
+                        : 'Map coordinates unavailable'}
+                    </p>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ─── Mobil: FAB-kortknap — kun synlig på skærme under 900px ─── */}
+      {!visKort && (
+        <button
+          onClick={() => setMobilKortAaben(true)}
+          className="fixed bottom-20 right-4 z-40 flex items-center gap-2 px-4 py-3 bg-blue-600 hover:bg-blue-500 active:scale-95 rounded-full text-white shadow-2xl transition-all"
+          aria-label={lang === 'da' ? 'Åbn kort' : 'Open map'}
+        >
+          <MapIcon size={18} />
+          <span className="text-sm font-semibold">{lang === 'da' ? 'Kort' : 'Map'}</span>
+        </button>
+      )}
+
+      {/* ─── Mobil: Kortoverlay — fylder hele skærmen ─── */}
+      {!visKort && mobilKortAaben && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-slate-950">
+          {/* Overlay-header */}
+          <div className="flex items-center justify-between px-4 py-3 bg-slate-900 border-b border-slate-700/50 flex-shrink-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <MapIcon size={15} className="text-blue-400 flex-shrink-0" />
+              <span className="text-white text-sm font-medium truncate">{adresseStreng}</span>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0 ml-3">
+              <Link
+                href="/dashboard/kort"
+                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-slate-300 text-xs font-medium transition-all"
+              >
+                <MapIcon size={11} />
+                {lang === 'da' ? 'Fuldt kort' : 'Full map'}
+              </Link>
+              <button
+                onClick={() => setMobilKortAaben(false)}
+                className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors"
+                aria-label={lang === 'da' ? 'Luk kort' : 'Close map'}
+              >
+                <X size={18} />
+              </button>
+            </div>
+          </div>
+          {/* Kortindhold */}
+          <div className="flex-1 relative">
+            {kortKoordinater ? (
+              <Suspense
+                fallback={
+                  <div className="absolute inset-0 flex items-center justify-center bg-slate-900">
+                    <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                  </div>
+                }
+              >
+                <PropertyMap
+                  lat={kortKoordinater.lat}
+                  lng={kortKoordinater.lng}
+                  adresse={adresseStreng}
+                  visMatrikel={false}
+                />
+              </Suspense>
+            ) : (
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900 gap-3">
+                <MapPin size={32} className="text-slate-600" />
+                <p className="text-slate-500 text-xs">
+                  {lang === 'da'
+                    ? 'Kortkoordinater ikke tilgængelige'
+                    : 'Map coordinates unavailable'}
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

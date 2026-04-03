@@ -104,6 +104,10 @@ const DANISH_DOMAINS = new Set([
   'borsen.dk',
   'finans.dk',
   'ugebrev.dk', // Økonomisk Ugebrev
+  'epn.dk', // Erhvervs Presse Nyheder
+  'euroinvestor.dk',
+  'businessreview.dk',
+  'fdih.dk',
   // Teknologi og IT
   'version2.dk',
   'computerworld.dk',
@@ -112,6 +116,9 @@ const DANISH_DOMAINS = new Set([
   'videnskab.dk',
   'weekendavisen.dk',
   'zetland.dk',
+  // Sundhed og pharma
+  'medwatch.dk',
+  'sundhedspolitisktidsskrift.dk',
   // Lokalt og regionalt
   'stiftstidende.dk',
   'fyens.dk',
@@ -122,6 +129,9 @@ const DANISH_DOMAINS = new Set([
   'tv2fyn.dk',
   'tvmidtvest.dk',
   'tv2ostjylland.dk',
+  'jv.dk', // JydskeVestkysten
+  'nordjyske.dk',
+  'avisendanmark.dk',
   // Undersøgende journalistik
   'danwatch.dk',
   'frihedsbrevet.dk',
@@ -130,17 +140,31 @@ const DANISH_DOMAINS = new Set([
   'mm.dk', // Mandag Morgen
   'magisterbladet.dk',
   'djoefbladet.dk',
+  'kristeligt-dagblad.dk',
+  // Pressemeddelelser og releases (officielle kilder)
+  'businesswire.com', // Virksomheds-pressemeddelelser
+  'globenewswire.com',
+  'prnewswire.com',
+  'cision.com',
+  'news.cision.com',
 ]);
 
 /**
  * Returnerer true hvis URL'en stammer fra et dansk medie-domæne.
+ * Understøtter både fulde URLs og bare domænenavne (f.eks. fra <source url="...">).
  *
- * @param url - Artiklens URL
+ * @param urlOrDomain - Artiklens URL eller bare domænenavnet
  * @returns Om domænet er på hvidlisten
  */
-function isDanishSource(url: string): boolean {
+function isDanishSource(urlOrDomain: string): boolean {
   try {
-    const hostname = new URL(url).hostname.replace(/^www\./, '');
+    // Prøv at parse som URL — hvis det fejler, behandl som bare domæne
+    let hostname: string;
+    if (urlOrDomain.startsWith('http')) {
+      hostname = new URL(urlOrDomain).hostname.replace(/^www\./, '');
+    } else {
+      hostname = urlOrDomain.replace(/^www\./, '').split('/')[0];
+    }
     return (
       DANISH_DOMAINS.has(hostname) || [...DANISH_DOMAINS].some((d) => hostname.endsWith('.' + d))
     );
@@ -178,16 +202,17 @@ Returner KUN validt JSON uden tekst før/efter:
 Regler:
 - "selected": op til 8 artiklernes numre (1-baseret), sortér nyeste/mest relevante først
 - "descriptions": ét element per valgt artikel i samme rækkefølge, max 80 tegn
-- KILDEPRIORITET (VIGTIGT): Medtag KUN artikler fra danske medier. Prioritér i denne rækkefølge:
-  1. Erhverv/økonomi: borsen.dk, finans.dk, ugebrev.dk
-  2. Daglige nyheder: politiken.dk, berlingske.dk, jyllands-posten.dk, information.dk, dr.dk, tv2.dk
-  3. Teknologi/IT: version2.dk, computerworld.dk, ing.dk
-  4. Videnskab/debat: videnskab.dk, weekendavisen.dk, zetland.dk
-  5. Fagmedier: altinget.dk, mm.dk, magisterbladet.dk, djoefbladet.dk
-  6. Undersøgende: danwatch.dk, frihedsbrevet.dk
-  7. Regionalt: stiftstidende.dk, fyens.dk, sn.dk, tv2nord.dk, tv2lorry.dk, tv2east.dk, tv2fyn.dk, tvmidtvest.dk, tv2ostjylland.dk
-  Kun hvis der ikke er tilstrækkeligt med resultater fra ovenstående: acceptér andre danske kilder.
-  Afvis ALTID artikler fra svenske (svt.se, dn.se, aftonbladet.se) og norske (nrk.no, vg.no) medier.
+- KILDEPRIORITET (VIGTIGT): Prioritér i denne rækkefølge:
+  1. Erhverv/økonomi DK: borsen.dk, finans.dk, ugebrev.dk, epn.dk, euroinvestor.dk
+  2. Daglige nyheder DK: politiken.dk, berlingske.dk, jyllands-posten.dk, information.dk, dr.dk, tv2.dk
+  3. Teknologi/IT DK: version2.dk, computerworld.dk, ing.dk
+  4. Fagmedier DK: altinget.dk, mm.dk, medwatch.dk, magisterbladet.dk
+  5. Undersøgende/Debat DK: danwatch.dk, frihedsbrevet.dk, weekendavisen.dk, zetland.dk
+  6. Regionalt DK: stiftstidende.dk, fyens.dk, jv.dk, nordjyske.dk, tv2nord.dk m.fl.
+  7. Officielle pressemeddelelser: businesswire.com, globenewswire.com, prnewswire.com, cision.com
+  8. FALLBACK — kun hvis færre end 5 danske resultater: acceptér relevante Skandinaviske erhvervsmedier
+     (f.eks. finans.se, di.se, finansavisen.no, e24.no) — de er bedre end ingenting.
+  Afvis altid tabloid (vg.no, nettavisen.no, aftonbladet.se) og ikke-relevante internationale medier.
 - "socials": VIGTIGT — brug din træningsviden til at finde virksomhedens officielle links.
   Du SKAL altid inkludere de sociale profiler og hjemmeside du kender til virksomheden.
   For store/kendte virksomheder forventes minimum website + linkedin.
@@ -287,33 +312,17 @@ function decodeHtmlEntities(str: string): string {
  * Inlines logikken i stedet for at kalde /api/news for at undgå timeout-kæden.
  * Timeout: 8s — tilpasset Vercel Pro plan (60s maxDuration).
  *
- * Søgestrategien bruger site:-operatorer for de primære danske medier
- * så Google News prioriterer disse kilder. Whitelist-filteret sikrer
- * at ingen ikke-danske artikler slipper igennem.
+ * To-trins strategi:
+ *   1. Søg UDEN site:-filtre (lange OR-kæder bryder Google News og giver 0 resultater)
+ *   2. Filtrer rå-resultater i koden mod DANISH_DOMAINS whitelist
+ *   3. Hvis < 5 danske artikler, behold internationale som fallback (Claude filtrerer dem)
  *
  * @param companyName - Virksomhedens navn
- * @returns Op til 15 artikler om virksomheden
+ * @returns Op til 20 artikler om virksomheden (danske først, internationale som fallback)
  */
 async function fetchGoogleNewsArticles(companyName: string): Promise<RawNewsArticle[]> {
-  // Primære danske medier brugt som site:-parametre i søgeforespørgslen
-  const primarySites = [
-    'borsen.dk',
-    'finans.dk',
-    'politiken.dk',
-    'berlingske.dk',
-    'jyllands-posten.dk',
-    'dr.dk',
-    'tv2.dk',
-    'information.dk',
-    'version2.dk',
-    'computerworld.dk',
-    'ing.dk',
-    'altinget.dk',
-    'mm.dk',
-  ];
-  const siteQuery = primarySites.map((s) => `site:${s}`).join(' OR ');
-  const q = `${companyName} (${siteQuery})`;
-  const url = `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=da&gl=DK&ceid=DK:da`;
+  // Trin 1: Simpel søgning uden site:-operatorer — Google News håndterer lange OR-kæder meget dårligt
+  const url = `https://news.google.com/rss/search?q=${encodeURIComponent(companyName)}&hl=da&gl=DK&ceid=DK:da`;
   try {
     const res = await fetch(url, {
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; BizzAssist/1.0)' },
@@ -322,11 +331,11 @@ async function fetchGoogleNewsArticles(companyName: string): Promise<RawNewsArti
     if (!res.ok) return [];
     const xml = await res.text();
 
-    const articles: RawNewsArticle[] = [];
+    const allArticles: RawNewsArticle[] = [];
     const itemRegex = /<item>([\s\S]*?)<\/item>/g;
     let match;
 
-    while ((match = itemRegex.exec(xml)) !== null && articles.length < 20) {
+    while ((match = itemRegex.exec(xml)) !== null && allArticles.length < 30) {
       const item = match[1];
 
       const titleMatch =
@@ -334,14 +343,20 @@ async function fetchGoogleNewsArticles(companyName: string): Promise<RawNewsArti
       const title = decodeHtmlEntities((titleMatch?.[1] ?? '').trim());
       if (!title) continue;
 
+      // Google News RSS returnerer proxy-URLs i <link> — bevar dem som klikbart link
       const linkMatch = item.match(/<link>(.*?)<\/link>/) ?? item.match(/<link\s*\/?>([^<\s]+)/);
       const articleUrl = (linkMatch?.[1] ?? '').trim();
       if (!articleUrl || !articleUrl.startsWith('http')) continue;
 
-      // Faktisk udgiver fra <source> tag
+      // Udgiver-navn og kildedomæne fra <source url="...">-tagget
+      // VIGTIGT: Brug kildedomænet (ikke proxy-URL) til Danish whitelist-check
       let source = 'Google News';
-      const sourceMatch = item.match(/<source[^>]*url="[^"]*"[^>]*>(.*?)<\/source>/);
-      if (sourceMatch) source = decodeHtmlEntities(sourceMatch[1].trim()) || source;
+      let sourceDomain = '';
+      const sourceMatch = item.match(/<source[^>]*url="([^"]*)"[^>]*>(.*?)<\/source>/);
+      if (sourceMatch) {
+        sourceDomain = (sourceMatch[1] ?? '').trim();
+        source = decodeHtmlEntities((sourceMatch[2] ?? '').trim()) || source;
+      }
 
       let date: string | undefined;
       const pubDateMatch = item.match(/<pubDate>(.*?)<\/pubDate>/);
@@ -357,13 +372,33 @@ async function fetchGoogleNewsArticles(companyName: string): Promise<RawNewsArti
         }
       }
 
-      // Filtrer ikke-danske medier fra
-      if (!isDanishSource(articleUrl)) continue;
-
-      articles.push({ title, url: articleUrl, source, date });
+      allArticles.push({
+        title,
+        url: articleUrl,
+        source,
+        date,
+        _sourceDomain: sourceDomain,
+      } as RawNewsArticle & { _sourceDomain: string });
     }
 
-    return articles;
+    // Trin 2: Brug kildedomæne (fra <source url>) til whitelist-check — ikke proxy-URL'en
+    const danishArticles = allArticles.filter((a) => {
+      const domain = (a as RawNewsArticle & { _sourceDomain?: string })._sourceDomain ?? a.url;
+      return isDanishSource(domain);
+    });
+
+    console.log(
+      `[article-search] Rå RSS-resultater: ${allArticles.length}, heraf fra danske domæner: ${danishArticles.length}`
+    );
+
+    // Trin 3: Hvis < 5 danske, behold alle som fallback (Claude filtrerer via KILDEPRIORITET-reglen)
+    // Dækker tilfælde hvor Google News server returnerer Skandinaviske/internationale resultater
+    if (danishArticles.length >= 5) {
+      return danishArticles.slice(0, 20);
+    }
+    // Fallback: returner alle artikler (inkl. ikke-danske) — max 20
+    // Claude-prompten afviser norske og svenske medier, men beholder relevante internationale
+    return allArticles.slice(0, 20);
   } catch (err) {
     console.error('[article-search] Google News RSS fejl:', err);
     return [];

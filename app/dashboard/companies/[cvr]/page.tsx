@@ -51,6 +51,8 @@ import {
   Sparkles,
   Lock,
   Zap,
+  ThumbsUp,
+  ThumbsDown,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';
@@ -66,6 +68,7 @@ import { resolvePlan, formatTokens, isSubscriptionFunctional } from '@/app/lib/s
 import { buildDiagramGraph } from '@/app/components/diagrams/DiagramData';
 import dynamic from 'next/dynamic';
 import VerifiedLinks from '@/app/components/VerifiedLinks';
+import { useAuth } from '@/app/hooks/useAuth';
 import {
   ResponsiveContainer,
   LineChart,
@@ -2933,6 +2936,13 @@ interface AIArticleResult {
  * @param lang - Aktivt sprog
  * @param onSocialsFound - Callback med fundne sociale medier-URLs
  */
+/** Verificerings-summary for en artikel */
+interface ArticleVerdict {
+  verifiedCount: number;
+  rejectedCount: number;
+  userVerdict: 'verified' | 'rejected' | null;
+}
+
 function AIArticleSearchPanel({
   companyData,
   lang,
@@ -2944,12 +2954,17 @@ function AIArticleSearchPanel({
 }) {
   const { subscription: ctxSub, addTokenUsage } = useSubscription();
   const { isActive: subActive } = useSubscriptionAccess('ai');
+  const { isAuthenticated } = useAuth();
   const [articles, setArticles] = useState<AIArticleResult[]>([]);
   const [hasSearched, setHasSearched] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tokenInfo, setTokenInfo] = useState<{ used: number; limit: number } | null>(null);
   const [tokensUsedThisSearch, setTokensUsedThisSearch] = useState(0);
+  /** Map: article url → ArticleVerdict */
+  const [articleVerdicts, setArticleVerdicts] = useState<Map<string, ArticleVerdict>>(new Map());
+  /** URL under optimistisk API-kald */
+  const [pendingArticleUrl, setPendingArticleUrl] = useState<string | null>(null);
 
   /** Opdaterer token-info fra subscription context */
   useEffect(() => {
@@ -3013,7 +3028,40 @@ function AIArticleSearchPanel({
         return;
       }
 
-      setArticles(json.articles ?? []);
+      const fetchedArticles: AIArticleResult[] = json.articles ?? [];
+      setArticles(fetchedArticles);
+
+      // Hent verificeringer for de fundne artikler
+      if (fetchedArticles.length > 0) {
+        fetch(`/api/link-verification?cvr=${encodeURIComponent(String(companyData.vat))}`)
+          .then((r) => (r.ok ? r.json() : []))
+          .then(
+            (
+              summaries: {
+                link_url: string;
+                verified_count: number;
+                rejected_count: number;
+                user_verdict: 'verified' | 'rejected' | null;
+              }[]
+            ) => {
+              const map = new Map<string, ArticleVerdict>();
+              for (const s of summaries) {
+                if (fetchedArticles.some((a) => a.url === s.link_url)) {
+                  map.set(s.link_url, {
+                    verifiedCount: s.verified_count,
+                    rejectedCount: s.rejected_count,
+                    userVerdict: s.user_verdict,
+                  });
+                }
+              }
+              setArticleVerdicts(map);
+            }
+          )
+          .catch(() => {
+            /* ignore */
+          });
+      }
+
       // Videresend AI-fundne sociale medier til VerifiedLinks
       if (json.socials && Object.keys(json.socials).length > 0) {
         onSocialsFound?.(json.socials as Record<string, string>);
@@ -3144,32 +3192,184 @@ function AIArticleSearchPanel({
         </p>
       ) : (
         <div className="space-y-2.5">
-          {articles.map((a, i) => (
-            <a
-              key={i}
-              href={a.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-start gap-2 group"
-            >
-              <ExternalLink
-                size={10}
-                className="text-slate-600 group-hover:text-blue-400 flex-shrink-0 mt-0.5"
-              />
-              <div className="min-w-0">
-                <p className="text-slate-300 text-xs font-medium group-hover:text-blue-300 transition-colors leading-snug">
-                  {a.title}
-                </p>
-                <p className="text-slate-600 text-[10px] mt-0.5">
-                  {a.source}
-                  {a.date ? ` · ${a.date}` : ''}
-                </p>
-                {a.description && (
-                  <p className="text-slate-600 text-[10px] mt-0.5 line-clamp-2">{a.description}</p>
-                )}
+          {articles.map((a, i) => {
+            const verdict = articleVerdicts.get(a.url);
+            const isUserVerified = verdict?.userVerdict === 'verified';
+            const isUserRejected = verdict?.userVerdict === 'rejected';
+            const isPending = pendingArticleUrl === a.url;
+
+            /**
+             * Håndterer 👍/👎 klik på artikel.
+             * Toggle off (klik igen) sender DELETE, ellers POST.
+             */
+            const handleArticleVote = async (v: 'verified' | 'rejected') => {
+              if (!isAuthenticated || isPending) return;
+              const isToggleOff = verdict?.userVerdict === v;
+              setPendingArticleUrl(a.url);
+
+              // Optimistisk opdatering
+              setArticleVerdicts((prev) => {
+                const next = new Map(prev);
+                const cur = prev.get(a.url) ?? {
+                  verifiedCount: 0,
+                  rejectedCount: 0,
+                  userVerdict: null,
+                };
+                if (isToggleOff) {
+                  next.set(a.url, {
+                    verifiedCount:
+                      v === 'verified' ? Math.max(0, cur.verifiedCount - 1) : cur.verifiedCount,
+                    rejectedCount:
+                      v === 'rejected' ? Math.max(0, cur.rejectedCount - 1) : cur.rejectedCount,
+                    userVerdict: null,
+                  });
+                } else {
+                  next.set(a.url, {
+                    verifiedCount:
+                      v === 'verified'
+                        ? cur.verifiedCount + 1
+                        : cur.userVerdict === 'verified'
+                          ? Math.max(0, cur.verifiedCount - 1)
+                          : cur.verifiedCount,
+                    rejectedCount:
+                      v === 'rejected'
+                        ? cur.rejectedCount + 1
+                        : cur.userVerdict === 'rejected'
+                          ? Math.max(0, cur.rejectedCount - 1)
+                          : cur.rejectedCount,
+                    userVerdict: v,
+                  });
+                }
+                return next;
+              });
+
+              try {
+                if (isToggleOff) {
+                  await fetch(
+                    `/api/link-verification?cvr=${encodeURIComponent(String(companyData.vat))}&link_url=${encodeURIComponent(a.url)}`,
+                    { method: 'DELETE' }
+                  );
+                } else {
+                  await fetch('/api/link-verification', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      cvr: String(companyData.vat),
+                      link_url: a.url,
+                      link_type: 'article',
+                      platform: 'article',
+                      verdict: v,
+                    }),
+                  });
+                }
+              } catch {
+                /* ignore */
+              } finally {
+                setPendingArticleUrl(null);
+              }
+            };
+
+            return (
+              <div key={i} className="flex items-start gap-2">
+                {/* Artikel-link */}
+                <a
+                  href={a.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-start gap-2 group flex-1 min-w-0"
+                >
+                  <ExternalLink
+                    size={10}
+                    className="text-slate-600 group-hover:text-blue-400 flex-shrink-0 mt-0.5"
+                  />
+                  <div className="min-w-0">
+                    <p className="text-slate-300 text-xs font-medium group-hover:text-blue-300 transition-colors leading-snug">
+                      {a.title}
+                    </p>
+                    <p className="text-slate-600 text-[10px] mt-0.5">
+                      {a.source}
+                      {a.date ? ` · ${a.date}` : ''}
+                    </p>
+                    {a.description && (
+                      <p className="text-slate-600 text-[10px] mt-0.5 line-clamp-2">
+                        {a.description}
+                      </p>
+                    )}
+                  </div>
+                </a>
+
+                {/* Verificerings-knapper */}
+                <div className="flex items-center gap-0.5 flex-shrink-0 mt-0.5">
+                  <button
+                    onClick={() => handleArticleVote('verified')}
+                    disabled={!isAuthenticated || isPending}
+                    title={
+                      !isAuthenticated
+                        ? da
+                          ? 'Log ind for at stemme'
+                          : 'Log in to vote'
+                        : isUserVerified
+                          ? da
+                            ? 'Fjern verificering'
+                            : 'Remove verification'
+                          : da
+                            ? 'Artiklen er relevant'
+                            : 'Article is relevant'
+                    }
+                    className={`flex items-center gap-0.5 px-1 py-0.5 rounded text-[10px] transition-all
+                      ${!isAuthenticated ? 'opacity-30 cursor-not-allowed text-slate-600' : ''}
+                      ${
+                        isUserVerified && isAuthenticated
+                          ? 'bg-emerald-500/20 text-emerald-400'
+                          : isAuthenticated
+                            ? 'text-slate-600 hover:text-emerald-400 hover:bg-emerald-500/15'
+                            : ''
+                      }`}
+                  >
+                    {isPending ? (
+                      <Loader2 size={9} className="animate-spin" />
+                    ) : (
+                      <ThumbsUp size={9} className={isUserVerified ? 'fill-emerald-400' : ''} />
+                    )}
+                    {(verdict?.verifiedCount ?? 0) > 0 && <span>{verdict!.verifiedCount}</span>}
+                  </button>
+                  <button
+                    onClick={() => handleArticleVote('rejected')}
+                    disabled={!isAuthenticated || isPending}
+                    title={
+                      !isAuthenticated
+                        ? da
+                          ? 'Log ind for at stemme'
+                          : 'Log in to vote'
+                        : isUserRejected
+                          ? da
+                            ? 'Fjern afvisning'
+                            : 'Remove rejection'
+                          : da
+                            ? 'Artiklen er ikke relevant'
+                            : 'Article is not relevant'
+                    }
+                    className={`flex items-center gap-0.5 px-1 py-0.5 rounded text-[10px] transition-all
+                      ${!isAuthenticated ? 'opacity-30 cursor-not-allowed text-slate-600' : ''}
+                      ${
+                        isUserRejected && isAuthenticated
+                          ? 'bg-red-500/20 text-red-400'
+                          : isAuthenticated
+                            ? 'text-slate-600 hover:text-red-400 hover:bg-red-500/15'
+                            : ''
+                      }`}
+                  >
+                    {isPending ? (
+                      <Loader2 size={9} className="animate-spin" />
+                    ) : (
+                      <ThumbsDown size={9} className={isUserRejected ? 'fill-red-400' : ''} />
+                    )}
+                    {(verdict?.rejectedCount ?? 0) > 0 && <span>{verdict!.rejectedCount}</span>}
+                  </button>
+                </div>
               </div>
-            </a>
-          ))}
+            );
+          })}
         </div>
       )}
       <button

@@ -201,38 +201,54 @@ async function fetchRitzauNews(query: string): Promise<NewsArticle[]> {
  * @param query - Søgeterm (f.eks. "Novo Nordisk")
  * @returns Artikler matchende søgetermen fra Google News
  */
+/**
+ * Domæner fra norske og svenske medier der filtreres fra Google News-resultater.
+ * Vi ønsker kun danske og internationale (engelsksprogede) kilder.
+ */
+const EXCLUDED_DOMAINS = new Set([
+  'e24.no',
+  'nrk.no',
+  'vg.no',
+  'dagbladet.no',
+  'aftenposten.no',
+  'dn.no',
+  'tv2.no',
+  'abc.no',
+  'ba.no',
+  'bt.no',
+  'fvn.no',
+  'adressa.bt.no',
+  'svd.se',
+  'dn.se',
+  'aftonbladet.se',
+  'expressen.se',
+  'di.se',
+  'sydsvenskan.se',
+  'gp.se',
+  'nt.se',
+  'sr.se',
+  'svt.se',
+]);
+
 async function fetchGoogleNewsRss(query: string): Promise<NewsArticle[]> {
-  const urls = [
-    `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=da&gl=DK&ceid=DK:da`,
-    `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=en&gl=DK&ceid=DK:en`,
-  ];
+  // Kun dansk locale — filtrerer naturligt mod danske og internationale kilder
+  const url = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=da&gl=DK&ceid=DK:da`;
 
-  const results = await Promise.allSettled(
-    urls.map(async (url) => {
-      const res = await fetch(url, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; BizzAssist/1.0)' },
-        signal: AbortSignal.timeout(8000),
-      });
-      if (!res.ok) return [];
-      const xml = await res.text();
-      // Google News returnerer alle artikler uden filtrering nødvendigt
-      return parseRssFeed(xml, 'Google News', 'news.google.com', ['']); // tom term matcher alt
-    })
-  );
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; BizzAssist/1.0)' },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) return [];
+    const xml = await res.text();
+    // Google News-feed er allerede søgespecifikt — tom term matcher alt
+    const all = parseRssFeed(xml, 'Google News', 'news.google.com', ['']);
 
-  const articles: NewsArticle[] = [];
-  const seenUrls = new Set<string>();
-  for (const r of results) {
-    if (r.status === 'fulfilled') {
-      for (const a of r.value) {
-        if (!seenUrls.has(a.url)) {
-          seenUrls.add(a.url);
-          articles.push(a);
-        }
-      }
-    }
+    // Filtrer norske og svenske kilder fra — behold danske og internationale
+    return all.filter((a) => !EXCLUDED_DOMAINS.has(a.sourceDomain));
+  } catch {
+    return [];
   }
-  return articles;
 }
 
 /** Danske RSS-feeds — verificerede og fungerende */

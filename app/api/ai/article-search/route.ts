@@ -365,7 +365,7 @@ function parseArticleResponse(
   }
 }
 
-// ─── Google News RSS fetcher (inline — ingen HTTP-rundtur) ───────────────────
+// ─── RSS fetching ────────────────────────────────────────────────────────────
 
 /** Decode HTML entities fra RSS */
 function decodeHtmlEntities(str: string): string {
@@ -467,86 +467,204 @@ function filterAcceptableArticles(
 }
 
 /**
- * Henter søgespecifikke artikler direkte fra Google News RSS.
- * Inlines logikken i stedet for at kalde /api/news for at undgå timeout-kæden.
- * Timeout: 8s per søgning — tilpasset Vercel Pro plan (60s maxDuration).
+ * Parser generiske RSS-feeds (DR, TV2, Børsen, Berlingske osv.).
+ * Understøtter CDATA-titler og <guid>-URLs som fallback til <link>.
  *
- * To-trins strategi:
- *   1. PRIMÆR: Dansk-lokaliseret søgning (hl=da&gl=DK) — bedst for de fleste danske virksomheder
- *   2. FALLBACK: Engelsk søgning "{navn} Denmark" uden geo-filter — bruges for store danske
- *      virksomheder (Novo Nordisk, Mærsk, Vestas) der primært dækkes af internationale medier
- *      Returnerer Reuters, Bloomberg, FT, GlobeNewswire m.fl.
+ * @param xml - RSS XML-svar
+ * @param defaultSource - Kildnavn brugt hvis <source> ikke er til stede
+ * @returns Parsede artikler
+ */
+function parseGenericRssXml(xml: string, defaultSource: string): RawNewsArticle[] {
+  const articles: RawNewsArticle[] = [];
+  const itemRegex = /<item>([\s\S]*?)<\/item>/g;
+  let match;
+
+  while ((match = itemRegex.exec(xml)) !== null) {
+    const item = match[1];
+
+    const titleMatch =
+      item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) ?? item.match(/<title>(.*?)<\/title>/);
+    const title = decodeHtmlEntities((titleMatch?.[1] ?? '').trim());
+    if (!title) continue;
+
+    // <link> er oftest tom-tag i Atom/RSS 2.0 — brug <guid> som fallback
+    const linkMatch =
+      item.match(/<link>(https?:[^<]+)<\/link>/) ?? item.match(/<guid[^>]*>(https?:[^<]+)<\/guid>/);
+    const articleUrl = (linkMatch?.[1] ?? '').trim();
+    if (!articleUrl || !articleUrl.startsWith('http')) continue;
+
+    let date: string | undefined;
+    const pubDateMatch =
+      item.match(/<pubDate>(.*?)<\/pubDate>/) ?? item.match(/<dc:date>(.*?)<\/dc:date>/);
+    if (pubDateMatch?.[1]) {
+      try {
+        date = new Date(pubDateMatch[1]).toLocaleDateString('da-DK', {
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric',
+        });
+      } catch {
+        /* ignore */
+      }
+    }
+
+    articles.push({ title, url: articleUrl, source: defaultSource, date });
+  }
+
+  return articles;
+}
+
+/** Konfiguration af direkte danske RSS-feeds */
+const DANISH_RSS_FEEDS: { url: string; source: string }[] = [
+  { url: 'https://www.dr.dk/nyheder/service/feeds/senestenyt', source: 'DR' },
+  { url: 'https://nyheder.tv2.dk/rss', source: 'TV 2' },
+  { url: 'https://borsen.dk/rss', source: 'Børsen' },
+  { url: 'https://www.berlingske.dk/rss', source: 'Berlingske' },
+  { url: 'https://politiken.dk/rss/senestenyt.rss', source: 'Politiken' },
+  { url: 'https://jyllands-posten.dk/rss', source: 'Jyllands-Posten' },
+  { url: 'https://www.altinget.dk/rss', source: 'Altinget' },
+  { url: 'https://www.information.dk/rss', source: 'Information' },
+];
+
+/**
+ * Henter og filtrerer artikler fra direkte danske RSS-feeds parallelt.
+ * Returnerer kun artikler der nævner virksomhedsnavnet.
+ *
+ * @param companyName - Virksomhedens navn til filtrering
+ * @returns Matchende artikler fra alle feeds
+ */
+async function fetchDirectDanishRss(companyName: string): Promise<RawNewsArticle[]> {
+  // Nøgleord til matching (ord > 2 tegn undgår stoppord som "og", "af")
+  const nameWords = companyName
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((w) => w.length > 2);
+
+  const feedResults = await Promise.allSettled(
+    DANISH_RSS_FEEDS.map(async (feed) => {
+      const res = await fetch(feed.url, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; BizzAssist/1.0)' },
+        signal: AbortSignal.timeout(6000),
+      });
+      if (!res.ok) return [] as RawNewsArticle[];
+      const xml = await res.text();
+      return parseGenericRssXml(xml, feed.source);
+    })
+  );
+
+  const allArticles: RawNewsArticle[] = [];
+  for (const result of feedResults) {
+    if (result.status === 'fulfilled') {
+      allArticles.push(...result.value);
+    }
+  }
+
+  // Filtrer: titlen skal indeholde mindst ét nøgleord fra virksomhedsnavnet
+  const matched = allArticles.filter((a) => {
+    const text = a.title.toLowerCase();
+    return nameWords.some((w) => text.includes(w));
+  });
+
+  console.log(
+    `[article-search] Direkte dansk RSS: ${allArticles.length} rå → ${matched.length} matcher "${companyName}"`
+  );
+
+  return matched;
+}
+
+/**
+ * Tre-trins strategi for artikelhentning:
+ *   1. PRIMÆR: Direkte danske RSS-feeds (DR, TV2, Børsen, Berlingske, Politiken m.fl.)
+ *      — hentes parallelt, filtreres på virksomhedsnavn
+ *   2. SEKUNDÆR: Google News med dansk lokalisering (hl=da&gl=DK)
+ *      — aktiveres hvis < 5 artikler fra direkte feeds
+ *   3. FALLBACK: Google News "{navn} Denmark" — bruges for store internationale virksomheder
+ *      (Novo Nordisk, Mærsk, Vestas) der primært dækkes af Reuters, Bloomberg, FT
  *
  * @param companyName - Virksomhedens navn
  * @returns Op til 20 artikler om virksomheden
  */
-async function fetchGoogleNewsArticles(companyName: string): Promise<RawNewsArticle[]> {
-  // ── Trin 1: Dansk-lokaliseret søgning ────────────────────────────────────────
-  const primaryUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(companyName)}&hl=da&gl=DK&ceid=DK:da`;
-  let primaryAcceptable: (RawNewsArticle & { _sourceDomain: string })[] = [];
+async function fetchArticles(companyName: string): Promise<RawNewsArticle[]> {
+  // ── Trin 1: Direkte danske RSS-feeds ─────────────────────────────────────────
+  const directDanish = await fetchDirectDanishRss(companyName);
+
+  if (directDanish.length >= 5) {
+    return directDanish.slice(0, 20);
+  }
+
+  // ── Trin 2: Google News dansk søgning ────────────────────────────────────────
+  console.log(
+    `[article-search] < 5 fra direkte feeds (${directDanish.length}) — prøver Google News DA`
+  );
+  const gnDaUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(companyName)}&hl=da&gl=DK&ceid=DK:da`;
+  let gnDaAcceptable: (RawNewsArticle & { _sourceDomain: string })[] = [];
 
   try {
-    const res = await fetch(primaryUrl, {
+    const res = await fetch(gnDaUrl, {
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; BizzAssist/1.0)' },
       signal: AbortSignal.timeout(8000),
     });
     if (res.ok) {
       const xml = await res.text();
       const all = parseGoogleNewsXml(xml, 40);
-      primaryAcceptable = filterAcceptableArticles(all);
+      gnDaAcceptable = filterAcceptableArticles(all);
       console.log(
-        `[article-search] PRIMÆR (da): ${all.length} rå, ${all.length - primaryAcceptable.length} blokeret, ${primaryAcceptable.length} acceptable`
+        `[article-search] Google News DA: ${all.length} rå, ${gnDaAcceptable.length} acceptable`
       );
     }
   } catch (err) {
-    console.error('[article-search] Primær Google News RSS fejl:', err);
+    console.error('[article-search] Google News DA fejl:', err);
   }
 
-  // Nok danske/acceptable artikler — returner dem direkte
-  if (primaryAcceptable.length >= 5) {
-    return primaryAcceptable.slice(0, 20);
+  // Merge trin 1 + 2 (URL-dedup)
+  const mergedAfterStep2 = deduplicateByUrl([...directDanish, ...gnDaAcceptable]);
+  if (mergedAfterStep2.length >= 5) {
+    return mergedAfterStep2.slice(0, 20);
   }
 
-  // ── Trin 2: Engelsk fallback-søgning "{navn} Denmark" ────────────────────────
-  // Aktiveres når den danske søgning returnerer < 5 acceptable artikler.
-  // Dette sker typisk for store internationale virksomheder (Novo Nordisk, Mærsk, Vestas)
-  // der primært dækkes af Reuters, Bloomberg, FT i stedet for danske medier.
+  // ── Trin 3: Google News engelsk fallback ─────────────────────────────────────
   console.log(
-    `[article-search] < 5 acceptable fra dansk søgning (${primaryAcceptable.length}) — prøver engelsk fallback`
+    `[article-search] < 5 samlet (${mergedAfterStep2.length}) — prøver Google News EN fallback`
   );
-
   const fallbackQuery = `${companyName} Denmark`;
-  const fallbackUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(fallbackQuery)}`;
-  let fallbackAcceptable: (RawNewsArticle & { _sourceDomain: string })[] = [];
+  const gnEnUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(fallbackQuery)}`;
+  let gnEnAcceptable: (RawNewsArticle & { _sourceDomain: string })[] = [];
 
   try {
-    const res = await fetch(fallbackUrl, {
+    const res = await fetch(gnEnUrl, {
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; BizzAssist/1.0)' },
       signal: AbortSignal.timeout(8000),
     });
     if (res.ok) {
       const xml = await res.text();
       const all = parseGoogleNewsXml(xml, 40);
-      fallbackAcceptable = filterAcceptableArticles(all);
+      gnEnAcceptable = filterAcceptableArticles(all);
       console.log(
-        `[article-search] FALLBACK (en): ${all.length} rå, ${all.length - fallbackAcceptable.length} blokeret, ${fallbackAcceptable.length} acceptable`
+        `[article-search] Google News EN: ${all.length} rå, ${gnEnAcceptable.length} acceptable`
       );
     }
   } catch (err) {
-    console.error('[article-search] Fallback Google News RSS fejl:', err);
+    console.error('[article-search] Google News EN fejl:', err);
   }
 
-  // Merge: primære resultater først, derefter unikke fallback-resultater (URL-dedup)
-  const primaryUrls = new Set(primaryAcceptable.map((a) => a.url));
-  const merged = [
-    ...primaryAcceptable,
-    ...fallbackAcceptable.filter((a) => !primaryUrls.has(a.url)),
-  ];
+  const final = deduplicateByUrl([...mergedAfterStep2, ...gnEnAcceptable]);
+  console.log(`[article-search] Samlet (alle trin): ${final.length} artikler`);
+  return final.slice(0, 20);
+}
 
-  console.log(
-    `[article-search] Samlet: ${merged.length} artikler (${primaryAcceptable.length} primære + ${merged.length - primaryAcceptable.length} fallback)`
-  );
-  return merged.slice(0, 20);
+/**
+ * Fjerner duplikerede URL'er fra en artikel-liste — beholder første forekomst.
+ *
+ * @param articles - Liste med potentielle dubletter
+ * @returns Deduplikeret liste
+ */
+function deduplicateByUrl(articles: RawNewsArticle[]): RawNewsArticle[] {
+  const seen = new Set<string>();
+  return articles.filter((a) => {
+    if (seen.has(a.url)) return false;
+    seen.add(a.url);
+    return true;
+  });
 }
 
 // ─── Handler ────────────────────────────────────────────────────────────────
@@ -579,11 +697,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'companyName er påkrævet' }, { status: 400 });
   }
 
-  // Hent artikler direkte fra Google News RSS (ingen HTTP-rundtur til /api/news)
-  const rawArticles = await fetchGoogleNewsArticles(companyName);
-  console.log(
-    `[article-search] Google News resultater for "${companyName}": ${rawArticles.length} artikler`
-  );
+  // Hent artikler via tre-trins strategi: direkte DK RSS → Google News DA → Google News EN
+  const rawArticles = await fetchArticles(companyName);
+  console.log(`[article-search] Artikler for "${companyName}": ${rawArticles.length} samlet`);
 
   // Byg virksomhedskontekst
   const companyContext = [

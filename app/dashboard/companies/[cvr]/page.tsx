@@ -47,6 +47,8 @@ import {
   Plus,
   Map as MapIcon,
   X,
+  Newspaper,
+  Globe,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';
@@ -58,7 +60,6 @@ import type { CvrHandelData } from '@/app/api/salgshistorik/cvr/route';
 import { saveRecentCompany } from '@/app/lib/recentCompanies';
 import { buildDiagramGraph } from '@/app/components/diagrams/DiagramData';
 import dynamic from 'next/dynamic';
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import VerifiedLinks from '@/app/components/VerifiedLinks';
 import {
   ResponsiveContainer,
@@ -372,6 +373,15 @@ export default function VirksomhedDetalje({ params }: PageProps) {
       window.removeEventListener('mouseup', onUp);
     };
   }, [trækker]);
+
+  /**
+   * Styrer om nyheder/sociale medier-panelet er synligt på desktop.
+   * Gensidigt eksklusivt med kortpanelet — kun ét panel ad gangen.
+   */
+  const [nyhedsPanelÅben, setNyhedsPanelÅben] = useState(false);
+
+  /** Styrer om mobil nyheder-overlay er åbent. */
+  const [mobilNyhederAaben, setMobilNyhederAaben] = useState(false);
 
   /**
    * Geocodede koordinater for virksomhedens adresse.
@@ -1030,7 +1040,9 @@ export default function VirksomhedDetalje({ params }: PageProps) {
               <button
                 onClick={() => {
                   if (visKort) {
-                    setKortPanelÅben((prev) => !prev);
+                    const åbner = !kortPanelÅben;
+                    setKortPanelÅben(åbner);
+                    if (åbner) setNyhedsPanelÅben(false);
                   } else {
                     setMobilKortAaben(true);
                   }
@@ -1044,6 +1056,27 @@ export default function VirksomhedDetalje({ params }: PageProps) {
               >
                 <MapIcon size={14} />
                 {lang === 'da' ? 'Kort' : 'Map'}
+              </button>
+              {/* Nyheder/sociale medier-toggle knap */}
+              <button
+                onClick={() => {
+                  if (visKort) {
+                    const åbner = !nyhedsPanelÅben;
+                    setNyhedsPanelÅben(åbner);
+                    if (åbner) setKortPanelÅben(false);
+                  } else {
+                    setMobilNyhederAaben(true);
+                  }
+                }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-sm transition-all ${
+                  (visKort && nyhedsPanelÅben) || (!visKort && mobilNyhederAaben)
+                    ? 'bg-blue-600/20 hover:bg-blue-600/30 border-blue-500/40 text-blue-300'
+                    : 'bg-slate-800 hover:bg-slate-700 border-slate-700/60 text-slate-300'
+                }`}
+                title={lang === 'da' ? 'Nyheder & sociale medier' : 'News & social media'}
+              >
+                <Newspaper size={14} />
+                {lang === 'da' ? 'Nyheder' : 'News'}
               </button>
               {/* Følg button */}
               <button
@@ -2981,6 +3014,112 @@ export default function VirksomhedDetalje({ params }: PageProps) {
           </div>
         </div>
       )}
+
+      {/* ─── Adskillelseslinie — nyheder (desktop) ─── */}
+      {visKort && nyhedsPanelÅben && data && <div className="w-1.5 flex-shrink-0 bg-slate-800" />}
+
+      {/* ─── Nyheder/sociale medier panel (desktop) ─── */}
+      {visKort && nyhedsPanelÅben && data && (
+        <div
+          className="flex-shrink-0 self-stretch flex flex-col overflow-hidden border-l border-slate-700/50"
+          style={{ width: 340 }}
+        >
+          {/* Panel-header */}
+          <div className="flex items-center justify-between px-4 py-3 bg-slate-900 border-b border-slate-700/50 flex-shrink-0">
+            <div className="flex items-center gap-2">
+              <Newspaper size={14} className="text-blue-400" />
+              <span className="text-white text-sm font-medium">
+                {lang === 'da' ? 'Nyheder & links' : 'News & links'}
+              </span>
+            </div>
+            <button
+              onClick={() => setNyhedsPanelÅben(false)}
+              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
+              aria-label={lang === 'da' ? 'Luk panel' : 'Close panel'}
+            >
+              <X size={14} />
+            </button>
+          </div>
+          {/* Panel-indhold */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-6">
+            {/* Sociale medier & links */}
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <Globe size={12} className="text-slate-500" />
+                <p className="text-slate-400 text-xs font-medium uppercase tracking-wide">
+                  {lang === 'da' ? 'Sociale medier & hjemmeside' : 'Social media & website'}
+                </p>
+              </div>
+              <VerifiedLinks
+                entityType="company"
+                entityId={cvr}
+                entityName={data.name}
+                lang={lang}
+              />
+            </div>
+            {/* Nyheder */}
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <Newspaper size={12} className="text-slate-500" />
+                <p className="text-slate-400 text-xs font-medium uppercase tracking-wide">
+                  {lang === 'da' ? 'Seneste nyheder' : 'Latest news'}
+                </p>
+              </div>
+              <CompanyNewsFeed companyName={data.name} cvr={cvr} lang={lang} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── Mobil: Nyheder-overlay — fylder hele skærmen ─── */}
+      {!visKort && mobilNyhederAaben && data && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-slate-950">
+          {/* Overlay-header */}
+          <div className="flex items-center justify-between px-4 py-3 bg-slate-900 border-b border-slate-700/50 flex-shrink-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <Newspaper size={15} className="text-blue-400 flex-shrink-0" />
+              <span className="text-white text-sm font-medium truncate">
+                {lang === 'da' ? 'Nyheder & links' : 'News & links'}
+              </span>
+            </div>
+            <button
+              onClick={() => setMobilNyhederAaben(false)}
+              className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors flex-shrink-0"
+              aria-label={lang === 'da' ? 'Luk' : 'Close'}
+            >
+              <X size={18} />
+            </button>
+          </div>
+          {/* Indhold */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-6">
+            {/* Sociale medier & links */}
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <Globe size={12} className="text-slate-500" />
+                <p className="text-slate-400 text-xs font-medium uppercase tracking-wide">
+                  {lang === 'da' ? 'Sociale medier & hjemmeside' : 'Social media & website'}
+                </p>
+              </div>
+              <VerifiedLinks
+                entityType="company"
+                entityId={cvr}
+                entityName={data.name}
+                lang={lang}
+              />
+            </div>
+            {/* Nyheder */}
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <Newspaper size={12} className="text-slate-500" />
+                <p className="text-slate-400 text-xs font-medium uppercase tracking-wide">
+                  {lang === 'da' ? 'Seneste nyheder' : 'Latest news'}
+                </p>
+              </div>
+              <CompanyNewsFeed companyName={data.name} cvr={cvr} lang={lang} />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2991,7 +3130,6 @@ export default function VirksomhedDetalje({ params }: PageProps) {
  * Viser nyheder fra troværdige kilder for en given virksomhed.
  * Søger via Google News-lignende query med firmanavn.
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function CompanyNewsFeed({
   companyName,
   cvr,

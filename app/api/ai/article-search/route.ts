@@ -40,9 +40,21 @@ interface ArticleResult {
   description?: string;
 }
 
+/** Sociale medier og hjemmeside-links fundet af Claude */
+interface SocialsResult {
+  website?: string;
+  facebook?: string;
+  linkedin?: string;
+  instagram?: string;
+  twitter?: string;
+  youtube?: string;
+}
+
 /** Svar-format fra API'en */
 interface ArticleSearchResponse {
   articles: ArticleResult[];
+  socials: SocialsResult;
+  tokensUsed: number;
   usage: { totalTokens: number };
 }
 
@@ -66,15 +78,20 @@ interface RawNewsArticle {
 
 // ─── System prompt ──────────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT = `Du er en AI-assistent specialiseret i at finde og rangere nyheder om danske virksomheder.
+const SYSTEM_PROMPT = `Du er en AI-assistent specialiseret i at finde nyheder og officielle sociale medier-profiler for danske virksomheder.
 
-Du modtager en liste af artikler hentet fra danske RSS-feeds (Børsen, Berlingske, Politiken, DR, Altinget m.fl.).
+Du modtager en liste af artikler hentet fra danske RSS-feeds og virksomhedsoplysninger.
 
 Din opgave:
 1. Filtrer og behold KUN artikler der direkte handler om den angivne virksomhed
 2. Sortér nyeste artikler først
 3. Tilføj en kort beskrivelse (max 120 tegn) til hver artikel baseret på titlen
-4. Returner max 10 af de mest relevante artikler
+4. Returner PRÆCIS 10 af de mest relevante artikler (eller færre hvis under 10 er relevante)
+5. Find virksomhedens officielle sociale medier og hjemmeside baseret på virksomhedsnavnet
+
+For sociale medier: brug din viden om kendte danske virksomheder til at angive de officielle URL'er.
+Eksempel: Novo Nordisk → linkedin: "https://www.linkedin.com/company/novo-nordisk", website: "https://www.novonordisk.com"
+Hvis du ikke kender den præcise URL, sæt feltet til null (medtag det ikke).
 
 MEGET VIGTIGT: Returner KUN validt JSON i PRÆCIS dette format — ingen tekst før eller efter:
 
@@ -87,10 +104,19 @@ MEGET VIGTIGT: Returner KUN validt JSON i PRÆCIS dette format — ingen tekst f
       "date": "Dato som tekst (bevar original format)",
       "description": "Kort beskrivelse på max 120 tegn"
     }
-  ]
+  ],
+  "socials": {
+    "website": "https://virksomhed.dk",
+    "linkedin": "https://www.linkedin.com/company/virksomhed",
+    "facebook": "https://www.facebook.com/virksomhed",
+    "instagram": "https://www.instagram.com/virksomhed",
+    "twitter": "https://x.com/virksomhed",
+    "youtube": "https://www.youtube.com/@virksomhed"
+  }
 }
 
-Hvis ingen artikler er relevante for den angivne virksomhed, returner: {"articles": []}`;
+Udelad sociale medie-felter du ikke kender præcist (brug ikke google-søge-links, kun direkte profil-URLs).
+Hvis ingen artikler er relevante: sæt "articles" til [] — men returner ALTID "socials" med de kendte URLs.`;
 
 // ─── Response parser ─────────────────────────────────────────────────────────
 
@@ -98,20 +124,21 @@ Hvis ingen artikler er relevante for den angivne virksomhed, returner: {"article
  * Udtrækker JSON fra Claude's tekstsvar og parser det til strukturerede data.
  *
  * @param text - Rå tekstsvar fra Claude
- * @returns Parsede artikler
+ * @returns Parsede artikler og sociale medier-links
  */
-function parseArticleResponse(text: string): ArticleResult[] {
+function parseArticleResponse(text: string): { articles: ArticleResult[]; socials: SocialsResult } {
+  const empty = { articles: [], socials: {} };
   try {
     const jsonMatch =
       text.match(/```json\s*([\s\S]*?)\s*```/) ??
       text.match(/```\s*([\s\S]*?)\s*```/) ??
       text.match(/(\{[\s\S]*\})/);
 
-    if (!jsonMatch) return [];
+    if (!jsonMatch) return empty;
 
     const raw = JSON.parse(jsonMatch[1] ?? jsonMatch[0]);
 
-    return (raw.articles ?? [])
+    const articles: ArticleResult[] = (raw.articles ?? [])
       .filter(
         (a: Record<string, unknown>) =>
           typeof a.title === 'string' && typeof a.url === 'string' && a.url.startsWith('http')
@@ -124,8 +151,28 @@ function parseArticleResponse(text: string): ArticleResult[] {
         date: a.date ? String(a.date).trim() : undefined,
         description: a.description ? String(a.description).trim().slice(0, 150) : undefined,
       }));
+
+    // Udtræk sociale medier — bevar kun felter med gyldige https-URLs
+    const rawSocials = raw.socials ?? {};
+    const socials: SocialsResult = {};
+    const socialKeys: (keyof SocialsResult)[] = [
+      'website',
+      'facebook',
+      'linkedin',
+      'instagram',
+      'twitter',
+      'youtube',
+    ];
+    for (const key of socialKeys) {
+      const val = rawSocials[key];
+      if (typeof val === 'string' && val.startsWith('https://')) {
+        socials[key] = val.trim();
+      }
+    }
+
+    return { articles, socials };
   } catch {
-    return [];
+    return empty;
   }
 }
 
@@ -148,7 +195,8 @@ async function fetchRssArticles(baseUrl: string, companyName: string): Promise<R
     if (!res.ok) return [];
     const data = await res.json();
     return Array.isArray(data) ? data : [];
-  } catch {
+  } catch (err) {
+    console.error('[article-search] fetchRssArticles fejl:', err);
     return [];
   }
 }
@@ -190,6 +238,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   // Hent artikler fra /api/news (danske RSS-feeds — gratis, ingen beta krævet)
   const rawArticles = await fetchRssArticles(baseUrl, companyName);
+  console.log(
+    `[article-search] RSS-feed resultater for "${companyName}": ${rawArticles.length} artikler`
+  );
 
   // Byg virksomhedskontekst
   const companyContext = [
@@ -221,7 +272,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
     // Enkelt Claude-kald uden tools — samme pattern som AI Business Assistent
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-6',
       max_tokens: 2048,
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userMessage }],
@@ -237,10 +288,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       .map((b) => b.text)
       .join('');
 
-    const articles = parseArticleResponse(finalText);
+    const { articles, socials } = parseArticleResponse(finalText);
+    if (articles.length === 0) {
+      console.warn(
+        '[article-search] Claude svarede men ingen artikler kunne parses. Råsvar:',
+        finalText.slice(0, 500)
+      );
+    }
 
     const result: ArticleSearchResponse = {
       articles,
+      socials,
+      tokensUsed: totalTokens,
       usage: { totalTokens },
     };
 

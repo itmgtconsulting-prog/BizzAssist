@@ -74,7 +74,7 @@ async function fetchRitzauVia(searchTerms: string[]): Promise<NewsArticle[]> {
       // Match søgetermer i titel og evt. brødtekst
       const body = (r.body ?? r.text ?? r.summary ?? '').replace(/<[^>]+>/g, '');
       const searchText = (title + ' ' + body).toLowerCase();
-      if (!searchTerms.every((term) => searchText.includes(term))) continue;
+      if (!searchTerms.some((term) => searchText.includes(term))) continue;
 
       let timestamp = 0;
       let date: string | undefined;
@@ -192,6 +192,49 @@ async function fetchRitzauNews(query: string): Promise<NewsArticle[]> {
 
 // ─── Direkte danske RSS-feeds (fallback) ────────────────────────────────────
 
+// ─── Google News RSS (søgespecifikt) ────────────────────────────────────────
+
+/**
+ * Henter søgespecifikke artikler fra Google News RSS.
+ * Disse er allerede filtreret af Google — ingen yderligere filtrering nødvendig.
+ *
+ * @param query - Søgeterm (f.eks. "Novo Nordisk")
+ * @returns Artikler matchende søgetermen fra Google News
+ */
+async function fetchGoogleNewsRss(query: string): Promise<NewsArticle[]> {
+  const urls = [
+    `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=da&gl=DK&ceid=DK:da`,
+    `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=en&gl=DK&ceid=DK:en`,
+  ];
+
+  const results = await Promise.allSettled(
+    urls.map(async (url) => {
+      const res = await fetch(url, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; BizzAssist/1.0)' },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) return [];
+      const xml = await res.text();
+      // Google News returnerer alle artikler uden filtrering nødvendigt
+      return parseRssFeed(xml, 'Google News', 'news.google.com', ['']); // tom term matcher alt
+    })
+  );
+
+  const articles: NewsArticle[] = [];
+  const seenUrls = new Set<string>();
+  for (const r of results) {
+    if (r.status === 'fulfilled') {
+      for (const a of r.value) {
+        if (!seenUrls.has(a.url)) {
+          seenUrls.add(a.url);
+          articles.push(a);
+        }
+      }
+    }
+  }
+  return articles;
+}
+
 /** Danske RSS-feeds — verificerede og fungerende */
 const RSS_FEEDS = [
   { name: 'Børsen', domain: 'borsen.dk', url: 'https://borsen.dk/rss' },
@@ -206,6 +249,23 @@ const RSS_FEEDS = [
   { name: 'Altinget', domain: 'altinget.dk', url: 'https://www.altinget.dk/rss' },
   { name: 'Ingeniøren', domain: 'ing.dk', url: 'https://ing.dk/rss' },
   { name: 'Version2', domain: 'version2.dk', url: 'https://www.version2.dk/rss' },
+  { name: 'TV2 Nyheder', domain: 'tv2.dk', url: 'https://feeds.tv2.dk/nyheder/rss' },
+  { name: 'TV2 Business', domain: 'tv2.dk', url: 'https://feeds.tv2.dk/business/rss' },
+  {
+    name: 'Jyllands-Posten',
+    domain: 'jyllands-posten.dk',
+    url: 'https://jyllands-posten.dk/rss/',
+  },
+  { name: 'Information', domain: 'information.dk', url: 'https://www.information.dk/rss' },
+  {
+    name: 'Computerworld',
+    domain: 'computerworld.dk',
+    url: 'https://www.computerworld.dk/rss/all',
+  },
+  { name: 'FinansWatch', domain: 'finanswatch.dk', url: 'https://finanswatch.dk/rss' },
+  { name: 'MedWatch', domain: 'medwatch.dk', url: 'https://medwatch.dk/rss' },
+  { name: 'EnergiWatch', domain: 'energiwatch.dk', url: 'https://energiwatch.dk/rss' },
+  { name: 'ShippingWatch', domain: 'shippingwatch.dk', url: 'https://shippingwatch.dk/rss' },
 ];
 
 /** Parse RSS XML og returnér artikler der matcher søgetermen */
@@ -237,7 +297,21 @@ function parseRssFeed(
     const desc = decodeHtmlEntities((descMatch?.[1] ?? '').replace(/<[^>]+>/g, ''));
 
     const searchText = (title + ' ' + desc).toLowerCase();
-    if (!searchTerms.every((term) => searchText.includes(term))) continue;
+    // Tomt søgeterm ('') matcher alt — bruges til Google News (allerede søgespecifik)
+    if (!searchTerms.some((term) => term === '' || searchText.includes(term))) continue;
+
+    // Google News: udled faktisk kilde fra <source> tag hvis tilgængeligt
+    let resolvedName = feedName;
+    let resolvedDomain = feedDomain;
+    const sourceTagMatch = item.match(/<source[^>]*url="([^"]+)"[^>]*>(.*?)<\/source>/);
+    if (sourceTagMatch) {
+      resolvedName = decodeHtmlEntities(sourceTagMatch[2].trim()) || feedName;
+      try {
+        resolvedDomain = new URL(sourceTagMatch[1]).hostname.replace(/^www\./, '');
+      } catch {
+        /* bevar feedDomain */
+      }
+    }
 
     let date: string | undefined;
     let timestamp = 0;
@@ -255,9 +329,9 @@ function parseRssFeed(
     articles.push({
       title,
       url,
-      source: feedName,
-      sourceDomain: feedDomain,
-      favicon: `https://www.google.com/s2/favicons?sz=32&domain=${feedDomain}`,
+      source: resolvedName,
+      sourceDomain: resolvedDomain,
+      favicon: `https://www.google.com/s2/favicons?sz=32&domain=${resolvedDomain}`,
       date,
       timestamp,
     });
@@ -289,34 +363,59 @@ async function fetchDanskeRssFeeds(searchTerms: string[]): Promise<NewsArticle[]
 
 // ─── Main Handler ───────────────────────────────────────────────────────────
 
+/**
+ * Renser et virksomhedsnavn for juridiske suffikser (A/S, ApS, I/S m.fl.)
+ * og returnerer en liste af søgetermer der er lange nok til at matche artikler.
+ *
+ * @param q - Rå søgestreng (f.eks. "Novo Nordisk A/S")
+ * @returns Array af lowercase søgetermer uden suffikser
+ */
+function buildSearchTerms(q: string): string[] {
+  // Fjern kendte danske selskabsformer, tegnsætning og whitespace-varianter
+  const cleaned = q
+    .replace(
+      /\b(a\/s|aps|apS|ApS|a\.p\.s|i\/s|p\/s|k\/s|ivs|smba|fmba|mbba|a\.m\.b\.a|f\.m\.b\.a|s\.m\.b\.a)\b/gi,
+      ''
+    )
+    .replace(/[.,;:!?()[\]{}&]/g, ' ')
+    .trim();
+
+  return cleaned
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((t) => t.length > 2); // kræv min. 3 tegn for at undgå falske match
+}
+
 export async function GET(req: NextRequest) {
   const q = req.nextUrl.searchParams.get('q') ?? '';
   if (!q.trim()) {
     return NextResponse.json([], { status: 200 });
   }
 
-  const searchTerms = q
-    .toLowerCase()
-    .split(/\s+/)
-    .filter((t) => t.length > 1);
+  const searchTerms = buildSearchTerms(q);
   if (searchTerms.length === 0) {
     return NextResponse.json([], { status: 200 });
   }
 
   try {
-    // Hent fra alle kilder parallelt — Ritzau har prioritet
-    const [ritzauNews, ritzauVia, rssArticles] = await Promise.all([
+    // Hent fra alle kilder parallelt — Ritzau har prioritet, Google News er søgespecifik
+    const [ritzauNews, ritzauVia, rssArticles, googleNewsArticles] = await Promise.all([
       fetchRitzauNews(q),
       fetchRitzauVia(searchTerms),
       fetchDanskeRssFeeds(searchTerms),
+      fetchGoogleNewsRss(q),
     ]);
 
-    // Saml alle artikler — Ritzau Nyhedstjenesten først, derefter Via, derefter RSS
+    console.log(
+      `[news] Resultater for "${q}": Ritzau=${ritzauNews.length}, RitzauVia=${ritzauVia.length}, RSS=${rssArticles.length}, GoogleNews=${googleNewsArticles.length}`
+    );
+
+    // Saml alle artikler — Ritzau Nyhedstjenesten først, derefter Via, derefter RSS, derefter Google News
     const allArticles: NewsArticle[] = [];
     const seenUrls = new Set<string>();
     const seenTitles = new Set<string>();
 
-    for (const article of [...ritzauNews, ...ritzauVia, ...rssArticles]) {
+    for (const article of [...ritzauNews, ...ritzauVia, ...rssArticles, ...googleNewsArticles]) {
       if (seenUrls.has(article.url)) continue;
       const normalTitle = article.title
         .toLowerCase()
@@ -331,8 +430,8 @@ export async function GET(req: NextRequest) {
     // Sortér nyeste først
     allArticles.sort((a, b) => b.timestamp - a.timestamp);
 
-    // Returnér max 10
-    const response = allArticles.slice(0, 10).map(({ timestamp: _, ...rest }) => rest);
+    // Returnér max 30 (Claude filtrerer ned til 10 relevante)
+    const response = allArticles.slice(0, 30).map(({ timestamp: _, ...rest }) => rest);
 
     return NextResponse.json(response, {
       status: 200,

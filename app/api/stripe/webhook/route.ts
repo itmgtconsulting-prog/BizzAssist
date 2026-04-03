@@ -274,16 +274,34 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice): Promise<void> {
 
   // Get subscription to find user ID and plan
   const sub = await stripe!.subscriptions.retrieve(subscriptionId);
-  const userId = sub.metadata?.supabase_user_id;
+  let userId = sub.metadata?.supabase_user_id;
+
+  const admin = createAdminClient();
+
+  // Fallback: look up user by Stripe customer ID if metadata is missing.
+  // This handles subscriptions assigned via admin panel (not through checkout flow).
   if (!userId) {
-    console.error(
-      '[stripe/webhook] invoice.payment_succeeded: subscription missing supabase_user_id'
+    const customerId =
+      typeof sub.customer === 'string' ? sub.customer : (sub.customer as { id?: string })?.id;
+    if (customerId) {
+      const { data: usersPage } = await admin.auth.admin.listUsers({ perPage: 1000 });
+      const match = usersPage?.users?.find(
+        (u) => (u.app_metadata?.stripe_customer_id as string | undefined) === customerId
+      );
+      if (match?.id) userId = match.id;
+    }
+    if (!userId) {
+      console.error(
+        '[stripe/webhook] invoice.payment_succeeded: could not resolve user from subscription metadata or customer ID'
+      );
+      return;
+    }
+    console.log(
+      `[stripe/webhook] invoice.payment_succeeded: resolved user ${userId} via Stripe customer ID fallback`
     );
-    return;
   }
 
   // Get user email from Supabase
-  const admin = createAdminClient();
   const { data: userData } = await admin.auth.admin.getUserById(userId);
   const userEmail = userData?.user?.email;
   if (!userEmail) {
@@ -302,13 +320,20 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice): Promise<void> {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.bizzassist.dk';
   const cancelUrl = `${appUrl}/dashboard/settings`;
 
-  // Plan name mapping
-  const planNames: Record<string, string> = {
+  // Resolve plan display name: check DB first, then hardcoded fallbacks, then raw plan ID
+  const { data: planRow } = await admin
+    .from('plan_configs')
+    .select('name_da')
+    .eq('plan_id', planId)
+    .single();
+  const hardcodedNames: Record<string, string> = {
     basis: 'Basis',
     professionel: 'Professionel',
     enterprise: 'Enterprise',
+    demo: 'Demo',
   };
-  const planName = planNames[planId] ?? planId;
+  const planName =
+    (planRow as { name_da?: string } | null)?.name_da ?? hardcodedNames[planId] ?? planId;
 
   // Send email (fire-and-forget — don't block webhook response)
   sendRecurringPaymentEmail({

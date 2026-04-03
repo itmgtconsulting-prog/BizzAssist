@@ -53,6 +53,8 @@ export interface TinglysningData {
 /** Cert path + password fra env */
 const CERT_PATH = process.env.NEMLOGIN_DEVTEST4_CERT_PATH ?? '';
 const CERT_PASSWORD = process.env.NEMLOGIN_DEVTEST4_CERT_PASSWORD ?? '';
+/** Base64-encodet certifikat — bruges i serverless (Vercel) hvor filsystemet ikke er tilgængeligt */
+const CERT_B64 = process.env.NEMLOGIN_DEVTEST4_CERT_B64 ?? '';
 
 /** Base URL — test vs prod */
 const TL_BASE = process.env.TINGLYSNING_BASE_URL ?? 'https://test.tinglysning.dk';
@@ -63,13 +65,17 @@ const TL_API_PATH = '/tinglysning/ssl';
 /** Laver HTTPS request med client-certifikat (mTLS) */
 function tlFetch(urlPath: string): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
-    const certAbsPath = path.resolve(CERT_PATH);
-    if (!fs.existsSync(certAbsPath)) {
-      reject(new Error('Certifikat ikke fundet: ' + certAbsPath));
-      return;
+    let pfx: Buffer;
+    if (CERT_B64) {
+      pfx = Buffer.from(CERT_B64, 'base64');
+    } else {
+      const certAbsPath = path.resolve(CERT_PATH);
+      if (!fs.existsSync(certAbsPath)) {
+        reject(new Error('Certifikat ikke fundet: ' + certAbsPath));
+        return;
+      }
+      pfx = fs.readFileSync(certAbsPath);
     }
-
-    const pfx = fs.readFileSync(certAbsPath);
     const url = new URL(TL_BASE + TL_API_PATH + urlPath);
 
     const req = https.request(
@@ -141,7 +147,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'bfe parameter er påkrævet (numerisk)' }, { status: 400 });
   }
 
-  if (!CERT_PATH || !CERT_PASSWORD) {
+  if ((!CERT_PATH && !CERT_B64) || !CERT_PASSWORD) {
     return NextResponse.json(
       { error: 'Tinglysning certifikat ikke konfigureret' },
       { status: 503 }

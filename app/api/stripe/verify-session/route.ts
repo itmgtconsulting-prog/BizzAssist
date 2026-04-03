@@ -112,16 +112,29 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         }
       }
 
-      const plan = resolvePlan(String(planId ?? 'demo'));
       const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
       const cancelUrl = `${appUrl}/dashboard/settings?tab=abonnement`;
 
       if (user.email) {
+        // Resolve plan name and price: DB first (handles custom plans like "test"/"test2"),
+        // then hardcoded fallback, then raw plan ID. resolvePlan() is client-side cache only
+        // and must NOT be relied on for server-side rendering.
+        const { data: planDbRow } = await admin
+          .from('plan_configs')
+          .select('name_da, price_dkk')
+          .eq('plan_id', String(planId ?? ''))
+          .single();
+        const plan = resolvePlan(String(planId ?? 'demo'));
+        const resolvedPriceDkk =
+          (planDbRow as { price_dkk?: number } | null)?.price_dkk ?? plan.priceDkk;
+        const resolvedNameDa = (planDbRow as { name_da?: string } | null)?.name_da ?? plan.nameDa;
+        const resolvedNameEn = plan.nameEn;
+
         // Fire-and-forget — do not block the response
         sendPaymentConfirmationEmail({
           to: user.email,
-          planName: `${plan.nameDa} / ${plan.nameEn}`,
-          priceDkk: plan.priceDkk,
+          planName: `${resolvedNameDa} / ${resolvedNameEn}`,
+          priceDkk: resolvedPriceDkk,
           periodEnd: periodEnd ?? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
           cancelUrl,
         }).catch((emailErr) => {

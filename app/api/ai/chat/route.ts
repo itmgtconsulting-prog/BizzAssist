@@ -441,7 +441,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   const limited = rateLimit(request, AI_CHAT_LIMIT);
   if (limited) return limited;
 
-  const apiKey = process.env.BIZZASSIST_CLAUDE_KEY;
+  const apiKey = process.env.BIZZASSIST_CLAUDE_KEY?.trim();
   if (!apiKey) {
     return Response.json(
       { error: 'BIZZASSIST_CLAUDE_KEY ikke konfigureret. Tilføj den i .env.local' },
@@ -499,7 +499,7 @@ export async function POST(request: NextRequest): Promise<Response> {
 
           // Call Claude (non-streaming for tool rounds, streaming for final)
           const response = await client.messages.create({
-            model: 'claude-sonnet-4-20250514',
+            model: 'claude-sonnet-4-6',
             max_tokens: 4096,
             system: systemPrompt,
             tools: TOOLS,

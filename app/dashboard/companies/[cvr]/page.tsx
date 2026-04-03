@@ -11,7 +11,7 @@
  * @param params.cvr - 8-cifret CVR-nummer fra URL
  */
 
-import { useState, useEffect, use, useCallback, useRef, useMemo, Suspense } from 'react';
+import { useState, useEffect, use, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -45,10 +45,12 @@ import {
   ChevronRight,
   Percent,
   Plus,
-  Map as MapIcon,
   X,
   Newspaper,
   Globe,
+  Sparkles,
+  Lock,
+  Zap,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';
@@ -58,6 +60,9 @@ import type { RegnskabsAar } from '@/app/api/regnskab/xbrl/route';
 import type { RelateretVirksomhed } from '@/app/api/cvr-public/related/route';
 import type { CvrHandelData } from '@/app/api/salgshistorik/cvr/route';
 import { saveRecentCompany } from '@/app/lib/recentCompanies';
+import { useSubscription } from '@/app/context/SubscriptionContext';
+import { useSubscriptionAccess } from '@/app/components/SubscriptionGate';
+import { resolvePlan, formatTokens, isSubscriptionFunctional } from '@/app/lib/subscriptions';
 import { buildDiagramGraph } from '@/app/components/diagrams/DiagramData';
 import dynamic from 'next/dynamic';
 import VerifiedLinks from '@/app/components/VerifiedLinks';
@@ -73,11 +78,6 @@ import {
 
 /** Lazy-loaded diagram variants (heavy dependencies) */
 const DiagramForce = dynamic(() => import('@/app/components/diagrams/DiagramForce'), {
-  ssr: false,
-});
-
-/** Lazy-loaded kortkomponent — tung Mapbox-afhængighed */
-const PropertyMap = dynamic(() => import('@/app/components/ejendomme/PropertyMap'), {
   ssr: false,
 });
 
@@ -317,97 +317,22 @@ export default function VirksomhedDetalje({ params }: PageProps) {
 
   /**
    * JS-baseret breakpoint detektion (≥900px).
-   * Viser kortpanel på desktop, skjuler på mobil (FAB-knap i stedet).
+   * Viser nyheder-sidepanel på desktop, overlay på mobil.
    */
-  const [visKort, setVisKort] = useState(true);
+  const [isDesktop, setIsDesktop] = useState(true);
   useEffect(() => {
     const mq = window.matchMedia('(min-width: 900px)');
-    setVisKort(mq.matches);
-    const handler = (e: MediaQueryListEvent) => setVisKort(e.matches);
+    setIsDesktop(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
     mq.addEventListener('change', handler);
     return () => mq.removeEventListener('change', handler);
   }, []);
 
-  /** Styrer om mobil-kortoverlay er åbent. */
-  const [mobilKortAaben, setMobilKortAaben] = useState(false);
-
-  /**
-   * Styrer om kortpanelet er synligt på desktop.
-   * Brugeren kan toggle panelet via knappen i headeren.
-   * Har ingen effekt på mobil (mobilKortAaben styrer overlay der).
-   */
-  const [kortPanelÅben, setKortPanelÅben] = useState(true);
-
-  /**
-   * Kortpanel-bredde i px — kan trækkes af brugeren via adskillelseslinien.
-   * Standard 360 px, min 200 px, max 700 px.
-   */
-  const [kortBredde, setKortBredde] = useState(360);
-
-  /** True mens brugeren trækker adskillelseslinien. */
-  const [trækker, setTrækker] = useState(false);
-
-  /** Gemmer startpunktet for en drag-operation. */
-  const trækStart = useRef<{ x: number; bredde: number } | null>(null);
-
-  /**
-   * Globale drag-handlers — kun aktive mens trækker === true.
-   * Bevægelse mod venstre øger kortbredden og omvendt.
-   */
-  useEffect(() => {
-    if (!trækker) return;
-    function onMove(e: MouseEvent) {
-      if (!trækStart.current) return;
-      const delta = trækStart.current.x - e.clientX;
-      const nyBredde = Math.min(700, Math.max(200, trækStart.current.bredde + delta));
-      setKortBredde(nyBredde);
-    }
-    function onUp() {
-      setTrækker(false);
-      trækStart.current = null;
-    }
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-    return () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
-  }, [trækker]);
-
-  /**
-   * Styrer om nyheder/sociale medier-panelet er synligt på desktop.
-   * Gensidigt eksklusivt med kortpanelet — kun ét panel ad gangen.
-   */
+  /** Styrer om nyheder/sociale medier-panelet er synligt på desktop. */
   const [nyhedsPanelÅben, setNyhedsPanelÅben] = useState(false);
 
   /** Styrer om mobil nyheder-overlay er åbent. */
   const [mobilNyhederAaben, setMobilNyhederAaben] = useState(false);
-
-  /**
-   * Geocodede koordinater for virksomhedens adresse.
-   * Hentes via /api/adresse/autocomplete når data er tilgængeligt.
-   */
-  const [kortKoordinater, setKortKoordinater] = useState<{ lat: number; lng: number } | null>(null);
-
-  /**
-   * Geokoder virksomhedens adresse til koordinater via DAR autocomplete.
-   * Kun aktiv når data er hentet og visKort er true.
-   */
-  useEffect(() => {
-    if (!data?.address || !data.zipcode || !data.city) return;
-    const q = `${data.address}, ${data.zipcode} ${data.city}`;
-    fetch(`/api/adresse/autocomplete?q=${encodeURIComponent(q)}`)
-      .then((res) => (res.ok ? res.json() : []))
-      .then((results: { data?: { x?: number; y?: number } }[]) => {
-        const first = results[0];
-        if (first?.data?.x && first?.data?.y) {
-          setKortKoordinater({ lat: first.data.y, lng: first.data.x });
-        }
-      })
-      .catch(() => {
-        /* stille fejl — kort vises bare uden koordinater */
-      });
-  }, [data?.address, data?.zipcode, data?.city]);
 
   /** Regnskab state — lazy-loaded when financials tab is activated */
   const [regnskaber, setRegnskaber] = useState<Regnskab[] | null>(null);
@@ -1016,12 +941,8 @@ export default function VirksomhedDetalje({ params }: PageProps) {
     return acc;
   }, {});
 
-  const adresseStreng = data
-    ? `${data.address}${data.addressco ? `, ${data.addressco}` : ''}, ${data.zipcode} ${data.city}`
-    : '';
-
   return (
-    <div className={`flex-1 flex overflow-hidden${trækker ? ' select-none' : ''}`}>
+    <div className="flex-1 flex overflow-hidden">
       {/* ─── Left: Main Content ─── */}
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         {/* ─── Sticky Header ─── */}
@@ -1036,44 +957,21 @@ export default function VirksomhedDetalje({ params }: PageProps) {
               {c.title}
             </button>
             <div className="flex items-center gap-2">
-              {/* Kort-toggle knap — åbner overlay på mobil, toggle sidepanel på desktop */}
+              {/* Nyheder/AI-søgning toggle knap */}
               <button
                 onClick={() => {
-                  if (visKort) {
-                    const åbner = !kortPanelÅben;
-                    setKortPanelÅben(åbner);
-                    if (åbner) setNyhedsPanelÅben(false);
-                  } else {
-                    setMobilKortAaben(true);
-                  }
-                }}
-                className={`flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-sm transition-all ${
-                  visKort && kortPanelÅben
-                    ? 'bg-blue-600/20 hover:bg-blue-600/30 border-blue-500/40 text-blue-300'
-                    : 'bg-slate-800 hover:bg-slate-700 border-slate-700/60 text-slate-300'
-                }`}
-                title={lang === 'da' ? 'Vis/skjul kort' : 'Show/hide map'}
-              >
-                <MapIcon size={14} />
-                {lang === 'da' ? 'Kort' : 'Map'}
-              </button>
-              {/* Nyheder/sociale medier-toggle knap */}
-              <button
-                onClick={() => {
-                  if (visKort) {
-                    const åbner = !nyhedsPanelÅben;
-                    setNyhedsPanelÅben(åbner);
-                    if (åbner) setKortPanelÅben(false);
+                  if (isDesktop) {
+                    setNyhedsPanelÅben((prev) => !prev);
                   } else {
                     setMobilNyhederAaben(true);
                   }
                 }}
                 className={`flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-sm transition-all ${
-                  (visKort && nyhedsPanelÅben) || (!visKort && mobilNyhederAaben)
+                  (isDesktop && nyhedsPanelÅben) || (!isDesktop && mobilNyhederAaben)
                     ? 'bg-blue-600/20 hover:bg-blue-600/30 border-blue-500/40 text-blue-300'
                     : 'bg-slate-800 hover:bg-slate-700 border-slate-700/60 text-slate-300'
                 }`}
-                title={lang === 'da' ? 'Nyheder & sociale medier' : 'News & social media'}
+                title={lang === 'da' ? 'Nyheder & AI artikel søgning' : 'News & AI article search'}
               >
                 <Newspaper size={14} />
                 {lang === 'da' ? 'Nyheder' : 'News'}
@@ -2882,144 +2780,11 @@ export default function VirksomhedDetalje({ params }: PageProps) {
       </div>
       {/* END left: main content */}
 
-      {/* ─── Adskillelseslinie (desktop) ─── */}
-      {visKort && kortPanelÅben && (
-        <div
-          className={`w-1.5 flex-shrink-0 cursor-col-resize flex items-center justify-center group transition-colors ${trækker ? 'bg-blue-500/30' : 'bg-slate-800 hover:bg-blue-500/20'}`}
-          onMouseDown={(e) => {
-            e.preventDefault();
-            trækStart.current = { x: e.clientX, bredde: kortBredde };
-            setTrækker(true);
-          }}
-        >
-          <div
-            className={`w-0.5 h-10 rounded-full transition-colors ${trækker ? 'bg-blue-400' : 'bg-slate-600 group-hover:bg-blue-400'}`}
-          />
-        </div>
-      )}
-
-      {/* ─── Kortpanel (desktop) — strækker fuld højde ─── */}
-      {visKort && kortPanelÅben && (
-        <div className="relative flex-shrink-0 self-stretch" style={{ width: kortBredde }}>
-          {/* Åbn på fuldt kort */}
-          <Link
-            href={kortKoordinater ? `/dashboard/kort` : '/dashboard/kort'}
-            className="absolute top-3 right-3 z-20 flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-900/90 hover:bg-slate-800 border border-slate-700 rounded-lg text-slate-300 text-xs font-medium shadow-lg transition-all"
-            title={lang === 'da' ? 'Åbn fuldt kort' : 'Open full map'}
-          >
-            <MapIcon size={12} />
-            {lang === 'da' ? 'Fuldt kort' : 'Full map'}
-          </Link>
-          <div className="absolute inset-0">
-            {kortKoordinater ? (
-              <Suspense
-                fallback={
-                  <div className="w-full h-full flex items-center justify-center bg-slate-900">
-                    <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-                  </div>
-                }
-              >
-                <PropertyMap
-                  lat={kortKoordinater.lat}
-                  lng={kortKoordinater.lng}
-                  adresse={adresseStreng}
-                  visMatrikel={false}
-                />
-              </Suspense>
-            ) : (
-              <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900 gap-3">
-                {loading ? (
-                  <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-                ) : (
-                  <>
-                    <MapPin size={32} className="text-slate-600" />
-                    <p className="text-slate-500 text-xs text-center px-4">
-                      {lang === 'da'
-                        ? 'Kortkoordinater ikke tilgængelige'
-                        : 'Map coordinates unavailable'}
-                    </p>
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* ─── Mobil: FAB-kortknap — kun synlig på skærme under 900px ─── */}
-      {!visKort && (
-        <button
-          onClick={() => setMobilKortAaben(true)}
-          className="fixed bottom-20 right-4 z-40 flex items-center gap-2 px-4 py-3 bg-blue-600 hover:bg-blue-500 active:scale-95 rounded-full text-white shadow-2xl transition-all"
-          aria-label={lang === 'da' ? 'Åbn kort' : 'Open map'}
-        >
-          <MapIcon size={18} />
-          <span className="text-sm font-semibold">{lang === 'da' ? 'Kort' : 'Map'}</span>
-        </button>
-      )}
-
-      {/* ─── Mobil: Kortoverlay — fylder hele skærmen ─── */}
-      {!visKort && mobilKortAaben && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-slate-950">
-          {/* Overlay-header */}
-          <div className="flex items-center justify-between px-4 py-3 bg-slate-900 border-b border-slate-700/50 flex-shrink-0">
-            <div className="flex items-center gap-2 min-w-0">
-              <MapIcon size={15} className="text-blue-400 flex-shrink-0" />
-              <span className="text-white text-sm font-medium truncate">{adresseStreng}</span>
-            </div>
-            <div className="flex items-center gap-2 flex-shrink-0 ml-3">
-              <Link
-                href="/dashboard/kort"
-                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-slate-300 text-xs font-medium transition-all"
-              >
-                <MapIcon size={11} />
-                {lang === 'da' ? 'Fuldt kort' : 'Full map'}
-              </Link>
-              <button
-                onClick={() => setMobilKortAaben(false)}
-                className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors"
-                aria-label={lang === 'da' ? 'Luk kort' : 'Close map'}
-              >
-                <X size={18} />
-              </button>
-            </div>
-          </div>
-          {/* Kortindhold */}
-          <div className="flex-1 relative">
-            {kortKoordinater ? (
-              <Suspense
-                fallback={
-                  <div className="absolute inset-0 flex items-center justify-center bg-slate-900">
-                    <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-                  </div>
-                }
-              >
-                <PropertyMap
-                  lat={kortKoordinater.lat}
-                  lng={kortKoordinater.lng}
-                  adresse={adresseStreng}
-                  visMatrikel={false}
-                />
-              </Suspense>
-            ) : (
-              <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900 gap-3">
-                <MapPin size={32} className="text-slate-600" />
-                <p className="text-slate-500 text-xs">
-                  {lang === 'da'
-                    ? 'Kortkoordinater ikke tilgængelige'
-                    : 'Map coordinates unavailable'}
-                </p>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
       {/* ─── Adskillelseslinie — nyheder (desktop) ─── */}
-      {visKort && nyhedsPanelÅben && data && <div className="w-1.5 flex-shrink-0 bg-slate-800" />}
+      {isDesktop && nyhedsPanelÅben && data && <div className="w-1.5 flex-shrink-0 bg-slate-800" />}
 
       {/* ─── Nyheder/sociale medier panel (desktop) ─── */}
-      {visKort && nyhedsPanelÅben && data && (
+      {isDesktop && nyhedsPanelÅben && data && (
         <div
           className="flex-shrink-0 self-stretch flex flex-col overflow-hidden border-l border-slate-700/50"
           style={{ width: 340 }}
@@ -3040,8 +2805,18 @@ export default function VirksomhedDetalje({ params }: PageProps) {
               <X size={14} />
             </button>
           </div>
-          {/* Panel-indhold */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-6">
+          {/* Panel-indhold: ØVERST nyheder (AI), NEDERST sociale medier */}
+          <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-5 min-h-0">
+            {/* AI Artikel søgning */}
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <Sparkles size={12} className="text-blue-400" />
+                <p className="text-slate-400 text-xs font-medium uppercase tracking-wide">
+                  {lang === 'da' ? 'AI Artikel søgning' : 'AI Article Search'}
+                </p>
+              </div>
+              <AIArticleSearchPanel companyData={data} lang={lang} />
+            </div>
             {/* Sociale medier & links */}
             <div>
               <div className="flex items-center gap-2 mb-3">
@@ -3057,22 +2832,12 @@ export default function VirksomhedDetalje({ params }: PageProps) {
                 lang={lang}
               />
             </div>
-            {/* Nyheder */}
-            <div>
-              <div className="flex items-center gap-2 mb-3">
-                <Newspaper size={12} className="text-slate-500" />
-                <p className="text-slate-400 text-xs font-medium uppercase tracking-wide">
-                  {lang === 'da' ? 'Seneste nyheder' : 'Latest news'}
-                </p>
-              </div>
-              <CompanyNewsFeed companyName={data.name} cvr={cvr} lang={lang} />
-            </div>
           </div>
         </div>
       )}
 
       {/* ─── Mobil: Nyheder-overlay — fylder hele skærmen ─── */}
-      {!visKort && mobilNyhederAaben && data && (
+      {!isDesktop && mobilNyhederAaben && data && (
         <div className="fixed inset-0 z-50 flex flex-col bg-slate-950">
           {/* Overlay-header */}
           <div className="flex items-center justify-between px-4 py-3 bg-slate-900 border-b border-slate-700/50 flex-shrink-0">
@@ -3090,8 +2855,18 @@ export default function VirksomhedDetalje({ params }: PageProps) {
               <X size={18} />
             </button>
           </div>
-          {/* Indhold */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-6">
+          {/* Indhold: ØVERST nyheder (AI), NEDERST sociale medier */}
+          <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-5">
+            {/* AI Artikel søgning */}
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <Sparkles size={12} className="text-blue-400" />
+                <p className="text-slate-400 text-xs font-medium uppercase tracking-wide">
+                  {lang === 'da' ? 'AI Artikel søgning' : 'AI Article Search'}
+                </p>
+              </div>
+              <AIArticleSearchPanel companyData={data} lang={lang} />
+            </div>
             {/* Sociale medier & links */}
             <div>
               <div className="flex items-center gap-2 mb-3">
@@ -3107,16 +2882,6 @@ export default function VirksomhedDetalje({ params }: PageProps) {
                 lang={lang}
               />
             </div>
-            {/* Nyheder */}
-            <div>
-              <div className="flex items-center gap-2 mb-3">
-                <Newspaper size={12} className="text-slate-500" />
-                <p className="text-slate-400 text-xs font-medium uppercase tracking-wide">
-                  {lang === 'da' ? 'Seneste nyheder' : 'Latest news'}
-                </p>
-              </div>
-              <CompanyNewsFeed companyName={data.name} cvr={cvr} lang={lang} />
-            </div>
           </div>
         </div>
       )}
@@ -3124,154 +2889,284 @@ export default function VirksomhedDetalje({ params }: PageProps) {
   );
 }
 
-// ─── CompanyNewsFeed — søger nyheder for virksomheden ────────────────────────
+// ─── AIArticleSearchPanel ─────────────────────────────────────────────────────
 
 /**
- * Viser nyheder fra troværdige kilder for en given virksomhed.
- * Søger via Google News-lignende query med firmanavn.
+ * Synkroniserer token-forbrug til Supabase i baggrunden (fire-and-forget).
+ *
+ * @param tokensUsed - Antal forbrugte tokens
  */
-function CompanyNewsFeed({
-  companyName,
-  cvr,
-  lang,
-}: {
-  companyName: string;
-  cvr: string;
-  lang: 'da' | 'en';
-}) {
-  const [articles, setArticles] = useState<
-    {
-      title: string;
-      url: string;
-      source: string;
-      sourceDomain?: string;
-      favicon?: string;
-      date?: string;
-    }[]
-  >([]);
-  const [loading, setLoading] = useState(true);
-  const fetchedRef = useRef(false);
+function syncTokenUsageToServer(tokensUsed: number) {
+  if (tokensUsed <= 0) return;
+  fetch('/api/subscription/track-tokens', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tokensUsed }),
+  }).catch(() => {
+    /* stille fejl */
+  });
+}
 
-  useEffect(() => {
-    if (fetchedRef.current) return;
-    fetchedRef.current = true;
-
-    fetch(`/api/news?q=${encodeURIComponent(companyName)}&cvr=${cvr}`)
-      .then((res) => (res.ok ? res.json() : []))
-      .then((data) => setArticles(Array.isArray(data) ? data.slice(0, 8) : []))
-      .catch(() => setArticles([]))
-      .finally(() => setLoading(false));
-  }, [companyName, cvr]);
-
-  if (loading)
-    return (
-      <div className="flex items-center gap-2 text-slate-500 text-xs">
-        <Loader2 size={12} className="animate-spin" />{' '}
-        {lang === 'da' ? 'Søger nyheder…' : 'Searching news…'}
-      </div>
-    );
-  if (articles.length === 0)
-    return (
-      <p className="text-slate-600 text-xs">
-        {lang === 'da' ? 'Ingen nyheder fundet' : 'No news found'}
-      </p>
-    );
-
-  return (
-    <div className="space-y-2.5">
-      {articles.map((a, i) => (
-        <a
-          key={i}
-          href={a.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-start gap-2.5 group"
-        >
-          {a.favicon && (
-            <img
-              src={a.favicon}
-              alt=""
-              width={16}
-              height={16}
-              className="mt-0.5 rounded-sm flex-shrink-0"
-            />
-          )}
-          <div className="min-w-0">
-            <p className="text-slate-300 text-xs font-medium group-hover:text-blue-300 transition-colors leading-snug">
-              {a.title}
-            </p>
-            <p className="text-slate-600 text-[10px] mt-0.5">
-              {a.source}
-              {a.date ? ` · ${a.date}` : ''}
-            </p>
-          </div>
-        </a>
-      ))}
-    </div>
-  );
+/** Et nyhedsresultat fra AI artikel søgning */
+interface AIArticleResult {
+  title: string;
+  url: string;
+  source: string;
+  date?: string;
+  description?: string;
 }
 
 /**
- * Viser sociale links (hjemmeside, Facebook, Instagram) for en virksomhed.
- * Baseret på data fra CVR og automatiske gæt.
+ * AIArticleSearchPanel — AI-drevet artikelsøgning i nyheds-sidepanelet.
+ *
+ * Viser tokens til rådighed og en "Søg"-knap. Når brugeren klikker,
+ * hentes de 10 seneste nyheder om virksomheden via /api/ai/article-search.
+ * Resultater erstatter Søg-knappen. Token-forbrug trækkes fra brugerens konto.
+ *
+ * @param companyData - CVRPublicData for den valgte virksomhed
+ * @param lang - Aktivt sprog
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function CompanySocialLinks({ data, lang: _lang }: { data: CVRPublicData; lang: 'da' | 'en' }) {
-  // Build links from available data
-  const links: { label: string; url: string; icon: string }[] = [];
+function AIArticleSearchPanel({
+  companyData,
+  lang,
+}: {
+  companyData: CVRPublicData;
+  lang: 'da' | 'en';
+}) {
+  const { subscription: ctxSub, addTokenUsage } = useSubscription();
+  const { isActive: subActive } = useSubscriptionAccess('ai');
+  const [articles, setArticles] = useState<AIArticleResult[]>([]);
+  const [hasSearched, setHasSearched] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [tokenInfo, setTokenInfo] = useState<{ used: number; limit: number } | null>(null);
+  const [tokensUsedThisSearch, setTokensUsedThisSearch] = useState(0);
 
-  // Hjemmeside — check email domain as proxy
-  if (data.email) {
-    const domain = data.email.split('@')[1];
-    if (
-      domain &&
-      !domain.includes('gmail') &&
-      !domain.includes('yahoo') &&
-      !domain.includes('hotmail') &&
-      !domain.includes('outlook')
-    ) {
-      links.push({ label: domain, url: `https://${domain}`, icon: 'web' });
+  /** Opdaterer token-info fra subscription context */
+  useEffect(() => {
+    if (!ctxSub) {
+      setTokenInfo(null);
+      return;
     }
+    const plan = resolvePlan(ctxSub.planId);
+    if (!plan.aiEnabled) {
+      setTokenInfo(null);
+      return;
+    }
+    const limit =
+      plan.aiTokensPerMonth < 0 ? -1 : plan.aiTokensPerMonth + (ctxSub.bonusTokens ?? 0);
+    setTokenInfo({ used: ctxSub.tokensUsedThisMonth, limit });
+  }, [ctxSub]);
+
+  /** Bygger liste af nøglepersoner fra deltagere-array */
+  const keyPersons = useMemo(() => {
+    return (companyData.deltagere ?? [])
+      .filter((d) => !d.erVirksomhed && d.roller.some((r) => !r.til))
+      .map((d) => d.navn)
+      .slice(0, 8);
+  }, [companyData.deltagere]);
+
+  /** Starter AI artikel søgning */
+  const handleSearch = useCallback(async () => {
+    if (loading) return;
+
+    if (ctxSub) {
+      const plan = resolvePlan(ctxSub.planId);
+      if (!isSubscriptionFunctional(ctxSub, plan)) return;
+      if (!plan.aiEnabled) return;
+      const limit =
+        plan.aiTokensPerMonth < 0 ? -1 : plan.aiTokensPerMonth + (ctxSub.bonusTokens ?? 0);
+      if (limit > 0 && ctxSub.tokensUsedThisMonth >= limit) return;
+    }
+
+    setLoading(true);
+    setError(null);
+    setArticles([]);
+
+    try {
+      const res = await fetch('/api/ai/article-search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          companyName: companyData.name,
+          cvr: String(companyData.vat),
+          industry: companyData.industrydesc,
+          employees: companyData.employees,
+          city: companyData.city,
+          keyPersons,
+        }),
+      });
+
+      const json = await res.json();
+
+      if (!res.ok || json.error) {
+        setError(json.error ?? (lang === 'da' ? 'Søgefejl' : 'Search error'));
+        return;
+      }
+
+      setArticles(json.articles ?? []);
+      const total = json.usage?.totalTokens ?? 0;
+      if (total > 0) {
+        setTokensUsedThisSearch(total);
+        addTokenUsage(total);
+        syncTokenUsageToServer(total);
+      }
+    } catch {
+      setError(lang === 'da' ? 'Netværksfejl — prøv igen' : 'Network error — try again');
+    } finally {
+      setHasSearched(true);
+      setLoading(false);
+    }
+  }, [loading, ctxSub, companyData, keyPersons, lang, addTokenUsage]);
+
+  const da = lang === 'da';
+
+  /** Locked state — ingen AI-adgang */
+  if (!subActive) {
+    return (
+      <div className="flex flex-col items-center gap-2 py-3 text-center">
+        <div className="w-8 h-8 bg-amber-500/10 rounded-lg flex items-center justify-center">
+          <Lock size={14} className="text-amber-400" />
+        </div>
+        <p className="text-slate-500 text-xs leading-relaxed">
+          {da
+            ? 'AI-søgning kræver et aktivt abonnement.'
+            : 'AI search requires an active subscription.'}
+        </p>
+      </div>
+    );
   }
 
-  // CVR-opslag links
-  const cvrStr = String(data.vat).padStart(8, '0');
-  links.push({
-    label: 'Virk.dk (CVR)',
-    url: `https://datacvr.virk.dk/enhed/virksomhed/${cvrStr}`,
-    icon: 'cvr',
-  });
+  /** Token-statusbar (vises over knap og resultater) */
+  const tokenBar =
+    tokenInfo && (tokenInfo.limit > 0 || tokenInfo.limit === -1) ? (
+      <div className="flex items-center gap-2 mb-3">
+        <span className="text-[10px] text-slate-600 whitespace-nowrap">Tokens</span>
+        {tokenInfo.limit === -1 ? (
+          <>
+            <div className="flex-1 h-1 bg-slate-800 rounded-full overflow-hidden">
+              <div className="h-full rounded-full bg-purple-500 w-full" />
+            </div>
+            <span className="text-[10px] font-medium text-purple-400">∞</span>
+          </>
+        ) : (
+          <>
+            <div className="flex-1 h-1 bg-slate-800 rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all ${
+                  tokenInfo.used / tokenInfo.limit > 0.9
+                    ? 'bg-red-500'
+                    : tokenInfo.used / tokenInfo.limit > 0.7
+                      ? 'bg-amber-500'
+                      : 'bg-blue-500'
+                }`}
+                style={{ width: `${Math.min(100, (tokenInfo.used / tokenInfo.limit) * 100)}%` }}
+              />
+            </div>
+            <span
+              className={`text-[10px] font-medium whitespace-nowrap ${
+                tokenInfo.used / tokenInfo.limit > 0.9
+                  ? 'text-red-400'
+                  : tokenInfo.used / tokenInfo.limit > 0.7
+                    ? 'text-amber-400'
+                    : 'text-slate-500'
+              }`}
+            >
+              {formatTokens(tokenInfo.used)}/{formatTokens(tokenInfo.limit)}
+            </span>
+          </>
+        )}
+      </div>
+    ) : null;
 
-  // Social media — we can't know these from CVR, but provide search links
-  const searchName = encodeURIComponent(data.name);
-  links.push({
-    label: 'Facebook',
-    url: `https://www.facebook.com/search/pages/?q=${searchName}`,
-    icon: 'fb',
-  });
-  links.push({
-    label: 'LinkedIn',
-    url: `https://www.linkedin.com/search/results/companies/?keywords=${searchName}`,
-    icon: 'linkedin',
-  });
-
-  return (
-    <div className="space-y-2">
-      {links.map((link, i) => (
-        <a
-          key={i}
-          href={link.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center gap-2 text-slate-400 hover:text-blue-300 transition-colors text-xs group"
+  /** Go-state — søgning ikke startet endnu */
+  if (!hasSearched && !loading) {
+    return (
+      <div>
+        {tokenBar}
+        <p className="text-slate-500 text-xs mb-3 leading-relaxed">
+          {da
+            ? `Klik for at finde de 10 seneste danske nyheder om ${companyData.name}.`
+            : `Click to find the 10 latest Danish news articles about ${companyData.name}.`}
+        </p>
+        <button
+          onClick={handleSearch}
+          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 border border-blue-500/60 rounded-lg text-white text-xs font-medium transition-all"
         >
-          <ExternalLink
-            size={10}
-            className="text-slate-600 group-hover:text-blue-400 flex-shrink-0"
-          />
-          <span className="truncate">{link.label}</span>
-        </a>
-      ))}
+          <Zap size={12} />
+          {da ? 'Søg med AI' : 'Search with AI'}
+        </button>
+      </div>
+    );
+  }
+
+  /** Loading-state */
+  if (loading) {
+    return (
+      <div>
+        {tokenBar}
+        <div className="flex items-center gap-2 text-slate-400 text-xs py-2">
+          <Loader2 size={12} className="animate-spin text-blue-400" />
+          {da ? 'AI søger efter nyheder…' : 'AI searching for news…'}
+        </div>
+      </div>
+    );
+  }
+
+  /** Resultat-state */
+  return (
+    <div>
+      {tokenBar}
+      {tokensUsedThisSearch > 0 && (
+        <p className="text-[10px] text-slate-600 mb-3">
+          {da
+            ? `Brugte ${formatTokens(tokensUsedThisSearch)} tokens`
+            : `Used ${formatTokens(tokensUsedThisSearch)} tokens`}
+        </p>
+      )}
+      {error && <p className="text-red-400 text-xs mb-2">{error}</p>}
+      {articles.length === 0 && !error ? (
+        <p className="text-slate-600 text-xs">
+          {da ? 'Ingen artikler fundet — prøv igen.' : 'No articles found — try again.'}
+        </p>
+      ) : (
+        <div className="space-y-2.5">
+          {articles.map((a, i) => (
+            <a
+              key={i}
+              href={a.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-start gap-2 group"
+            >
+              <ExternalLink
+                size={10}
+                className="text-slate-600 group-hover:text-blue-400 flex-shrink-0 mt-0.5"
+              />
+              <div className="min-w-0">
+                <p className="text-slate-300 text-xs font-medium group-hover:text-blue-300 transition-colors leading-snug">
+                  {a.title}
+                </p>
+                <p className="text-slate-600 text-[10px] mt-0.5">
+                  {a.source}
+                  {a.date ? ` · ${a.date}` : ''}
+                </p>
+                {a.description && (
+                  <p className="text-slate-600 text-[10px] mt-0.5 line-clamp-2">{a.description}</p>
+                )}
+              </div>
+            </a>
+          ))}
+        </div>
+      )}
+      <button
+        onClick={handleSearch}
+        disabled={loading}
+        className="mt-3 flex items-center gap-1.5 text-[10px] text-slate-500 hover:text-blue-400 transition-colors disabled:opacity-50"
+      >
+        <Zap size={9} />
+        {da ? 'Søg igen' : 'Search again'}
+      </button>
     </div>
   );
 }

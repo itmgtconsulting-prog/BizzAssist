@@ -16,7 +16,14 @@ import PDFDocument from 'pdfkit';
 
 const CERT_PATH = process.env.NEMLOGIN_DEVTEST4_CERT_PATH ?? '';
 const CERT_PASSWORD = process.env.NEMLOGIN_DEVTEST4_CERT_PASSWORD ?? '';
+const CERT_B64 = process.env.NEMLOGIN_DEVTEST4_CERT_B64 ?? '';
 const TL_BASE = process.env.TINGLYSNING_BASE_URL ?? 'https://test.tinglysning.dk';
+
+/** Loader certifikat som Buffer — foretrækker base64 env var over filsti */
+function loadCert(): Buffer {
+  if (CERT_B64) return Buffer.from(CERT_B64, 'base64');
+  return fs.readFileSync(path.resolve(CERT_PATH));
+}
 
 // ─── XML field labels (DA) ──────────────────────────────────────────────────
 
@@ -66,12 +73,7 @@ const _FIELD_LABELS: Record<string, string> = {
 
 function tlFetch(urlPath: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const certAbsPath = path.resolve(CERT_PATH);
-    if (!fs.existsSync(certAbsPath)) {
-      reject(new Error('Certifikat ikke fundet'));
-      return;
-    }
-    const pfx = fs.readFileSync(certAbsPath);
+    const pfx = loadCert();
     const url = new URL(TL_BASE + '/tinglysning/ssl' + urlPath);
     const req = https.request(
       {
@@ -365,14 +367,13 @@ export async function GET(req: NextRequest) {
 
   if (!uuid && !bilagId)
     return NextResponse.json({ error: 'uuid eller bilag er påkrævet' }, { status: 400 });
-  if (!CERT_PATH || !CERT_PASSWORD)
+  if ((!CERT_PATH && !CERT_B64) || !CERT_PASSWORD)
     return NextResponse.json({ error: 'Certifikat ikke konfigureret' }, { status: 503 });
 
   // ── Original PDF bilag — hent direkte fra Tinglysning ──
   if (bilagId) {
     try {
-      const certAbsPath = path.resolve(CERT_PATH);
-      const pfx = fs.readFileSync(certAbsPath);
+      const pfx = loadCert();
       const url = new URL(TL_BASE + `/tinglysning/ssl/bilag/${bilagId}`);
       const pdfData = await new Promise<Buffer>((resolve, reject) => {
         const r = https.request(
@@ -426,8 +427,7 @@ export async function GET(req: NextRequest) {
     try {
       // Forsøg at hente officiel tingbogsattest-PDF direkte fra Tinglysning API
       // Prøver kendte endpoint-stier i prioriteret rækkefølge
-      const certAbsPath = path.resolve(CERT_PATH);
-      const pfx = fs.readFileSync(certAbsPath);
+      const pfx = loadCert();
 
       /**
        * Prøver alle kendte Tinglysning REST API endpoint-stier for tingbogsattest-PDF.

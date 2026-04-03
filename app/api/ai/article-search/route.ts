@@ -116,7 +116,6 @@ async function searchBrave(key: string, query: string, count = 20): Promise<Arti
   const rawResults: BraveWebResult[] = data.web?.results ?? [];
 
   if (rawResults.length === 0) {
-    console.log('[article-search] Brave Search: 0 resultater returneret');
     return [];
   }
 
@@ -139,6 +138,44 @@ async function searchBrave(key: string, query: string, count = 20): Promise<Arti
 }
 
 /**
+ * Søger artikler om en virksomhed via to parallelle Brave-queries:
+ * 1. Generel nyheds-query (virksomhedsnavn + "nyheder artikel")
+ * 2. Medie-specifik query med site:-filtre til danske nyhedsmedier
+ *
+ * Resultater merges og dedupliceres på URL — danske medier prioriteres.
+ *
+ * @param key         - Brave Search Subscription Token
+ * @param companyName - Virksomhedens navn
+ * @returns Merged og dedupliceret liste med op til 20 artikelresultater
+ */
+async function searchBraveArticles(key: string, companyName: string): Promise<ArticleResult[]> {
+  // Primær: generel nyhedssøgning
+  const query1 = `${companyName} nyheder artikel`;
+  // Sekundær: medie-specifik søgning til danske nyhedsmedier
+  const query2 = `${companyName} site:dr.dk OR site:tv2.dk OR site:borsen.dk OR site:berlingske.dk OR site:politiken.dk`;
+
+  const [results1, results2] = await Promise.all([
+    searchBrave(key, query1, 10),
+    searchBrave(key, query2, 10),
+  ]);
+
+  // Merge med danske medier først — deduplication på URL
+  const seen = new Set<string>();
+  const merged: ArticleResult[] = [];
+  for (const r of [...results2, ...results1]) {
+    if (!seen.has(r.url)) {
+      seen.add(r.url);
+      merged.push(r);
+    }
+  }
+
+  console.log(
+    `[article-search] searchBraveArticles: query1=${results1.length} + query2=${results2.length} → merged=${merged.length}`
+  );
+  return merged;
+}
+
+/**
  * Søger sociale medier-profiler for en virksomhed via Brave Search API.
  * Én søgning per platform (6 total) køres parallelt for minimal latency.
  * Individuelle platform-fejl ignoreres stille — returnerer hvad der lykkes.
@@ -148,24 +185,54 @@ async function searchBrave(key: string, query: string, count = 20): Promise<Arti
  * @returns Map af platform → verificeret URL (kun hvis fundet)
  */
 async function searchBraveSocials(key: string, companyName: string): Promise<SocialsResult> {
-  const platforms: Array<{ name: keyof SocialsResult; query: string }> = [
-    { name: 'website', query: `${companyName} officiel hjemmeside` },
-    { name: 'facebook', query: `${companyName} site:facebook.com` },
-    { name: 'instagram', query: `${companyName} site:instagram.com` },
-    { name: 'linkedin', query: `${companyName} site:linkedin.com` },
-    { name: 'twitter', query: `${companyName} site:x.com OR site:twitter.com` },
-    { name: 'youtube', query: `${companyName} site:youtube.com` },
+  // Kendte katalog- og aggregatordomæner der aldrig er officielle hjemmesider
+  const DIRECTORY_DOMAINS = [
+    'krak.dk',
+    'proff.dk',
+    'yelp.com',
+    'tripadvisor',
+    'gulesider.dk',
+    'cvr.dk',
+    'virk.dk',
+    'wikipedia.org',
+    'facebook.com',
+    'linkedin.com',
+    'instagram.com',
+    'youtube.com',
+    'x.com',
+    'twitter.com',
+  ];
+
+  const platforms: Array<{ name: keyof SocialsResult; query: string; count: number }> = [
+    // count=3 for website so we can skip directory hits
+    { name: 'website', query: `${companyName} officiel hjemmeside`, count: 3 },
+    { name: 'facebook', query: `${companyName} site:facebook.com`, count: 1 },
+    { name: 'instagram', query: `${companyName} site:instagram.com`, count: 1 },
+    { name: 'linkedin', query: `${companyName} site:linkedin.com`, count: 1 },
+    { name: 'twitter', query: `${companyName} site:x.com OR site:twitter.com`, count: 1 },
+    { name: 'youtube', query: `${companyName} site:youtube.com`, count: 1 },
   ];
 
   const results = await Promise.allSettled(
     platforms.map(async (p) => {
-      const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(p.query)}&count=1&country=dk`;
+      const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(p.query)}&count=${p.count}&country=dk`;
       const res = await fetch(url, {
         headers: { 'X-Subscription-Token': key, Accept: 'application/json' },
         signal: AbortSignal.timeout(5000),
       });
       const data = await res.json();
-      return { name: p.name, url: (data.web?.results?.[0]?.url as string) || null };
+      const hits: BraveWebResult[] = data.web?.results ?? [];
+
+      if (p.name === 'website') {
+        // For hjemmeside: spring katalog-sites over og brug første rigtige domæne
+        const official = hits.find((h) => {
+          const hostname = h.meta_url?.hostname ?? new URL(h.url).hostname;
+          return !DIRECTORY_DOMAINS.some((d) => hostname.includes(d));
+        });
+        return { name: p.name, url: (official?.url as string) || null };
+      }
+
+      return { name: p.name, url: (hits[0]?.url as string) || null };
     })
   );
 
@@ -431,15 +498,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const client = new Anthropic({ apiKey });
 
   // ── Kør Brave-søgning og social profile-søgning parallelt ────────────────
-  const braveQuery = city
-    ? `${companyName} ${city} nyhed`
-    : `${companyName} dansk virksomhed nyhed`;
-
   let braveResults: ArticleResult[];
   let braveSocials: SocialsResult;
   try {
     [braveResults, braveSocials] = await Promise.all([
-      searchBrave(braveKey, braveQuery),
+      searchBraveArticles(braveKey, companyName),
       searchBraveSocials(braveKey, companyName),
     ]);
   } catch (err) {
@@ -449,7 +512,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   console.log(
-    `[article-search] "${companyName}": Brave Search ${braveResults.length} rå resultater`
+    `[article-search] "${companyName}": Brave Search ${braveResults.length} rå resultater (dual-query)`
   );
 
   // ── Byg Claude-besked ────────────────────────────────────────────────────

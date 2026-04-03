@@ -102,7 +102,7 @@ interface BraveWebResult {
  * @throws Error ved HTTP-fejl eller netværksproblemer
  */
 async function searchBrave(key: string, query: string, count = 20): Promise<ArticleResult[]> {
-  const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}&country=dk&search_lang=da&ui_lang=da`;
+  const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}&country=dk`;
   const res = await fetch(url, {
     headers: { 'X-Subscription-Token': key, Accept: 'application/json' },
   });

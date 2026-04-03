@@ -137,7 +137,17 @@ async function searchGoogleCSE(query: string): Promise<ArticleResult[]> {
 
         const data = (await res.json()) as { items?: GoogleSearchItem[] };
 
-        if (!Array.isArray(data.items)) return;
+        if (!Array.isArray(data.items)) {
+          console.log(
+            `[article-search] Google CSE start=${start}: ingen items i response. Response keys: ${Object.keys(data).join(', ')}`
+          );
+          return;
+        }
+
+        if (data.items.length === 0) {
+          console.log(`[article-search] Google CSE start=${start}: 0 resultater returneret`);
+          return;
+        }
 
         for (const item of data.items) {
           // Udtræk publiceret-dato fra Open Graph metatags hvis tilgængeligt
@@ -186,6 +196,81 @@ function formatGoogleDate(isoDate: string): string {
   } catch {
     return '';
   }
+}
+
+// ─── Social Profile Search ────────────────────────────────────────────────────
+
+/**
+ * Søger sociale medier-profiler for en virksomhed via Google Custom Search API.
+ * Én søgning per platform (6 total) køres parallelt for minimal latency.
+ * Returnerer tomt objekt hvis GOOGLE_CSE_API_KEY eller GOOGLE_CSE_ID mangler.
+ *
+ * @param companyName - Virksomhedens navn
+ * @returns Map af platform → verificeret URL (kun hvis fundet)
+ */
+async function searchSocialProfiles(companyName: string): Promise<SocialsResult> {
+  const key = process.env.GOOGLE_CSE_API_KEY?.trim();
+  const cx = process.env.GOOGLE_CSE_ID?.trim();
+  if (!key || !cx) return {};
+
+  const platforms: Array<{ name: keyof SocialsResult; query: string; domainHint: string }> = [
+    { name: 'facebook', query: `${companyName} site:facebook.com`, domainHint: 'facebook.com' },
+    { name: 'instagram', query: `${companyName} site:instagram.com`, domainHint: 'instagram.com' },
+    {
+      name: 'linkedin',
+      query: `${companyName} site:linkedin.com/company`,
+      domainHint: 'linkedin.com',
+    },
+    {
+      name: 'twitter',
+      query: `${companyName} site:twitter.com OR site:x.com`,
+      domainHint: 'x.com',
+    },
+    { name: 'youtube', query: `${companyName} site:youtube.com`, domainHint: 'youtube.com' },
+    { name: 'website', query: `${companyName} officiel hjemmeside`, domainHint: '' },
+  ];
+
+  const results = await Promise.allSettled(
+    platforms.map(async (p) => {
+      const url =
+        `https://www.googleapis.com/customsearch/v1` +
+        `?key=${encodeURIComponent(key)}` +
+        `&cx=${encodeURIComponent(cx)}` +
+        `&q=${encodeURIComponent(p.query)}` +
+        `&num=1`;
+
+      const res = await fetch(url, { signal: AbortSignal.timeout(5000), next: { revalidate: 0 } });
+      const data = (await res.json()) as { items?: Array<{ link: string }> };
+      const link = data.items?.[0]?.link ?? null;
+
+      // Afvis resultater der ikke matcher den forventede platform
+      if (link && p.domainHint && !link.includes(p.domainHint)) return null;
+
+      // Afvis generiske roddomæner (ingen specifik sti)
+      if (link) {
+        try {
+          const { pathname } = new URL(link);
+          if (pathname === '/' || pathname === '') return null;
+        } catch {
+          return null;
+        }
+      }
+
+      return link ? { name: p.name, url: link } : null;
+    })
+  );
+
+  const socials: SocialsResult = {};
+  for (const r of results) {
+    if (r.status === 'fulfilled' && r.value) {
+      socials[r.value.name] = r.value.url;
+    }
+  }
+
+  console.log(
+    `[article-search] searchSocialProfiles: fandt ${Object.keys(socials).length} platforme`
+  );
+  return socials;
 }
 
 // ─── System prompts ──────────────────────────────────────────────────────────
@@ -406,22 +491,45 @@ function parseArticleResponse(text: string): {
       'youtube',
     ];
 
+    /**
+     * Returnerer true hvis URL er et generisk roddomæne uden specifik sti
+     * (f.eks. "https://facebook.com" eller "https://www.facebook.com/").
+     * Generiske URLs fra Claude filtreres fra — de er ubrugelige for brugeren.
+     *
+     * @param url - URL der skal tjekkes
+     */
+    const isGenericUrl = (url: string): boolean => {
+      try {
+        const { pathname } = new URL(url);
+        return pathname === '/' || pathname === '';
+      } catch {
+        return true; // Ugyldig URL — afvis
+      }
+    };
+
     for (const key of socialKeys) {
       const val = rawSocials[key];
       if (!val) continue;
 
-      if (typeof val === 'string' && val.startsWith('https://')) {
+      if (typeof val === 'string' && val.startsWith('https://') && !isGenericUrl(val)) {
         // Gammel format: direkte URL-streng
         socials[key] = val.trim();
       } else if (typeof val === 'object' && val !== null) {
         // Nyt format: { primary, alternatives }
         const entry = val as Record<string, unknown>;
-        if (typeof entry.primary === 'string' && entry.primary.startsWith('https://')) {
+        if (
+          typeof entry.primary === 'string' &&
+          entry.primary.startsWith('https://') &&
+          !isGenericUrl(entry.primary)
+        ) {
           socials[key] = entry.primary.trim();
         }
         if (Array.isArray(entry.alternatives)) {
           const alts = (entry.alternatives as unknown[])
-            .filter((a): a is string => typeof a === 'string' && a.startsWith('https://'))
+            .filter(
+              (a): a is string =>
+                typeof a === 'string' && a.startsWith('https://') && !isGenericUrl(a)
+            )
             .map((a) => a.trim())
             .slice(0, 5);
           if (alts.length > 0) {
@@ -482,12 +590,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const client = new Anthropic({ apiKey });
 
-  // ── Forsøg Google CSE ────────────────────────────────────────────────────
+  // ── Forsøg Google CSE + social profile-søgning parallelt ────────────────
   const googleQuery = city
     ? `${companyName} ${city} nyhed`
     : `${companyName} dansk virksomhed nyhed`;
 
-  const googleResults = await searchGoogleCSE(googleQuery);
+  const [googleResults, googleSocials] = await Promise.all([
+    searchGoogleCSE(googleQuery),
+    searchSocialProfiles(companyName),
+  ]);
   const useGoogle = googleResults.length > 0;
 
   console.log(
@@ -533,10 +644,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       .map((b) => b.text)
       .join('');
 
-    const { articles, socials, socialAlternatives } = parseArticleResponse(finalText);
+    const {
+      articles,
+      socials: claudeSocials,
+      socialAlternatives,
+    } = parseArticleResponse(finalText);
+
+    // Merge: Google CSE-fundne sociale medier har prioritet da de er verificerede links.
+    // Claude's fund bruges som fallback for platforme Google ikke fandt.
+    const socials: SocialsResult = { ...claudeSocials, ...googleSocials };
 
     console.log(
-      `[article-search] "${companyName}": ${articles.length} artikler, tokens=${totalTokens}, source=${useGoogle ? 'google+claude' : 'claude-only'}`
+      `[article-search] "${companyName}": ${articles.length} artikler, tokens=${totalTokens}, source=${useGoogle ? 'google+claude' : 'claude-only'}, socials=[google:${Object.keys(googleSocials).join(',')}]`
     );
 
     if (articles.length === 0) {

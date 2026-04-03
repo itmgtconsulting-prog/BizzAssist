@@ -337,6 +337,24 @@ Regler for "socials":
 // ─── Response parser ─────────────────────────────────────────────────────────
 
 /**
+ * Returnerer true hvis to URLs tilhører samme base-domæne.
+ * Ignorerer www.-præfiks og TLD-varianter (.dk/.com/.org/.net/.io).
+ * Bruges til at filtrere alternative links der er reelt identiske med primær-URL.
+ *
+ * @param url1 - Primær URL
+ * @param url2 - Alternativ URL der sammenlignes
+ */
+function isSameBaseDomain(url1: string, url2: string): boolean {
+  try {
+    const base = (u: string) =>
+      new URL(u).hostname.replace(/^www\./, '').replace(/\.(dk|com|org|net|io)$/, '');
+    return base(url1) === base(url2);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Parser Claude's JSON-svar med artikelliste og sociale medier.
  * Understøtter både gammel format (string) og nyt format ({ primary, alternatives }).
  *
@@ -430,9 +448,12 @@ function parseArticleResponse(text: string): {
           socials[key] = entry.primary.trim();
         }
         if (Array.isArray(entry.alternatives)) {
+          const primaryUrl = socials[key];
           const alts = (entry.alternatives as unknown[])
             .filter((a): a is string => typeof a === 'string' && isValidUrl(a))
             .map((a) => a.trim())
+            // Fjern alternativer der er identiske med eller samme base-domæne som primær
+            .filter((a) => !primaryUrl || (a !== primaryUrl && !isSameBaseDomain(a, primaryUrl)))
             .slice(0, 5);
           if (alts.length > 0) {
             socialAlternatives[key] = alts;

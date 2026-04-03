@@ -156,6 +156,24 @@ function isGenericDomain(url: string): boolean {
   }
 }
 
+/**
+ * Returnerer true hvis to URLs tilhører samme base-domæne.
+ * Ignorerer www.-præfiks og TLD-varianter (.dk/.com/.org/.net).
+ * Bruges til at filtrere alternative links der er identiske med primær-URL.
+ *
+ * @param url1 - Primær URL
+ * @param url2 - Alternativ URL der sammenlignes
+ */
+function isSameBaseDomain(url1: string, url2: string): boolean {
+  try {
+    const base = (u: string) =>
+      new URL(u).hostname.replace(/^www\./, '').replace(/\.(dk|com|org|net|io)$/, '');
+    return base(url1) === base(url2);
+  } catch {
+    return false;
+  }
+}
+
 /** State for åben Alt.-popup */
 interface AltPopupState {
   platform: string;
@@ -582,9 +600,13 @@ export default function VerifiedLinks({
       setAltPopup(null);
       setPopupPlatform(null);
     } else {
+      // Filtrer alternativer der er identiske med eller samme base-domæne som primær-URL
+      const filteredAlts = link.alternatives.filter(
+        (alt) => alt !== link.url && !isSameBaseDomain(alt, link.url)
+      );
       setAltPopup({
         platform: link.platform,
-        alternatives: link.alternatives,
+        alternatives: filteredAlts,
         altCounts: link.altCounts,
       });
       setPopupPlatform(link.platform);

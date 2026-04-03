@@ -272,16 +272,9 @@ async function searchSocialProfiles(companyName: string): Promise<SocialsResult>
       // Afvis resultater der ikke matcher den forventede platform
       if (p.domainHint && !link.includes(p.domainHint)) return null;
 
-      // Afvis generiske roddomæner (ingen specifik sti) — KUN for sociale medier.
-      // For website er rod-URL (pathname="/") en gyldig virksomhedshjemmeside.
-      if (!p.skipPathCheck) {
-        try {
-          const { pathname } = new URL(link);
-          if (pathname === '/' || pathname === '') return null;
-        } catch {
-          return null;
-        }
-      }
+      // Bemærk: Vi filtrerer IKKE på pathname for sociale medier.
+      // Hvis Google finder en facebook.com/side, er den sandsynligvis korrekt.
+      // Website-søgning bruger skipPathCheck=true for at tillade roddomæner.
 
       return { name: p.name, url: link };
     })
@@ -304,25 +297,40 @@ async function searchSocialProfiles(companyName: string): Promise<SocialsResult>
 
 /**
  * System prompt til Google+Claude-tilstand.
- * Claude modtager Google-resultater som kontekst og skal:
- * 1. Rangere + filtrere dem til max 15 relevante artikler
- * 2. Forbedre beskrivelser hvis nødvendigt
- * 3. Finde sociale medier-links
+ * Claude modtager ALLE Google-resultater (ufiltrerede) og kvalitetsvurderer dem:
+ * 1. Vurderer om hvert hit er relevant for den specifikke virksomhed
+ * 2. Prioriterer danske artikler, men inkluderer internationale hvis relevante
+ * 3. Afviser artikler om en ANDEN virksomhed med lignende navn
+ * 4. Afviser spam/generisk indhold
+ * 5. Returnerer op til 15 kvalitetsvurderede artikler
  */
-const SYSTEM_PROMPT_WITH_GOOGLE = `Du er en dansk medieekspert. Du modtager Google Search-resultater om en dansk virksomhed.
+const SYSTEM_PROMPT_WITH_GOOGLE = `Du er en dansk medieekspert. Du modtager ALLE Google Search-resultater om en virksomhed — ufiltrerede.
 
-Din opgave:
-1. Vælg de mest relevante og informative artikler — max 15, min 5
-2. Sorter dem med nyeste/vigtigste først
-3. Forbedre snippet-beskrivelser til max 100 tegn dansk tekst hvis nødvendigt
-4. Find virksomhedens sociale medier og hjemmeside-links baseret på din viden
+Din opgave er at kvalitetsvurdere hvert eneste resultat og returnere de bedste:
+1. Vurdér om hvert hit handler om DENNE SPECIFIKKE virksomhed (ikke en anden med lignende navn)
+2. Prioritér danske artikler, men inkludér internationale hvis de handler om virksomheden
+3. Sortér med nyeste/vigtigste først
+4. Forbedre snippet-beskrivelser til max 100 tegn dansk tekst hvis nødvendigt
+5. Find virksomhedens sociale medier og hjemmeside-links baseret på din viden
 
-FILTRERINGSREGLER:
-- Udelad ikke-relevante resultater (jobopslag, generiske branchesider, aggregator-spam)
-- Bevar artikler fra kendte danske medier: DR, TV2, Børsen, Berlingske, Politiken, Jyllands-Posten, Altinget, Information, FinansWatch, MedWatch, Ingeniøren, Version2, Computerworld, Weekendavisen, Zetland, BT, Ekstra Bladet, Frihedsbrevet, Danwatch, Mandag Morgen
-- Inkludér også pressemeddelelser og branchemedier hvis de er relevante
+RELEVANCEREGLER — afvis et resultat hvis:
+- Det handler om en ANDEN virksomhed med samme eller lignende navn
+- Det er et jobopslag (stillingsopslag, karriere, ledige stillinger)
+- Det er en generisk brancheportal eller aggregator der bare lister virksomheden
+- Det er åbenlyst spam eller irrelevant indhold (SEO-spam, scraper-sites)
+- Det er en tom/generisk virksomhedsprofilside uden reel information
+
+INKLUDÉR disse typer (hvis relevante for virksomheden):
+- Nyhedsartikler fra alle medier — både danske og internationale
+- Pressemeddelelser og erhvervsmeddelelser
+- Branchemedier og faglige publikationer
+- Anmeldelser og omtaler (TripAdvisor, Google, etc.) hvis virksomheden er forbrugervendt
+- Blogindlæg og sociale medier-opslag hvis de er informative
+
+KRITISKE REGLER:
 - Ret IKKE URLs — brug præcis de URLs fra Google-resultaterne
 - Opfind IKKE nye artikler — brug KUN de givne resultater
+- Returner max 15, men gerne færre hvis kun 3-4 er reelt relevante
 
 Returner KUN validt JSON uden tekst før/efter:
 
@@ -479,19 +487,10 @@ function parseArticleResponse(text: string): {
           typeof (a as Record<string, unknown>).url === 'string'
       )
       .filter((a) => {
+        // Afvis kun resultater med ugyldig URL-format — al indholdsmæssig filtrering
+        // er delegeret til Claude, som vurderer relevans for den specifikke virksomhed.
         const url = String(a.url);
-        // Afvis ikke-danske internationale medier
-        const blocked = [
-          'globenewswire',
-          'reuters',
-          'bloomberg',
-          'apnews',
-          'ap.org',
-          'ft.com',
-          '.no/',
-          '.se/',
-        ];
-        return url.startsWith('https://') && !blocked.some((b) => url.includes(b));
+        return url.startsWith('https://') || url.startsWith('http://');
       })
       .map((a) => ({
         title: String(a.title).trim(),
@@ -519,18 +518,17 @@ function parseArticleResponse(text: string): {
     ];
 
     /**
-     * Returnerer true hvis URL er et generisk roddomæne uden specifik sti
-     * (f.eks. "https://facebook.com" eller "https://www.facebook.com/").
-     * Generiske URLs fra Claude filtreres fra — de er ubrugelige for brugeren.
+     * Returnerer true hvis URL har et gyldigt format.
+     * Vi filtrerer IKKE på pathname — Google-fundne profiler med rod-URL er gyldige.
      *
-     * @param url - URL der skal tjekkes
+     * @param url - URL der skal valideres
      */
-    const isGenericUrl = (url: string): boolean => {
+    const isValidUrl = (url: string): boolean => {
       try {
-        const { pathname } = new URL(url);
-        return pathname === '/' || pathname === '';
+        new URL(url);
+        return url.startsWith('https://') || url.startsWith('http://');
       } catch {
-        return true; // Ugyldig URL — afvis
+        return false; // Ugyldig URL — afvis
       }
     };
 
@@ -538,25 +536,18 @@ function parseArticleResponse(text: string): {
       const val = rawSocials[key];
       if (!val) continue;
 
-      if (typeof val === 'string' && val.startsWith('https://') && !isGenericUrl(val)) {
+      if (typeof val === 'string' && isValidUrl(val)) {
         // Gammel format: direkte URL-streng
         socials[key] = val.trim();
       } else if (typeof val === 'object' && val !== null) {
         // Nyt format: { primary, alternatives }
         const entry = val as Record<string, unknown>;
-        if (
-          typeof entry.primary === 'string' &&
-          entry.primary.startsWith('https://') &&
-          !isGenericUrl(entry.primary)
-        ) {
+        if (typeof entry.primary === 'string' && isValidUrl(entry.primary)) {
           socials[key] = entry.primary.trim();
         }
         if (Array.isArray(entry.alternatives)) {
           const alts = (entry.alternatives as unknown[])
-            .filter(
-              (a): a is string =>
-                typeof a === 'string' && a.startsWith('https://') && !isGenericUrl(a)
-            )
+            .filter((a): a is string => typeof a === 'string' && isValidUrl(a))
             .map((a) => a.trim())
             .slice(0, 5);
           if (alts.length > 0) {
@@ -629,7 +620,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const useGoogle = googleResults.length > 0;
 
   console.log(
-    `[article-search] "${companyName}": ${useGoogle ? `Google CSE ${googleResults.length} resultater` : 'Claude-only fallback'}`
+    `[article-search] "${companyName}": ${useGoogle ? `Google CSE ${googleResults.length} rå resultater (ingen programmatisk filtrering)` : 'Claude-only fallback'}`
   );
 
   // ── Byg Claude-besked ────────────────────────────────────────────────────
@@ -682,7 +673,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const socials: SocialsResult = { ...claudeSocials, ...googleSocials };
 
     console.log(
-      `[article-search] "${companyName}": ${articles.length} artikler, tokens=${totalTokens}, source=${useGoogle ? 'google+claude' : 'claude-only'}, socials=[google:${Object.keys(googleSocials).join(',')}]`
+      `[article-search] "${companyName}": Google CSE=${googleResults.length} rå → Claude valgte ${articles.length} artikler, tokens=${totalTokens}, source=${useGoogle ? 'google+claude' : 'claude-only'}, socials=[google:${Object.keys(googleSocials).join(',')}, claude:${Object.keys(claudeSocials).join(',')}]`
     );
 
     if (articles.length === 0) {

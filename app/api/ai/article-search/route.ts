@@ -155,8 +155,8 @@ async function searchBraveArticles(key: string, companyName: string): Promise<Ar
   const query2 = `${companyName} site:dr.dk OR site:tv2.dk OR site:borsen.dk OR site:berlingske.dk OR site:politiken.dk`;
 
   const [results1, results2] = await Promise.all([
-    searchBrave(key, query1, 10),
-    searchBrave(key, query2, 10),
+    searchBrave(key, query1, 20),
+    searchBrave(key, query2, 20),
   ]);
 
   // Merge med danske medier først — deduplication på URL

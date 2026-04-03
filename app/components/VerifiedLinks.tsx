@@ -475,8 +475,9 @@ export default function VerifiedLinks({
         }
       }
 
-      // Fjern links der kun er generiske roddomæner (f.eks. facebook.com uden profilsti)
-      setLinks(merged.filter((l) => !isGenericDomain(l.url)));
+      // Fjern links der kun er generiske roddomæner (f.eks. facebook.com uden profilsti).
+      // Undtagelse: website-platform, hvor roddomæner er gyldige hjemmeside-URLs.
+      setLinks(merged.filter((l) => l.platform === 'website' || !isGenericDomain(l.url)));
     } catch {
       /* ignore network errors */
     } finally {

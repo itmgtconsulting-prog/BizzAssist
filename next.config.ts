@@ -58,6 +58,9 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   devIndicators: false,
+  env: {
+    NEXT_PUBLIC_BUILD_ID: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? 'dev',
+  },
   // pdfkit bruger __dirname til at finde font-filer — bundling bryder dette,
   // så vi loader pakken som native Node.js-modul uden transpilering.
   serverExternalPackages: ['pdfkit'],

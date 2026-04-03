@@ -2846,6 +2846,12 @@ export default function VirksomhedDetalje({ params }: PageProps) {
               />
             </div>
           </div>
+          {/* Build-nummer — diskret footer i bunden af nyheder-panelet */}
+          <div className="px-4 py-2 border-t border-slate-700/30 flex-shrink-0">
+            <p className="text-slate-600 text-xs">
+              Build: {process.env.NEXT_PUBLIC_BUILD_ID ?? 'dev'}
+            </p>
+          </div>
         </div>
       )}
 
@@ -2869,7 +2875,7 @@ export default function VirksomhedDetalje({ params }: PageProps) {
             </button>
           </div>
           {/* Indhold: ØVERST nyheder (AI), NEDERST sociale medier */}
-          <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-5">
+          <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-5 min-h-0">
             {/* AI Artikel søgning */}
             <div>
               <div className="flex items-center gap-2 mb-3">
@@ -2902,6 +2908,12 @@ export default function VirksomhedDetalje({ params }: PageProps) {
                 aiAlternatives={aiAlternatives}
               />
             </div>
+          </div>
+          {/* Build-nummer — diskret footer i bunden af mobil nyheder-overlay */}
+          <div className="px-4 py-2 border-t border-slate-700/30 flex-shrink-0">
+            <p className="text-slate-600 text-xs">
+              Build: {process.env.NEXT_PUBLIC_BUILD_ID ?? 'dev'}
+            </p>
           </div>
         </div>
       )}

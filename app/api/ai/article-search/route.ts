@@ -139,10 +139,10 @@ function parseArticleResponse(
 
     const articles: ArticleResult[] = selected
       .slice(0, 8)
-      .map((idx: number, position: number) => {
+      .reduce<ArticleResult[]>((acc, idx: number, position: number) => {
         const article = rawArticles[idx - 1]; // konvertér til 0-baseret
-        if (!article) return null;
-        return {
+        if (!article) return acc;
+        acc.push({
           title: article.title,
           url: article.url,
           source: article.source,
@@ -150,9 +150,9 @@ function parseArticleResponse(
           description: descriptions[position]
             ? String(descriptions[position]).trim().slice(0, 100)
             : undefined,
-        };
-      })
-      .filter((a): a is ArticleResult => a !== null);
+        });
+        return acc;
+      }, []);
 
     // Udtræk sociale medier — bevar kun felter med gyldige https-URLs
     const rawSocials = raw.socials ?? {};

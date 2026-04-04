@@ -126,7 +126,7 @@ export default function AdminAiMediaAgentsPage() {
   const [showBraveKey, setShowBraveKey] = useState(false);
 
   // Sektion 1: Confidence
-  const [confidenceThreshold, setConfidenceThreshold] = useState(70);
+  const [confidenceThreshold, setConfidenceThreshold] = useState(65);
   /** Score >= greenThreshold → grøn badge. Score < greenThreshold men >= threshold → gul badge. */
   const [greenThreshold, setGreenThreshold] = useState(85);
 
@@ -168,18 +168,15 @@ export default function AdminAiMediaAgentsPage() {
     loading: da ? 'Henter indstillinger…' : 'Loading settings…',
 
     // Sektion 1
-    sec1Title: da ? 'Generelle AI-indstillinger' : 'General AI Settings',
-    sec1Desc: da
-      ? 'Styr hvornår AI-links vises baseret på confidence-score.'
-      : 'Control when AI links are shown based on confidence score.',
-    confidenceThreshold: da ? 'Confidence-tærskel' : 'Confidence threshold',
+    sec1Title: 'Confidence',
+    confidenceThreshold: da ? 'Gul grænse' : 'Yellow threshold',
     confidenceThresholdDesc: da
-      ? 'Links med score under denne grænse skjules helt for brugeren.'
-      : 'Links with score below this threshold are hidden entirely from users.',
+      ? 'Links med score under denne grænse skjules helt. Over denne grænse vises gul badge.'
+      : 'Links with score below this threshold are hidden. Above it, a yellow badge is shown.',
     greenThresholdLabel: da ? 'Grøn grænse' : 'Green threshold',
     greenThresholdDesc: da
-      ? 'Score over denne grænse vises med grøn badge. Under (men over tærsklen) vises gul badge.'
-      : 'Score above this shows a green badge. Below this (but above threshold) shows a yellow badge.',
+      ? 'Score over denne grænse vises med grøn badge.'
+      : 'Score above this threshold shows a green badge.',
 
     // Sektion 2
     sec2Title: da ? 'Blokerede domæner' : 'Blocked Domains',
@@ -538,24 +535,21 @@ export default function AdminAiMediaAgentsPage() {
           {!loading && (
             <>
               {/* ══════════════════════════════════════════════════════════════
-                  SEKTION 1: Generelle AI-indstillinger
+                  SEKTION 1: Confidence
               ══════════════════════════════════════════════════════════════ */}
               <section className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-5 space-y-5">
                 <div className="flex items-start gap-3">
                   <Settings size={18} className="text-blue-400 mt-0.5 shrink-0" />
-                  <div>
-                    <h2 className="text-white font-semibold">{t.sec1Title}</h2>
-                    <p className="text-slate-400 text-sm mt-0.5">{t.sec1Desc}</p>
-                  </div>
+                  <h2 className="text-white font-semibold mt-0.5">{t.sec1Title}</h2>
                 </div>
 
-                {/* Confidence threshold slider */}
+                {/* Slider 1: Gul grænse */}
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <label className="text-sm font-medium text-slate-200">
                       {t.confidenceThreshold}
                     </label>
-                    <span className="text-blue-400 font-mono text-sm font-bold">
+                    <span className="text-amber-400 font-mono text-sm font-bold">
                       {confidenceThreshold}%
                     </span>
                   </div>
@@ -565,8 +559,12 @@ export default function AdminAiMediaAgentsPage() {
                     min={0}
                     max={100}
                     value={confidenceThreshold}
-                    onChange={(e) => setConfidenceThreshold(Number(e.target.value))}
-                    className="w-full h-2 bg-slate-700 rounded-full appearance-none cursor-pointer accent-blue-500"
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      // Gul må ikke overstige grøn
+                      setConfidenceThreshold(Math.min(val, greenThreshold));
+                    }}
+                    className="w-full h-2 bg-slate-700 rounded-full appearance-none cursor-pointer accent-amber-500"
                   />
                   <div className="flex justify-between text-[10px] text-slate-600">
                     <span>0%</span>
@@ -575,8 +573,8 @@ export default function AdminAiMediaAgentsPage() {
                   </div>
                 </div>
 
-                {/* Grøn grænse */}
-                <div className="space-y-2">
+                {/* Slider 2: Grøn grænse */}
+                <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <label className="text-sm font-medium text-slate-200">
                       {t.greenThresholdLabel}
@@ -586,34 +584,42 @@ export default function AdminAiMediaAgentsPage() {
                     </span>
                   </div>
                   <p className="text-xs text-slate-500">{t.greenThresholdDesc}</p>
-                  <div className="flex items-center gap-3">
-                    <div className="flex items-center gap-2">
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-500/15 border border-emerald-500/20 rounded text-[11px] text-emerald-400">
-                        ≥{greenThreshold}% → {da ? 'Grøn badge' : 'Green badge'}
-                      </span>
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-500/15 border border-amber-500/20 rounded text-[11px] text-amber-400">
-                        {confidenceThreshold}–{greenThreshold}% →{' '}
-                        {da ? 'Gul badge' : 'Yellow badge'}
-                      </span>
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-700/40 border border-slate-600/30 rounded text-[11px] text-slate-500">
-                        &lt;{confidenceThreshold}% → {da ? 'Skjult' : 'Hidden'}
-                      </span>
-                    </div>
-                    <input
-                      type="number"
-                      min={confidenceThreshold}
-                      max={100}
-                      value={greenThreshold}
-                      onChange={(e) =>
-                        setGreenThreshold(Math.max(confidenceThreshold, Number(e.target.value)))
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={greenThreshold}
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      setGreenThreshold(val);
+                      // Hvis grøn trækkes under gul, justér gul ned
+                      if (val < confidenceThreshold) {
+                        setConfidenceThreshold(val);
                       }
-                      className="w-20 bg-slate-900/60 border border-slate-700 rounded-lg px-2 py-1.5 text-white text-sm text-center focus:outline-none focus:border-emerald-500"
-                    />
-                    <span className="text-slate-500 text-xs">%</span>
+                    }}
+                    className="w-full h-2 bg-slate-700 rounded-full appearance-none cursor-pointer accent-emerald-500"
+                  />
+                  <div className="flex justify-between text-[10px] text-slate-600">
+                    <span>0%</span>
+                    <span>50%</span>
+                    <span>100%</span>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-3 pt-1">
+                {/* Farve-eksempler */}
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-500/15 border border-emerald-500/20 rounded text-[11px] text-emerald-400">
+                    ≥{greenThreshold}% → {da ? 'Grøn badge' : 'Green badge'}
+                  </span>
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-500/15 border border-amber-500/20 rounded text-[11px] text-amber-400">
+                    {confidenceThreshold}–{greenThreshold}% → {da ? 'Gul badge' : 'Yellow badge'}
+                  </span>
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-700/40 border border-slate-600/30 rounded text-[11px] text-slate-500">
+                    &lt;{confidenceThreshold}% → {da ? 'Skjult' : 'Hidden'}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-3">
                   <SaveBtn
                     settingKey="min_confidence_threshold"
                     onClick={async () => {

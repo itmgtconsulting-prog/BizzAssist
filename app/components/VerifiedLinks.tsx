@@ -18,16 +18,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import {
-  ExternalLink,
-  Loader2,
-  ThumbsUp,
-  ThumbsDown,
-  ChevronDown,
-  X,
-  Plus,
-  Check,
-} from 'lucide-react';
+import { ExternalLink, Loader2, ThumbsUp, ThumbsDown, ChevronDown, X } from 'lucide-react';
 import { useAuth } from '@/app/hooks/useAuth';
 
 // ─── Platform SVG ikoner ────────────────────────────────────────────────────
@@ -334,18 +325,6 @@ export default function VerifiedLinks({
   const [altPopup, setAltPopup] = useState<AltPopupState | null>(null);
   /** Platform med åben popup (til positionering) */
   const [popupPlatform, setPopupPlatform] = useState<string | null>(null);
-  /** Viser/skjuler "Tilføj link" formular */
-  const [showAddForm, setShowAddForm] = useState(false);
-  /** Valgt platform i "Tilføj link" formular */
-  const [addPlatform, setAddPlatform] = useState('facebook');
-  /** URL-input i "Tilføj link" formular */
-  const [addUrl, setAddUrl] = useState('');
-  /** Indlæsning under gem af manuelt link */
-  const [addLoading, setAddLoading] = useState(false);
-  /** Succes-besked efter gem af manuelt link */
-  const [addSuccess, setAddSuccess] = useState(false);
-  /** Fejlbesked ved ugyldig URL */
-  const [addError, setAddError] = useState('');
 
   /**
    * Henter links fra /api/links og merger med:
@@ -664,57 +643,6 @@ export default function VerifiedLinks({
     }
   };
 
-  /**
-   * Gemmer et manuelt tilføjet socialt medie-link som alternativ via /api/link-alternatives.
-   * Validerer URL-format og platform. Viser succes-feedback i 2 sekunder efter gem.
-   */
-  const handleAddLink = async () => {
-    const trimmed = addUrl.trim();
-    if (!trimmed) {
-      setAddError(lang === 'da' ? 'URL er påkrævet' : 'URL is required');
-      return;
-    }
-    try {
-      new URL(trimmed);
-    } catch {
-      setAddError(
-        lang === 'da' ? 'Ugyldig URL — husk https://' : 'Invalid URL — remember https://'
-      );
-      return;
-    }
-    setAddError('');
-    setAddLoading(true);
-    try {
-      // Hent eksisterende alternativer for platformen, tilføj den nye URL
-      const existingRes = await fetch(`/api/link-alternatives?cvr=${encodeURIComponent(entityId)}`);
-      const existing: Record<string, string[]> = existingRes.ok ? await existingRes.json() : {};
-      const current = existing[addPlatform] ?? [];
-      if (!current.includes(trimmed)) {
-        current.push(trimmed);
-      }
-      const res = await fetch('/api/link-alternatives', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cvr: entityId, alternatives: { [addPlatform]: current } }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        setAddError(
-          (err as { error?: string }).error ?? (lang === 'da' ? 'Gem fejlede' : 'Save failed')
-        );
-        return;
-      }
-      setAddSuccess(true);
-      setAddUrl('');
-      setShowAddForm(false);
-      // Genindlæs links så det nye link vises straks
-      await fetchLinks();
-      setTimeout(() => setAddSuccess(false), 2000);
-    } finally {
-      setAddLoading(false);
-    }
-  };
-
   if (loading) {
     return (
       <div className="flex items-center gap-2 text-slate-500 text-xs">
@@ -982,84 +910,6 @@ export default function VerifiedLinks({
       {!isAuthenticated && (
         <div className="px-3 py-2 bg-slate-800/30 border-t border-slate-700/30 text-[10px] text-slate-600 text-center">
           {lang === 'da' ? 'Log ind for at verificere links' : 'Log in to verify links'}
-        </div>
-      )}
-
-      {/* Tilføj link — vises kun for indloggede brugere */}
-      {isAuthenticated && (
-        <div className="border-t border-slate-700/30">
-          {!showAddForm ? (
-            <button
-              onClick={() => setShowAddForm(true)}
-              className="w-full flex items-center justify-center gap-1.5 px-3 py-2 text-[10px] text-slate-500 hover:text-blue-400 hover:bg-slate-700/20 transition-colors"
-            >
-              <Plus size={11} />
-              {lang === 'da' ? 'Tilføj link manuelt' : 'Add link manually'}
-            </button>
-          ) : (
-            <div className="px-3 py-2.5 bg-slate-800/40 space-y-2">
-              <div className="flex items-center justify-between">
-                <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">
-                  {lang === 'da' ? 'Tilføj socialt medie-link' : 'Add social media link'}
-                </p>
-                <button
-                  onClick={() => {
-                    setShowAddForm(false);
-                    setAddUrl('');
-                    setAddError('');
-                  }}
-                  className="text-slate-500 hover:text-slate-300 transition-colors"
-                  aria-label={lang === 'da' ? 'Luk' : 'Close'}
-                >
-                  <X size={12} />
-                </button>
-              </div>
-              <div className="flex gap-1.5">
-                {/* Platform-dropdown */}
-                <select
-                  value={addPlatform}
-                  onChange={(e) => setAddPlatform(e.target.value)}
-                  className="text-[11px] bg-slate-700/60 border border-slate-600/50 rounded px-1.5 py-1 text-slate-300 focus:outline-none focus:border-blue-500/50"
-                >
-                  <option value="facebook">Facebook</option>
-                  <option value="linkedin">LinkedIn</option>
-                  <option value="instagram">Instagram</option>
-                  <option value="twitter">Twitter/X</option>
-                  <option value="website">Hjemmeside</option>
-                </select>
-                {/* URL-input */}
-                <input
-                  type="url"
-                  value={addUrl}
-                  onChange={(e) => {
-                    setAddUrl(e.target.value);
-                    setAddError('');
-                  }}
-                  placeholder="https://..."
-                  className="flex-1 text-[11px] bg-slate-700/60 border border-slate-600/50 rounded px-2 py-1 text-slate-300 placeholder-slate-600 focus:outline-none focus:border-blue-500/50"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleAddLink();
-                  }}
-                />
-                {/* Gem-knap */}
-                <button
-                  onClick={handleAddLink}
-                  disabled={addLoading || !addUrl.trim()}
-                  className="flex items-center gap-1 px-2 py-1 rounded bg-blue-600/20 border border-blue-500/30 text-blue-400 text-[11px] font-medium hover:bg-blue-600/30 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >
-                  {addLoading ? (
-                    <Loader2 size={11} className="animate-spin" />
-                  ) : addSuccess ? (
-                    <Check size={11} />
-                  ) : (
-                    <Plus size={11} />
-                  )}
-                  {lang === 'da' ? 'Gem' : 'Save'}
-                </button>
-              </div>
-              {addError && <p className="text-[10px] text-red-400">{addError}</p>}
-            </div>
-          )}
         </div>
       )}
     </div>

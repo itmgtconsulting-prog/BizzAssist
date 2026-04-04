@@ -165,6 +165,38 @@ async function fetchHusnumre(
   }
 }
 
+/** Et BBR-bygningspunkt med ejendomstype fra /api/bbr/bbox */
+interface BBRTypePunkt {
+  id: string;
+  lng: number;
+  lat: number;
+  ejerforholdskode: string | null;
+}
+
+/**
+ * Henter BBR bygningspunkter med ejerforholdskode for en bounding box.
+ * Bruges til at vise andelsbolig (AB) og almen bolig (AL) badges på kortet.
+ * Returnerer tomt array ved fejl eller zoom < 15.
+ *
+ * @param w - Vest-koordinat (lng, WGS84)
+ * @param s - Syd-koordinat (lat, WGS84)
+ * @param e - Øst-koordinat (lng, WGS84)
+ * @param n - Nord-koordinat (lat, WGS84)
+ * @returns Array af BBRTypePunkt
+ */
+async function fetchBBRType(w: number, s: number, e: number, n: number): Promise<BBRTypePunkt[]> {
+  try {
+    const res = await fetch(`/api/bbr/bbox?w=${w}&s=${s}&e=${e}&n=${n}`, {
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!res.ok) return [];
+    const json = (await res.json()) as BBRTypePunkt[];
+    return Array.isArray(json) ? json : [];
+  } catch {
+    return [];
+  }
+}
+
 // TODO: Migrate reverseGeocode to DAR when DAR supports reverse geocoding (before July 2026)
 /**
  * Reverse geocoder — finder nærmeste DAWA adresse for koordinat.
@@ -203,6 +235,7 @@ type LagNøgle =
   | 'ortofoto'
   | 'matrikel'
   | 'husnumre'
+  | 'bbr_type'
   | 'lokalplaner'
   | 'kommuneplan'
   | 'zonekort'
@@ -233,6 +266,7 @@ const LAG_START: LagSynlighed = {
   ortofoto: false,
   matrikel: true,
   husnumre: true,
+  bbr_type: false,
   lokalplaner: false,
   kommuneplan: false,
   zonekort: false,
@@ -383,6 +417,7 @@ const LAG_GRUPPER: Array<{
     lag: [
       { id: 'matrikel', navn: 'Matrikelgrænser' },
       { id: 'husnumre', navn: 'Husnumre' },
+      { id: 'bbr_type', navn: 'Ejendomstype (EL/AB) zoom 15+' },
     ],
   },
   {
@@ -455,6 +490,13 @@ interface LegendEntry {
  * Plandata.dk og Miljøportalen (verificeret via GetMap-requests).
  */
 const LAYER_LEGENDS: Partial<Record<LagNøgle, { title: string; entries: LegendEntry[] }>> = {
+  bbr_type: {
+    title: 'Ejendomstype',
+    entries: [
+      { color: '#059669', label: 'AB — Andelsbolig' },
+      { color: '#4f46e5', label: 'AL — Almen bolig' },
+    ],
+  },
   zonekort: {
     title: 'Zonekort',
     entries: [
@@ -634,6 +676,8 @@ function KortInner() {
   // Lag-panel
   const [lagPanel, setLagPanel] = useState(false);
   const [visLag, setVisLag] = useState<LagSynlighed>(LAG_START);
+  /** BBR ejendomstype-punkter (AB/AL) — hentes ved bbr_type toggle + zoom ≥ 15 */
+  const [bbrTypePunkter, setBbrTypePunkter] = useState<BBRTypePunkt[]>([]);
   const visLagRef = useRef<LagSynlighed>(LAG_START);
   const lagPanelRef = useRef<HTMLDivElement>(null);
 
@@ -988,6 +1032,25 @@ function KortInner() {
     };
   }, [viewport, synkLagData, setupLag]);
 
+  /**
+   * Henter BBR ejendomstype-punkter (AB/AL) når bbr_type-laget er aktivt og zoom ≥ 15.
+   * Rydder automatisk op ved viewport-ændring.
+   */
+  useEffect(() => {
+    if (!viewport || !visLag.bbr_type || viewport.zoom < 15) {
+      if (!visLag.bbr_type) setBbrTypePunkter([]);
+      return;
+    }
+    let cancelled = false;
+    const { w, s, e, n } = viewport;
+    fetchBBRType(w, s, e, n).then((data) => {
+      if (!cancelled) setBbrTypePunkter(data);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [viewport, visLag.bbr_type]);
+
   // ── Hover-data → Mapbox source (direkte) ────────────────────────────────────
 
   /**
@@ -1184,6 +1247,27 @@ function KortInner() {
             </div>
           </Marker>
         )}
+
+        {/* BBR ejendomstype-badges — vises kun ved zoom ≥ 15 og når bbr_type-laget er aktivt */}
+        {visLag.bbr_type &&
+          bbrTypePunkter.map((p) => {
+            const isAB = p.ejerforholdskode === '50';
+            const isAL = p.ejerforholdskode === '60';
+            if (!isAB && !isAL) return null;
+            return (
+              <Marker key={p.id} longitude={p.lng} latitude={p.lat} anchor="center">
+                <span
+                  className={`text-[8px] font-bold px-1.5 py-px rounded-full shadow-lg border leading-none pointer-events-none select-none ${
+                    isAB
+                      ? 'bg-emerald-600/90 text-white border-emerald-400'
+                      : 'bg-indigo-600/90 text-white border-indigo-400'
+                  }`}
+                >
+                  {isAB ? 'AB' : 'AL'}
+                </span>
+              </Marker>
+            );
+          })}
       </Map>
 
       {/* ── Søgebar ───────────────────────────────────────────────────────── */}

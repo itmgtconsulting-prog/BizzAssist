@@ -53,6 +53,8 @@ export interface RawBBRBygning {
   byg030Vandforsyning?: string;
   byg031Afloebsforhold?: string;
   byg021BygningensAnvendelse?: string;
+  /** Ejerforholdskode (byg066) — "10"=privatperson, "50"=andelsboligforening, "60"=almennyttigt */
+  byg066Ejerforhold?: string;
   byg070Fredning?: string;
   byg071BevaringsvaerdighedReference?: string;
   byg094Revisionsdato?: string;
@@ -111,6 +113,8 @@ export interface LiveBBRBygning {
   bygningsnr: number | null;
   /** Seneste revisionsdato fra BBR (byg094Revisionsdato) — ISO-dato-streng */
   revisionsdato: string | null;
+  /** Ejerforholdskode (byg066) — rå kode, f.eks. "50"=andelsboligforening */
+  ejerforholdskode: string | null;
 }
 
 /** Normalised BBR enhed returned to client */
@@ -148,6 +152,8 @@ export interface BBRBygningPunkt {
   samletAreal: number | null;
   antalEtager: number | null;
   status: string | null;
+  /** Ejerforholdskode (byg066) — "50"=andelsboligforening, "60"=almen bolig */
+  ejerforholdskode: string | null;
 }
 
 /** BBR Ejendomsrelation — kobler husnummer til BFEnummer og matrikelinfo */
@@ -247,6 +253,7 @@ async function fetchBygningPunkter(bygningIds: string[]): Promise<BBRBygningPunk
             p.byg038SamletBygningsareal != null ? Number(p.byg038SamletBygningsareal) : null,
           antalEtager: p.byg054AntalEtager != null ? Number(p.byg054AntalEtager) : null,
           status: p.status != null ? bygStatusTekst(parseInt(String(p.status), 10)) : null,
+          ejerforholdskode: p.byg066Ejerforhold != null ? String(p.byg066Ejerforhold) : null,
         };
       });
   } catch {
@@ -554,6 +561,7 @@ export function normaliseBygning(raw: RawBBRBygning): LiveBBRBygning {
     status: raw.status != null ? bygStatusTekst(parseInt(raw.status, 10)) : null,
     bygningsnr: null, // udfyldes fra WFS bygningPunkter efter fetch
     revisionsdato: raw.byg094Revisionsdato ?? null,
+    ejerforholdskode: raw.byg066Ejerforhold ?? null,
   };
 }
 
@@ -617,6 +625,7 @@ const BYGNING_QUERY = `
         byg030Vandforsyning
         byg031Afloebsforhold
         byg021BygningensAnvendelse
+        byg066Ejerforhold
         byg070Fredning
         byg071BevaringsvaerdighedReference
         byg094Revisionsdato

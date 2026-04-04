@@ -132,6 +132,8 @@ export interface BBRBygningPunkt {
   samletAreal: number | null;
   antalEtager: number | null;
   status: string | null;
+  /** Ejerforholdskode (byg066) — "50"=andelsboligforening, "60"=almen bolig */
+  ejerforholdskode: string | null;
 }
 
 /** Statuskoder der anses som aktive bygninger */
@@ -237,6 +239,11 @@ interface PropertyMapProps {
    * som konkurrerede med lag-knappernes z-index og blokerede klik.
    */
   fullMapHref?: string;
+  /**
+   * True hvis ejendommen er en ejerlejlighed (ejerlejlighedBfe !== null).
+   * Bruges til at vise "EL"-badge på bygningsmarkørerne i BBR-tilstand.
+   */
+  erEjerlejlighed?: boolean;
 }
 
 /** In-memory cache — gemmer { all, selected } per koordinat */
@@ -364,6 +371,7 @@ export default function PropertyMap({
   onAdresseValgt,
   bygningPunkter,
   fullMapHref,
+  erEjerlejlighed,
 }: PropertyMapProps) {
   const mapRef = useRef<MapRef>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -406,6 +414,12 @@ export default function PropertyMap({
   const [hoverData, setHoverData] = useState<GeoJSONSourceSpecification['data']>(EMPTY_GEOJSON);
   /** Debounce-timer ref til hover-kald — forhindrer for mange API-kald */
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /**
+   * Styrer om EL/AB ejendomstype-badges vises på bygningsmarkørerne.
+   * Initialiseres til false — brugeren aktiverer via lag-panelet.
+   */
+  const [visEjendomsBadges, setVisEjendomsBadges] = useState(false);
 
   /** Åben/lukket tilstand for lag-panelet */
   const [lagPanel, setLagPanel] = useState(false);
@@ -775,28 +789,50 @@ export default function PropertyMap({
             const erHover = aktivBygning?.id === b.id;
             return (
               <Marker key={`${b.id}-${bIdx}`} longitude={b.lng} latitude={b.lat} anchor="center">
-                {/* Kun cirklen i Marker — tooltip løftes til container-lag */}
-                <div
-                  onMouseEnter={() => {
-                    setAktivBygning(b);
-                    const px = mapRef.current?.project({ lng: b.lng, lat: b.lat });
-                    if (px) setTooltipPos({ x: px.x, y: px.y });
-                  }}
-                  onMouseLeave={() => {
-                    setAktivBygning(null);
-                    setTooltipPos(null);
-                  }}
-                  aria-label={`Byg${b.bygningsnr ?? '?'} — ${b.anvendelse}`}
-                  className={`w-5 h-5 rounded-full border-2 shadow-lg cursor-pointer transition-all ${
-                    aktiv
-                      ? erHover
-                        ? 'bg-emerald-400 border-emerald-200 scale-125'
-                        : 'bg-emerald-500/90 border-emerald-300 hover:scale-125'
-                      : erHover
-                        ? 'bg-slate-500 border-slate-300 scale-110'
-                        : 'bg-slate-600/80 border-slate-400 hover:scale-110'
-                  }`}
-                />
+                {/* Wrapper til at positionere badge relativt til cirklen */}
+                <div className="relative">
+                  <div
+                    onMouseEnter={() => {
+                      setAktivBygning(b);
+                      const px = mapRef.current?.project({ lng: b.lng, lat: b.lat });
+                      if (px) setTooltipPos({ x: px.x, y: px.y });
+                    }}
+                    onMouseLeave={() => {
+                      setAktivBygning(null);
+                      setTooltipPos(null);
+                    }}
+                    aria-label={`Byg${b.bygningsnr ?? '?'} — ${b.anvendelse}`}
+                    className={`w-5 h-5 rounded-full border-2 shadow-lg cursor-pointer transition-all ${
+                      aktiv
+                        ? erHover
+                          ? 'bg-emerald-400 border-emerald-200 scale-125'
+                          : 'bg-emerald-500/90 border-emerald-300 hover:scale-125'
+                        : erHover
+                          ? 'bg-slate-500 border-slate-300 scale-110'
+                          : 'bg-slate-600/80 border-slate-400 hover:scale-110'
+                    }`}
+                  />
+                  {/* EL/AB ejendomstype-badge — vises kun når togget er aktivt */}
+                  {visEjendomsBadges && (
+                    <>
+                      {erEjerlejlighed && (
+                        <span className="absolute -top-2 -right-2.5 bg-blue-600 text-white text-[7px] font-bold px-1 py-px rounded-full shadow-sm border border-blue-300 leading-none pointer-events-none select-none">
+                          EL
+                        </span>
+                      )}
+                      {!erEjerlejlighed && b.ejerforholdskode === '50' && (
+                        <span className="absolute -top-2 -right-2.5 bg-emerald-600 text-white text-[7px] font-bold px-1 py-px rounded-full shadow-sm border border-emerald-300 leading-none pointer-events-none select-none">
+                          AB
+                        </span>
+                      )}
+                      {!erEjerlejlighed && b.ejerforholdskode === '60' && (
+                        <span className="absolute -top-2 -right-2.5 bg-indigo-600 text-white text-[7px] font-bold px-1 py-px rounded-full shadow-sm border border-indigo-300 leading-none pointer-events-none select-none">
+                          AL
+                        </span>
+                      )}
+                    </>
+                  )}
+                </div>
               </Marker>
             );
           })}
@@ -930,6 +966,56 @@ export default function PropertyMap({
                     {bygningPunkter.length}
                   </span>
                 )}
+              </button>
+
+              {/* Ejendomstype-badges — EL / AB / AL */}
+              <button
+                onClick={() => setVisEjendomsBadges((p) => !p)}
+                disabled={(!bygningPunkter || bygningPunkter.length === 0) && !erEjerlejlighed}
+                className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-px transition-colors text-left ${
+                  visEjendomsBadges ? 'bg-white/5' : 'hover:bg-white/[0.03]'
+                } disabled:opacity-40 disabled:cursor-not-allowed`}
+              >
+                <div
+                  className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center shrink-0 border transition-colors ${
+                    visEjendomsBadges ? 'bg-blue-600 border-blue-600' : 'border-white/20'
+                  }`}
+                >
+                  {visEjendomsBadges && (
+                    <svg width="8" height="6" viewBox="0 0 10 8" fill="none">
+                      <path
+                        d="M1 4L3.5 6.5L9 1"
+                        stroke="white"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  )}
+                </div>
+                <p
+                  className={`text-xs leading-tight truncate ${visEjendomsBadges ? 'text-white' : 'text-slate-400'}`}
+                >
+                  Ejerlejlighed/Andel
+                </p>
+                {/* Forhåndsvisning af badges der vil blive vist */}
+                <div className="ml-auto flex gap-0.5 shrink-0">
+                  {erEjerlejlighed && (
+                    <span className="text-[8px] bg-blue-600/30 text-blue-400 border border-blue-500/30 rounded px-1 font-bold leading-none py-0.5">
+                      EL
+                    </span>
+                  )}
+                  {!erEjerlejlighed && bygningPunkter?.some((b) => b.ejerforholdskode === '50') && (
+                    <span className="text-[8px] bg-emerald-600/30 text-emerald-400 border border-emerald-500/30 rounded px-1 font-bold leading-none py-0.5">
+                      AB
+                    </span>
+                  )}
+                  {bygningPunkter?.some((b) => b.ejerforholdskode === '60') && (
+                    <span className="text-[8px] bg-indigo-600/30 text-indigo-400 border border-indigo-500/30 rounded px-1 font-bold leading-none py-0.5">
+                      AL
+                    </span>
+                  )}
+                </div>
               </button>
 
               {/* Basiskort-lag */}

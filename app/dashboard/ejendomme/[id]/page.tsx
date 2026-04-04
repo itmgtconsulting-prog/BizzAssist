@@ -4289,6 +4289,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                   visMatrikel={true}
                   onAdresseValgt={(newId) => router.push(`/dashboard/ejendomme/${newId}`)}
                   fullMapHref={`/dashboard/kort?ejendom=${id}`}
+                  erEjerlejlighed={!!bbrData?.ejerlejlighedBfe}
                   bygningPunkter={
                     bbrData?.bygningPunkter
                       ? bbrData.bygningPunkter.filter(
@@ -4349,6 +4350,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                     setMobilKortAaben(false);
                     router.push(`/dashboard/ejendomme/${newId}`);
                   }}
+                  erEjerlejlighed={!!bbrData?.ejerlejlighedBfe}
                   bygningPunkter={
                     bbrData?.bygningPunkter
                       ? bbrData.bygningPunkter.filter(
@@ -6044,6 +6046,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                   visMatrikel={true}
                   onAdresseValgt={(id) => router.push(`/dashboard/ejendomme/${id}`)}
                   fullMapHref={`/dashboard/kort?ejendom=${id}`}
+                  erEjerlejlighed={!!bbrData?.ejerlejlighedBfe}
                   bygningPunkter={bbrData?.bygningPunkter ?? undefined}
                 />
               </Suspense>
@@ -6098,6 +6101,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                   setMobilKortAaben(false);
                   router.push(`/dashboard/ejendomme/${newId}`);
                 }}
+                erEjerlejlighed={!!bbrData?.ejerlejlighedBfe}
                 bygningPunkter={bbrData?.bygningPunkter ?? undefined}
               />
             </Suspense>

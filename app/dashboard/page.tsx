@@ -12,7 +12,16 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { Building2, Users, Briefcase, ChevronRight, Eye, MapPin } from 'lucide-react';
+import {
+  Building2,
+  Users,
+  Briefcase,
+  ChevronRight,
+  Eye,
+  MapPin,
+  X,
+  FlaskConical,
+} from 'lucide-react';
 import Link from 'next/link';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';
@@ -45,6 +54,22 @@ export default function DashboardPage() {
 
   /** Collapsible sections — all collapsed by default */
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
+
+  /** Beta banner — hidden if user has dismissed it */
+  const [showBetaBanner, setShowBetaBanner] = useState(false);
+
+  /** Read localStorage after mount to avoid SSR mismatch */
+  useEffect(() => {
+    if (localStorage.getItem('ba-beta-banner-dismissed') !== '1') {
+      setShowBetaBanner(true);
+    }
+  }, []);
+
+  /** Dismiss beta banner and persist to localStorage */
+  const dismissBetaBanner = () => {
+    localStorage.setItem('ba-beta-banner-dismissed', '1');
+    setShowBetaBanner(false);
+  };
 
   /** Toggle a collapsible section open/closed */
   const toggle = (key: string) => setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -92,6 +117,25 @@ export default function DashboardPage() {
 
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-6">
+      {/* Beta banner — dismissible, persisted in localStorage */}
+      {showBetaBanner && (
+        <div className="flex items-start gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-300">
+          <FlaskConical className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+          <p className="flex-1 leading-snug">
+            <span className="font-semibold text-amber-200">BizzAssist Beta</span>
+            {' — '}Produktet er under aktiv udvikling. Der kan forekomme fejl og mangler. Del din
+            feedback via 💬 knappen.
+          </p>
+          <button
+            onClick={dismissBetaBanner}
+            aria-label="Luk beta-banner"
+            className="mt-0.5 shrink-0 rounded p-0.5 text-amber-400 hover:bg-amber-500/20 hover:text-amber-200 transition-colors"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
       {/* Welcome */}
       <div>
         <h1 className="text-2xl font-bold text-white">{d.welcome}</h1>

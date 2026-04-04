@@ -437,9 +437,14 @@ async function fetchBFENummer(dawaId: string): Promise<{
       jordBfe = js?.bfenummer ?? null;
     }
 
-    // Trin 3: Hvis adressen har etage/dør → find ejerlejlighedens BFE via Vurderingsportalen ES
+    // Trin 3: Find ejerlejlighedens BFE via Vurderingsportalen ES.
+    // Kører ALTID når adresseTekst er tilgængeligt — ikke kun for adresser med etage/dør.
+    // Nogle ejerlejligheder har ingen etage/dør-betegnelse (registreret som adgangsadresse)
+    // og ville ellers fejlagtigt mangle EL-badge.
+    // Validering: uden harEtage accepteres kun en kandidat der er FORSKELLIG fra jordBfe
+    // — det udelukker normale enfamiliehuse hvor Vurderingsportalen returnerer grundstykke-BFE.
     let ejerlejlighedBfe: number | null = null;
-    if (harEtage && adresseTekst) {
+    if (adresseTekst) {
       try {
         const esUrl = 'https://api-fs.vurderingsportalen.dk/preliminaryproperties/_search';
         const addrParts = adresseTekst.split(',')[0]; // "Vejnavn Nr" uden etage
@@ -469,9 +474,13 @@ async function fetchBFENummer(dawaId: string): Promise<{
             const matchFloor = etage ? hitFloor === etage.toLowerCase() : !hitFloor;
             const matchDoor = doer ? hitDoor === doer.toLowerCase() : !hitDoor;
             if (matchFloor && matchDoor && s.bfeNumbers) {
-              ejerlejlighedBfe = parseInt(String(s.bfeNumbers), 10);
-              if (!isNaN(ejerlejlighedBfe)) break;
-              ejerlejlighedBfe = null;
+              const candidate = parseInt(String(s.bfeNumbers), 10);
+              if (isNaN(candidate)) continue;
+              // Uden etage/dør: kun acceptér hvis BFE adskiller sig fra grundstykke-BFE
+              // (sikrer at vi ikke fejlagtigt markerer enfamiliehuse som ejerlejlighed)
+              if (!harEtage && jordBfe != null && candidate === jordBfe) continue;
+              ejerlejlighedBfe = candidate;
+              break;
             }
           }
         }

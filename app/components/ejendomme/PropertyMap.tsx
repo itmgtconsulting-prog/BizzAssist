@@ -569,14 +569,24 @@ export default function PropertyMap({
       const lyrId = `prop-wms-${wms.id}-raster`;
       if (!map.getSource(srcId))
         map.addSource(srcId, { type: 'raster', tiles: [wms.url], tileSize: 256 });
-      if (!map.getLayer(lyrId))
-        map.addLayer({
-          id: lyrId,
-          type: 'raster',
-          source: srcId,
-          layout: { visibility: visOverlayRef.current[wms.id] ? 'visible' : 'none' },
-          paint: { 'raster-opacity': wms.opacity },
-        });
+      if (!map.getLayer(lyrId)) {
+        // Indsæt WMS raster-lag UNDER housenum-label så husnumre altid vises øverst.
+        // På navigation-night-v1 (dark/bbr) eksisterer housenum-label i stilen —
+        // addLayer med beforeId placerer det nye lag under dette symbol-lag.
+        // På satellite-streets-v12 eksisterer housenum-label ikke, så beforeId er undefined
+        // og laget tilføjes øverst (housenum-overlay tilføjes derefter via aktiverHusnumre).
+        const beforeId = map.getLayer('housenum-label') ? 'housenum-label' : undefined;
+        map.addLayer(
+          {
+            id: lyrId,
+            type: 'raster',
+            source: srcId,
+            layout: { visibility: visOverlayRef.current[wms.id] ? 'visible' : 'none' },
+            paint: { 'raster-opacity': wms.opacity },
+          },
+          beforeId
+        );
+      }
     }
   }, []);
 

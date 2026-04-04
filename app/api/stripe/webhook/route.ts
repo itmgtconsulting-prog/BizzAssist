@@ -278,27 +278,46 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice): Promise<void> {
 
   const admin = createAdminClient();
 
-  // Fallback: look up user by Stripe customer ID if metadata is missing.
+  // Fallback: look up user by Stripe customer ID or email if metadata is missing.
   // This handles subscriptions assigned via admin panel (not through checkout flow).
   if (!userId) {
     const customerId =
       typeof sub.customer === 'string' ? sub.customer : (sub.customer as { id?: string })?.id;
+
+    // Fetch full user list once — reused for both fallback strategies
+    const { data: usersPage } = await admin.auth.admin.listUsers({ perPage: 1000 });
+
+    // Fallback 2: match by stripe_customer_id stored in app_metadata
     if (customerId) {
-      const { data: usersPage } = await admin.auth.admin.listUsers({ perPage: 1000 });
       const match = usersPage?.users?.find(
         (u) => (u.app_metadata?.stripe_customer_id as string | undefined) === customerId
       );
-      if (match?.id) userId = match.id;
+      if (match?.id) {
+        userId = match.id;
+        console.log(
+          `[stripe/webhook] invoice.payment_succeeded: resolved user ${userId} via Stripe customer ID fallback`
+        );
+      }
     }
+
+    // Fallback 3: match by Stripe customer email
+    if (!userId && invoice.customer) {
+      const customer = await stripe!.customers.retrieve(invoice.customer as string);
+      if (customer && !customer.deleted && customer.email) {
+        const emailMatch = usersPage?.users?.find((u) => u.email === customer.email);
+        if (emailMatch?.id) {
+          userId = emailMatch.id;
+          console.log('[stripe/webhook] Found user via email match:', customer.email);
+        }
+      }
+    }
+
     if (!userId) {
       console.error(
-        '[stripe/webhook] invoice.payment_succeeded: could not resolve user from subscription metadata or customer ID'
+        '[stripe/webhook] invoice.payment_succeeded: could not resolve user from subscription metadata, customer ID, or email'
       );
       return;
     }
-    console.log(
-      `[stripe/webhook] invoice.payment_succeeded: resolved user ${userId} via Stripe customer ID fallback`
-    );
   }
 
   // Get user email from Supabase

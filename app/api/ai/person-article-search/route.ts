@@ -547,6 +547,53 @@ async function searchBravePersonContacts(
   return all;
 }
 
+/**
+ * Sekundær telefonnummer-søgning — kører KUN hvis primær kontakt-søgning fandt adresse
+ * men IKKE telefonnummer. Søger på krak.dk, 118.dk og virksomhedernes kontaktoplysninger.
+ *
+ * @param key        - Brave Search Subscription Token
+ * @param personName - Personens fulde navn
+ * @param city       - By (til disambiguation)
+ * @param companies  - Virksomheder personen er tilknyttet (max 3 bruges)
+ */
+async function searchBravePersonPhone(
+  key: string,
+  personName: string,
+  city: string | undefined,
+  companies: Array<{ cvr: number | string; name: string }>
+): Promise<ArticleResult[]> {
+  const queries: string[] = [
+    city ? `"${personName}" telefon ${city}` : `"${personName}" telefon`,
+    `"${personName}" site:krak.dk`,
+    `"${personName}" site:118.dk`,
+  ];
+
+  // Søg virksomhedernes kontaktoplysninger for eventuelle telefonnumre
+  for (const c of companies.slice(0, 3)) {
+    queries.push(`"${c.name}" kontakt telefon`);
+  }
+
+  const results = await Promise.allSettled(queries.map((q) => searchBrave(key, q, 5, true)));
+
+  const all: ArticleResult[] = [];
+  const seen = new Set<string>();
+  for (const r of results) {
+    if (r.status === 'fulfilled') {
+      for (const item of r.value) {
+        if (!seen.has(item.url)) {
+          seen.add(item.url);
+          all.push(item);
+        }
+      }
+    }
+  }
+
+  console.log(
+    `[person-article-search] searchBravePersonPhone: ${all.length} ekstra telefon-resultater for "${personName}"`
+  );
+  return all;
+}
+
 // ─── System prompt ────────────────────────────────────────────────────────────
 
 /**
@@ -920,6 +967,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'personName er påkrævet' }, { status: 400 });
   }
 
+  console.log('[person-article-search] Companies modtaget:', JSON.stringify(companies));
+
   // ── Hent threshold + lærings-kontekst + Brave-data parallelt ────────────
   let braveResults: ArticleResult[];
   let braveSocials: SocialsResult;
@@ -1024,7 +1073,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const totalInputTokens = response.usage?.input_tokens ?? 0;
     const totalOutputTokens = response.usage?.output_tokens ?? 0;
-    const totalTokens = totalInputTokens + totalOutputTokens;
+    let totalTokens = totalInputTokens + totalOutputTokens;
 
     const finalText = response.content
       .filter((b): b is Anthropic.TextBlock => b.type === 'text')
@@ -1071,6 +1120,89 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         '[person-article-search] Ingen artikler parsede. Råsvar:',
         finalText.slice(0, 500)
       );
+    }
+
+    // ── Sekundær telefon-søgning hvis adresse fundet men ikke telefon ─────────
+    const hasPhone = contacts.some((c) => c.phone);
+    const hasAddress = contacts.some((c) => c.address);
+
+    if (!hasPhone && hasAddress) {
+      try {
+        const extraContactResults = await searchBravePersonPhone(
+          braveKey,
+          personName,
+          city,
+          companies
+        );
+
+        if (extraContactResults.length > 0) {
+          const existingAddress = contacts.find((c) => c.address)?.address ?? '';
+          const extraSummary = extraContactResults
+            .map(
+              (r, i) =>
+                `${i + 1}. ${r.title}\n   URL: ${r.url}\n   Kilde: ${r.source}${r.description ? `\n   Snippet: ${r.description}` : ''}`
+            )
+            .join('\n\n');
+
+          const phoneResponse = await client.messages.create({
+            model: 'claude-haiku-4-5-20251001',
+            max_tokens: 512,
+            messages: [
+              {
+                role: 'user',
+                content:
+                  `Find telefonnummer og email for ${personName}${existingAddress ? ` (bor på: ${existingAddress})` : ''} baseret på disse søgeresultater.\n\n` +
+                  `${extraSummary}\n\n` +
+                  `Returner KUN JSON:\n{"phone": "...", "email": "...", "source": "...", "sourceUrl": "...", "confidence": 70}\n` +
+                  `Brug null for felter der ikke kan bekræftes. Returnér {} hvis ingen information.`,
+              },
+            ],
+          });
+
+          totalTokens +=
+            (phoneResponse.usage?.input_tokens ?? 0) + (phoneResponse.usage?.output_tokens ?? 0);
+
+          const extraText = phoneResponse.content
+            .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+            .map((b) => b.text)
+            .join('');
+
+          try {
+            const jsonMatch =
+              extraText.match(/```json\s*([\s\S]*?)\s*```/) ?? extraText.match(/(\{[\s\S]*\})/);
+            if (jsonMatch) {
+              const extraData = JSON.parse(jsonMatch[1] ?? jsonMatch[0]) as Record<string, unknown>;
+              if (extraData.phone || extraData.email) {
+                const addrContact = contacts.find((c) => c.address);
+                if (addrContact) {
+                  if (typeof extraData.phone === 'string') addrContact.phone = extraData.phone;
+                  if (typeof extraData.email === 'string') addrContact.email = extraData.email;
+                } else {
+                  contacts.push({
+                    phone: typeof extraData.phone === 'string' ? extraData.phone : undefined,
+                    email: typeof extraData.email === 'string' ? extraData.email : undefined,
+                    source:
+                      typeof extraData.source === 'string' ? extraData.source : 'Sekundær søgning',
+                    sourceUrl: typeof extraData.sourceUrl === 'string' ? extraData.sourceUrl : '',
+                    confidence:
+                      typeof extraData.confidence === 'number' ? extraData.confidence : 60,
+                  });
+                }
+                console.log(
+                  `[person-article-search] Sekundær telefon-søgning fandt: phone=${extraData.phone ?? '–'}, email=${extraData.email ?? '–'}`
+                );
+              }
+            }
+          } catch {
+            // Ignorer parse-fejl fra sekundær søgning
+          }
+        }
+      } catch (err) {
+        console.warn(
+          '[person-article-search] Sekundær telefon-søgning fejlede (ikke kritisk):',
+          err instanceof Error ? err.message : err
+        );
+      }
     }
 
     const result: ArticleSearchResponse = {

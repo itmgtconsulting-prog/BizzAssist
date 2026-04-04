@@ -1430,19 +1430,14 @@ function PersonArticleSearchPanel({
   }, [ctxSub]);
 
   /**
-   * Bygger liste af virksomheder personen ejer — sendes til API som søgekontekst.
-   * Begrænset til top 5 ejervirksomheder.
+   * Bygger liste af virksomheder personen er aktiv tilknyttet — sendes til API som søgekontekst.
+   * Inkluderer alle aktive roller (ikke kun ejerroller) da artikel-søgning profiterer af
+   * alle offentlige tilknytninger (DIREKTØR, STIFTER, EJER osv.).
+   * Begrænset til top 5.
    */
   const ownedCompanies = useMemo(() => {
     return personData.virksomheder
-      .filter(
-        (v) =>
-          v.aktiv &&
-          v.roller.some((r) => {
-            const u = r.rolle.toUpperCase();
-            return !r.til && (u.includes('EJER') || u.includes('LEGALE') || u.includes('REEL'));
-          })
-      )
+      .filter((v) => v.aktiv && v.roller.some((r) => !r.til))
       .slice(0, 5)
       .map((v) => ({ cvr: v.cvr, name: v.navn }));
   }, [personData.virksomheder]);

@@ -984,10 +984,10 @@ export default function VirksomhedDetalje({ params }: PageProps) {
                     ? 'bg-blue-600/20 hover:bg-blue-600/30 border-blue-500/40 text-blue-300'
                     : 'bg-slate-800 hover:bg-slate-700 border-slate-700/60 text-slate-300'
                 }`}
-                title={lang === 'da' ? 'Nyheder & AI artikel søgning' : 'News & AI article search'}
+                title={lang === 'da' ? 'Medier & AI artikel søgning' : 'Media & AI article search'}
               >
                 <Newspaper size={14} />
-                {lang === 'da' ? 'Nyheder' : 'News'}
+                {lang === 'da' ? 'Medier' : 'Media'}
               </button>
               {/* Følg button */}
               <button
@@ -2807,7 +2807,7 @@ export default function VirksomhedDetalje({ params }: PageProps) {
             <div className="flex items-center gap-2">
               <Newspaper size={14} className="text-blue-400" />
               <span className="text-white text-sm font-medium">
-                {lang === 'da' ? 'Nyheder & links' : 'News & links'}
+                {lang === 'da' ? 'Medier & links' : 'Media & links'}
               </span>
             </div>
             <button
@@ -2872,7 +2872,7 @@ export default function VirksomhedDetalje({ params }: PageProps) {
             <div className="flex items-center gap-2 min-w-0">
               <Newspaper size={15} className="text-blue-400 flex-shrink-0" />
               <span className="text-white text-sm font-medium truncate">
-                {lang === 'da' ? 'Nyheder & links' : 'News & links'}
+                {lang === 'da' ? 'Medier & links' : 'Media & links'}
               </span>
             </div>
             <button

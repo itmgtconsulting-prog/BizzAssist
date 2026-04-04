@@ -696,17 +696,58 @@ export default function PropertyMap({
    * Opsætter også WMS overlay-lag og re-registrerer dem ved stil-skift.
    */
   /**
-   * Aktiverer Mapbox's built-in housenum-label lag ved zoom ≥ 17.
+   * Aktiverer husnumre på kortet.
+   *
+   * Navigation-night-v1 (dark/bbr) har et built-in 'housenum-label' lag der blot
+   * skal gøres synligt. Satellite-streets-v12 mangler dette lag, så vi tilføjer
+   * en manuel streets-v8 vector source og et symbol-lag med hvide husnumre med
+   * sort halo — synligt oven på luftfoto ved zoom ≥ 17.
+   *
    * Kaldes både ved initial load og ved hvert stilskift.
    */
   const aktiverHusnumre = useCallback(() => {
     const map = mapRef.current?.getMap();
     if (!map) return;
-    try {
-      map.setLayoutProperty('housenum-label', 'visibility', 'visible');
-      map.setFilter('housenum-label', ['>=', ['zoom'], 17]);
-    } catch {
-      /* Lag findes ikke i alle stiltyper — ignorer */
+
+    if (map.getLayer('housenum-label')) {
+      // Built-in lag i navigation-night-v1 — gør det synligt
+      try {
+        map.setLayoutProperty('housenum-label', 'visibility', 'visible');
+        map.setFilter('housenum-label', ['>=', ['zoom'], 17]);
+      } catch {
+        /* ignorer */
+      }
+      return;
+    }
+
+    // Satellite-stilen har ikke housenum-label — tilføj streets-v8 overlay
+    const SRC = 'streets-v8-housenum';
+    const LYR = 'housenum-overlay';
+    if (!map.getSource(SRC)) {
+      map.addSource(SRC, {
+        type: 'vector',
+        url: 'mapbox://mapbox.mapbox-streets-v8',
+      });
+    }
+    if (!map.getLayer(LYR)) {
+      map.addLayer({
+        id: LYR,
+        type: 'symbol',
+        source: SRC,
+        'source-layer': 'housenum_label',
+        minzoom: 17,
+        layout: {
+          'text-field': ['get', 'house_num'],
+          'text-size': 12,
+          'text-allow-overlap': false,
+          'text-ignore-placement': false,
+        },
+        paint: {
+          'text-color': '#ffffff',
+          'text-halo-color': '#000000',
+          'text-halo-width': 1.5,
+        },
+      });
     }
   }, []);
 

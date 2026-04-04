@@ -38,6 +38,40 @@ import { rateLimit, AI_CHAT_LIMIT } from '@/app/lib/rateLimit';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
+// ─── Ekskluderede domæner (konkurrenter) ─────────────────────────────────────
+
+/**
+ * Domæner der aldrig må vises som artikelresultater — konkurrenters platforme.
+ * Filtreres fra Brave-resultater inden de sendes til Claude.
+ */
+const EXCLUDED_ARTICLE_DOMAINS = [
+  'ownr.dk',
+  'estatistik.dk',
+  'profiler.dk',
+  'krak.dk',
+  'proff.dk',
+  'paqle.dk',
+  'erhvervplus.dk',
+  'lasso.dk',
+  'cvrapi.dk',
+  'find-virksomhed.dk',
+  'virksomhedskartoteket.dk',
+];
+
+/**
+ * Returnerer true hvis URL'ens domæne er på ekskluderingslisten.
+ *
+ * @param url - URL der skal tjekkes
+ */
+function isExcludedDomain(url: string): boolean {
+  try {
+    const hostname = new URL(url).hostname.replace(/^www\./, '');
+    return EXCLUDED_ARTICLE_DOMAINS.some((d) => hostname === d || hostname.endsWith(`.${d}`));
+  } catch {
+    return false;
+  }
+}
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 /** En nyhedsartikel */
@@ -226,7 +260,8 @@ async function searchBrave(key: string, query: string, count = 20): Promise<Arti
       description: r.description?.trim().slice(0, 150) ?? undefined,
       date: r.age?.trim() ?? undefined,
     }))
-    .filter((r) => r.title && r.url);
+    .filter((r) => r.title && r.url)
+    .filter((r) => !isExcludedDomain(r.url));
 }
 
 /**
@@ -345,12 +380,16 @@ Din opgave er at kvalitetsvurdere hvert eneste resultat og returnere de bedste:
 4. Forbedre snippet-beskrivelser til max 100 tegn dansk tekst hvis nødvendigt
 5. Find virksomhedens sociale medier og hjemmeside-links — vurder confidence for hvert link
 
+EKSKLUDEREDE DOMÆNER — inkludér ALDRIG artikler fra disse domæner (konkurrenter):
+ownr.dk, estatistik.dk, profiler.dk, krak.dk, proff.dk, paqle.dk, erhvervplus.dk, lasso.dk, cvrapi.dk, find-virksomhed.dk, virksomhedskartoteket.dk
+
 RELEVANCEREGLER — afvis et resultat hvis:
 - Det handler om en ANDEN virksomhed med samme eller lignende navn
 - Det er et jobopslag (stillingsopslag, karriere, ledige stillinger)
 - Det er en generisk brancheportal eller aggregator der bare lister virksomheden
 - Det er åbenlyst spam eller irrelevant indhold
 - Det er en tom/generisk virksomhedsprofilside uden reel information
+- Det stammer fra et af de ekskluderede domæner ovenfor
 
 CONFIDENCE-REGLER for sociale medier:
 - 90-100: Meget sikker — officielt domæne matcher eksakt, /company/ URL med korrekt slug, osv.

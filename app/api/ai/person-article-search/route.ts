@@ -40,6 +40,40 @@ import { rateLimit, AI_CHAT_LIMIT } from '@/app/lib/rateLimit';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
+// ─── Ekskluderede domæner (konkurrenter) ─────────────────────────────────────
+
+/**
+ * Domæner der aldrig må vises som artikelresultater — konkurrenters platforme.
+ * Filtreres fra Brave-resultater inden de sendes til Claude.
+ */
+const EXCLUDED_ARTICLE_DOMAINS = [
+  'ownr.dk',
+  'estatistik.dk',
+  'profiler.dk',
+  'krak.dk',
+  'proff.dk',
+  'paqle.dk',
+  'erhvervplus.dk',
+  'lasso.dk',
+  'cvrapi.dk',
+  'find-virksomhed.dk',
+  'virksomhedskartoteket.dk',
+];
+
+/**
+ * Returnerer true hvis URL'ens domæne er på ekskluderingslisten.
+ *
+ * @param url - URL der skal tjekkes
+ */
+function isExcludedDomain(url: string): boolean {
+  try {
+    const hostname = new URL(url).hostname.replace(/^www\./, '');
+    return EXCLUDED_ARTICLE_DOMAINS.some((d) => hostname === d || hostname.endsWith(`.${d}`));
+  } catch {
+    return false;
+  }
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 /** En nyhedsartikel */
@@ -214,7 +248,8 @@ async function searchBrave(key: string, query: string, count = 20): Promise<Arti
       description: r.description?.trim().slice(0, 150) ?? undefined,
       date: r.age?.trim() ?? undefined,
     }))
-    .filter((r) => r.title && r.url);
+    .filter((r) => r.title && r.url)
+    .filter((r) => !isExcludedDomain(r.url));
 }
 
 /**
@@ -268,44 +303,140 @@ async function searchBravePersonArticles(
 }
 
 /**
+ * Udtrækker en kortere navnevariant ved at fjerne mellemnavne.
+ * "Vicki Hornebo Larsen" → "Vicki Larsen"
+ *
+ * @param fullName - Personens fulde navn
+ * @returns Fornavn + efternavn (uden mellemnavne), eller fuldt navn hvis <= 2 ord
+ */
+function shortName(fullName: string): string {
+  const parts = fullName.trim().split(/\s+/);
+  if (parts.length <= 2) return fullName;
+  return `${parts[0]} ${parts[parts.length - 1]}`;
+}
+
+/**
+ * Søger én platform på Brave og returnerer unikke profil-URLs fra resultater.
+ * Filtrerer ekskluderede domæner fra.
+ *
+ * @param key   - Brave Search Subscription Token
+ * @param query - Søgeforespørgsel
+ * @param count - Antal resultater ønsket
+ */
+async function searchBraveSocialPlatform(
+  key: string,
+  query: string,
+  count: number
+): Promise<string[]> {
+  try {
+    const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}&country=dk`;
+    const res = await fetch(url, {
+      headers: { 'X-Subscription-Token': key, Accept: 'application/json' },
+      signal: AbortSignal.timeout(5000),
+    });
+    const data = await res.json();
+    const hits: BraveWebResult[] = data.web?.results ?? [];
+    return hits.map((h) => h.url as string).filter((u) => u && !isExcludedDomain(u));
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Søger personens sociale medier-profiler via Brave Search.
- * Bruger personlig profil-format (/in/ på LinkedIn) i stedet for virksomhedsprofil.
+ * Søger med BÅDE fuldt navn og kort navn (fornavn+efternavn) parallelt per platform
+ * for at fange profiler der ikke indekseres under det fulde navn.
  *
  * @param key        - Brave Search Subscription Token
  * @param personName - Personens fulde navn
  */
-async function searchBravePersonSocials(key: string, personName: string): Promise<SocialsResult> {
-  const platforms: Array<{ name: keyof SocialsResult; query: string; count: number }> = [
-    { name: 'linkedin', query: `"${personName}" site:linkedin.com/in`, count: 2 },
-    { name: 'facebook', query: `"${personName}" site:facebook.com`, count: 2 },
-    { name: 'instagram', query: `"${personName}" site:instagram.com`, count: 1 },
-    { name: 'twitter', query: `"${personName}" site:x.com OR site:twitter.com`, count: 1 },
+async function searchBravePersonSocials(
+  key: string,
+  personName: string
+): Promise<{ socials: SocialsResult; allCandidates: Record<string, string[]> }> {
+  const short = shortName(personName);
+  const hasMiddleName = short !== personName;
+
+  // Søgeforespørgsler per platform — begge navnevarianter køres parallelt
+  type PlatformDef = { name: keyof SocialsResult; queries: string[]; count: number };
+  const platforms: PlatformDef[] = [
+    {
+      name: 'linkedin',
+      queries: [
+        `"${personName}" site:linkedin.com/in`,
+        ...(hasMiddleName ? [`"${short}" site:linkedin.com/in`] : []),
+      ],
+      count: 3,
+    },
+    {
+      name: 'facebook',
+      queries: [
+        `"${personName}" site:facebook.com`,
+        ...(hasMiddleName ? [`"${short}" site:facebook.com`] : []),
+        // Backup uden site:-restriktion (fanger share-links og profiler der ikke indekseres med site:)
+        `"${personName}" facebook`,
+      ],
+      count: 3,
+    },
+    {
+      name: 'instagram',
+      queries: [
+        `"${personName}" site:instagram.com`,
+        ...(hasMiddleName ? [`"${short}" site:instagram.com`] : []),
+      ],
+      count: 2,
+    },
+    {
+      name: 'twitter',
+      queries: [
+        `"${personName}" site:x.com OR site:twitter.com`,
+        ...(hasMiddleName ? [`"${short}" site:x.com OR site:twitter.com`] : []),
+      ],
+      count: 2,
+    },
   ];
 
-  const results = await Promise.allSettled(
-    platforms.map(async (p) => {
-      const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(p.query)}&count=${p.count}&country=dk`;
-      const res = await fetch(url, {
-        headers: { 'X-Subscription-Token': key, Accept: 'application/json' },
-        signal: AbortSignal.timeout(5000),
-      });
-      const data = await res.json();
-      const hits: BraveWebResult[] = data.web?.results ?? [];
-      return { name: p.name, url: (hits[0]?.url as string) || null };
-    })
+  // Kør alle queries parallelt på tværs af alle platforme
+  const allQueries = platforms.flatMap((p) =>
+    p.queries.map((q) => ({ platform: p.name, query: q, count: p.count }))
   );
 
+  const queryResults = await Promise.allSettled(
+    allQueries.map(({ query, count }) => searchBraveSocialPlatform(key, query, count))
+  );
+
+  // Merge resultater per platform — behold første fund per platform (bedste match)
+  const platformUrls: Partial<Record<keyof SocialsResult, string[]>> = {};
+  let qi = 0;
+  for (const p of platforms) {
+    const urls: string[] = [];
+    const seen = new Set<string>();
+    for (let i = 0; i < p.queries.length; i++) {
+      const r = queryResults[qi + i];
+      if (r.status === 'fulfilled') {
+        for (const u of r.value) {
+          if (!seen.has(u)) {
+            seen.add(u);
+            urls.push(u);
+          }
+        }
+      }
+    }
+    qi += p.queries.length;
+    if (urls.length > 0) platformUrls[p.name] = urls;
+  }
+
   const socials: SocialsResult = {};
-  for (const r of results) {
-    if (r.status === 'fulfilled' && r.value.url) {
-      socials[r.value.name] = r.value.url;
+  for (const [name, urls] of Object.entries(platformUrls)) {
+    if (urls && urls.length > 0) {
+      socials[name as keyof SocialsResult] = urls[0];
     }
   }
 
   console.log(
-    `[person-article-search] searchBravePersonSocials: fandt ${Object.keys(socials).length} platforme`
+    `[person-article-search] searchBravePersonSocials: fandt ${Object.keys(socials).length} platforme (navnevariant: "${personName}"${hasMiddleName ? ` + "${short}"` : ''})`
   );
-  return socials;
+  return { socials, allCandidates: platformUrls as Record<string, string[]> };
 }
 
 // ─── System prompt ────────────────────────────────────────────────────────────
@@ -327,11 +458,15 @@ Din opgave er at kvalitetsvurdere hvert eneste resultat og returnere de bedste:
 4. Forbedre snippet-beskrivelser til max 100 tegn dansk tekst hvis nødvendigt
 5. Find personens sociale medier-profiler — VIGTIGT: søg efter PERSONLIG profil (LinkedIn /in/), ikke virksomhedsprofil
 
+EKSKLUDEREDE DOMÆNER — inkludér ALDRIG artikler fra disse domæner (konkurrenter):
+ownr.dk, estatistik.dk, profiler.dk, krak.dk, proff.dk, paqle.dk, erhvervplus.dk, lasso.dk, cvrapi.dk, find-virksomhed.dk, virksomhedskartoteket.dk
+
 RELEVANCEREGLER — afvis et resultat hvis:
 - Det handler om en ANDEN person med samme navn
 - Det er et jobopslag for en stilling personen ikke har nævneværdig tilknytning til
 - Det er en generisk telefonbog/adressebog-side uden reel information
 - Det er åbenlyst spam eller irrelevant indhold
+- Det stammer fra et af de ekskluderede domæner ovenfor
 
 CONFIDENCE-REGLER for sociale medier (PERSON-specifik):
 - 90-100: Meget sikker — LinkedIn /in/ profil med personens fulde navn eksakt, billede matcher mv.
@@ -587,16 +722,22 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   // ── Hent threshold + lærings-kontekst + Brave-data parallelt ────────────
   let braveResults: ArticleResult[];
   let braveSocials: SocialsResult;
+  let braveSocialCandidates: Record<string, string[]>;
   let confidenceThreshold: number;
   let learningContext: string;
 
   try {
-    [braveResults, braveSocials, confidenceThreshold, learningContext] = await Promise.all([
+    const [articles, socialsResult, threshold, learning] = await Promise.all([
       searchBravePersonArticles(braveKey, personName, companies),
       searchBravePersonSocials(braveKey, personName),
       fetchConfidenceThreshold(),
       buildLearningContext(),
     ]);
+    braveResults = articles;
+    braveSocials = socialsResult.socials;
+    braveSocialCandidates = socialsResult.allCandidates;
+    confidenceThreshold = threshold;
+    learningContext = learning;
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Ukendt Brave Search fejl';
     console.error('[person-article-search] Initialiseringsfejl:', msg);
@@ -632,14 +773,19 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       : '(Ingen Brave-resultater for denne søgning)';
 
   let socialVerificationSection = '';
-  if (Object.keys(braveSocials).length > 0) {
-    const socialsStr = Object.entries(braveSocials)
-      .map(([platform, url]) => `- ${platform}: ${url}`)
-      .join('\n');
+  if (Object.keys(braveSocialCandidates).length > 0) {
     const locationHint = city ? ` i ${city}` : ' i Danmark';
+    // Vis alle kandidat-URLs per platform (inkl. fund fra kortere navnevariant)
+    const candidatesStr = Object.entries(braveSocialCandidates)
+      .map(([platform, urls]) => {
+        if (urls.length === 1) return `- ${platform}: ${urls[0]}`;
+        return `- ${platform}:\n${urls.map((u, i) => `    ${i + 1}. ${u}`).join('\n')}`;
+      })
+      .join('\n');
     socialVerificationSection =
-      `\n\nBrave Search har fundet disse sociale medie-profiler — verificer om de tilhører NETOP DENNE PERSON${locationHint}:\n${socialsStr}\n` +
-      `Brug dem i din socials-output med passende confidence-score. Hvis en profil tilhører en anden person, giv den lav confidence eller udelad den.`;
+      `\n\nBrave Search har fundet disse sociale medie-profil-kandidater — verificer om de tilhører NETOP DENNE PERSON${locationHint}:\n${candidatesStr}\n` +
+      `Vælg den bedste URL per platform og brug den i din socials-output med passende confidence-score. ` +
+      `Hvis ingen URL tilhører denne person, udelad platformen. Returner gerne alle kandidater som alternativer.`;
   }
 
   const userMessage =

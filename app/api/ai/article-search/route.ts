@@ -56,6 +56,8 @@ const EXCLUDED_ARTICLE_DOMAINS = [
   'cvrapi.dk',
   'find-virksomhed.dk',
   'virksomhedskartoteket.dk',
+  'crunchbase.com',
+  'b2bhint.com',
 ];
 
 /**
@@ -381,7 +383,7 @@ Din opgave er at kvalitetsvurdere hvert eneste resultat og returnere de bedste:
 5. Find virksomhedens sociale medier og hjemmeside-links — vurder confidence for hvert link
 
 EKSKLUDEREDE DOMÆNER — inkludér ALDRIG artikler fra disse domæner (konkurrenter):
-ownr.dk, estatistik.dk, profiler.dk, krak.dk, proff.dk, paqle.dk, erhvervplus.dk, lasso.dk, cvrapi.dk, find-virksomhed.dk, virksomhedskartoteket.dk
+ownr.dk, estatistik.dk, profiler.dk, krak.dk, proff.dk, paqle.dk, erhvervplus.dk, lasso.dk, cvrapi.dk, find-virksomhed.dk, virksomhedskartoteket.dk, crunchbase.com, b2bhint.com
 
 RELEVANCEREGLER — afvis et resultat hvis:
 - Det handler om en ANDEN virksomhed med samme eller lignende navn

@@ -7,9 +7,17 @@
  * - Missing data returns 400
  * - Correct content-type header
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { POST } from '@/app/api/export/route';
 import { NextRequest } from 'next/server';
+
+// Mock rate limiter so tests run without Upstash Redis env vars
+vi.mock('@/app/lib/rateLimit', () => ({
+  checkRateLimit: vi.fn().mockResolvedValue(null),
+  rateLimit: {},
+  aiRateLimit: {},
+  braveRateLimit: {},
+}));
 
 /**
  * Helper to create a mock NextRequest with JSON body.

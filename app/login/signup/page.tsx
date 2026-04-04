@@ -25,6 +25,7 @@ import {
 import { useLanguage } from '@/app/context/LanguageContext';
 import { signUp } from '@/app/auth/actions';
 import { formatTokens } from '@/app/lib/subscriptions';
+import { createClient } from '@/lib/supabase/client';
 
 /** Plan data from /api/plans */
 interface PlanOption {
@@ -120,6 +121,9 @@ export default function SignupPage() {
   const [selectedPlan, setSelectedPlan] = useState<string>('demo');
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [oauthLoading, setOauthLoading] = useState<'google' | 'azure' | 'linkedin_oidc' | null>(
+    null
+  );
   const [error, setError] = useState<string | null>(null);
 
   /** Available plans from API */
@@ -149,6 +153,30 @@ export default function SignupPage() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const currentPlan = plans.find((p) => p.id === selectedPlan);
+
+  /**
+   * Initiates an OAuth sign-up/sign-in flow via Supabase.
+   * Redirects the browser to the provider's consent screen.
+   *
+   * @param provider - The OAuth provider ('google', 'azure', or 'linkedin_oidc')
+   */
+  const handleOAuth = async (provider: 'google' | 'azure' | 'linkedin_oidc') => {
+    setOauthLoading(provider);
+    setError(null);
+    const supabase = createClient();
+    const { error: oauthError } = await supabase.auth.signInWithOAuth({
+      provider,
+      options: {
+        redirectTo: `${window.location.origin}/auth/callback`,
+        queryParams: provider === 'google' ? { prompt: 'select_account' } : {},
+      },
+    });
+    if (oauthError) {
+      setError('unexpected_error');
+      setOauthLoading(null);
+    }
+    // On success the browser is redirected — no further action needed
+  };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -221,6 +249,87 @@ export default function SignupPage() {
               <p className="text-slate-400 text-sm">
                 {da ? 'Kom i gang med BizzAssist' : 'Get started with BizzAssist'}
               </p>
+            </div>
+
+            {/* OAuth buttons */}
+            <div className="space-y-3 mb-6">
+              {/* Microsoft / Office 365 */}
+              <button
+                type="button"
+                onClick={() => handleOAuth('azure')}
+                disabled={!!oauthLoading || loading}
+                className="w-full flex items-center justify-center gap-3 bg-[#0078D4] hover:bg-[#106EBE] disabled:opacity-50 text-white font-medium py-3 px-4 rounded-xl text-sm transition-colors"
+              >
+                {oauthLoading === 'azure' ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <svg width="18" height="18" viewBox="0 0 23 23" fill="none">
+                    <path d="M11 11H0V0h11v11z" fill="#F25022" />
+                    <path d="M23 11H12V0h11v11z" fill="#7FBA00" />
+                    <path d="M11 23H0V12h11v11z" fill="#00A4EF" />
+                    <path d="M23 23H12V12h11v11z" fill="#FFB900" />
+                  </svg>
+                )}
+                {da ? 'Fortsæt med Microsoft' : 'Continue with Microsoft'}
+              </button>
+
+              {/* Google */}
+              <button
+                type="button"
+                onClick={() => handleOAuth('google')}
+                disabled={!!oauthLoading || loading}
+                className="w-full flex items-center justify-center gap-3 bg-white hover:bg-gray-50 disabled:opacity-50 text-gray-700 font-medium py-3 px-4 rounded-xl text-sm transition-colors"
+              >
+                {oauthLoading === 'google' ? (
+                  <Loader2 size={16} className="animate-spin text-gray-500" />
+                ) : (
+                  <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                    <path
+                      d="M17.64 9.205c0-.639-.057-1.252-.164-1.841H9v3.481h4.844a4.14 4.14 0 01-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"
+                      fill="#4285F4"
+                    />
+                    <path
+                      d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 009 18z"
+                      fill="#34A853"
+                    />
+                    <path
+                      d="M3.964 10.71A5.41 5.41 0 013.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 000 9c0 1.452.348 2.827.957 4.042l3.007-2.332z"
+                      fill="#FBBC05"
+                    />
+                    <path
+                      d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 00.957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z"
+                      fill="#EA4335"
+                    />
+                  </svg>
+                )}
+                {da ? 'Fortsæt med Google' : 'Continue with Google'}
+              </button>
+
+              {/* LinkedIn */}
+              <button
+                type="button"
+                onClick={() => handleOAuth('linkedin_oidc')}
+                disabled={!!oauthLoading || loading}
+                className="w-full flex items-center justify-center gap-3 bg-[#0A66C2] hover:bg-[#004182] disabled:opacity-50 text-white font-medium py-3 px-4 rounded-xl text-sm transition-colors"
+              >
+                {oauthLoading === 'linkedin_oidc' ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" />
+                  </svg>
+                )}
+                {da ? 'Fortsæt med LinkedIn' : 'Continue with LinkedIn'}
+              </button>
+            </div>
+
+            {/* Divider */}
+            <div className="flex items-center gap-4 mb-6">
+              <div className="flex-1 border-t border-white/10" />
+              <span className="text-slate-500 text-xs">
+                {da ? 'eller opret med e-mail' : 'or sign up with email'}
+              </span>
+              <div className="flex-1 border-t border-white/10" />
             </div>
 
             {errorMsg && (

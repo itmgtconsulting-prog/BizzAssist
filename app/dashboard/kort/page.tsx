@@ -266,7 +266,7 @@ const LAG_START: LagSynlighed = {
   ortofoto: false,
   matrikel: true,
   husnumre: true,
-  bbr_type: false,
+  bbr_type: true,
   lokalplaner: false,
   kommuneplan: false,
   zonekort: false,

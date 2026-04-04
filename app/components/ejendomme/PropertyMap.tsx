@@ -417,9 +417,9 @@ export default function PropertyMap({
 
   /**
    * Styrer om EL/AB ejendomstype-badges vises på bygningsmarkørerne.
-   * Initialiseres til false — brugeren aktiverer via lag-panelet.
+   * Initialiseres til true — vises som standard, brugeren kan deaktivere via lag-panelet.
    */
-  const [visEjendomsBadges, setVisEjendomsBadges] = useState(false);
+  const [visEjendomsBadges, setVisEjendomsBadges] = useState(true);
 
   /** Åben/lukket tilstand for lag-panelet */
   const [lagPanel, setLagPanel] = useState(false);
@@ -695,18 +695,35 @@ export default function PropertyMap({
    * men useEffect kører EFTER render.
    * Opsætter også WMS overlay-lag og re-registrerer dem ved stil-skift.
    */
+  /**
+   * Aktiverer Mapbox's built-in housenum-label lag ved zoom ≥ 17.
+   * Kaldes både ved initial load og ved hvert stilskift.
+   */
+  const aktiverHusnumre = useCallback(() => {
+    const map = mapRef.current?.getMap();
+    if (!map) return;
+    try {
+      map.setLayoutProperty('housenum-label', 'visibility', 'visible');
+      map.setFilter('housenum-label', ['>=', ['zoom'], 17]);
+    } catch {
+      /* Lag findes ikke i alle stiltyper — ignorer */
+    }
+  }, []);
+
   const handleMapLoad = useCallback(() => {
     const map = mapRef.current?.getMap();
     if (!map) return;
     // Anvend overrides og opsæt lag på den allerede indlæste startsstil
     anvendStilOverrides();
     opsætWmsLag();
+    aktiverHusnumre();
     // Lyt permanent — style.load fyrer ved hvert fremtidigt stilskift
     map.on('style.load', () => {
       anvendStilOverrides();
       opsætWmsLag();
+      aktiverHusnumre();
     });
-  }, [anvendStilOverrides, opsætWmsLag]);
+  }, [anvendStilOverrides, opsætWmsLag, aktiverHusnumre]);
 
   /** Vis fallback UI hvis Mapbox-token mangler */
   if (!harToken) {
@@ -916,7 +933,7 @@ export default function PropertyMap({
                 <X size={12} />
               </button>
             </div>
-            <div className="px-2 py-1.5 max-h-[60vh] overflow-y-auto">
+            <div className="px-2 py-1.5 max-h-[60vh] overflow-y-auto touch-pan-y overscroll-contain">
               {/* BBR Bygninger */}
               <p className="text-[9px] font-bold uppercase tracking-widest px-1 pt-1.5 pb-1 text-emerald-400">
                 Bygninger

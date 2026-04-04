@@ -1406,12 +1406,18 @@ function PersonArticleSearchPanel({
   const { isActive: subActive } = useSubscriptionAccess('ai');
   const [articles, setArticles] = useState<PersonAIArticleResult[]>([]);
   const [hasSearched, setHasSearched] = useState(false);
-  const [loading, setLoading] = useState(false);
+  /** Individuelle loading-states per søge-kategori — til progressiv visning */
+  const [socialsLoading, setSocialsLoading] = useState(false);
+  const [articlesLoading, setArticlesLoading] = useState(false);
+  const [contactsLoading, setContactsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tokenInfo, setTokenInfo] = useState<{ used: number; limit: number } | null>(null);
   const [tokensUsedThisSearch, setTokensUsedThisSearch] = useState(0);
   /** Antal synlige artikler — starter på 5, øges med 5 ved hvert "Vis flere"-klik */
   const [visibleCount, setVisibleCount] = useState(5);
+
+  /** Mindst én søge-kategori er stadig i gang */
+  const anyLoading = socialsLoading || articlesLoading || contactsLoading;
 
   /** Opdaterer token-info fra subscription context */
   useEffect(() => {
@@ -1450,9 +1456,12 @@ function PersonArticleSearchPanel({
     return undefined;
   }, [personData.virksomheder]);
 
-  /** Starter AI artikel søgning */
+  /**
+   * Starter AI-søgning med 3 parallelle kald (socials, articles, contacts).
+   * Hvert kald opdaterer sin egen loading-state og viser resultater progressivt.
+   */
   const handleSearch = useCallback(async () => {
-    if (loading) return;
+    if (anyLoading) return;
 
     if (ctxSub) {
       const plan = resolvePlan(ctxSub.planId);
@@ -1463,76 +1472,99 @@ function PersonArticleSearchPanel({
       if (limit > 0 && ctxSub.tokensUsedThisMonth >= limit) return;
     }
 
-    setLoading(true);
+    setHasSearched(true);
     setError(null);
     setArticles([]);
+    setVisibleCount(5);
+    setSocialsLoading(true);
+    setArticlesLoading(true);
+    setContactsLoading(true);
+    setTokensUsedThisSearch(0);
 
-    try {
-      const res = await fetch('/api/ai/person-article-search', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          personName: personData.navn,
-          companies: ownedCompanies,
-          city,
-        }),
-      });
+    const payload = JSON.stringify({
+      personName: personData.navn,
+      companies: ownedCompanies,
+      city,
+    });
 
-      const json = await res.json();
+    // ── Sociale medier (hurtigst ~2s) ──
+    const socialsPromise = fetch('/api/ai/person-search/socials', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: payload,
+    })
+      .then(async (res) => {
+        const json = await res.json();
+        type SocialMeta = { url: string; confidence: number; reason?: string };
+        const socialsWithMeta = json.socialsWithMeta as Record<string, SocialMeta> | undefined;
+        if (socialsWithMeta && Object.keys(socialsWithMeta).length > 0) {
+          onSocialsFound?.(socialsWithMeta);
+        }
+        type AltMeta = { url: string; confidence: number; reason?: string };
+        const altsWithMeta = json.alternativesWithMeta as Record<string, AltMeta[]> | undefined;
+        if (altsWithMeta && Object.keys(altsWithMeta).length > 0) {
+          onAlternativesFound?.(altsWithMeta);
+        }
+        if (typeof json.confidenceThreshold === 'number') {
+          onThresholdFound?.(json.confidenceThreshold);
+        }
+        return (json.tokensUsed as number) ?? 0;
+      })
+      .catch(() => 0)
+      .finally(() => setSocialsLoading(false));
 
-      if (!res.ok || json.error) {
-        setError(json.error ?? (lang === 'da' ? 'Søgefejl' : 'Search error'));
-        return;
-      }
+    // ── Artikler (~5-8s) ──
+    const articlesPromise = fetch('/api/ai/person-search/articles', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: payload,
+    })
+      .then(async (res) => {
+        const json = await res.json();
+        if (json.error) setError(json.error);
+        const fetchedArticles: PersonAIArticleResult[] = json.articles ?? [];
+        setArticles(fetchedArticles);
+        setVisibleCount(5);
+        return (json.tokensUsed as number) ?? 0;
+      })
+      .catch(() => 0)
+      .finally(() => setArticlesLoading(false));
 
-      const fetchedArticles: PersonAIArticleResult[] = json.articles ?? [];
-      setArticles(fetchedArticles);
-      setVisibleCount(5);
+    // ── Kontaktoplysninger (~3-5s) ──
+    const contactsPromise = fetch('/api/ai/person-search/contacts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: payload,
+    })
+      .then(async (res) => {
+        const json = await res.json();
+        const contacts = json.contacts as ContactResult[] | undefined;
+        if (contacts && contacts.length > 0) {
+          onContactsFound?.(contacts);
+        }
+        return (json.tokensUsed as number) ?? 0;
+      })
+      .catch(() => 0)
+      .finally(() => setContactsLoading(false));
 
-      // Videresend AI-fundne sociale medier med confidence til VerifiedLinks
-      type SocialMeta = { url: string; confidence: number; reason?: string };
-      const socialsWithMeta = json.socialsWithMeta as Record<string, SocialMeta> | undefined;
-      if (socialsWithMeta && Object.keys(socialsWithMeta).length > 0) {
-        onSocialsFound?.(socialsWithMeta);
-      }
-
-      // Videresend alternative links med confidence
-      type AltMeta = { url: string; confidence: number; reason?: string };
-      const altsWithMeta = json.alternativesWithMeta as Record<string, AltMeta[]> | undefined;
-      if (altsWithMeta && Object.keys(altsWithMeta).length > 0) {
-        onAlternativesFound?.(altsWithMeta);
-      }
-
-      // Videresend confidence-tærskel
-      if (typeof json.confidenceThreshold === 'number') {
-        onThresholdFound?.(json.confidenceThreshold);
-      }
-
-      // Videresend AI-fundne kontaktoplysninger
-      const contacts = json.contacts as ContactResult[] | undefined;
-      if (contacts && contacts.length > 0) {
-        onContactsFound?.(contacts);
-      }
-
-      const total = json.tokensUsed ?? json.usage?.totalTokens ?? 0;
-      if (total > 0) {
-        setTokensUsedThisSearch(total);
-        addTokenUsage(total);
-        syncPersonTokenUsageToServer(total);
-      }
-    } catch {
-      setError(lang === 'da' ? 'Netværksfejl — prøv igen' : 'Network error — try again');
-    } finally {
-      setHasSearched(true);
-      setLoading(false);
+    // ── Vent på alle og rapportér samlet token-forbrug ──
+    const [socialsTokens, articlesTokens, contactsTokens] = await Promise.all([
+      socialsPromise,
+      articlesPromise,
+      contactsPromise,
+    ]);
+    const total = socialsTokens + articlesTokens + contactsTokens;
+    if (total > 0) {
+      setTokensUsedThisSearch(total);
+      addTokenUsage(total);
+      syncPersonTokenUsageToServer(total);
     }
   }, [
-    loading,
+    anyLoading,
     ctxSub,
     personData,
     ownedCompanies,
     city,
-    lang,
     addTokenUsage,
     onSocialsFound,
     onAlternativesFound,
@@ -1608,7 +1640,7 @@ function PersonArticleSearchPanel({
   );
 
   /** Go-state — søgning ikke startet endnu */
-  if (!hasSearched && !loading) {
+  if (!hasSearched) {
     return (
       <div>
         {tokenBar}
@@ -1629,41 +1661,60 @@ function PersonArticleSearchPanel({
     );
   }
 
-  /** Loading-state */
-  if (loading) {
-    return (
-      <div>
-        {tokenBar}
-        {aiDisclaimer}
-        <div className="flex items-center gap-2 text-slate-400 text-xs py-2">
-          <Loader2 size={12} className="animate-spin text-blue-400" />
-          {da ? 'AI søger efter nyheder…' : 'AI searching for news…'}
-        </div>
-      </div>
-    );
-  }
-
-  /** Resultat-state */
+  /** Progressiv resultat-state — vises når søgning er startet */
   return (
     <div>
       {tokenBar}
       {aiDisclaimer}
-      {tokensUsedThisSearch > 0 && (
+
+      {/* Aktive loading-indikatorer per kategori */}
+      {anyLoading && (
+        <div className="space-y-1 mb-3">
+          {socialsLoading && (
+            <div className="flex items-center gap-2 text-slate-400 text-xs">
+              <Loader2 size={10} className="animate-spin text-blue-400 flex-shrink-0" />
+              <span>{da ? 'Søger sociale medier…' : 'Searching social media…'}</span>
+            </div>
+          )}
+          {articlesLoading && (
+            <div className="flex items-center gap-2 text-slate-400 text-xs">
+              <Loader2 size={10} className="animate-spin text-purple-400 flex-shrink-0" />
+              <span>{da ? 'Søger artikler…' : 'Searching articles…'}</span>
+            </div>
+          )}
+          {contactsLoading && (
+            <div className="flex items-center gap-2 text-slate-400 text-xs">
+              <Loader2 size={10} className="animate-spin text-green-400 flex-shrink-0" />
+              <span>{da ? 'Søger kontaktoplysninger…' : 'Searching contacts…'}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Token-forbrug (vises når alle er færdige) */}
+      {!anyLoading && tokensUsedThisSearch > 0 && (
         <p className="text-[10px] text-slate-600 mb-3">
           {da
             ? `Brugte ${formatTokens(tokensUsedThisSearch)} tokens`
             : `Used ${formatTokens(tokensUsedThisSearch)} tokens`}
         </p>
       )}
+
       {error && <p className="text-red-400 text-xs mb-2">{error}</p>}
-      {articles.length === 0 && !error ? (
+
+      {/* Artikler — fade-in når de ankommer */}
+      {articlesLoading && articles.length === 0 ? null : articles.length === 0 &&
+        !articlesLoading ? (
         <p className="text-slate-600 text-xs">
           {da
             ? 'Ingen danske medieartikler fundet for denne person.'
             : 'No Danish media articles found for this person.'}
         </p>
       ) : (
-        <div className="space-y-2.5">
+        <div
+          className="space-y-2.5"
+          style={{ animation: articles.length > 0 ? 'fadeIn 0.4s ease-in' : undefined }}
+        >
           {articles.slice(0, visibleCount).map((a, i) => (
             <a
               key={i}
@@ -1690,12 +1741,11 @@ function PersonArticleSearchPanel({
               </div>
             </a>
           ))}
-          {visibleCount < articles.length && (
+          {articles.length > visibleCount && (
             <button
-              onClick={() => setVisibleCount((c) => Math.min(c + 5, articles.length))}
-              className="mt-1 flex items-center gap-1 text-[10px] text-slate-500 hover:text-blue-400 transition-colors"
+              onClick={() => setVisibleCount((v) => v + 5)}
+              className="text-[10px] text-slate-500 hover:text-blue-400 transition-colors mt-1"
             >
-              <ChevronDown size={10} />
               {da
                 ? `Vis flere (${articles.length - visibleCount} mere)`
                 : `Show more (${articles.length - visibleCount} more)`}
@@ -1703,11 +1753,12 @@ function PersonArticleSearchPanel({
           )}
         </div>
       )}
-      {articles.length > 0 && (
+
+      {/* Søg igen (vises kun når alt er færdigt) */}
+      {!anyLoading && (
         <button
           onClick={handleSearch}
-          disabled={loading}
-          className="mt-3 flex items-center gap-1.5 text-[10px] text-slate-500 hover:text-blue-400 transition-colors disabled:opacity-50"
+          className="mt-3 flex items-center gap-1.5 text-[10px] text-slate-500 hover:text-blue-400 transition-colors"
         >
           <Zap size={9} />
           {da ? 'Søg igen' : 'Search again'}
@@ -1716,7 +1767,6 @@ function PersonArticleSearchPanel({
     </div>
   );
 }
-
 // ─── GroupTab ───────────────────────────────────────────────────────────────
 
 /**

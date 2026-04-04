@@ -2997,12 +2997,17 @@ function AIArticleSearchPanel({
   const { isActive: subActive } = useSubscriptionAccess('ai');
   const [articles, setArticles] = useState<AIArticleResult[]>([]);
   const [hasSearched, setHasSearched] = useState(false);
-  const [loading, setLoading] = useState(false);
+  /** Individuelle loading-states per søge-kategori — til progressiv visning */
+  const [socialsLoading, setSocialsLoading] = useState(false);
+  const [articlesLoading, setArticlesLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tokenInfo, setTokenInfo] = useState<{ used: number; limit: number } | null>(null);
   const [tokensUsedThisSearch, setTokensUsedThisSearch] = useState(0);
   /** Antal synlige artikler — starter på 5, øges med 5 ved hvert "Vis flere"-klik */
   const [visibleCount, setVisibleCount] = useState(5);
+
+  /** Mindst én søge-kategori er stadig i gang */
+  const anyLoading = socialsLoading || articlesLoading;
 
   /** Opdaterer token-info fra subscription context */
   useEffect(() => {
@@ -3028,9 +3033,12 @@ function AIArticleSearchPanel({
       .slice(0, 8);
   }, [companyData.deltagere]);
 
-  /** Starter AI artikel søgning */
+  /**
+   * Starter AI-søgning med 2 parallelle kald (socials + articles).
+   * Hvert kald opdaterer sin egen loading-state og viser resultater progressivt.
+   */
   const handleSearch = useCallback(async () => {
-    if (loading) return;
+    if (anyLoading) return;
 
     if (ctxSub) {
       const plan = resolvePlan(ctxSub.planId);
@@ -3041,84 +3049,93 @@ function AIArticleSearchPanel({
       if (limit > 0 && ctxSub.tokensUsedThisMonth >= limit) return;
     }
 
-    setLoading(true);
+    setHasSearched(true);
     setError(null);
     setArticles([]);
+    setVisibleCount(5);
+    setSocialsLoading(true);
+    setArticlesLoading(true);
+    setTokensUsedThisSearch(0);
 
-    try {
-      const res = await fetch('/api/ai/article-search', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          companyName: companyData.name,
-          cvr: String(companyData.vat),
-          industry: companyData.industrydesc,
-          employees: companyData.employees,
-          city: companyData.city,
-          keyPersons,
-        }),
-      });
+    const payload = JSON.stringify({
+      companyName: companyData.name,
+      cvr: String(companyData.vat),
+      industry: companyData.industrydesc,
+      employees: companyData.employees,
+      city: companyData.city,
+      keyPersons,
+    });
 
-      const json = await res.json();
-
-      if (!res.ok || json.error) {
-        setError(json.error ?? (lang === 'da' ? 'Søgefejl' : 'Search error'));
-        return;
-      }
-
-      const fetchedArticles: AIArticleResult[] = json.articles ?? [];
-      setArticles(fetchedArticles);
-      setVisibleCount(5);
-
-      // Videresend AI-fundne sociale medier med confidence til VerifiedLinks
-      type SocialMeta = { url: string; confidence: number; reason?: string };
-      const socialsWithMeta = json.socialsWithMeta as Record<string, SocialMeta> | undefined;
-      if (socialsWithMeta && Object.keys(socialsWithMeta).length > 0) {
-        onSocialsFound?.(socialsWithMeta);
-      }
-
-      // Videresend og gem alternative links med confidence
-      type AltMeta = { url: string; confidence: number; reason?: string };
-      const altsWithMeta = json.alternativesWithMeta as Record<string, AltMeta[]> | undefined;
-      if (altsWithMeta && Object.keys(altsWithMeta).length > 0) {
-        onAlternativesFound?.(altsWithMeta);
-        // Gem string-URL-version til Supabase (backward compat)
-        const stringAlts: Record<string, string[]> = {};
-        for (const [k, arr] of Object.entries(altsWithMeta)) {
-          stringAlts[k] = arr.map((a) => a.url);
+    // ── Sociale medier (hurtigst ~2s) ──
+    const socialsPromise = fetch('/api/ai/article-search/socials', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: payload,
+    })
+      .then(async (res) => {
+        const json = await res.json();
+        type SocialMeta = { url: string; confidence: number; reason?: string };
+        const socialsWithMeta = json.socialsWithMeta as Record<string, SocialMeta> | undefined;
+        if (socialsWithMeta && Object.keys(socialsWithMeta).length > 0) {
+          onSocialsFound?.(socialsWithMeta);
         }
-        fetch('/api/link-alternatives', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ cvr: String(companyData.vat), alternatives: stringAlts }),
-        }).catch(() => {
-          /* ignore — gemning af alternativer er ikke kritisk */
-        });
-      }
+        type AltMeta = { url: string; confidence: number; reason?: string };
+        const altsWithMeta = json.alternativesWithMeta as Record<string, AltMeta[]> | undefined;
+        if (altsWithMeta && Object.keys(altsWithMeta).length > 0) {
+          onAlternativesFound?.(altsWithMeta);
+          // Gem string-URL-version til Supabase (backward compat)
+          const stringAlts: Record<string, string[]> = {};
+          for (const [k, arr] of Object.entries(altsWithMeta)) {
+            stringAlts[k] = arr.map((a) => a.url);
+          }
+          fetch('/api/link-alternatives', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cvr: String(companyData.vat), alternatives: stringAlts }),
+          }).catch(() => {
+            /* ignore */
+          });
+        }
+        if (typeof json.confidenceThreshold === 'number') {
+          onThresholdFound?.(json.confidenceThreshold);
+        }
+        return (json.tokensUsed as number) ?? 0;
+      })
+      .catch(() => 0)
+      .finally(() => setSocialsLoading(false));
 
-      // Videresend confidence-tærskel
-      if (typeof json.confidenceThreshold === 'number') {
-        onThresholdFound?.(json.confidenceThreshold);
-      }
-      const total = json.tokensUsed ?? json.usage?.totalTokens ?? 0;
-      if (total > 0) {
-        setTokensUsedThisSearch(total);
-        addTokenUsage(total);
-        syncTokenUsageToServer(total);
-      }
-    } catch {
-      setError(lang === 'da' ? 'Netværksfejl — prøv igen' : 'Network error — try again');
-    } finally {
-      setHasSearched(true);
-      setLoading(false);
+    // ── Artikler (~5-8s) ──
+    const articlesPromise = fetch('/api/ai/article-search/articles', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: payload,
+    })
+      .then(async (res) => {
+        const json = await res.json();
+        if (json.error) setError(json.error);
+        const fetchedArticles: AIArticleResult[] = json.articles ?? [];
+        setArticles(fetchedArticles);
+        setVisibleCount(5);
+        return (json.tokensUsed as number) ?? 0;
+      })
+      .catch(() => 0)
+      .finally(() => setArticlesLoading(false));
+
+    // ── Vent på begge og rapportér samlet token-forbrug ──
+    const [socialsTokens, articlesTokens] = await Promise.all([socialsPromise, articlesPromise]);
+    const total = socialsTokens + articlesTokens;
+    if (total > 0) {
+      setTokensUsedThisSearch(total);
+      addTokenUsage(total);
+      syncTokenUsageToServer(total);
     }
   }, [
-    loading,
+    anyLoading,
     ctxSub,
     companyData,
     keyPersons,
-    lang,
     addTokenUsage,
+    onSocialsFound,
     onAlternativesFound,
     onThresholdFound,
   ]);
@@ -3191,7 +3208,7 @@ function AIArticleSearchPanel({
   );
 
   /** Go-state — søgning ikke startet endnu */
-  if (!hasSearched && !loading) {
+  if (!hasSearched) {
     return (
       <div>
         {tokenBar}
@@ -3212,41 +3229,54 @@ function AIArticleSearchPanel({
     );
   }
 
-  /** Loading-state */
-  if (loading) {
-    return (
-      <div>
-        {tokenBar}
-        {aiDisclaimer}
-        <div className="flex items-center gap-2 text-slate-400 text-xs py-2">
-          <Loader2 size={12} className="animate-spin text-blue-400" />
-          {da ? 'AI søger efter nyheder…' : 'AI searching for news…'}
-        </div>
-      </div>
-    );
-  }
-
-  /** Resultat-state */
+  /** Progressiv resultat-state — vises når søgning er startet */
   return (
     <div>
       {tokenBar}
       {aiDisclaimer}
-      {tokensUsedThisSearch > 0 && (
+
+      {/* Aktive loading-indikatorer per kategori */}
+      {anyLoading && (
+        <div className="space-y-1 mb-3">
+          {socialsLoading && (
+            <div className="flex items-center gap-2 text-slate-400 text-xs">
+              <Loader2 size={10} className="animate-spin text-blue-400 flex-shrink-0" />
+              <span>{da ? 'Søger sociale medier…' : 'Searching social media…'}</span>
+            </div>
+          )}
+          {articlesLoading && (
+            <div className="flex items-center gap-2 text-slate-400 text-xs">
+              <Loader2 size={10} className="animate-spin text-purple-400 flex-shrink-0" />
+              <span>{da ? 'Søger artikler…' : 'Searching articles…'}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Token-forbrug (vises når alle er færdige) */}
+      {!anyLoading && tokensUsedThisSearch > 0 && (
         <p className="text-[10px] text-slate-600 mb-3">
           {da
             ? `Brugte ${formatTokens(tokensUsedThisSearch)} tokens`
             : `Used ${formatTokens(tokensUsedThisSearch)} tokens`}
         </p>
       )}
+
       {error && <p className="text-red-400 text-xs mb-2">{error}</p>}
-      {articles.length === 0 && !error ? (
+
+      {/* Artikler — fade-in når de ankommer */}
+      {articlesLoading && articles.length === 0 ? null : articles.length === 0 &&
+        !articlesLoading ? (
         <p className="text-slate-600 text-xs">
           {da
             ? 'Ingen danske medieartikler fundet for denne virksomhed.'
             : 'No Danish media articles found for this company.'}
         </p>
       ) : (
-        <div className="space-y-2.5">
+        <div
+          className="space-y-2.5"
+          style={{ animation: articles.length > 0 ? 'fadeIn 0.4s ease-in' : undefined }}
+        >
           {articles.slice(0, visibleCount).map((a, i) => (
             <a
               key={i}
@@ -3286,11 +3316,12 @@ function AIArticleSearchPanel({
           )}
         </div>
       )}
-      {articles.length > 0 && (
+
+      {/* Søg igen (vises kun når alt er færdigt) */}
+      {!anyLoading && (
         <button
           onClick={handleSearch}
-          disabled={loading}
-          className="mt-3 flex items-center gap-1.5 text-[10px] text-slate-500 hover:text-blue-400 transition-colors disabled:opacity-50"
+          className="mt-3 flex items-center gap-1.5 text-[10px] text-slate-500 hover:text-blue-400 transition-colors"
         >
           <Zap size={9} />
           {da ? 'Søg igen' : 'Search again'}

@@ -60,6 +60,7 @@ const EXCLUDED_ARTICLE_DOMAINS = [
   'virksomhedskartoteket.dk',
   'crunchbase.com',
   'b2bhint.com',
+  'resights.dk',
 ];
 
 /**
@@ -289,12 +290,14 @@ async function searchBravePersonArticles(
   const query1 = `"${personName}" nyheder artikel`;
   const query2 = `"${personName}" site:dr.dk OR site:tv2.dk OR site:borsen.dk OR site:berlingske.dk OR site:politiken.dk`;
 
-  // Sekundær: top 5 ejervirksomheder — to queries per virksomhed:
+  // Sekundær: top 5 ejervirksomheder — tre queries per virksomhed:
   // 1. Krydshenvisning: kræver BEGGE navne i artiklen
-  // 2. Selvstændig: generelle nyheder om virksomheden alene
+  // 2. Selvstændig: generelle nyheder + anmeldelser + guides (inkluderer mindre virksomheder)
+  // 3. Bred søgning uden site:-begrænsning (fanger lokale medier, blogger, TripAdvisor-lignende)
   const topCompanies = companies.slice(0, 5);
   const companyQueries = topCompanies.flatMap((c) => [
     `"${c.name}" "${personName}"`,
+    `"${c.name}" anmeldelse OR artikel OR nyheder OR guide OR omtale`,
     `"${c.name}" nyheder artikel`,
   ]);
 
@@ -515,16 +518,34 @@ async function searchBravePersonSocials(
  *
  * @param key        - Brave Search Subscription Token
  * @param personName - Personens fulde navn
+ * @param city       - By (valgfrit, til geografisk præcisering)
+ * @param companies  - Virksomheder personen er tilknyttet (bruges til kryds-søgning)
  */
 async function searchBravePersonContacts(
   key: string,
-  personName: string
+  personName: string,
+  city?: string,
+  companies?: Array<{ cvr: number | string; name: string }>
 ): Promise<ArticleResult[]> {
-  const queries = [
+  const queries: string[] = [
     `"${personName}" adresse telefon`,
     `"${personName}" kontakt email`,
-    `"${personName}" site:krak.dk OR site:118.dk OR site:degulesider.dk`,
+    `"${personName}" site:krak.dk`,
+    `"${personName}" site:118.dk`,
+    `"${personName}" site:degulesider.dk`,
   ];
+
+  // Geografi-baseret søgning øger præcision for almindelige navne
+  if (city) {
+    queries.push(`"${personName}" ${city} adresse`);
+  }
+
+  // Kryds-søgning: person + virksomhedsnavn (forbinder person med registrerede kontaktdata)
+  if (companies && companies.length > 0) {
+    for (const c of companies.slice(0, 3)) {
+      queries.push(`"${personName}" "${c.name}"`);
+    }
+  }
 
   const results = await Promise.allSettled(queries.map((q) => searchBrave(key, q, 5, true)));
 
@@ -614,7 +635,7 @@ Din opgave er at kvalitetsvurdere hvert eneste resultat og returnere de bedste:
 5. Find personens sociale medier-profiler — VIGTIGT: søg efter PERSONLIG profil (LinkedIn /in/), ikke virksomhedsprofil
 
 EKSKLUDEREDE DOMÆNER — inkludér ALDRIG artikler fra disse domæner (konkurrenter):
-ownr.dk, estatistik.dk, profiler.dk, krak.dk, proff.dk, paqle.dk, erhvervplus.dk, lasso.dk, cvrapi.dk, find-virksomhed.dk, virksomhedskartoteket.dk, crunchbase.com, b2bhint.com
+ownr.dk, estatistik.dk, profiler.dk, krak.dk, proff.dk, paqle.dk, erhvervplus.dk, lasso.dk, cvrapi.dk, find-virksomhed.dk, virksomhedskartoteket.dk, crunchbase.com, b2bhint.com, resights.dk
 
 RELEVANCEREGLER — afvis et resultat hvis:
 - Det handler om en ANDEN person med samme navn
@@ -981,7 +1002,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const [articles, socialsResult, contactResults, threshold, learning] = await Promise.all([
       searchBravePersonArticles(braveKey, personName, companies),
       searchBravePersonSocials(braveKey, personName),
-      searchBravePersonContacts(braveKey, personName),
+      searchBravePersonContacts(braveKey, personName, city, companies),
       fetchConfidenceThreshold(),
       buildLearningContext(),
     ]);

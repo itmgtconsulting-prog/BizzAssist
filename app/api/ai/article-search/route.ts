@@ -58,6 +58,7 @@ const EXCLUDED_ARTICLE_DOMAINS = [
   'virksomhedskartoteket.dk',
   'crunchbase.com',
   'b2bhint.com',
+  'resights.dk',
 ];
 
 /**
@@ -273,17 +274,23 @@ async function searchBrave(key: string, query: string, count = 20): Promise<Arti
  * @param companyName - Virksomhedens navn
  */
 async function searchBraveArticles(key: string, companyName: string): Promise<ArticleResult[]> {
-  const query1 = `${companyName} nyheder artikel`;
-  const query2 = `${companyName} site:dr.dk OR site:tv2.dk OR site:borsen.dk OR site:berlingske.dk OR site:politiken.dk`;
+  // Generel søgning — dækker anmeldelser, guides, omtaler, nyheder
+  const query1 = `"${companyName}" anmeldelse OR artikel OR nyheder OR guide OR omtale`;
+  // Bredt nyheds-søgning uden site:-begrænsning (relevant for mindre virksomheder)
+  const query2 = `"${companyName}" nyheder artikel`;
+  // Medievirksomheder (kun for større/kendte virksomheder — kører parallelt)
+  const query3 = `"${companyName}" site:dr.dk OR site:tv2.dk OR site:borsen.dk OR site:berlingske.dk OR site:politiken.dk`;
 
-  const [results1, results2] = await Promise.all([
+  const [results1, results2, results3] = await Promise.all([
     searchBrave(key, query1, 20),
     searchBrave(key, query2, 20),
+    searchBrave(key, query3, 10),
   ]);
 
   const seen = new Set<string>();
   const merged: ArticleResult[] = [];
-  for (const r of [...results2, ...results1]) {
+  // Prioritér medievirksomheder, derefter anmeldelses-søgning, til sidst generel
+  for (const r of [...results3, ...results1, ...results2]) {
     if (!seen.has(r.url)) {
       seen.add(r.url);
       merged.push(r);
@@ -291,7 +298,7 @@ async function searchBraveArticles(key: string, companyName: string): Promise<Ar
   }
 
   console.log(
-    `[article-search] searchBraveArticles: query1=${results1.length} + query2=${results2.length} → merged=${merged.length}`
+    `[article-search] searchBraveArticles: q1=${results1.length} + q2=${results2.length} + q3=${results3.length} → merged=${merged.length}`
   );
   return merged;
 }
@@ -383,7 +390,7 @@ Din opgave er at kvalitetsvurdere hvert eneste resultat og returnere de bedste:
 5. Find virksomhedens sociale medier og hjemmeside-links — vurder confidence for hvert link
 
 EKSKLUDEREDE DOMÆNER — inkludér ALDRIG artikler fra disse domæner (konkurrenter):
-ownr.dk, estatistik.dk, profiler.dk, krak.dk, proff.dk, paqle.dk, erhvervplus.dk, lasso.dk, cvrapi.dk, find-virksomhed.dk, virksomhedskartoteket.dk, crunchbase.com, b2bhint.com
+ownr.dk, estatistik.dk, profiler.dk, krak.dk, proff.dk, paqle.dk, erhvervplus.dk, lasso.dk, cvrapi.dk, find-virksomhed.dk, virksomhedskartoteket.dk, crunchbase.com, b2bhint.com, resights.dk
 
 RELEVANCEREGLER — afvis et resultat hvis:
 - Det handler om en ANDEN virksomhed med samme eller lignende navn

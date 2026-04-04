@@ -36,6 +36,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 import { rateLimit, AI_CHAT_LIMIT } from '@/app/lib/rateLimit';
+import { withBraveCache } from '@/app/lib/searchCache';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -1000,6 +1001,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   console.log('[person-article-search] Companies modtaget:', JSON.stringify(companies));
 
   // ── Hent threshold + lærings-kontekst + Brave-data + ekskluderede domæner parallelt ──
+  // Brave results are cached 24h in Supabase search_cache to reduce API usage.
+  const personKey = `${personName.toLowerCase()}|${city ?? ''}`;
   let braveResults: ArticleResult[];
   let braveSocials: SocialsResult;
   let braveSocialCandidates: Record<string, string[]>;
@@ -1011,9 +1014,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
     const [articles, socialsResult, contactResults, threshold, learning, excludedDomains] =
       await Promise.all([
-        searchBravePersonArticles(braveKey, personName, companies),
-        searchBravePersonSocials(braveKey, personName),
-        searchBravePersonContacts(braveKey, personName, city, companies),
+        withBraveCache(`person_articles|${personKey}`, () =>
+          searchBravePersonArticles(braveKey, personName, companies)
+        ),
+        withBraveCache(`person_socials|${personKey}`, () =>
+          searchBravePersonSocials(braveKey, personName)
+        ),
+        withBraveCache(`person_contacts|${personKey}`, () =>
+          searchBravePersonContacts(braveKey, personName, city, companies)
+        ),
         fetchConfidenceThreshold(),
         buildLearningContext(),
         fetchExcludedDomains(),

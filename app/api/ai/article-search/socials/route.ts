@@ -22,6 +22,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 import { rateLimit, AI_CHAT_LIMIT } from '@/app/lib/rateLimit';
+import { withBraveCache } from '@/app/lib/searchCache';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -381,13 +382,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'companyName er påkrævet' }, { status: 400 });
 
   // ── Brave-søgning + Supabase parallelt ──
+  // Brave socials results are cached 24h in Supabase search_cache to reduce API usage.
   let braveSocials: SocialsResult;
   let confidenceThreshold: number;
   let learningContext: string;
 
   try {
     [braveSocials, confidenceThreshold, learningContext] = await Promise.all([
-      searchBraveSocials(braveKey, companyName),
+      withBraveCache(`socials|${companyName.toLowerCase()}|${cvr ?? ''}`, () =>
+        searchBraveSocials(braveKey, companyName)
+      ),
       fetchConfidenceThreshold(),
       buildLearningContext(),
     ]);

@@ -22,6 +22,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 import { rateLimit, AI_CHAT_LIMIT } from '@/app/lib/rateLimit';
+import { withBraveCache } from '@/app/lib/searchCache';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -359,12 +360,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'companyName er påkrævet' }, { status: 400 });
 
   // ── Brave-søgning + Supabase parallelt ──
+  // Brave results are cached 24h in Supabase search_cache to reduce API usage.
   let braveResults: ArticleResult[];
   let dbExcludedDomains: string[];
 
   try {
     [braveResults, dbExcludedDomains] = await Promise.all([
-      searchBraveArticles(braveKey, companyName),
+      withBraveCache(`articles|${companyName.toLowerCase()}|${cvr ?? ''}`, () =>
+        searchBraveArticles(braveKey, companyName)
+      ),
       fetchExcludedDomains(),
     ]);
   } catch (err) {

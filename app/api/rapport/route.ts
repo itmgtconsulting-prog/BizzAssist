@@ -7,6 +7,10 @@
  * Returns: application/pdf stream
  */
 import { NextRequest, NextResponse } from 'next/server';
+
+export const runtime = 'nodejs';
+export const maxDuration = 60;
+
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const PDFDocument = require('pdfkit');
 

@@ -892,8 +892,14 @@ export default function PropertyMap({
         {/* Ejendomsmarkør */}
         <Marker longitude={lng} latitude={lat} anchor="bottom">
           <div className="flex flex-col items-center cursor-pointer" onClick={centerMap}>
-            <div className="bg-blue-600 text-white text-xs px-2 py-1 rounded-lg shadow-lg font-medium whitespace-nowrap mb-1">
+            <div className="relative flex items-center gap-1 bg-blue-600 text-white text-xs px-2 py-1 rounded-lg shadow-lg font-medium whitespace-nowrap mb-1">
               {adresse.split(',')[0]}
+              {/* EL-badge vises altid på hoved-markøren når erEjerlejlighed=true og togget er aktivt */}
+              {erEjerlejlighed && visEjendomsBadges && (
+                <span className="bg-white text-blue-700 text-[7px] font-bold px-1 py-px rounded-full shadow-sm leading-none pointer-events-none select-none">
+                  EL
+                </span>
+              )}
             </div>
             <div className="w-3 h-3 bg-blue-600 rounded-full border-2 border-white shadow-lg" />
           </div>

@@ -18,6 +18,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { rateLimit, AI_CHAT_LIMIT } from '@/app/lib/rateLimit';
+import { withBraveCache } from '@/app/lib/searchCache';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -331,9 +332,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'personName er påkrævet' }, { status: 400 });
 
   // ── Brave-søgning ──
+  // Brave contact results cached 24h in Supabase search_cache to reduce API usage.
   let braveContactResults: ArticleResult[];
   try {
-    braveContactResults = await searchBravePersonContacts(braveKey, personName, city, companies);
+    braveContactResults = await withBraveCache(
+      `ps_contacts|${personName.toLowerCase()}|${city ?? ''}`,
+      () => searchBravePersonContacts(braveKey, personName, city, companies)
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Brave Search fejl';
     return NextResponse.json({ error: `Søgning fejlede: ${msg}` }, { status: 502 });

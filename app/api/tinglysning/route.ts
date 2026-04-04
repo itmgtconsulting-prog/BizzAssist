@@ -13,6 +13,9 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+
+export const runtime = 'nodejs';
+export const maxDuration = 60;
 import https from 'https';
 import fs from 'fs';
 import path from 'path';

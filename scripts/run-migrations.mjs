@@ -17,7 +17,7 @@
  *   NEXT_PUBLIC_SUPABASE_URL   in .env.local
  */
 
-import fs   from 'fs';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -53,7 +53,7 @@ if (!projectRef) {
 }
 
 const apiBase = `https://api.supabase.com/v1/projects/${projectRef}/database/query`;
-const headers = { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' };
+const headers = { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' };
 
 // ── SQL executor ─────────────────────────────────────────────
 
@@ -86,8 +86,8 @@ const filter = process.argv[2]; // optional: '005' to run only files matching
 
 const files = fs
   .readdirSync(migrationsDir)
-  .filter(f => f.endsWith('.sql') && !f.startsWith('ALL_'))
-  .filter(f => !filter || f.includes(filter))
+  .filter((f) => f.endsWith('.sql') && !f.startsWith('ALL_'))
+  .filter((f) => !filter || f.includes(filter))
   .sort();
 
 if (files.length === 0) {

@@ -19,6 +19,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 import { rateLimit, AI_CHAT_LIMIT } from '@/app/lib/rateLimit';
+import { withBraveCache } from '@/app/lib/searchCache';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -498,7 +499,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     confidenceThreshold = threshold;
     learningContext = learning;
 
-    const socialsResult = await searchBravePersonSocials(braveKey, personName, enabledPlatforms);
+    // Brave socials cached 24h — platform list affects results so include it in key
+    const socialsResult = await withBraveCache(
+      `ps_socials|${personName.toLowerCase()}|${enabledPlatforms.join(',')}`,
+      () => searchBravePersonSocials(braveKey, personName, enabledPlatforms)
+    );
     braveSocials = socialsResult.socials;
     braveSocialCandidates = socialsResult.allCandidates;
   } catch (err) {

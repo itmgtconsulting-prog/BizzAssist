@@ -26,6 +26,7 @@ import {
   MessageSquare,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
+import { createClient } from '@/lib/supabase/client';
 
 /** localStorage key to track onboarding completion */
 const ONBOARDING_KEY = 'ba-onboarding-done';
@@ -87,26 +88,64 @@ export default function OnboardingModal() {
   const [show, setShow] = useState(false);
   const [step, setStep] = useState(0);
 
-  /** Check if onboarding has been completed */
+  /**
+   * Check if onboarding has been completed.
+   * Checks Supabase user_metadata first (cross-device), falls back to localStorage.
+   */
   useEffect(() => {
-    try {
-      if (!localStorage.getItem(ONBOARDING_KEY)) {
-        // Small delay so the dashboard loads first
-        const timer = setTimeout(() => setShow(true), 800);
-        return () => clearTimeout(timer);
+    let cancelled = false;
+    (async () => {
+      // 1. Check localStorage immediately (fast path)
+      try {
+        if (localStorage.getItem(ONBOARDING_KEY)) return;
+      } catch {
+        /* ignore */
       }
-    } catch {
-      // localStorage not available
-    }
+
+      // 2. Check Supabase user_metadata (cross-device source of truth)
+      try {
+        const supabase = createClient();
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        if (user?.user_metadata?.onboarding_done) {
+          // Sync to localStorage so we skip the async check next time
+          try {
+            localStorage.setItem(ONBOARDING_KEY, String(user.user_metadata.onboarding_done));
+          } catch {
+            /* ignore */
+          }
+          return;
+        }
+      } catch {
+        /* Supabase unavailable — fall through to show onboarding */
+      }
+
+      if (cancelled) return;
+      // Small delay so the dashboard loads first
+      const timer = setTimeout(() => setShow(true), 800);
+      return () => clearTimeout(timer);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  /** Mark onboarding as complete and close */
+  /** Mark onboarding as complete — saves to both Supabase user_metadata and localStorage. */
   const complete = () => {
+    const ts = Date.now();
+    // Persist to localStorage (sync, immediate)
     try {
-      localStorage.setItem(ONBOARDING_KEY, Date.now().toString());
+      localStorage.setItem(ONBOARDING_KEY, String(ts));
     } catch {
-      // ignore
+      /* ignore */
     }
+    // Persist to Supabase user_metadata (async, cross-device)
+    createClient()
+      .auth.updateUser({ data: { onboarding_done: ts } })
+      .catch(() => {
+        /* non-fatal — localStorage already set */
+      });
     setShow(false);
   };
 

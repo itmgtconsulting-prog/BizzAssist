@@ -9,7 +9,10 @@ const res = await fetch(`https://${JIRA_HOST}/rest/api/3/issue/${issueKey}`, {
 });
 const data = await res.json();
 
-if (!res.ok) { console.error('Error:', JSON.stringify(data, null, 2)); process.exit(1); }
+if (!res.ok) {
+  console.error('Error:', JSON.stringify(data, null, 2));
+  process.exit(1);
+}
 
 const f = data.fields;
 console.log(`Key:      ${data.key}`);

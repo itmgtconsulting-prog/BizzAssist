@@ -24,6 +24,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 import { rateLimit, AI_CHAT_LIMIT } from '@/app/lib/rateLimit';
+import { withBraveCache } from '@/app/lib/searchCache';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -424,13 +425,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const hasMore = sortedCompanies.length > nextBatchStart;
 
   // ── Brave-søgning + Supabase parallelt ──
+  // Brave results are cached 24h in Supabase search_cache to reduce API usage.
   let braveResults: ArticleResult[];
   let batchCompanyNames: string[];
   let dbExcludedDomains: string[];
 
   try {
     const [braveOutput, domains] = await Promise.all([
-      searchBravePersonArticles(braveKey, personName, companies, batch),
+      withBraveCache(`ps_articles|${personName.toLowerCase()}|b${batch}`, () =>
+        searchBravePersonArticles(braveKey, personName, companies, batch)
+      ),
       fetchExcludedDomains(),
     ]);
     braveResults = braveOutput.results;

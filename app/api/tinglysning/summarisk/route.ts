@@ -13,6 +13,9 @@ import https from 'https';
 import fs from 'fs';
 import path from 'path';
 
+export const runtime = 'nodejs';
+export const maxDuration = 60;
+
 const CERT_PATH = process.env.NEMLOGIN_DEVTEST4_CERT_PATH ?? '';
 const CERT_PASSWORD = process.env.NEMLOGIN_DEVTEST4_CERT_PASSWORD ?? '';
 const CERT_B64 = process.env.NEMLOGIN_DEVTEST4_CERT_B64 ?? '';

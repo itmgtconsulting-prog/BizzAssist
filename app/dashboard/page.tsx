@@ -75,14 +75,37 @@ export default function DashboardPage() {
   const toggle = (key: string) => setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
 
   /**
-   * Indlæser alle dashboard-data fra localStorage.
-   * Kaldt ved mount og når tracked/storage events fyres.
+   * Indlæser fulgte virksomheder — Supabase som primær kilde, localStorage som fallback.
+   * Supabase-resultater skrives tilbage til localStorage for konsistens på tværs af faner.
    */
-  const refreshData = useCallback(() => {
-    setTrackedEjendomme(hentTrackedEjendomme());
-    setRecentEjendomme(hentRecentEjendomme());
+  const refreshTrackedCompanies = useCallback(async () => {
+    try {
+      const res = await fetch('/api/tracked-companies');
+      if (res.ok) {
+        const json = await res.json();
+        if (Array.isArray(json.tracked) && json.tracked.length > 0) {
+          const mapped: TrackedCompany[] = json.tracked.map(
+            (e: { entity_id: string; label: string | null; created_at: string }) => ({
+              cvr: e.entity_id,
+              navn: e.label ?? e.entity_id,
+              trackedSiden: new Date(e.created_at).getTime(),
+            })
+          );
+          setTrackedCompanies(mapped);
+          // Keep localStorage in sync as fallback for offline/tab scenarios
+          try {
+            localStorage.setItem('ba-tracked-companies', JSON.stringify(mapped));
+          } catch {
+            /* ignore quota errors */
+          }
+          return;
+        }
+      }
+    } catch {
+      /* Supabase unavailable — fall through to localStorage */
+    }
 
-    // Fulgte virksomheder fra localStorage
+    // localStorage fallback
     try {
       const rawTracked = localStorage.getItem('ba-tracked-companies');
       if (rawTracked) {
@@ -92,13 +115,23 @@ export default function DashboardPage() {
     } catch {
       setTrackedCompanies([]);
     }
+  }, []);
+
+  /**
+   * Indlæser alle dashboard-data.
+   * Kaldt ved mount og når tracked/storage events fyres.
+   */
+  const refreshData = useCallback(() => {
+    setTrackedEjendomme(hentTrackedEjendomme());
+    setRecentEjendomme(hentRecentEjendomme());
+    refreshTrackedCompanies();
 
     // Seneste virksomheder fra Supabase (in-memory cache)
     setRecentCompanies(getRecentCompanies());
 
     // Seneste ejere fra Supabase (in-memory cache)
     setRecentPersons(getRecentPersons());
-  }, []);
+  }, [refreshTrackedCompanies]);
 
   /** Indlæs data ved mount og lyt efter ændringer */
   useEffect(() => {

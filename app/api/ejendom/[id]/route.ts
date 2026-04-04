@@ -378,9 +378,14 @@ async function fetchBFENummer(dawaId: string): Promise<{
     if (adgRes.ok) {
       const adg = (await adgRes.json()) as {
         jordstykke?: { ejerlav?: { kode?: number }; matrikelnr?: string };
+        adressebetegnelse?: string;
       };
       ejerlavKode = adg?.jordstykke?.ejerlav?.kode;
       matrikelnr = adg?.jordstykke?.matrikelnr;
+      // Sæt adresseTekst selv for adgangsadresser — nødvendigt for at Vurderingsportalen-søgning
+      // kører i Trin 3. Uden dette springes EL-detektionen over for ejerlejligheder navigeret
+      // til via adgangsadresse-UUID (f.eks. fra autocomplete eller kortvisning).
+      adresseTekst = adg?.adressebetegnelse ?? null;
     } else {
       // Trin 1b: ID er en adresse (med etage/dør) — hent adgangsadresse via /adresser/{id}
       const adrRes = await fetch(`${DAWA_BASE}/adresser/${dawaId}`, {
@@ -466,22 +471,31 @@ async function fetchBFENummer(dawaId: string): Promise<{
             hits?: { hits?: { _source: Record<string, unknown> }[] };
           };
           const hits = esData?.hits?.hits ?? [];
-          // Match etage + dør
+          // Match etage + dør.
+          // Når harEtage=true (fuld adresse): match præcist på floor + door.
+          // Når harEtage=false (adgangsadresse uden etage/dør info, fx fra autocomplete
+          // eller kortvisning): acceptér ethvert hit der adskiller sig fra jordBfe —
+          // dette detekterer ejerlejligheder i flerfamiliehuse selvom den specifikke
+          // etage/dør ikke er kendt (vi har kun adressen, ikke lejligheden).
           for (const hit of hits) {
             const s = hit._source;
-            const hitFloor = String(s.floor ?? '').toLowerCase();
-            const hitDoor = String(s.door ?? '').toLowerCase();
-            const matchFloor = etage ? hitFloor === etage.toLowerCase() : !hitFloor;
-            const matchDoor = doer ? hitDoor === doer.toLowerCase() : !hitDoor;
-            if (matchFloor && matchDoor && s.bfeNumbers) {
-              const candidate = parseInt(String(s.bfeNumbers), 10);
-              if (isNaN(candidate)) continue;
-              // Uden etage/dør: kun acceptér hvis BFE adskiller sig fra grundstykke-BFE
-              // (sikrer at vi ikke fejlagtigt markerer enfamiliehuse som ejerlejlighed)
-              if (!harEtage && jordBfe != null && candidate === jordBfe) continue;
-              ejerlejlighedBfe = candidate;
-              break;
+            if (!s.bfeNumbers) continue;
+            const candidate = parseInt(String(s.bfeNumbers), 10);
+            if (isNaN(candidate)) continue;
+            if (harEtage) {
+              // Præcis match på etage og dør
+              const hitFloor = String(s.floor ?? '').toLowerCase();
+              const hitDoor = String(s.door ?? '').toLowerCase();
+              const matchFloor = etage ? hitFloor === etage.toLowerCase() : !hitFloor;
+              const matchDoor = doer ? hitDoor === doer.toLowerCase() : !hitDoor;
+              if (!matchFloor || !matchDoor) continue;
+            } else {
+              // Adgangsadresse: kun acceptér BFE der adskiller sig fra grundstykke-BFE
+              // (undgår at markere enfamiliehuse som ejerlejlighed)
+              if (jordBfe != null && candidate === jordBfe) continue;
             }
+            ejerlejlighedBfe = candidate;
+            break;
           }
         }
       } catch {

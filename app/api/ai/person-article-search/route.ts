@@ -1043,8 +1043,24 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // Claude's kvalitetssikrede links overskriver Brave-fund
     const socials: SocialsResult = { ...braveSocials, ...claudeSocials };
 
+    // Fallback: Brave-fundne links for platforme Claude ikke verificerede med tilstrækkelig confidence.
+    // Ensures at Brave-fund altid vises i frontend (socialsWithMeta), selv hvis Claude springer over.
+    for (const [platform, url] of Object.entries(braveSocials)) {
+      if (url && !socialsWithMeta[platform]) {
+        socialsWithMeta[platform] = {
+          url,
+          confidence: 65,
+          reason: 'Fundet via Brave Search (ikke verificeret af AI)',
+        };
+        console.log(
+          `[person-article-search] Brave fallback socialsWithMeta: ${platform}=${url} (Claude verificerede ikke platformen)`
+        );
+      }
+    }
+
     console.log(
       `[person-article-search] "${personName}": ${articles.length} artikler, tokens=${totalTokens}, ` +
+        `brave-socials=[${Object.keys(braveSocials).join(',')}], ` +
         `primære links=[${Object.keys(socialsWithMeta).join(',')}], ` +
         `alternativer=[${Object.keys(alternativesWithMeta).join(',')}], ` +
         `kontakter=${contacts.length}, threshold=${confidenceThreshold}`

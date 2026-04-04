@@ -3,7 +3,8 @@
 /**
  * Onboarding modal shown to first-time users.
  *
- * Guides users through a 3-step introduction:
+ * Guides users through a 4-step introduction:
+ *   0. Beta disclaimer — acceptance of beta status + feedback instructions
  *   1. Welcome — what BizzAssist does
  *   2. Search — how to find properties and companies
  *   3. AI — how to use the AI assistant
@@ -14,13 +15,22 @@
  */
 
 import { useState, useEffect } from 'react';
-import { Building2, Search, Sparkles, ArrowRight, X, Check } from 'lucide-react';
+import {
+  Building2,
+  Search,
+  Sparkles,
+  ArrowRight,
+  X,
+  Check,
+  FlaskConical,
+  MessageSquare,
+} from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 
 /** localStorage key to track onboarding completion */
 const ONBOARDING_KEY = 'ba-onboarding-done';
 
-/** Step definition */
+/** Step definition for standard steps */
 interface OnboardingStep {
   icon: typeof Building2;
   iconColor: string;
@@ -31,7 +41,7 @@ interface OnboardingStep {
   descriptionEn: string;
 }
 
-/** All onboarding steps */
+/** Standard onboarding steps (shown after the beta step) */
 const STEPS: OnboardingStep[] = [
   {
     icon: Building2,
@@ -68,6 +78,9 @@ const STEPS: OnboardingStep[] = [
   },
 ];
 
+/** Total step count including the beta disclaimer step */
+const TOTAL_STEPS = STEPS.length + 1;
+
 export default function OnboardingModal() {
   const { lang } = useLanguage();
   const da = lang === 'da';
@@ -99,7 +112,7 @@ export default function OnboardingModal() {
 
   /** Advance to next step or complete */
   const next = () => {
-    if (step < STEPS.length - 1) {
+    if (step < TOTAL_STEPS - 1) {
       setStep(step + 1);
     } else {
       complete();
@@ -108,9 +121,11 @@ export default function OnboardingModal() {
 
   if (!show) return null;
 
-  const current = STEPS[step];
-  const Icon = current.icon;
-  const isLast = step === STEPS.length - 1;
+  const isLast = step === TOTAL_STEPS - 1;
+  /** Step 0 is the beta disclaimer, steps 1+ map to STEPS[step - 1] */
+  const isBetaStep = step === 0;
+  const current = isBetaStep ? null : STEPS[step - 1];
+  const Icon = current?.icon ?? FlaskConical;
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center">
@@ -129,7 +144,7 @@ export default function OnboardingModal() {
 
         {/* Step indicators */}
         <div className="flex items-center gap-2 px-6 pt-6">
-          {STEPS.map((_, i) => (
+          {Array.from({ length: TOTAL_STEPS }).map((_, i) => (
             <div
               key={i}
               className={`h-1 flex-1 rounded-full transition-colors ${
@@ -139,22 +154,88 @@ export default function OnboardingModal() {
           ))}
         </div>
 
-        {/* Content */}
-        <div className="px-6 py-8 text-center">
-          <div
-            className={`w-14 h-14 ${current.iconBg} rounded-xl flex items-center justify-center mx-auto mb-5`}
-          >
-            <Icon size={26} className={current.iconColor} />
+        {/* Beta disclaimer step */}
+        {isBetaStep ? (
+          <div className="px-6 py-7">
+            <div className="flex items-center gap-3 mb-5">
+              <div className="w-12 h-12 bg-amber-500/20 rounded-xl flex items-center justify-center shrink-0">
+                <FlaskConical size={22} className="text-amber-400" />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-white leading-tight">BizzAssist Beta</h2>
+                <span className="text-xs font-medium text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full">
+                  {da ? 'Beta-version' : 'Beta version'}
+                </span>
+              </div>
+            </div>
+
+            <p className="text-slate-300 text-sm leading-relaxed mb-4">
+              {da
+                ? 'Velkommen til BizzAssist beta-version. Da produktet er under aktiv udvikling, kan der forekomme fejl og mangler. Vi arbejder løbende på at forbedre platformen og sætter stor pris på din feedback.'
+                : 'Welcome to the BizzAssist beta version. As the product is under active development, errors and limitations may occur. We continuously work to improve the platform and greatly value your feedback.'}
+            </p>
+
+            <div className="bg-slate-800/60 border border-white/5 rounded-xl p-4 mb-5">
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">
+                {da ? 'Ved at fortsætte accepterer du at:' : 'By continuing you accept that:'}
+              </p>
+              <ul className="space-y-1.5">
+                {(da
+                  ? [
+                      'Produktet er i beta og kan indeholde fejl',
+                      'Data og funktionalitet kan ændre sig uden varsel',
+                      'Vi indsamler anonymiseret brugsdata for at forbedre produktet',
+                    ]
+                  : [
+                      'The product is in beta and may contain errors',
+                      'Data and functionality may change without notice',
+                      'We collect anonymised usage data to improve the product',
+                    ]
+                ).map((item) => (
+                  <li key={item} className="flex items-start gap-2 text-sm text-slate-300">
+                    <span className="text-blue-400 mt-0.5 shrink-0">•</span>
+                    {item}
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            {/* Feedback section */}
+            <div className="bg-blue-900/20 border border-blue-500/20 rounded-xl p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <MessageSquare size={14} className="text-blue-400" />
+                <p className="text-xs font-semibold text-blue-400">
+                  {da ? 'Fandt du en fejl?' : 'Found a bug?'}
+                </p>
+              </div>
+              <p className="text-xs text-slate-400 leading-relaxed mb-2">
+                {da
+                  ? 'Som beta-bruger er din feedback uvurderlig. Klik på 💬-ikonet i nederste højre hjørne, beskriv fejlen kort — hvad skete der og hvad forventede du? Du kan også sende feedback direkte til '
+                  : 'As a beta user your feedback is invaluable. Click the 💬 icon in the bottom-right corner, briefly describe the issue — what happened and what did you expect? You can also send feedback directly to '}
+                <a href="mailto:support@bizzassist.dk" className="text-blue-400 hover:underline">
+                  support@bizzassist.dk
+                </a>
+              </p>
+            </div>
           </div>
+        ) : (
+          /* Standard step content */
+          <div className="px-6 py-8 text-center">
+            <div
+              className={`w-14 h-14 ${current!.iconBg} rounded-xl flex items-center justify-center mx-auto mb-5`}
+            >
+              <Icon size={26} className={current!.iconColor} />
+            </div>
 
-          <h2 className="text-xl font-bold text-white mb-3">
-            {da ? current.titleDa : current.titleEn}
-          </h2>
+            <h2 className="text-xl font-bold text-white mb-3">
+              {da ? current!.titleDa : current!.titleEn}
+            </h2>
 
-          <p className="text-slate-400 text-sm leading-relaxed max-w-sm mx-auto">
-            {da ? current.descriptionDa : current.descriptionEn}
-          </p>
-        </div>
+            <p className="text-slate-400 text-sm leading-relaxed max-w-sm mx-auto">
+              {da ? current!.descriptionDa : current!.descriptionEn}
+            </p>
+          </div>
+        )}
 
         {/* Actions */}
         <div className="px-6 pb-6 flex items-center justify-between">
@@ -173,6 +254,11 @@ export default function OnboardingModal() {
               <>
                 {da ? 'Kom i gang' : 'Get started'}
                 <Check size={16} />
+              </>
+            ) : isBetaStep ? (
+              <>
+                {da ? 'Forstået — fortsæt' : 'Understood — continue'}
+                <ArrowRight size={16} />
               </>
             ) : (
               <>

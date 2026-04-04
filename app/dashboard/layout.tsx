@@ -32,6 +32,7 @@ import type { UnifiedSearchResult } from '@/app/api/search/route';
 import AIChatPanel from '@/app/components/AIChatPanel';
 import NotifikationsDropdown from '@/app/components/NotifikationsDropdown';
 import OnboardingModal from '@/app/components/OnboardingModal';
+import FeedbackButton from '@/app/components/FeedbackButton';
 import SubscriptionGate from '@/app/components/SubscriptionGate';
 import { cachePlans, type UserSubscription, type PlanDef } from '@/app/lib/subscriptions';
 import { SubscriptionProvider, useSubscription } from '@/app/context/SubscriptionContext';
@@ -892,6 +893,9 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
 
       {/* Onboarding modal — shown once for new users */}
       <OnboardingModal />
+
+      {/* Floating feedback button — always visible for beta users */}
+      <FeedbackButton />
     </div>
   );
 }

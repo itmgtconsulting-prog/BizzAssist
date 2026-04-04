@@ -274,11 +274,11 @@ async function searchBrave(
 
 /**
  * Søger artikler om en person og deres virksomheder via parallelle Brave-queries.
- * Primær: personens fulde navn. Sekundær: top 3 virksomheder personen ejer.
+ * Primær: personens fulde navn. Sekundær: top 5 ejervirksomheder (krydshenvisninger + egne nyheder).
  *
  * @param key        - Brave Search Subscription Token
  * @param personName - Personens fulde navn
- * @param companies  - Top virksomheder personen ejer (max 3 bruges)
+ * @param companies  - Top virksomheder personen ejer (max 5 bruges)
  */
 async function searchBravePersonArticles(
   key: string,
@@ -289,9 +289,14 @@ async function searchBravePersonArticles(
   const query1 = `"${personName}" nyheder artikel`;
   const query2 = `"${personName}" site:dr.dk OR site:tv2.dk OR site:borsen.dk OR site:berlingske.dk OR site:politiken.dk`;
 
-  // Sekundær: top 3 ejervirksomheder
-  const topCompanies = companies.slice(0, 3);
-  const companyQueries = topCompanies.map((c) => `"${c.name}" "${personName}"`);
+  // Sekundær: top 5 ejervirksomheder — to queries per virksomhed:
+  // 1. Krydshenvisning: kræver BEGGE navne i artiklen
+  // 2. Selvstændig: generelle nyheder om virksomheden alene
+  const topCompanies = companies.slice(0, 5);
+  const companyQueries = topCompanies.flatMap((c) => [
+    `"${c.name}" "${personName}"`,
+    `"${c.name}" nyheder artikel`,
+  ]);
 
   const queries: Promise<ArticleResult[]>[] = [
     searchBrave(key, query1, 20),
@@ -338,15 +343,18 @@ function shortName(fullName: string): string {
 /**
  * Søger én platform på Brave og returnerer unikke profil-URLs fra resultater.
  * Filtrerer ekskluderede domæner fra.
+ * Hvis domainFilter er sat, returneres kun URLs der matcher det pågældende domæne.
  *
- * @param key   - Brave Search Subscription Token
- * @param query - Søgeforespørgsel
- * @param count - Antal resultater ønsket
+ * @param key          - Brave Search Subscription Token
+ * @param query        - Søgeforespørgsel
+ * @param count        - Antal resultater ønsket
+ * @param domainFilter - Valgfrit domæne-filter (f.eks. "facebook.com") — filtrerer andre domæner fra
  */
 async function searchBraveSocialPlatform(
   key: string,
   query: string,
-  count: number
+  count: number,
+  domainFilter?: string
 ): Promise<string[]> {
   try {
     const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}&country=dk`;
@@ -356,7 +364,20 @@ async function searchBraveSocialPlatform(
     });
     const data = await res.json();
     const hits: BraveWebResult[] = data.web?.results ?? [];
-    return hits.map((h) => h.url as string).filter((u) => u && !isExcludedDomain(u));
+    return hits
+      .map((h) => h.url as string)
+      .filter((u) => {
+        if (!u || isExcludedDomain(u)) return false;
+        if (domainFilter) {
+          try {
+            const hostname = new URL(u).hostname.replace(/^www\./, '');
+            return hostname === domainFilter || hostname.endsWith(`.${domainFilter}`);
+          } catch {
+            return false;
+          }
+        }
+        return true;
+      });
   } catch {
     return [];
   }
@@ -364,8 +385,10 @@ async function searchBraveSocialPlatform(
 
 /**
  * Søger personens sociale medier-profiler via Brave Search.
- * Søger med BÅDE fuldt navn og kort navn (fornavn+efternavn) parallelt per platform
- * for at fange profiler der ikke indekseres under det fulde navn.
+ * Kører TO søgninger parallelt per platform:
+ * 1. Direkte: `"navn" site:platform.com` — ramler direkte profil-indeksering
+ * 2. Indirekte: `"navn" Platform` — finder profiler via tredje-parts links/omtaler
+ * Begge navnevarianter (fuldt + kort) køres for alle queries.
  *
  * @param key        - Brave Search Subscription Token
  * @param personName - Personens fulde navn
@@ -377,40 +400,59 @@ async function searchBravePersonSocials(
   const short = shortName(personName);
   const hasMiddleName = short !== personName;
 
-  // Søgeforespørgsler per platform — begge navnevarianter køres parallelt
-  type PlatformDef = { name: keyof SocialsResult; queries: string[]; count: number };
+  // Søgeforespørgsler per platform — direkte + indirekte + navnevarianter.
+  // "direct" queries bruger site:-filter og returnerer alle URLs.
+  // "indirect" queries returnerer kun URLs der matcher platform-domænet (domainFilter).
+  type QueryDef = { query: string; domainFilter?: string };
+  type PlatformDef = { name: keyof SocialsResult; queries: QueryDef[]; count: number };
   const platforms: PlatformDef[] = [
     {
       name: 'linkedin',
       queries: [
-        `"${personName}" site:linkedin.com/in`,
-        ...(hasMiddleName ? [`"${short}" site:linkedin.com/in`] : []),
+        // Direkte
+        { query: `"${personName}" site:linkedin.com/in` },
+        ...(hasMiddleName ? [{ query: `"${short}" site:linkedin.com/in` }] : []),
+        // Indirekte — filtrerer til kun linkedin.com URLs i resultaterne
+        { query: `"${personName}" LinkedIn`, domainFilter: 'linkedin.com' },
+        ...(hasMiddleName ? [{ query: `"${short}" LinkedIn`, domainFilter: 'linkedin.com' }] : []),
       ],
       count: 3,
     },
     {
       name: 'facebook',
       queries: [
-        `"${personName}" site:facebook.com`,
-        ...(hasMiddleName ? [`"${short}" site:facebook.com`] : []),
-        // Backup uden site:-restriktion (fanger share-links og profiler der ikke indekseres med site:)
-        `"${personName}" facebook`,
+        // Direkte
+        { query: `"${personName}" site:facebook.com` },
+        ...(hasMiddleName ? [{ query: `"${short}" site:facebook.com` }] : []),
+        // Indirekte
+        { query: `"${personName}" Facebook`, domainFilter: 'facebook.com' },
+        ...(hasMiddleName ? [{ query: `"${short}" Facebook`, domainFilter: 'facebook.com' }] : []),
       ],
       count: 3,
     },
     {
       name: 'instagram',
       queries: [
-        `"${personName}" site:instagram.com`,
-        ...(hasMiddleName ? [`"${short}" site:instagram.com`] : []),
+        // Direkte
+        { query: `"${personName}" site:instagram.com` },
+        ...(hasMiddleName ? [{ query: `"${short}" site:instagram.com` }] : []),
+        // Indirekte
+        { query: `"${personName}" Instagram`, domainFilter: 'instagram.com' },
+        ...(hasMiddleName
+          ? [{ query: `"${short}" Instagram`, domainFilter: 'instagram.com' }]
+          : []),
       ],
       count: 2,
     },
     {
       name: 'twitter',
       queries: [
-        `"${personName}" site:x.com OR site:twitter.com`,
-        ...(hasMiddleName ? [`"${short}" site:x.com OR site:twitter.com`] : []),
+        // Direkte
+        { query: `"${personName}" site:x.com OR site:twitter.com` },
+        ...(hasMiddleName ? [{ query: `"${short}" site:x.com OR site:twitter.com` }] : []),
+        // Indirekte — filtrerer til x.com eller twitter.com
+        { query: `"${personName}" Twitter`, domainFilter: 'x.com' },
+        ...(hasMiddleName ? [{ query: `"${short}" Twitter`, domainFilter: 'x.com' }] : []),
       ],
       count: 2,
     },
@@ -418,11 +460,18 @@ async function searchBravePersonSocials(
 
   // Kør alle queries parallelt på tværs af alle platforme
   const allQueries = platforms.flatMap((p) =>
-    p.queries.map((q) => ({ platform: p.name, query: q, count: p.count }))
+    p.queries.map((qd) => ({
+      platform: p.name,
+      query: qd.query,
+      count: p.count,
+      domainFilter: qd.domainFilter,
+    }))
   );
 
   const queryResults = await Promise.allSettled(
-    allQueries.map(({ query, count }) => searchBraveSocialPlatform(key, query, count))
+    allQueries.map(({ query, count, domainFilter }) =>
+      searchBraveSocialPlatform(key, query, count, domainFilter)
+    )
   );
 
   // Merge resultater per platform — behold første fund per platform (bedste match)

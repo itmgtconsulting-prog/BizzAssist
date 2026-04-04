@@ -140,8 +140,10 @@ interface VerifiedLinksProps {
   aiSocials?: Record<string, AISocialEntry>;
   /** AI-fundne alternative links per platform med confidence */
   aiAlternatives?: Record<string, AISocialEntry[]>;
-  /** Confidence-tærskel: alternativer under denne score vises ikke (default 70) */
+  /** Confidence-tærskel: links under denne score skjules helt (default 70) */
   confidenceThreshold?: number;
+  /** Grøn badge-grænse: score >= denne → grøn badge, ellers gul (default 85) */
+  greenThreshold?: number;
 }
 
 /**
@@ -211,10 +213,12 @@ function AlternativesPopup({
   popup,
   onClose,
   lang,
+  greenThreshold = 85,
 }: {
   popup: AltPopupState & { altCounts?: Record<string, number> };
   onClose: () => void;
   lang: 'da' | 'en';
+  greenThreshold?: number;
 }) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -258,9 +262,9 @@ function AlternativesPopup({
               /* ignore */
             }
             const count = popup.altCounts?.[url] ?? 0;
-            // Confidence badge: grøn >85, gul 70-85
+            // Confidence badge: grøn >= greenThreshold, gul under
             const confBadgeClass =
-              alt.confidence > 85
+              alt.confidence >= greenThreshold
                 ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20'
                 : 'bg-amber-500/15 text-amber-400 border border-amber-500/20';
             return (
@@ -315,6 +319,7 @@ export default function VerifiedLinks({
   aiSocials,
   aiAlternatives,
   confidenceThreshold = 70,
+  greenThreshold = 85,
 }: VerifiedLinksProps) {
   const { isAuthenticated, userId } = useAuth();
   const [links, setLinks] = useState<LinkItem[]>([]);
@@ -684,9 +689,9 @@ export default function VerifiedLinks({
               alt.confidence >= confidenceThreshold
           ).length;
           const hasAlts = filteredAltsCount > 0;
-          // Confidence badge farve: grøn >85, gul 70-85 (kun for AI-fundne links)
+          // Confidence badge farve: grøn >= greenThreshold, gul under (kun for AI-fundne links)
           const confBadgeClass =
-            (link.confidence ?? 0) > 85
+            (link.confidence ?? 0) >= greenThreshold
               ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20'
               : 'bg-amber-500/15 text-amber-400 border border-amber-500/20';
           const isPopupOpen = popupPlatform === link.platform;
@@ -802,6 +807,7 @@ export default function VerifiedLinks({
                       setPopupPlatform(null);
                     }}
                     lang={lang}
+                    greenThreshold={greenThreshold}
                   />
                 )}
               </div>

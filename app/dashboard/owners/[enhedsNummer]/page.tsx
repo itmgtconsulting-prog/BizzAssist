@@ -1370,9 +1370,9 @@ interface ContactResult {
  * PersonArticleSearchPanel — AI-drevet artikelsøgning i nyheds-sidepanelet på personsiden.
  *
  * Viser tokens til rådighed og en "Søg"-knap. Når brugeren klikker,
- * hentes op til 15 seneste nyheder om personen via /api/ai/person-article-search.
- * Søger primært personens navn + virksomheder i ejerportefølje.
- * Viser første 5 og ekspanderer med 5 ad gangen via "Vis flere".
+ * hentes nyheder om personen via /api/ai/person-search/articles med dynamisk batching.
+ * Søger personens navn + ALLE tilknyttede virksomheder i batches af 5.
+ * Viser artikler progressivt — nye artikler tilføjes til listen med fade-in.
  * Kalder onSocialsFound med AI-fundne personlige sociale medier-URLs.
  * Kalder onContactsFound med AI-fundne kontaktoplysninger.
  *
@@ -1410,6 +1410,8 @@ function PersonArticleSearchPanel({
   const [socialsLoading, setSocialsLoading] = useState(false);
   const [articlesLoading, setArticlesLoading] = useState(false);
   const [contactsLoading, setContactsLoading] = useState(false);
+  /** Aktuel batch-status-label — vises mens artikler hentes i batches */
+  const [articlesBatchLabel, setArticlesBatchLabel] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tokenInfo, setTokenInfo] = useState<{ used: number; limit: number } | null>(null);
   const [tokensUsedThisSearch, setTokensUsedThisSearch] = useState(0);
@@ -1439,12 +1441,11 @@ function PersonArticleSearchPanel({
    * Bygger liste af virksomheder personen er aktiv tilknyttet — sendes til API som søgekontekst.
    * Inkluderer alle aktive roller (ikke kun ejerroller) da artikel-søgning profiterer af
    * alle offentlige tilknytninger (DIREKTØR, STIFTER, EJER osv.).
-   * Begrænset til top 5.
+   * Ingen begrænsning — alle virksomheder sendes og batches håndteres af API'et.
    */
   const ownedCompanies = useMemo(() => {
     return personData.virksomheder
       .filter((v) => v.aktiv && v.roller.some((r) => !r.til))
-      .slice(0, 5)
       .map((v) => ({ cvr: v.cvr, name: v.navn }));
   }, [personData.virksomheder]);
 
@@ -1479,19 +1480,20 @@ function PersonArticleSearchPanel({
     setSocialsLoading(true);
     setArticlesLoading(true);
     setContactsLoading(true);
+    setArticlesBatchLabel(null);
     setTokensUsedThisSearch(0);
 
-    const payload = JSON.stringify({
+    const sharedPayload = {
       personName: personData.navn,
       companies: ownedCompanies,
       city,
-    });
+    };
 
     // ── Sociale medier (hurtigst ~2s) ──
     const socialsPromise = fetch('/api/ai/person-search/socials', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: payload,
+      body: JSON.stringify(sharedPayload),
     })
       .then(async (res) => {
         const json = await res.json();
@@ -1513,28 +1515,77 @@ function PersonArticleSearchPanel({
       .catch(() => 0)
       .finally(() => setSocialsLoading(false));
 
-    // ── Artikler (~5-8s) ──
-    const articlesPromise = fetch('/api/ai/person-search/articles', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: payload,
-    })
-      .then(async (res) => {
-        const json = await res.json();
-        if (json.error) setError(json.error);
-        const fetchedArticles: PersonAIArticleResult[] = json.articles ?? [];
-        setArticles(fetchedArticles);
-        setVisibleCount(5);
-        return (json.tokensUsed as number) ?? 0;
-      })
-      .catch(() => 0)
-      .finally(() => setArticlesLoading(false));
+    // ── Artikler — progressiv batching, ingen max-begrænsning på virksomheder ──
+    // Hvert batch dækker 5 virksomheder. Batch 0 inkluderer personens egne generiske søgninger.
+    // Frontend kalder endpoint gentagne gange til hasMore=false, deduplicerer på tværs af batches.
+    const articlesPromise = (async (): Promise<number> => {
+      const seenUrls = new Set<string>();
+      let batchNum = 0;
+      let totalArticlesTokens = 0;
+
+      try {
+        while (true) {
+          const BATCH_SIZE = 5;
+          const batchStart = batchNum * BATCH_SIZE;
+          const batchSlice = ownedCompanies.slice(batchStart, batchStart + BATCH_SIZE);
+
+          // Batch 0 kører altid (person-niveau søgning). Efterfølgende stopper ved tomme batches.
+          if (batchNum > 0 && batchSlice.length === 0) break;
+
+          if (batchSlice.length > 0) {
+            setArticlesBatchLabel(
+              lang === 'da'
+                ? `Søger artikler for ${batchSlice.map((c) => c.name).join(', ')}…`
+                : `Searching articles for ${batchSlice.map((c) => c.name).join(', ')}…`
+            );
+          } else {
+            setArticlesBatchLabel(
+              lang === 'da' ? 'Søger artikler om personen…' : 'Searching articles about person…'
+            );
+          }
+
+          const res = await fetch('/api/ai/person-search/articles', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...sharedPayload, batch: batchNum }),
+          });
+
+          const json = await res.json();
+          if (json.error) setError(json.error as string);
+
+          // Tilføj nye artikler — dedupliker på URL på tværs af batches
+          const newArticles: PersonAIArticleResult[] = (
+            (json.articles as PersonAIArticleResult[]) ?? []
+          ).filter((a) => {
+            if (seenUrls.has(a.url)) return false;
+            seenUrls.add(a.url);
+            return true;
+          });
+
+          if (newArticles.length > 0) {
+            setArticles((prev) => [...prev, ...newArticles]);
+          }
+
+          totalArticlesTokens += (json.tokensUsed as number) ?? 0;
+
+          if (!json.hasMore) break;
+          batchNum++;
+        }
+      } catch {
+        // Søgefejl ignoreres — vi viser hvad vi har
+      } finally {
+        setArticlesLoading(false);
+        setArticlesBatchLabel(null);
+      }
+
+      return totalArticlesTokens;
+    })();
 
     // ── Kontaktoplysninger (~3-5s) ──
     const contactsPromise = fetch('/api/ai/person-search/contacts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: payload,
+      body: JSON.stringify(sharedPayload),
     })
       .then(async (res) => {
         const json = await res.json();
@@ -1565,6 +1616,7 @@ function PersonArticleSearchPanel({
     personData,
     ownedCompanies,
     city,
+    lang,
     addTokenUsage,
     onSocialsFound,
     onAlternativesFound,
@@ -1679,7 +1731,7 @@ function PersonArticleSearchPanel({
           {articlesLoading && (
             <div className="flex items-center gap-2 text-slate-400 text-xs">
               <Loader2 size={10} className="animate-spin text-purple-400 flex-shrink-0" />
-              <span>{da ? 'Søger artikler…' : 'Searching articles…'}</span>
+              <span>{articlesBatchLabel ?? (da ? 'Søger artikler…' : 'Searching articles…')}</span>
             </div>
           )}
           {contactsLoading && (

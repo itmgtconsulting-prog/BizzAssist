@@ -4,15 +4,20 @@
  * Split-endpoint til progressiv loading — søger KUN nyheder/artikler om en dansk person.
  * Del af parallelt søge-flow: kald dette endpoint sideløbende med /socials og /contacts.
  *
+ * Understøtter dynamisk batching — frontend kalder gentagne gange med stigende batch-nummer
+ * til alle virksomheder er søgt. Ingen max-begrænsning på antal virksomheder.
+ *
  * Strategi:
- * 1. Brave Search — søger artikler om personen + top 3 tilknyttede virksomheder (8 parallelle queries)
+ * 1. Brave Search — batch 0: personens egne artikler + virksomheder[0..4].
+ *                   batch N: virksomheder[N*5..(N+1)*5].
  * 2. Claude — rangerer og filtrerer resultater med confidence-scoring
  * 3. Supabase — henter confidence-tærskel og ekskluderede domæner
  *
  * @param body.personName   - Personens fulde navn
- * @param body.companies    - Tilknyttede virksomheder (valgfrit, top 3 bruges)
+ * @param body.companies    - Tilknyttede virksomheder (alle, ikke trunceret)
  * @param body.city         - By (valgfrit)
- * @returns { articles, tokensUsed }
+ * @param body.batch        - Batch-nummer, 0-baseret (default: 0)
+ * @returns { articles, tokensUsed, hasMore, nextBatch, batchCompanies }
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -22,6 +27,9 @@ import { rateLimit, AI_CHAT_LIMIT } from '@/app/lib/rateLimit';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
+
+/** Antal virksomheder per batch */
+const BATCH_SIZE = 5;
 
 // ─── Ekskluderede domæner ─────────────────────────────────────────────────────
 
@@ -72,6 +80,8 @@ interface PersonInput {
   personName: string;
   companies?: Array<{ cvr: number | string; name: string; role?: string }>;
   city?: string;
+  /** Batch-nummer, 0-baseret. Batch 0 inkluderer personens egne artikler + første 5 virksomheder. */
+  batch?: number;
 }
 
 /** Brave-resultat råformat */
@@ -163,33 +173,47 @@ function rolePriority(role?: string): number {
 }
 
 /**
- * Søger artikler om en person og deres top 3 virksomheder via parallelle Brave-queries.
+ * Søger artikler om en person og en given batch af virksomheder via parallelle Brave-queries.
+ * Batch 0 inkluderer personens egne generiske artikelsøgninger.
+ * Efterfølgende batches søger kun de næste 5 virksomheder.
  *
  * @param key        - Brave Search Subscription Token
  * @param personName - Personens fulde navn
- * @param companies  - Tilknyttede virksomheder (sorteres efter rolle, max 3 bruges)
+ * @param companies  - Alle tilknyttede virksomheder (sorteres efter rolle)
+ * @param batch      - Batch-nummer, 0-baseret
+ * @returns { results: artikelresultater, batchCompanyNames: virksomhedsnavne i dette batch }
  */
 async function searchBravePersonArticles(
   key: string,
   personName: string,
-  companies: Array<{ cvr: number | string; name: string; role?: string }>
-): Promise<ArticleResult[]> {
-  const query1 = `"${personName}" nyheder artikel`;
-  const query2 = `"${personName}" site:dr.dk OR site:tv2.dk OR site:borsen.dk OR site:berlingske.dk OR site:politiken.dk`;
+  companies: Array<{ cvr: number | string; name: string; role?: string }>,
+  batch: number
+): Promise<{ results: ArticleResult[]; batchCompanyNames: string[] }> {
+  const sortedCompanies = [...companies].sort(
+    (a, b) => rolePriority(a.role) - rolePriority(b.role)
+  );
+  const batchStart = batch * BATCH_SIZE;
+  const batchCompanies = sortedCompanies.slice(batchStart, batchStart + BATCH_SIZE);
 
-  const topCompanies = [...companies]
-    .sort((a, b) => rolePriority(a.role) - rolePriority(b.role))
-    .slice(0, 3);
-  const companyQueries = topCompanies.flatMap((c) => [
-    `"${c.name}" "${personName}"`,
-    `"${c.name}" nyheder artikel`,
-  ]);
+  const queries: Promise<ArticleResult[]>[] = [];
 
-  const queries = [
-    searchBrave(key, query1, 20),
-    searchBrave(key, query2, 10),
-    ...companyQueries.map((q) => searchBrave(key, q, 5)),
-  ];
+  // Batch 0: medtag generiske personartikelsøgninger
+  if (batch === 0) {
+    queries.push(searchBrave(key, `"${personName}" nyheder artikel`, 20));
+    queries.push(
+      searchBrave(
+        key,
+        `"${personName}" site:dr.dk OR site:tv2.dk OR site:borsen.dk OR site:berlingske.dk OR site:politiken.dk`,
+        10
+      )
+    );
+  }
+
+  // Virksomhedsspecifikke queries for dette batch
+  for (const c of batchCompanies) {
+    queries.push(searchBrave(key, `"${c.name}" "${personName}"`, 5));
+    queries.push(searchBrave(key, `"${c.name}" nyheder artikel`, 5));
+  }
 
   const results = await Promise.allSettled(queries);
   const allResults: ArticleResult[] = [];
@@ -207,9 +231,10 @@ async function searchBravePersonArticles(
   }
 
   console.log(
-    `[person-search/articles] searchBravePersonArticles: ${merged.length} merged for "${personName}"`
+    `[person-search/articles] batch=${batch}: ${merged.length} merged for "${personName}", virksomheder: ${batchCompanies.map((c) => c.name).join(', ') || '(ingen)'}`
   );
-  return merged;
+
+  return { results: merged, batchCompanyNames: batchCompanies.map((c) => c.name) };
 }
 
 // ─── System prompt ────────────────────────────────────────────────────────────
@@ -329,6 +354,8 @@ function parseArticlesResponse(text: string): ArticleResult[] {
 /**
  * POST /api/ai/person-search/articles
  * Søger og rangerer nyheder/artikler om en person via Brave Search + Claude.
+ * Understøtter dynamisk batching med `batch`-parameter — frontend kalder gentagne gange
+ * til `hasMore` er false. Ingen max-begrænsning på antal virksomheder.
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const limited = rateLimit(request, AI_CHAT_LIMIT);
@@ -349,19 +376,32 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Ugyldig JSON' }, { status: 400 });
   }
 
-  const { personName, companies = [] } = body;
+  const { personName, companies = [], batch: rawBatch = 0 } = body;
   if (!personName?.trim())
     return NextResponse.json({ error: 'personName er påkrævet' }, { status: 400 });
 
+  const batch = typeof rawBatch === 'number' && rawBatch >= 0 ? Math.floor(rawBatch) : 0;
+
+  // Beregn om der er flere batches efter dette
+  const sortedCompanies = [...companies].sort(
+    (a, b) => rolePriority(a.role) - rolePriority(b.role)
+  );
+  const nextBatchStart = (batch + 1) * BATCH_SIZE;
+  const hasMore = sortedCompanies.length > nextBatchStart;
+
   // ── Brave-søgning + Supabase parallelt ──
   let braveResults: ArticleResult[];
+  let batchCompanyNames: string[];
   let dbExcludedDomains: string[];
 
   try {
-    [braveResults, dbExcludedDomains] = await Promise.all([
-      searchBravePersonArticles(braveKey, personName, companies),
+    const [braveOutput, domains] = await Promise.all([
+      searchBravePersonArticles(braveKey, personName, companies, batch),
       fetchExcludedDomains(),
     ]);
+    braveResults = braveOutput.results;
+    batchCompanyNames = braveOutput.batchCompanyNames;
+    dbExcludedDomains = domains;
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Brave Search fejl';
     return NextResponse.json({ error: `Søgning fejlede: ${msg}` }, { status: 502 });
@@ -381,17 +421,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   console.log(
-    `[person-search/articles] "${personName}": ${braveResults.length} rå Brave-resultater`
+    `[person-search/articles] "${personName}" batch=${batch}: ${braveResults.length} rå Brave-resultater, hasMore=${hasMore}`
   );
 
   // ── Byg Claude-besked ──
   const personContext = [
     `Personens fulde navn: ${personName}`,
+    batchCompanyNames.length > 0
+      ? `Virksomheder i dette søgebatch: ${batchCompanyNames.join(', ')}`
+      : null,
     companies.length > 0
-      ? `Virksomheder: ${companies
-          .slice(0, 5)
+      ? `Alle tilknyttede virksomheder (${companies.length} total): ${companies
+          .slice(0, 10)
           .map((c) => `${c.name} (CVR ${c.cvr})`)
-          .join(', ')}`
+          .join(', ')}${companies.length > 10 ? ' …' : ''}`
       : null,
   ]
     .filter(Boolean)
@@ -428,7 +471,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const articles = parseArticlesResponse(finalText);
 
     console.log(
-      `[person-search/articles] "${personName}": ${articles.length} artikler, tokens=${totalTokens}`
+      `[person-search/articles] "${personName}" batch=${batch}: ${articles.length} artikler, tokens=${totalTokens}, hasMore=${hasMore}`
     );
 
     if (articles.length === 0) {
@@ -438,7 +481,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    return NextResponse.json({ articles, tokensUsed: totalTokens, source: 'brave+claude' });
+    return NextResponse.json({
+      articles,
+      tokensUsed: totalTokens,
+      hasMore,
+      nextBatch: batch + 1,
+      batchCompanies: batchCompanyNames,
+      source: 'brave+claude',
+    });
   } catch (err) {
     const msg =
       err instanceof Anthropic.APIError

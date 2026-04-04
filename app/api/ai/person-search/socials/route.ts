@@ -63,6 +63,9 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
 const DEFAULT_THRESHOLD = 70;
 
+/** Standard-platforme der søges hvis ingen konfiguration er tilgængelig */
+const DEFAULT_ENABLED_PLATFORMS = ['linkedin', 'facebook', 'instagram', 'twitter'];
+
 /**
  * Henter confidence-tærskel fra ai_settings-tabellen.
  *
@@ -81,6 +84,30 @@ async function fetchConfidenceThreshold(): Promise<number> {
     return Number.isFinite(val) && val >= 0 && val <= 100 ? val : DEFAULT_THRESHOLD;
   } catch {
     return DEFAULT_THRESHOLD;
+  }
+}
+
+/**
+ * Henter liste af aktiverede sociale platforme fra ai_settings-tabellen.
+ * Bruges til at filtrere hvilke platforme der søges for personer.
+ *
+ * @returns Array af aktiverede platform-nøgler (f.eks. ['linkedin', 'facebook'])
+ */
+async function fetchEnabledPlatforms(): Promise<string[]> {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) return DEFAULT_ENABLED_PLATFORMS;
+  try {
+    const client = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+    const { data } = await client
+      .from('ai_settings')
+      .select('value')
+      .eq('key', 'enabled_social_platforms')
+      .single();
+    if (Array.isArray(data?.value) && data.value.length > 0) {
+      return data.value as string[];
+    }
+    return DEFAULT_ENABLED_PLATFORMS;
+  } catch {
+    return DEFAULT_ENABLED_PLATFORMS;
   }
 }
 
@@ -163,18 +190,23 @@ async function searchBraveSocialPlatform(
 }
 
 /**
- * Søger personens sociale medier-profiler via Brave Search (8 parallelle queries).
+ * Søger personens sociale medier-profiler via Brave Search (parallelle queries).
+ * Søger kun de platforme der er aktiveret i ai_settings (enabled_social_platforms).
  *
- * @param key        - Brave Search Subscription Token
- * @param personName - Personens fulde navn
+ * @param key              - Brave Search Subscription Token
+ * @param personName       - Personens fulde navn
+ * @param enabledPlatforms - Platforme der er aktiveret i admin-indstillingerne
  */
 async function searchBravePersonSocials(
   key: string,
-  personName: string
+  personName: string,
+  enabledPlatforms: string[]
 ): Promise<{ socials: SocialsResult; allCandidates: Record<string, string[]> }> {
   type QueryDef = { query: string; domainFilter?: string };
   type PlatformDef = { name: keyof SocialsResult; queries: QueryDef[]; count: number };
-  const platforms: PlatformDef[] = [
+
+  // Alle understøttede platforme med søge-templates
+  const allPlatforms: PlatformDef[] = [
     {
       name: 'linkedin',
       queries: [
@@ -208,6 +240,9 @@ async function searchBravePersonSocials(
       count: 2,
     },
   ];
+
+  // Filtrer til kun aktiverede platforme
+  const platforms = allPlatforms.filter((p) => enabledPlatforms.includes(p.name));
 
   const allQueries = platforms.flatMap((p) =>
     p.queries.map((qd) => ({
@@ -447,22 +482,25 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (!personName?.trim())
     return NextResponse.json({ error: 'personName er påkrævet' }, { status: 400 });
 
-  // ── Brave-søgning + Supabase parallelt ──
+  // ── Supabase-indstillinger + Brave-søgning ──
+  // Henter konfiguration parallelt, derefter søger med aktiverede platforme.
   let braveSocials: SocialsResult;
   let braveSocialCandidates: Record<string, string[]>;
   let confidenceThreshold: number;
   let learningContext: string;
 
   try {
-    const [socialsResult, threshold, learning] = await Promise.all([
-      searchBravePersonSocials(braveKey, personName),
+    const [threshold, learning, enabledPlatforms] = await Promise.all([
       fetchConfidenceThreshold(),
       buildLearningContext(),
+      fetchEnabledPlatforms(),
     ]);
-    braveSocials = socialsResult.socials;
-    braveSocialCandidates = socialsResult.allCandidates;
     confidenceThreshold = threshold;
     learningContext = learning;
+
+    const socialsResult = await searchBravePersonSocials(braveKey, personName, enabledPlatforms);
+    braveSocials = socialsResult.socials;
+    braveSocialCandidates = socialsResult.allCandidates;
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Brave Search fejl';
     return NextResponse.json({ error: `Søgning fejlede: ${msg}` }, { status: 502 });

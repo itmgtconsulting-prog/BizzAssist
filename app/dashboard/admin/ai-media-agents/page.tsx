@@ -87,7 +87,8 @@ const ALL_SOCIAL_PLATFORMS = [
 /** Alle AI-indstillinger fra ai_settings-tabellen. */
 interface AiSettings {
   min_confidence_threshold: number;
-  confidence_levels: { hide: number; uncertain: number; confident: number };
+  /** Grøn badge-grænse — over denne score vises grøn badge (default 85) */
+  green_threshold: number;
   excluded_domains: string[];
   brave_api_key: string;
   primary_media_domains: string[];
@@ -95,7 +96,8 @@ interface AiSettings {
   max_tokens_per_search: number;
   person_contact_search_enabled: boolean;
   person_phone_fallback_enabled: boolean;
-  person_social_platforms: string[];
+  /** Aktiverede sociale platforme — kilde til sandhed for søgning */
+  enabled_social_platforms: string[];
 }
 
 /** Feedback-besked efter gem-operation. */
@@ -125,11 +127,8 @@ export default function AdminAiMediaAgentsPage() {
 
   // Sektion 1: Confidence
   const [confidenceThreshold, setConfidenceThreshold] = useState(70);
-  const [confidenceLevels, setConfidenceLevels] = useState({
-    hide: 70,
-    uncertain: 85,
-    confident: 100,
-  });
+  /** Score >= greenThreshold → grøn badge. Score < greenThreshold men >= threshold → gul badge. */
+  const [greenThreshold, setGreenThreshold] = useState(85);
 
   // Sektion 2: Blokerede domæner
   const [excludedDomains, setExcludedDomains] = useState<string[]>(DEFAULT_EXCLUDED_DOMAINS);
@@ -145,9 +144,15 @@ export default function AdminAiMediaAgentsPage() {
   // Sektion 4: Person-agent
   const [contactSearchEnabled, setContactSearchEnabled] = useState(true);
   const [phoneFallbackEnabled, setPhoneFallbackEnabled] = useState(true);
+  /** Aktiverede platforme — starter med alle standard-platforme */
   const [activePlatforms, setActivePlatforms] = useState<string[]>(
     ALL_SOCIAL_PLATFORMS.map((p) => p.key)
   );
+  /** Alle kendte platforme (standard + tilføjede) */
+  const [knownPlatforms, setKnownPlatforms] = useState(
+    ALL_SOCIAL_PLATFORMS.map((p) => ({ key: p.key, label: p.label }))
+  );
+  const [newPlatformInput, setNewPlatformInput] = useState('');
 
   // ── Translations ──
   const t = {
@@ -169,11 +174,12 @@ export default function AdminAiMediaAgentsPage() {
       : 'Control when AI links are shown based on confidence score.',
     confidenceThreshold: da ? 'Confidence-tærskel' : 'Confidence threshold',
     confidenceThresholdDesc: da
-      ? 'Links med score under denne grænse skjules for brugeren.'
-      : 'Links with score below this threshold are hidden from users.',
-    hideBelowLabel: da ? 'Skjul under' : 'Hide below',
-    uncertainLabel: da ? 'Usikker over' : 'Uncertain above',
-    confidentLabel: da ? 'Sikker over' : 'Confident above',
+      ? 'Links med score under denne grænse skjules helt for brugeren.'
+      : 'Links with score below this threshold are hidden entirely from users.',
+    greenThresholdLabel: da ? 'Grøn grænse' : 'Green threshold',
+    greenThresholdDesc: da
+      ? 'Score over denne grænse vises med grøn badge. Under (men over tærsklen) vises gul badge.'
+      : 'Score above this shows a green badge. Below this (but above threshold) shows a yellow badge.',
 
     // Sektion 2
     sec2Title: da ? 'Blokerede domæner' : 'Blocked Domains',
@@ -216,8 +222,10 @@ export default function AdminAiMediaAgentsPage() {
       : 'Run secondary phone search if address found but not phone.',
     socialPlatformsLabel: da ? 'Sociale medier-platforme' : 'Social media platforms',
     socialPlatformsDesc: da
-      ? 'Vælg hvilke platforme der søges for personers profiler.'
-      : "Choose which platforms are searched for people's profiles.",
+      ? 'Vælg hvilke platforme der søges for personers profiler. Blå = aktiv, grå = deaktiveret.'
+      : "Choose which platforms are searched for people's profiles. Blue = active, grey = disabled.",
+    addPlatformLabel: da ? 'Tilføj platform' : 'Add platform',
+    addPlatformPlaceholder: da ? 'f.eks. tiktok' : 'e.g. tiktok',
   };
 
   // ── Fetch settings ──
@@ -239,12 +247,8 @@ export default function AdminAiMediaAgentsPage() {
       if (typeof data.min_confidence_threshold === 'number') {
         setConfidenceThreshold(data.min_confidence_threshold);
       }
-      if (data.confidence_levels && typeof data.confidence_levels === 'object') {
-        setConfidenceLevels({
-          hide: data.confidence_levels.hide ?? 70,
-          uncertain: data.confidence_levels.uncertain ?? 85,
-          confident: data.confidence_levels.confident ?? 100,
-        });
+      if (typeof data.green_threshold === 'number') {
+        setGreenThreshold(data.green_threshold);
       }
       if (Array.isArray(data.excluded_domains) && data.excluded_domains.length > 0) {
         setExcludedDomains(data.excluded_domains);
@@ -267,8 +271,19 @@ export default function AdminAiMediaAgentsPage() {
       if (typeof data.person_phone_fallback_enabled === 'boolean') {
         setPhoneFallbackEnabled(data.person_phone_fallback_enabled);
       }
-      if (Array.isArray(data.person_social_platforms) && data.person_social_platforms.length > 0) {
-        setActivePlatforms(data.person_social_platforms);
+      if (
+        Array.isArray(data.enabled_social_platforms) &&
+        data.enabled_social_platforms.length > 0
+      ) {
+        setActivePlatforms(data.enabled_social_platforms);
+        // Tilføj evt. platforme fra settings der ikke er i standard-listen
+        setKnownPlatforms((prev) => {
+          const existingKeys = new Set(prev.map((p) => p.key));
+          const extra = (data.enabled_social_platforms as string[])
+            .filter((k) => !existingKeys.has(k))
+            .map((k) => ({ key: k, label: k.charAt(0).toUpperCase() + k.slice(1) }));
+          return extra.length > 0 ? [...prev, ...extra] : prev;
+        });
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
@@ -369,7 +384,23 @@ export default function AdminAiMediaAgentsPage() {
       ? activePlatforms.filter((p) => p !== key)
       : [...activePlatforms, key];
     setActivePlatforms(updated);
-    saveSetting('person_social_platforms', updated);
+    saveSetting('enabled_social_platforms', updated);
+  };
+
+  /**
+   * Tilføjer en ny platform til listen af kendte og aktiverede platforme.
+   * Platformens søge-nøgle normaliseres til lowercase uden mellemrum.
+   */
+  const addPlatform = () => {
+    const key = newPlatformInput.trim().toLowerCase().replace(/\s+/g, '_');
+    if (!key || knownPlatforms.some((p) => p.key === key)) return;
+    const label =
+      newPlatformInput.trim().charAt(0).toUpperCase() + newPlatformInput.trim().slice(1);
+    setKnownPlatforms((prev) => [...prev, { key, label }]);
+    const updated = [...activePlatforms, key];
+    setActivePlatforms(updated);
+    setNewPlatformInput('');
+    saveSetting('enabled_social_platforms', updated);
   };
 
   // ── Feedback banner ──
@@ -544,69 +575,41 @@ export default function AdminAiMediaAgentsPage() {
                   </div>
                 </div>
 
-                {/* Confidence levels */}
-                <div className="space-y-3">
-                  <p className="text-sm font-medium text-slate-200">
-                    {da ? 'Confidence-niveauer' : 'Confidence levels'}
-                  </p>
-                  <div className="grid grid-cols-3 gap-3">
-                    <div className="space-y-1">
-                      <label className="text-xs text-slate-400">{t.hideBelowLabel}</label>
-                      <div className="flex items-center gap-1.5">
-                        <input
-                          type="number"
-                          min={0}
-                          max={100}
-                          value={confidenceLevels.hide}
-                          onChange={(e) =>
-                            setConfidenceLevels((prev) => ({
-                              ...prev,
-                              hide: Number(e.target.value),
-                            }))
-                          }
-                          className="w-full bg-slate-900/60 border border-slate-700 rounded-lg px-2 py-1.5 text-white text-sm text-center focus:outline-none focus:border-blue-500"
-                        />
-                        <span className="text-slate-500 text-xs">%</span>
-                      </div>
+                {/* Grøn grænse */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-sm font-medium text-slate-200">
+                      {t.greenThresholdLabel}
+                    </label>
+                    <span className="text-emerald-400 font-mono text-sm font-bold">
+                      {greenThreshold}%
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500">{t.greenThresholdDesc}</p>
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2">
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-500/15 border border-emerald-500/20 rounded text-[11px] text-emerald-400">
+                        ≥{greenThreshold}% → {da ? 'Grøn badge' : 'Green badge'}
+                      </span>
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-500/15 border border-amber-500/20 rounded text-[11px] text-amber-400">
+                        {confidenceThreshold}–{greenThreshold}% →{' '}
+                        {da ? 'Gul badge' : 'Yellow badge'}
+                      </span>
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-700/40 border border-slate-600/30 rounded text-[11px] text-slate-500">
+                        &lt;{confidenceThreshold}% → {da ? 'Skjult' : 'Hidden'}
+                      </span>
                     </div>
-                    <div className="space-y-1">
-                      <label className="text-xs text-slate-400">{t.uncertainLabel}</label>
-                      <div className="flex items-center gap-1.5">
-                        <input
-                          type="number"
-                          min={0}
-                          max={100}
-                          value={confidenceLevels.uncertain}
-                          onChange={(e) =>
-                            setConfidenceLevels((prev) => ({
-                              ...prev,
-                              uncertain: Number(e.target.value),
-                            }))
-                          }
-                          className="w-full bg-slate-900/60 border border-slate-700 rounded-lg px-2 py-1.5 text-white text-sm text-center focus:outline-none focus:border-blue-500"
-                        />
-                        <span className="text-slate-500 text-xs">%</span>
-                      </div>
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-xs text-slate-400">{t.confidentLabel}</label>
-                      <div className="flex items-center gap-1.5">
-                        <input
-                          type="number"
-                          min={0}
-                          max={100}
-                          value={confidenceLevels.confident}
-                          onChange={(e) =>
-                            setConfidenceLevels((prev) => ({
-                              ...prev,
-                              confident: Number(e.target.value),
-                            }))
-                          }
-                          className="w-full bg-slate-900/60 border border-slate-700 rounded-lg px-2 py-1.5 text-white text-sm text-center focus:outline-none focus:border-blue-500"
-                        />
-                        <span className="text-slate-500 text-xs">%</span>
-                      </div>
-                    </div>
+                    <input
+                      type="number"
+                      min={confidenceThreshold}
+                      max={100}
+                      value={greenThreshold}
+                      onChange={(e) =>
+                        setGreenThreshold(Math.max(confidenceThreshold, Number(e.target.value)))
+                      }
+                      className="w-20 bg-slate-900/60 border border-slate-700 rounded-lg px-2 py-1.5 text-white text-sm text-center focus:outline-none focus:border-emerald-500"
+                    />
+                    <span className="text-slate-500 text-xs">%</span>
                   </div>
                 </div>
 
@@ -615,7 +618,7 @@ export default function AdminAiMediaAgentsPage() {
                     settingKey="min_confidence_threshold"
                     onClick={async () => {
                       await saveSetting('min_confidence_threshold', confidenceThreshold);
-                      await saveSetting('confidence_levels', confidenceLevels);
+                      await saveSetting('green_threshold', greenThreshold);
                     }}
                   />
                   <FeedbackBanner settingKey="min_confidence_threshold" />
@@ -858,7 +861,7 @@ export default function AdminAiMediaAgentsPage() {
                   <p className="text-sm font-medium text-slate-200">{t.socialPlatformsLabel}</p>
                   <p className="text-xs text-slate-500">{t.socialPlatformsDesc}</p>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                    {ALL_SOCIAL_PLATFORMS.map((platform) => {
+                    {knownPlatforms.map((platform) => {
                       const active = activePlatforms.includes(platform.key);
                       return (
                         <button
@@ -878,7 +881,25 @@ export default function AdminAiMediaAgentsPage() {
                       );
                     })}
                   </div>
-                  <FeedbackBanner settingKey="person_social_platforms" />
+                  {/* Tilføj ny platform */}
+                  <div className="flex gap-2 mt-1">
+                    <input
+                      type="text"
+                      value={newPlatformInput}
+                      onChange={(e) => setNewPlatformInput(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && addPlatform()}
+                      placeholder={t.addPlatformPlaceholder}
+                      className="flex-1 bg-slate-900/60 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm placeholder-slate-600 focus:outline-none focus:border-blue-500"
+                    />
+                    <button
+                      onClick={addPlatform}
+                      disabled={!newPlatformInput.trim()}
+                      className="flex items-center gap-1.5 text-sm px-3 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white rounded-lg transition-colors"
+                    >
+                      <Plus size={14} /> {t.addPlatformLabel}
+                    </button>
+                  </div>
+                  <FeedbackBanner settingKey="enabled_social_platforms" />
                 </div>
               </section>
             </>

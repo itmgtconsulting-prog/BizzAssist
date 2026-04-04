@@ -253,6 +253,9 @@ export default function PersonDetailPage({
     Record<string, { url: string; confidence: number; reason?: string }>
   >({});
 
+  /** AI-fundne kontaktoplysninger — udfyldes efter artikel-søgning */
+  const [aiContacts, setAiContacts] = useState<ContactResult[]>([]);
+
   /** AI-fundne alternative links per platform med confidence — udfyldes efter artikel-søgning */
   const [aiAlternatives, setAiAlternatives] = useState<
     Record<string, Array<{ url: string; confidence: number; reason?: string }>>
@@ -1130,6 +1133,7 @@ export default function PersonDetailPage({
                 onSocialsFound={setAiSocials}
                 onAlternativesFound={setAiAlternatives}
                 onThresholdFound={setConfidenceThreshold}
+                onContactsFound={setAiContacts}
               />
             </div>
             {/* Sociale medier & links */}
@@ -1150,6 +1154,18 @@ export default function PersonDetailPage({
                 confidenceThreshold={confidenceThreshold}
               />
             </div>
+            {/* Kontaktoplysninger — vises kun efter AI-søgning */}
+            {aiContacts.length > 0 && (
+              <div>
+                <div className="flex items-center gap-2 mb-3">
+                  <User size={12} className="text-slate-500" />
+                  <p className="text-slate-400 text-xs font-medium uppercase tracking-wide">
+                    {lang === 'da' ? 'Kontaktoplysninger' : 'Contact info'}
+                  </p>
+                </div>
+                <ContactList contacts={aiContacts} />
+              </div>
+            )}
           </div>
           {/* Build-nummer — diskret footer */}
           <div className="px-4 py-2 border-t border-slate-700/30 flex-shrink-0">
@@ -1195,6 +1211,7 @@ export default function PersonDetailPage({
                 onSocialsFound={setAiSocials}
                 onAlternativesFound={setAiAlternatives}
                 onThresholdFound={setConfidenceThreshold}
+                onContactsFound={setAiContacts}
               />
             </div>
             {/* Sociale medier & links */}
@@ -1215,6 +1232,18 @@ export default function PersonDetailPage({
                 confidenceThreshold={confidenceThreshold}
               />
             </div>
+            {/* Kontaktoplysninger — vises kun efter AI-søgning */}
+            {aiContacts.length > 0 && (
+              <div>
+                <div className="flex items-center gap-2 mb-3">
+                  <User size={12} className="text-slate-500" />
+                  <p className="text-slate-400 text-xs font-medium uppercase tracking-wide">
+                    {lang === 'da' ? 'Kontaktoplysninger' : 'Contact info'}
+                  </p>
+                </div>
+                <ContactList contacts={aiContacts} />
+              </div>
+            )}
           </div>
           {/* Build-nummer */}
           <div className="px-4 py-2 border-t border-slate-700/30 flex-shrink-0">
@@ -1224,6 +1253,77 @@ export default function PersonDetailPage({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── ContactList ───────────────────────────────────────────────────────────────
+
+/**
+ * ContactList — viser AI-fundne kontaktoplysninger som kort-liste.
+ * Hvert kort viser adresse, telefon (klikbart), email (klikbart), kilde og confidence badge.
+ * Ingen filtrering baseret på confidence — viser ALT.
+ *
+ * @param contacts - Liste af ContactResult fra AI
+ */
+function ContactList({ contacts }: { contacts: ContactResult[] }) {
+  return (
+    <div className="space-y-2.5">
+      {contacts.map((c, i) => {
+        const badgeColor =
+          c.confidence >= 85
+            ? 'bg-green-500/15 text-green-400 border-green-500/30'
+            : c.confidence >= 70
+              ? 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+              : 'bg-red-500/15 text-red-400 border-red-500/30';
+
+        return (
+          <div
+            key={i}
+            className="rounded-lg bg-slate-800/60 border border-slate-700/50 p-3 space-y-1.5"
+          >
+            {/* Confidence badge + kilde */}
+            <div className="flex items-center justify-between gap-2">
+              <a
+                href={c.sourceUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[10px] text-blue-400 hover:text-blue-300 truncate flex items-center gap-1"
+              >
+                <ExternalLink size={9} className="flex-shrink-0" />
+                {c.source}
+              </a>
+              <span
+                className={`text-[10px] font-medium px-1.5 py-0.5 rounded border flex-shrink-0 ${badgeColor}`}
+              >
+                {c.confidence}%
+              </span>
+            </div>
+            {/* Adresse */}
+            {c.address && <p className="text-slate-300 text-xs leading-snug">{c.address}</p>}
+            {/* Telefon */}
+            {c.phone && (
+              <a
+                href={`tel:${c.phone.replace(/\s/g, '')}`}
+                className="block text-xs text-blue-400 hover:text-blue-300 transition-colors"
+              >
+                {c.phone}
+              </a>
+            )}
+            {/* Email */}
+            {c.email && (
+              <a
+                href={`mailto:${c.email}`}
+                className="block text-xs text-blue-400 hover:text-blue-300 transition-colors"
+              >
+                {c.email}
+              </a>
+            )}
+            {/* Begrundelse */}
+            {c.reason && <p className="text-slate-600 text-[10px] leading-snug">{c.reason}</p>}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1255,6 +1355,17 @@ interface PersonAIArticleResult {
   description?: string;
 }
 
+/** En kontaktoplysning fundet via AI */
+interface ContactResult {
+  address?: string;
+  phone?: string;
+  email?: string;
+  source: string;
+  sourceUrl: string;
+  confidence: number;
+  reason?: string;
+}
+
 /**
  * PersonArticleSearchPanel — AI-drevet artikelsøgning i nyheds-sidepanelet på personsiden.
  *
@@ -1263,12 +1374,14 @@ interface PersonAIArticleResult {
  * Søger primært personens navn + virksomheder i ejerportefølje.
  * Viser første 5 og ekspanderer med 5 ad gangen via "Vis flere".
  * Kalder onSocialsFound med AI-fundne personlige sociale medier-URLs.
+ * Kalder onContactsFound med AI-fundne kontaktoplysninger.
  *
  * @param personData - PersonPublicData for den valgte person
  * @param lang - Aktivt sprog
  * @param onSocialsFound - Callback med fundne sociale medier-URLs inkl. confidence
  * @param onAlternativesFound - Callback med alternative links per platform
  * @param onThresholdFound - Callback med confidence-tærskel fra ai_settings
+ * @param onContactsFound - Callback med fundne kontaktoplysninger
  */
 function PersonArticleSearchPanel({
   personData,
@@ -1276,6 +1389,7 @@ function PersonArticleSearchPanel({
   onSocialsFound,
   onAlternativesFound,
   onThresholdFound,
+  onContactsFound,
 }: {
   personData: PersonPublicData;
   lang: 'da' | 'en';
@@ -1286,6 +1400,7 @@ function PersonArticleSearchPanel({
     alternatives: Record<string, Array<{ url: string; confidence: number; reason?: string }>>
   ) => void;
   onThresholdFound?: (threshold: number) => void;
+  onContactsFound?: (contacts: ContactResult[]) => void;
 }) {
   const { subscription: ctxSub, addTokenUsage } = useSubscription();
   const { isActive: subActive } = useSubscriptionAccess('ai');
@@ -1398,6 +1513,12 @@ function PersonArticleSearchPanel({
         onThresholdFound?.(json.confidenceThreshold);
       }
 
+      // Videresend AI-fundne kontaktoplysninger
+      const contacts = json.contacts as ContactResult[] | undefined;
+      if (contacts && contacts.length > 0) {
+        onContactsFound?.(contacts);
+      }
+
       const total = json.tokensUsed ?? json.usage?.totalTokens ?? 0;
       if (total > 0) {
         setTokensUsedThisSearch(total);
@@ -1421,6 +1542,7 @@ function PersonArticleSearchPanel({
     onSocialsFound,
     onAlternativesFound,
     onThresholdFound,
+    onContactsFound,
   ]);
 
   const da = lang === 'da';

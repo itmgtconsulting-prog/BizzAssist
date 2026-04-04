@@ -450,6 +450,33 @@ Regler for "socials":
 // ─── Response parser ─────────────────────────────────────────────────────────
 
 /**
+ * Sociale medier-domæner der skal filtreres fra artikellisten
+ * hvis de matcher et fundet socialt medie-link.
+ */
+const SOCIAL_DOMAINS = [
+  'linkedin.com',
+  'facebook.com',
+  'instagram.com',
+  'twitter.com',
+  'x.com',
+  'youtube.com',
+];
+
+/**
+ * Returnerer true hvis URL'ens domæne er et socialt medie-domæne.
+ *
+ * @param url - URL der skal tjekkes
+ */
+function isSocialDomain(url: string): boolean {
+  try {
+    const hostname = new URL(url).hostname.replace(/^www\./, '');
+    return SOCIAL_DOMAINS.some((d) => hostname === d || hostname.endsWith(`.${d}`));
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Returnerer true hvis to URLs tilhører samme base-domæne.
  *
  * @param url1 - Primær URL
@@ -622,7 +649,20 @@ function parseArticleResponse(
       }
     }
 
-    return { articles, socials, socialAlternatives, socialsWithMeta, alternativesWithMeta };
+    // ── Filtrer artikler der matcher sociale medie-domæner ──
+    const socialUrls = Object.values(socials).filter(Boolean) as string[];
+    const filteredArticles = articles.filter((a) => {
+      if (!isSocialDomain(a.url)) return true;
+      return !socialUrls.some((su) => isSameBaseDomain(a.url, su));
+    });
+
+    return {
+      articles: filteredArticles,
+      socials,
+      socialAlternatives,
+      socialsWithMeta,
+      alternativesWithMeta,
+    };
   } catch {
     return empty;
   }

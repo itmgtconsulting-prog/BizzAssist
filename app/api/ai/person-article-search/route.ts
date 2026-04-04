@@ -108,6 +108,17 @@ interface SocialWithMeta {
   reason?: string;
 }
 
+/** En kontaktoplysning fundet via AI */
+interface ContactResult {
+  address?: string;
+  phone?: string;
+  email?: string;
+  source: string;
+  sourceUrl: string;
+  confidence: number;
+  reason?: string;
+}
+
 /** Svar-format fra API'en */
 interface ArticleSearchResponse {
   articles: ArticleResult[];
@@ -115,6 +126,7 @@ interface ArticleSearchResponse {
   socialAlternatives: SocialAlternativesResult;
   socialsWithMeta: Record<string, SocialWithMeta>;
   alternativesWithMeta: Record<string, SocialWithMeta[]>;
+  contacts: ContactResult[];
   confidenceThreshold: number;
   tokensUsed: number;
   usage: { totalTokens: number };
@@ -216,11 +228,17 @@ async function buildLearningContext(): Promise<string> {
 /**
  * Søger via Brave Search API og returnerer rå web-resultater.
  *
- * @param key   - Brave Search Subscription Token
- * @param query - Søgeforespørgsel
- * @param count - Antal resultater (max 20 pr. kald)
+ * @param key              - Brave Search Subscription Token
+ * @param query            - Søgeforespørgsel
+ * @param count            - Antal resultater (max 20 pr. kald)
+ * @param skipDomainFilter - Spring ekskluderede domæner over (bruges til kontakt-søgning)
  */
-async function searchBrave(key: string, query: string, count = 20): Promise<ArticleResult[]> {
+async function searchBrave(
+  key: string,
+  query: string,
+  count = 20,
+  skipDomainFilter = false
+): Promise<ArticleResult[]> {
   const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}&country=dk`;
   const res = await fetch(url, {
     headers: { 'X-Subscription-Token': key, Accept: 'application/json' },
@@ -251,7 +269,7 @@ async function searchBrave(key: string, query: string, count = 20): Promise<Arti
       date: r.age?.trim() ?? undefined,
     }))
     .filter((r) => r.title && r.url)
-    .filter((r) => !isExcludedDomain(r.url));
+    .filter((r) => skipDomainFilter || !isExcludedDomain(r.url));
 }
 
 /**
@@ -441,6 +459,45 @@ async function searchBravePersonSocials(
   return { socials, allCandidates: platformUrls as Record<string, string[]> };
 }
 
+/**
+ * Søger kontaktoplysninger for en person via Brave Search.
+ * Bruger kontakt-specifikke queries inkl. krak.dk, 118.dk og degulesider.dk.
+ * Domæne-ekskludering springes over, da disse sider er relevante for kontaktdata.
+ *
+ * @param key        - Brave Search Subscription Token
+ * @param personName - Personens fulde navn
+ */
+async function searchBravePersonContacts(
+  key: string,
+  personName: string
+): Promise<ArticleResult[]> {
+  const queries = [
+    `"${personName}" adresse telefon`,
+    `"${personName}" kontakt email`,
+    `"${personName}" site:krak.dk OR site:118.dk OR site:degulesider.dk`,
+  ];
+
+  const results = await Promise.allSettled(queries.map((q) => searchBrave(key, q, 5, true)));
+
+  const all: ArticleResult[] = [];
+  const seen = new Set<string>();
+  for (const r of results) {
+    if (r.status === 'fulfilled') {
+      for (const item of r.value) {
+        if (!seen.has(item.url)) {
+          seen.add(item.url);
+          all.push(item);
+        }
+      }
+    }
+  }
+
+  console.log(
+    `[person-article-search] searchBravePersonContacts: ${all.length} kontakt-resultater for "${personName}"`
+  );
+  return all;
+}
+
 // ─── System prompt ────────────────────────────────────────────────────────────
 
 /**
@@ -479,6 +536,12 @@ CONFIDENCE-REGLER for sociale medier (PERSON-specifik):
 - Gæt IKKE URLs — returner kun links du kender med rimelig sikkerhed (confidence >= 50)
 - Returner ALDRIG generiske roddomæner (f.eks. "https://facebook.com/") — kun specifikke profil-URLs${learningContext}
 
+KONTAKTOPLYSNINGER — ud over artikler og sociale medier, udtrék også kontaktoplysninger fra kontakt-søgeresultaterne (se separat sektion i brugerbesked):
+- For hvert kontaktresultat der matcher personen: udtrék adresse, telefon og/eller email
+- Angiv kilde-URL og kilde-navn (f.eks. "krak.dk")
+- Giv en confidence score (0-100) baseret på navnematch og kontekst
+- Inkludér en kort begrundelse
+
 Returner KUN validt JSON uden tekst før/efter:
 
 {
@@ -506,7 +569,18 @@ Returner KUN validt JSON uden tekst før/efter:
         {"url": "https://www.facebook.com/altslug", "confidence": 55, "reason": "Muligt alternativ"}
       ]
     }
-  }
+  },
+  "contacts": [
+    {
+      "address": "Strandboulevarderden 108, 2650 Hvidovre",
+      "phone": "+45 12 34 56 78",
+      "email": "vicki@example.dk",
+      "source": "krak.dk",
+      "sourceUrl": "https://krak.dk/...",
+      "confidence": 85,
+      "reason": "Navn og by matcher CVR-registreret adresse"
+    }
+  ]
 }
 
 Regler for "socials":
@@ -514,7 +588,15 @@ Regler for "socials":
 - Returner altid "socials"-objektet (evt. tomt {})
 - "alternatives"-arrayet kan være tomt [] men skal altid inkluderes for platforme du returnerer
 - Ret IKKE URLs fra Brave — brug præcis de URLs fra Brave-resultaterne til artikler
-- Opfind IKKE nye artikel-URLs — brug KUN de givne Brave-resultater`;
+- Opfind IKKE nye artikel-URLs — brug KUN de givne Brave-resultater
+
+Regler for "contacts":
+- Returner altid "contacts"-arrayet (evt. tomt [])
+- Inkludér KUN kontaktresultater der specifikt handler om denne person
+- address, phone og email er alle valgfrie — inkludér kun hvad der er tilgængeligt
+- source skal være domænenavnet (f.eks. "krak.dk", "118.dk")
+- sourceUrl skal være den præcise URL fra Brave-resultatet
+- Opfind IKKE kontaktoplysninger — brug kun hvad Brave har returneret`;
 }
 
 // ─── Response parser ──────────────────────────────────────────────────────────
@@ -550,11 +632,39 @@ function isValidUrl(url: string): boolean {
 }
 
 /**
+ * Sociale medier-domæner der skal filtreres fra artikellisten
+ * hvis de matcher et fundet socialt medie-link.
+ */
+const SOCIAL_DOMAINS = [
+  'linkedin.com',
+  'facebook.com',
+  'instagram.com',
+  'twitter.com',
+  'x.com',
+  'youtube.com',
+];
+
+/**
+ * Returnerer true hvis URL'ens domæne er et socialt medie-domæne.
+ *
+ * @param url - URL der skal tjekkes
+ */
+function isSocialDomain(url: string): boolean {
+  try {
+    const hostname = new URL(url).hostname.replace(/^www\./, '');
+    return SOCIAL_DOMAINS.some((d) => hostname === d || hostname.endsWith(`.${d}`));
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Parser Claude's JSON-svar med artikelliste og sociale medier inkl. confidence-scores.
+ * Filtrerer artikler der matcher sociale medie-URLs (samme base-domæne).
  *
  * @param text       - Rå tekstsvar fra Claude
  * @param threshold  - Confidence-tærskel: primære links under denne score flyttes til alternativer
- * @returns Parsede artikler, socials, socialAlternatives, socialsWithMeta, alternativesWithMeta
+ * @returns Parsede artikler, socials, socialAlternatives, socialsWithMeta, alternativesWithMeta, contacts
  */
 function parsePersonArticleResponse(
   text: string,
@@ -565,6 +675,7 @@ function parsePersonArticleResponse(
   socialAlternatives: SocialAlternativesResult;
   socialsWithMeta: Record<string, SocialWithMeta>;
   alternativesWithMeta: Record<string, SocialWithMeta[]>;
+  contacts: ContactResult[];
 } {
   const empty = {
     articles: [],
@@ -572,6 +683,7 @@ function parsePersonArticleResponse(
     socialAlternatives: {},
     socialsWithMeta: {},
     alternativesWithMeta: {},
+    contacts: [],
   };
 
   try {
@@ -683,7 +795,45 @@ function parsePersonArticleResponse(
       }
     }
 
-    return { articles, socials, socialAlternatives, socialsWithMeta, alternativesWithMeta };
+    // ── Kontaktoplysninger ──
+    const rawContacts: unknown[] = Array.isArray(raw.contacts) ? raw.contacts : [];
+    const contacts: ContactResult[] = rawContacts
+      .filter(
+        (c): c is Record<string, unknown> =>
+          typeof c === 'object' &&
+          c !== null &&
+          typeof (c as Record<string, unknown>).sourceUrl === 'string'
+      )
+      .map((c) => ({
+        address: typeof c.address === 'string' ? c.address.trim() : undefined,
+        phone: typeof c.phone === 'string' ? c.phone.trim() : undefined,
+        email: typeof c.email === 'string' ? c.email.trim() : undefined,
+        source: typeof c.source === 'string' ? c.source.trim() : 'Ukendt kilde',
+        sourceUrl: String(c.sourceUrl).trim(),
+        confidence:
+          typeof c.confidence === 'number'
+            ? Math.max(0, Math.min(100, Math.round(c.confidence)))
+            : 50,
+        reason: typeof c.reason === 'string' ? c.reason.trim() : undefined,
+      }))
+      .filter((c) => isValidUrl(c.sourceUrl) && (c.address || c.phone || c.email));
+
+    // ── Filtrer artikler der matcher sociale medie-domæner ──
+    const socialUrls = Object.values(socials).filter(Boolean) as string[];
+    const filteredArticles = articles.filter((a) => {
+      if (!isSocialDomain(a.url)) return true;
+      // Behold kun social-medie-artikler hvis de IKKE matcher et fundet socialt profil-domæne
+      return !socialUrls.some((su) => isSameBaseDomain(a.url, su));
+    });
+
+    return {
+      articles: filteredArticles,
+      socials,
+      socialAlternatives,
+      socialsWithMeta,
+      alternativesWithMeta,
+      contacts,
+    };
   } catch {
     return empty;
   }
@@ -725,19 +875,22 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   let braveResults: ArticleResult[];
   let braveSocials: SocialsResult;
   let braveSocialCandidates: Record<string, string[]>;
+  let braveContactResults: ArticleResult[];
   let confidenceThreshold: number;
   let learningContext: string;
 
   try {
-    const [articles, socialsResult, threshold, learning] = await Promise.all([
+    const [articles, socialsResult, contactResults, threshold, learning] = await Promise.all([
       searchBravePersonArticles(braveKey, personName, companies),
       searchBravePersonSocials(braveKey, personName),
+      searchBravePersonContacts(braveKey, personName),
       fetchConfidenceThreshold(),
       buildLearningContext(),
     ]);
     braveResults = articles;
     braveSocials = socialsResult.socials;
     braveSocialCandidates = socialsResult.allCandidates;
+    braveContactResults = contactResults;
     confidenceThreshold = threshold;
     learningContext = learning;
   } catch (err) {
@@ -790,9 +943,23 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       `Hvis ingen URL tilhører denne person, udelad platformen. Returner gerne alle kandidater som alternativer.`;
   }
 
+  // ── Kontakt-søgeresultater ────────────────────────────────────────────────
+  const contactSummary =
+    braveContactResults.length > 0
+      ? braveContactResults
+          .map(
+            (r, i) =>
+              `${i + 1}. ${r.title}\n   URL: ${r.url}\n   Kilde: ${r.source}${r.description ? `\n   Snippet: ${r.description}` : ''}`
+          )
+          .join('\n\n')
+      : '(Ingen kontakt-resultater fundet)';
+
+  const contactSection = `\n\nKontakt-søgeresultater (${braveContactResults.length} hits — bruges til "contacts"-feltet i JSON):\n\n${contactSummary}`;
+
   const userMessage =
     `Person:\n${personContext}\n\nBrave Search-resultater (${braveResults.length} hits):\n\n${braveSummary}\n\nRangér og filtrer disse resultater. Find også personens sociale medier-links med confidence-scores.` +
-    socialVerificationSection;
+    socialVerificationSection +
+    contactSection;
 
   // ── Kald Claude ──────────────────────────────────────────────────────────
   const client = new Anthropic({ apiKey });
@@ -821,6 +988,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       socialAlternatives,
       socialsWithMeta,
       alternativesWithMeta,
+      contacts,
     } = parsePersonArticleResponse(finalText, confidenceThreshold);
 
     // Claude's kvalitetssikrede links overskriver Brave-fund
@@ -829,7 +997,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     console.log(
       `[person-article-search] "${personName}": ${articles.length} artikler, tokens=${totalTokens}, ` +
         `primære links=[${Object.keys(socialsWithMeta).join(',')}], ` +
-        `alternativer=[${Object.keys(alternativesWithMeta).join(',')}], threshold=${confidenceThreshold}`
+        `alternativer=[${Object.keys(alternativesWithMeta).join(',')}], ` +
+        `kontakter=${contacts.length}, threshold=${confidenceThreshold}`
     );
 
     if (articles.length === 0) {
@@ -845,6 +1014,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       socialAlternatives,
       socialsWithMeta,
       alternativesWithMeta,
+      contacts,
       confidenceThreshold,
       tokensUsed: totalTokens,
       usage: { totalTokens },

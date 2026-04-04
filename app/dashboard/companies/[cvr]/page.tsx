@@ -260,7 +260,12 @@ function extractOwners(deltagere: CVRPublicData['deltagere']): {
       d.roller.some((r) => {
         const role = r.rolle.toUpperCase();
         return (
-          (role.includes('EJER') || role.includes('LEGALE') || role.includes('REEL')) && !r.til
+          (role.includes('EJER') ||
+            role.includes('LEGALE') ||
+            role.includes('REEL') ||
+            role.includes('INTERESSENT') ||
+            role.includes('FULDT_ANSVARLIG')) &&
+          !r.til
         );
       })
     )
@@ -268,7 +273,12 @@ function extractOwners(deltagere: CVRPublicData['deltagere']): {
       const ejerRolle = d.roller.find((r) => {
         const role = r.rolle.toUpperCase();
         return (
-          (role.includes('EJER') || role.includes('LEGALE') || role.includes('REEL')) && !r.til
+          (role.includes('EJER') ||
+            role.includes('LEGALE') ||
+            role.includes('REEL') ||
+            role.includes('INTERESSENT') ||
+            role.includes('FULDT_ANSVARLIG')) &&
+          !r.til
         );
       });
       return {
@@ -875,7 +885,8 @@ export default function VirksomhedDetalje({ params }: PageProps) {
       upper.includes('EJER') ||
       upper.includes('FULDT_ANSVARLIG') ||
       upper.includes('LEGALE_EJERE') ||
-      upper.includes('REELLE_EJERE')
+      upper.includes('REELLE_EJERE') ||
+      upper.includes('INTERESSENT')
     )
       return 'EJER';
     if (upper.includes('BESTYRELSE') || upper.includes('TILSYNSRÅD')) return 'BESTYRELSE';

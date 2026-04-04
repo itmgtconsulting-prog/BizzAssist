@@ -130,8 +130,15 @@ async function fetchExcludedDomains(): Promise<string[]> {
  * @param query            - Søgeforespørgsel
  * @param count            - Antal resultater (max 20 pr. kald)
  */
-async function searchBrave(key: string, query: string, count = 20): Promise<ArticleResult[]> {
-  const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}&country=dk`;
+async function searchBrave(
+  key: string,
+  query: string,
+  count = 20,
+  freshness?: string
+): Promise<ArticleResult[]> {
+  const params = new URLSearchParams({ q: query, count: String(count), country: 'dk' });
+  if (freshness) params.set('freshness', freshness);
+  const url = `https://api.search.brave.com/res/v1/web/search?${params}`;
   const res = await fetch(url, {
     headers: { 'X-Subscription-Token': key, Accept: 'application/json' },
   });
@@ -197,7 +204,7 @@ async function searchBravePersonArticles(
 
   const queries: Promise<ArticleResult[]>[] = [];
 
-  // Batch 0: medtag generiske personartikelsøgninger
+  // Batch 0: medtag generiske personartikelsøgninger + seneste måneds artikler
   if (batch === 0) {
     queries.push(searchBrave(key, `"${personName}" nyheder artikel`, 20));
     queries.push(
@@ -207,6 +214,8 @@ async function searchBravePersonArticles(
         10
       )
     );
+    // Seneste måned — sikrer nyeste artikler prioriteres
+    queries.push(searchBrave(key, `"${personName}" nyheder artikel`, 10, 'pm'));
   }
 
   // Virksomhedsspecifikke queries for dette batch
@@ -250,7 +259,7 @@ function buildArticlesSystemPrompt(): string {
 Din opgave:
 1. Vurdér om hvert hit handler om DENNE SPECIFIKKE PERSON (ikke en anden med samme navn)
 2. Prioritér artikler der nævner personens fulde navn og helst kontekst (virksomhed, by, branche)
-3. Sortér med nyeste/vigtigste først
+3. Sortér artikler efter dato — NYESTE artikler FØRST. Prioritér artikler fra de seneste 30 dage over ældre artikler.
 4. Forbedre snippet-beskrivelser til max 100 tegn dansk tekst
 
 EKSKLUDEREDE DOMÆNER — inkludér ALDRIG:
@@ -307,6 +316,30 @@ function isSocialDomain(url: string): boolean {
 }
 
 /**
+ * Konverterer en dato-streng (ISO, relativ "X days ago" etc.) til sorterbar timestamp.
+ * Returnerer 0 hvis datoen ikke kan parses.
+ *
+ * @param dateStr - Datostreng fra Brave/Claude
+ */
+function parseDateForSort(dateStr: string | undefined): number {
+  if (!dateStr) return 0;
+  const d = new Date(dateStr);
+  if (!isNaN(d.getTime())) return d.getTime();
+  const agoMatch = dateStr.match(/(\d+)\s+(hour|day|week|month|year|time|dag|uge|m.ned|.r)/i);
+  if (agoMatch) {
+    const n = parseInt(agoMatch[1], 10);
+    const unit = agoMatch[2].toLowerCase();
+    const now = Date.now();
+    if (unit.startsWith('hour') || unit.startsWith('time')) return now - n * 3_600_000;
+    if (unit.startsWith('day') || unit.startsWith('dag')) return now - n * 86_400_000;
+    if (unit.startsWith('week') || unit.startsWith('uge')) return now - n * 7 * 86_400_000;
+    if (unit.startsWith('month') || unit.startsWith('m')) return now - n * 30 * 86_400_000;
+    if (unit.startsWith('year') || unit.startsWith('.r')) return now - n * 365 * 86_400_000;
+  }
+  return 0;
+}
+
+/**
  * Parser Claude's JSON-svar — udtrækker kun artikler.
  *
  * @param text - Rå tekstsvar fra Claude
@@ -343,7 +376,8 @@ function parseArticlesResponse(text: string): ArticleResult[] {
         description:
           typeof a.description === 'string' ? a.description.trim().slice(0, 150) : undefined,
       }))
-      .filter((a) => !isSocialDomain(a.url));
+      .filter((a) => !isSocialDomain(a.url))
+      .sort((a, b) => parseDateForSort(b.date) - parseDateForSort(a.date));
   } catch {
     return [];
   }

@@ -260,8 +260,15 @@ async function buildLearningContext(): Promise<string> {
  * @param query - Søgeforespørgsel
  * @param count - Antal resultater (max 20 pr. kald)
  */
-async function searchBrave(key: string, query: string, count = 20): Promise<ArticleResult[]> {
-  const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}&country=dk`;
+async function searchBrave(
+  key: string,
+  query: string,
+  count = 20,
+  freshness?: string
+): Promise<ArticleResult[]> {
+  const params = new URLSearchParams({ q: query, count: String(count), country: 'dk' });
+  if (freshness) params.set('freshness', freshness);
+  const url = `https://api.search.brave.com/res/v1/web/search?${params}`;
   const res = await fetch(url, {
     headers: { 'X-Subscription-Token': key, Accept: 'application/json' },
   });
@@ -308,16 +315,17 @@ async function searchBraveArticles(key: string, companyName: string): Promise<Ar
   // Medievirksomheder (kun for større/kendte virksomheder — kører parallelt)
   const query3 = `"${companyName}" site:dr.dk OR site:tv2.dk OR site:borsen.dk OR site:berlingske.dk OR site:politiken.dk`;
 
-  const [results1, results2, results3] = await Promise.all([
+  const [results1, results2, results3, resultsFresh] = await Promise.all([
     searchBrave(key, query1, 20),
     searchBrave(key, query2, 20),
     searchBrave(key, query3, 10),
+    searchBrave(key, query1, 10, 'pm'), // Seneste måned — nyeste artikler
   ]);
 
   const seen = new Set<string>();
   const merged: ArticleResult[] = [];
-  // Prioritér medievirksomheder, derefter anmeldelses-søgning, til sidst generel
-  for (const r of [...results3, ...results1, ...results2]) {
+  // Nyeste (fresh) og medievirksomheder prioriteres
+  for (const r of [...resultsFresh, ...results3, ...results1, ...results2]) {
     if (!seen.has(r.url)) {
       seen.add(r.url);
       merged.push(r);
@@ -412,7 +420,7 @@ function buildSystemPrompt(learningContext: string): string {
 Din opgave er at kvalitetsvurdere hvert eneste resultat og returnere de bedste:
 1. Vurdér om hvert hit handler om DENNE SPECIFIKKE virksomhed (ikke en anden med lignende navn)
 2. Prioritér danske artikler, men inkludér internationale hvis de handler om virksomheden
-3. Sortér med nyeste/vigtigste først
+3. Sortér artikler efter dato — NYESTE artikler FØRST. Prioritér artikler fra de seneste 30 dage over ældre artikler.
 4. Forbedre snippet-beskrivelser til max 100 tegn dansk tekst hvis nødvendigt
 5. Find virksomhedens sociale medier og hjemmeside-links — vurder confidence for hvert link
 
@@ -541,6 +549,30 @@ function isValidUrl(url: string): boolean {
 }
 
 /**
+ * Konverterer en dato-streng (ISO, relativ "X days ago" etc.) til sorterbar timestamp.
+ * Returnerer 0 hvis datoen ikke kan parses.
+ *
+ * @param dateStr - Datostreng fra Brave/Claude
+ */
+function parseDateForSort(dateStr: string | undefined): number {
+  if (!dateStr) return 0;
+  const d = new Date(dateStr);
+  if (!isNaN(d.getTime())) return d.getTime();
+  const agoMatch = dateStr.match(/(\d+)\s+(hour|day|week|month|year|time|dag|uge|m.ned|.r)/i);
+  if (agoMatch) {
+    const n = parseInt(agoMatch[1], 10);
+    const unit = agoMatch[2].toLowerCase();
+    const now = Date.now();
+    if (unit.startsWith('hour') || unit.startsWith('time')) return now - n * 3_600_000;
+    if (unit.startsWith('day') || unit.startsWith('dag')) return now - n * 86_400_000;
+    if (unit.startsWith('week') || unit.startsWith('uge')) return now - n * 7 * 86_400_000;
+    if (unit.startsWith('month') || unit.startsWith('m')) return now - n * 30 * 86_400_000;
+    if (unit.startsWith('year') || unit.startsWith('.r')) return now - n * 365 * 86_400_000;
+  }
+  return 0;
+}
+
+/**
  * Parser Claude's JSON-svar med artikelliste og sociale medier inkl. confidence-scores.
  * Understøtter nyt format ({ url, confidence, reason, alternatives[] }) samt
  * gammelt format ({ primary, alternatives[] }) for bagudkompatibilitet.
@@ -602,7 +634,8 @@ function parseArticleResponse(
             ? String(a.description).trim().slice(0, 100)
             : undefined,
       }))
-      .filter((a) => a.title && a.url);
+      .filter((a) => a.title && a.url)
+      .sort((a, b) => parseDateForSort(b.date) - parseDateForSort(a.date));
 
     // ── Sociale medier med confidence ──
     const rawSocials = raw.socials ?? {};

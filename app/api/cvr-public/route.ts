@@ -637,7 +637,11 @@ function mapESHit(hit: Record<string, unknown>): CVRPublicData | null {
     const harAktivEjerRolle = d.roller.some((r) => {
       const upper = r.rolle.toUpperCase();
       return (
-        (upper.includes('EJER') || upper.includes('LEGALE') || upper.includes('REEL')) &&
+        (upper.includes('EJER') ||
+          upper.includes('LEGALE') ||
+          upper.includes('REEL') ||
+          upper.includes('INTERESSENT') ||
+          upper.includes('FULDT_ANSVARLIG')) &&
         r.til === null
       );
     });

@@ -418,8 +418,21 @@ export default function PropertyMap({
   /**
    * Styrer om EL/AB ejendomstype-badges vises på bygningsmarkørerne.
    * Initialiseres til true — vises som standard, brugeren kan deaktivere via lag-panelet.
+   * Vises i ALLE tre kortstile (BBR, gade, satellit).
    */
   const [visEjendomsBadges, setVisEjendomsBadges] = useState(true);
+
+  /**
+   * Styrer om husnumre vises på kortet.
+   * Ref bruges til at sætte initial synlighed i aktiverHusnumre uden stale closure.
+   */
+  const visHusnumreRef = useRef(true);
+  const [visHusnumre, setVisHusnumreState] = useState(true);
+  /** Opdaterer visHusnumre state + ref atomisk */
+  const setVisHusnumre = (v: boolean) => {
+    setVisHusnumreState(v);
+    visHusnumreRef.current = v;
+  };
 
   /** Åben/lukket tilstand for lag-panelet */
   const [lagPanel, setLagPanel] = useState(false);
@@ -718,11 +731,12 @@ export default function PropertyMap({
   const aktiverHusnumre = useCallback(() => {
     const map = mapRef.current?.getMap();
     if (!map) return;
+    const vis = visHusnumreRef.current ? 'visible' : 'none';
 
     if (map.getLayer('housenum-label')) {
-      // Built-in lag i navigation-night-v1 — gør det synligt
+      // Built-in lag i navigation-night-v1 — anvend synlighedstilstand fra ref
       try {
-        map.setLayoutProperty('housenum-label', 'visibility', 'visible');
+        map.setLayoutProperty('housenum-label', 'visibility', vis);
         map.setFilter('housenum-label', ['>=', ['zoom'], 17]);
       } catch {
         /* ignorer */
@@ -749,6 +763,7 @@ export default function PropertyMap({
         layout: {
           'text-field': ['get', 'house_num'],
           'text-size': 12,
+          visibility: vis,
           'text-allow-overlap': false,
           'text-ignore-placement': false,
         },
@@ -758,6 +773,13 @@ export default function PropertyMap({
           'text-halo-width': 1.5,
         },
       });
+    } else {
+      // Lag eksisterer allerede — synkronisér synlighed
+      try {
+        map.setLayoutProperty(LYR, 'visibility', vis);
+      } catch {
+        /* ignorer */
+      }
     }
   }, []);
 
@@ -775,6 +797,33 @@ export default function PropertyMap({
       aktiverHusnumre();
     });
   }, [anvendStilOverrides, opsætWmsLag, aktiverHusnumre]);
+
+  /**
+   * Synkroniserer husnumre-synlighed til Mapbox ved toggle.
+   * Håndterer begge lag: built-in housenum-label (dark/bbr) og custom housenum-overlay (satellite).
+   */
+  const sætHusnumreSynlighed = useCallback((on: boolean) => {
+    const map = mapRef.current?.getMap();
+    if (!map) return;
+    const vis = on ? 'visible' : 'none';
+    if (map.getLayer('housenum-label'))
+      try {
+        map.setLayoutProperty('housenum-label', 'visibility', vis);
+      } catch {
+        /* ignorer */
+      }
+    if (map.getLayer('housenum-overlay'))
+      try {
+        map.setLayoutProperty('housenum-overlay', 'visibility', vis);
+      } catch {
+        /* ignorer */
+      }
+  }, []);
+
+  /** Synkroniserer husnumre-synlighed til Mapbox ved state-ændring */
+  useEffect(() => {
+    sætHusnumreSynlighed(visHusnumre);
+  }, [visHusnumre, sætHusnumreSynlighed]);
 
   /** Vis fallback UI hvis Mapbox-token mangler */
   if (!harToken) {
@@ -850,15 +899,22 @@ export default function PropertyMap({
           </div>
         </Marker>
 
-        {/* BBR-bygningsmarkører — kun synlige i BBR-tilstand */}
-        {mapStyle === 'bbr' &&
-          bygningPunkter?.map((b, bIdx) => {
-            const aktiv = AKTIV_STATUS.has(b.status ?? '');
-            const erHover = aktivBygning?.id === b.id;
-            return (
-              <Marker key={`${b.id}-${bIdx}`} longitude={b.lng} latitude={b.lat} anchor="center">
-                {/* Wrapper til at positionere badge relativt til cirklen */}
-                <div className="relative">
+        {/* BBR-bygningsmarkører — cirkler kun i BBR-tilstand, badges i ALLE tre kortstile */}
+        {bygningPunkter?.map((b, bIdx) => {
+          const aktiv = AKTIV_STATUS.has(b.status ?? '');
+          const erHover = aktivBygning?.id === b.id;
+          const visCirkel = mapStyle === 'bbr';
+          const badgeEL = visEjendomsBadges && erEjerlejlighed;
+          const badgeAB = visEjendomsBadges && !erEjerlejlighed && b.ejerforholdskode === '50';
+          const badgeAL = visEjendomsBadges && !erEjerlejlighed && b.ejerforholdskode === '60';
+          // I ikke-BBR tilstand: marker kun vises hvis der er et aktivt badge
+          if (!visCirkel && !badgeEL && !badgeAB && !badgeAL) return null;
+          return (
+            <Marker key={`${b.id}-${bIdx}`} longitude={b.lng} latitude={b.lat} anchor="center">
+              {/* Wrapper til at positionere badge relativt til cirklen */}
+              <div className="relative">
+                {/* Bygningscirkel — kun i BBR-tilstand */}
+                {visCirkel && (
                   <div
                     onMouseEnter={() => {
                       setAktivBygning(b);
@@ -880,30 +936,33 @@ export default function PropertyMap({
                           : 'bg-slate-600/80 border-slate-400 hover:scale-110'
                     }`}
                   />
-                  {/* EL/AB ejendomstype-badge — vises kun når togget er aktivt */}
-                  {visEjendomsBadges && (
-                    <>
-                      {erEjerlejlighed && (
-                        <span className="absolute -top-2 -right-2.5 bg-blue-600 text-white text-[7px] font-bold px-1 py-px rounded-full shadow-sm border border-blue-300 leading-none pointer-events-none select-none">
-                          EL
-                        </span>
-                      )}
-                      {!erEjerlejlighed && b.ejerforholdskode === '50' && (
-                        <span className="absolute -top-2 -right-2.5 bg-emerald-600 text-white text-[7px] font-bold px-1 py-px rounded-full shadow-sm border border-emerald-300 leading-none pointer-events-none select-none">
-                          AB
-                        </span>
-                      )}
-                      {!erEjerlejlighed && b.ejerforholdskode === '60' && (
-                        <span className="absolute -top-2 -right-2.5 bg-indigo-600 text-white text-[7px] font-bold px-1 py-px rounded-full shadow-sm border border-indigo-300 leading-none pointer-events-none select-none">
-                          AL
-                        </span>
-                      )}
-                    </>
-                  )}
-                </div>
-              </Marker>
-            );
-          })}
+                )}
+                {/* EL/AB/AL ejendomstype-badge — vises i alle tre kortstile når togget er aktivt */}
+                {badgeEL && (
+                  <span
+                    className={`${visCirkel ? 'absolute -top-2 -right-2.5' : ''} bg-blue-600 text-white text-[7px] font-bold px-1 py-px rounded-full shadow-sm border border-blue-300 leading-none pointer-events-none select-none`}
+                  >
+                    EL
+                  </span>
+                )}
+                {badgeAB && (
+                  <span
+                    className={`${visCirkel ? 'absolute -top-2 -right-2.5' : ''} bg-emerald-600 text-white text-[7px] font-bold px-1 py-px rounded-full shadow-sm border border-emerald-300 leading-none pointer-events-none select-none`}
+                  >
+                    AB
+                  </span>
+                )}
+                {badgeAL && (
+                  <span
+                    className={`${visCirkel ? 'absolute -top-2 -right-2.5' : ''} bg-indigo-600 text-white text-[7px] font-bold px-1 py-px rounded-full shadow-sm border border-indigo-300 leading-none pointer-events-none select-none`}
+                  >
+                    AL
+                  </span>
+                )}
+              </div>
+            </Marker>
+          );
+        })}
       </Map>
 
       {/* Luftfoto / Gade / BBR toggle — BBR yderst til venstre, Luftfoto yderst til højre */}
@@ -1090,6 +1149,36 @@ export default function PropertyMap({
               <p className="text-[9px] font-bold uppercase tracking-widest px-1 pt-2 pb-1 text-blue-400">
                 Basiskort
               </p>
+              {/* Husnumre toggle — vises i alle tre kortstile */}
+              <button
+                onClick={() => setVisHusnumre(!visHusnumre)}
+                className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-px transition-colors text-left ${
+                  visHusnumre ? 'bg-white/5' : 'hover:bg-white/[0.03]'
+                }`}
+              >
+                <div
+                  className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center shrink-0 border transition-colors ${
+                    visHusnumre ? 'bg-blue-600 border-blue-600' : 'border-white/20'
+                  }`}
+                >
+                  {visHusnumre && (
+                    <svg width="8" height="6" viewBox="0 0 10 8" fill="none">
+                      <path
+                        d="M1 4L3.5 6.5L9 1"
+                        stroke="white"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  )}
+                </div>
+                <p
+                  className={`text-xs leading-tight truncate ${visHusnumre ? 'text-white' : 'text-slate-400'}`}
+                >
+                  Husnumre
+                </p>
+              </button>
               {visMatrikel && (
                 <button
                   onClick={() => setVisOverlay((prev) => ({ ...prev, matrikel: !prev.matrikel }))}

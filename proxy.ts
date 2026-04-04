@@ -211,6 +211,15 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
   // ── 6. Add request ID for Sentry audit trail correlation ──────────────────
   supabaseResponse.headers.set('x-request-id', crypto.randomUUID());
 
+  // ── 7. Rate-limit info headers on API routes ───────────────────────────────
+  // Informational only — actual enforcement is handled in step 2 above.
+  // Lets clients observe the configured policy without hitting a 429.
+  if (pathname.startsWith('/api')) {
+    supabaseResponse.headers.set('X-RateLimit-Limit', String(RATE_LIMIT_MAX));
+    supabaseResponse.headers.set('X-RateLimit-Window', `${RATE_LIMIT_WINDOW_MS / 1000}s`);
+    supabaseResponse.headers.set('X-RateLimit-Policy', 'sliding-window');
+  }
+
   return supabaseResponse;
 }
 

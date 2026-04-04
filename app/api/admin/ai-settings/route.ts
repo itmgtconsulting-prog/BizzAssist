@@ -123,7 +123,21 @@ export async function PUT(req: NextRequest) {
   }
 
   // Tillad kun kendte nøgler for at forhindre utilsigtede indstillinger
-  const ALLOWED_KEYS = ['min_confidence_threshold', 'confidence_levels'];
+  const ALLOWED_KEYS = [
+    'min_confidence_threshold',
+    'confidence_levels',
+    // Blokerede domæner
+    'excluded_domains',
+    // Virksomheds-agent
+    'brave_api_key',
+    'primary_media_domains',
+    'max_articles_per_search',
+    'max_tokens_per_search',
+    // Person-agent
+    'person_contact_search_enabled',
+    'person_phone_fallback_enabled',
+    'person_social_platforms',
+  ];
   if (!ALLOWED_KEYS.includes(key)) {
     return NextResponse.json(
       { error: `Ukendt nøgle: ${key}. Tilladte: ${ALLOWED_KEYS.join(', ')}` },

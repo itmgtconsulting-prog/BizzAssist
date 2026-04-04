@@ -137,7 +137,12 @@ interface ArticleSearchResponse {
 /** Input-format til API'en */
 interface PersonInput {
   personName: string;
-  companies?: Array<{ cvr: number | string; name: string }>;
+  /**
+   * Virksomheder personen er tilknyttet.
+   * Sortér gerne efter rolle inden afsendelse: direktør > bestyrelsesformand > bestyrelsesmedlem > ejer.
+   * Kun de første 3 bruges til artikelsøgning for at holde Brave-kald under budgettet.
+   */
+  companies?: Array<{ cvr: number | string; name: string; role?: string }>;
   city?: string;
 }
 
@@ -157,6 +162,32 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
 
 /** Standard confidence-tærskel hvis Supabase ikke er tilgængeligt */
 const DEFAULT_THRESHOLD = 70;
+
+/**
+ * Henter blokerede domæner fra ai_settings-tabellen.
+ * Merger DB-listen med de hardcodede standarddomæner.
+ * Returnerer de hardcodede standarddomæner hvis Supabase fejler.
+ *
+ * @returns Array af domæner der skal ekskluderes fra artikelresultater
+ */
+async function fetchExcludedDomains(): Promise<string[]> {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) return EXCLUDED_ARTICLE_DOMAINS;
+  try {
+    const client = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+    const { data } = await client
+      .from('ai_settings')
+      .select('value')
+      .eq('key', 'excluded_domains')
+      .single();
+    if (Array.isArray(data?.value) && data.value.length > 0) {
+      const merged = new Set([...EXCLUDED_ARTICLE_DOMAINS, ...(data.value as string[])]);
+      return Array.from(merged);
+    }
+    return EXCLUDED_ARTICLE_DOMAINS;
+  } catch {
+    return EXCLUDED_ARTICLE_DOMAINS;
+  }
+}
 
 /**
  * Henter confidence-tærskel fra ai_settings-tabellen.
@@ -274,30 +305,48 @@ async function searchBrave(
 }
 
 /**
+ * Rolleprioritet til sortering af virksomheder — direktør foretrækkes frem for bestyrelsesmedlem mv.
+ * Lavere tal = højere prioritet.
+ *
+ * @param role - Rollebetegnelse fra PersonInput.companies[].role
+ */
+function rolePriority(role?: string): number {
+  if (!role) return 99;
+  const r = role.toLowerCase();
+  if (r.includes('direktør') || r.includes('ceo') || r.includes('adm')) return 1;
+  if (r.includes('bestyrelsesformand') || r.includes('chairman')) return 2;
+  if (r.includes('bestyrelsesmedlem') || r.includes('board')) return 3;
+  if (r.includes('ejer') || r.includes('owner') || r.includes('partner')) return 4;
+  return 5;
+}
+
+/**
  * Søger artikler om en person og deres virksomheder via parallelle Brave-queries.
- * Primær: personens fulde navn. Sekundær: top 5 ejervirksomheder (krydshenvisninger + egne nyheder).
+ * Primær: personens fulde navn. Sekundær: top 3 vigtigste virksomheder (sorteret efter rolle).
+ * Begrænset til max 8 Brave-kald for at undgå timeout ved personer med mange tilknytninger.
  *
  * @param key        - Brave Search Subscription Token
  * @param personName - Personens fulde navn
- * @param companies  - Top virksomheder personen ejer (max 5 bruges)
+ * @param companies  - Virksomheder personen er tilknyttet (sorteres internt efter rolle, max 3 bruges)
  */
 async function searchBravePersonArticles(
   key: string,
   personName: string,
-  companies: Array<{ cvr: number | string; name: string }>
+  companies: Array<{ cvr: number | string; name: string; role?: string }>
 ): Promise<ArticleResult[]> {
-  // Primær: artikler om personen
+  // Primær: artikler om personen (2 queries)
   const query1 = `"${personName}" nyheder artikel`;
   const query2 = `"${personName}" site:dr.dk OR site:tv2.dk OR site:borsen.dk OR site:berlingske.dk OR site:politiken.dk`;
 
-  // Sekundær: top 5 ejervirksomheder — tre queries per virksomhed:
+  // Sekundær: top 3 vigtigste virksomheder sorteret efter rolle — 2 queries per virksomhed:
   // 1. Krydshenvisning: kræver BEGGE navne i artiklen
-  // 2. Selvstændig: generelle nyheder + anmeldelser + guides (inkluderer mindre virksomheder)
-  // 3. Bred søgning uden site:-begrænsning (fanger lokale medier, blogger, TripAdvisor-lignende)
-  const topCompanies = companies.slice(0, 5);
+  // 2. Generelle nyheder/anmeldelser for virksomheden
+  // Maks 3×2 = 6 virksomheds-queries → total 8 Brave-kald for artikler
+  const topCompanies = [...companies]
+    .sort((a, b) => rolePriority(a.role) - rolePriority(b.role))
+    .slice(0, 3);
   const companyQueries = topCompanies.flatMap((c) => [
     `"${c.name}" "${personName}"`,
-    `"${c.name}" anmeldelse OR artikel OR nyheder OR guide OR omtale`,
     `"${c.name}" nyheder artikel`,
   ]);
 
@@ -328,19 +377,6 @@ async function searchBravePersonArticles(
     `[person-article-search] searchBravePersonArticles: ${merged.length} merged resultater for "${personName}"`
   );
   return merged;
-}
-
-/**
- * Udtrækker en kortere navnevariant ved at fjerne mellemnavne.
- * "Vicki Hornebo Larsen" → "Vicki Larsen"
- *
- * @param fullName - Personens fulde navn
- * @returns Fornavn + efternavn (uden mellemnavne), eller fuldt navn hvis <= 2 ord
- */
-function shortName(fullName: string): string {
-  const parts = fullName.trim().split(/\s+/);
-  if (parts.length <= 2) return fullName;
-  return `${parts[0]} ${parts[parts.length - 1]}`;
 }
 
 /**
@@ -388,10 +424,9 @@ async function searchBraveSocialPlatform(
 
 /**
  * Søger personens sociale medier-profiler via Brave Search.
- * Kører TO søgninger parallelt per platform:
- * 1. Direkte: `"navn" site:platform.com` — ramler direkte profil-indeksering
- * 2. Indirekte: `"navn" Platform` — finder profiler via tredje-parts links/omtaler
- * Begge navnevarianter (fuldt + kort) køres for alle queries.
+ * Kører 2 søgninger per platform (direkte + indirekte) med fuldt navn.
+ * Navnevariant (kort navn) er fjernet for at holde total Brave-kald under budgettet.
+ * 4 platforme × 2 queries = 8 sociale medie-kald.
  *
  * @param key        - Brave Search Subscription Token
  * @param personName - Personens fulde navn
@@ -400,10 +435,9 @@ async function searchBravePersonSocials(
   key: string,
   personName: string
 ): Promise<{ socials: SocialsResult; allCandidates: Record<string, string[]> }> {
-  const short = shortName(personName);
-  const hasMiddleName = short !== personName;
-
-  // Søgeforespørgsler per platform — direkte + indirekte + navnevarianter.
+  // Søgeforespørgsler per platform — direkte + indirekte, KUN fuldt navn.
+  // Navnevariant (kort navn) udelades for at holde antallet af Brave-kald nede.
+  // 4 platforme × 2 queries = 8 sociale medie-kald.
   // "direct" queries bruger site:-filter og returnerer alle URLs.
   // "indirect" queries returnerer kun URLs der matcher platform-domænet (domainFilter).
   type QueryDef = { query: string; domainFilter?: string };
@@ -412,50 +446,32 @@ async function searchBravePersonSocials(
     {
       name: 'linkedin',
       queries: [
-        // Direkte
         { query: `"${personName}" site:linkedin.com/in` },
-        ...(hasMiddleName ? [{ query: `"${short}" site:linkedin.com/in` }] : []),
-        // Indirekte — filtrerer til kun linkedin.com URLs i resultaterne
         { query: `"${personName}" LinkedIn`, domainFilter: 'linkedin.com' },
-        ...(hasMiddleName ? [{ query: `"${short}" LinkedIn`, domainFilter: 'linkedin.com' }] : []),
       ],
       count: 3,
     },
     {
       name: 'facebook',
       queries: [
-        // Direkte
         { query: `"${personName}" site:facebook.com` },
-        ...(hasMiddleName ? [{ query: `"${short}" site:facebook.com` }] : []),
-        // Indirekte
         { query: `"${personName}" Facebook`, domainFilter: 'facebook.com' },
-        ...(hasMiddleName ? [{ query: `"${short}" Facebook`, domainFilter: 'facebook.com' }] : []),
       ],
       count: 3,
     },
     {
       name: 'instagram',
       queries: [
-        // Direkte
         { query: `"${personName}" site:instagram.com` },
-        ...(hasMiddleName ? [{ query: `"${short}" site:instagram.com` }] : []),
-        // Indirekte
         { query: `"${personName}" Instagram`, domainFilter: 'instagram.com' },
-        ...(hasMiddleName
-          ? [{ query: `"${short}" Instagram`, domainFilter: 'instagram.com' }]
-          : []),
       ],
       count: 2,
     },
     {
       name: 'twitter',
       queries: [
-        // Direkte
         { query: `"${personName}" site:x.com OR site:twitter.com` },
-        ...(hasMiddleName ? [{ query: `"${short}" site:x.com OR site:twitter.com` }] : []),
-        // Indirekte — filtrerer til x.com eller twitter.com
         { query: `"${personName}" Twitter`, domainFilter: 'x.com' },
-        ...(hasMiddleName ? [{ query: `"${short}" Twitter`, domainFilter: 'x.com' }] : []),
       ],
       count: 2,
     },
@@ -506,45 +522,41 @@ async function searchBravePersonSocials(
   }
 
   console.log(
-    `[person-article-search] searchBravePersonSocials: fandt ${Object.keys(socials).length} platforme (navnevariant: "${personName}"${hasMiddleName ? ` + "${short}"` : ''})`
+    `[person-article-search] searchBravePersonSocials: fandt ${Object.keys(socials).length} platforme for "${personName}"`
   );
   return { socials, allCandidates: platformUrls as Record<string, string[]> };
 }
 
 /**
  * Søger kontaktoplysninger for en person via Brave Search.
- * Bruger kontakt-specifikke queries inkl. krak.dk, 118.dk og degulesider.dk.
- * Domæne-ekskludering springes over, da disse sider er relevante for kontaktdata.
+ * Begrænset til max 3 queries for at holde total Brave-kald under budgettet.
+ * Domæne-ekskludering springes over, da krak.dk/118.dk er relevante for kontaktdata.
  *
  * @param key        - Brave Search Subscription Token
  * @param personName - Personens fulde navn
  * @param city       - By (valgfrit, til geografisk præcisering)
- * @param companies  - Virksomheder personen er tilknyttet (bruges til kryds-søgning)
+ * @param companies  - Virksomheder personen er tilknyttet (bruges til kryds-søgning, max 1)
  */
 async function searchBravePersonContacts(
   key: string,
   personName: string,
   city?: string,
-  companies?: Array<{ cvr: number | string; name: string }>
+  companies?: Array<{ cvr: number | string; name: string; role?: string }>
 ): Promise<ArticleResult[]> {
+  // Max 3 kontakt-queries: adresse+telefon, krak.dk, og enten by- eller virksomheds-kryds
   const queries: string[] = [
-    `"${personName}" adresse telefon`,
-    `"${personName}" kontakt email`,
+    city ? `"${personName}" ${city} adresse telefon` : `"${personName}" adresse telefon`,
     `"${personName}" site:krak.dk`,
-    `"${personName}" site:118.dk`,
-    `"${personName}" site:degulesider.dk`,
   ];
 
-  // Geografi-baseret søgning øger præcision for almindelige navne
-  if (city) {
-    queries.push(`"${personName}" ${city} adresse`);
-  }
-
-  // Kryds-søgning: person + virksomhedsnavn (forbinder person med registrerede kontaktdata)
+  // Tilføj virksomheds-kryds kun hvis kontekst er tilgængeligt og budget tillader
   if (companies && companies.length > 0) {
-    for (const c of companies.slice(0, 3)) {
-      queries.push(`"${personName}" "${c.name}"`);
-    }
+    const topCompany = [...companies].sort(
+      (a, b) => rolePriority(a.role) - rolePriority(b.role)
+    )[0];
+    queries.push(`"${personName}" "${topCompany.name}"`);
+  } else {
+    queries.push(`"${personName}" site:118.dk`);
   }
 
   const results = await Promise.allSettled(queries.map((q) => searchBrave(key, q, 5, true)));
@@ -936,12 +948,9 @@ function parsePersonArticleResponse(
       .filter((c) => isValidUrl(c.sourceUrl) && (c.address || c.phone || c.email));
 
     // ── Filtrer artikler der matcher sociale medie-domæner ──
-    const socialUrls = Object.values(socials).filter(Boolean) as string[];
-    const filteredArticles = articles.filter((a) => {
-      if (!isSocialDomain(a.url)) return true;
-      // Behold kun social-medie-artikler hvis de IKKE matcher et fundet socialt profil-domæne
-      return !socialUrls.some((su) => isSameBaseDomain(a.url, su));
-    });
+    // Sociale medier-links vises i "socials"-sektionen — aldrig som artikler.
+    // Filteret kører ubetinget så LinkedIn/Facebook-profiler ikke dukker op i begge sektioner.
+    const filteredArticles = articles.filter((a) => !isSocialDomain(a.url));
 
     return {
       articles: filteredArticles,
@@ -990,32 +999,49 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   console.log('[person-article-search] Companies modtaget:', JSON.stringify(companies));
 
-  // ── Hent threshold + lærings-kontekst + Brave-data parallelt ────────────
+  // ── Hent threshold + lærings-kontekst + Brave-data + ekskluderede domæner parallelt ──
   let braveResults: ArticleResult[];
   let braveSocials: SocialsResult;
   let braveSocialCandidates: Record<string, string[]>;
   let braveContactResults: ArticleResult[];
   let confidenceThreshold: number;
   let learningContext: string;
+  let dbExcludedDomains: string[];
 
   try {
-    const [articles, socialsResult, contactResults, threshold, learning] = await Promise.all([
-      searchBravePersonArticles(braveKey, personName, companies),
-      searchBravePersonSocials(braveKey, personName),
-      searchBravePersonContacts(braveKey, personName, city, companies),
-      fetchConfidenceThreshold(),
-      buildLearningContext(),
-    ]);
+    const [articles, socialsResult, contactResults, threshold, learning, excludedDomains] =
+      await Promise.all([
+        searchBravePersonArticles(braveKey, personName, companies),
+        searchBravePersonSocials(braveKey, personName),
+        searchBravePersonContacts(braveKey, personName, city, companies),
+        fetchConfidenceThreshold(),
+        buildLearningContext(),
+        fetchExcludedDomains(),
+      ]);
     braveResults = articles;
     braveSocials = socialsResult.socials;
     braveSocialCandidates = socialsResult.allCandidates;
     braveContactResults = contactResults;
     confidenceThreshold = threshold;
     learningContext = learning;
+    dbExcludedDomains = excludedDomains;
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Ukendt Brave Search fejl';
     console.error('[person-article-search] Initialiseringsfejl:', msg);
     return NextResponse.json({ error: `Søgning fejlede: ${msg}` }, { status: 502 });
+  }
+
+  // Anvend DB-baserede ekskluderede domæner som ekstra filtrering oven på hardcodet liste
+  if (dbExcludedDomains.length > EXCLUDED_ARTICLE_DOMAINS.length) {
+    const dbExtra = new Set(dbExcludedDomains.filter((d) => !EXCLUDED_ARTICLE_DOMAINS.includes(d)));
+    braveResults = braveResults.filter((r) => {
+      try {
+        const hostname = new URL(r.url).hostname.replace(/^www\./, '');
+        return ![...dbExtra].some((d) => hostname === d || hostname.endsWith(`.${d}`));
+      } catch {
+        return true;
+      }
+    });
   }
 
   console.log(

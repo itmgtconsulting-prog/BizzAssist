@@ -154,6 +154,33 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
 const DEFAULT_THRESHOLD = 70;
 
 /**
+ * Henter blokerede domæner fra ai_settings-tabellen.
+ * Merger DB-listen med de hardcodede standarddomæner.
+ * Returnerer de hardcodede standarddomæner hvis Supabase fejler.
+ *
+ * @returns Array af domæner der skal ekskluderes fra artikelresultater
+ */
+async function fetchExcludedDomains(): Promise<string[]> {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) return EXCLUDED_ARTICLE_DOMAINS;
+  try {
+    const client = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+    const { data } = await client
+      .from('ai_settings')
+      .select('value')
+      .eq('key', 'excluded_domains')
+      .single();
+    if (Array.isArray(data?.value) && data.value.length > 0) {
+      // Merger DB-domæner med hardcodede standarddomæner (union — ingen dubletter)
+      const merged = new Set([...EXCLUDED_ARTICLE_DOMAINS, ...(data.value as string[])]);
+      return Array.from(merged);
+    }
+    return EXCLUDED_ARTICLE_DOMAINS;
+  } catch {
+    return EXCLUDED_ARTICLE_DOMAINS;
+  }
+}
+
+/**
  * Henter confidence-tærskel fra ai_settings-tabellen.
  * Returnerer DEFAULT_THRESHOLD hvis Supabase ikke er konfigureret eller fejler.
  *
@@ -657,11 +684,8 @@ function parseArticleResponse(
     }
 
     // ── Filtrer artikler der matcher sociale medie-domæner ──
-    const socialUrls = Object.values(socials).filter(Boolean) as string[];
-    const filteredArticles = articles.filter((a) => {
-      if (!isSocialDomain(a.url)) return true;
-      return !socialUrls.some((su) => isSameBaseDomain(a.url, su));
-    });
+    // Sociale medier-links vises i "socials"-sektionen — aldrig som artikler.
+    const filteredArticles = articles.filter((a) => !isSocialDomain(a.url));
 
     return {
       articles: filteredArticles,
@@ -707,23 +731,39 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'companyName er påkrævet' }, { status: 400 });
   }
 
-  // ── Hent threshold + lærings-kontekst + Brave-data parallelt ────────────
+  // ── Hent threshold + lærings-kontekst + Brave-data + ekskluderede domæner parallelt ──
   let braveResults: ArticleResult[];
   let braveSocials: SocialsResult;
   let confidenceThreshold: number;
   let learningContext: string;
+  let dbExcludedDomains: string[];
 
   try {
-    [braveResults, braveSocials, confidenceThreshold, learningContext] = await Promise.all([
-      searchBraveArticles(braveKey, companyName),
-      searchBraveSocials(braveKey, companyName),
-      fetchConfidenceThreshold(),
-      buildLearningContext(),
-    ]);
+    [braveResults, braveSocials, confidenceThreshold, learningContext, dbExcludedDomains] =
+      await Promise.all([
+        searchBraveArticles(braveKey, companyName),
+        searchBraveSocials(braveKey, companyName),
+        fetchConfidenceThreshold(),
+        buildLearningContext(),
+        fetchExcludedDomains(),
+      ]);
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Ukendt Brave Search fejl';
     console.error('[article-search] Initialiseringsfejl:', msg);
     return NextResponse.json({ error: `Søgning fejlede: ${msg}` }, { status: 502 });
+  }
+
+  // Anvend DB-baserede ekskluderede domæner som ekstra filtrering oven på hardcodet liste
+  if (dbExcludedDomains.length > EXCLUDED_ARTICLE_DOMAINS.length) {
+    const dbExtra = new Set(dbExcludedDomains.filter((d) => !EXCLUDED_ARTICLE_DOMAINS.includes(d)));
+    braveResults = braveResults.filter((r) => {
+      try {
+        const hostname = new URL(r.url).hostname.replace(/^www\./, '');
+        return ![...dbExtra].some((d) => hostname === d || hostname.endsWith(`.${d}`));
+      } catch {
+        return true;
+      }
+    });
   }
 
   console.log(

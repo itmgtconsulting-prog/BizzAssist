@@ -1226,13 +1226,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
     }
 
+    // Fjern kontakt-poster der stammer fra blokerede domæner (konkurrenter).
+    // Brave-resultater fra disse domæner bruges stadig internt som kontekst til Claude,
+    // men sourceUrl må ikke eksponeres i API-responsen.
+    const filteredContacts = contacts.filter((c) => !isExcludedDomain(c.sourceUrl));
+
     const result: ArticleSearchResponse = {
       articles,
       socials,
       socialAlternatives,
       socialsWithMeta,
       alternativesWithMeta,
-      contacts,
+      contacts: filteredContacts,
       confidenceThreshold,
       tokensUsed: totalTokens,
       usage: { totalTokens },

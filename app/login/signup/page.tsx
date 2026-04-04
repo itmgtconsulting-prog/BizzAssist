@@ -168,7 +168,9 @@ export default function SignupPage() {
       provider,
       options: {
         redirectTo: `${window.location.origin}/auth/callback`,
-        queryParams: provider === 'google' ? { prompt: 'select_account' } : {},
+        queryParams: { prompt: 'select_account' },
+        // Request email + profile scopes explicitly so Azure/Microsoft returns the user's email
+        ...(provider === 'azure' && { scopes: 'email openid profile User.Read' }),
       },
     });
     if (oauthError) {

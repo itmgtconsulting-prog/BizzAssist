@@ -63,6 +63,8 @@ function LoginForm() {
   const t = translations[lang].login;
   const searchParams = useSearchParams();
   const redirectTo = searchParams.get('redirectTo') ?? '/dashboard';
+  // DEBUG: capture details param from auth callback for display
+  const debugDetails = searchParams.get('details');
 
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState('');
@@ -99,6 +101,8 @@ function LoginForm() {
         redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(redirectTo)}`,
         // Force account picker so users can switch accounts after logout
         queryParams: { prompt: 'select_account' },
+        // Request email + profile scopes explicitly so Azure/Microsoft returns the user's email
+        ...(provider === 'azure' && { scopes: 'email openid profile User.Read' }),
       },
     });
     if (oauthError) {
@@ -276,6 +280,11 @@ function LoginForm() {
                     />
                     <p className={`${isSubError ? 'text-amber-300' : 'text-red-300'} text-sm`}>
                       {errorMsg}
+                      {debugDetails && (
+                        <span className="block mt-1 text-xs font-mono opacity-80">
+                          DEBUG: {debugDetails}
+                        </span>
+                      )}
                     </p>
                   </div>
                 );

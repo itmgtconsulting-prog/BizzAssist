@@ -26,6 +26,11 @@ export interface AuthResult {
   error: string | null;
   /** True if 2FA challenge is required before the session is fully elevated */
   mfaRequired?: boolean;
+  /**
+   * Set when error === 'oauth_user_no_password'.
+   * Contains the OAuth provider the user registered with (e.g. 'azure', 'google', 'linkedin_oidc').
+   */
+  oauthProvider?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -55,6 +60,29 @@ export async function signIn(
     console.error('[signIn] Supabase auth error:', error.message, '| status:', error.status);
     // Do not expose internal error details — map to user-safe messages
     if (error.message.toLowerCase().includes('invalid')) {
+      // Check if the account was created via OAuth (no password identity).
+      // listUsers is acceptable here — only runs on failed logins, small user base.
+      try {
+        const admin = createAdminClient();
+        const { data: usersData } = await admin.auth.admin.listUsers({ perPage: 1000 });
+        const matchUser = usersData?.users?.find(
+          (u) => u.email?.toLowerCase() === email.toLowerCase()
+        );
+        if (matchUser) {
+          // app_metadata.providers is reliably populated by Supabase for all auth methods.
+          // identities[] is not reliably returned by listUsers, so we use providers instead.
+          const providers = (matchUser.app_metadata?.providers as string[] | undefined) ?? [];
+          const hasEmailProvider = providers.includes('email');
+          const hasOAuthProvider = providers.some((p) => p !== 'email');
+          if (!hasEmailProvider && hasOAuthProvider) {
+            // Return the first OAuth provider so the UI can highlight the right button
+            const oauthProvider = providers.find((p) => p !== 'email') ?? 'oauth';
+            return { error: 'oauth_user_no_password', oauthProvider };
+          }
+        }
+      } catch {
+        // Non-fatal — fall through to generic invalid_credentials
+      }
       return { error: 'invalid_credentials' };
     }
     if (error.message.toLowerCase().includes('email not confirmed')) {

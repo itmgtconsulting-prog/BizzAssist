@@ -20,7 +20,7 @@
 import { useState, useEffect, FormEvent, Suspense } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { Eye, EyeOff, ArrowLeft, Loader2, AlertCircle } from 'lucide-react';
+import { Eye, EyeOff, ArrowLeft, Loader2, AlertCircle, Info } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';
 import { signIn } from '@/app/auth/actions';
@@ -31,6 +31,10 @@ const errorMessages: Record<string, { da: string; en: string }> = {
   invalid_credentials: {
     da: 'Forkert e-mail eller adgangskode.',
     en: 'Incorrect email or password.',
+  },
+  oauth_user_no_password: {
+    da: 'Denne konto er oprettet via Microsoft, Google eller LinkedIn — ikke med e-mail og adgangskode. Brug den knap du oprettede kontoen med.',
+    en: 'This account was created via Microsoft, Google or LinkedIn — not with email and password. Use the button you signed up with.',
   },
   email_not_confirmed: {
     da: 'Bekræft din e-mail først. Tjek din indbakke.',
@@ -75,6 +79,8 @@ function LoginForm() {
   );
   /** Error from form submission or from URL query param (e.g. subscription_pending) */
   const [error, setError] = useState<string | null>(searchParams.get('error'));
+  /** OAuth provider returned when error === 'oauth_user_no_password' (e.g. 'azure', 'google') */
+  const [detectedProvider, setDetectedProvider] = useState<string | null>(null);
 
   /** Clear the error query param from URL after displaying it, so refreshing doesn't show stale errors */
   useEffect(() => {
@@ -94,6 +100,7 @@ function LoginForm() {
   const handleOAuth = async (provider: 'google' | 'azure' | 'linkedin_oidc') => {
     setOauthLoading(provider);
     setError(null);
+    setDetectedProvider(null);
     const supabase = createClient();
     const { error: oauthError } = await supabase.auth.signInWithOAuth({
       provider,
@@ -127,6 +134,9 @@ function LoginForm() {
       const result = await signIn(email, password, redirectTo);
       if (result?.error) {
         setError(result.error);
+        if (result.oauthProvider) {
+          setDetectedProvider(result.oauthProvider);
+        }
       } else {
         // Login succeeded — redirect client-side so cookies are properly set.
         // Hard redirect (window.location) ensures proxy.ts runs and session is valid.
@@ -143,6 +153,22 @@ function LoginForm() {
   const errorMsg = error
     ? (errorMessages[error]?.[lang] ?? errorMessages.unexpected_error[lang])
     : null;
+
+  /** Maps Supabase provider ID to a human-readable name */
+  const providerDisplayName: Record<string, string> = {
+    azure: 'Microsoft',
+    google: 'Google',
+    linkedin_oidc: 'LinkedIn',
+  };
+  const detectedProviderName = detectedProvider
+    ? (providerDisplayName[detectedProvider] ?? detectedProvider)
+    : null;
+
+  /**
+   * True when we should highlight the OAuth buttons because the user either
+   * tried email/password on an OAuth-only account or has no subscription yet.
+   */
+  const highlightOAuth = error === 'oauth_user_no_password' || error === 'no_subscription';
 
   return (
     <div className="min-h-screen bg-[#0f172a] flex flex-col">
@@ -187,8 +213,27 @@ function LoginForm() {
               <p className="text-slate-400 text-sm">{t.subtitle}</p>
             </div>
 
+            {/* OAuth login hint — shown when user tried email/password on an OAuth account,
+                or when they have no subscription (likely an OAuth signup without plan selection) */}
+            {highlightOAuth && (
+              <div className="flex items-start gap-2 bg-blue-500/10 border border-blue-500/30 rounded-xl px-4 py-3 mb-4 text-blue-300 text-sm">
+                <Info size={16} className="shrink-0 mt-0.5 text-blue-400" />
+                <p>
+                  {detectedProviderName
+                    ? lang === 'da'
+                      ? `Log ind med "Fortsæt med ${detectedProviderName}" knappen nedenfor ↓`
+                      : `Sign in with the "Continue with ${detectedProviderName}" button below ↓`
+                    : lang === 'da'
+                      ? 'Log ind med den knap du oprettede din konto med ↓'
+                      : 'Sign in with the button you used to create your account ↓'}
+                </p>
+              </div>
+            )}
+
             {/* OAuth buttons */}
-            <div className="space-y-3 mb-6">
+            <div
+              className={`space-y-3 mb-6${highlightOAuth ? ' ring-2 ring-blue-500/40 rounded-2xl p-3' : ''}`}
+            >
               {/* Microsoft / Office 365 */}
               <button
                 onClick={() => handleOAuth('azure')}
@@ -263,22 +308,36 @@ function LoginForm() {
               <div className="flex-1 border-t border-white/10" />
             </div>
 
-            {/* Error banner — amber for subscription issues, red for auth errors */}
+            {/* Error banner — blue for OAuth guidance, amber for subscription issues, red for auth errors */}
             {errorMsg &&
               (() => {
                 const isSubError =
                   error === 'subscription_pending' ||
                   error === 'no_subscription' ||
                   error === 'subscription_cancelled';
+                const isOAuthGuidance = error === 'oauth_user_no_password';
+                const bannerColor = isOAuthGuidance
+                  ? 'bg-blue-500/10 border-blue-500/30'
+                  : isSubError
+                    ? 'bg-amber-500/10 border-amber-500/30'
+                    : 'bg-red-500/10 border-red-500/30';
+                const iconColor = isOAuthGuidance
+                  ? 'text-blue-400'
+                  : isSubError
+                    ? 'text-amber-400'
+                    : 'text-red-400';
+                const textColor = isOAuthGuidance
+                  ? 'text-blue-300'
+                  : isSubError
+                    ? 'text-amber-300'
+                    : 'text-red-300';
+                const IconComponent = isOAuthGuidance ? Info : AlertCircle;
                 return (
                   <div
-                    className={`flex items-start gap-2 ${isSubError ? 'bg-amber-500/10 border-amber-500/30' : 'bg-red-500/10 border-red-500/30'} border rounded-xl px-4 py-3 mb-4`}
+                    className={`flex items-start gap-2 ${bannerColor} border rounded-xl px-4 py-3 mb-4`}
                   >
-                    <AlertCircle
-                      size={16}
-                      className={`${isSubError ? 'text-amber-400' : 'text-red-400'} shrink-0 mt-0.5`}
-                    />
-                    <div className={`${isSubError ? 'text-amber-300' : 'text-red-300'} text-sm`}>
+                    <IconComponent size={16} className={`${iconColor} shrink-0 mt-0.5`} />
+                    <div className={`${textColor} text-sm`}>
                       <p>{errorMsg}</p>
                       {error === 'no_subscription' && (
                         <Link

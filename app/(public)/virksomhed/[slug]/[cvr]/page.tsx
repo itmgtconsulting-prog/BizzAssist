@@ -262,7 +262,6 @@ function LoginCTA({ navn }: { navn: string }) {
     'Ejere og ejerstruktur',
     'Ejendomsportefølje',
     'Regnskaber og nøgletal',
-    'AI-analyse og konkurrentoverblik',
     'Følg virksomheden og få notifikationer',
   ];
 

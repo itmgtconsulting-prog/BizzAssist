@@ -213,6 +213,7 @@ const BBR_PUBLIC_QUERY = `
         byg041BebyggetAreal
         byg054AntalEtager
         byg021BygningensAnvendelse
+        byg066Ejerforhold
         status
       }
     }

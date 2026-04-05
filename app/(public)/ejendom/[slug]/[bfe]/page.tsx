@@ -189,12 +189,8 @@ async function hentDawaAdresse(bfe: string): Promise<DawaAdresse | null> {
 
 // ─── BBR GraphQL constants ──────────────────────────────────────────────────
 
-/** Datafordeler OAuth token endpoint — client_credentials kræver IKKE IP-whitelist */
-const DF_TOKEN_URL =
-  'https://auth.datafordeler.dk/realms/distribution/protocol/openid-connect/token';
-
-/** Datafordeler BBR v2 GraphQL endpoint */
-const BBR_GQL_URL = 'https://graphql.datafordeler.dk/BBR/v2';
+/** Datafordeler BBR v2 GraphQL base URL — API key appended as ?apiKey= query param */
+const BBR_GQL_BASE = 'https://graphql.datafordeler.dk/BBR/v2';
 
 /**
  * Minimal BBR bygning query — henter kun de felter der bruges på den offentlige side.
@@ -241,15 +237,14 @@ function nowDafDateTime(): string {
 }
 
 /**
- * Henter BBR bygning-data direkte fra Datafordeler BBR v2 GraphQL via OAuth Bearer token.
+ * Henter BBR bygning-data fra Datafordeler BBR v2 GraphQL via API-nøgle + proxy.
  *
- * Bruger client_credentials flow med DATAFORDELER_OAUTH_CLIENT_ID + _SECRET.
- * OAuth-tokens kræver IKKE IP-whitelisting og virker fra Vercel og alle cloud-miljøer.
- * Kalder Datafordeler direkte (ingen intern HTTP-hop) for at undgå Vercel self-call-problemer
- * og for at undgå afhængighed af DATAFORDELER_API_KEY (der kræver IP-whitelist).
+ * Bruger samme autentificeringsmetode som dashboard-ruten (/api/ejendom/[id]):
+ * DATAFORDELER_API_KEY som ?apiKey= query-parameter, routet via DF_PROXY_URL
+ * (statisk IP whitelistet hos Datafordeler) fra Vercel og andre cloud-miljøer.
  *
  * Kræver env vars:
- *   DATAFORDELER_OAUTH_CLIENT_ID + DATAFORDELER_OAUTH_CLIENT_SECRET
+ *   DATAFORDELER_API_KEY
  * Valgfrit (cloud-proxy):
  *   DF_PROXY_URL + DF_PROXY_SECRET
  *
@@ -259,51 +254,30 @@ function nowDafDateTime(): string {
 async function hentBbrBygning(dawaIds: string[]): Promise<BbrBygning | null> {
   if (dawaIds.length === 0) return null;
   try {
-    const clientId = process.env.DATAFORDELER_OAUTH_CLIENT_ID;
-    const clientSecret = process.env.DATAFORDELER_OAUTH_CLIENT_SECRET;
-    if (!clientId || !clientSecret) {
-      console.error('[BBR GQL] Mangler DATAFORDELER_OAUTH_CLIENT_ID eller _SECRET');
+    const apiKey = process.env.DATAFORDELER_API_KEY;
+    if (!apiKey) {
+      console.error('[BBR GQL] Mangler DATAFORDELER_API_KEY');
       return null;
     }
 
-    // Hent OAuth Bearer token (client credentials — ingen IP-whitelist påkrævet)
-    const tokenRes = await fetch(proxyUrl(DF_TOKEN_URL), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...proxyHeaders() },
-      body: `grant_type=client_credentials&client_id=${encodeURIComponent(clientId)}&client_secret=${encodeURIComponent(clientSecret)}`,
-      signal: AbortSignal.timeout(proxyTimeout()),
-      cache: 'no-store',
-    });
-    if (!tokenRes.ok) {
-      console.error(`[BBR GQL] OAuth token fejl: ${tokenRes.status} ${tokenRes.statusText}`);
-      return null;
-    }
-    const { access_token: token } = (await tokenRes.json()) as { access_token: string };
-    if (!token) {
-      console.error('[BBR GQL] OAuth svarede OK men ingen access_token i body');
-      return null;
-    }
+    const gqlUrl = proxyUrl(`${BBR_GQL_BASE}?apiKey=${apiKey}`);
 
     // Kald BBR GraphQL for hvert adgangsadresse-UUID parallelt og merge nodes.
     // De fleste ejendomme har 1 UUID — for ejendomme med flere adgangsadresser
     // (f.eks. ejendomme hvor hus og carport har separate adresser) hentes alle.
     const vt = nowDafDateTime();
     const fetchNodes = async (id: string): Promise<Array<Record<string, unknown>>> => {
-      const gqlRes = await fetch(proxyUrl(BBR_GQL_URL), {
+      const gqlRes = await fetch(gqlUrl, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-          ...proxyHeaders(),
-        },
+        headers: { 'Content-Type': 'application/json', ...proxyHeaders() },
         body: JSON.stringify({ query: BBR_PUBLIC_QUERY, variables: { vt, id } }),
         signal: AbortSignal.timeout(proxyTimeout()),
-        next: { revalidate: 3600 },
+        cache: 'no-store',
       });
       if (!gqlRes.ok) {
         const body = await gqlRes.text().catch(() => '');
         console.error(
-          `[BBR GQL] GraphQL HTTP fejl: ${gqlRes.status} ${gqlRes.statusText} — ${body.slice(0, 200)}`
+          `[BBR GQL] HTTP ${gqlRes.status} ${gqlRes.statusText} — ${body.slice(0, 200)}`
         );
         return [];
       }

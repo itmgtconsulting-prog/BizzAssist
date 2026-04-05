@@ -228,13 +228,12 @@ export async function signUp(
   // Set subscription in app_metadata via admin client (so it's in the database)
   const now = new Date().toISOString();
 
-  // Beta period: demo plan is auto-approved — no admin approval needed
+  // Look up requires_approval from DB for all plans (including demo)
   let requiresApproval = false;
-  if (signupData?.user?.id && planId !== 'demo') {
+  if (signupData?.user?.id) {
     try {
       const admin = createAdminClient();
 
-      // Look up plan config from DB (only for non-demo plans)
       const { data: planRow } = (await admin
         .from('plan_configs')
         .select('requires_approval')
@@ -245,7 +244,7 @@ export async function signUp(
         requiresApproval = planRow.requires_approval;
       }
     } catch {
-      // Fallback to hardcoded check
+      // Fallback: no approval required if DB lookup fails
     }
   }
 
@@ -401,18 +400,16 @@ export async function selectFreePlan(planId: string): Promise<AuthResult> {
   try {
     const admin = createAdminClient();
 
-    // Beta period: demo plan is auto-approved — no admin approval needed
+    // Look up requires_approval from DB for all plans (including demo)
     let requiresApproval = false;
-    if (planId !== 'demo') {
-      const { data: planRow } = (await admin
-        .from('plan_configs')
-        .select('requires_approval')
-        .eq('plan_id', planId)
-        .limit(1)
-        .single()) as { data: { requires_approval: boolean } | null; error: unknown };
-      if (planRow) {
-        requiresApproval = planRow.requires_approval;
-      }
+    const { data: planRow } = (await admin
+      .from('plan_configs')
+      .select('requires_approval')
+      .eq('plan_id', planId)
+      .limit(1)
+      .single()) as { data: { requires_approval: boolean } | null; error: unknown };
+    if (planRow) {
+      requiresApproval = planRow.requires_approval;
     }
 
     const status = requiresApproval ? 'pending' : 'active';

@@ -30,10 +30,8 @@ import { generateEjendomSlug } from '@/app/lib/slug';
 import { fetchBbrForAddress } from '@/app/lib/fetchBbrData';
 
 // ─── ISR cache-periode ───────────────────────────────────────────────────────
-// Sat til 0 (force-dynamic) så siden altid henter friske BBR-data fra
-// /api/ejendom/[id] uden at stale ISR-cache maskerer fejl.
-// Sæt til 3600 igen når BBR-data bekræftet vises korrekt på test.bizzassist.dk.
-export const revalidate = 0;
+// 3600 sekunder (1 time) — BBR-data bekræftet fungerende.
+export const revalidate = 3600;
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 

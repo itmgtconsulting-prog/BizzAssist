@@ -111,6 +111,9 @@ async function hentDawaAdresse(bfe: string): Promise<DawaAdresse | null> {
     const matrikelnr = jordstykkeRaw['matrikelnr'];
     const kommuneRaw = jordstykkeRaw['kommune'] as Record<string, unknown> | undefined;
     const kommunekode = kommuneRaw?.['kode'];
+    // DAWA jordstykker-endpoint returnerer registreretareal (lowercase) på trin 1.
+    // Det gemmes her, da det nestet adgangsadresse-svar (trin 2) ikke inkluderer arealet.
+    const registreretArealFraJs1 = Number(jordstykkeRaw['registreretareal'] ?? 0);
 
     if (!ejerlavKode || !matrikelnr || !kommunekode) return null;
 
@@ -158,7 +161,9 @@ async function hentDawaAdresse(bfe: string): Promise<DawaAdresse | null> {
         ? {
             matrikelnr: String(js['matrikelnr'] ?? ''),
             ejerlav: { navn: String(ejerlav?.['navn'] ?? '') },
-            registreretAreal: Number(js['registreretAreal'] ?? 0),
+            // Nestet adgangsadresse-svar inkluderer ikke registreretAreal —
+            // brug værdien fra trin 1 jordstykker-opslaget som fallback.
+            registreretAreal: Number(js['registreretAreal'] ?? 0) || registreretArealFraJs1,
           }
         : null,
     };

@@ -172,61 +172,54 @@ async function hentDawaAdresse(bfe: string): Promise<DawaAdresse | null> {
   }
 }
 
-/** Raw bygning-objekt fra DAWA bbrlight API */
-interface BbrLightBygning {
-  BYG_BOLIG_ARL_SAML?: number;
-  BEBO_ARL?: number;
-  BYG_ARL_SAML?: number;
-  OPFOERELSE_AAR?: number;
-  ETAGER_ANT?: number;
-  BEBYGGET_ARL?: number;
-  ANVEND_KODE?: string;
-  EJER_KODE?: string;
-  STATUS_KODE?: string;
+/**
+ * Subset af LiveBBRBygning-felter vi bruger fra /api/ejendom/[id]-responsen.
+ * Defineret lokalt for at undgå import fra API-route.
+ */
+interface LiveBBRBygningSubset {
+  opfoerelsesaar: number | null;
+  samletBygningsareal: number | null;
+  samletBoligareal: number | null;
+  bebyggetAreal: number | null;
+  antalEtager: number | null;
+  anvendelseskode: number | null;
+  ejerforholdskode: string | null;
 }
 
 /**
- * Henter BBR bygning-data direkte fra DAWA bbrlight API (kræver ingen auth).
+ * Henter BBR bygning-data via intern API-route (/api/ejendom/[dawaId]).
  *
- * Endpoint: https://api.dataforsyningen.dk/bbrlight/bygninger?adgangsadresseid=<uuid>
+ * Erstatter den nedlagte DAWA bbrlight API (lukket april 2024).
+ * Intern route bruger Datafordeleren BBR v2 GraphQL med DATAFORDELER_API_KEY.
  *
- * Felter mappet:
- *  BYG_BOLIG_ARL_SAML  → byg039BygningensSamledeBoligAreal
- *  BYG_ARL_SAML        → byg038SamletBygningsareal
- *  BEBYGGET_ARL        → byg041BebyggetAreal
- *  OPFOERELSE_AAR      → byg026Opfoerelsesaar
- *  ETAGER_ANT          → byg054AntalEtager
- *  ANVEND_KODE         → byg021BygningensAnvendelse
- *  EJER_KODE           → byg066Ejerforhold
- *  STATUS_KODE         → status
- *
- * @param dawaId - DAWA adgangsadresse UUID
+ * @param dawaId  - DAWA adgangsadresse UUID
+ * @param baseUrl - Absolut URL til applikationen (til server-side self-fetch)
  * @returns Første BBR bygning mappet til BbrBygning, eller null
  */
-async function hentBbrBygning(dawaId: string): Promise<BbrBygning | null> {
+async function hentBbrViaDawaId(dawaId: string, baseUrl: string): Promise<BbrBygning | null> {
   try {
-    const res = await fetch(
-      `https://api.dataforsyningen.dk/bbrlight/bygninger?adgangsadresseid=${encodeURIComponent(dawaId)}`,
-      { next: { revalidate: 3600 }, headers: { Accept: 'application/json' } }
-    );
-
+    const res = await fetch(`${baseUrl}/api/ejendom/${encodeURIComponent(dawaId)}`, {
+      next: { revalidate: 3600 },
+    });
     if (!res.ok) return null;
 
-    const data: BbrLightBygning[] = await res.json();
-    if (!Array.isArray(data) || data.length === 0) return null;
+    const data = (await res.json()) as {
+      bbr?: LiveBBRBygningSubset[];
+      bbrFejl?: string | null;
+    };
+    if (!data.bbr || data.bbr.length === 0) return null;
 
-    // Vælg den primære bygning: foretræk aktiv status (6 = gyldig i brug)
-    const bygning = data.find((b) => b.STATUS_KODE === '6') ?? data[0];
+    // Vælg den primære bygning (første i listen — API'et returnerer aktive bygninger øverst)
+    const b = data.bbr[0];
 
     return {
-      byg026Opfoerelsesaar: bygning.OPFOERELSE_AAR ?? undefined,
-      byg038SamletBygningsareal: bygning.BYG_ARL_SAML ?? undefined,
-      byg039BygningensSamledeBoligAreal: bygning.BYG_BOLIG_ARL_SAML ?? undefined,
-      byg041BebyggetAreal: bygning.BEBYGGET_ARL ?? undefined,
-      byg054AntalEtager: bygning.ETAGER_ANT ?? undefined,
-      byg021BygningensAnvendelse: bygning.ANVEND_KODE ?? undefined,
-      byg066Ejerforhold: bygning.EJER_KODE ?? undefined,
-      status: bygning.STATUS_KODE ?? undefined,
+      byg026Opfoerelsesaar: b.opfoerelsesaar ?? undefined,
+      byg038SamletBygningsareal: b.samletBygningsareal ?? undefined,
+      byg039BygningensSamledeBoligAreal: b.samletBoligareal ?? undefined,
+      byg041BebyggetAreal: b.bebyggetAreal ?? undefined,
+      byg054AntalEtager: b.antalEtager ?? undefined,
+      byg021BygningensAnvendelse: b.anvendelseskode != null ? String(b.anvendelseskode) : undefined,
+      byg066Ejerforhold: b.ejerforholdskode ?? undefined,
     };
   } catch {
     return null;
@@ -296,9 +289,9 @@ async function hentEjendomData(bfe: string): Promise<EjendomPublicData> {
     return { adresse: null, bbr: null, vurdering: null, fejl: 'Ejendom ikke fundet' };
   }
 
-  // Hent BBR (direkte fra DAWA bbrlight, ingen auth) og vurdering parallelt
+  // Hent BBR (via intern route → Datafordeleren) og vurdering parallelt
   const [bbr, vurdering] = await Promise.all([
-    adresse.id ? hentBbrBygning(adresse.id) : Promise.resolve(null),
+    adresse.id ? hentBbrViaDawaId(adresse.id, baseUrl) : Promise.resolve(null),
     hentVurdering(bfe, adresse.kommunekode, baseUrl),
   ]);
 

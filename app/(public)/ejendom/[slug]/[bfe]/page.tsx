@@ -7,7 +7,7 @@
  * uden login-krav. Avancerede data (ejere, tinglysning, salgshistorik)
  * kræver login og vises bag en CTA-blok.
  *
- * ISR: revalidate = 604800 (7 dage)
+ * ISR: revalidate = 3600 (1 time)
  *
  * @param params.slug - SEO-venlig adresse-slug (dekorativ, bruges ikke til datahentning)
  * @param params.bfe  - BFE-nummer (BBR-ejendomsnummer), bruges til alle API-kald
@@ -29,8 +29,8 @@ import { bygAnvendelseTekst, ejerforholdTekst } from '@/app/lib/bbrKoder';
 import { generateEjendomSlug } from '@/app/lib/slug';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 
-// ─── ISR cache-periode: 7 dage ─────────────────────────────────────────────
-export const revalidate = 604800;
+// ─── ISR cache-periode: 1 time ──────────────────────────────────────────────
+export const revalidate = 3600;
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -100,7 +100,7 @@ async function hentDawaAdresse(bfe: string): Promise<DawaAdresse | null> {
     // Trin 1: BFE → jordstykke (ejerlav + matrikelnr + kommunekode)
     const jsRes = await fetch(
       `https://api.dataforsyningen.dk/jordstykker?bfenummer=${encodeURIComponent(bfe)}&per_side=1`,
-      { next: { revalidate: 604800 }, headers: { Accept: 'application/json' } }
+      { next: { revalidate: 3600 }, headers: { Accept: 'application/json' } }
     );
     if (!jsRes.ok) return null;
     const jsData: unknown[] = await jsRes.json();

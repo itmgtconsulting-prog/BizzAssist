@@ -304,8 +304,23 @@ async function hentBbrBygning(dawaId: string): Promise<BbrBygning | null> {
     const nodes = json.data?.BBR_Bygning?.nodes;
     if (!Array.isArray(nodes) || nodes.length === 0) return null;
 
-    // Foretræk aktive bygninger (status '6' = Bygning i brug)
-    const node = nodes.find((n) => n.status === '6') ?? nodes[0];
+    // Vælg primær bygning: foretræk beboelsesbygninger (110–199) frem for
+    // udhuse/carporte (500+). Sekundær sortering på samlet areal (størst = primær).
+    // Fallback: første aktive bygning, derefter første i listen.
+    const BOLIG_KODER_MIN = 110;
+    const BOLIG_KODER_MAX = 199;
+    const isBolig = (n: Record<string, unknown>) => {
+      const kode = Number(n.byg021BygningensAnvendelse ?? 0);
+      return kode >= BOLIG_KODER_MIN && kode <= BOLIG_KODER_MAX;
+    };
+    const areal = (n: Record<string, unknown>) => Number(n.byg038SamletBygningsareal ?? 0);
+
+    const aktive = nodes.filter((n) => n.status === '6');
+    const kandidater = aktive.length > 0 ? aktive : nodes;
+
+    const boligBygninger = kandidater.filter(isBolig);
+    const pool = boligBygninger.length > 0 ? boligBygninger : kandidater;
+    const node = pool.reduce((best, cur) => (areal(cur) > areal(best) ? cur : best), pool[0]);
 
     return {
       byg026Opfoerelsesaar:

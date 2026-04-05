@@ -39,6 +39,7 @@ import {
   ChevronUp,
   Palette,
   Bot,
+  ShieldCheck,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 
@@ -706,6 +707,12 @@ export default function AdminPlansPage() {
             className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors whitespace-nowrap"
           >
             <Bot size={14} /> {da ? 'AI-agenter' : 'AI Agents'}
+          </Link>
+          <Link
+            href="/dashboard/admin/security"
+            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors whitespace-nowrap"
+          >
+            <ShieldCheck size={14} /> {da ? 'Sikkerhed' : 'Security'}
           </Link>
         </div>
       </div>

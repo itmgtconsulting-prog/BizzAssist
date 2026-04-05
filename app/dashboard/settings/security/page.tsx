@@ -28,6 +28,7 @@ import {
   CheckCircle2,
   Copy,
   Smartphone,
+  Info,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { createClient } from '@/lib/supabase/client';
@@ -103,6 +104,14 @@ const t = {
     da: 'Noget gik galt. Prøv igen.',
     en: 'Something went wrong. Please try again.',
   },
+  oauthTitle: {
+    da: '2FA håndteres af din identity provider',
+    en: '2FA is managed by your identity provider',
+  },
+  oauthDesc: {
+    da: 'Du logger ind via {provider}. Din identity provider kræver allerede 2FA — BizzAssist tilføjer ikke et ekstra trin.',
+    en: 'You sign in via {provider}. Your identity provider already requires 2FA — BizzAssist does not add an additional step.',
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -124,11 +133,35 @@ export default function SecuritySettingsPage() {
   const [copied, setCopied] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [enrolledFactorId, setEnrolledFactorId] = useState<string | null>(null);
+  /** Detected OAuth provider name if user signed in via SSO (azure/google/linkedin_oidc) */
+  const [oauthProvider, setOauthProvider] = useState<string | null>(null);
 
-  // Fetch current MFA status on mount
+  // Fetch current MFA status and detect OAuth-only users on mount.
+  // OAuth users (azure, google, linkedin_oidc) already have 2FA at their IDP
+  // — we skip TOTP enrollment for them entirely.
   useEffect(() => {
     (async () => {
       const supabase = createClient();
+
+      // Detect OAuth-only login
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const providers = (user?.app_metadata?.providers as string[] | undefined) ?? [];
+      const oauthProviders = ['azure', 'google', 'linkedin_oidc'];
+      const detectedOAuth = providers.find((p) => oauthProviders.includes(p));
+      if (detectedOAuth && !providers.includes('email')) {
+        const providerLabel =
+          detectedOAuth === 'azure'
+            ? 'Microsoft'
+            : detectedOAuth === 'google'
+              ? 'Google'
+              : 'LinkedIn';
+        setOauthProvider(providerLabel);
+        setMfaState('idle');
+        return;
+      }
+
       const { data, error: listError } = await supabase.auth.mfa.listFactors();
       if (listError) {
         setMfaState('idle');
@@ -298,15 +331,31 @@ export default function SecuritySettingsPage() {
           </div>
         )}
 
+        {/* ── OAuth info banner — shown instead of TOTP UI for SSO users ──── */}
+        {oauthProvider && (
+          <div className="bg-[#1e293b] border border-blue-500/30 rounded-2xl p-6 flex items-start gap-4">
+            <div className="w-10 h-10 bg-blue-500/10 rounded-full flex items-center justify-center shrink-0">
+              <Info size={20} className="text-blue-400" />
+            </div>
+            <div>
+              <p className="text-white font-medium">{t.oauthTitle[lang]}</p>
+              <p className="text-slate-400 text-sm mt-1">
+                {t.oauthDesc[lang].replace('{provider}', oauthProvider)}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* ── TOTP UI — only shown for email/password users ─────────────────── */}
         {/* ── Loading ────────────────────────────────────────────────────────── */}
-        {mfaState === 'loading' && (
+        {!oauthProvider && mfaState === 'loading' && (
           <div className="flex justify-center py-12">
             <Loader2 size={28} className="animate-spin text-blue-400" />
           </div>
         )}
 
         {/* ── Idle — not enrolled ────────────────────────────────────────────── */}
-        {mfaState === 'idle' && (
+        {!oauthProvider && mfaState === 'idle' && (
           <div className="bg-[#1e293b] border border-white/10 rounded-2xl p-6 flex items-start gap-4">
             <div className="w-10 h-10 bg-slate-700 rounded-full flex items-center justify-center shrink-0">
               <ShieldOff size={20} className="text-slate-400" />
@@ -327,7 +376,7 @@ export default function SecuritySettingsPage() {
         )}
 
         {/* ── Enrolling — QR code + verification ────────────────────────────── */}
-        {mfaState === 'enrolling' && enrollData && (
+        {!oauthProvider && mfaState === 'enrolling' && enrollData && (
           <div className="bg-[#1e293b] border border-white/10 rounded-2xl p-6 space-y-6">
             {/* Step header */}
             <div className="flex items-center gap-3">
@@ -415,7 +464,7 @@ export default function SecuritySettingsPage() {
         )}
 
         {/* ── Enrolled ──────────────────────────────────────────────────────── */}
-        {mfaState === 'enrolled' && !confirmRemove && (
+        {!oauthProvider && mfaState === 'enrolled' && !confirmRemove && (
           <div className="bg-[#1e293b] border border-white/10 rounded-2xl p-6 flex items-start gap-4">
             <div className="w-10 h-10 bg-emerald-500/10 rounded-full flex items-center justify-center shrink-0">
               <ShieldCheck size={20} className="text-emerald-400" />
@@ -437,7 +486,7 @@ export default function SecuritySettingsPage() {
         )}
 
         {/* ── Confirm remove ────────────────────────────────────────────────── */}
-        {mfaState === 'enrolled' && confirmRemove && (
+        {!oauthProvider && mfaState === 'enrolled' && confirmRemove && (
           <div className="bg-[#1e293b] border border-red-500/30 rounded-2xl p-6 space-y-4">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 bg-red-500/10 rounded-full flex items-center justify-center shrink-0">

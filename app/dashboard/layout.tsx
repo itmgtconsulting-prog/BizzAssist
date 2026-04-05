@@ -35,6 +35,8 @@ import { getRecentSearches, saveRecentSearch, type RecentSearch } from '@/app/li
 import type { UnifiedSearchResult } from '@/app/api/search/route';
 import AIChatPanel from '@/app/components/AIChatPanel';
 import NotifikationsDropdown from '@/app/components/NotifikationsDropdown';
+import SessionTimeoutWarning from '@/app/components/SessionTimeoutWarning';
+import { useSessionTimeout } from '@/app/hooks/useSessionTimeout';
 import OnboardingModal from '@/app/components/OnboardingModal';
 import FeedbackButton from '@/app/components/FeedbackButton';
 import SubscriptionGate from '@/app/components/SubscriptionGate';
@@ -106,6 +108,18 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
 
   /** Subscription context — replaces localStorage for subscription state */
   const { initialize: initSub } = useSubscription();
+
+  // Session timeout — tracks idle + absolute timeout, shows warning modal.
+  // Only active once access is granted (user is authenticated in the dashboard).
+  const {
+    showWarning: showSessionWarning,
+    secondsLeft,
+    extendSession,
+  } = useSessionTimeout({
+    onTimeout: async () => {
+      await signOut();
+    },
+  });
 
   /** Helper: set profile UI from email + optional name */
   const setProfile = useCallback((email: string, fullName?: string) => {
@@ -921,6 +935,16 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
 
       {/* Onboarding modal — shown once for new users */}
       <OnboardingModal />
+
+      {/* Session timeout warning — vises 5 min. inden idle-logout */}
+      <SessionTimeoutWarning
+        show={showSessionWarning}
+        secondsLeft={secondsLeft}
+        onExtend={extendSession}
+        onTimeout={async () => {
+          await signOut();
+        }}
+      />
 
       {/* Floating feedback button — always visible for beta users */}
       <FeedbackButton />

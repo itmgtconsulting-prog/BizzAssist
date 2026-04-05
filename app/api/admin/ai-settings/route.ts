@@ -137,6 +137,10 @@ export async function PUT(req: NextRequest) {
     'person_contact_search_enabled',
     'person_phone_fallback_enabled',
     'person_social_platforms',
+    // Session timeout (migration 018)
+    'idle_timeout_minutes',
+    'absolute_timeout_hours',
+    'refresh_token_days',
   ];
   if (!ALLOWED_KEYS.includes(key)) {
     return NextResponse.json(

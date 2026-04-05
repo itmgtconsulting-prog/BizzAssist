@@ -91,10 +91,24 @@ export async function signIn(
     return { error: 'unexpected_error' };
   }
 
-  // Check if MFA challenge is required
-  const { data: aalData } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-  if (aalData?.nextLevel === 'aal2' && aalData.nextLevel !== aalData.currentLevel) {
-    redirect('/login/mfa');
+  // Check if MFA challenge is required.
+  // OAuth users (azure, google, linkedin_oidc) already authenticate with 2FA
+  // at their identity provider — we must NOT require an additional TOTP step.
+  // Only users who signed in with the 'email' provider are subject to BizzAssist 2FA.
+  const {
+    data: { user: userForMfa },
+  } = await supabase.auth.getUser();
+  const providers = (userForMfa?.app_metadata?.providers as string[] | undefined) ?? [];
+  const isOAuthOnly =
+    providers.length > 0 &&
+    !providers.includes('email') &&
+    providers.some((p) => ['azure', 'google', 'linkedin_oidc'].includes(p));
+
+  if (!isOAuthOnly) {
+    const { data: aalData } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+    if (aalData?.nextLevel === 'aal2' && aalData.nextLevel !== aalData.currentLevel) {
+      redirect('/login/mfa');
+    }
   }
 
   // ── Subscription gate — check FRESH data from Supabase Auth database ────
@@ -132,10 +146,9 @@ export async function signIn(
           await supabase.auth.signOut();
           return { error: 'no_subscription' };
         }
+        // During beta: pending demo users are allowed in (auto-approval)
         if (sub.status === 'pending') {
-          console.log('[signIn] → BLOCKED: subscription_pending');
-          await supabase.auth.signOut();
-          return { error: 'subscription_pending' };
+          console.log('[signIn] → ALLOWED: pending subscription (beta auto-approval)');
         }
         if (sub.status === 'cancelled') {
           console.log('[signIn] → BLOCKED: subscription_cancelled');
@@ -215,13 +228,13 @@ export async function signUp(
   // Set subscription in app_metadata via admin client (so it's in the database)
   const now = new Date().toISOString();
 
-  // Check if plan requires approval from DB config, fallback to hardcoded check
-  let requiresApproval = planId === 'demo';
-  if (signupData?.user?.id) {
+  // Beta period: demo plan is auto-approved — no admin approval needed
+  let requiresApproval = false;
+  if (signupData?.user?.id && planId !== 'demo') {
     try {
       const admin = createAdminClient();
 
-      // Look up plan config from DB
+      // Look up plan config from DB (only for non-demo plans)
       const { data: planRow } = (await admin
         .from('plan_configs')
         .select('requires_approval')
@@ -388,16 +401,18 @@ export async function selectFreePlan(planId: string): Promise<AuthResult> {
   try {
     const admin = createAdminClient();
 
-    // Look up whether this plan requires admin approval
-    let requiresApproval = planId === 'demo';
-    const { data: planRow } = (await admin
-      .from('plan_configs')
-      .select('requires_approval')
-      .eq('plan_id', planId)
-      .limit(1)
-      .single()) as { data: { requires_approval: boolean } | null; error: unknown };
-    if (planRow) {
-      requiresApproval = planRow.requires_approval;
+    // Beta period: demo plan is auto-approved — no admin approval needed
+    let requiresApproval = false;
+    if (planId !== 'demo') {
+      const { data: planRow } = (await admin
+        .from('plan_configs')
+        .select('requires_approval')
+        .eq('plan_id', planId)
+        .limit(1)
+        .single()) as { data: { requires_approval: boolean } | null; error: unknown };
+      if (planRow) {
+        requiresApproval = planRow.requires_approval;
+      }
     }
 
     const status = requiresApproval ? 'pending' : 'active';

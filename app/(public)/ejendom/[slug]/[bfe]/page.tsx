@@ -204,8 +204,11 @@ interface LiveBBRBygningSubset {
  */
 async function hentBbrBygning(dawaId: string, baseUrl: string): Promise<BbrBygning | null> {
   try {
+    // BBR-data hentes via intern server-route der bruger DATAFORDELER_API_KEY (Datafordeler frie data).
+    // Nøglen er gratis — registrér på datafordeler.dk og sæt DATAFORDELER_API_KEY i .env.local.
+    // Kortere TTL end sidens revalidate (7 dage) for hurtig recovery hvis nøgle mangler.
     const res = await fetch(`${baseUrl}/api/ejendom/${encodeURIComponent(dawaId)}`, {
-      next: { revalidate: 604800 },
+      next: { revalidate: 3600 },
     });
 
     if (!res.ok) return null;

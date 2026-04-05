@@ -368,6 +368,8 @@ async function fetchBFENummer(dawaId: string): Promise<{
     let adresseTekst: string | null = null;
     let etage: string | null = null;
     let doer: string | null = null;
+    /** Kommunekode fra adgangsadresse — bruges til at afvise tværkommunale EL-falske positiver */
+    let adgKommunekode: string | null = null;
 
     // Trin 1a: Forsøg direkte som adgangsadresse
     const adgRes = await fetch(`${DAWA_BASE}/adgangsadresser/${dawaId}`, {
@@ -379,6 +381,7 @@ async function fetchBFENummer(dawaId: string): Promise<{
       const adg = (await adgRes.json()) as {
         jordstykke?: { ejerlav?: { kode?: number }; matrikelnr?: string };
         adressebetegnelse?: string;
+        kommune?: { kode?: string };
       };
       ejerlavKode = adg?.jordstykke?.ejerlav?.kode;
       matrikelnr = adg?.jordstykke?.matrikelnr;
@@ -386,6 +389,7 @@ async function fetchBFENummer(dawaId: string): Promise<{
       // kører i Trin 3. Uden dette springes EL-detektionen over for ejerlejligheder navigeret
       // til via adgangsadresse-UUID (f.eks. fra autocomplete eller kortvisning).
       adresseTekst = adg?.adressebetegnelse ?? null;
+      adgKommunekode = adg?.kommune?.kode ?? null;
     } else {
       // Trin 1b: ID er en adresse (med etage/dør) — hent adgangsadresse via /adresser/{id}
       const adrRes = await fetch(`${DAWA_BASE}/adresser/${dawaId}`, {
@@ -493,6 +497,27 @@ async function fetchBFENummer(dawaId: string): Promise<{
               // Adgangsadresse: kun acceptér BFE der adskiller sig fra grundstykke-BFE
               // (undgår at markere enfamiliehuse som ejerlejlighed)
               if (jordBfe != null && candidate === jordBfe) continue;
+              // Tværkommune-validering: afvis kandidat hvis den tilhører en anden kommune.
+              // Vurderingsportalen ES søger på tværs af hele Danmark, så "Søbyvej 11" kan
+              // matche i f.eks. Skive selvom vores adresse er i Hvidovre. Vi slår kandidatens
+              // BFE op via DAWA jordstykker for at bekræfte kommunekoden stemmer.
+              if (adgKommunekode) {
+                try {
+                  const verifyRes = await fetch(
+                    `${DAWA_BASE}/jordstykker?bfenummer=${candidate}&per_side=1`,
+                    { signal: AbortSignal.timeout(3000), next: { revalidate: 3600 } }
+                  );
+                  if (verifyRes.ok) {
+                    const verifyData = (await verifyRes.json()) as Array<{
+                      kommune?: { kode?: string };
+                    }>;
+                    const candidateKommunekode = verifyData[0]?.kommune?.kode;
+                    if (candidateKommunekode && candidateKommunekode !== adgKommunekode) continue;
+                  }
+                } catch {
+                  /* validering fejlede — acceptér kandidaten for at undgå false negatives */
+                }
+              }
             }
             ejerlejlighedBfe = candidate;
             break;

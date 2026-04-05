@@ -168,12 +168,34 @@ async function hentDawaAdresse(bfe: string): Promise<DawaAdresse | null> {
 }
 
 /**
+ * Normalized BBR bygning shape returneret af /api/ejendom/[id].
+ * Afspejler LiveBBRBygning fra route-typen — felterne er normaliserede
+ * (dvs. `samletBoligareal` i stedet for `byg039BygningensSamledeBoligAreal`).
+ */
+interface LiveBBRBygningSubset {
+  opfoerelsesaar: number | null;
+  samletBygningsareal: number | null;
+  samletBoligareal: number | null;
+  bebyggetAreal: number | null;
+  antalEtager: number | null;
+  anvendelse: string;
+  anvendelseskode: number | null;
+  ejerforholdskode: string | null;
+  status: string | null;
+}
+
+/**
  * Henter BBR bygning-data fra Datafordeler via den interne API-proxy.
  * Kræver DAWA adresse-UUID (dawaId).
  *
+ * Den interne route returnerer normaliserede `LiveBBRBygning`-objekter
+ * (med felter som `samletBoligareal`, `opfoerelsesaar` osv.), ikke rå BBR-koder.
+ * Denne funktion mapper de normaliserede felter til `BbrBygning`-formen
+ * som resten af den offentlige side forventer.
+ *
  * @param dawaId - DAWA adgangsadresse UUID
  * @param baseUrl - Absolut URL til applikationen
- * @returns Første BBR bygning eller null
+ * @returns Første BBR bygning mappet til BbrBygning, eller null
  */
 async function hentBbrBygning(dawaId: string, baseUrl: string): Promise<BbrBygning | null> {
   try {
@@ -184,11 +206,26 @@ async function hentBbrBygning(dawaId: string, baseUrl: string): Promise<BbrBygni
     if (!res.ok) return null;
 
     const data = (await res.json()) as {
-      bbr?: BbrBygning[] | null;
+      bbr?: LiveBBRBygningSubset[] | null;
       bbrFejl?: string | null;
     };
 
-    return data.bbr?.[0] ?? null;
+    const live = data.bbr?.[0];
+    if (!live) return null;
+
+    // Mapper normaliserede LiveBBRBygning-felter til rå BbrBygning-feltnavn-formen
+    // som DataCard-visningen og generateMetadata forventer.
+    return {
+      byg026Opfoerelsesaar: live.opfoerelsesaar ?? undefined,
+      byg038SamletBygningsareal: live.samletBygningsareal ?? undefined,
+      byg039BygningensSamledeBoligAreal: live.samletBoligareal ?? undefined,
+      byg041BebyggetAreal: live.bebyggetAreal ?? undefined,
+      byg054AntalEtager: live.antalEtager ?? undefined,
+      byg021BygningensAnvendelse:
+        live.anvendelseskode != null ? String(live.anvendelseskode) : undefined,
+      byg066Ejerforhold: live.ejerforholdskode ?? undefined,
+      status: live.status ?? undefined,
+    };
   } catch {
     return null;
   }

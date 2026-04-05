@@ -33,7 +33,7 @@ import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 // Midlertidigt sat til 0 (force-dynamic) for at bypass stale ISR-cache
 // efter fix af manglende byg066Ejerforhold-felt i BBR GQL query.
 // Sæt tilbage til 3600 når BBR-data bekræftet vises korrekt på test.bizzassist.dk.
-export const revalidate = 0;
+export const revalidate = 3600;
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 

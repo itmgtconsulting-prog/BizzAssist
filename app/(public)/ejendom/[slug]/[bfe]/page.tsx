@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { bygAnvendelseTekst, ejerforholdTekst } from '@/app/lib/bbrKoder';
 import { generateEjendomSlug } from '@/app/lib/slug';
+import { fetchBbrForAddress } from '@/app/lib/fetchBbrData';
 
 // ─── ISR cache-periode ───────────────────────────────────────────────────────
 // Sat til 0 (force-dynamic) så siden altid henter friske BBR-data fra
@@ -187,44 +188,20 @@ async function hentDawaAdresse(bfe: string): Promise<DawaAdresse | null> {
 }
 
 /**
- * Henter BBR bygning-data via den interne /api/ejendom/[id] route.
+ * Henter BBR bygning-data direkte via fetchBbrForAddress (ingen HTTP round-trip).
  *
- * Bruger NØJAGTIGT samme code path som dashboard-visningen — kalder den samme
- * API-route i stedet for at lave egne BBR GraphQL-kald. Det sikrer at auth,
- * proxy-konfiguration og field-mapping altid er identisk med dashboard.
+ * Kalder det delte utility direkte i stedet for at lave et HTTP-kald til
+ * /api/ejendom/[id], som ikke virker pålideligt under Vercel SSR fordi der
+ * ikke er en kørende server at kalde under server-side rendering.
  *
- * @param dawaId   - DAWA adgangsadresse UUID (første UUID fra jordstykkets adresser)
- * @param baseUrl  - Absolut URL til applikationen (til server-side API-kald)
+ * @param dawaId - DAWA adgangsadresse UUID (første UUID fra jordstykkets adresser)
  * @returns Primær aktiv BBR bygning mappet til BbrBygning, eller null
  */
-async function hentBbrBygning(dawaId: string, baseUrl: string): Promise<BbrBygning | null> {
+async function hentBbrBygning(dawaId: string): Promise<BbrBygning | null> {
   try {
-    const url = `${baseUrl}/api/ejendom/${encodeURIComponent(dawaId)}`;
-    console.error(`[BBR PUBLIC] Fetching ${url}`);
+    console.error(`[BBR PUBLIC] fetchBbrForAddress dawaId=${dawaId}`);
 
-    const res = await fetch(url, { cache: 'no-store' });
-
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      console.error(
-        `[BBR PUBLIC] HTTP ${res.status} ${res.statusText} — dawaId=${dawaId}: ${body.slice(0, 300)}`
-      );
-      return null;
-    }
-
-    const data = (await res.json()) as {
-      bbr: Array<{
-        opfoerelsesaar: number | null;
-        samletBygningsareal: number | null;
-        samletBoligareal: number | null;
-        bebyggetAreal: number | null;
-        antalEtager: number | null;
-        anvendelseskode: number | null;
-        ejerforholdskode: string | null;
-        status: string | null;
-      }> | null;
-      bbrFejl: string | null;
-    };
+    const data = await fetchBbrForAddress(dawaId);
 
     if (data.bbrFejl) {
       console.error(`[BBR PUBLIC] bbrFejl=${data.bbrFejl} for dawaId=${dawaId}`);
@@ -241,7 +218,7 @@ async function hentBbrBygning(dawaId: string, baseUrl: string): Promise<BbrBygni
 
     // Vælg primær bygning: foretræk beboelsesbygninger (110–199) frem for
     // udhuse/carporte (500+). Sekundær sortering på samlet areal (størst = primær).
-    // status er normaliseret tekst fra /api/ejendom — "Bygning opført" = aktiv (kode 3+6).
+    // status er normaliseret tekst fra normaliseBygning — "Bygning opført" = aktiv (kode 3+6).
     const isBolig = (b: { anvendelseskode: number | null }) => {
       const kode = b.anvendelseskode ?? 0;
       return kode >= 110 && kode <= 199;
@@ -350,10 +327,10 @@ async function hentEjendomData(bfe: string): Promise<EjendomPublicData> {
   }
 
   // Hent BBR og vurdering parallelt.
-  // BBR hentes via den interne /api/ejendom/[id] route — SAMME code path som dashboard.
+  // BBR hentes via fetchBbrForAddress direkte (ingen HTTP round-trip) — se app/lib/fetchBbrData.ts.
   // adresse.id er det første adgangsadresse-UUID fra jordstykket.
   const [bbr, vurdering] = await Promise.all([
-    hentBbrBygning(adresse.id, baseUrl),
+    hentBbrBygning(adresse.id),
     hentVurdering(bfe, adresse.kommunekode, baseUrl),
   ]);
 

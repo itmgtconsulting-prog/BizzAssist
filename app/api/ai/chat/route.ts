@@ -26,6 +26,7 @@
 import { NextRequest } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { checkRateLimit, aiRateLimit } from '@/app/lib/rateLimit';
+import { fetchBbrForAddress } from '@/app/lib/fetchBbrData';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -330,11 +331,9 @@ async function executeTool(
       }
 
       case 'hent_bbr_data': {
-        const res = await fetch(`${baseUrl}/api/ejendom/${encodeURIComponent(input.dawaId)}`, {
-          signal: AbortSignal.timeout(20_000),
-        });
-        if (!res.ok) return { fejl: `Ejendom-API svarede ${res.status}` };
-        return await res.json();
+        // Direct function call — no HTTP self-call (self-calls are unreliable on Vercel serverless)
+        const data = await fetchBbrForAddress(input.dawaId);
+        return { dawaId: input.dawaId, ...data };
       }
 
       case 'hent_vurdering': {

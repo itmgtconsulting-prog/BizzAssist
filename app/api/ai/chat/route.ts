@@ -27,6 +27,7 @@ import { NextRequest } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { checkRateLimit, aiRateLimit } from '@/app/lib/rateLimit';
 import { fetchBbrForAddress } from '@/app/lib/fetchBbrData';
+import { createClient } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -439,6 +440,15 @@ export async function POST(request: NextRequest): Promise<Response> {
   // Rate limit: 10 req/min for AI chat
   const limited = await checkRateLimit(request, aiRateLimit);
   if (limited) return limited;
+
+  // Require an authenticated user — AI chat consumes paid API tokens
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  }
 
   const apiKey = process.env.BIZZASSIST_CLAUDE_KEY?.trim();
   if (!apiKey) {

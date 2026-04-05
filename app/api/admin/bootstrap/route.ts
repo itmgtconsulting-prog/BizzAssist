@@ -2,10 +2,13 @@
  * Admin bootstrap — POST /api/admin/bootstrap
  *
  * One-time endpoint to set the first admin user's isAdmin flag.
- * Requires SUPABASE_SERVICE_ROLE_KEY as authorization to prevent abuse.
+ * Requires BOOTSTRAP_SECRET (a dedicated env var) as authorization.
  * Should be disabled/removed after first use in production.
  *
- * @param req - JSON body with { email: string }
+ * Security: uses a separate BOOTSTRAP_SECRET — never the service role key —
+ * so that a leaked request body cannot be used to derive database credentials.
+ *
+ * @param req - JSON body with { email: string, secret: string }
  * @returns JSON with { ok: true } or error
  */
 
@@ -16,8 +19,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
     const { email, secret } = await req.json();
 
-    // Require the service role key as proof of server access
-    if (secret !== process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    // Require a dedicated bootstrap secret — never compare against the service role key,
+    // which is a database credential and must never travel over the wire.
+    const bootstrapSecret = process.env.BOOTSTRAP_SECRET;
+    if (!bootstrapSecret) {
+      return NextResponse.json({ error: 'Bootstrap not configured' }, { status: 503 });
+    }
+    if (secret !== bootstrapSecret) {
       return NextResponse.json({ error: 'Invalid secret' }, { status: 403 });
     }
 

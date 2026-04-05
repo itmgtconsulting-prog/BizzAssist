@@ -197,7 +197,6 @@ const BBR_PUBLIC_QUERY = `
         byg041BebyggetAreal
         byg054AntalEtager
         byg021BygningensAnvendelse
-        byg066Ejerforhold
         status
       }
     }
@@ -304,8 +303,6 @@ async function hentBbrBygning(dawaId: string): Promise<BbrBygning | null> {
         node.byg021BygningensAnvendelse != null
           ? String(node.byg021BygningensAnvendelse)
           : undefined,
-      byg066Ejerforhold:
-        node.byg066Ejerforhold != null ? String(node.byg066Ejerforhold) : undefined,
       status: node.status != null ? String(node.status) : undefined,
     };
   } catch {

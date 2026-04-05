@@ -37,8 +37,8 @@ const errorMessages: Record<string, { da: string; en: string }> = {
     en: 'Please confirm your email first. Check your inbox.',
   },
   no_subscription: {
-    da: 'Du har ikke et aktivt abonnement. Opret en konto først, eller kontakt administrator.',
-    en: 'You do not have an active subscription. Please sign up first or contact your administrator.',
+    da: 'Velkommen! Din konto er oprettet. Vælg en plan for at komme i gang.',
+    en: 'Welcome! Your account has been created. Choose a plan to get started.',
   },
   subscription_pending: {
     da: 'Din demo-anmodning afventer godkendelse af en administrator. Du vil modtage besked, når den er behandlet.',
@@ -278,14 +278,22 @@ function LoginForm() {
                       size={16}
                       className={`${isSubError ? 'text-amber-400' : 'text-red-400'} shrink-0 mt-0.5`}
                     />
-                    <p className={`${isSubError ? 'text-amber-300' : 'text-red-300'} text-sm`}>
-                      {errorMsg}
+                    <div className={`${isSubError ? 'text-amber-300' : 'text-red-300'} text-sm`}>
+                      <p>{errorMsg}</p>
+                      {error === 'no_subscription' && (
+                        <Link
+                          href="/login/select-plan"
+                          className="inline-flex items-center gap-1 mt-1.5 text-blue-400 hover:text-blue-300 font-medium underline underline-offset-2 transition-colors"
+                        >
+                          {lang === 'da' ? 'Vælg plan →' : 'Select plan →'}
+                        </Link>
+                      )}
                       {debugDetails && (
                         <span className="block mt-1 text-xs font-mono opacity-80">
                           DEBUG: {debugDetails}
                         </span>
                       )}
-                    </p>
+                    </div>
                   </div>
                 );
               })()}

@@ -334,6 +334,69 @@ export async function updatePassword(newPassword: string): Promise<AuthResult> {
 }
 
 // ---------------------------------------------------------------------------
+// Select free / demo plan for an already-authenticated OAuth user
+// ---------------------------------------------------------------------------
+
+/**
+ * Sets a free or demo plan subscription in app_metadata for the currently
+ * authenticated user. Called from the /login/select-plan page for users who
+ * signed up via OAuth and were redirected before choosing a plan.
+ *
+ * @param planId - The plan ID to assign (e.g. 'demo')
+ * @returns AuthResult with error message, or { error: null } on success
+ */
+export async function selectFreePlan(planId: string): Promise<AuthResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { error: 'not_authenticated' };
+  }
+
+  const now = new Date().toISOString();
+
+  try {
+    const admin = createAdminClient();
+
+    // Look up whether this plan requires admin approval
+    let requiresApproval = planId === 'demo';
+    const { data: planRow } = (await admin
+      .from('plan_configs')
+      .select('requires_approval')
+      .eq('plan_id', planId)
+      .limit(1)
+      .single()) as { data: { requires_approval: boolean } | null; error: unknown };
+    if (planRow) {
+      requiresApproval = planRow.requires_approval;
+    }
+
+    const status = requiresApproval ? 'pending' : 'active';
+
+    await admin.auth.admin.updateUserById(user.id, {
+      app_metadata: {
+        subscription: {
+          planId,
+          status,
+          createdAt: now,
+          approvedAt: requiresApproval ? null : now,
+          tokensUsedThisMonth: 0,
+          periodStart: now,
+          bonusTokens: 0,
+        },
+      },
+    });
+
+    console.log('[selectFreePlan] Set plan', planId, 'status', status, 'for user', user.id);
+    return { error: null };
+  } catch (err) {
+    console.error('[selectFreePlan] Error:', err);
+    return { error: 'unexpected_error' };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // MFA — verify TOTP challenge
 // ---------------------------------------------------------------------------
 

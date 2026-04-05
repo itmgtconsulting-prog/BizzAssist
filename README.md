@@ -84,6 +84,30 @@ bizzassist/
 | [docs/architecture/DATABASE.md](docs/architecture/DATABASE.md)   | Database schema design                                     |
 | [docs/security/ISMS.md](docs/security/ISMS.md)                   | ISO 27001 Information Security policy                      |
 
+## Git Workflow & Deployment
+
+| Branch    | Deploys to          | URL                        |
+| --------- | ------------------- | -------------------------- |
+| `main`    | Production (Vercel) | https://bizzassist.dk      |
+| `develop` | Preview (Vercel)    | https://test.bizzassist.dk |
+
+**Daglig udvikling sker på `develop`** — merge til `main` kun ved planlagte releases.
+
+```bash
+# Start ny feature
+git checkout develop
+git checkout -b feature/min-feature
+
+# Når klar: merge til develop (trigger Preview deploy)
+git checkout develop && git merge feature/min-feature
+
+# Release: merge develop → main (trigger Production deploy)
+git checkout main && git merge develop && git push origin main
+```
+
+> Env vars er identiske i Preview og Production foreløbigt.
+> Se `scripts/jira-tickets/env-split.md` for plan om at splitte dem.
+
 ## CI/CD
 
 Every PR runs automatically:

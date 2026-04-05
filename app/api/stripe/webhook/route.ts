@@ -254,16 +254,25 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription): Pro
  * @param invoice - The succeeded Stripe invoice
  */
 async function handlePaymentSucceeded(invoice: Stripe.Invoice): Promise<void> {
-  // Skip first invoice — checkout.session.completed + verify-session handles that
+  // Log billing_reason so we can see exactly what Stripe sent
   const billingReason = (invoice as unknown as Record<string, unknown>).billing_reason;
+  console.log(
+    `[stripe/webhook] invoice.payment_succeeded — billing_reason="${billingReason}" invoice_id="${invoice.id}"`
+  );
+
+  // Skip first invoice — checkout.session.completed + verify-session handles that
   if (billingReason === 'subscription_create') {
-    console.log('[stripe/webhook] Skipping payment_succeeded for initial subscription invoice');
+    console.log(
+      '[stripe/webhook] Skipping payment_succeeded for initial subscription invoice (billing_reason=subscription_create)'
+    );
     return;
   }
 
   const rawSub = (invoice as unknown as Record<string, unknown>).subscription;
   const subscriptionId =
     typeof rawSub === 'string' ? rawSub : ((rawSub as { id?: string } | null)?.id ?? null);
+
+  console.log(`[stripe/webhook] invoice.payment_succeeded — subscriptionId="${subscriptionId}"`);
 
   if (!subscriptionId) {
     console.log(
@@ -276,6 +285,10 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice): Promise<void> {
   const sub = await stripe!.subscriptions.retrieve(subscriptionId);
   let userId = sub.metadata?.supabase_user_id;
 
+  console.log(
+    `[stripe/webhook] invoice.payment_succeeded — userId from sub.metadata="${userId ?? 'none'}"`
+  );
+
   const admin = createAdminClient();
 
   // Fallback: look up user by Stripe customer ID or email if metadata is missing.
@@ -283,6 +296,10 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice): Promise<void> {
   if (!userId) {
     const customerId =
       typeof sub.customer === 'string' ? sub.customer : (sub.customer as { id?: string })?.id;
+
+    console.log(
+      `[stripe/webhook] invoice.payment_succeeded — no userId in metadata, trying fallbacks. customerId="${customerId}"`
+    );
 
     // Fetch full user list once — reused for both fallback strategies
     const { data: usersPage } = await admin.auth.admin.listUsers({ perPage: 1000 });
@@ -306,6 +323,9 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice): Promise<void> {
         | string
         | null
         | undefined;
+      console.log(
+        `[stripe/webhook] invoice.payment_succeeded — trying email fallback, invoiceEmail="${invoiceEmail}"`
+      );
       if (invoiceEmail) {
         const emailMatch = usersPage?.users?.find((u) => u.email === invoiceEmail);
         if (emailMatch?.id) {
@@ -344,6 +364,7 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice): Promise<void> {
   // Get user email from Supabase
   const { data: userData } = await admin.auth.admin.getUserById(userId);
   const userEmail = userData?.user?.email;
+  console.log(`[stripe/webhook] invoice.payment_succeeded — userEmail found="${!!userEmail}"`);
   if (!userEmail) {
     console.error('[stripe/webhook] invoice.payment_succeeded: user has no email');
     return;
@@ -355,6 +376,10 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice): Promise<void> {
   const planId = sub.metadata?.plan_id ?? 'basis';
   const periodEnd = new Date(
     ((sub as unknown as Record<string, unknown>).current_period_end as number) * 1000
+  );
+
+  console.log(
+    `[stripe/webhook] invoice.payment_succeeded — planId="${planId}" priceDkk=${priceDkk} RESEND_API_KEY_SET=${!!process.env.RESEND_API_KEY}`
   );
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.bizzassist.dk';
@@ -375,19 +400,17 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice): Promise<void> {
   const planName =
     (planRow as { name_da?: string } | null)?.name_da ?? hardcodedNames[planId] ?? planId;
 
-  // Send email (fire-and-forget — don't block webhook response)
-  sendRecurringPaymentEmail({
+  // Await email send so failures surface in logs and trigger Stripe retries (via 500 response)
+  await sendRecurringPaymentEmail({
     to: userEmail,
     planName,
     priceDkk,
     periodEnd,
     cancelUrl,
-  }).catch((err) => {
-    console.error('[stripe/webhook] Failed to send recurring payment email:', err);
   });
 
   console.log(
-    `[stripe/webhook] Recurring payment succeeded for user ${userId} — email sent to ${userEmail}`
+    `[stripe/webhook] Recurring payment email dispatched for user ${userId} (plan=${planId}, amount=${priceDkk} DKK)`
   );
 }
 

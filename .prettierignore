@@ -4,6 +4,8 @@ build/
 dist/
 node_modules/
 coverage/
+playwright-report/
+test-results/
 *.min.js
 public/sw.js
 public/manifest.json

@@ -218,6 +218,13 @@ async function hentCvrVirksomheder(): Promise<CvrVirksomhedMin[]> {
  *
  * @returns MetadataRoute.Sitemap array med alle URL-entries
  */
+/** True kun på bizzassist.dk production */
+const isProduction =
+  process.env.VERCEL_ENV === 'production' ||
+  (!!process.env.NEXT_PUBLIC_APP_URL &&
+    process.env.NEXT_PUBLIC_APP_URL.includes('bizzassist.dk') &&
+    !process.env.NEXT_PUBLIC_APP_URL.includes('test.bizzassist.dk'));
+
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const now = new Date().toISOString();
 
@@ -260,6 +267,11 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       priority: 0.1,
     },
   ];
+
+  // På test/preview: returner kun statiske sider — ingen crawling af DAWA/CVR
+  if (!isProduction) {
+    return statiske;
+  }
 
   // ── Ejendomssider ──────────────────────────────────────────────────────────
   let ejendomEntries: MetadataRoute.Sitemap = [];

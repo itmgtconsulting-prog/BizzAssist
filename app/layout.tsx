@@ -12,6 +12,13 @@ const geistSans = Geist({
   subsets: ['latin'],
 });
 
+/** True kun på bizzassist.dk production — bruges til robots/noindex guard */
+const isProduction =
+  process.env.VERCEL_ENV === 'production' ||
+  (!!process.env.NEXT_PUBLIC_APP_URL &&
+    process.env.NEXT_PUBLIC_APP_URL.includes('bizzassist.dk') &&
+    !process.env.NEXT_PUBLIC_APP_URL.includes('test.bizzassist.dk'));
+
 export const metadata: Metadata = {
   title: 'BizzAssist — Danmarks forretningsintelligens platform',
   description:
@@ -27,6 +34,10 @@ export const metadata: Metadata = {
     description: "Denmark's most comprehensive business intelligence platform",
     type: 'website',
   },
+  // Bloker alle sider fra indeksering på test/preview-miljøer
+  ...(!isProduction && {
+    robots: { index: false, follow: false },
+  }),
 };
 
 export const viewport: Viewport = {

@@ -40,6 +40,8 @@ export const revalidate = 0;
 /** Komprimeret adresse-data fra DAWA */
 interface DawaAdresse {
   id: string;
+  /** Alle adgangsadresse-UUIDs på samme jordstykke — bruges til BBR-opslag */
+  alleIds: string[];
   vejnavn: string;
   husnr: string;
   etage: string | null;
@@ -121,13 +123,16 @@ async function hentDawaAdresse(bfe: string): Promise<DawaAdresse | null> {
 
     if (!ejerlavKode || !matrikelnr || !kommunekode) return null;
 
-    // Trin 2: ejerlav + matrikelnr + kommunekode → adgangsadresse
+    // Trin 2: ejerlav + matrikelnr + kommunekode → alle adgangsadresser på jordstykket.
+    // per_side=10 for at hente alle (de fleste ejendomme har 1, sjældent 2-3).
+    // Alle UUIDs gemmes i alleIds og sendes til BBR-opslaget for at sikre at
+    // bygninger under forskellige adgangsadresser (f.eks. hus + carport) alle hentes.
     const url =
       `https://api.dataforsyningen.dk/adgangsadresser` +
       `?matrikelnr=${encodeURIComponent(String(matrikelnr))}` +
       `&landsejerlavkode=${encodeURIComponent(String(ejerlavKode))}` +
       `&kommunekode=${encodeURIComponent(String(kommunekode))}` +
-      `&struktur=nestet&per_side=1`;
+      `&struktur=nestet&per_side=10`;
 
     const res = await fetch(url, {
       next: { revalidate: 604800 },
@@ -138,6 +143,11 @@ async function hentDawaAdresse(bfe: string): Promise<DawaAdresse | null> {
 
     const data: unknown[] = await res.json();
     if (!Array.isArray(data) || data.length === 0) return null;
+
+    // Første adresse bruges til visning; alle UUIDs sendes til BBR-opslag
+    const alleIds = data
+      .map((item) => String((item as Record<string, unknown>)['id'] ?? ''))
+      .filter(Boolean);
 
     const a = data[0] as Record<string, unknown>;
     // DAWA nestet: vejnavn er i vejstykke.navn (ikke vejnavn.navn som i ældre format)
@@ -151,6 +161,7 @@ async function hentDawaAdresse(bfe: string): Promise<DawaAdresse | null> {
 
     return {
       id: String(a['id'] ?? ''),
+      alleIds,
       vejnavn: String(vejstykke?.['navn'] ?? ''),
       husnr: String(a['husnr'] ?? ''),
       etage: a['etage'] != null ? String(a['etage']) : null,
@@ -188,14 +199,13 @@ const BBR_GQL_URL = 'https://graphql.datafordeler.dk/BBR/v2';
 /**
  * Minimal BBR bygning query — henter kun de felter der bruges på den offentlige side.
  *
- * Filtrerer på grund.BFEnummer for at hente ALLE bygninger på ejendommen uanset
- * hvilken adgangsadresse de er registreret under. Tidligere brug af husnummer-filter
- * gav kun bygninger under én adgangsadresse-UUID, hvilket medførte at carporte/udhuse
- * (der kan have en anden adgangsadresse end beboelsesbygningen) blev valgt som primær.
+ * Filtrerer på husnummer (= DAWA adgangsadresse UUID) og nuværende virkningstid.
+ * Køres parallelt for alle adgangsadresse-UUIDs på jordstykket for at sikre at
+ * alle bygninger hentes uanset hvilken adgangsadresse de er registreret under.
  */
 const BBR_PUBLIC_QUERY = `
-  query($vt: DafDateTime!, $bfe: Long!) {
-    BBR_Bygning(first: 20, virkningstid: $vt, where: { grund: { BFEnummer: { eq: $bfe } } }) {
+  query($vt: DafDateTime!, $id: String!) {
+    BBR_Bygning(first: 20, virkningstid: $vt, where: { husnummer: { eq: $id } }) {
       nodes {
         byg026Opfoerelsesaar
         byg038SamletBygningsareal
@@ -242,10 +252,11 @@ function nowDafDateTime(): string {
  * Valgfrit (cloud-proxy):
  *   DF_PROXY_URL + DF_PROXY_SECRET
  *
- * @param bfe - BFE-nummer (bruges som grund.BFEnummer filter i BBR GraphQL)
+ * @param dawaIds - Array af DAWA adgangsadresse-UUIDs (alle på jordstykket)
  * @returns Primær aktiv BBR bygning mappet til BbrBygning, eller null
  */
-async function hentBbrBygning(bfe: string): Promise<BbrBygning | null> {
+async function hentBbrBygning(dawaIds: string[]): Promise<BbrBygning | null> {
+  if (dawaIds.length === 0) return null;
   try {
     const clientId = process.env.DATAFORDELER_OAUTH_CLIENT_ID;
     const clientSecret = process.env.DATAFORDELER_OAUTH_CLIENT_SECRET;
@@ -272,39 +283,42 @@ async function hentBbrBygning(bfe: string): Promise<BbrBygning | null> {
       return null;
     }
 
-    // Kald BBR GraphQL direkte med Bearer token
-    const gqlRes = await fetch(proxyUrl(BBR_GQL_URL), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-        ...proxyHeaders(),
-      },
-      body: JSON.stringify({
-        query: BBR_PUBLIC_QUERY,
-        variables: { vt: nowDafDateTime(), bfe: Number(bfe) },
-      }),
-      signal: AbortSignal.timeout(proxyTimeout()),
-      next: { revalidate: 3600 },
-    });
-    if (!gqlRes.ok) {
-      const body = await gqlRes.text().catch(() => '');
-      console.error(
-        `[BBR GQL] GraphQL HTTP fejl: ${gqlRes.status} ${gqlRes.statusText} — ${body.slice(0, 200)}`
-      );
-      return null;
-    }
-
-    const json = (await gqlRes.json()) as {
-      data?: { BBR_Bygning?: { nodes?: Array<Record<string, unknown>> } };
-      errors?: unknown[];
+    // Kald BBR GraphQL for hvert adgangsadresse-UUID parallelt og merge nodes.
+    // De fleste ejendomme har 1 UUID — for ejendomme med flere adgangsadresser
+    // (f.eks. ejendomme hvor hus og carport har separate adresser) hentes alle.
+    const vt = nowDafDateTime();
+    const fetchNodes = async (id: string): Promise<Array<Record<string, unknown>>> => {
+      const gqlRes = await fetch(proxyUrl(BBR_GQL_URL), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+          ...proxyHeaders(),
+        },
+        body: JSON.stringify({ query: BBR_PUBLIC_QUERY, variables: { vt, id } }),
+        signal: AbortSignal.timeout(proxyTimeout()),
+        next: { revalidate: 3600 },
+      });
+      if (!gqlRes.ok) {
+        const body = await gqlRes.text().catch(() => '');
+        console.error(
+          `[BBR GQL] GraphQL HTTP fejl: ${gqlRes.status} ${gqlRes.statusText} — ${body.slice(0, 200)}`
+        );
+        return [];
+      }
+      const json = (await gqlRes.json()) as {
+        data?: { BBR_Bygning?: { nodes?: Array<Record<string, unknown>> } };
+        errors?: unknown[];
+      };
+      if (json.errors?.length) {
+        console.error('[BBR GQL] GraphQL errors:', JSON.stringify(json.errors).slice(0, 300));
+        return [];
+      }
+      return json.data?.BBR_Bygning?.nodes ?? [];
     };
-    if (json.errors?.length) {
-      console.error('[BBR GQL] GraphQL errors:', JSON.stringify(json.errors).slice(0, 300));
-      return null;
-    }
 
-    const nodes = json.data?.BBR_Bygning?.nodes;
+    const results = await Promise.all(dawaIds.map(fetchNodes));
+    const nodes = results.flat();
     if (!Array.isArray(nodes) || nodes.length === 0) return null;
 
     // Vælg primær bygning: foretræk beboelsesbygninger (110–199) frem for
@@ -413,11 +427,11 @@ async function hentEjendomData(bfe: string): Promise<EjendomPublicData> {
     return { adresse: null, bbr: null, vurdering: null, fejl: 'Ejendom ikke fundet' };
   }
 
-  // Hent BBR (direkte Datafordeler BBR GraphQL via OAuth) og vurdering parallelt.
-  // BBR forespørges nu via BFE-nummer (grund.BFEnummer) for at hente ALLE bygninger
-  // på grunden — ikke kun dem under én specifik adgangsadresse.
+  // Hent BBR og vurdering parallelt.
+  // BBR forespørges for ALLE adgangsadresse-UUIDs på jordstykket (adresse.alleIds)
+  // for at sikre at bygninger registreret under forskellige adresser alle hentes.
   const [bbr, vurdering] = await Promise.all([
-    hentBbrBygning(bfe),
+    hentBbrBygning(adresse.alleIds),
     hentVurdering(bfe, adresse.kommunekode, baseUrl),
   ]);
 

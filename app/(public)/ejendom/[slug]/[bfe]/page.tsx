@@ -86,14 +86,41 @@ interface EjendomPublicData {
  * Henter adresse-data fra DAWA's offentlige API baseret på BFE-nummer.
  * Inkluderer jordstykke-data for matrikelnummer og grundareal.
  *
+ * DAWA's `adgangsadresser?bfenummer=` filter ignoreres af API'et (returnerer
+ * altid den første adresse uanset BFE). Korrekt løsning: slå jordstykket op
+ * via `jordstykker?bfenummer=` for at hente ejerlav + matrikelnr + kommunekode,
+ * og brug derefter disse tre parametre til at finde den præcise adresse.
+ *
  * @param bfe - BFE-nummer
  * @returns DAWA adresse-objekt eller null
  */
 async function hentDawaAdresse(bfe: string): Promise<DawaAdresse | null> {
   try {
+    // Trin 1: BFE → jordstykke (ejerlav + matrikelnr + kommunekode)
+    const jsRes = await fetch(
+      `https://api.dataforsyningen.dk/jordstykker?bfenummer=${encodeURIComponent(bfe)}&per_side=1`,
+      { next: { revalidate: 604800 }, headers: { Accept: 'application/json' } }
+    );
+    if (!jsRes.ok) return null;
+    const jsData: unknown[] = await jsRes.json();
+    if (!Array.isArray(jsData) || jsData.length === 0) return null;
+
+    const jordstykkeRaw = jsData[0] as Record<string, unknown>;
+    const ejerlavRaw = jordstykkeRaw['ejerlav'] as Record<string, unknown> | undefined;
+    const ejerlavKode = ejerlavRaw?.['kode'];
+    const matrikelnr = jordstykkeRaw['matrikelnr'];
+    const kommuneRaw = jordstykkeRaw['kommune'] as Record<string, unknown> | undefined;
+    const kommunekode = kommuneRaw?.['kode'];
+
+    if (!ejerlavKode || !matrikelnr || !kommunekode) return null;
+
+    // Trin 2: ejerlav + matrikelnr + kommunekode → adgangsadresse
     const url =
       `https://api.dataforsyningen.dk/adgangsadresser` +
-      `?bfenummer=${encodeURIComponent(bfe)}&struktur=nestet&per_side=1`;
+      `?matrikelnr=${encodeURIComponent(String(matrikelnr))}` +
+      `&landsejerlavkode=${encodeURIComponent(String(ejerlavKode))}` +
+      `&kommunekode=${encodeURIComponent(String(kommunekode))}` +
+      `&struktur=nestet&per_side=1`;
 
     const res = await fetch(url, {
       next: { revalidate: 604800 },

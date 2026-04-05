@@ -188,11 +188,14 @@ const BBR_GQL_URL = 'https://graphql.datafordeler.dk/BBR/v2';
 /**
  * Minimal BBR bygning query — henter kun de felter der bruges på den offentlige side.
  *
- * Filtrerer på husnummer (= DAWA adgangsadresse UUID) og nuværende virkningstid.
+ * Filtrerer på grund.BFEnummer for at hente ALLE bygninger på ejendommen uanset
+ * hvilken adgangsadresse de er registreret under. Tidligere brug af husnummer-filter
+ * gav kun bygninger under én adgangsadresse-UUID, hvilket medførte at carporte/udhuse
+ * (der kan have en anden adgangsadresse end beboelsesbygningen) blev valgt som primær.
  */
 const BBR_PUBLIC_QUERY = `
-  query($vt: DafDateTime!, $id: String!) {
-    BBR_Bygning(first: 10, virkningstid: $vt, where: { husnummer: { eq: $id } }) {
+  query($vt: DafDateTime!, $bfe: Long!) {
+    BBR_Bygning(first: 20, virkningstid: $vt, where: { grund: { BFEnummer: { eq: $bfe } } }) {
       nodes {
         byg026Opfoerelsesaar
         byg038SamletBygningsareal
@@ -239,10 +242,10 @@ function nowDafDateTime(): string {
  * Valgfrit (cloud-proxy):
  *   DF_PROXY_URL + DF_PROXY_SECRET
  *
- * @param dawaId - DAWA adgangsadresse UUID (= BBR_Bygning.husnummer filter)
- * @returns Første aktive BBR bygning mappet til BbrBygning, eller null
+ * @param bfe - BFE-nummer (bruges som grund.BFEnummer filter i BBR GraphQL)
+ * @returns Primær aktiv BBR bygning mappet til BbrBygning, eller null
  */
-async function hentBbrBygning(dawaId: string): Promise<BbrBygning | null> {
+async function hentBbrBygning(bfe: string): Promise<BbrBygning | null> {
   try {
     const clientId = process.env.DATAFORDELER_OAUTH_CLIENT_ID;
     const clientSecret = process.env.DATAFORDELER_OAUTH_CLIENT_SECRET;
@@ -279,7 +282,7 @@ async function hentBbrBygning(dawaId: string): Promise<BbrBygning | null> {
       },
       body: JSON.stringify({
         query: BBR_PUBLIC_QUERY,
-        variables: { vt: nowDafDateTime(), id: dawaId },
+        variables: { vt: nowDafDateTime(), bfe: Number(bfe) },
       }),
       signal: AbortSignal.timeout(proxyTimeout()),
       next: { revalidate: 3600 },
@@ -410,9 +413,11 @@ async function hentEjendomData(bfe: string): Promise<EjendomPublicData> {
     return { adresse: null, bbr: null, vurdering: null, fejl: 'Ejendom ikke fundet' };
   }
 
-  // Hent BBR (direkte Datafordeler BBR GraphQL via OAuth) og vurdering parallelt
+  // Hent BBR (direkte Datafordeler BBR GraphQL via OAuth) og vurdering parallelt.
+  // BBR forespørges nu via BFE-nummer (grund.BFEnummer) for at hente ALLE bygninger
+  // på grunden — ikke kun dem under én specifik adgangsadresse.
   const [bbr, vurdering] = await Promise.all([
-    adresse.id ? hentBbrBygning(adresse.id) : Promise.resolve(null),
+    hentBbrBygning(bfe),
     hentVurdering(bfe, adresse.kommunekode, baseUrl),
   ]);
 

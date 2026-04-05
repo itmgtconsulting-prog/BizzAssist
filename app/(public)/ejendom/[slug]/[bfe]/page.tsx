@@ -29,8 +29,11 @@ import { bygAnvendelseTekst, ejerforholdTekst } from '@/app/lib/bbrKoder';
 import { generateEjendomSlug } from '@/app/lib/slug';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 
-// ─── ISR cache-periode: 1 time ──────────────────────────────────────────────
-export const revalidate = 3600;
+// ─── ISR cache-periode ───────────────────────────────────────────────────────
+// Midlertidigt sat til 0 (force-dynamic) for at bypass stale ISR-cache
+// efter fix af manglende byg066Ejerforhold-felt i BBR GQL query.
+// Sæt tilbage til 3600 når BBR-data bekræftet vises korrekt på test.bizzassist.dk.
+export const revalidate = 0;
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -243,7 +246,10 @@ async function hentBbrBygning(dawaId: string): Promise<BbrBygning | null> {
   try {
     const clientId = process.env.DATAFORDELER_OAUTH_CLIENT_ID;
     const clientSecret = process.env.DATAFORDELER_OAUTH_CLIENT_SECRET;
-    if (!clientId || !clientSecret) return null;
+    if (!clientId || !clientSecret) {
+      console.error('[BBR GQL] Mangler DATAFORDELER_OAUTH_CLIENT_ID eller _SECRET');
+      return null;
+    }
 
     // Hent OAuth Bearer token (client credentials — ingen IP-whitelist påkrævet)
     const tokenRes = await fetch(proxyUrl(DF_TOKEN_URL), {
@@ -253,9 +259,15 @@ async function hentBbrBygning(dawaId: string): Promise<BbrBygning | null> {
       signal: AbortSignal.timeout(proxyTimeout()),
       cache: 'no-store',
     });
-    if (!tokenRes.ok) return null;
+    if (!tokenRes.ok) {
+      console.error(`[BBR GQL] OAuth token fejl: ${tokenRes.status} ${tokenRes.statusText}`);
+      return null;
+    }
     const { access_token: token } = (await tokenRes.json()) as { access_token: string };
-    if (!token) return null;
+    if (!token) {
+      console.error('[BBR GQL] OAuth svarede OK men ingen access_token i body');
+      return null;
+    }
 
     // Kald BBR GraphQL direkte med Bearer token
     const gqlRes = await fetch(proxyUrl(BBR_GQL_URL), {
@@ -272,13 +284,22 @@ async function hentBbrBygning(dawaId: string): Promise<BbrBygning | null> {
       signal: AbortSignal.timeout(proxyTimeout()),
       next: { revalidate: 3600 },
     });
-    if (!gqlRes.ok) return null;
+    if (!gqlRes.ok) {
+      const body = await gqlRes.text().catch(() => '');
+      console.error(
+        `[BBR GQL] GraphQL HTTP fejl: ${gqlRes.status} ${gqlRes.statusText} — ${body.slice(0, 200)}`
+      );
+      return null;
+    }
 
     const json = (await gqlRes.json()) as {
       data?: { BBR_Bygning?: { nodes?: Array<Record<string, unknown>> } };
       errors?: unknown[];
     };
-    if (json.errors?.length) return null;
+    if (json.errors?.length) {
+      console.error('[BBR GQL] GraphQL errors:', JSON.stringify(json.errors).slice(0, 300));
+      return null;
+    }
 
     const nodes = json.data?.BBR_Bygning?.nodes;
     if (!Array.isArray(nodes) || nodes.length === 0) return null;
@@ -305,7 +326,8 @@ async function hentBbrBygning(dawaId: string): Promise<BbrBygning | null> {
           : undefined,
       status: node.status != null ? String(node.status) : undefined,
     };
-  } catch {
+  } catch (err) {
+    console.error('[BBR GQL] Uventet fejl:', err instanceof Error ? err.message : String(err));
     return null;
   }
 }

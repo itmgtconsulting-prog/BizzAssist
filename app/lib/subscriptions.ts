@@ -70,7 +70,7 @@ export const PLANS: Record<PlanId, PlanDef> = {
     priceDkk: 0,
     aiEnabled: true,
     aiTokensPerMonth: 10_000,
-    requiresApproval: false,
+    requiresApproval: true,
     color: 'amber',
     durationMonths: 1,
     durationDays: 0,

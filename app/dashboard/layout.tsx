@@ -1006,7 +1006,6 @@ function PlanSelectionOverlay({
   mode: 'select_plan' | 'pending_approval';
 }) {
   const da = lang === 'da';
-  const router = useRouter();
   const [plans, setPlans] = useState<OverlayPlanOption[]>([]);
   const [plansLoading, setPlansLoading] = useState(true);
   const [selectedPlan, setSelectedPlan] = useState<string>('');
@@ -1076,12 +1075,10 @@ function PlanSelectionOverlay({
           setSubmitting(false);
           return;
         }
-        if (plan?.requiresApproval) {
-          router.replace('/login?error=subscription_pending');
-        } else {
-          // Reload so the layout re-checks subscription and removes the overlay
-          window.location.reload();
-        }
+        // Always reload — layout re-checks subscription and shows
+        // pending_approval overlay if plan requires admin approval, or
+        // removes the overlay if it does not.
+        window.location.reload();
       }
     } catch {
       setError(da ? 'Noget gik galt. Prøv igen.' : 'Something went wrong. Please try again.');

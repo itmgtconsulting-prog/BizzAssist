@@ -34,6 +34,7 @@ interface PlanConfigRow {
   duration_days: number;
   max_sales: number | null;
   sales_count: number;
+  stripe_price_id: string | null;
 }
 
 /**
@@ -75,6 +76,7 @@ export async function GET(): Promise<NextResponse> {
         freeTrialDays: db?.free_trial_days ?? 0,
         maxSales: db?.max_sales ?? null,
         salesCount: db?.sales_count ?? 0,
+        stripePriceId: db?.stripe_price_id ?? null,
       };
     });
 
@@ -99,6 +101,7 @@ export async function GET(): Promise<NextResponse> {
         freeTrialDays: row.free_trial_days ?? 0,
         maxSales: row.max_sales ?? null,
         salesCount: row.sales_count ?? 0,
+        stripePriceId: row.stripe_price_id ?? null,
       }));
 
     const plans = [...legacyPlans, ...customPlans].filter((p) => p.isActive);

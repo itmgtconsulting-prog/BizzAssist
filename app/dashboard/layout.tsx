@@ -964,6 +964,7 @@ interface OverlayPlanOption {
   requiresApproval: boolean;
   freeTrialDays: number;
   color: string;
+  stripePriceId?: string | null;
 }
 
 /**
@@ -1016,6 +1017,16 @@ function PlanSelectionOverlay({
     const plan = plans.find((p) => p.id === selectedPlan);
     try {
       if (plan && plan.priceDkk > 0) {
+        // Warn early if Stripe price ID is missing — avoids a round-trip that will always fail
+        if (!plan.stripePriceId) {
+          const msg = da
+            ? `Stripe-pris ikke konfigureret for "${da ? plan.nameDa : plan.nameEn}". Kontakt administrator.`
+            : `Stripe price not configured for "${plan.nameEn}". Contact administrator.`;
+          console.error('[PlanOverlay] Stripe price ID missing for plan', selectedPlan);
+          setError(msg);
+          setSubmitting(false);
+          return;
+        }
         const res = await fetch('/api/stripe/create-checkout', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1023,7 +1034,12 @@ function PlanSelectionOverlay({
         });
         const json = await res.json();
         if (!res.ok || !json.url) {
-          setError(da ? 'Noget gik galt. Prøv igen.' : 'Something went wrong. Please try again.');
+          const apiErr = (json.error as string | undefined) ?? '';
+          console.error('[PlanOverlay] Stripe checkout failed:', res.status, apiErr);
+          setError(
+            apiErr ||
+              (da ? 'Noget gik galt. Prøv igen.' : 'Something went wrong. Please try again.')
+          );
           setSubmitting(false);
           return;
         }
@@ -1031,6 +1047,7 @@ function PlanSelectionOverlay({
       } else {
         const result = await selectFreePlan(selectedPlan);
         if (result?.error) {
+          console.error('[PlanOverlay] selectFreePlan failed:', result.error);
           setError(da ? 'Noget gik galt. Prøv igen.' : 'Something went wrong. Please try again.');
           setSubmitting(false);
           return;
@@ -1185,6 +1202,13 @@ function PlanSelectionOverlay({
                         {da
                           ? `${plan.freeTrialDays} dages gratis prøve`
                           : `${plan.freeTrialDays}-day free trial`}
+                      </div>
+                    )}
+                    {/* Warn when a paid plan has no Stripe price configured */}
+                    {plan.priceDkk > 0 && !plan.stripePriceId && (
+                      <div className="mt-1.5 inline-flex items-center gap-1 text-xs text-amber-400">
+                        <AlertCircle size={10} />
+                        {da ? 'Betaling ikke konfigureret' : 'Payment not configured'}
                       </div>
                     )}
                   </button>

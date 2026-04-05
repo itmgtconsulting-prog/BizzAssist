@@ -36,6 +36,7 @@ interface PlanOption {
   requiresApproval: boolean;
   freeTrialDays: number;
   color: string;
+  stripePriceId?: string | null;
 }
 
 /** Color map matching the signup page */
@@ -126,6 +127,12 @@ export default function SelectPlanPage() {
 
     try {
       if (plan && plan.priceDkk > 0) {
+        // Warn early if Stripe price ID is missing
+        if (!plan.stripePriceId) {
+          setError('stripe_not_configured');
+          setSubmitting(false);
+          return;
+        }
         // Paid plan — create Stripe checkout session
         const res = await fetch('/api/stripe/create-checkout', {
           method: 'POST',
@@ -134,6 +141,7 @@ export default function SelectPlanPage() {
         });
         const json = await res.json();
         if (!res.ok || !json.url) {
+          console.error('[select-plan] Stripe checkout failed:', res.status, json.error);
           setError(json.error ?? 'unexpected_error');
           setSubmitting(false);
           return;
@@ -148,13 +156,8 @@ export default function SelectPlanPage() {
           setSubmitting(false);
           return;
         }
-        if (plan?.requiresApproval) {
-          // Demo plan requires admin approval — show pending page
-          router.replace('/login?error=subscription_pending');
-        } else {
-          // Free plan activated — go to dashboard
-          router.replace('/dashboard');
-        }
+        // Beta period: demo plan is auto-approved — go directly to dashboard
+        router.replace('/dashboard');
       }
     } catch {
       setError('unexpected_error');
@@ -170,6 +173,10 @@ export default function SelectPlanPage() {
     not_authenticated: {
       da: 'Du er ikke logget ind.',
       en: 'You are not logged in.',
+    },
+    stripe_not_configured: {
+      da: 'Betaling er ikke konfigureret for denne plan. Kontakt administrator.',
+      en: 'Payment is not configured for this plan. Contact administrator.',
     },
   };
   const errorMsg = error

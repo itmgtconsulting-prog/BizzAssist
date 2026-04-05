@@ -21,7 +21,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
-import { rateLimit, AI_CHAT_LIMIT } from '@/app/lib/rateLimit';
+import { checkRateLimit, braveRateLimit } from '@/app/lib/rateLimit';
 import { withBraveCache } from '@/app/lib/searchCache';
 
 export const runtime = 'nodejs';
@@ -359,8 +359,8 @@ function parseSocialsResponse(
  * Verificerer sociale medie-profiler for en virksomhed via Brave Search + Claude.
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  const limited = rateLimit(request, AI_CHAT_LIMIT);
-  if (limited) return NextResponse.json({ error: 'Rate limit overskredet' }, { status: 429 });
+  const limited = await checkRateLimit(request, braveRateLimit);
+  if (limited) return limited;
 
   const apiKey = process.env.BIZZASSIST_CLAUDE_KEY?.trim();
   if (!apiKey)

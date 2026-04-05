@@ -12,7 +12,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import ExcelJS from 'exceljs';
-import { rateLimit, EXPORT_LIMIT } from '@/app/lib/rateLimit';
+import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 
 /** Header style for the worksheet */
 const HEADER_FILL: ExcelJS.Fill = {
@@ -246,8 +246,8 @@ function buildCompanyWorkbook(data: Record<string, unknown>): ExcelJS.Workbook {
 }
 
 export async function POST(request: NextRequest) {
-  // Rate limit: 10 req/min for export
-  const limited = rateLimit(request, EXPORT_LIMIT);
+  // Rate limit: 60 req/min (standard)
+  const limited = await checkRateLimit(request, rateLimit);
   if (limited) return limited;
 
   try {

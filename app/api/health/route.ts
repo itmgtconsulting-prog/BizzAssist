@@ -13,7 +13,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { rateLimit, API_DEFAULT } from '@/app/lib/rateLimit';
+import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 
 /** Shape of the health check response body */
 interface HealthStatus {
@@ -36,8 +36,8 @@ interface HealthStatus {
  * @returns JSON health status with HTTP 200 (healthy) or 503 (unhealthy)
  */
 export async function GET(request: NextRequest): Promise<NextResponse<HealthStatus>> {
-  // Rate limit: 100 req/min (default)
-  const limited = rateLimit(request, API_DEFAULT);
+  // Rate limit: 60 req/min (standard)
+  const limited = await checkRateLimit(request, rateLimit);
   if (limited) return limited as NextResponse<HealthStatus>;
   // ── Check database connectivity (when Supabase is configured) ────────────
   let dbStatus: 'ok' | 'error' | 'unconfigured' = 'unconfigured';

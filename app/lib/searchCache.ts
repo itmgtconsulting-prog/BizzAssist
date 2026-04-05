@@ -1,9 +1,10 @@
 /**
- * Brave Search result cache — server-side only.
+ * Brave Search result cache — Redis-first, Supabase fallback.
  *
- * Wraps Brave Search calls with a 24-hour Supabase cache to reduce API spend.
+ * Wraps Brave Search calls with a 24-hour cache to reduce API spend.
+ * Primary store: Upstash Redis (fast, ~1ms latency).
+ * Fallback store: Supabase search_cache table (if Redis is unavailable).
  * Cache key = SHA-256 of the query string + any variant params.
- * Stored in public.search_cache (see migration 017_search_cache.sql).
  *
  * Usage:
  *   import { withBraveCache } from '@/app/lib/searchCache';
@@ -13,13 +14,30 @@
  */
 
 import { createHash } from 'crypto';
+import { Redis } from '@upstash/redis';
 import { createClient } from '@supabase/supabase-js';
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
-const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
+/** Cache TTL in seconds (24 hours) */
+const CACHE_TTL_SECONDS = 86_400;
 
-/** Cache TTL in hours */
-const CACHE_TTL_HOURS = 24;
+// ─── Redis client ────────────────────────────────────────────────────────────
+
+let _redis: Redis | null = null;
+
+/**
+ * Returns a lazily-initialised Redis client.
+ * Returns null if env vars are missing (e.g. during build time).
+ */
+function getRedis(): Redis | null {
+  if (_redis) return _redis;
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) return null;
+  _redis = new Redis({ url, token });
+  return _redis;
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /**
  * Returns a short SHA-256 hex digest of the input string.
@@ -31,18 +49,56 @@ function hashKey(input: string): string {
   return createHash('sha256').update(input).digest('hex').slice(0, 32);
 }
 
+// ─── Redis cache ──────────────────────────────────────────────────────────────
+
 /**
- * Fetches a cached search result for the given key.
- * Returns null if not found, expired, or Supabase is unavailable.
+ * Fetch cached result from Redis.
  *
  * @param cacheKey - Human-readable key (will be hashed internally)
- * @returns Cached result (any JSON value), or null on miss
+ * @returns Cached result or null on miss / error
  */
-async function getCached(cacheKey: string): Promise<unknown | null> {
+async function redisGet(cacheKey: string): Promise<unknown | null> {
+  try {
+    const redis = getRedis();
+    if (!redis) return null;
+    return await redis.get(`brave:${hashKey(cacheKey)}`);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Save result to Redis with 24-hour TTL. Fire-and-forget.
+ *
+ * @param cacheKey - Human-readable key (will be hashed internally)
+ * @param results  - Value to cache
+ */
+async function redisSet(cacheKey: string, results: unknown): Promise<void> {
+  try {
+    const redis = getRedis();
+    if (!redis) return;
+    await redis.set(`brave:${hashKey(cacheKey)}`, results, { ex: CACHE_TTL_SECONDS });
+  } catch {
+    // Cache write failures are non-fatal
+  }
+}
+
+// ─── Supabase fallback cache ──────────────────────────────────────────────────
+
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
+
+/**
+ * Fetch cached result from Supabase (fallback when Redis is unavailable).
+ *
+ * @param cacheKey - Human-readable key (will be hashed internally)
+ * @returns Cached result or null on miss / error
+ */
+async function supabaseGet(cacheKey: string): Promise<unknown | null> {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) return null;
   try {
     const client = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
-    const cutoff = new Date(Date.now() - CACHE_TTL_HOURS * 3_600_000).toISOString();
+    const cutoff = new Date(Date.now() - CACHE_TTL_SECONDS * 1_000).toISOString();
     const { data } = await client
       .from('search_cache')
       .select('results')
@@ -57,12 +113,12 @@ async function getCached(cacheKey: string): Promise<unknown | null> {
 }
 
 /**
- * Saves search results to the cache. Fire-and-forget — failures are silently ignored.
+ * Save result to Supabase cache. Fire-and-forget.
  *
  * @param cacheKey - Human-readable key (will be hashed internally)
- * @param results  - Value to cache (array or object)
+ * @param results  - Value to cache
  */
-async function saveCache(cacheKey: string, results: unknown): Promise<void> {
+async function supabaseSet(cacheKey: string, results: unknown): Promise<void> {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) return;
   try {
     const client = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
@@ -72,26 +128,42 @@ async function saveCache(cacheKey: string, results: unknown): Promise<void> {
       created_at: new Date().toISOString(),
     });
   } catch {
-    // Cache write failures are non-fatal — Brave API will be called next time
+    // Non-fatal
   }
 }
 
+// ─── Public API ───────────────────────────────────────────────────────────────
+
 /**
- * Wraps a Brave Search call with a 24-hour Supabase cache.
+ * Wraps a Brave Search call with a 24-hour cache.
  *
- * Checks the cache before calling Brave. On a miss, runs `fetchFn`, stores
- * the result, and returns it. Cache write is fire-and-forget.
+ * Check order: Redis → Supabase → fetch from Brave.
+ * On a miss, runs `fetchFn`, stores result in Redis (primary) and
+ * Supabase (fallback). Both writes are fire-and-forget.
  *
  * @param cacheKey - Unique key for this search (e.g. `articles|Acme A/S|12345678`)
  * @param fetchFn  - Async function that performs the actual Brave search
  * @returns Cached or freshly fetched results
  */
 export async function withBraveCache<T>(cacheKey: string, fetchFn: () => Promise<T>): Promise<T> {
-  const cached = await getCached(cacheKey);
-  if (cached !== null) return cached as T;
+  // 1. Try Redis first (fast path)
+  const redisCached = await redisGet(cacheKey);
+  if (redisCached !== null) return redisCached as T;
 
+  // 2. Try Supabase fallback
+  const supabaseCached = await supabaseGet(cacheKey);
+  if (supabaseCached !== null) {
+    // Backfill Redis for next time
+    redisSet(cacheKey, supabaseCached).catch(() => {});
+    return supabaseCached as T;
+  }
+
+  // 3. Fetch from Brave
   const results = await fetchFn();
-  // Fire-and-forget — do not await so it doesn't block the response
-  saveCache(cacheKey, results).catch(() => {});
+
+  // Fire-and-forget writes to both stores
+  redisSet(cacheKey, results).catch(() => {});
+  supabaseSet(cacheKey, results).catch(() => {});
+
   return results;
 }

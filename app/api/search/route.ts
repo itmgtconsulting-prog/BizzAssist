@@ -12,7 +12,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { darAutocomplete } from '@/app/lib/dar';
-import { rateLimit, SEARCH_LIMIT } from '@/app/lib/rateLimit';
+import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -390,8 +390,8 @@ async function searchPeople(
 // ─── Route handler ───────────────────────────────────────────────────────────
 
 export async function GET(request: NextRequest) {
-  // Rate limit: 60 req/min for search
-  const limited = rateLimit(request, SEARCH_LIMIT);
+  // Rate limit: 60 req/min (standard)
+  const limited = await checkRateLimit(request, rateLimit);
   if (limited) return limited;
 
   const q = request.nextUrl.searchParams.get('q') ?? '';

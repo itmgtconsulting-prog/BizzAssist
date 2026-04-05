@@ -40,10 +40,6 @@ const errorMessages: Record<string, { da: string; en: string }> = {
     da: 'Bekræft din e-mail først. Tjek din indbakke.',
     en: 'Please confirm your email first. Check your inbox.',
   },
-  no_subscription: {
-    da: 'Velkommen! Din konto er oprettet. Vælg en plan for at komme i gang.',
-    en: 'Welcome! Your account has been created. Choose a plan to get started.',
-  },
   subscription_pending: {
     da: 'Din demo-anmodning afventer godkendelse af en administrator. Du vil modtage besked, når den er behandlet.',
     en: 'Your demo request is awaiting administrator approval. You will be notified when it has been processed.',

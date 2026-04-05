@@ -581,7 +581,12 @@ export default function SignupPage() {
                     {da ? (
                       <>
                         Jeg accepterer{' '}
-                        <Link href="/terms" className="text-blue-400 hover:text-blue-300 underline">
+                        <Link
+                          href="/terms"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-400 hover:text-blue-300 underline"
+                        >
                           betingelserne for brug
                         </Link>{' '}
                         af BizzAssist
@@ -589,7 +594,12 @@ export default function SignupPage() {
                     ) : (
                       <>
                         I accept the{' '}
-                        <Link href="/terms" className="text-blue-400 hover:text-blue-300 underline">
+                        <Link
+                          href="/terms"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-400 hover:text-blue-300 underline"
+                        >
                           terms of service
                         </Link>{' '}
                         for BizzAssist

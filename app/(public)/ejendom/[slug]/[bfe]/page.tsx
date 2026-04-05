@@ -27,13 +27,12 @@ import {
 } from 'lucide-react';
 import { bygAnvendelseTekst, ejerforholdTekst } from '@/app/lib/bbrKoder';
 import { generateEjendomSlug } from '@/app/lib/slug';
-import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 
 // ─── ISR cache-periode ───────────────────────────────────────────────────────
-// Midlertidigt sat til 0 (force-dynamic) for at bypass stale ISR-cache
-// efter fix af manglende byg066Ejerforhold-felt i BBR GQL query.
-// Sæt tilbage til 3600 når BBR-data bekræftet vises korrekt på test.bizzassist.dk.
-export const revalidate = 3600;
+// Sat til 0 (force-dynamic) så siden altid henter friske BBR-data fra
+// /api/ejendom/[id] uden at stale ISR-cache maskerer fejl.
+// Sæt til 3600 igen når BBR-data bekræftet vises korrekt på test.bizzassist.dk.
+export const revalidate = 0;
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -187,154 +186,102 @@ async function hentDawaAdresse(bfe: string): Promise<DawaAdresse | null> {
   }
 }
 
-// ─── BBR GraphQL constants ──────────────────────────────────────────────────
-
-/** Datafordeler BBR v2 GraphQL base URL — API key appended as ?apiKey= query param */
-const BBR_GQL_BASE = 'https://graphql.datafordeler.dk/BBR/v2';
-
 /**
- * Minimal BBR bygning query — henter kun de felter der bruges på den offentlige side.
+ * Henter BBR bygning-data via den interne /api/ejendom/[id] route.
  *
- * Filtrerer på husnummer (= DAWA adgangsadresse UUID) og nuværende virkningstid.
- * Køres parallelt for alle adgangsadresse-UUIDs på jordstykket for at sikre at
- * alle bygninger hentes uanset hvilken adgangsadresse de er registreret under.
- */
-const BBR_PUBLIC_QUERY = `
-  query($vt: DafDateTime!, $id: String!) {
-    BBR_Bygning(first: 20, virkningstid: $vt, where: { husnummer: { eq: $id } }) {
-      nodes {
-        byg026Opfoerelsesaar
-        byg038SamletBygningsareal
-        byg039BygningensSamledeBoligAreal
-        byg041BebyggetAreal
-        byg054AntalEtager
-        byg021BygningensAnvendelse
-        byg066Ejerforhold
-        status
-      }
-    }
-  }
-`;
-
-/**
- * Returnerer en DafDateTime-streng for det aktuelle tidspunkt.
- * Format krævet af Datafordeler GraphQL: "2026-04-05T12:00:00+02:00".
+ * Bruger NØJAGTIGT samme code path som dashboard-visningen — kalder den samme
+ * API-route i stedet for at lave egne BBR GraphQL-kald. Det sikrer at auth,
+ * proxy-konfiguration og field-mapping altid er identisk med dashboard.
  *
- * @returns ISO dato-tid med timezone-offset
- */
-function nowDafDateTime(): string {
-  const now = new Date();
-  const off = -now.getTimezoneOffset();
-  const sign = off >= 0 ? '+' : '-';
-  const hh = String(Math.floor(Math.abs(off) / 60)).padStart(2, '0');
-  const mm = String(Math.abs(off) % 60).padStart(2, '0');
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return (
-    `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}` +
-    `T${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}` +
-    `${sign}${hh}:${mm}`
-  );
-}
-
-/**
- * Henter BBR bygning-data fra Datafordeler BBR v2 GraphQL via API-nøgle + proxy.
- *
- * Bruger samme autentificeringsmetode som dashboard-ruten (/api/ejendom/[id]):
- * DATAFORDELER_API_KEY som ?apiKey= query-parameter, routet via DF_PROXY_URL
- * (statisk IP whitelistet hos Datafordeler) fra Vercel og andre cloud-miljøer.
- *
- * Kræver env vars:
- *   DATAFORDELER_API_KEY
- * Valgfrit (cloud-proxy):
- *   DF_PROXY_URL + DF_PROXY_SECRET
- *
- * @param dawaIds - Array af DAWA adgangsadresse-UUIDs (alle på jordstykket)
+ * @param dawaId   - DAWA adgangsadresse UUID (første UUID fra jordstykkets adresser)
+ * @param baseUrl  - Absolut URL til applikationen (til server-side API-kald)
  * @returns Primær aktiv BBR bygning mappet til BbrBygning, eller null
  */
-async function hentBbrBygning(dawaIds: string[]): Promise<BbrBygning | null> {
-  if (dawaIds.length === 0) return null;
+async function hentBbrBygning(dawaId: string, baseUrl: string): Promise<BbrBygning | null> {
   try {
-    const apiKey = process.env.DATAFORDELER_API_KEY;
-    if (!apiKey) {
-      console.error('[BBR GQL] Mangler DATAFORDELER_API_KEY');
+    const url = `${baseUrl}/api/ejendom/${encodeURIComponent(dawaId)}`;
+    console.error(`[BBR PUBLIC] Fetching ${url}`);
+
+    const res = await fetch(url, { cache: 'no-store' });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      console.error(
+        `[BBR PUBLIC] HTTP ${res.status} ${res.statusText} — dawaId=${dawaId}: ${body.slice(0, 300)}`
+      );
       return null;
     }
 
-    const gqlUrl = proxyUrl(`${BBR_GQL_BASE}?apiKey=${apiKey}`);
-
-    // Kald BBR GraphQL for hvert adgangsadresse-UUID parallelt og merge nodes.
-    // De fleste ejendomme har 1 UUID — for ejendomme med flere adgangsadresser
-    // (f.eks. ejendomme hvor hus og carport har separate adresser) hentes alle.
-    const vt = nowDafDateTime();
-    const fetchNodes = async (id: string): Promise<Array<Record<string, unknown>>> => {
-      const gqlRes = await fetch(gqlUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...proxyHeaders() },
-        body: JSON.stringify({ query: BBR_PUBLIC_QUERY, variables: { vt, id } }),
-        signal: AbortSignal.timeout(proxyTimeout()),
-        cache: 'no-store',
-      });
-      if (!gqlRes.ok) {
-        const body = await gqlRes.text().catch(() => '');
-        console.error(
-          `[BBR GQL] HTTP ${gqlRes.status} ${gqlRes.statusText} — ${body.slice(0, 200)}`
-        );
-        return [];
-      }
-      const json = (await gqlRes.json()) as {
-        data?: { BBR_Bygning?: { nodes?: Array<Record<string, unknown>> } };
-        errors?: unknown[];
-      };
-      if (json.errors?.length) {
-        console.error('[BBR GQL] GraphQL errors:', JSON.stringify(json.errors).slice(0, 300));
-        return [];
-      }
-      return json.data?.BBR_Bygning?.nodes ?? [];
+    const data = (await res.json()) as {
+      bbr: Array<{
+        opfoerelsesaar: number | null;
+        samletBygningsareal: number | null;
+        samletBoligareal: number | null;
+        bebyggetAreal: number | null;
+        antalEtager: number | null;
+        anvendelseskode: number | null;
+        ejerforholdskode: string | null;
+        status: string | null;
+      }> | null;
+      bbrFejl: string | null;
     };
 
-    const results = await Promise.all(dawaIds.map(fetchNodes));
-    const nodes = results.flat();
-    if (!Array.isArray(nodes) || nodes.length === 0) return null;
+    if (data.bbrFejl) {
+      console.error(`[BBR PUBLIC] bbrFejl=${data.bbrFejl} for dawaId=${dawaId}`);
+    }
+
+    if (!data.bbr || data.bbr.length === 0) {
+      console.error(
+        `[BBR PUBLIC] Ingen bygninger returneret — dawaId=${dawaId}, bbrFejl=${data.bbrFejl ?? 'null'}`
+      );
+      return null;
+    }
+
+    console.error(`[BBR PUBLIC] ${data.bbr.length} bygning(er) for dawaId=${dawaId}`);
 
     // Vælg primær bygning: foretræk beboelsesbygninger (110–199) frem for
     // udhuse/carporte (500+). Sekundær sortering på samlet areal (størst = primær).
-    // Fallback: første aktive bygning, derefter første i listen.
-    const BOLIG_KODER_MIN = 110;
-    const BOLIG_KODER_MAX = 199;
-    const isBolig = (n: Record<string, unknown>) => {
-      const kode = Number(n.byg021BygningensAnvendelse ?? 0);
-      return kode >= BOLIG_KODER_MIN && kode <= BOLIG_KODER_MAX;
+    // status er normaliseret tekst fra /api/ejendom — "Bygning opført" = aktiv (kode 3+6).
+    const isBolig = (b: { anvendelseskode: number | null }) => {
+      const kode = b.anvendelseskode ?? 0;
+      return kode >= 110 && kode <= 199;
     };
-    const areal = (n: Record<string, unknown>) => Number(n.byg038SamletBygningsareal ?? 0);
 
-    const aktive = nodes.filter((n) => n.status === '6');
-    const kandidater = aktive.length > 0 ? aktive : nodes;
-
+    const aktive = data.bbr.filter((b) => b.status === 'Bygning opført');
+    const kandidater = aktive.length > 0 ? aktive : data.bbr;
     const boligBygninger = kandidater.filter(isBolig);
     const pool = boligBygninger.length > 0 ? boligBygninger : kandidater;
-    const node = pool.reduce((best, cur) => (areal(cur) > areal(best) ? cur : best), pool[0]);
+    const node = pool.reduce(
+      (best, cur) =>
+        (cur.samletBygningsareal ?? 0) > (best.samletBygningsareal ?? 0) ? cur : best,
+      pool[0]
+    );
 
+    console.error(
+      `[BBR PUBLIC] Primær bygning: anvendelseskode=${node.anvendelseskode}, ` +
+        `samletBygningsareal=${node.samletBygningsareal}, ` +
+        `samletBoligareal=${node.samletBoligareal}, ` +
+        `opfoerelsesaar=${node.opfoerelsesaar}, ` +
+        `antalEtager=${node.antalEtager}, ` +
+        `ejerforholdskode=${node.ejerforholdskode}`
+    );
+
+    // Map LiveBBRBygning (normaliseret) tilbage til BbrBygning (rå felter) så render-koden
+    // ikke skal ændres. byg021BygningensAnvendelse sendes som numerisk streng da
+    // bygAnvendelseTekst() kalder Number() på det.
     return {
-      byg026Opfoerelsesaar:
-        node.byg026Opfoerelsesaar != null ? Number(node.byg026Opfoerelsesaar) : undefined,
-      byg038SamletBygningsareal:
-        node.byg038SamletBygningsareal != null ? Number(node.byg038SamletBygningsareal) : undefined,
-      byg039BygningensSamledeBoligAreal:
-        node.byg039BygningensSamledeBoligAreal != null
-          ? Number(node.byg039BygningensSamledeBoligAreal)
-          : undefined,
-      byg041BebyggetAreal:
-        node.byg041BebyggetAreal != null ? Number(node.byg041BebyggetAreal) : undefined,
-      byg054AntalEtager:
-        node.byg054AntalEtager != null ? Number(node.byg054AntalEtager) : undefined,
+      byg026Opfoerelsesaar: node.opfoerelsesaar ?? undefined,
+      byg038SamletBygningsareal: node.samletBygningsareal ?? undefined,
+      byg039BygningensSamledeBoligAreal: node.samletBoligareal ?? undefined,
+      byg041BebyggetAreal: node.bebyggetAreal ?? undefined,
+      byg054AntalEtager: node.antalEtager ?? undefined,
       byg021BygningensAnvendelse:
-        node.byg021BygningensAnvendelse != null
-          ? String(node.byg021BygningensAnvendelse)
-          : undefined,
-      status: node.status != null ? String(node.status) : undefined,
+        node.anvendelseskode != null ? String(node.anvendelseskode) : undefined,
+      byg066Ejerforhold: node.ejerforholdskode ?? undefined,
+      status: node.status ?? undefined,
     };
   } catch (err) {
-    console.error('[BBR GQL] Uventet fejl:', err instanceof Error ? err.message : String(err));
+    console.error('[BBR PUBLIC] Uventet fejl:', err instanceof Error ? err.message : String(err));
     return null;
   }
 }
@@ -403,10 +350,10 @@ async function hentEjendomData(bfe: string): Promise<EjendomPublicData> {
   }
 
   // Hent BBR og vurdering parallelt.
-  // BBR forespørges for ALLE adgangsadresse-UUIDs på jordstykket (adresse.alleIds)
-  // for at sikre at bygninger registreret under forskellige adresser alle hentes.
+  // BBR hentes via den interne /api/ejendom/[id] route — SAMME code path som dashboard.
+  // adresse.id er det første adgangsadresse-UUID fra jordstykket.
   const [bbr, vurdering] = await Promise.all([
-    hentBbrBygning(adresse.alleIds),
+    hentBbrBygning(adresse.id, baseUrl),
     hentVurdering(bfe, adresse.kommunekode, baseUrl),
   ]);
 

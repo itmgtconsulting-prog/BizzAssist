@@ -250,9 +250,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
             requires_approval: updates.requiresApproval ?? defaults?.requiresApproval ?? false,
             is_active: updates.isActive ?? true,
             free_trial_days: updates.freeTrialDays ?? 0,
-            stripe_price_id: updates.stripePriceId ?? null,
             max_sales: updates.maxSales ?? null,
             sales_count: updates.salesCount ?? 0,
+            // stripe_price_id is NOT included here — updateFields handles it conditionally
+            // so editing other fields never resets a previously-saved Stripe price ID to null
             ...updateFields,
           } as never,
           { onConflict: 'plan_id' }

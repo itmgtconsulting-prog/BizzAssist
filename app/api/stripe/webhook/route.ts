@@ -300,14 +300,35 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice): Promise<void> {
       }
     }
 
-    // Fallback 3: match by Stripe customer email
+    // Fallback 3: match by invoice.customer_email (directly on invoice — no extra API call)
+    if (!userId) {
+      const invoiceEmail = (invoice as unknown as Record<string, unknown>).customer_email as
+        | string
+        | null
+        | undefined;
+      if (invoiceEmail) {
+        const emailMatch = usersPage?.users?.find((u) => u.email === invoiceEmail);
+        if (emailMatch?.id) {
+          userId = emailMatch.id;
+          console.log(
+            `[stripe/webhook] invoice.payment_succeeded: resolved user ${userId} via invoice.customer_email (${invoiceEmail})`
+          );
+        }
+      }
+    }
+
+    // Fallback 4: retrieve Stripe customer and match by email (covers cases where
+    // invoice.customer_email differs from the subscription customer email)
     if (!userId && invoice.customer) {
       const customer = await stripe!.customers.retrieve(invoice.customer as string);
       if (customer && !customer.deleted && customer.email) {
         const emailMatch = usersPage?.users?.find((u) => u.email === customer.email);
         if (emailMatch?.id) {
           userId = emailMatch.id;
-          console.log('[stripe/webhook] Found user via email match:', customer.email);
+          console.log(
+            '[stripe/webhook] Found user via Stripe customer email match:',
+            customer.email
+          );
         }
       }
     }

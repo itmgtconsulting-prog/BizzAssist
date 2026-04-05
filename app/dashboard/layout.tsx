@@ -90,8 +90,13 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
   const [_hasActiveSub, setHasActiveSub] = useState(false);
   /** Whether the subscription is functional (paid, free, or within trial) — gates features */
   const [isFunctional, setIsFunctional] = useState(false);
-  /** True when user is authenticated but has no plan — shows plan-selection overlay */
-  const [needsPlanSelection, setNeedsPlanSelection] = useState(false);
+  /**
+   * Controls which overlay (if any) is shown over the dashboard.
+   * 'select_plan'       → user has no subscription at all
+   * 'pending_approval'  → user chose a plan requiring admin approval (status: pending)
+   * null                → no overlay, full access
+   */
+  const [overlayMode, setOverlayMode] = useState<'select_plan' | 'pending_approval' | null>(null);
   /** Current user profile from Supabase auth */
   const [userProfile, setUserProfile] = useState<{
     name: string;
@@ -150,14 +155,21 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
         setAccessGranted(true);
         setHasActiveSub(false);
         setIsFunctional(false);
-        setNeedsPlanSelection(true);
+        setOverlayMode('select_plan');
         initSub({ subscription: null, isAdmin: admin, isFunctional: false });
         return;
       }
-      await supabase.auth.signOut();
+      // Pending demo users are let into the dashboard but shown an "awaiting approval" overlay
       if (status === 'pending') {
-        window.location.href = '/login?error=subscription_pending';
-      } else if (status === 'cancelled') {
+        setAccessGranted(true);
+        setHasActiveSub(false);
+        setIsFunctional(false);
+        setOverlayMode('pending_approval');
+        initSub({ subscription: sub, isAdmin: admin, isFunctional: false });
+        return;
+      }
+      await supabase.auth.signOut();
+      if (status === 'cancelled') {
         window.location.href = '/login?error=subscription_cancelled';
       }
     };
@@ -904,8 +916,8 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
         </main>
       </div>
 
-      {/* Plan-selection overlay — shown for authenticated users without a plan */}
-      {needsPlanSelection && <PlanSelectionOverlay lang={lang} />}
+      {/* Plan-selection / pending-approval overlay — shown based on subscription state */}
+      {overlayMode && <PlanSelectionOverlay lang={lang} mode={overlayMode} />}
 
       {/* Onboarding modal — shown once for new users */}
       <OnboardingModal />
@@ -955,12 +967,19 @@ interface OverlayPlanOption {
 }
 
 /**
- * PlanSelectionOverlay — fullscreen modal shown to authenticated users without a subscription.
- * Cannot be closed; user must choose a plan to proceed.
+ * PlanSelectionOverlay — fullscreen modal shown to authenticated users who cannot yet access the dashboard.
+ * Cannot be closed; presents either plan selection or a "pending approval" waiting screen.
  *
- * @param lang - Current UI language ('da' | 'en')
+ * @param lang  - Current UI language ('da' | 'en')
+ * @param mode  - 'select_plan' shows plan cards; 'pending_approval' shows waiting message
  */
-function PlanSelectionOverlay({ lang }: { lang: 'da' | 'en' }) {
+function PlanSelectionOverlay({
+  lang,
+  mode,
+}: {
+  lang: 'da' | 'en';
+  mode: 'select_plan' | 'pending_approval';
+}) {
   const da = lang === 'da';
   const router = useRouter();
   const [plans, setPlans] = useState<OverlayPlanOption[]>([]);
@@ -969,8 +988,12 @@ function PlanSelectionOverlay({ lang }: { lang: 'da' | 'en' }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  /** Fetch available plans on mount */
+  /** Fetch available plans on mount (only needed for select_plan mode) */
   useEffect(() => {
+    if (mode !== 'select_plan') {
+      setPlansLoading(false);
+      return;
+    }
     fetch('/api/plans')
       .then((r) => (r.ok ? r.json() : []))
       .then((data: OverlayPlanOption[]) => {
@@ -979,7 +1002,7 @@ function PlanSelectionOverlay({ lang }: { lang: 'da' | 'en' }) {
       })
       .catch(() => {})
       .finally(() => setPlansLoading(false));
-  }, []);
+  }, [mode]);
 
   /**
    * Handles plan selection.
@@ -1025,6 +1048,54 @@ function PlanSelectionOverlay({ lang }: { lang: 'da' | 'en' }) {
     }
   };
 
+  // ── Pending-approval mode ────────────────────────────────────────────────
+  if (mode === 'pending_approval') {
+    return (
+      <div
+        className="fixed inset-0 z-[100] flex items-center justify-center"
+        style={{ backdropFilter: 'blur(4px)', background: 'rgba(10,16,32,0.75)' }}
+      >
+        <div className="w-full max-w-md mx-4">
+          <div className="bg-[#1e293b] border border-white/10 rounded-2xl p-8 shadow-2xl text-center">
+            {/* Wait icon */}
+            <div className="w-16 h-16 bg-amber-500/10 border border-amber-500/30 rounded-2xl flex items-center justify-center mx-auto mb-5">
+              <Clock size={28} className="text-amber-400" />
+            </div>
+
+            <h1 className="text-xl font-bold text-white mb-3">
+              {da ? 'Demo-anmodning modtaget!' : 'Demo request received!'}
+            </h1>
+            <p className="text-slate-400 text-sm leading-relaxed mb-6">
+              {da
+                ? 'En administrator vil gennemgå din anmodning snarest muligt. Du modtager en e-mail, når din adgang er aktiveret.'
+                : 'An administrator will review your request as soon as possible. You will receive an email when your access has been activated.'}
+            </p>
+
+            {/* Support link */}
+            <a
+              href="mailto:support@bizzassist.dk"
+              className="inline-flex items-center gap-2 text-blue-400 hover:text-blue-300 text-sm transition-colors mb-6"
+            >
+              {da ? 'Kontakt support' : 'Contact support'}
+            </a>
+
+            {/* Sign out */}
+            <div className="border-t border-white/10 pt-5">
+              <button
+                type="button"
+                onClick={() => signOut()}
+                className="text-slate-500 hover:text-slate-300 text-xs transition-colors"
+              >
+                {da ? 'Log ud' : 'Sign out'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Select-plan mode ──────────────────────────────────────────────────────
   return (
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center"

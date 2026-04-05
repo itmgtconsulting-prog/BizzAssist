@@ -133,7 +133,8 @@ async function hentDawaAdresse(bfe: string): Promise<DawaAdresse | null> {
     if (!Array.isArray(data) || data.length === 0) return null;
 
     const a = data[0] as Record<string, unknown>;
-    const vej = a['vejnavn'] as Record<string, unknown> | undefined;
+    // DAWA nestet: vejnavn er i vejstykke.navn (ikke vejnavn.navn som i ældre format)
+    const vejstykke = a['vejstykke'] as Record<string, unknown> | undefined;
     const pos = a['postnummer'] as Record<string, unknown> | undefined;
     const kom = a['kommune'] as Record<string, unknown> | undefined;
     const adgPkt = a['adgangspunkt'] as Record<string, unknown> | undefined;
@@ -143,7 +144,7 @@ async function hentDawaAdresse(bfe: string): Promise<DawaAdresse | null> {
 
     return {
       id: String(a['id'] ?? ''),
-      vejnavn: String(vej?.['navn'] ?? a['vejnavn'] ?? ''),
+      vejnavn: String(vejstykke?.['navn'] ?? ''),
       husnr: String(a['husnr'] ?? ''),
       etage: a['etage'] != null ? String(a['etage']) : null,
       dør: a['dør'] != null ? String(a['dør']) : null,

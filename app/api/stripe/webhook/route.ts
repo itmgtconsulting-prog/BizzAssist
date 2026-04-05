@@ -251,6 +251,10 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription): Pro
  * for recurring subscription payments. Skips the first invoice (handled
  * by verify-session endpoint instead).
  *
+ * Supports both the legacy `invoice.subscription` field and the newer Stripe API
+ * path `invoice.parent.subscription_details.subscription`. If no subscription ID
+ * is available at all, user lookup falls back directly to `invoice.customer_email`.
+ *
  * @param invoice - The succeeded Stripe invoice
  */
 async function handlePaymentSucceeded(invoice: Stripe.Invoice): Promise<void> {
@@ -268,22 +272,34 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice): Promise<void> {
     return;
   }
 
+  // Resolve subscription ID: try legacy `invoice.subscription` first, then the newer
+  // `invoice.parent.subscription_details.subscription` path (Stripe API ≥ 2025-x).
   const rawSub = (invoice as unknown as Record<string, unknown>).subscription;
-  const subscriptionId =
+  const legacySubId: string | null =
     typeof rawSub === 'string' ? rawSub : ((rawSub as { id?: string } | null)?.id ?? null);
 
-  console.log(`[stripe/webhook] invoice.payment_succeeded — subscriptionId="${subscriptionId}"`);
+  const rawParent = (invoice as unknown as Record<string, unknown>).parent as
+    | Record<string, unknown>
+    | null
+    | undefined;
+  const subDetails = rawParent?.subscription_details as Record<string, unknown> | null | undefined;
+  const parentSubId: string | null =
+    typeof subDetails?.subscription === 'string' ? subDetails.subscription : null;
 
-  if (!subscriptionId) {
-    console.log(
-      '[stripe/webhook] invoice.payment_succeeded missing subscription ID — skipping email'
-    );
-    return;
+  const subscriptionId: string | null = legacySubId ?? parentSubId;
+
+  console.log(
+    `[stripe/webhook] invoice.payment_succeeded — legacySubId="${legacySubId}" parentSubId="${parentSubId}" resolved="${subscriptionId}"`
+  );
+
+  // Attempt to retrieve the Stripe subscription (needed for plan/period metadata).
+  // If subscriptionId is null we skip this and rely on invoice + app_metadata instead.
+  let sub: Stripe.Subscription | null = null;
+  if (subscriptionId) {
+    sub = await stripe!.subscriptions.retrieve(subscriptionId);
   }
 
-  // Get subscription to find user ID and plan
-  const sub = await stripe!.subscriptions.retrieve(subscriptionId);
-  let userId = sub.metadata?.supabase_user_id;
+  let userId = sub?.metadata?.supabase_user_id;
 
   console.log(
     `[stripe/webhook] invoice.payment_succeeded — userId from sub.metadata="${userId ?? 'none'}"`
@@ -291,64 +307,67 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice): Promise<void> {
 
   const admin = createAdminClient();
 
-  // Fallback: look up user by Stripe customer ID or email if metadata is missing.
-  // This handles subscriptions assigned via admin panel (not through checkout flow).
+  // Resolve userId via fallbacks when it is not stored in subscription metadata.
+  // This covers: admin-assigned subscriptions, and the newer API where subscription is null.
   if (!userId) {
-    const customerId =
-      typeof sub.customer === 'string' ? sub.customer : (sub.customer as { id?: string })?.id;
-
-    console.log(
-      `[stripe/webhook] invoice.payment_succeeded — no userId in metadata, trying fallbacks. customerId="${customerId}"`
-    );
-
-    // Fetch full user list once — reused for both fallback strategies
+    // Fetch full user list once — reused across all fallback strategies below
     const { data: usersPage } = await admin.auth.admin.listUsers({ perPage: 1000 });
 
-    // Fallback 2: match by stripe_customer_id stored in app_metadata
-    if (customerId) {
-      const match = usersPage?.users?.find(
-        (u) => (u.app_metadata?.stripe_customer_id as string | undefined) === customerId
-      );
-      if (match?.id) {
-        userId = match.id;
+    // Fallback 1: match by invoice.customer_email (no extra API call required)
+    const invoiceEmail = (invoice as unknown as Record<string, unknown>).customer_email as
+      | string
+      | null
+      | undefined;
+    console.log(
+      `[stripe/webhook] invoice.payment_succeeded — trying email fallback, invoiceEmail present=${!!invoiceEmail}`
+    );
+    if (invoiceEmail) {
+      const emailMatch = usersPage?.users?.find((u) => u.email === invoiceEmail);
+      if (emailMatch?.id) {
+        userId = emailMatch.id;
         console.log(
-          `[stripe/webhook] invoice.payment_succeeded: resolved user ${userId} via Stripe customer ID fallback`
+          `[stripe/webhook] invoice.payment_succeeded: resolved user via invoice.customer_email`
         );
       }
     }
 
-    // Fallback 3: match by invoice.customer_email (directly on invoice — no extra API call)
+    // Fallback 2: match by stripe_customer_id stored in app_metadata
     if (!userId) {
-      const invoiceEmail = (invoice as unknown as Record<string, unknown>).customer_email as
-        | string
-        | null
-        | undefined;
+      const customerId = sub
+        ? typeof sub.customer === 'string'
+          ? sub.customer
+          : (sub.customer as { id?: string })?.id
+        : typeof invoice.customer === 'string'
+          ? invoice.customer
+          : null;
+
       console.log(
-        `[stripe/webhook] invoice.payment_succeeded — trying email fallback, invoiceEmail="${invoiceEmail}"`
+        `[stripe/webhook] invoice.payment_succeeded — trying customerId fallback, customerId present=${!!customerId}`
       );
-      if (invoiceEmail) {
-        const emailMatch = usersPage?.users?.find((u) => u.email === invoiceEmail);
-        if (emailMatch?.id) {
-          userId = emailMatch.id;
+
+      if (customerId) {
+        const match = usersPage?.users?.find(
+          (u) => (u.app_metadata?.stripe_customer_id as string | undefined) === customerId
+        );
+        if (match?.id) {
+          userId = match.id;
           console.log(
-            `[stripe/webhook] invoice.payment_succeeded: resolved user ${userId} via invoice.customer_email (${invoiceEmail})`
+            `[stripe/webhook] invoice.payment_succeeded: resolved user via stripe_customer_id in app_metadata`
           );
         }
-      }
-    }
 
-    // Fallback 4: retrieve Stripe customer and match by email (covers cases where
-    // invoice.customer_email differs from the subscription customer email)
-    if (!userId && invoice.customer) {
-      const customer = await stripe!.customers.retrieve(invoice.customer as string);
-      if (customer && !customer.deleted && customer.email) {
-        const emailMatch = usersPage?.users?.find((u) => u.email === customer.email);
-        if (emailMatch?.id) {
-          userId = emailMatch.id;
-          console.log(
-            '[stripe/webhook] Found user via Stripe customer email match:',
-            customer.email
-          );
+        // Fallback 3: retrieve Stripe customer and match by email
+        if (!userId) {
+          const customer = await stripe!.customers.retrieve(customerId);
+          if (customer && !customer.deleted && customer.email) {
+            const emailMatch = usersPage?.users?.find((u) => u.email === customer.email);
+            if (emailMatch?.id) {
+              userId = emailMatch.id;
+              console.log(
+                '[stripe/webhook] invoice.payment_succeeded: resolved user via Stripe customer email'
+              );
+            }
+          }
         }
       }
     }
@@ -373,10 +392,32 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice): Promise<void> {
   // Extract payment details from invoice
   const amountPaid = ((invoice as unknown as Record<string, unknown>).amount_paid as number) ?? 0;
   const priceDkk = Math.round(amountPaid / 100); // Stripe uses øre/cents
-  const planId = sub.metadata?.plan_id ?? 'basis';
-  const periodEnd = new Date(
-    ((sub as unknown as Record<string, unknown>).current_period_end as number) * 1000
-  );
+
+  // Derive planId and periodEnd from subscription when available; fall back to
+  // app_metadata (plan) and invoice.period_end / +30 days (period end).
+  let planId = 'basis';
+  let periodEnd: Date;
+
+  if (sub) {
+    planId = sub.metadata?.plan_id ?? 'basis';
+    periodEnd = new Date(
+      ((sub as unknown as Record<string, unknown>).current_period_end as number) * 1000
+    );
+  } else {
+    // No subscription object — derive from user's existing app_metadata
+    const existingMeta = userData?.user?.app_metadata ?? {};
+    const existingSub = (existingMeta.subscription as Record<string, unknown>) ?? {};
+    planId = (existingSub.planId as string) ?? 'basis';
+
+    // invoice.period_end is set on renewal invoices; fall back to 30 days from now
+    const invoicePeriodEnd = (invoice as unknown as Record<string, unknown>).period_end as
+      | number
+      | null
+      | undefined;
+    periodEnd = invoicePeriodEnd
+      ? new Date(invoicePeriodEnd * 1000)
+      : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+  }
 
   console.log(
     `[stripe/webhook] invoice.payment_succeeded — planId="${planId}" priceDkk=${priceDkk} RESEND_API_KEY_SET=${!!process.env.RESEND_API_KEY}`

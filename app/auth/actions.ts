@@ -184,7 +184,7 @@ export async function signUp(
     password,
     options: {
       data: { full_name: fullName },
-      emailRedirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback`,
+      emailRedirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?type=signup`,
     },
   });
 
@@ -291,7 +291,7 @@ export async function resendVerificationEmail(email: string): Promise<AuthResult
     type: 'signup',
     email,
     options: {
-      emailRedirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback`,
+      emailRedirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?type=signup`,
     },
   });
 

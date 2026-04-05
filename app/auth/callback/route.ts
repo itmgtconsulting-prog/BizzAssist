@@ -36,6 +36,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   console.error('[auth/callback] All params:', Object.fromEntries(searchParams.entries()));
 
   const code = searchParams.get('code');
+  const type = searchParams.get('type');
   const next = searchParams.get('next') ?? '/dashboard';
 
   // OAuth providers send error + error_description on failure instead of code
@@ -86,6 +87,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     );
   }
   console.error('[auth/callback] Code exchange succeeded, redirecting to:', next);
+
+  // ── Email verification (signup confirmation) ─────────────────────────────
+  // When the user clicks the verification link from their signup email,
+  // we tagged the emailRedirectTo with ?type=signup. Redirect them to the
+  // verified confirmation page instead of the dashboard.
+  if (type === 'signup') {
+    return NextResponse.redirect(`${origin}/login/verified`);
+  }
 
   // Ensure the redirect target is relative (prevent open redirect attacks)
   const safeNext = next.startsWith('/') ? next : '/dashboard';

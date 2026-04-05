@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { bygAnvendelseTekst, ejerforholdTekst } from '@/app/lib/bbrKoder';
 import { generateEjendomSlug } from '@/app/lib/slug';
+import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 
 // ─── ISR cache-periode: 7 dage ─────────────────────────────────────────────
 export const revalidate = 604800;
@@ -172,54 +173,140 @@ async function hentDawaAdresse(bfe: string): Promise<DawaAdresse | null> {
   }
 }
 
+// ─── BBR GraphQL constants ──────────────────────────────────────────────────
+
+/** Datafordeler OAuth token endpoint — client_credentials kræver IKKE IP-whitelist */
+const DF_TOKEN_URL =
+  'https://auth.datafordeler.dk/realms/distribution/protocol/openid-connect/token';
+
+/** Datafordeler BBR v2 GraphQL endpoint */
+const BBR_GQL_URL = 'https://graphql.datafordeler.dk/BBR/v2';
+
 /**
- * Subset af LiveBBRBygning-felter vi bruger fra /api/ejendom/[id]-responsen.
- * Defineret lokalt for at undgå import fra API-route.
+ * Minimal BBR bygning query — henter kun de felter der bruges på den offentlige side.
+ *
+ * Filtrerer på husnummer (= DAWA adgangsadresse UUID) og nuværende virkningstid.
  */
-interface LiveBBRBygningSubset {
-  opfoerelsesaar: number | null;
-  samletBygningsareal: number | null;
-  samletBoligareal: number | null;
-  bebyggetAreal: number | null;
-  antalEtager: number | null;
-  anvendelseskode: number | null;
-  ejerforholdskode: string | null;
+const BBR_PUBLIC_QUERY = `
+  query($vt: DafDateTime!, $id: String!) {
+    BBR_Bygning(first: 10, virkningstid: $vt, where: { husnummer: { eq: $id } }) {
+      nodes {
+        byg026Opfoerelsesaar
+        byg038SamletBygningsareal
+        byg039BygningensSamledeBoligAreal
+        byg041BebyggetAreal
+        byg054AntalEtager
+        byg021BygningensAnvendelse
+        byg066Ejerforhold
+        status
+      }
+    }
+  }
+`;
+
+/**
+ * Returnerer en DafDateTime-streng for det aktuelle tidspunkt.
+ * Format krævet af Datafordeler GraphQL: "2026-04-05T12:00:00+02:00".
+ *
+ * @returns ISO dato-tid med timezone-offset
+ */
+function nowDafDateTime(): string {
+  const now = new Date();
+  const off = -now.getTimezoneOffset();
+  const sign = off >= 0 ? '+' : '-';
+  const hh = String(Math.floor(Math.abs(off) / 60)).padStart(2, '0');
+  const mm = String(Math.abs(off) % 60).padStart(2, '0');
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return (
+    `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}` +
+    `T${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}` +
+    `${sign}${hh}:${mm}`
+  );
 }
 
 /**
- * Henter BBR bygning-data via intern API-route (/api/ejendom/[dawaId]).
+ * Henter BBR bygning-data direkte fra Datafordeler BBR v2 GraphQL via OAuth Bearer token.
  *
- * Erstatter den nedlagte DAWA bbrlight API (lukket april 2024).
- * Intern route bruger Datafordeleren BBR v2 GraphQL med DATAFORDELER_API_KEY.
+ * Bruger client_credentials flow med DATAFORDELER_OAUTH_CLIENT_ID + _SECRET.
+ * OAuth-tokens kræver IKKE IP-whitelisting og virker fra Vercel og alle cloud-miljøer.
+ * Kalder Datafordeler direkte (ingen intern HTTP-hop) for at undgå Vercel self-call-problemer
+ * og for at undgå afhængighed af DATAFORDELER_API_KEY (der kræver IP-whitelist).
  *
- * @param dawaId  - DAWA adgangsadresse UUID
- * @param baseUrl - Absolut URL til applikationen (til server-side self-fetch)
- * @returns Første BBR bygning mappet til BbrBygning, eller null
+ * Kræver env vars:
+ *   DATAFORDELER_OAUTH_CLIENT_ID + DATAFORDELER_OAUTH_CLIENT_SECRET
+ * Valgfrit (cloud-proxy):
+ *   DF_PROXY_URL + DF_PROXY_SECRET
+ *
+ * @param dawaId - DAWA adgangsadresse UUID (= BBR_Bygning.husnummer filter)
+ * @returns Første aktive BBR bygning mappet til BbrBygning, eller null
  */
-async function hentBbrViaDawaId(dawaId: string, baseUrl: string): Promise<BbrBygning | null> {
+async function hentBbrBygning(dawaId: string): Promise<BbrBygning | null> {
   try {
-    const res = await fetch(`${baseUrl}/api/ejendom/${encodeURIComponent(dawaId)}`, {
+    const clientId = process.env.DATAFORDELER_OAUTH_CLIENT_ID;
+    const clientSecret = process.env.DATAFORDELER_OAUTH_CLIENT_SECRET;
+    if (!clientId || !clientSecret) return null;
+
+    // Hent OAuth Bearer token (client credentials — ingen IP-whitelist påkrævet)
+    const tokenRes = await fetch(proxyUrl(DF_TOKEN_URL), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...proxyHeaders() },
+      body: `grant_type=client_credentials&client_id=${encodeURIComponent(clientId)}&client_secret=${encodeURIComponent(clientSecret)}`,
+      signal: AbortSignal.timeout(proxyTimeout()),
+      cache: 'no-store',
+    });
+    if (!tokenRes.ok) return null;
+    const { access_token: token } = (await tokenRes.json()) as { access_token: string };
+    if (!token) return null;
+
+    // Kald BBR GraphQL direkte med Bearer token
+    const gqlRes = await fetch(proxyUrl(BBR_GQL_URL), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        ...proxyHeaders(),
+      },
+      body: JSON.stringify({
+        query: BBR_PUBLIC_QUERY,
+        variables: { vt: nowDafDateTime(), id: dawaId },
+      }),
+      signal: AbortSignal.timeout(proxyTimeout()),
       next: { revalidate: 3600 },
     });
-    if (!res.ok) return null;
+    if (!gqlRes.ok) return null;
 
-    const data = (await res.json()) as {
-      bbr?: LiveBBRBygningSubset[];
-      bbrFejl?: string | null;
+    const json = (await gqlRes.json()) as {
+      data?: { BBR_Bygning?: { nodes?: Array<Record<string, unknown>> } };
+      errors?: unknown[];
     };
-    if (!data.bbr || data.bbr.length === 0) return null;
+    if (json.errors?.length) return null;
 
-    // Vælg den primære bygning (første i listen — API'et returnerer aktive bygninger øverst)
-    const b = data.bbr[0];
+    const nodes = json.data?.BBR_Bygning?.nodes;
+    if (!Array.isArray(nodes) || nodes.length === 0) return null;
+
+    // Foretræk aktive bygninger (status '6' = Bygning i brug)
+    const node = nodes.find((n) => n.status === '6') ?? nodes[0];
 
     return {
-      byg026Opfoerelsesaar: b.opfoerelsesaar ?? undefined,
-      byg038SamletBygningsareal: b.samletBygningsareal ?? undefined,
-      byg039BygningensSamledeBoligAreal: b.samletBoligareal ?? undefined,
-      byg041BebyggetAreal: b.bebyggetAreal ?? undefined,
-      byg054AntalEtager: b.antalEtager ?? undefined,
-      byg021BygningensAnvendelse: b.anvendelseskode != null ? String(b.anvendelseskode) : undefined,
-      byg066Ejerforhold: b.ejerforholdskode ?? undefined,
+      byg026Opfoerelsesaar:
+        node.byg026Opfoerelsesaar != null ? Number(node.byg026Opfoerelsesaar) : undefined,
+      byg038SamletBygningsareal:
+        node.byg038SamletBygningsareal != null ? Number(node.byg038SamletBygningsareal) : undefined,
+      byg039BygningensSamledeBoligAreal:
+        node.byg039BygningensSamledeBoligAreal != null
+          ? Number(node.byg039BygningensSamledeBoligAreal)
+          : undefined,
+      byg041BebyggetAreal:
+        node.byg041BebyggetAreal != null ? Number(node.byg041BebyggetAreal) : undefined,
+      byg054AntalEtager:
+        node.byg054AntalEtager != null ? Number(node.byg054AntalEtager) : undefined,
+      byg021BygningensAnvendelse:
+        node.byg021BygningensAnvendelse != null
+          ? String(node.byg021BygningensAnvendelse)
+          : undefined,
+      byg066Ejerforhold:
+        node.byg066Ejerforhold != null ? String(node.byg066Ejerforhold) : undefined,
+      status: node.status != null ? String(node.status) : undefined,
     };
   } catch {
     return null;
@@ -289,9 +376,9 @@ async function hentEjendomData(bfe: string): Promise<EjendomPublicData> {
     return { adresse: null, bbr: null, vurdering: null, fejl: 'Ejendom ikke fundet' };
   }
 
-  // Hent BBR (via intern route → Datafordeleren) og vurdering parallelt
+  // Hent BBR (direkte Datafordeler BBR GraphQL via OAuth) og vurdering parallelt
   const [bbr, vurdering] = await Promise.all([
-    adresse.id ? hentBbrViaDawaId(adresse.id, baseUrl) : Promise.resolve(null),
+    adresse.id ? hentBbrBygning(adresse.id) : Promise.resolve(null),
     hentVurdering(bfe, adresse.kommunekode, baseUrl),
   ]);
 

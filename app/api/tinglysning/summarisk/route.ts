@@ -319,17 +319,20 @@ export async function GET(req: NextRequest) {
 
       const prioritetStr = entry.match(/PrioritetNummer[^>]*>([^<]+)/)?.[1];
       const prioritet = prioritetStr ? parseInt(prioritetStr, 10) : null;
-      // Debitor(er) — find alle DebitorInformation-blokke; én hæftelse kan have flere debitorer
+      // Debitor(er) — find alle DebitorInformation-blokke; én hæftelse kan have flere debitorer.
+      // Bruger samme robuste navneudtræk som adkomsthavere: matcher alle Name/Navn-tags med
+      // direkte tekstindhold, så opdelte felter (PersonGivenName + PersonSurnameName) slås sammen.
       const debitorBlocks = [
         ...entry.matchAll(/DebitorInformation>([\s\S]*?)<\/[^>]*DebitorInformation/g),
       ];
       const debitorer = debitorBlocks
-        .map(
-          ([, info]) =>
-            info.match(/LegalUnitName[^>]*>([^<]+)/)?.[1] ??
-            info.match(/PersonName[^>]*>([^<]+)/)?.[1] ??
-            ''
-        )
+        .map(([, info]) => {
+          const allNames = [...info.matchAll(/<[^\/][^>]*(?:Name|Navn)[^>]*>([^<]+)<\//g)];
+          return allNames
+            .map((m) => m[1].trim())
+            .filter((n) => n.length > 1)
+            .join(' ');
+        })
         .filter((n) => n.length > 0);
       // Rente
       const renteStr = entry.match(/HaeftelseRentePaalydendeSats[^>]*>([^<]+)/)?.[1];

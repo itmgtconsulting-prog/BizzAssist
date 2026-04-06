@@ -1,5 +1,7 @@
 'use client';
 
+'use no memo'; // Opt-out af React Compiler — filen har render-body mutations der konflikter
+
 /**
  * Virksomhedsdetaljeside — viser fuld information om en dansk virksomhed.
  *
@@ -4762,14 +4764,17 @@ function RelationsDiagram({
     () => datterselskaber.filter((v) => !v.ejetAfCvr || v.ejetAfCvr === data.vat),
     [datterselskaber, data.vat]
   );
-  const indirekteDatterMap = new Map<number, RelateretVirksomhed[]>();
-  for (const v of datterselskaber) {
-    if (v.ejetAfCvr && v.ejetAfCvr !== data.vat) {
-      const arr = indirekteDatterMap.get(v.ejetAfCvr) ?? [];
-      arr.push(v);
-      indirekteDatterMap.set(v.ejetAfCvr, arr);
+  const indirekteDatterMap = useMemo(() => {
+    const map = new Map<number, RelateretVirksomhed[]>();
+    for (const v of datterselskaber) {
+      if (v.ejetAfCvr && v.ejetAfCvr !== data.vat) {
+        const arr = map.get(v.ejetAfCvr) ?? [];
+        arr.push(v);
+        map.set(v.ejetAfCvr, arr);
+      }
     }
-  }
+    return map;
+  }, [datterselskaber, data.vat]);
 
   // ── Byg ejerkæder (deduplikeret) ──
 

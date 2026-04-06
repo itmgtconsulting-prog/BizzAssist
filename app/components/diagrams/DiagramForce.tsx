@@ -705,7 +705,10 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
       if (dragRef.current.active && dragRef.current.nodeId) {
         const dx = (e.clientX - dragRef.current.startX) / zoom;
         const dy = (e.clientY - dragRef.current.startY) / zoom;
-        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) dragRef.current.didMove = true;
+        // Brug screen-pixels (ikke zoom-kompenseret) til didMove-detektion
+        const screenDx = e.clientX - dragRef.current.startX;
+        const screenDy = e.clientY - dragRef.current.startY;
+        if (Math.abs(screenDx) > 5 || Math.abs(screenDy) > 5) dragRef.current.didMove = true;
         setPositions((prev) => {
           const next = new Map(prev);
           next.set(dragRef.current.nodeId!, {
@@ -1240,7 +1243,7 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
         return (
           <g
             key={node.id}
-            style={{ cursor: 'grab' }}
+            style={{ cursor: node.link ? 'pointer' : 'grab' }}
             onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
             onClick={() => {
               if (node.link && !dragRef.current.didMove) router.push(node.link);

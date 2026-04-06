@@ -37,6 +37,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { sendCriticalAlert, isCriticalIssue } from '@/lib/service-manager-alerts';
 
 /** Vercel Cron max duration (seconds) — Hobby plan limit */
 export const maxDuration = 30;
@@ -787,7 +788,27 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  // ── 4. Send alert email if new error issues were found ────────────────────
+  // ── 4. Send immediate critical alerts for high-severity issues ───────────
+  // These fire before the general alert email so critical failures get
+  // dedicated, immediately-actionable notifications with their own subject line.
+  const criticalIssues = errorIssues.filter((issue) =>
+    isCriticalIssue(issue.type, issue.message, issue.context)
+  );
+
+  for (const critical of criticalIssues) {
+    await sendCriticalAlert({
+      description: critical.message,
+      affectedPath: critical.context?.includes('Funktion: ')
+        ? critical.context.replace('Funktion: ', '')
+        : undefined,
+      scanId,
+      issueType: critical.type,
+      context: critical.context,
+      detectedAt: now,
+    });
+  }
+
+  // ── 5. Send general alert email if any error issues were found ────────────
   if (errorIssues.length > 0) {
     await sendAlertEmail(issues, scanId, proposedFixCount, now);
   }

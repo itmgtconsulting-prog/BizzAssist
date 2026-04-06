@@ -42,6 +42,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import type { ServiceManagerFix, ServiceManagerScan } from '@/lib/supabase/types';
 import type { ScanIssue } from '../route';
+import { evaluateAutoApproval, logAutoApproval } from '@/lib/service-manager-rules';
 
 /**
  * Returns the admin client cast to `any` for tables that are not yet in the
@@ -481,6 +482,29 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       finalReasoning = `Afvist: Claude returnerede et tomt diff. ${finalReasoning}`;
     }
 
+    // ── Check auto-approval rules ──────────────────────────────────────────
+    // Evaluate whether the fix qualifies for automatic approval without admin review.
+    // Only runs for non-rejected fixes — rejected fixes always stay rejected.
+    let initialStatus: 'proposed' | 'approved' | 'rejected' =
+      finalClassification === 'rejected' ? 'rejected' : 'proposed';
+    let autoApprovalRuleName: string | undefined;
+    let autoApprovalRuleDescription: string | undefined;
+
+    if (finalClassification !== 'rejected' && claudeResult.proposed_diff) {
+      const lineCount = countChangedLines(claudeResult.proposed_diff);
+      const autoResult = evaluateAutoApproval(
+        issue,
+        claudeResult.proposed_diff,
+        lineCount,
+        finalClassification
+      );
+      if (autoResult.autoApprove) {
+        initialStatus = 'approved';
+        autoApprovalRuleName = autoResult.ruleName;
+        autoApprovalRuleDescription = autoResult.ruleDescription;
+      }
+    }
+
     // ── Persist the fix proposal ───────────────────────────────────────────
     const { data: fixData, error: insertErr } = await db
       .from('service_manager_fixes')
@@ -490,9 +514,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         file_path: claudeResult.file_path,
         proposed_diff: claudeResult.proposed_diff,
         classification: finalClassification,
-        status: finalClassification === 'rejected' ? 'rejected' : 'proposed',
+        status: initialStatus,
         claude_reasoning: finalReasoning,
         rejection_reason: finalClassification === 'rejected' ? finalReasoning : null,
+        // Set reviewed metadata when auto-approved so the audit trail is complete
+        reviewed_by: initialStatus === 'approved' ? null : undefined,
+        reviewed_at: initialStatus === 'approved' ? new Date().toISOString() : undefined,
       })
       .select('id, status, classification')
       .single();
@@ -516,9 +543,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         lines_changed: claudeResult.proposed_diff
           ? countChangedLines(claudeResult.proposed_diff)
           : 0,
+        auto_approved: initialStatus === 'approved',
       },
       user.id
     );
+
+    // Log the auto-approval separately so it appears as its own audit entry
+    if (initialStatus === 'approved' && autoApprovalRuleName) {
+      await logAutoApproval(
+        fix.id,
+        scanId,
+        autoApprovalRuleName,
+        autoApprovalRuleDescription ?? autoApprovalRuleName,
+        { issue_type: issue.type, file_path: claudeResult.file_path, triggered_by: user.id }
+      );
+    }
 
     return NextResponse.json({
       fixId: fix.id,
@@ -526,6 +565,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       status: fix.status,
       filePath: claudeResult.file_path,
       reasoning: finalReasoning,
+      autoApproved: initialStatus === 'approved',
+      autoApprovalRule: autoApprovalRuleName,
     });
   } catch (err) {
     console.error('[service-manager/auto-fix POST]', err);

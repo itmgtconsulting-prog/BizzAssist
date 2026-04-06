@@ -82,8 +82,11 @@ import {
   Tooltip,
 } from 'recharts';
 
-/** Lazy-loaded diagram variants (heavy dependencies) */
-const DiagramForce = dynamic(() => import('@/app/components/diagrams/DiagramForce'), {
+/** Lazy-loaded diagram variant */
+const _DiagramForce = dynamic(() => import('@/app/components/diagrams/DiagramForce'), {
+  ssr: false,
+});
+const DiagramSimple = dynamic(() => import('@/app/components/diagrams/DiagramSimple'), {
   ssr: false,
 });
 
@@ -1811,7 +1814,7 @@ export default function VirksomhedDetalje({ params }: PageProps) {
                 data.industrydesc ?? null,
                 propertiesByCvr
               );
-              return <DiagramForce graph={diagramGraph} lang={lang} />;
+              return <DiagramSimple graph={diagramGraph} lang={lang} />;
             })()}
 
           {/* ══ EJENDOMME (inkl. ejendomshandler) ══ */}

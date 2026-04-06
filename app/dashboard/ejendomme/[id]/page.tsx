@@ -6478,6 +6478,28 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
 
   const visServitutter = showAllServitutter ? servitutter : servitutter.slice(0, 5);
 
+  /**
+   * Gruppér adkomst-entries efter dokumentId — to ejere på samme skøde deler dokumentId
+   * og skal vises som ét dokument med flere adkomsthavere, ikke to separate rækker.
+   * Fallback-nøgle bruges når dokumentId mangler.
+   */
+  const adkomstGroups: TLItem[][] = (() => {
+    const groups: TLItem[][] = [];
+    const seen = new Map<string, number>();
+    for (const e of ejere) {
+      const key =
+        String(e.dokumentId ?? '') ||
+        `${e.tinglysningsdato ?? ''}_${e.adkomstType ?? ''}_${e.koebesum ?? ''}`;
+      if (!seen.has(key)) {
+        seen.set(key, groups.length);
+        groups.push([e]);
+      } else {
+        groups[seen.get(key)!].push(e);
+      }
+    }
+    return groups;
+  })();
+
   const hovedNoteringMap: Record<string, string> = {
     samletEjendom: da ? 'Samlet ejendom' : 'Combined property',
     enfamilieshus: da ? 'Enfamilieshus' : 'Single-family house',
@@ -6639,7 +6661,7 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
             {da ? 'Tinglyste dokumenter' : 'Registered documents'}
           </span>
           <span className="text-slate-600 text-xs">
-            ({ejere.length + haeftelser.length + servitutter.length})
+            ({adkomstGroups.length + haeftelser.length + servitutter.length})
           </span>
           <button
             onClick={async () => {
@@ -6684,22 +6706,27 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
         </div>
 
         {/* ── ADKOMST ── */}
-        {ejere.length > 0 && (
+        {adkomstGroups.length > 0 && (
           <>
             <div className="px-4 py-1.5 bg-purple-500/5 border-b border-slate-700/20">
               <span className="text-[10px] font-semibold text-purple-400 uppercase tracking-wider">
-                {da ? 'Adkomst' : 'Title'} ({ejere.length})
+                {da ? 'Adkomst' : 'Title'} ({adkomstGroups.length})
               </span>
             </div>
-            {ejere.map((e, i) => {
+            {adkomstGroups.map((group, i) => {
+              // First entry carries shared document metadata (dato, beløb, type etc.)
+              const first = group[0];
               const isOpen = expandedAdkomst.has(i);
-              const docId = String(e.dokumentId ?? '');
+              const docId = String(first.dokumentId ?? '');
               const typeMap: Record<string, string> = {
                 skoede: da ? 'Skøde' : 'Deed',
                 auktionsskoede: 'Auktionsskøde',
                 arv: 'Arv',
                 gave: 'Gave',
               };
+              const typeLabel =
+                typeMap[String(first.adkomstType ?? '').toLowerCase()] ??
+                String(first.adkomstType ?? '');
               return (
                 <div key={`a-${i}`} className="border-b border-slate-700/15">
                   <div
@@ -6720,20 +6747,18 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
                     )}
                     <span />
                     <span className="text-xs text-slate-400 tabular-nums whitespace-nowrap">
-                      {formatDato(String(e.tinglysningsdato ?? e.dato ?? ''))}
+                      {formatDato(String(first.tinglysningsdato ?? first.dato ?? ''))}
                     </span>
+                    {/* Collapsed: show document type label, not individual owner name */}
                     <span className="text-sm text-slate-200 truncate">
-                      {String(e.navn)} {e.andel ? `(${e.andel})` : ''}
+                      {typeLabel || (da ? 'Adkomst' : 'Title')}
                     </span>
                     <span className="text-xs text-slate-300 tabular-nums text-right">
-                      {e.iAltKoebesum != null && Number(e.iAltKoebesum) > 0
-                        ? `${Number(e.iAltKoebesum).toLocaleString('da-DK')} DKK`
+                      {first.iAltKoebesum != null && Number(first.iAltKoebesum) > 0
+                        ? `${Number(first.iAltKoebesum).toLocaleString('da-DK')} DKK`
                         : ''}
                     </span>
-                    <span className="text-xs text-slate-400 truncate">
-                      {typeMap[String(e.adkomstType ?? '').toLowerCase()] ??
-                        String(e.adkomstType ?? '')}
-                    </span>
+                    <span className="text-xs text-slate-400 truncate">{typeLabel}</span>
                     <div
                       className="flex items-center gap-1.5"
                       onClick={(ev) => ev.stopPropagation()}
@@ -6782,102 +6807,125 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
                   </div>
                   {isOpen && (
                     <div className="px-4 pb-3 ml-10 border-l-2 border-purple-500/20">
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 mt-1 text-xs">
-                        <div>
-                          <p className="text-slate-500 text-[10px] uppercase">
-                            {da ? 'Adkomsthaver' : 'Owner'}
-                          </p>
-                          <p className="text-slate-200">{String(e.navn)}</p>
-                          {e.adresse && (
-                            <p className="text-slate-400 text-[11px]">{String(e.adresse)}</p>
-                          )}
-                        </div>
-                        {e.tinglysningsafgift != null && Number(e.tinglysningsafgift) > 0 && (
-                          <div>
-                            <p className="text-slate-500 text-[10px] uppercase">
-                              {da ? 'Tinglysningsafgift' : 'Reg. fee'}
+                      {/* All adkomsthavere for this document */}
+                      <div className="space-y-2 mt-1 mb-2">
+                        {group.map((e, j) => (
+                          <div key={j}>
+                            <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                              {da ? 'Adkomsthaver' : 'Owner'}
+                              {group.length > 1 ? ` ${j + 1}` : ''}
                             </p>
-                            <p className="text-slate-200">
-                              {Number(e.tinglysningsafgift).toLocaleString('da-DK')} DKK
-                            </p>
+                            {e.cvr ? (
+                              <Link
+                                href={`/dashboard/virksomheder/${String(e.cvr)}`}
+                                className="text-blue-300 hover:text-blue-200 text-xs font-medium flex items-center gap-1"
+                              >
+                                {String(e.navn)}
+                                <ChevronRight size={11} />
+                              </Link>
+                            ) : (
+                              <p className="text-slate-200 text-xs font-medium">{String(e.navn)}</p>
+                            )}
+                            {e.adresse && (
+                              <p className="text-slate-400 text-[11px]">{String(e.adresse)}</p>
+                            )}
+                            {e.andel && (
+                              <p className="text-slate-500 text-[11px]">{String(e.andel)}</p>
+                            )}
                           </div>
-                        )}
-                        {e.kontantKoebesum != null && Number(e.kontantKoebesum) > 0 && (
+                        ))}
+                      </div>
+                      {/* Common document fields (from first entry) */}
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 mt-2 pt-2 border-t border-slate-700/20 text-xs">
+                        {first.tinglysningsafgift != null &&
+                          Number(first.tinglysningsafgift) > 0 && (
+                            <div>
+                              <p className="text-slate-500 text-[10px] uppercase">
+                                {da ? 'Tinglysningsafgift' : 'Reg. fee'}
+                              </p>
+                              <p className="text-slate-200">
+                                {Number(first.tinglysningsafgift).toLocaleString('da-DK')} DKK
+                              </p>
+                            </div>
+                          )}
+                        {first.kontantKoebesum != null && Number(first.kontantKoebesum) > 0 && (
                           <div>
                             <p className="text-slate-500 text-[10px] uppercase">
                               {da ? 'Købesum kontant' : 'Cash'}
                             </p>
                             <p className="text-slate-200">
-                              {Number(e.kontantKoebesum).toLocaleString('da-DK')} DKK
+                              {Number(first.kontantKoebesum).toLocaleString('da-DK')} DKK
                             </p>
                           </div>
                         )}
-                        {e.iAltKoebesum != null && Number(e.iAltKoebesum) > 0 && (
+                        {first.iAltKoebesum != null && Number(first.iAltKoebesum) > 0 && (
                           <div>
                             <p className="text-slate-500 text-[10px] uppercase">
                               {da ? 'Købesum i alt' : 'Total'}
                             </p>
                             <p className="text-slate-200">
-                              {Number(e.iAltKoebesum).toLocaleString('da-DK')} DKK
+                              {Number(first.iAltKoebesum).toLocaleString('da-DK')} DKK
                             </p>
                           </div>
                         )}
-                        {e.koebsaftaledato && (
+                        {first.koebsaftaledato && (
                           <div>
                             <p className="text-slate-500 text-[10px] uppercase">
                               {da ? 'Købsaftaledato' : 'Agreement'}
                             </p>
                             <p className="text-slate-200">
-                              {formatDato(String(e.koebsaftaledato))}
+                              {formatDato(String(first.koebsaftaledato))}
                             </p>
                           </div>
                         )}
-                        {e.overtagelsesdato && (
+                        {first.overtagelsesdato && (
                           <div>
                             <p className="text-slate-500 text-[10px] uppercase">
                               {da ? 'Overtagelsesdato' : 'Acquisition'}
                             </p>
                             <p className="text-slate-200">
-                              {formatDato(String(e.overtagelsesdato))}
+                              {formatDato(String(first.overtagelsesdato))}
                             </p>
                           </div>
                         )}
-                        {e.ejendomKategori && (
+                        {first.ejendomKategori && (
                           <div>
                             <p className="text-slate-500 text-[10px] uppercase">
                               {da ? 'Ejendomskategori' : 'Category'}
                             </p>
-                            <p className="text-slate-200">{String(e.ejendomKategori)}</p>
+                            <p className="text-slate-200">{String(first.ejendomKategori)}</p>
                           </div>
                         )}
-                        {e.handelKode && (
+                        {first.handelKode && (
                           <div>
                             <p className="text-slate-500 text-[10px] uppercase">
                               {da ? 'Handelsmetode' : 'Trade'}
                             </p>
-                            <p className="text-slate-200">{String(e.handelKode)}</p>
+                            <p className="text-slate-200">{String(first.handelKode)}</p>
                           </div>
                         )}
                       </div>
-                      {(e.anmelderNavn || e.anmelderEmail) && (
+                      {(first.anmelderNavn || first.anmelderEmail) && (
                         <div className="mt-2 pt-2 border-t border-slate-700/20 text-xs">
                           <p className="text-slate-500 text-[10px] uppercase mb-0.5">
                             {da ? 'Anmelder' : 'Registrant'}
                           </p>
-                          {e.anmelderNavn && (
-                            <p className="text-slate-300">{String(e.anmelderNavn)}</p>
+                          {first.anmelderNavn && (
+                            <p className="text-slate-300">{String(first.anmelderNavn)}</p>
                           )}
-                          {e.anmelderEmail && (
-                            <p className="text-slate-400">{String(e.anmelderEmail)}</p>
+                          {first.anmelderEmail && (
+                            <p className="text-slate-400">{String(first.anmelderEmail)}</p>
                           )}
                         </div>
                       )}
-                      {e.skoedeTekst && (
+                      {first.skoedeTekst && (
                         <div className="mt-2 pt-2 border-t border-slate-700/20 text-xs">
                           <p className="text-slate-500 text-[10px] uppercase mb-0.5">
                             {da ? 'Skødetekst' : 'Deed text'}
                           </p>
-                          <p className="text-slate-400 leading-relaxed">{String(e.skoedeTekst)}</p>
+                          <p className="text-slate-400 leading-relaxed">
+                            {String(first.skoedeTekst)}
+                          </p>
                         </div>
                       )}
                     </div>

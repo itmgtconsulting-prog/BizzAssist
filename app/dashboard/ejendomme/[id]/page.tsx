@@ -929,13 +929,6 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
       (b: LiveBBRBygning) => b.anvendelseskode != null && KOLONIHAVE_KODER.has(b.anvendelseskode)
     ) ?? false;
 
-  /**
-   * Moderejandom-detektion: adressen har ingen etage/dør OG Vurderingsportalen
-   * fandt en underliggende ejerlejlighed-BFE. Vurderinger sidder på de individuelle
-   * ejerlejligheder — vis ikke vurderingsdata på moderejandommen.
-   */
-  const erModerejendom = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
-
   // Grundskyld stigningsbegrænsning (4,75% loft, ESL § 45) — fjernet fra UI.
   // Kræver historisk grundskyld-data for korrekt beregning. Se backlog.
 
@@ -1092,10 +1085,21 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
    * Henter ejendomsvurdering og ejerskabsdata fra Datafordeler når BFEnummer
    * er tilgængeligt via BBR Ejendomsrelation.
    * Kører i parallel og fejler stille ved manglende API-nøgle.
+   *
+   * BFE-valg: fetchBfeInfo sætter ejendomsrelationer[0].bfeNummer = ejerlejlighedBfe ?? jordBfe.
+   * For en moderejandom kan Vurderingsportalen fejlagtigt finde en child-ejerlejlighed-BFE,
+   * så ejendomsrelationer[0].bfeNummer peger på en child-enhed i stedet for moderejandommen selv.
+   * Rettelse: brug moderBfe (= jordBfe) når vi er på moderejandommens adresse (ingen etage/dør),
+   * da moderBfe altid er den korrekte jordBFE. Venter på dawaAdresse for at afgøre dette.
    */
   useEffect(() => {
-    if (!erDAWA || !bbrData?.ejendomsrelationer?.length) return;
-    const bfeNummer = bbrData.ejendomsrelationer[0]?.bfeNummer;
+    if (!erDAWA || !bbrData?.ejendomsrelationer?.length || !dawaAdresse) return;
+    // Moderejandom: ingen etage OG VP fandt en child-ejerlejlighed → brug moderBfe (jordBfe).
+    // Ejerlejlighed / normal: brug ejendomsrelationer-BFE (= ejerlejlighedBfe eller jordBfe).
+    const erModer = !dawaAdresse.etage && !!bbrData.ejerlejlighedBfe;
+    const bfeNummer = erModer
+      ? (bbrData.moderBfe ?? bbrData.ejendomsrelationer[0]?.bfeNummer)
+      : bbrData.ejendomsrelationer[0]?.bfeNummer;
     if (!bfeNummer) return;
 
     setVurderingLoader(true);
@@ -1133,7 +1137,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
       })
       .catch(() => setSalgshistorik([]))
       .finally(() => setSalgshistorikLoader(false));
-  }, [id, erDAWA, bbrData]);
+  }, [id, erDAWA, bbrData, dawaAdresse]);
 
   /**
    * Henter matrikeldata (jordstykker, landbrugsnotering m.m.) fra Datafordeler MAT-registret.
@@ -1768,7 +1772,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                     }
                   >
                     <Building2 size={12} />
-                    {lang === 'da' ? 'Hovedejendom' : 'Parent property'}
+                    {lang === 'da' ? 'Gå til hovedejendom' : 'Go to main property'}
                   </button>
                 )}
                 {bbrData?.ejerlejlighedBfe && (
@@ -1964,186 +1968,182 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                     );
                   })()}
 
-                  {/* Ejendomsvurdering — skjules for moderejandommen (vurdering sidder på de individuelle lejligheder) */}
-                  {!erModerejendom && (
-                    <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-2.5">
-                      <p className="text-slate-400 text-xs font-medium uppercase tracking-wide mb-1.5 flex items-center gap-2">
-                        <span>{t.propertyValuation}</span>
-                        {vurdering?.erNytSystem && (
-                          <span className="px-1.5 py-0.5 bg-blue-500/10 border border-blue-500/20 rounded text-[10px] text-blue-400 font-medium normal-case tracking-normal">
-                            NY
-                          </span>
-                        )}
-                      </p>
-                      {vurderingLoader ? (
-                        <div className="space-y-2 animate-pulse">
-                          <div className="grid grid-cols-2 gap-x-3">
-                            <div>
-                              <div className="h-3 w-20 bg-slate-700/60 rounded mb-1.5" />
-                              <div className="h-5 w-28 bg-slate-700/40 rounded" />
-                            </div>
-                            <div>
-                              <div className="h-3 w-16 bg-slate-700/60 rounded mb-1.5" />
-                              <div className="h-5 w-24 bg-slate-700/40 rounded" />
-                            </div>
+                  {/* Ejendomsvurdering */}
+                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-2.5">
+                    <p className="text-slate-400 text-xs font-medium uppercase tracking-wide mb-1.5 flex items-center gap-2">
+                      <span>{t.propertyValuation}</span>
+                      {vurdering?.erNytSystem && (
+                        <span className="px-1.5 py-0.5 bg-blue-500/10 border border-blue-500/20 rounded text-[10px] text-blue-400 font-medium normal-case tracking-normal">
+                          NY
+                        </span>
+                      )}
+                    </p>
+                    {vurderingLoader ? (
+                      <div className="space-y-2 animate-pulse">
+                        <div className="grid grid-cols-2 gap-x-3">
+                          <div>
+                            <div className="h-3 w-20 bg-slate-700/60 rounded mb-1.5" />
+                            <div className="h-5 w-28 bg-slate-700/40 rounded" />
                           </div>
-                          <div className="h-3 w-32 bg-slate-700/40 rounded" />
+                          <div>
+                            <div className="h-3 w-16 bg-slate-700/60 rounded mb-1.5" />
+                            <div className="h-5 w-24 bg-slate-700/40 rounded" />
+                          </div>
                         </div>
-                      ) : vurdering ? (
-                        <div className="space-y-2">
-                          {/* Ejendomsværdi + Grundværdi side om side */}
-                          <div className="grid grid-cols-2 gap-x-3">
+                        <div className="h-3 w-32 bg-slate-700/40 rounded" />
+                      </div>
+                    ) : vurdering ? (
+                      <div className="space-y-2">
+                        {/* Ejendomsværdi + Grundværdi side om side */}
+                        <div className="grid grid-cols-2 gap-x-3">
+                          <div>
+                            <p className="text-slate-500 text-xs leading-none mb-0.5">
+                              {t.propertyValue}
+                              {vurdering.aar && (
+                                <span className="ml-1 text-slate-600">({vurdering.aar})</span>
+                              )}
+                            </p>
+                            <p className="text-white text-base font-bold">
+                              {vurdering.ejendomsvaerdi
+                                ? formatDKK(vurdering.ejendomsvaerdi)
+                                : t.notAssessed}
+                            </p>
+                            {vurdering.afgiftspligtigEjendomsvaerdi !== null &&
+                              vurdering.afgiftspligtigEjendomsvaerdi !==
+                                vurdering.ejendomsvaerdi && (
+                                <p className="text-slate-500 text-xs mt-0.5">
+                                  {t.taxable}: {formatDKK(vurdering.afgiftspligtigEjendomsvaerdi)}
+                                </p>
+                              )}
+                          </div>
+                          <div>
+                            <p className="text-slate-500 text-xs leading-none mb-0.5">
+                              {t.landValue}
+                              {vurdering.aar && (
+                                <span className="ml-1 text-slate-600">({vurdering.aar})</span>
+                              )}
+                            </p>
+                            <p className="text-white text-sm font-medium">
+                              {vurdering.grundvaerdi ? formatDKK(vurdering.grundvaerdi) : '–'}
+                            </p>
+                            {vurdering.afgiftspligtigGrundvaerdi !== null &&
+                              vurdering.afgiftspligtigGrundvaerdi !== vurdering.grundvaerdi && (
+                                <p className="text-slate-500 text-xs mt-0.5">
+                                  {t.taxable}: {formatDKK(vurdering.afgiftspligtigGrundvaerdi)}
+                                </p>
+                              )}
+                          </div>
+                        </div>
+                        {/* Vurderet areal + Grundskyld side om side */}
+                        <div className="grid grid-cols-2 gap-x-3 pt-1.5 border-t border-slate-700/30">
+                          <div>
+                            <p className="text-slate-500 text-xs leading-none mb-0.5">
+                              {t.assessedArea}
+                            </p>
+                            <p className="text-white text-sm font-medium">
+                              {vurdering.vurderetAreal
+                                ? `${vurdering.vurderetAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
+                                : '–'}
+                            </p>
+                          </div>
+                          {/* Grundskyld — foretrækker faktisk fra Vurderingsportalen, falder tilbage til estimeret */}
+                          {(() => {
+                            const nyesteFrl = forelobige.length > 0 ? forelobige[0] : null;
+                            const faktiskGrundskyld = nyesteFrl?.grundskyld ?? null;
+                            if (faktiskGrundskyld !== null && faktiskGrundskyld > 0) {
+                              return (
+                                <div>
+                                  <p className="text-slate-500 text-xs leading-none mb-0.5">
+                                    {t.groundTax}
+                                    <span className="text-slate-600 ml-1">
+                                      ({nyesteFrl!.vurderingsaar})
+                                    </span>
+                                  </p>
+                                  <p className="text-white text-sm font-medium flex items-center gap-1">
+                                    {formatDKK(faktiskGrundskyld)}
+                                    <span className="text-slate-500 text-xs">{t.perYear}</span>
+                                  </p>
+                                </div>
+                              );
+                            }
+                            if (vurdering.estimereretGrundskyld !== null) {
+                              return (
+                                <div>
+                                  <p className="text-slate-500 text-xs leading-none mb-0.5">
+                                    {t.estGroundTax}
+                                    {vurdering.grundskyldspromille !== null && (
+                                      <span className="text-slate-600 ml-1">
+                                        ({vurdering.grundskyldspromille}‰)
+                                      </span>
+                                    )}
+                                  </p>
+                                  <p className="text-white text-sm font-medium">
+                                    {formatDKK(vurdering.estimereretGrundskyld)}
+                                    <span className="text-slate-500 text-xs ml-1">{t.perYear}</span>
+                                  </p>
+                                </div>
+                              );
+                            }
+                            return null;
+                          })()}
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-slate-500 text-xs">
+                        {bbrLoader || !bbrData
+                          ? t.awaitingBBR
+                          : !bbrData.ejendomsrelationer?.[0]?.bfeNummer
+                            ? t.bfeNotFound
+                            : 'Ingen vurderingsdata'}
+                      </p>
+                    )}
+
+                    {/* ── Forelobig vurdering — vises hvis nyere end nuvaerende vurdering ── */}
+                    {(() => {
+                      const nyesteForelobig = forelobige.length > 0 ? forelobige[0] : null;
+                      const erNyere =
+                        nyesteForelobig &&
+                        (!vurdering?.aar || nyesteForelobig.vurderingsaar > vurdering.aar);
+                      if (!nyesteForelobig || !erNyere) return null;
+                      return (
+                        <div className="mt-2 bg-amber-500/5 border border-amber-500/20 rounded-xl p-3">
+                          <div className="flex items-center gap-2 mb-1.5">
+                            <span className="px-1.5 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded text-[10px] text-amber-400 font-medium">
+                              {t.preliminary}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-x-2 gap-y-1">
                             <div>
                               <p className="text-slate-500 text-xs leading-none mb-0.5">
                                 {t.propertyValue}
-                                {vurdering.aar && (
-                                  <span className="ml-1 text-slate-600">({vurdering.aar})</span>
-                                )}
+                                <span className="ml-1 text-slate-600">
+                                  ({nyesteForelobig.vurderingsaar})
+                                </span>
                               </p>
-                              <p className="text-white text-base font-bold">
-                                {vurdering.ejendomsvaerdi
-                                  ? formatDKK(vurdering.ejendomsvaerdi)
+                              <p className="text-amber-200 text-sm font-medium">
+                                {nyesteForelobig.ejendomsvaerdi
+                                  ? formatDKK(nyesteForelobig.ejendomsvaerdi)
                                   : t.notAssessed}
                               </p>
-                              {vurdering.afgiftspligtigEjendomsvaerdi !== null &&
-                                vurdering.afgiftspligtigEjendomsvaerdi !==
-                                  vurdering.ejendomsvaerdi && (
-                                  <p className="text-slate-500 text-xs mt-0.5">
-                                    {t.taxable}: {formatDKK(vurdering.afgiftspligtigEjendomsvaerdi)}
-                                  </p>
-                                )}
                             </div>
                             <div>
                               <p className="text-slate-500 text-xs leading-none mb-0.5">
                                 {t.landValue}
-                                {vurdering.aar && (
-                                  <span className="ml-1 text-slate-600">({vurdering.aar})</span>
-                                )}
+                                <span className="ml-1 text-slate-600">
+                                  ({nyesteForelobig.vurderingsaar})
+                                </span>
                               </p>
-                              <p className="text-white text-sm font-medium">
-                                {vurdering.grundvaerdi ? formatDKK(vurdering.grundvaerdi) : '–'}
-                              </p>
-                              {vurdering.afgiftspligtigGrundvaerdi !== null &&
-                                vurdering.afgiftspligtigGrundvaerdi !== vurdering.grundvaerdi && (
-                                  <p className="text-slate-500 text-xs mt-0.5">
-                                    {t.taxable}: {formatDKK(vurdering.afgiftspligtigGrundvaerdi)}
-                                  </p>
-                                )}
-                            </div>
-                          </div>
-                          {/* Vurderet areal + Grundskyld side om side */}
-                          <div className="grid grid-cols-2 gap-x-3 pt-1.5 border-t border-slate-700/30">
-                            <div>
-                              <p className="text-slate-500 text-xs leading-none mb-0.5">
-                                {t.assessedArea}
-                              </p>
-                              <p className="text-white text-sm font-medium">
-                                {vurdering.vurderetAreal
-                                  ? `${vurdering.vurderetAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                  : '–'}
+                              <p className="text-amber-200 text-sm font-medium">
+                                {nyesteForelobig.grundvaerdi
+                                  ? formatDKK(nyesteForelobig.grundvaerdi)
+                                  : '0 DKK'}
                               </p>
                             </div>
-                            {/* Grundskyld — foretrækker faktisk fra Vurderingsportalen, falder tilbage til estimeret */}
-                            {(() => {
-                              const nyesteFrl = forelobige.length > 0 ? forelobige[0] : null;
-                              const faktiskGrundskyld = nyesteFrl?.grundskyld ?? null;
-                              if (faktiskGrundskyld !== null && faktiskGrundskyld > 0) {
-                                return (
-                                  <div>
-                                    <p className="text-slate-500 text-xs leading-none mb-0.5">
-                                      {t.groundTax}
-                                      <span className="text-slate-600 ml-1">
-                                        ({nyesteFrl!.vurderingsaar})
-                                      </span>
-                                    </p>
-                                    <p className="text-white text-sm font-medium flex items-center gap-1">
-                                      {formatDKK(faktiskGrundskyld)}
-                                      <span className="text-slate-500 text-xs">{t.perYear}</span>
-                                    </p>
-                                  </div>
-                                );
-                              }
-                              if (vurdering.estimereretGrundskyld !== null) {
-                                return (
-                                  <div>
-                                    <p className="text-slate-500 text-xs leading-none mb-0.5">
-                                      {t.estGroundTax}
-                                      {vurdering.grundskyldspromille !== null && (
-                                        <span className="text-slate-600 ml-1">
-                                          ({vurdering.grundskyldspromille}‰)
-                                        </span>
-                                      )}
-                                    </p>
-                                    <p className="text-white text-sm font-medium">
-                                      {formatDKK(vurdering.estimereretGrundskyld)}
-                                      <span className="text-slate-500 text-xs ml-1">
-                                        {t.perYear}
-                                      </span>
-                                    </p>
-                                  </div>
-                                );
-                              }
-                              return null;
-                            })()}
                           </div>
                         </div>
-                      ) : (
-                        <p className="text-slate-500 text-xs">
-                          {bbrLoader || !bbrData
-                            ? t.awaitingBBR
-                            : !bbrData.ejendomsrelationer?.[0]?.bfeNummer
-                              ? t.bfeNotFound
-                              : 'Ingen vurderingsdata'}
-                        </p>
-                      )}
-
-                      {/* ── Forelobig vurdering — vises hvis nyere end nuvaerende vurdering ── */}
-                      {(() => {
-                        const nyesteForelobig = forelobige.length > 0 ? forelobige[0] : null;
-                        const erNyere =
-                          nyesteForelobig &&
-                          (!vurdering?.aar || nyesteForelobig.vurderingsaar > vurdering.aar);
-                        if (!nyesteForelobig || !erNyere) return null;
-                        return (
-                          <div className="mt-2 bg-amber-500/5 border border-amber-500/20 rounded-xl p-3">
-                            <div className="flex items-center gap-2 mb-1.5">
-                              <span className="px-1.5 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded text-[10px] text-amber-400 font-medium">
-                                {t.preliminary}
-                              </span>
-                            </div>
-                            <div className="grid grid-cols-2 gap-x-2 gap-y-1">
-                              <div>
-                                <p className="text-slate-500 text-xs leading-none mb-0.5">
-                                  {t.propertyValue}
-                                  <span className="ml-1 text-slate-600">
-                                    ({nyesteForelobig.vurderingsaar})
-                                  </span>
-                                </p>
-                                <p className="text-amber-200 text-sm font-medium">
-                                  {nyesteForelobig.ejendomsvaerdi
-                                    ? formatDKK(nyesteForelobig.ejendomsvaerdi)
-                                    : t.notAssessed}
-                                </p>
-                              </div>
-                              <div>
-                                <p className="text-slate-500 text-xs leading-none mb-0.5">
-                                  {t.landValue}
-                                  <span className="ml-1 text-slate-600">
-                                    ({nyesteForelobig.vurderingsaar})
-                                  </span>
-                                </p>
-                                <p className="text-amber-200 text-sm font-medium">
-                                  {nyesteForelobig.grundvaerdi
-                                    ? formatDKK(nyesteForelobig.grundvaerdi)
-                                    : '0 DKK'}
-                                </p>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })()}
-                    </div>
-                  )}
+                      );
+                    })()}
+                  </div>
 
                   {/* ─── Rad 2: Bygninger (v) + Enheder (h)
                        self-start: boksene strækkes ikke til at matche hinanden ─── */}
@@ -3192,161 +3192,155 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
             {/* ══ ØKONOMI ══ */}
             {aktivTab === 'oekonomi' && (
               <div className="space-y-5">
-                {/* ── Ejendomsvurdering — skjules for moderejandommen ── */}
-                {!erModerejendom && (
-                  <div>
-                    <SectionTitle title={t.propertyValuation} />
-                    {vurderingLoader ? (
-                      <div className="flex items-center gap-2 text-slate-500 text-sm py-4">
-                        <div className="w-4 h-4 border-2 border-slate-600 border-t-blue-500 rounded-full animate-spin" />
-                        {t.loadingValuation}
-                      </div>
-                    ) : vurdering ? (
-                      <>
-                        {/* Aktuelle tal */}
-                        <div className="grid grid-cols-3 gap-3 mb-3">
-                          <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                            <p className="text-slate-400 text-xs mb-1">
-                              {t.propertyValue}
-                              {vurdering.aar && (
-                                <span className="ml-1 text-slate-500">({vurdering.aar})</span>
-                              )}
-                            </p>
-                            <p className="text-white text-lg font-bold">
-                              {vurdering.ejendomsvaerdi != null
-                                ? formatDKK(vurdering.ejendomsvaerdi)
-                                : t.notAssessed}
-                            </p>
-                          </div>
-                          <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                            <p className="text-slate-400 text-xs mb-1">{t.landValue}</p>
-                            <p className="text-white text-lg font-bold">
-                              {vurdering.grundvaerdi != null
-                                ? formatDKK(vurdering.grundvaerdi)
-                                : '–'}
-                            </p>
-                          </div>
-                          <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                            <p className="text-slate-400 text-xs mb-1">{t.plotArea}</p>
-                            <p className="text-white text-lg font-bold">
-                              {vurdering.vurderetAreal != null
-                                ? `${vurdering.vurderetAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                : '–'}
-                            </p>
-                          </div>
+                {/* ── Ejendomsvurdering ── */}
+                <div>
+                  <SectionTitle title={t.propertyValuation} />
+                  {vurderingLoader ? (
+                    <div className="flex items-center gap-2 text-slate-500 text-sm py-4">
+                      <div className="w-4 h-4 border-2 border-slate-600 border-t-blue-500 rounded-full animate-spin" />
+                      {t.loadingValuation}
+                    </div>
+                  ) : vurdering ? (
+                    <>
+                      {/* Aktuelle tal */}
+                      <div className="grid grid-cols-3 gap-3 mb-3">
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                          <p className="text-slate-400 text-xs mb-1">
+                            {t.propertyValue}
+                            {vurdering.aar && (
+                              <span className="ml-1 text-slate-500">({vurdering.aar})</span>
+                            )}
+                          </p>
+                          <p className="text-white text-lg font-bold">
+                            {vurdering.ejendomsvaerdi != null
+                              ? formatDKK(vurdering.ejendomsvaerdi)
+                              : t.notAssessed}
+                          </p>
                         </div>
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                          <p className="text-slate-400 text-xs mb-1">{t.landValue}</p>
+                          <p className="text-white text-lg font-bold">
+                            {vurdering.grundvaerdi != null ? formatDKK(vurdering.grundvaerdi) : '–'}
+                          </p>
+                        </div>
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                          <p className="text-slate-400 text-xs mb-1">{t.plotArea}</p>
+                          <p className="text-white text-lg font-bold">
+                            {vurdering.vurderetAreal != null
+                              ? `${vurdering.vurderetAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
+                              : '–'}
+                          </p>
+                        </div>
+                      </div>
 
-                        {/* Vurderingshistorik — collapsible tabel med forelobige prepended */}
-                        {(alleVurderinger.length > 1 || forelobige.length > 0) && (
-                          <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden overflow-x-auto">
-                            <button
-                              onClick={() => setVisVurderingHistorik((v) => !v)}
-                              className="w-full flex items-center gap-2 px-4 py-3 hover:bg-slate-700/20 transition-colors"
-                            >
-                              <ChevronRight
-                                size={14}
-                                className={`text-slate-500 transition-transform flex-shrink-0 ${visVurderingHistorik ? 'rotate-90' : ''}`}
-                              />
-                              <span className="text-slate-300 text-sm font-medium">
-                                {t.valuationHistory}
+                      {/* Vurderingshistorik — collapsible tabel med forelobige prepended */}
+                      {(alleVurderinger.length > 1 || forelobige.length > 0) && (
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden overflow-x-auto">
+                          <button
+                            onClick={() => setVisVurderingHistorik((v) => !v)}
+                            className="w-full flex items-center gap-2 px-4 py-3 hover:bg-slate-700/20 transition-colors"
+                          >
+                            <ChevronRight
+                              size={14}
+                              className={`text-slate-500 transition-transform flex-shrink-0 ${visVurderingHistorik ? 'rotate-90' : ''}`}
+                            />
+                            <span className="text-slate-300 text-sm font-medium">
+                              {t.valuationHistory}
+                            </span>
+                            {forelobige.length > 0 && (
+                              <span className="px-1.5 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded text-[10px] text-amber-400 font-medium">
+                                {forelobige.length} {t.preliminary}
+                                {forelobige.length > 1 ? 'E' : ''}
                               </span>
-                              {forelobige.length > 0 && (
-                                <span className="px-1.5 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded text-[10px] text-amber-400 font-medium">
-                                  {forelobige.length} {t.preliminary}
-                                  {forelobige.length > 1 ? 'E' : ''}
-                                </span>
-                              )}
-                            </button>
-                            {visVurderingHistorik && (
-                              <>
-                                {/* Header */}
-                                <div className="min-w-[550px] grid grid-cols-[140px_1fr_1fr_100px] px-4 py-2 text-slate-500 text-xs font-medium border-t border-slate-700/30 bg-slate-900/30">
-                                  <span>{t.yearCol}</span>
-                                  <span>{t.propertyValueCol}</span>
-                                  <span>{t.landValueCol}</span>
-                                  <span className="text-right">{t.plotArea}</span>
-                                </div>
+                            )}
+                          </button>
+                          {visVurderingHistorik && (
+                            <>
+                              {/* Header */}
+                              <div className="min-w-[550px] grid grid-cols-[140px_1fr_1fr_100px] px-4 py-2 text-slate-500 text-xs font-medium border-t border-slate-700/30 bg-slate-900/30">
+                                <span>{t.yearCol}</span>
+                                <span>{t.propertyValueCol}</span>
+                                <span>{t.landValueCol}</span>
+                                <span className="text-right">{t.plotArea}</span>
+                              </div>
 
-                                {/* Forelobige vurderinger — prepended med amber badge */}
-                                {forelobige.map((fv, i) => (
+                              {/* Forelobige vurderinger — prepended med amber badge */}
+                              {forelobige.map((fv, i) => (
+                                <div
+                                  key={`forelobig-${fv.vurderingsaar}-${i}`}
+                                  className="min-w-[550px] grid grid-cols-[140px_1fr_1fr_100px] px-4 py-2.5 text-sm border-t border-amber-500/10 bg-amber-500/[0.02] hover:bg-amber-500/5 items-center"
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-amber-200 font-medium">
+                                      {fv.vurderingsaar}
+                                    </span>
+                                    <span className="px-1.5 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded text-[10px] text-amber-400 font-medium">
+                                      {t.preliminary}
+                                    </span>
+                                  </div>
+                                  <span className="text-amber-200/80">
+                                    {fv.ejendomsvaerdi
+                                      ? formatDKK(fv.ejendomsvaerdi)
+                                      : t.notAssessed}
+                                  </span>
+                                  <span className="text-amber-200/80">
+                                    {fv.grundvaerdi ? formatDKK(fv.grundvaerdi) : '0 DKK'}
+                                  </span>
+                                  <span className="text-slate-400 text-right">–</span>
+                                </div>
+                              ))}
+
+                              {/* Endelige vurderinger fra Datafordeler */}
+                              {alleVurderinger.map((v, i) => {
+                                return (
                                   <div
-                                    key={`forelobig-${fv.vurderingsaar}-${i}`}
-                                    className="min-w-[550px] grid grid-cols-[140px_1fr_1fr_100px] px-4 py-2.5 text-sm border-t border-amber-500/10 bg-amber-500/[0.02] hover:bg-amber-500/5 items-center"
+                                    key={`${v.aar}-${i}`}
+                                    className="min-w-[550px] grid grid-cols-[140px_1fr_1fr_100px] px-4 py-2.5 text-sm border-t border-slate-700/20 hover:bg-slate-700/10 items-center"
                                   >
                                     <div className="flex items-center gap-2">
-                                      <span className="text-amber-200 font-medium">
-                                        {fv.vurderingsaar}
+                                      <span className="text-slate-200 font-medium">
+                                        {v.aar ?? '–'}
                                       </span>
-                                      <span className="px-1.5 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded text-[10px] text-amber-400 font-medium">
-                                        {t.preliminary}
-                                      </span>
+                                      {v.erNytSystem && (
+                                        <span className="px-1.5 py-0.5 bg-blue-500/10 border border-blue-500/20 rounded text-[10px] text-blue-400 font-medium">
+                                          NY
+                                        </span>
+                                      )}
                                     </div>
-                                    <span className="text-amber-200/80">
-                                      {fv.ejendomsvaerdi
-                                        ? formatDKK(fv.ejendomsvaerdi)
+                                    <span className="text-slate-300">
+                                      {v.ejendomsvaerdi != null
+                                        ? formatDKK(v.ejendomsvaerdi)
                                         : t.notAssessed}
                                     </span>
-                                    <span className="text-amber-200/80">
-                                      {fv.grundvaerdi ? formatDKK(fv.grundvaerdi) : '0 DKK'}
+                                    <span className="text-slate-300">
+                                      {v.grundvaerdi != null ? formatDKK(v.grundvaerdi) : '0 DKK'}
                                     </span>
-                                    <span className="text-slate-400 text-right">–</span>
+                                    <span className="text-slate-400 text-right">
+                                      {v.vurderetAreal != null
+                                        ? `${v.vurderetAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
+                                        : '–'}
+                                    </span>
                                   </div>
-                                ))}
-
-                                {/* Endelige vurderinger fra Datafordeler */}
-                                {alleVurderinger.map((v, i) => {
-                                  return (
-                                    <div
-                                      key={`${v.aar}-${i}`}
-                                      className="min-w-[550px] grid grid-cols-[140px_1fr_1fr_100px] px-4 py-2.5 text-sm border-t border-slate-700/20 hover:bg-slate-700/10 items-center"
-                                    >
-                                      <div className="flex items-center gap-2">
-                                        <span className="text-slate-200 font-medium">
-                                          {v.aar ?? '–'}
-                                        </span>
-                                        {v.erNytSystem && (
-                                          <span className="px-1.5 py-0.5 bg-blue-500/10 border border-blue-500/20 rounded text-[10px] text-blue-400 font-medium">
-                                            NY
-                                          </span>
-                                        )}
-                                      </div>
-                                      <span className="text-slate-300">
-                                        {v.ejendomsvaerdi != null
-                                          ? formatDKK(v.ejendomsvaerdi)
-                                          : t.notAssessed}
-                                      </span>
-                                      <span className="text-slate-300">
-                                        {v.grundvaerdi != null ? formatDKK(v.grundvaerdi) : '0 DKK'}
-                                      </span>
-                                      <span className="text-slate-400 text-right">
-                                        {v.vurderetAreal != null
-                                          ? `${v.vurderetAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                          : '–'}
-                                      </span>
-                                    </div>
-                                  );
-                                })}
-                              </>
-                            )}
-                          </div>
-                        )}
-                      </>
-                    ) : !bbrData?.ejendomsrelationer?.[0]?.bfeNummer ? (
-                      <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-4">
-                        <p className="text-amber-300 text-sm font-medium mb-1">
-                          {t.bfeUnavailable}
-                        </p>
-                        <p className="text-slate-400 text-xs">
-                          Ejendomsvurdering kræver BFEnummer fra BBR Ejendomsrelation.
-                        </p>
-                      </div>
-                    ) : (
-                      <div className="bg-slate-800/30 border border-slate-700/40 rounded-xl p-4 text-center">
-                        <p className="text-slate-500 text-xs">{t.noValuationFound}</p>
-                      </div>
-                    )}
-                  </div>
-                )}
+                                );
+                              })}
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  ) : !bbrData?.ejendomsrelationer?.[0]?.bfeNummer ? (
+                    <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-4">
+                      <p className="text-amber-300 text-sm font-medium mb-1">{t.bfeUnavailable}</p>
+                      <p className="text-slate-400 text-xs">
+                        Ejendomsvurdering kræver BFEnummer fra BBR Ejendomsrelation.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="bg-slate-800/30 border border-slate-700/40 rounded-xl p-4 text-center">
+                      <p className="text-slate-500 text-xs">{t.noValuationFound}</p>
+                    </div>
+                  )}
+                </div>
 
                 {/* ── Salgshistorik (EJF + Tinglysning) ── */}
                 <div>

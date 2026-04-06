@@ -1,4 +1,10 @@
 {
+  "_webhooks": {
+    "_doc": "Vercel deploy webhook — configure in Project Settings → Git → Webhooks",
+    "url": "https://test.bizzassist.dk/api/webhooks/vercel-deploy?secret=<VERCEL_DEPLOY_WEBHOOK_SECRET>",
+    "events": ["deployment.created", "deployment.succeeded", "deployment.error"],
+    "secret_env_var": "VERCEL_DEPLOY_WEBHOOK_SECRET"
+  },
   "crons": [
     {
       "path": "/api/cron/poll-properties",

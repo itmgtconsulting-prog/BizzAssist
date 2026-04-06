@@ -132,6 +132,61 @@ const AUTO_APPROVAL_RULES: AutoApprovalRule[] = [
       );
     },
   },
+  {
+    name: 'build_fix',
+    description:
+      'Auto-approves a bug-fix for a build error when the diff only touches TypeScript types, ' +
+      'imports, or config values — no logic changes (≤ 15 linjer ændret). ' +
+      'When matched, the Release Agent is triggered to create a hotfix branch and PR.',
+    maxLines: 15,
+    matches(issue, diff, classification) {
+      // Only applies to build errors classified as bug-fix
+      if (classification !== 'bug-fix') return false;
+      if (issue.type !== 'build_error') return false;
+
+      // Extract all changed lines (strip the +/- prefix, ignore diff headers)
+      const changedLines = diff
+        .split('\n')
+        .filter(
+          (l) =>
+            (l.startsWith('+') || l.startsWith('-')) && !l.startsWith('---') && !l.startsWith('+++')
+        )
+        .map((l) => l.slice(1).trim());
+
+      if (changedLines.length === 0) return false;
+
+      /**
+       * A changed line is considered "safe" (types/imports/config) if it matches
+       * one of the following patterns. Logic-bearing code (conditionals, function
+       * calls, assignments with complex RHS) does not match and causes rejection.
+       */
+      const isSafeLine = (line: string): boolean => {
+        if (line === '') return true;
+        // Comments
+        if (/^\/\//.test(line) || /^\/\*/.test(line) || /^\*/.test(line)) return true;
+        // Import statements (including multi-line continuations)
+        if (/^import\b/.test(line)) return true;
+        if (/^from\s+['"]/.test(line)) return true;
+        // Re-export type statements
+        if (/^export\s+(?:type\s+)?\{/.test(line)) return true;
+        if (/^export\s+type\b/.test(line)) return true;
+        // TypeScript type / interface declarations
+        if (/^type\s+\w+/.test(line)) return true;
+        if (/^interface\s+\w+/.test(line)) return true;
+        // Closing braces for type blocks (interface bodies, type unions, etc.)
+        if (/^[}\]]\s*[;,]?\s*$/.test(line)) return true;
+        if (/^\|\s+\w/.test(line)) return true; // union type member
+        // Config file JSON-style key-value (tsconfig, next.config values)
+        if (/^["']?\w[\w-]*["']?\s*:\s*(?:true|false|null|['"\d\[{])/.test(line)) return true;
+        // Simple string/number constant declarations (no function calls)
+        if (/^(?:const|let|var)\s+\w+\s*=\s*['"`\d]/.test(line)) return true;
+
+        return false;
+      };
+
+      return changedLines.every(isSafeLine);
+    },
+  },
 ];
 
 // ─── Public API ───────────────────────────────────────────────────────────────

@@ -131,7 +131,7 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   /** Trigger to re-fit diagram when container size changes (e.g. fullscreen toggle) */
-  const [_fitTrigger, _setFitTrigger] = useState(0);
+  const [fitTrigger, setFitTrigger] = useState(0);
 
   // ── Pan state (drag background to move entire canvas) ──
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
@@ -586,7 +586,8 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
       newPositions.set(node.id, { x: node.x ?? 0, y: node.y ?? 0 });
     }
     setPositions(newPositions);
-    // Auto-fit trigges automatisk via positions.size ændring i useEffect
+    // Trigger auto-zoom/center med lille forsinkelse så viewBox-memo når at opdatere
+    setTimeout(() => setFitTrigger((t) => t + 1), 80);
 
     return () => {
       simulation.stop();
@@ -624,12 +625,14 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
     initialFitDone.current = false;
   }, [filteredGraph]);
 
-  // Auto-fit: centrer og zoom diagrammet til containeren — kører kun én gang
+  // Stabilisér viewBox-værdier som primitiver for at undgå uendelig effect-loop
+  const vbKey = `${viewBox.minX.toFixed(1)}_${viewBox.minY.toFixed(1)}_${viewBox.w.toFixed(1)}_${viewBox.h.toFixed(1)}`;
+
   useEffect(() => {
     if (positions.size === 0 || viewBox.w <= 0 || viewBox.h <= 0) return;
-    if (initialFitDone.current) return;
 
     const doFit = () => {
+      // Kør kun én gang — undgå at overskrive brugerens zoom/pan
       if (initialFitDone.current) return;
       const c = containerRef.current;
       if (!c) return;
@@ -642,21 +645,30 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
       const scaledW = viewBox.w * z + 32;
       const scaledH = viewBox.h * z + 32;
       const panX = Math.round((cW - scaledW) / 2);
+      // Placér diagrammet tæt på toppen (5% fra top)
       const panY = Math.round(Math.max(4, (cH - scaledH) * 0.05));
-      initialFitDone.current = true;
       setZoom(z);
       setPanOffset({ x: panX, y: panY });
+      initialFitDone.current = true;
     };
 
-    const id = setTimeout(doFit, 200);
-    return () => clearTimeout(id);
+    // Schedule fit — rAF + fallback timers for layout timing (kun første gang)
+    const id1 = requestAnimationFrame(doFit);
+    const id2 = setTimeout(doFit, 150);
+    const id3 = setTimeout(doFit, 400);
+    return () => {
+      cancelAnimationFrame(id1);
+      clearTimeout(id2);
+      clearTimeout(id3);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [positions.size]);
+  }, [positions.size, vbKey, fitTrigger]);
 
   // ── Node drag: start ──
   const handleNodeMouseDown = useCallback(
     (e: React.MouseEvent, nodeId: string) => {
       e.stopPropagation();
+      e.preventDefault();
       const pos = positions.get(nodeId);
       if (!pos) return;
       dragRef.current = {
@@ -694,10 +706,7 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
       if (dragRef.current.active && dragRef.current.nodeId) {
         const dx = (e.clientX - dragRef.current.startX) / zoom;
         const dy = (e.clientY - dragRef.current.startY) / zoom;
-        // Brug screen-pixels (ikke zoom-kompenseret) til didMove-detektion
-        const screenDx = e.clientX - dragRef.current.startX;
-        const screenDy = e.clientY - dragRef.current.startY;
-        if (Math.abs(screenDx) > 5 || Math.abs(screenDy) > 5) dragRef.current.didMove = true;
+        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) dragRef.current.didMove = true;
         setPositions((prev) => {
           const next = new Map(prev);
           next.set(dragRef.current.nodeId!, {
@@ -717,8 +726,10 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
 
   // ── Global mouseup: stop drag or pan ──
   const handleMouseUp = useCallback(() => {
-    // didMove is NOT reset here — it's checked by the click handler (which fires after mouseup).
-    // It's reset in the next mousedown instead.
+    // Reset didMove after a short delay so the click handler can check it
+    setTimeout(() => {
+      dragRef.current.didMove = false;
+    }, 10);
     dragRef.current.active = false;
     dragRef.current.nodeId = null;
     panRef.current.active = false;
@@ -1229,24 +1240,13 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
           );
         }
 
-        const nodeClickRef = { startX: 0, startY: 0 };
         return (
           <g
             key={node.id}
-            style={{ cursor: node.link ? 'pointer' : 'grab' }}
-            onMouseDown={(e) => {
-              nodeClickRef.startX = e.clientX;
-              nodeClickRef.startY = e.clientY;
-              handleNodeMouseDown(e, node.id);
-            }}
-            onMouseUp={(e) => {
-              if (!node.link) return;
-              const dx = Math.abs(e.clientX - nodeClickRef.startX);
-              const dy = Math.abs(e.clientY - nodeClickRef.startY);
-              if (dx < 5 && dy < 5) {
-                e.stopPropagation();
-                window.location.href = node.link;
-              }
+            style={{ cursor: 'grab' }}
+            onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
+            onClick={() => {
+              if (node.link && !dragRef.current.didMove) router.push(node.link);
             }}
           >
             <rect

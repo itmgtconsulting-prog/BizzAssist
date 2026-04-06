@@ -59,7 +59,8 @@
     "react-map-gl": "^8.1.0",
     "recharts": "^3.8.0",
     "resend": "^6.9.4",
-    "stripe": "^21.0.1"
+    "stripe": "^21.0.1",
+    "twilio": "^5.13.1"
   },
   "devDependencies": {
     "@commitlint/cli": "^20.5.0",

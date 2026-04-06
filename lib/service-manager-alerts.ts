@@ -10,6 +10,8 @@
  * @module lib/service-manager-alerts
  */
 
+import { sendCriticalSms } from '@/lib/sms';
+
 /** Resend API endpoint */
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';
 const FROM_ADDRESS = 'BizzAssist <noreply@bizzassist.dk>';
@@ -204,4 +206,16 @@ export async function sendCriticalAlert(params: CriticalAlertParams): Promise<vo
   } catch (err) {
     console.error('[service-manager-alerts] Kunne ikke sende kritisk alert:', err);
   }
+
+  // Also send SMS — secondary alert channel
+  const typeShort =
+    params.issueType === 'build_error'
+      ? 'build-fejl'
+      : params.issueType === 'runtime_error'
+        ? 'runtime-fejl'
+        : params.issueType === 'config_error'
+          ? 'konfigurationsfejl'
+          : 'type-fejl';
+  const smsMsg = `\uD83D\uDEA8 BizzAssist: ${typeShort} \u2014 ${params.description.slice(0, 80)}. Check admin panel.`;
+  await sendCriticalSms(smsMsg);
 }

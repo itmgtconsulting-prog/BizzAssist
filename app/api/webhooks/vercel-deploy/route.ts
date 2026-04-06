@@ -40,6 +40,7 @@ import { createHmac } from 'crypto';
 import Anthropic from '@anthropic-ai/sdk';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { sendCriticalAlert } from '@/lib/service-manager-alerts';
+import { sendCriticalSms } from '@/lib/sms';
 import { evaluateAutoApproval, logAutoApproval } from '@/lib/service-manager-rules';
 
 export const maxDuration = 30;
@@ -634,7 +635,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
   }
 
-  // ── Send critical alert email ─────────────────────────────────────────────
+  // ── Send critical alert email + SMS ──────────────────────────────────────
   await sendCriticalAlert({
     description: issue.message,
     affectedPath: claudeResult.file_path || undefined,
@@ -643,6 +644,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     context: issue.context,
     detectedAt: now,
   });
+
+  await sendCriticalSms(
+    `\uD83D\uDEA8 BizzAssist: build-fejl \u2014 ${issue.message.slice(0, 90)}. Check admin panel.`
+  );
 
   console.log(
     `[vercel-deploy] Done: scan=${scanId}, fix=${fixId ?? 'none'}, ` +

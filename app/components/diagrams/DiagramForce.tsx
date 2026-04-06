@@ -131,7 +131,7 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   /** Trigger to re-fit diagram when container size changes (e.g. fullscreen toggle) */
-  const [fitTrigger, setFitTrigger] = useState(0);
+  const [_fitTrigger, _setFitTrigger] = useState(0);
 
   // ── Pan state (drag background to move entire canvas) ──
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
@@ -586,8 +586,7 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
       newPositions.set(node.id, { x: node.x ?? 0, y: node.y ?? 0 });
     }
     setPositions(newPositions);
-    // Trigger auto-zoom/center med lille forsinkelse så viewBox-memo når at opdatere
-    setTimeout(() => setFitTrigger((t) => t + 1), 80);
+    // Auto-fit trigges automatisk via positions.size ændring i useEffect
 
     return () => {
       simulation.stop();
@@ -625,14 +624,12 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
     initialFitDone.current = false;
   }, [filteredGraph]);
 
-  // Stabilisér viewBox-værdier som primitiver for at undgå uendelig effect-loop
-  const vbKey = `${viewBox.minX.toFixed(1)}_${viewBox.minY.toFixed(1)}_${viewBox.w.toFixed(1)}_${viewBox.h.toFixed(1)}`;
-
+  // Auto-fit: centrer og zoom diagrammet til containeren — kører kun én gang
   useEffect(() => {
     if (positions.size === 0 || viewBox.w <= 0 || viewBox.h <= 0) return;
+    if (initialFitDone.current) return;
 
     const doFit = () => {
-      // Kør kun én gang — undgå at overskrive brugerens zoom/pan
       if (initialFitDone.current) return;
       const c = containerRef.current;
       if (!c) return;
@@ -645,24 +642,16 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
       const scaledW = viewBox.w * z + 32;
       const scaledH = viewBox.h * z + 32;
       const panX = Math.round((cW - scaledW) / 2);
-      // Placér diagrammet tæt på toppen (5% fra top)
       const panY = Math.round(Math.max(4, (cH - scaledH) * 0.05));
+      initialFitDone.current = true;
       setZoom(z);
       setPanOffset({ x: panX, y: panY });
-      initialFitDone.current = true;
     };
 
-    // Schedule fit — rAF + fallback timers for layout timing (kun første gang)
-    const id1 = requestAnimationFrame(doFit);
-    const id2 = setTimeout(doFit, 150);
-    const id3 = setTimeout(doFit, 400);
-    return () => {
-      cancelAnimationFrame(id1);
-      clearTimeout(id2);
-      clearTimeout(id3);
-    };
+    const id = setTimeout(doFit, 200);
+    return () => clearTimeout(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [positions.size, vbKey, fitTrigger]);
+  }, [positions.size]);
 
   // ── Node drag: start ──
   const handleNodeMouseDown = useCallback(

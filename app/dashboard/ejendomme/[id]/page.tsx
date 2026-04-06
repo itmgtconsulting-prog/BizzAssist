@@ -842,10 +842,10 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
 
   /** Ejere fra Ejerfortegnelsen (Datafordeler) */
   const [ejere, setEjere] = useState<EjerData[] | null>(null);
-  /** True mens ejerdata hentes */
-  const [ejereLoader, setEjereLoader] = useState(false);
+  /** True mens ejerdata hentes (bruges kun internt i fetch-effekt) */
+  const [_ejereLoader, setEjereLoader] = useState(false);
   /** True hvis Datafordeler returnerer 403 — Dataadgang-ansøgning mangler for EJF */
-  const [manglerEjereAdgang, setManglerEjereAdgang] = useState(false);
+  const [_manglerEjereAdgang, setManglerEjereAdgang] = useState(false);
 
   /** BBR-tab: ID'er på bygningsrækker der er foldet ud */
   const [expandedBygninger, setExpandedBygninger] = useState<Set<string>>(new Set());
@@ -3062,100 +3062,6 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
             {/* ══ EJERFORHOLD ══ */}
             {aktivTab === 'ejerforhold' && (
               <div className="space-y-4">
-                {/* ── Nuværende ejere (EJF Datafordeler) ── */}
-                <div>
-                  <SectionTitle title={t.currentOwners} />
-                  {ejereLoader ? (
-                    <div className="flex items-center gap-2 text-slate-500 text-sm bg-slate-800/30 border border-slate-700/40 rounded-xl p-4">
-                      <div className="w-4 h-4 border-2 border-slate-600 border-t-blue-500 rounded-full animate-spin" />
-                      {da ? 'Henter ejerdata…' : 'Loading owner data…'}
-                    </div>
-                  ) : manglerEjereAdgang ? (
-                    <div className="bg-orange-500/10 border border-orange-500/20 rounded-xl p-4">
-                      <p className="text-orange-300 text-xs font-medium mb-1">{t.accessMissing}</p>
-                      <p className="text-slate-400 text-xs">{t.oauthValid}</p>
-                    </div>
-                  ) : ejere && ejere.length > 0 ? (
-                    <div className="space-y-2">
-                      {ejere.map((ejer, i) => {
-                        const ejerandelPct =
-                          ejer.ejerandel_taeller != null && ejer.ejerandel_naevner
-                            ? Math.round((ejer.ejerandel_taeller / ejer.ejerandel_naevner) * 100)
-                            : null;
-                        const ejerforholdMap: Record<string, string> = {
-                          '10': t.ownerRelation10,
-                          '20': t.ownerRelation20,
-                          '30': t.ownerRelation30,
-                          '40': t.ownerRelation40,
-                          '41': t.ownerRelation41,
-                          '50': t.ownerRelation50,
-                          '60': t.ownerRelation60,
-                          '70': t.ownerRelation70,
-                          '80': t.ownerRelation80,
-                        };
-                        const ejerforholdTxt = ejer.ejerforholdskode
-                          ? (ejerforholdMap[ejer.ejerforholdskode] ?? null)
-                          : null;
-                        return (
-                          <div
-                            key={i}
-                            className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-3 flex items-center justify-between gap-3"
-                          >
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap mb-1">
-                                {ejer.cvr ? (
-                                  <Link
-                                    href={`/dashboard/companies/${ejer.cvr}`}
-                                    className="text-blue-400 hover:text-blue-300 text-sm font-medium transition-colors"
-                                  >
-                                    CVR {ejer.cvr} →
-                                  </Link>
-                                ) : (
-                                  <p className="text-slate-300 text-sm">{t.privatPerson}</p>
-                                )}
-                                {ejerforholdTxt && (
-                                  <span className="px-2 py-0.5 rounded-full text-xs text-slate-400 bg-slate-700/40 border border-slate-600/30">
-                                    {ejerforholdTxt}
-                                  </span>
-                                )}
-                              </div>
-                              <div className="flex items-center gap-3 flex-wrap">
-                                {ejer.virkningFra && (
-                                  <p className="text-slate-500 text-xs">
-                                    {t.ownerSince}{' '}
-                                    {new Date(ejer.virkningFra).toLocaleDateString('da-DK')}
-                                  </p>
-                                )}
-                                {ejer.ejerandel_taeller != null &&
-                                  ejer.ejerandel_naevner != null && (
-                                    <p className="text-slate-500 text-xs">
-                                      {t.share}: {ejer.ejerandel_taeller}/{ejer.ejerandel_naevner}
-                                    </p>
-                                  )}
-                              </div>
-                            </div>
-                            {ejerandelPct != null && (
-                              <span className="text-white text-lg font-semibold flex-shrink-0">
-                                {ejerandelPct}%
-                              </span>
-                            )}
-                          </div>
-                        );
-                      })}
-                      {bbrData?.ejendomsrelationer?.[0]?.bfeNummer && (
-                        <p className="text-slate-600 text-xs text-right">
-                          BFE {bbrData.ejendomsrelationer[0].bfeNummer}
-                        </p>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="bg-slate-800/30 border border-slate-700/40 rounded-xl p-4 text-center">
-                      <Users size={24} className="text-slate-600 mx-auto mb-2" />
-                      <p className="text-slate-400 text-xs">{t.noOwnerDataFound}</p>
-                    </div>
-                  )}
-                </div>
-
                 {/* ── Ejerskabsdiagram / Relationsdiagram (fra Tinglysning + EJF kæde) ── */}
                 {(() => {
                   const bfeForDiagram =

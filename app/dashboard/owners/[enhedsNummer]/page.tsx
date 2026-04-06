@@ -37,6 +37,8 @@ import { useLanguage } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';
 import type { PersonPublicData, PersonCompanyRole } from '@/app/api/cvr-public/person/route';
 import type { RelateretVirksomhed } from '@/app/api/cvr-public/related/route';
+import type { EjendomSummary } from '@/app/api/ejendomme-by-owner/route';
+import PropertyOwnerCard from '@/app/components/ejendomme/PropertyOwnerCard';
 import { saveRecentPerson } from '@/app/lib/recentPersons';
 import { buildPersonDiagramGraph } from '@/app/components/diagrams/DiagramData';
 import dynamic from 'next/dynamic';
@@ -231,6 +233,15 @@ export default function PersonDetailPage({
   );
   const [relatedLoading, setRelatedLoading] = useState(false);
   const relatedFetchedRef = useRef(false);
+
+  /** Ejendomme portefølje — lazy-loaded when properties tab is activated */
+  const [ejendommeData, setEjendommeData] = useState<EjendomSummary[]>([]);
+  const [ejendommeLoading, setEjendommeLoading] = useState(false);
+  const [ejendommeManglerNoegle, setEjendommeManglerNoegle] = useState(false);
+  const [ejendommeManglerAdgang, setEjendommeManglerAdgang] = useState(false);
+  const [ejendommeTotalBfe, setEjendommeTotalBfe] = useState(0);
+  /** Kommasepereret CVR-nøgle der sidst blev hentet — forhindrer duplicate-fetches */
+  const ejendomFetchKeyRef = useRef('');
 
   /** Detekterer desktop vs. mobil — nyheder-panel vises som sidebar på desktop, overlay på mobil */
   const [isDesktop, setIsDesktop] = useState(true);
@@ -585,6 +596,56 @@ export default function PersonDetailPage({
       setNoeglePersonerMap(map);
     });
   }, [topLevelEjer, derived?.andreVirksomheder]);
+
+  /**
+   * Henter ejendomsportefølje når properties-tab er aktivt.
+   * Inkluderer alle virksomheder personen ejer + deres datterselskaber.
+   * Kører igen når relatedCompanies ændres (subsidiaries loader ind).
+   * Bruger ejendomFetchKeyRef til at undgå duplicate fetches for samme CVR-sæt.
+   */
+  useEffect(() => {
+    if (aktivTab !== 'properties' || !derived) return;
+
+    /* Saml CVR-numre for direkte ejede virksomheder */
+    const ejerCvrs = derived.ejerVirksomheder.map((v) => String(v.cvr).padStart(8, '0'));
+
+    /* Tilføj datterselskaber fra relatedCompanies */
+    const subsidieCvrs: string[] = [];
+    for (const [, related] of relatedCompanies) {
+      for (const r of related) {
+        if (r.aktiv) subsidieCvrs.push(String(r.cvr).padStart(8, '0'));
+      }
+    }
+
+    const uniqueCvrs = [...new Set([...ejerCvrs, ...subsidieCvrs])].slice(0, 30);
+
+    if (uniqueCvrs.length === 0) {
+      /* Personen ejer ingen virksomheder — intet at hente */
+      setEjendommeData([]);
+      setEjendommeTotalBfe(0);
+      return;
+    }
+
+    const fetchKey = [...uniqueCvrs].sort().join(',');
+    if (ejendomFetchKeyRef.current === fetchKey) return;
+    ejendomFetchKeyRef.current = fetchKey;
+
+    setEjendommeLoading(true);
+    fetch(`/api/ejendomme-by-owner?cvr=${uniqueCvrs.join(',')}`)
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`${res.status}`))))
+      .then((json) => {
+        setEjendommeData(json.ejendomme ?? []);
+        setEjendommeTotalBfe(json.totalBfe ?? 0);
+        setEjendommeManglerNoegle(json.manglerNoegle === true);
+        setEjendommeManglerAdgang(json.manglerAdgang === true);
+      })
+      .catch(() => {
+        setEjendommeData([]);
+      })
+      .finally(() => {
+        setEjendommeLoading(false);
+      });
+  }, [aktivTab, derived, relatedCompanies]);
 
   // ─── Tab config ──────────────────────────────────────────────────────────────
   const tabDef: { id: TabId; label: string; icon: React.ReactNode }[] = [
@@ -1062,10 +1123,102 @@ export default function PersonDetailPage({
 
           {/* ══ EJENDOMME ══ */}
           {aktivTab === 'properties' && (
-            <PlaceholderTab
-              label={c.tabs.properties}
-              icon={<Home size={32} className="text-slate-600" />}
-            />
+            <div className="space-y-4">
+              {/* Ingen ejede virksomheder — personen ejer ingen virksomheder */}
+              {!ejendommeLoading &&
+                !ejendommeManglerNoegle &&
+                !ejendommeManglerAdgang &&
+                derived?.ejerVirksomheder.length === 0 && (
+                  <div className="flex flex-col items-center justify-center py-12 text-center">
+                    <Home size={36} className="text-slate-600 mb-3" />
+                    <p className="text-slate-400 text-sm">
+                      {lang === 'da'
+                        ? 'Ingen registrerede ejerskaber fundet — personen ejer ingen aktive virksomheder med ejerandel.'
+                        : 'No registered ownership found — the person does not own any active companies with an ownership stake.'}
+                    </p>
+                  </div>
+                )}
+
+              {/* Loading */}
+              {ejendommeLoading && (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
+                  <span className="ml-2 text-slate-400 text-sm">
+                    {lang === 'da' ? 'Henter ejendomsportefølje…' : 'Loading property portfolio…'}
+                  </span>
+                </div>
+              )}
+
+              {/* Mangler nøgle / adgang */}
+              {!ejendommeLoading && ejendommeManglerNoegle && (
+                <div className="flex flex-col items-center justify-center py-12 text-center">
+                  <Home size={36} className="text-slate-600 mb-3" />
+                  <p className="text-slate-400 text-sm max-w-sm">
+                    {lang === 'da'
+                      ? 'Ejendomsopslag kræver Datafordeler OAuth-nøgler (DATAFORDELER_OAUTH_CLIENT_ID / CLIENT_SECRET).'
+                      : 'Property lookup requires Datafordeler OAuth keys (DATAFORDELER_OAUTH_CLIENT_ID / CLIENT_SECRET).'}
+                  </p>
+                </div>
+              )}
+              {!ejendommeLoading && ejendommeManglerAdgang && (
+                <div className="flex flex-col items-center justify-center py-12 text-center">
+                  <Home size={36} className="text-slate-600 mb-3" />
+                  <p className="text-slate-400 text-sm max-w-sm">
+                    {lang === 'da'
+                      ? 'Adgang til Ejerfortegnelsen (EJF) er ikke godkendt endnu. Ansøg om Dataadgang på datafordeler.dk.'
+                      : 'Access to the Danish land registry (EJF) has not been approved yet. Apply for Dataadgang at datafordeler.dk.'}
+                  </p>
+                </div>
+              )}
+
+              {/* Ingen ejendomme fundet */}
+              {!ejendommeLoading &&
+                !ejendommeManglerNoegle &&
+                !ejendommeManglerAdgang &&
+                ejendommeData.length === 0 &&
+                (derived?.ejerVirksomheder.length ?? 0) > 0 && (
+                  <div className="flex flex-col items-center justify-center py-12 text-center">
+                    <Home size={36} className="text-slate-600 mb-3" />
+                    <p className="text-slate-400 text-sm">
+                      {lang === 'da'
+                        ? 'Ingen registrerede ejendomme fundet for de tilknyttede virksomheder.'
+                        : 'No registered properties found for the linked companies.'}
+                    </p>
+                  </div>
+                )}
+
+              {/* Ejendomme grid */}
+              {!ejendommeLoading && ejendommeData.length > 0 && (
+                <>
+                  <div className="flex items-center justify-between">
+                    <p className="text-slate-400 text-sm">
+                      {lang === 'da'
+                        ? `${ejendommeData.length} ejendom${ejendommeData.length !== 1 ? 'me' : ''} fundet`
+                        : `${ejendommeData.length} propert${ejendommeData.length !== 1 ? 'ies' : 'y'} found`}
+                      {ejendommeTotalBfe > ejendommeData.length && (
+                        <span className="text-amber-400 ml-2">
+                          (
+                          {lang === 'da'
+                            ? `viser 100 af ${ejendommeTotalBfe}`
+                            : `showing 100 of ${ejendommeTotalBfe}`}
+                          )
+                        </span>
+                      )}
+                    </p>
+                    <span className="text-slate-500 text-xs">
+                      {lang === 'da'
+                        ? `Via ${derived?.ejerVirksomheder.length ?? 0} ejervirksomhed${(derived?.ejerVirksomheder.length ?? 0) !== 1 ? 'er' : ''}`
+                        : `Via ${derived?.ejerVirksomheder.length ?? 0} owned compan${(derived?.ejerVirksomheder.length ?? 0) !== 1 ? 'ies' : 'y'}`}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                    {ejendommeData.map((ej) => (
+                      <PropertyOwnerCard key={ej.bfeNummer} ejendom={ej} showOwner lang={lang} />
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
           )}
 
           {/* ══ GRUPPE ══ */}

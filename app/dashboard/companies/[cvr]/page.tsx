@@ -209,7 +209,6 @@ const tabIcons: Record<TabId, React.ReactNode> = {
 const tabOrder: TabId[] = [
   'overview',
   'diagram',
-  'diagram2',
   'properties',
   'companies',
   'financials',

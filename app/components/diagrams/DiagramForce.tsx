@@ -1240,19 +1240,23 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
           );
         }
 
+        const nodeClickRef = { startX: 0, startY: 0 };
         return (
           <g
             key={node.id}
             style={{ cursor: node.link ? 'pointer' : 'grab' }}
-            onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
+            onMouseDown={(e) => {
+              nodeClickRef.startX = e.clientX;
+              nodeClickRef.startY = e.clientY;
+              handleNodeMouseDown(e, node.id);
+            }}
             onMouseUp={(e) => {
-              // Naviger ved klik (mouseup uden bevægelse) — mere robust end onClick med didMove
               if (!node.link) return;
-              const dx = Math.abs(e.clientX - dragRef.current.startX);
-              const dy = Math.abs(e.clientY - dragRef.current.startY);
+              const dx = Math.abs(e.clientX - nodeClickRef.startX);
+              const dy = Math.abs(e.clientY - nodeClickRef.startY);
               if (dx < 5 && dy < 5) {
                 e.stopPropagation();
-                router.push(node.link);
+                window.location.href = node.link;
               }
             }}
           >

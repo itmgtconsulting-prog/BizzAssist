@@ -7048,12 +7048,16 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
                             )}
                           </div>
                         )}
-                        {h.debitor && (
+                        {Array.isArray(h.debitorer) && (h.debitorer as string[]).length > 0 && (
                           <div>
                             <p className="text-slate-500 text-[10px] uppercase">
                               {da ? 'Debitor' : 'Debtor'}
                             </p>
-                            <p className="text-slate-300">{String(h.debitor)}</p>
+                            {(h.debitorer as string[]).map((navn, di) => (
+                              <p key={di} className="text-slate-300">
+                                {navn}
+                              </p>
+                            ))}
                           </div>
                         )}
                         {h.rente != null && (

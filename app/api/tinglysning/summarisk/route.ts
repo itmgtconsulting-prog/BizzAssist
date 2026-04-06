@@ -96,7 +96,8 @@ export interface TLHaeftelse {
   dato: string | null;
   kreditor: string | null;
   kreditorCvr: string | null;
-  debitor: string | null;
+  /** Alle debitorer på hæftelsen — kan være flere ved fælles lån */
+  debitorer: string[];
   beloeb: number | null;
   valuta: string;
   rente: number | null;
@@ -318,9 +319,18 @@ export async function GET(req: NextRequest) {
 
       const prioritetStr = entry.match(/PrioritetNummer[^>]*>([^<]+)/)?.[1];
       const prioritet = prioritetStr ? parseInt(prioritetStr, 10) : null;
-      // Debitor
-      const debitorNavn =
-        entry.match(/DebitorInformation[\s\S]*?PersonName[^>]*>([^<]+)/)?.[1] ?? null;
+      // Debitor(er) — find alle DebitorInformation-blokke; én hæftelse kan have flere debitorer
+      const debitorBlocks = [
+        ...entry.matchAll(/DebitorInformation>([\s\S]*?)<\/[^>]*DebitorInformation/g),
+      ];
+      const debitorer = debitorBlocks
+        .map(
+          ([, info]) =>
+            info.match(/LegalUnitName[^>]*>([^<]+)/)?.[1] ??
+            info.match(/PersonName[^>]*>([^<]+)/)?.[1] ??
+            ''
+        )
+        .filter((n) => n.length > 0);
       // Rente
       const renteStr = entry.match(/HaeftelseRentePaalydendeSats[^>]*>([^<]+)/)?.[1];
       const rente = renteStr ? parseFloat(renteStr) : null;
@@ -342,7 +352,7 @@ export async function GET(req: NextRequest) {
         dato,
         kreditor,
         kreditorCvr,
-        debitor: debitorNavn,
+        debitorer,
         beloeb,
         valuta,
         rente,

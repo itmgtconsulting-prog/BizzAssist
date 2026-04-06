@@ -112,7 +112,7 @@ interface ForceLink extends SimulationLinkDatum<ForceNode> {
  * @param props - graph + lang
  */
 export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
-  const router = useRouter();
+  const _router = useRouter();
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [zoom, setZoom] = useState(1);
@@ -1194,7 +1194,7 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
                   style={{ cursor: 'pointer', pointerEvents: 'auto' }}
                   onClick={(e) => {
                     e.stopPropagation();
-                    if (item.link) router.push(item.link);
+                    if (item.link) window.location.href = item.link;
                   }}
                 >
                   {'•'} {item.label.length > 42 ? item.label.slice(0, 42) + '…' : item.label}
@@ -1243,10 +1243,12 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
         return (
           <g
             key={node.id}
-            style={{ cursor: 'grab' }}
+            style={{ cursor: node.link ? 'pointer' : 'grab' }}
             onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
             onClick={() => {
-              if (node.link && !dragRef.current.didMove) router.push(node.link);
+              if (node.link && !dragRef.current.didMove) {
+                window.location.href = node.link;
+              }
             }}
           >
             <rect
@@ -1431,7 +1433,7 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
                               className="pointer-events-none cursor-pointer"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                router.push(`/dashboard/owners/${p.enhedsNummer}`);
+                                window.location.href = `/dashboard/owners/${p.enhedsNummer}`;
                               }}
                               style={{ cursor: 'pointer', pointerEvents: 'auto' }}
                             >

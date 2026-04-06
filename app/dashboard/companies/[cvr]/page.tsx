@@ -82,8 +82,8 @@ import {
   Tooltip,
 } from 'recharts';
 
-/** Lazy-loaded diagram variant */
-const _DiagramForce = dynamic(() => import('@/app/components/diagrams/DiagramForce'), {
+/** Lazy-loaded diagram variants */
+const DiagramForce = dynamic(() => import('@/app/components/diagrams/DiagramForce'), {
   ssr: false,
 });
 const DiagramSimple = dynamic(() => import('@/app/components/diagrams/DiagramSimple'), {
@@ -180,6 +180,7 @@ function formatDatoKort(iso: string): string {
 type TabId =
   | 'overview'
   | 'diagram'
+  | 'diagram2'
   | 'tradeHistory'
   | 'properties'
   | 'companies'
@@ -193,6 +194,7 @@ type TabId =
 const tabIcons: Record<TabId, React.ReactNode> = {
   overview: <LayoutDashboard size={14} />,
   diagram: <Briefcase size={14} />,
+  diagram2: <Briefcase size={14} />,
   tradeHistory: <ArrowRightLeft size={14} />,
   properties: <Home size={14} />,
   companies: <Building2 size={14} />,
@@ -207,6 +209,7 @@ const tabIcons: Record<TabId, React.ReactNode> = {
 const tabOrder: TabId[] = [
   'overview',
   'diagram',
+  'diagram2',
   'properties',
   'companies',
   'financials',
@@ -317,6 +320,7 @@ export default function VirksomhedDetalje({ params }: PageProps) {
   const tabLabelMap: Record<TabId, string> = {
     overview: c.tabs.overview,
     diagram: lang === 'da' ? 'Relationsdiagram' : 'Relations Diagram',
+    diagram2: lang === 'da' ? 'Diagram' : 'Diagram',
     tradeHistory: c.tabs.tradeHistory,
     properties: c.tabs.properties,
     companies: c.tabs.companies,
@@ -888,7 +892,7 @@ export default function VirksomhedDetalje({ params }: PageProps) {
    * Kører igen når relatedCompanies ændres (datterselskaber loader ind).
    */
   useEffect(() => {
-    if (aktivTab !== 'properties' && aktivTab !== 'diagram') return;
+    if (aktivTab !== 'properties' && aktivTab !== 'diagram' && aktivTab !== 'diagram2') return;
 
     /* Saml CVR-numre: hovedvirksomhed + aktive datterselskaber */
     const cvrList = [
@@ -1792,10 +1796,33 @@ export default function VirksomhedDetalje({ params }: PageProps) {
             </div>
           )}
 
-          {/* ══ RELATIONSDIAGRAM (Force Graph) ══ */}
+          {/* ══ RELATIONSDIAGRAM (Force Graph — original) ══ */}
           {aktivTab === 'diagram' &&
             (() => {
-              // Build properties map grouped by owning CVR
+              const propertiesByCvr =
+                ejendommeData.length > 0
+                  ? ejendommeData.reduce((map, p) => {
+                      const cvrNum = parseInt(p.ownerCvr, 10);
+                      if (!map.has(cvrNum)) map.set(cvrNum, []);
+                      map.get(cvrNum)!.push(p as DiagramPropertySummary);
+                      return map;
+                    }, new Map<number, DiagramPropertySummary[]>())
+                  : undefined;
+              const diagramGraph = buildDiagramGraph(
+                data.name,
+                data.vat,
+                data.companydesc ?? null,
+                ownerChainShared,
+                relatedCompanies,
+                data.industrydesc ?? null,
+                propertiesByCvr
+              );
+              return <DiagramForce graph={diagramGraph} lang={lang} />;
+            })()}
+
+          {/* ══ DIAGRAM (Simpelt — nyt) ══ */}
+          {aktivTab === 'diagram2' &&
+            (() => {
               const propertiesByCvr =
                 ejendommeData.length > 0
                   ? ejendommeData.reduce((map, p) => {

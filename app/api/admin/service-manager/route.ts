@@ -26,6 +26,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import type { ServiceManagerScan } from '@/lib/supabase/types';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -137,10 +138,14 @@ export async function GET(): Promise<NextResponse> {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    // Fetch deployments and scan history in parallel
+    // Fetch deployments and scan history in parallel.
+    // Cast admin to any: service_manager_scans is not yet in the generated
+    // Database type — remove cast once `supabase gen types` is re-run.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const adminAny = createAdminClient() as any;
     const [deployments, scansResult] = await Promise.all([
       fetchVercelDeployments(),
-      createAdminClient()
+      adminAny
         .from('service_manager_scans')
         .select('*')
         .order('created_at', { ascending: false })
@@ -181,19 +186,23 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Ukendt action' }, { status: 400 });
     }
 
-    // Create the scan record in state 'running'
-    const admin = createAdminClient();
-    const { data: scan, error: insertErr } = await admin
+    // Create the scan record in state 'running'.
+    // Cast admin to any: service_manager_scans is not yet in the generated
+    // Database type — remove cast once `supabase gen types` is re-run.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const admin = createAdminClient() as any;
+    const { data: scanData, error: insertErr } = await admin
       .from('service_manager_scans')
       .insert({
         scan_type: 'manual',
         status: 'running',
         triggered_by: user.id,
         summary: null,
-        issues_found: [],
+        issues_found: [] as unknown[],
       })
       .select('id')
       .single();
+    const scan = scanData as Pick<ServiceManagerScan, 'id'> | null;
 
     if (insertErr || !scan) {
       console.error('[service-manager POST] insert error:', insertErr?.message);

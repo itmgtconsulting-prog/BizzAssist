@@ -3,21 +3,29 @@
 /**
  * Service Manager admin page — /dashboard/admin/service-manager
  *
- * Monitoring dashboard for the BizzAssist platform (BIZZ-86).
+ * Monitoring dashboard for the BizzAssist platform (BIZZ-86 v2).
  * Shows:
  *   - Recent Vercel deployments with build status
  *   - History of automated bug scans with categorised issues
- *   - "Run Bug Scan" button that triggers a new scan
+ *   - AI-proposed fix proposals with unified diff viewer
+ *   - Approve / Reject / Apply Hotfix controls for each fix
+ *   - Release Agent activity log
  *
- * Data is fetched from:
- *   - GET /api/admin/service-manager — deployments + scan history
- *   - POST /api/admin/service-manager { action: 'scan' } — trigger scan
+ * Data sources:
+ *   GET  /api/admin/service-manager          — deployments + scan history
+ *   POST /api/admin/service-manager          — trigger new scan
+ *   GET  /api/admin/service-manager/auto-fix?scanId=<id> — fixes for a scan
+ *   POST /api/admin/service-manager/auto-fix — propose fix for an issue
+ *   PATCH /api/admin/service-manager/auto-fix — approve / reject a fix
+ *   POST /api/admin/release-agent            — create hotfix / deploy / promote
+ *   GET  /api/admin/release-agent            — activity log
  *
  * Only accessible by admin users (app_metadata.isAdmin === true).
- * Polling every 5 seconds when a scan is in progress.
+ * Polling every 4 seconds when a scan is in progress.
  *
- * @see app/api/admin/service-manager/route.ts — API route
- * @see app/api/admin/service-manager/scan/route.ts — scan implementation
+ * @see app/api/admin/service-manager/route.ts       — main API
+ * @see app/api/admin/service-manager/auto-fix/route.ts — AI fix engine
+ * @see app/api/admin/release-agent/route.ts          — deployment workflow
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -45,6 +53,15 @@ import {
   CreditCard,
   AlertCircle,
   Wrench,
+  Sparkles,
+  ThumbsUp,
+  ThumbsDown,
+  GitBranch,
+  Terminal,
+  Eye,
+  EyeOff,
+  Zap,
+  ListChecks,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import type {
@@ -53,7 +70,34 @@ import type {
   ScanIssue,
 } from '@/app/api/admin/service-manager/route';
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+/** A fix proposal record from service_manager_fixes */
+interface FixRecord {
+  id: string;
+  scan_id: string;
+  issue_index: number;
+  file_path: string;
+  proposed_diff: string;
+  classification: 'bug-fix' | 'config-fix' | 'rejected';
+  status: 'proposed' | 'approved' | 'applied' | 'rejected';
+  claude_reasoning: string | null;
+  rejection_reason: string | null;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+}
+
+/** An activity log entry from service_manager_activity */
+interface ActivityRecord {
+  id: string;
+  action: string;
+  details: Record<string, unknown>;
+  created_by: string | null;
+  created_at: string;
+}
+
+// ─── Badge components ─────────────────────────────────────────────────────────
 
 /**
  * Badge showing a Vercel deployment state with appropriate colour.
@@ -171,15 +215,399 @@ function IssueBadge({ issue }: { issue: ScanIssue }) {
 }
 
 /**
- * Expandable row showing a single scan record and its issues.
+ * Badge for a fix's classification.
  *
- * @param scan - The scan record to display.
- * @param da - Whether to use Danish labels.
+ * @param classification - 'bug-fix' | 'config-fix' | 'rejected'
  */
-function ScanRow({ scan, da }: { scan: ScanRecord; da: boolean }) {
+function FixClassificationBadge({
+  classification,
+}: {
+  classification: FixRecord['classification'];
+}) {
+  const config: Record<FixRecord['classification'], { label: string; className: string }> = {
+    'bug-fix': { label: 'Bug Fix', className: 'bg-blue-500/15 text-blue-400 border-blue-500/30' },
+    'config-fix': {
+      label: 'Config Fix',
+      className: 'bg-teal-500/15 text-teal-400 border-teal-500/30',
+    },
+    rejected: { label: 'Afvist', className: 'bg-slate-500/15 text-slate-400 border-slate-500/30' },
+  };
+  const c = config[classification];
+  return (
+    <span
+      className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium border ${c.className}`}
+    >
+      {c.label}
+    </span>
+  );
+}
+
+/**
+ * Badge for a fix's lifecycle status.
+ *
+ * @param status - 'proposed' | 'approved' | 'applied' | 'rejected'
+ */
+function FixStatusBadge({ status }: { status: FixRecord['status'] }) {
+  const config: Record<
+    FixRecord['status'],
+    { label: string; className: string; icon: React.ReactNode }
+  > = {
+    proposed: {
+      label: 'Afventer',
+      className: 'bg-amber-500/15 text-amber-400 border-amber-500/30',
+      icon: <Clock size={10} />,
+    },
+    approved: {
+      label: 'Godkendt',
+      className: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
+      icon: <CheckCircle2 size={10} />,
+    },
+    applied: {
+      label: 'Anvendt',
+      className: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
+      icon: <GitBranch size={10} />,
+    },
+    rejected: {
+      label: 'Afvist',
+      className: 'bg-red-500/15 text-red-400 border-red-500/30',
+      icon: <XCircle size={10} />,
+    },
+  };
+  const c = config[status];
+  return (
+    <span
+      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium border ${c.className}`}
+    >
+      {c.icon} {c.label}
+    </span>
+  );
+}
+
+// ─── Diff viewer ──────────────────────────────────────────────────────────────
+
+/**
+ * Renders a unified diff with syntax highlighting.
+ * Added lines (+) are green, removed lines (-) are red, context lines are grey.
+ *
+ * @param diff - Unified diff string.
+ */
+function DiffViewer({ diff }: { diff: string }) {
+  if (!diff.trim()) {
+    return <p className="text-slate-500 text-xs italic px-3 py-2">Intet diff tilgængeligt.</p>;
+  }
+
+  return (
+    <pre className="text-xs font-mono overflow-x-auto leading-5 select-text">
+      {diff.split('\n').map((line, i) => {
+        let cls = 'text-slate-400';
+        if (line.startsWith('+++') || line.startsWith('---')) cls = 'text-slate-500';
+        else if (line.startsWith('@@')) cls = 'text-blue-400';
+        else if (line.startsWith('+')) cls = 'text-emerald-400 bg-emerald-500/5';
+        else if (line.startsWith('-')) cls = 'text-red-400 bg-red-500/5';
+        return (
+          <span key={i} className={`block px-3 ${cls}`}>
+            {line || ' '}
+          </span>
+        );
+      })}
+    </pre>
+  );
+}
+
+// ─── Fix card ─────────────────────────────────────────────────────────────────
+
+/**
+ * Card showing a single fix proposal with diff viewer and action buttons.
+ *
+ * @param fix - The fix record to display.
+ * @param da - Whether to use Danish labels.
+ * @param onReview - Callback when admin approves or rejects the fix.
+ * @param onApplyHotfix - Callback when admin clicks "Apply Hotfix".
+ */
+function FixCard({
+  fix,
+  da,
+  onReview,
+  onApplyHotfix,
+}: {
+  fix: FixRecord;
+  da: boolean;
+  onReview: (fixId: string, action: 'approve' | 'reject', reason?: string) => Promise<void>;
+  onApplyHotfix: (fixId: string) => Promise<void>;
+}) {
+  const [showDiff, setShowDiff] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
+  const [applying, setApplying] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
+  const [showRejectInput, setShowRejectInput] = useState(false);
+
+  /** Handle approve button click */
+  const handleApprove = async () => {
+    setReviewing(true);
+    try {
+      await onReview(fix.id, 'approve');
+    } finally {
+      setReviewing(false);
+    }
+  };
+
+  /** Handle reject confirmation */
+  const handleReject = async () => {
+    if (!showRejectInput) {
+      setShowRejectInput(true);
+      return;
+    }
+    setReviewing(true);
+    try {
+      await onReview(
+        fix.id,
+        'reject',
+        rejectReason || (da ? 'Afvist af admin' : 'Rejected by admin')
+      );
+      setShowRejectInput(false);
+    } finally {
+      setReviewing(false);
+    }
+  };
+
+  /** Handle apply hotfix button click */
+  const handleApplyHotfix = async () => {
+    setApplying(true);
+    try {
+      await onApplyHotfix(fix.id);
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  return (
+    <div className="border border-slate-700/50 rounded-xl overflow-hidden">
+      {/* Card header */}
+      <div className="flex items-start gap-3 px-4 py-3">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center flex-wrap gap-2 mb-1">
+            <FixClassificationBadge classification={fix.classification} />
+            <FixStatusBadge status={fix.status} />
+            <span className="text-slate-400 text-xs font-mono truncate">{fix.file_path}</span>
+          </div>
+          {fix.claude_reasoning && (
+            <p className="text-slate-300 text-xs mt-1 leading-relaxed">{fix.claude_reasoning}</p>
+          )}
+          {fix.rejection_reason && fix.status === 'rejected' && (
+            <p className="text-red-400/80 text-xs mt-1">
+              {da ? 'Afvisningsgrund:' : 'Rejection reason:'} {fix.rejection_reason}
+            </p>
+          )}
+          <p className="text-slate-600 text-xs mt-1.5">
+            {new Date(fix.created_at).toLocaleString(da ? 'da-DK' : 'en-GB', {
+              day: '2-digit',
+              month: 'short',
+              hour: '2-digit',
+              minute: '2-digit',
+            })}
+          </p>
+        </div>
+      </div>
+
+      {/* Diff toggle */}
+      <div className="border-t border-slate-700/30">
+        <button
+          onClick={() => setShowDiff((v) => !v)}
+          className="w-full flex items-center gap-2 px-4 py-2 text-slate-400 hover:text-white text-xs transition-colors hover:bg-slate-800/30"
+        >
+          {showDiff ? <EyeOff size={12} /> : <Eye size={12} />}
+          {showDiff ? (da ? 'Skjul diff' : 'Hide diff') : da ? 'Vis diff' : 'Show diff'}
+        </button>
+        {showDiff && (
+          <div className="border-t border-slate-700/30 bg-slate-900/60 max-h-72 overflow-y-auto">
+            <DiffViewer diff={fix.proposed_diff} />
+          </div>
+        )}
+      </div>
+
+      {/* Action buttons — only for proposed fixes */}
+      {fix.status === 'proposed' && fix.classification !== 'rejected' && (
+        <div className="border-t border-slate-700/30 px-4 py-3 flex flex-wrap items-center gap-2">
+          <button
+            onClick={handleApprove}
+            disabled={reviewing}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/30 text-emerald-400 text-xs font-medium rounded-lg transition-colors disabled:opacity-50"
+          >
+            {reviewing ? <Loader2 size={12} className="animate-spin" /> : <ThumbsUp size={12} />}
+            {da ? 'Godkend' : 'Approve'}
+          </button>
+
+          {showRejectInput ? (
+            <div className="flex items-center gap-2 flex-1">
+              <input
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                placeholder={da ? 'Begrundelse (valgfri)…' : 'Reason (optional)…'}
+                className="flex-1 min-w-0 px-2 py-1.5 bg-slate-800 border border-slate-600/50 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-red-500/50"
+                autoFocus
+                onKeyDown={(e) => e.key === 'Escape' && setShowRejectInput(false)}
+              />
+              <button
+                onClick={handleReject}
+                disabled={reviewing}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600/20 hover:bg-red-600/30 border border-red-500/30 text-red-400 text-xs font-medium rounded-lg transition-colors disabled:opacity-50"
+              >
+                {reviewing ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : (
+                  <ThumbsDown size={12} />
+                )}
+                {da ? 'Bekræft' : 'Confirm'}
+              </button>
+              <button
+                onClick={() => setShowRejectInput(false)}
+                className="text-slate-500 hover:text-slate-300 text-xs px-2"
+              >
+                {da ? 'Annuller' : 'Cancel'}
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={handleReject}
+              disabled={reviewing}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600/10 hover:bg-red-600/20 border border-red-500/20 text-red-400 text-xs font-medium rounded-lg transition-colors disabled:opacity-50"
+            >
+              <ThumbsDown size={12} />
+              {da ? 'Afvis' : 'Reject'}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Apply Hotfix — only for approved fixes */}
+      {fix.status === 'approved' && (
+        <div className="border-t border-slate-700/30 px-4 py-3 flex items-center gap-3">
+          <button
+            onClick={handleApplyHotfix}
+            disabled={applying}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-medium rounded-lg transition-colors"
+          >
+            {applying ? <Loader2 size={12} className="animate-spin" /> : <GitBranch size={12} />}
+            {applying
+              ? da
+                ? 'Opretter hotfix…'
+                : 'Creating hotfix…'
+              : da
+                ? 'Anvend Hotfix'
+                : 'Apply Hotfix'}
+          </button>
+          <p className="text-slate-500 text-xs">
+            {da
+              ? 'Opretter branch, committer og pusher til remote'
+              : 'Creates branch, commits and pushes to remote'}
+          </p>
+        </div>
+      )}
+
+      {/* Applied state */}
+      {fix.status === 'applied' && (
+        <div className="border-t border-slate-700/30 px-4 py-3 flex items-center gap-2 text-blue-400 text-xs">
+          <GitBranch size={13} />
+          {da ? 'Hotfix er oprettet og pushet til remote.' : 'Hotfix created and pushed to remote.'}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Scan row (with fixes panel) ──────────────────────────────────────────────
+
+/**
+ * Expandable scan row that shows issues and their fix proposals.
+ *
+ * @param scan - The scan record.
+ * @param da - Whether to use Danish labels.
+ * @param onHotfixApplied - Callback to refresh data after a hotfix is applied.
+ */
+function ScanRow({
+  scan,
+  da,
+  onHotfixApplied,
+}: {
+  scan: ScanRecord;
+  da: boolean;
+  onHotfixApplied: () => void;
+}) {
   const [open, setOpen] = useState(false);
+  const [fixes, setFixes] = useState<FixRecord[]>([]);
+  const [loadingFixes, setLoadingFixes] = useState(false);
+  const [proposingFor, setProposingFor] = useState<number | null>(null);
+  const [hotfixResult, setHotfixResult] = useState<Record<string, string>>({});
+
   const errorCount = scan.issues_found.filter((i) => i.severity === 'error').length;
   const warnCount = scan.issues_found.filter((i) => i.severity === 'warning').length;
+
+  /** Load fix proposals for this scan */
+  const loadFixes = useCallback(async () => {
+    if (!open) return;
+    setLoadingFixes(true);
+    try {
+      const res = await fetch(`/api/admin/service-manager/auto-fix?scanId=${scan.id}`);
+      if (res.ok) {
+        const data = await res.json();
+        setFixes(data.fixes ?? []);
+      }
+    } finally {
+      setLoadingFixes(false);
+    }
+  }, [open, scan.id]);
+
+  /** Reload fixes whenever the row is expanded */
+  useEffect(() => {
+    if (open) loadFixes();
+  }, [open, loadFixes]);
+
+  /** Propose an AI fix for a specific issue */
+  const proposeFix = async (issueIndex: number) => {
+    setProposingFor(issueIndex);
+    try {
+      const res = await fetch('/api/admin/service-manager/auto-fix', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scanId: scan.id, issueIndex }),
+      });
+      await loadFixes();
+      if (!res.ok) {
+        const err = await res.json();
+        console.warn('[auto-fix propose]', err);
+      }
+    } finally {
+      setProposingFor(null);
+    }
+  };
+
+  /** Handle fix review (approve / reject) */
+  const handleReview = async (fixId: string, action: 'approve' | 'reject', reason?: string) => {
+    await fetch('/api/admin/service-manager/auto-fix', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fixId, action, reason }),
+    });
+    await loadFixes();
+  };
+
+  /** Handle apply hotfix via Release Agent */
+  const handleApplyHotfix = async (fixId: string) => {
+    const res = await fetch('/api/admin/release-agent', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'create-hotfix', fixId }),
+    });
+    const data = await res.json();
+    if (res.ok && data.branch) {
+      setHotfixResult((prev) => ({ ...prev, [fixId]: data.prUrl ?? data.branch }));
+    }
+    await loadFixes();
+    onHotfixApplied();
+  };
+
+  /** Returns the fix for a given issue index, if any */
+  const fixForIssue = (idx: number) => fixes.find((f) => f.issue_index === idx);
 
   return (
     <div className="border border-slate-700/50 rounded-xl overflow-hidden">
@@ -220,49 +648,253 @@ function ScanRow({ scan, da }: { scan: ScanRecord; da: boolean }) {
         </span>
       </button>
 
-      {/* Expanded issue list */}
-      {open && scan.issues_found.length > 0 && (
-        <div className="border-t border-slate-700/50 divide-y divide-slate-700/30">
-          {scan.issues_found.map((issue, idx) => (
-            <div key={idx} className="px-4 py-3 flex gap-3 items-start">
-              <span className="mt-0.5 shrink-0">
-                {issue.severity === 'error' ? (
-                  <AlertCircle size={14} className="text-red-400" />
-                ) : (
-                  <AlertTriangle size={14} className="text-amber-400" />
-                )}
-              </span>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-0.5">
-                  <IssueBadge issue={issue} />
-                  <span className="text-white text-xs truncate">{issue.message}</span>
-                </div>
-                {issue.context && (
-                  <p className="text-slate-500 text-xs font-mono mt-0.5 truncate">
-                    {issue.context}
-                  </p>
-                )}
-              </div>
+      {/* Expanded content */}
+      {open && (
+        <div className="border-t border-slate-700/50">
+          {/* Issues */}
+          {scan.issues_found.length > 0 ? (
+            <div className="divide-y divide-slate-700/30">
+              {scan.issues_found.map((issue, idx) => {
+                const fix = fixForIssue(idx);
+                const isProposing = proposingFor === idx;
+                const hotfixInfo = fix ? hotfixResult[fix.id] : undefined;
+
+                return (
+                  <div key={idx} className="px-4 py-3">
+                    {/* Issue header */}
+                    <div className="flex gap-3 items-start mb-2">
+                      <span className="mt-0.5 shrink-0">
+                        {issue.severity === 'error' ? (
+                          <AlertCircle size={14} className="text-red-400" />
+                        ) : (
+                          <AlertTriangle size={14} className="text-amber-400" />
+                        )}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                          <IssueBadge issue={issue} />
+                          <span className="text-white text-xs truncate">{issue.message}</span>
+                        </div>
+                        {issue.context && (
+                          <p className="text-slate-500 text-xs font-mono mt-0.5 truncate">
+                            {issue.context}
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Auto-fix button — only when no fix exists yet */}
+                      {!fix && scan.status === 'completed' && (
+                        <button
+                          onClick={() => proposeFix(idx)}
+                          disabled={isProposing || proposingFor !== null}
+                          className="flex items-center gap-1.5 px-2.5 py-1 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/30 text-purple-300 text-xs rounded-lg transition-colors disabled:opacity-50 shrink-0"
+                        >
+                          {isProposing ? (
+                            <Loader2 size={11} className="animate-spin" />
+                          ) : (
+                            <Sparkles size={11} />
+                          )}
+                          {isProposing
+                            ? da
+                              ? 'Analyserer…'
+                              : 'Analysing…'
+                            : da
+                              ? 'Auto-Fix'
+                              : 'Auto-Fix'}
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Fix card */}
+                    {fix && (
+                      <div className="mt-2 ml-5">
+                        <FixCard
+                          fix={fix}
+                          da={da}
+                          onReview={handleReview}
+                          onApplyHotfix={handleApplyHotfix}
+                        />
+                        {hotfixInfo && (
+                          <p className="text-blue-400 text-xs mt-1.5 ml-1">
+                            {da ? 'PR/Branch: ' : 'PR/Branch: '}
+                            <span className="font-mono">{hotfixInfo}</span>
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
-          ))}
-        </div>
-      )}
+          ) : (
+            <>
+              {scan.status === 'completed' && (
+                <div className="px-4 py-3 flex items-center gap-2 text-emerald-400 text-xs">
+                  <CheckCircle2 size={14} />
+                  {da ? 'Ingen problemer fundet i dette scan.' : 'No issues found in this scan.'}
+                </div>
+              )}
+              {scan.status === 'running' && (
+                <div className="px-4 py-3 flex items-center gap-2 text-blue-400 text-xs">
+                  <Loader2 size={14} className="animate-spin" />
+                  {da ? 'Scan er i gang…' : 'Scan in progress…'}
+                </div>
+              )}
+            </>
+          )}
 
-      {/* Expanded — no issues */}
-      {open && scan.issues_found.length === 0 && scan.status === 'completed' && (
-        <div className="border-t border-slate-700/50 px-4 py-3 flex items-center gap-2 text-emerald-400 text-xs">
-          <CheckCircle2 size={14} />
-          {da ? 'Ingen problemer fundet i dette scan.' : 'No issues found in this scan.'}
+          {/* Loading fixes indicator */}
+          {loadingFixes && (
+            <div className="px-4 py-2 flex items-center gap-2 text-slate-500 text-xs border-t border-slate-700/30">
+              <Loader2 size={12} className="animate-spin" />
+              {da ? 'Indlæser fix-forslag…' : 'Loading fix proposals…'}
+            </div>
+          )}
         </div>
       )}
+    </div>
+  );
+}
 
-      {/* Still running */}
-      {open && scan.status === 'running' && (
-        <div className="border-t border-slate-700/50 px-4 py-3 flex items-center gap-2 text-blue-400 text-xs">
-          <Loader2 size={14} className="animate-spin" />
-          {da ? 'Scan er i gang…' : 'Scan in progress…'}
+// ─── Activity log entry ───────────────────────────────────────────────────────
+
+/**
+ * Maps an activity action string to a human-readable label and icon.
+ *
+ * @param action - The action identifier.
+ * @param da - Whether to use Danish labels.
+ */
+function activityLabel(
+  action: string,
+  da: boolean
+): { label: string; icon: React.ReactNode; cls: string } {
+  const map: Record<
+    string,
+    { label: string; labelDa: string; icon: React.ReactNode; cls: string }
+  > = {
+    auto_fix_proposed: {
+      label: 'Fix proposed',
+      labelDa: 'Fix foreslået',
+      icon: <Sparkles size={12} />,
+      cls: 'text-purple-400',
+    },
+    fix_approved: {
+      label: 'Fix approved',
+      labelDa: 'Fix godkendt',
+      icon: <ThumbsUp size={12} />,
+      cls: 'text-emerald-400',
+    },
+    fix_rejected: {
+      label: 'Fix rejected',
+      labelDa: 'Fix afvist',
+      icon: <ThumbsDown size={12} />,
+      cls: 'text-red-400',
+    },
+    hotfix_created: {
+      label: 'Hotfix created',
+      labelDa: 'Hotfix oprettet',
+      icon: <GitBranch size={12} />,
+      cls: 'text-blue-400',
+    },
+    hotfix_pushed: {
+      label: 'Hotfix pushed',
+      labelDa: 'Hotfix pushet',
+      icon: <GitBranch size={12} />,
+      cls: 'text-blue-300',
+    },
+    pr_created: {
+      label: 'PR created',
+      labelDa: 'PR oprettet',
+      icon: <Rocket size={12} />,
+      cls: 'text-cyan-400',
+    },
+    deploy_test: {
+      label: 'Test deployment',
+      labelDa: 'Test-deployment',
+      icon: <Zap size={12} />,
+      cls: 'text-amber-400',
+    },
+    promote_prod: {
+      label: 'Promoted to prod',
+      labelDa: 'Fremmet til prod',
+      icon: <CheckCircle2 size={12} />,
+      cls: 'text-emerald-400',
+    },
+    hotfix_error: {
+      label: 'Hotfix error',
+      labelDa: 'Hotfix-fejl',
+      icon: <XCircle size={12} />,
+      cls: 'text-red-400',
+    },
+    deploy_test_error: {
+      label: 'Deploy error',
+      labelDa: 'Deploy-fejl',
+      icon: <XCircle size={12} />,
+      cls: 'text-red-400',
+    },
+    promote_prod_error: {
+      label: 'Promote error',
+      labelDa: 'Promote-fejl',
+      icon: <XCircle size={12} />,
+      cls: 'text-red-400',
+    },
+  };
+  const m = map[action];
+  if (!m) {
+    return { label: action, icon: <Terminal size={12} />, cls: 'text-slate-400' };
+  }
+  return { label: da ? m.labelDa : m.label, icon: m.icon, cls: m.cls };
+}
+
+/**
+ * Single row in the activity log.
+ *
+ * @param activity - The activity record to display.
+ * @param da - Whether to use Danish labels.
+ */
+function ActivityRow({ activity, da }: { activity: ActivityRecord; da: boolean }) {
+  const [showDetails, setShowDetails] = useState(false);
+  const { label, icon, cls } = activityLabel(activity.action, da);
+  const hasDetails = Object.keys(activity.details).length > 0;
+
+  return (
+    <div className="flex items-start gap-3 px-4 py-2.5 hover:bg-slate-800/20 transition-colors">
+      <span className={`mt-0.5 shrink-0 ${cls}`}>{icon}</span>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className={`text-xs font-medium ${cls}`}>{label}</span>
+          {!!activity.details.branch && (
+            <span className="text-slate-400 text-xs font-mono">
+              {String(activity.details.branch)}
+            </span>
+          )}
+          {!!activity.details.error && (
+            <span className="text-red-400 text-xs truncate max-w-[240px]">
+              {String(activity.details.error)}
+            </span>
+          )}
+          {hasDetails && (
+            <button
+              onClick={() => setShowDetails((v) => !v)}
+              className="text-slate-600 hover:text-slate-400 text-xs"
+            >
+              {showDetails ? '▲' : '▼'}
+            </button>
+          )}
         </div>
-      )}
+        {showDetails && (
+          <pre className="text-slate-500 text-xs font-mono mt-1 overflow-x-auto whitespace-pre-wrap break-all">
+            {JSON.stringify(activity.details, null, 2)}
+          </pre>
+        )}
+      </div>
+      <span className="text-slate-600 text-xs shrink-0 whitespace-nowrap">
+        {new Date(activity.created_at).toLocaleTimeString(da ? 'da-DK' : 'en-GB', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+        })}
+      </span>
     </div>
   );
 }
@@ -270,8 +902,8 @@ function ScanRow({ scan, da }: { scan: ScanRecord; da: boolean }) {
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 /**
- * Service Manager admin page — monitoring dashboard for BIZZ-86.
- * Shows Vercel deployment status and scan history; allows triggering new scans.
+ * Service Manager v2 admin page.
+ * Monitoring, AI auto-fix proposals, and Release Agent controls.
  */
 export default function ServiceManagerPage() {
   const router = useRouter();
@@ -280,30 +912,42 @@ export default function ServiceManagerPage() {
 
   const [deployments, setDeployments] = useState<VercelDeployment[]>([]);
   const [scans, setScans] = useState<ScanRecord[]>([]);
+  const [activities, setActivities] = useState<ActivityRecord[]>([]);
   const [configured, setConfigured] = useState(false);
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  const [activeTab, setActiveTab] = useState<'scans' | 'activity'>('scans');
 
   /** Ref used to cancel polling when component unmounts */
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  /** Fetch deployment + scan data from the API */
+  /** Fetch deployment + scan data and activity log */
   const refresh = useCallback(async () => {
     try {
-      const res = await fetch('/api/admin/service-manager');
-      if (res.status === 403) {
+      const [mainRes, activityRes] = await Promise.all([
+        fetch('/api/admin/service-manager'),
+        fetch('/api/admin/release-agent?limit=50'),
+      ]);
+
+      if (mainRes.status === 403) {
         setIsAdmin(false);
         return;
       }
-      if (!res.ok) return;
+      if (!mainRes.ok) return;
+
       setIsAdmin(true);
-      const data = await res.json();
+      const data = await mainRes.json();
       setDeployments(data.deployments ?? []);
       setScans(data.scans ?? []);
       setConfigured(data.configured ?? false);
       setLastRefresh(new Date());
+
+      if (activityRes.ok) {
+        const actData = await activityRes.json();
+        setActivities(actData.activities ?? []);
+      }
     } catch {
       // Network error — keep existing data
     }
@@ -339,16 +983,22 @@ export default function ServiceManagerPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'scan' }),
       });
-      if (res.ok) {
-        // Immediately refresh so the 'running' record appears
-        await refresh();
-      }
+      if (res.ok) await refresh();
     } finally {
       setScanning(false);
     }
   };
 
-  // ── Access denied ─────────────────────────────────────────────────────────
+  // ── Derived stats ──────────────────────────────────────────────────────────
+  const totalScans = scans.length;
+  const openIssues = scans
+    .filter((s) => s.status === 'completed')
+    .flatMap((s) => s.issues_found)
+    .filter((i) => i.severity === 'error').length;
+  const lastScan = scans[0] ?? null;
+  const hasRunning = scans.some((s) => s.status === 'running');
+
+  // ── Access denied ──────────────────────────────────────────────────────────
   if (!loading && isAdmin === false) {
     return (
       <div className="flex-1 flex items-center justify-center text-slate-400">
@@ -359,15 +1009,6 @@ export default function ServiceManagerPage() {
       </div>
     );
   }
-
-  // ── Derived stats ──────────────────────────────────────────────────────────
-  const totalScans = scans.length;
-  const openIssues = scans
-    .filter((s) => s.status === 'completed')
-    .flatMap((s) => s.issues_found)
-    .filter((i) => i.severity === 'error').length;
-  const lastScan = scans[0] ?? null;
-  const hasRunning = scans.some((s) => s.status === 'running');
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -384,18 +1025,16 @@ export default function ServiceManagerPage() {
         <div className="flex items-center gap-3 mb-1">
           <Wrench size={22} className="text-blue-400" />
           <div>
-            <h1 className="text-white text-xl font-bold">
-              {da ? 'Service Manager' : 'Service Manager'}
-            </h1>
+            <h1 className="text-white text-xl font-bold">Service Manager</h1>
             <p className="text-slate-400 text-sm">
               {da
-                ? 'Overvågning af deployments og automatisk fejlscanning'
-                : 'Deployment monitoring and automated bug scanning'}
+                ? 'Overvågning, AI auto-fix og release-agent'
+                : 'Monitoring, AI auto-fix and release agent'}
             </p>
           </div>
         </div>
 
-        {/* Tab navigation — mirrors other admin pages */}
+        {/* Admin tab navigation */}
         <div className="flex gap-1 -mb-px overflow-x-auto mt-4">
           <Link
             href="/dashboard/admin/users"
@@ -433,7 +1072,6 @@ export default function ServiceManagerPage() {
           >
             <ShieldCheck size={14} /> {da ? 'Sikkerhed' : 'Security'}
           </Link>
-          {/* Active tab */}
           <span className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-blue-500 text-blue-300 font-medium cursor-default whitespace-nowrap">
             <Wrench size={14} /> {da ? 'Service Manager' : 'Service Manager'}
           </span>
@@ -491,13 +1129,13 @@ export default function ServiceManagerPage() {
                 </p>
               </div>
               <div className="bg-slate-800/50 border border-slate-700/50 rounded-xl px-4 py-3">
-                <p className="text-slate-400 text-xs mb-1">{da ? 'Deployments' : 'Deployments'}</p>
-                <p className="text-white text-2xl font-bold">{deployments.length}</p>
+                <p className="text-slate-400 text-xs mb-1">{da ? 'Aktiviteter' : 'Activities'}</p>
+                <p className="text-white text-2xl font-bold">{activities.length}</p>
               </div>
             </div>
 
             {/* ─── Action bar ─── */}
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
               <button
                 onClick={startScan}
                 disabled={scanning || hasRunning}
@@ -603,33 +1241,71 @@ export default function ServiceManagerPage() {
               )}
             </section>
 
-            {/* ─── Scan history ─── */}
+            {/* ─── Scan history / Activity log tabs ─── */}
             <section>
-              <div className="flex items-center gap-2 mb-3">
-                <Bug size={16} className="text-slate-400" />
-                <h2 className="text-slate-200 text-sm font-semibold">
+              <div className="flex items-center gap-4 mb-3">
+                <button
+                  onClick={() => setActiveTab('scans')}
+                  className={`flex items-center gap-2 text-sm font-semibold pb-1 border-b-2 transition-colors ${
+                    activeTab === 'scans'
+                      ? 'text-white border-blue-500'
+                      : 'text-slate-400 border-transparent hover:text-slate-200'
+                  }`}
+                >
+                  <Bug size={15} />
                   {da ? 'Scanhistorik' : 'Scan History'}
-                </h2>
-                {hasRunning && (
-                  <span className="flex items-center gap-1 text-blue-400 text-xs">
-                    <Activity size={12} className="animate-pulse" />
-                    {da ? 'opdaterer…' : 'updating…'}
-                  </span>
-                )}
+                  {hasRunning && <Activity size={12} className="text-blue-400 animate-pulse" />}
+                </button>
+                <button
+                  onClick={() => setActiveTab('activity')}
+                  className={`flex items-center gap-2 text-sm font-semibold pb-1 border-b-2 transition-colors ${
+                    activeTab === 'activity'
+                      ? 'text-white border-blue-500'
+                      : 'text-slate-400 border-transparent hover:text-slate-200'
+                  }`}
+                >
+                  <ListChecks size={15} />
+                  {da ? 'Aktivitetslog' : 'Activity Log'}
+                  {activities.length > 0 && (
+                    <span className="text-xs bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded-full">
+                      {activities.length}
+                    </span>
+                  )}
+                </button>
               </div>
 
-              {scans.length === 0 ? (
-                <div className="bg-slate-800/30 border border-slate-700/40 rounded-xl px-4 py-6 text-center text-slate-500 text-sm">
-                  {da
-                    ? 'Ingen scans endnu. Tryk "Kør fejlscan" for at starte.'
-                    : 'No scans yet. Click "Run Bug Scan" to start.'}
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {scans.map((scan) => (
-                    <ScanRow key={scan.id} scan={scan} da={da} />
-                  ))}
-                </div>
+              {activeTab === 'scans' && (
+                <>
+                  {scans.length === 0 ? (
+                    <div className="bg-slate-800/30 border border-slate-700/40 rounded-xl px-4 py-6 text-center text-slate-500 text-sm">
+                      {da
+                        ? 'Ingen scans endnu. Tryk "Kør fejlscan" for at starte.'
+                        : 'No scans yet. Click "Run Bug Scan" to start.'}
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {scans.map((scan) => (
+                        <ScanRow key={scan.id} scan={scan} da={da} onHotfixApplied={refresh} />
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+
+              {activeTab === 'activity' && (
+                <>
+                  {activities.length === 0 ? (
+                    <div className="bg-slate-800/30 border border-slate-700/40 rounded-xl px-4 py-6 text-center text-slate-500 text-sm">
+                      {da ? 'Ingen aktiviteter endnu.' : 'No activity yet.'}
+                    </div>
+                  ) : (
+                    <div className="bg-slate-800/30 border border-slate-700/40 rounded-xl divide-y divide-slate-700/30 overflow-hidden">
+                      {activities.map((a) => (
+                        <ActivityRow key={a.id} activity={a} da={da} />
+                      ))}
+                    </div>
+                  )}
+                </>
               )}
             </section>
           </>

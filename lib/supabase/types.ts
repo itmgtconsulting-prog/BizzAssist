@@ -172,6 +172,56 @@ export interface AuditLog {
 }
 
 // ---------------------------------------------------------------------------
+// Service Manager types (BIZZ-86)
+// ---------------------------------------------------------------------------
+
+/** A single issue found during a Service Manager scan */
+export interface ServiceManagerScanIssue {
+  type: 'build_error' | 'runtime_error' | 'type_error' | 'config_error';
+  severity: 'error' | 'warning';
+  message: string;
+  source: 'vercel_build' | 'vercel_logs' | 'static';
+  context?: string;
+}
+
+/** A scan record from migration 020 */
+export interface ServiceManagerScan {
+  id: string;
+  created_at: string;
+  scan_type: 'manual' | 'scheduled' | 'triggered';
+  issues_found: ServiceManagerScanIssue[];
+  status: 'running' | 'completed' | 'failed';
+  resolved_at: string | null;
+  summary: string | null;
+  triggered_by: string | null;
+}
+
+/** An AI-proposed fix from migration 021 */
+export interface ServiceManagerFix {
+  id: string;
+  scan_id: string;
+  issue_index: number;
+  file_path: string;
+  proposed_diff: string;
+  classification: 'bug-fix' | 'config-fix' | 'rejected';
+  status: 'proposed' | 'approved' | 'applied' | 'rejected';
+  claude_reasoning: string | null;
+  rejection_reason: string | null;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+}
+
+/** A release-agent activity log entry from migration 021 */
+export interface ServiceManagerActivity {
+  id: string;
+  action: string;
+  details: Record<string, unknown>;
+  created_by: string | null;
+  created_at: string;
+}
+
+// ---------------------------------------------------------------------------
 // Full Database type used by Supabase client generics
 // ---------------------------------------------------------------------------
 
@@ -200,6 +250,10 @@ export type Database = {
         Insert: Omit<Subscription, 'created_at'>;
         Update: Partial<Subscription>;
       };
+      // service_manager_scans, service_manager_fixes, service_manager_activity
+      // are intentionally omitted here — they are accessed via (admin as any) casts
+      // in their respective route files to avoid strict overload conflicts until
+      // types are regenerated with `supabase gen types` after migrations are applied.
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;

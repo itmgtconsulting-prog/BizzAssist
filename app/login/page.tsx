@@ -133,6 +133,12 @@ function LoginForm() {
         if (result.oauthProvider) {
           setDetectedProvider(result.oauthProvider);
         }
+      } else if (result?.mfaRequired) {
+        // MFA step needed — navigate client-side so session cookies are preserved.
+        // mfaEnrolled=true  → TOTP challenge   (/login/mfa)
+        // mfaEnrolled=false → first-time setup (/login/mfa/enroll)
+        window.location.href = result.mfaEnrolled ? '/login/mfa' : '/login/mfa/enroll';
+        return; // Keep loading state while redirecting
       } else {
         // Login succeeded — redirect client-side so cookies are properly set.
         // Hard redirect (window.location) ensures proxy.ts runs and session is valid.

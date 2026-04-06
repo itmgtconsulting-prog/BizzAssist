@@ -24,8 +24,14 @@ import { createAdminClient } from '@/lib/supabase/admin';
 
 export interface AuthResult {
   error: string | null;
-  /** True if 2FA challenge is required before the session is fully elevated */
+  /** True if a 2FA step is required before the session is fully elevated */
   mfaRequired?: boolean;
+  /**
+   * Only set when mfaRequired is true.
+   * true  → TOTP is already enrolled, redirect to /login/mfa for the challenge.
+   * false → No TOTP enrolled yet, redirect to /login/mfa/enroll to set it up first.
+   */
+  mfaEnrolled?: boolean;
   /**
    * Set when error === 'oauth_user_no_password'.
    * Contains the OAuth provider the user registered with (e.g. 'azure', 'google', 'linkedin_oidc').
@@ -91,10 +97,14 @@ export async function signIn(
     return { error: 'unexpected_error' };
   }
 
-  // Check if MFA challenge is required.
-  // OAuth users (azure, google, linkedin_oidc) already authenticate with 2FA
-  // at their identity provider — we must NOT require an additional TOTP step.
-  // Only users who signed in with the 'email' provider are subject to BizzAssist 2FA.
+  // Check if MFA is required.
+  // OAuth users (azure, google, linkedin_oidc) already authenticate with 2FA at
+  // their identity provider — do NOT add a second TOTP step for them.
+  // Email/password users MUST use TOTP 2FA — enforce both enrollment and challenge.
+  //
+  // We return mfaRequired here rather than calling redirect() directly because
+  // redirect() in server actions can fail to propagate session cookies to the
+  // browser in some Next.js versions (see note near the bottom of this function).
   const {
     data: { user: userForMfa },
   } = await supabase.auth.getUser();
@@ -105,9 +115,22 @@ export async function signIn(
     providers.some((p) => ['azure', 'google', 'linkedin_oidc'].includes(p));
 
   if (!isOAuthOnly) {
+    // List enrolled TOTP factors to decide which MFA step is needed.
+    const { data: factorsData } = await supabase.auth.mfa.listFactors();
+    const verifiedTotp = factorsData?.totp?.find((f) => f.status === 'verified');
+
+    if (!verifiedTotp) {
+      // No TOTP factor enrolled yet — send user to the enrollment page.
+      // The enrollment page runs challengeAndVerify which elevates the session
+      // to aal2 on success, so no separate challenge step is needed afterwards.
+      return { error: null, mfaRequired: true, mfaEnrolled: false };
+    }
+
+    // Factor is enrolled — check if the session still needs to be elevated.
     const { data: aalData } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
     if (aalData?.nextLevel === 'aal2' && aalData.nextLevel !== aalData.currentLevel) {
-      redirect('/login/mfa');
+      // Session is aal1 but aal2 is required — redirect to TOTP challenge.
+      return { error: null, mfaRequired: true, mfaEnrolled: true };
     }
   }
 

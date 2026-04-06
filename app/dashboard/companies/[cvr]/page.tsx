@@ -66,6 +66,7 @@ import { useSubscription } from '@/app/context/SubscriptionContext';
 import { useSubscriptionAccess } from '@/app/components/SubscriptionGate';
 import { resolvePlan, formatTokens, isSubscriptionFunctional } from '@/app/lib/subscriptions';
 import { buildDiagramGraph } from '@/app/components/diagrams/DiagramData';
+import type { DiagramPropertySummary } from '@/app/components/diagrams/DiagramData';
 import dynamic from 'next/dynamic';
 import VerifiedLinks from '@/app/components/VerifiedLinks';
 import {
@@ -677,7 +678,7 @@ export default function VirksomhedDetalje({ params }: PageProps) {
    * Bruger ejendomFetchKeyRef til at undgå duplicate fetches for samme CVR-sæt.
    */
   useEffect(() => {
-    if (aktivTab !== 'properties') return;
+    if (aktivTab !== 'properties' && aktivTab !== 'diagram') return;
 
     /* Saml CVR-numre: hovedvirksomhed + aktive datterselskaber */
     const cvrList = [
@@ -1583,13 +1584,24 @@ export default function VirksomhedDetalje({ params }: PageProps) {
           {/* ══ RELATIONSDIAGRAM (Force Graph) ══ */}
           {aktivTab === 'diagram' &&
             (() => {
+              // Build properties map grouped by owning CVR
+              const propertiesByCvr =
+                ejendommeData.length > 0
+                  ? ejendommeData.reduce((map, p) => {
+                      const cvrNum = parseInt(p.ownerCvr, 10);
+                      if (!map.has(cvrNum)) map.set(cvrNum, []);
+                      map.get(cvrNum)!.push(p as DiagramPropertySummary);
+                      return map;
+                    }, new Map<number, DiagramPropertySummary[]>())
+                  : undefined;
               const diagramGraph = buildDiagramGraph(
                 data.name,
                 data.vat,
                 data.companydesc ?? null,
                 ownerChainShared,
                 relatedCompanies,
-                data.industrydesc ?? null
+                data.industrydesc ?? null,
+                propertiesByCvr
               );
               return <DiagramForce graph={diagramGraph} lang={lang} />;
             })()}

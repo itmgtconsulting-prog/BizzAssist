@@ -25,6 +25,8 @@ const NODE_W = 320;
 const NODE_H = 64;
 const NODE_H_EXPAND = 78;
 const NODE_H_PERSON = 34;
+/** Property node height — 3 text lines (address + BFE + ejendomstype) */
+const NODE_H_PROPERTY = 72;
 
 /** Extra height per noeglePerson row inside a company box */
 const PERSON_ROW_H = 14;
@@ -36,6 +38,7 @@ const OVERFLOW_INITIAL_SHOW = 5;
 /** Compute node height — expandedOverflowIds makes overflow nodes taller when expanded */
 function getNodeH(node: DiagramNode, expandedOverflowIds?: Set<string>): number {
   if (node.type === 'person') return NODE_H_PERSON;
+  if (node.type === 'property') return NODE_H_PROPERTY;
   // Overflow list node
   if (node.overflowItems) {
     const isExpanded = expandedOverflowIds?.has(node.id) ?? false;
@@ -313,18 +316,45 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
       if (!byDepth.has(d)) byDepth.set(d, []);
       byDepth.get(d)!.push(node.id);
     }
-    // Re-order each depth group: persons first, then companies (so persons are on top rows)
+    // Re-order each depth group: persons first, then companies, then properties
+    // Each type group is padded to a row boundary so they never share a sub-row.
     for (const [depth, ids] of byDepth) {
       const persons = ids.filter((id) => nodeById.get(id)?.type === 'person');
-      const companies = ids.filter((id) => nodeById.get(id)?.type !== 'person');
-      // Only re-order if there's a mix — pad persons to fill a complete row to prevent mixing
-      if (persons.length > 0 && companies.length > 0) {
+      const properties = ids.filter((id) => nodeById.get(id)?.type === 'property');
+      const companies = ids.filter((id) => {
+        const t = nodeById.get(id)?.type;
+        return t !== 'person' && t !== 'property';
+      });
+
+      const hasMixedTypes =
+        (persons.length > 0 && companies.length > 0) ||
+        (properties.length > 0 && (persons.length > 0 || companies.length > 0));
+
+      if (hasMixedTypes) {
+        // Pad persons so companies start on a fresh row
         const paddedPersons = [...persons];
-        // Pad to next multiple of MAX_PER_ROW so companies start on a fresh row
-        while (paddedPersons.length % MAX_PER_ROW !== 0) {
+        while (
+          persons.length > 0 &&
+          companies.length > 0 &&
+          paddedPersons.length % MAX_PER_ROW !== 0
+        ) {
           paddedPersons.push('__pad__');
         }
-        byDepth.set(depth, [...paddedPersons, ...companies]);
+        // Pad companies so properties start on a fresh row
+        const paddedCompanies = [...companies];
+        while (
+          properties.length > 0 &&
+          companies.length > 0 &&
+          paddedCompanies.length % MAX_PER_ROW !== 0
+        ) {
+          paddedCompanies.push('__pad__');
+        }
+        byDepth.set(depth, [...paddedPersons, ...paddedCompanies, ...properties]);
+      } else if (properties.length > 0 && companies.length > 0) {
+        // Only companies + properties (no persons): pad companies, then properties
+        const paddedCompanies = [...companies];
+        while (paddedCompanies.length % MAX_PER_ROW !== 0) paddedCompanies.push('__pad__');
+        byDepth.set(depth, [...paddedCompanies, ...properties]);
       }
     }
 
@@ -1248,7 +1278,7 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
                           {node.label.length > 44 ? node.label.slice(0, 44) + '…' : node.label}
                         </text>
                       )}
-                      {/* Person's role in this company OR CVR number */}
+                      {/* Person's role in this company OR CVR number OR BFE number for properties */}
                       {node.personRolle ? (
                         <text
                           x={x + 30}
@@ -1271,6 +1301,16 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
                           className="pointer-events-none"
                         >
                           CVR {node.cvr}
+                        </text>
+                      ) : isProperty && node.bfeNummer ? (
+                        <text
+                          x={x + 30}
+                          y={topY + 23}
+                          fill="rgba(110,231,183,0.8)"
+                          fontSize="9"
+                          className="pointer-events-none"
+                        >
+                          BFE {node.bfeNummer.toLocaleString('da-DK')}
                         </text>
                       ) : null}
                       {/* Branche */}

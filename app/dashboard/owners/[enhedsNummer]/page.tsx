@@ -41,6 +41,7 @@ import type { EjendomSummary } from '@/app/api/ejendomme-by-owner/route';
 import PropertyOwnerCard from '@/app/components/ejendomme/PropertyOwnerCard';
 import { saveRecentPerson } from '@/app/lib/recentPersons';
 import { buildPersonDiagramGraph } from '@/app/components/diagrams/DiagramData';
+import type { DiagramPropertySummary } from '@/app/components/diagrams/DiagramData';
 import dynamic from 'next/dynamic';
 import VerifiedLinks from '@/app/components/VerifiedLinks';
 import { useSubscription } from '@/app/context/SubscriptionContext';
@@ -604,7 +605,7 @@ export default function PersonDetailPage({
    * Bruger ejendomFetchKeyRef til at undgå duplicate fetches for samme CVR-sæt.
    */
   useEffect(() => {
-    if (aktivTab !== 'properties' || !derived) return;
+    if ((aktivTab !== 'properties' && aktivTab !== 'relations') || !derived) return;
 
     /* Saml CVR-numre for direkte ejede virksomheder */
     const ejerCvrs = derived.ejerVirksomheder.map((v) => String(v.cvr).padStart(8, '0'));
@@ -1110,13 +1111,24 @@ export default function PersonDetailPage({
           {/* ══ RELATIONSDIAGRAM (Force Graph — identical to company page) ══ */}
           {aktivTab === 'relations' &&
             (() => {
+              // Build properties map grouped by owning CVR
+              const propertiesByCvr =
+                ejendommeData.length > 0
+                  ? ejendommeData.reduce((map, p) => {
+                      const cvrNum = parseInt(p.ownerCvr, 10);
+                      if (!map.has(cvrNum)) map.set(cvrNum, []);
+                      map.get(cvrNum)!.push(p as DiagramPropertySummary);
+                      return map;
+                    }, new Map<number, DiagramPropertySummary[]>())
+                  : undefined;
               const diagramGraph = buildPersonDiagramGraph(
                 data.navn,
                 data.enhedsNummer,
                 topLevelEjer,
                 relatedCompanies,
                 noeglePersonerMap,
-                andreVirksomheder
+                andreVirksomheder,
+                propertiesByCvr
               );
               return <DiagramForce graph={diagramGraph} lang={lang} />;
             })()}

@@ -35,18 +35,34 @@ export interface DiagramNodePerson {
   rolle: string;
 }
 
+/** Minimal property summary for diagram rendering */
+export interface DiagramPropertySummary {
+  /** BFE-nummer (Bestemt Fast Ejendom) */
+  bfeNummer: number;
+  /** CVR-nummer på den ejende virksomhed */
+  ownerCvr: string;
+  /** Adresse (vejnavn + husnr) */
+  adresse: string | null;
+  /** Ejendomstype (f.eks. "Normal ejendom", "Ejerlejlighed") */
+  ejendomstype: string | null;
+  /** DAWA adgangsadresse UUID — til link til detaljeside */
+  dawaId: string | null;
+}
+
 /** A node in the diagram graph */
 export interface DiagramNode {
   /** Unique ID (enhedsNummer or CVR or generated) */
   id: string;
   /** Display label */
   label: string;
-  /** Secondary label (company form, etc.) */
+  /** Secondary label (company form, ejendomstype, etc.) */
   sublabel?: string;
   /** Node type for styling */
   type: 'person' | 'company' | 'main' | 'property' | 'status';
   /** CVR number (companies only) */
   cvr?: number;
+  /** BFE number (property nodes only) */
+  bfeNummer?: number;
   /** Industry / branche description */
   branche?: string;
   /** Link URL for navigation */
@@ -99,15 +115,21 @@ const MAX_CHILDREN_PER_PARENT = 15;
 
 // ─── Graph Builder ─────────────────────────────────────────────────────────
 
+/** Max properties shown per company node before capping (no overflow node) */
+const MAX_PROPS_PER_COMPANY = 6;
+
 /**
  * Builds a flat graph (nodes + edges) from owner chain and related companies.
  * Marks co-owners (nodes not on the main ownership path) as collapsible.
+ * Optionally adds owned property nodes as leaves below each company node.
  *
  * @param mainName - Name of the currently viewed company
  * @param mainCvr - CVR of the currently viewed company
  * @param mainForm - Company form description
  * @param ownerChain - Resolved owner chain (upward hierarchy)
  * @param relatedCompanies - Subsidiaries / related companies (downward)
+ * @param mainBranche - Main company industry description
+ * @param propertiesByCvr - Map of CVR → owned properties to add as leaf nodes
  * @returns DiagramGraph with nodes and edges
  */
 export function buildDiagramGraph(
@@ -116,7 +138,8 @@ export function buildDiagramGraph(
   mainForm: string | null,
   ownerChain: OwnerChainNode[],
   relatedCompanies: RelateretVirksomhed[],
-  mainBranche?: string | null
+  mainBranche?: string | null,
+  propertiesByCvr?: Map<number, DiagramPropertySummary[]>
 ): DiagramGraph {
   const nodes: DiagramNode[] = [];
   const edges: DiagramEdge[] = [];
@@ -325,6 +348,34 @@ export function buildDiagramGraph(
     }
   }
 
+  // ── Property nodes — owned by company nodes already in the graph ──
+  // Snapshot company node IDs before adding properties to avoid iterating new entries
+  if (propertiesByCvr) {
+    const companyNodes = nodes.filter((n) => n.cvr != null && !n.overflowItems);
+    for (const companyNode of companyNodes) {
+      const cvr = companyNode.cvr!;
+      const props = propertiesByCvr.get(cvr);
+      if (!props || props.length === 0) continue;
+
+      const shown = props.slice(0, MAX_PROPS_PER_COMPANY);
+      for (const p of shown) {
+        const propId = `bfe-${p.bfeNummer}`;
+        if (seenIds.has(propId)) continue;
+        seenIds.add(propId);
+        const link = p.dawaId ? `/dashboard/ejendomme/${p.dawaId}` : undefined;
+        nodes.push({
+          id: propId,
+          label: p.adresse ?? `BFE ${p.bfeNummer}`,
+          sublabel: p.ejendomstype ?? undefined,
+          type: 'property',
+          bfeNummer: p.bfeNummer,
+          link,
+        });
+        edges.push({ from: companyNode.id, to: propId });
+      }
+    }
+  }
+
   // ── Count expandable children per node (co-owners grouped by their target) ──
   const coOwnerCountByTarget = new Map<string, number>();
   for (const n of nodes) {
@@ -365,7 +416,7 @@ interface PersonCompany {
 
 /**
  * Builds a diagram graph centered on a person.
- * Person at top → owned companies → their subsidiaries.
+ * Person at top → owned companies → their subsidiaries → owned properties.
  *
  * @param personName - Person's display name
  * @param personEnhedsNummer - Person's enhedsNummer
@@ -373,6 +424,7 @@ interface PersonCompany {
  * @param relatedCompaniesMap - Map of CVR → subsidiaries for each owned company
  * @param noeglePersonerMap - Map of CVR → bestyrelse/direktion persons (optional)
  * @param andreVirksomheder - Companies where person has non-owner roles (optional)
+ * @param propertiesByCvr - Map of CVR → owned properties to add as leaf nodes (optional)
  * @returns DiagramGraph
  */
 export function buildPersonDiagramGraph(
@@ -387,7 +439,8 @@ export function buildPersonDiagramGraph(
       direktion: { navn: string; enhedsNummer: number }[];
     }
   >,
-  andreVirksomheder?: PersonCompany[]
+  andreVirksomheder?: PersonCompany[],
+  propertiesByCvr?: Map<number, DiagramPropertySummary[]>
 ): DiagramGraph {
   const nodes: DiagramNode[] = [];
   const edges: DiagramEdge[] = [];
@@ -602,6 +655,33 @@ export function buildPersonDiagramGraph(
 
       // Edge from person to this company (dashed — non-owner role)
       edges.push({ from: mainId, to: id });
+    }
+  }
+
+  // ── Property nodes — owned by company nodes already in the graph ──
+  if (propertiesByCvr) {
+    const companyNodes = nodes.filter((n) => n.cvr != null && !n.overflowItems);
+    for (const companyNode of companyNodes) {
+      const cvr = companyNode.cvr!;
+      const props = propertiesByCvr.get(cvr);
+      if (!props || props.length === 0) continue;
+
+      const shown = props.slice(0, MAX_PROPS_PER_COMPANY);
+      for (const p of shown) {
+        const propId = `bfe-${p.bfeNummer}`;
+        if (seenIds.has(propId)) continue;
+        seenIds.add(propId);
+        const link = p.dawaId ? `/dashboard/ejendomme/${p.dawaId}` : undefined;
+        nodes.push({
+          id: propId,
+          label: p.adresse ?? `BFE ${p.bfeNummer}`,
+          sublabel: p.ejendomstype ?? undefined,
+          type: 'property',
+          bfeNummer: p.bfeNummer,
+          link,
+        });
+        edges.push({ from: companyNode.id, to: propId });
+      }
     }
   }
 

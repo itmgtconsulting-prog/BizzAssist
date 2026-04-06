@@ -6104,14 +6104,14 @@ function PropertyOwnerDiagram({
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-2.5">
       {/* Ejer info-bokse */}
       {ejerDetaljer.map((ejer, i) => (
-        <div key={i} className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex items-center gap-3">
+        <div key={i} className="bg-slate-800/40 border border-slate-700/40 rounded-xl px-3 py-2.5">
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-center gap-2.5">
               <div
-                className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
                   ejer.type === 'selskab'
                     ? 'bg-blue-500/20 border border-blue-500/30'
                     : ejer.type === 'status'
@@ -6120,11 +6120,11 @@ function PropertyOwnerDiagram({
                 }`}
               >
                 {ejer.type === 'selskab' ? (
-                  <Building2 size={18} className="text-blue-400" />
+                  <Building2 size={15} className="text-blue-400" />
                 ) : ejer.type === 'status' ? (
-                  <Building2 size={18} className="text-slate-400" />
+                  <Building2 size={15} className="text-slate-400" />
                 ) : (
-                  <Users size={18} className="text-purple-400" />
+                  <Users size={15} className="text-purple-400" />
                 )}
               </div>
               <div>
@@ -6159,13 +6159,13 @@ function PropertyOwnerDiagram({
           </div>
 
           {ejer.type === 'status' ? (
-            <p className="text-slate-500 text-xs mt-3 pt-3 border-t border-slate-700/30">
+            <p className="text-slate-500 text-xs mt-2 pt-2 border-t border-slate-700/30">
               {da
                 ? 'Ejerskab registreret på de enkelte ejerlejligheder'
                 : 'Ownership registered on the individual condominiums'}
             </p>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2 mt-3 pt-3 border-t border-slate-700/30">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1.5 mt-2 pt-2 border-t border-slate-700/30">
               {ejer.overtagelsesdato && (
                 <div>
                   <p className="text-slate-500 text-[10px] uppercase tracking-wider">
@@ -6236,8 +6236,14 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
   const router = useRouter();
 
   const [loading, setLoading] = useState(true);
+  interface TLUnderpant {
+    prioritet: number | null;
+    beloeb: number | null;
+    valuta: string;
+    havere: string[];
+  }
   interface TLItem {
-    [key: string]: string | number | boolean | string[] | null | undefined;
+    [key: string]: string | number | boolean | string[] | TLUnderpant | null | undefined;
   }
   interface TLTingbogsattest {
     bfeNr: string | null;
@@ -6342,6 +6348,34 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
     andenServitut: da ? 'Servitut' : 'Easement',
     tillaeg: da ? 'Tillæg' : 'Amendment',
     paatalegning: da ? 'Påtegning' : 'Endorsement',
+  };
+
+  /** Konverterer CamelCase-koder fra Tinglysning til læsbar tekst med mellemrum */
+  const laanevilkaarMap: Record<string, string> = {
+    Refinansiering: 'Refinansiering',
+    MulighedForAfdragsfrihed: da ? 'Mulighed for afdragsfrihed' : 'Option for interest-only',
+    Inkonvertibel: da ? 'Inkonvertibel' : 'Non-convertible',
+    Rentetilpasning: da ? 'Rentetilpasning' : 'Interest rate adjustment',
+    Afdragsfrihed: da ? 'Afdragsfrihed' : 'Interest-only',
+    Konverterbar: da ? 'Konverterbar' : 'Convertible',
+    SDO: 'SDO',
+  };
+
+  /** Gør CamelCase-kode til læsbar tekst: indsæt mellemrum før store bogstaver */
+  const humanizeCode = (code: string): string => {
+    if (laanevilkaarMap[code]) return laanevilkaarMap[code];
+    // Indsæt mellemrum før versaler og gør første bogstav stort
+    return code
+      .replace(/([a-z])([A-Z])/g, '$1 $2')
+      .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+      .replace(/^./, (c) => c.toUpperCase());
+  };
+
+  const laantypeMap: Record<string, string> = {
+    Obligationslaan: da ? 'Obligationslån' : 'Bond loan',
+    Kontantlaan: da ? 'Kontantlån' : 'Cash loan',
+    Indekslaan: da ? 'Indekslån' : 'Index loan',
+    Anden: da ? 'Andet' : 'Other',
   };
 
   if (loading)
@@ -6864,9 +6898,16 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
                     <span className="text-xs text-slate-400 tabular-nums whitespace-nowrap">
                       {formatDato(h.dato as string | null)}
                     </span>
-                    <span className="text-sm text-slate-200 truncate">
-                      {haeftelseTypeMap[String(h.type)] ?? String(h.type)}
-                    </span>
+                    <div className="min-w-0">
+                      <span className="text-sm text-slate-200 truncate block">
+                        {haeftelseTypeMap[String(h.type)] ?? String(h.type)}
+                      </span>
+                      {Array.isArray(h.debitorer) && (h.debitorer as string[]).length > 0 && (
+                        <span className="text-[10px] text-slate-500 truncate block">
+                          {(h.debitorer as string[]).join(', ')}
+                        </span>
+                      )}
+                    </div>
                     <span className="text-xs text-slate-300 tabular-nums text-right">
                       {h.beloeb != null && Number(h.beloeb) > 0
                         ? `${Number(h.beloeb).toLocaleString('da-DK')} ${String(h.valuta ?? 'DKK')}`
@@ -6923,7 +6964,75 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
                   </div>
                   {isOpen && (
                     <div className="px-4 pb-3 ml-10 border-l-2 border-amber-500/20 text-xs">
+                      {/* ── Grundoplysninger ── */}
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 mt-1">
+                        {h.tinglysningsafgift != null && Number(h.tinglysningsafgift) > 0 && (
+                          <div>
+                            <p className="text-slate-500 text-[10px] uppercase">
+                              {da ? 'Tinglysningsafgift' : 'Reg. fee'}
+                            </p>
+                            <p className="text-slate-300">
+                              {Number(h.tinglysningsafgift).toLocaleString('da-DK')} DKK
+                            </p>
+                          </div>
+                        )}
+                        {h.pantebrevFormular && (
+                          <div>
+                            <p className="text-slate-500 text-[10px] uppercase">
+                              {da ? 'Pantebrev — Lovpligtig kode' : 'Mortgage form code'}
+                            </p>
+                            <p className="text-slate-300">{String(h.pantebrevFormular)}</p>
+                          </div>
+                        )}
+                        {h.laantype && (
+                          <div>
+                            <p className="text-slate-500 text-[10px] uppercase">
+                              {da ? 'Lånetypekode' : 'Loan type'}
+                            </p>
+                            <p className="text-slate-300">
+                              {laantypeMap[String(h.laantype)] ?? humanizeCode(String(h.laantype))}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* ── Særlige lånevilkår (badges) ── */}
+                      {h.laanevilkaar &&
+                        Array.isArray(h.laanevilkaar) &&
+                        h.laanevilkaar.length > 0 && (
+                          <div className="mt-3">
+                            <p className="text-slate-500 text-[10px] uppercase mb-1">
+                              {da ? 'Særlige lånevilkår' : 'Special loan terms'}
+                            </p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {(h.laanevilkaar as string[])
+                                .flatMap((v) => String(v).split(','))
+                                .map((v) => v.trim())
+                                .filter((v) => v.length > 0)
+                                .map((v, vi) => (
+                                  <span
+                                    key={vi}
+                                    className="px-2 py-0.5 rounded-full bg-slate-700/40 border border-slate-600/30 text-slate-300 text-[11px]"
+                                  >
+                                    {humanizeCode(v)}
+                                  </span>
+                                ))}
+                            </div>
+                          </div>
+                        )}
+
+                      {/* ── Kreditorbetegnelse ── */}
+                      {h.kreditorbetegnelse && (
+                        <div className="mt-3">
+                          <p className="text-slate-500 text-[10px] uppercase">
+                            {da ? 'Kreditorbetegnelse' : 'Creditor ID'}
+                          </p>
+                          <p className="text-slate-300">{String(h.kreditorbetegnelse)}</p>
+                        </div>
+                      )}
+
+                      {/* ── Kreditor + Debitorer ── */}
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 mt-3">
                         {h.kreditor && (
                           <div>
                             <p className="text-slate-500 text-[10px] uppercase">
@@ -6943,7 +7052,13 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
                         )}
                         <div>
                           <p className="text-slate-500 text-[10px] uppercase">
-                            {da ? 'Debitor' : 'Debtor'}
+                            {da
+                              ? Array.isArray(h.debitorer) && h.debitorer.length > 1
+                                ? 'Debitorer'
+                                : 'Debitor'
+                              : Array.isArray(h.debitorer) && h.debitorer.length > 1
+                                ? 'Debtors'
+                                : 'Debtor'}
                           </p>
                           {Array.isArray(h.debitorer) && (h.debitorer as string[]).length > 0 ? (
                             (h.debitorer as string[]).map((navn, di) => (
@@ -6955,63 +7070,129 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
                             <p className="text-slate-500">—</p>
                           )}
                         </div>
-                        {h.rente != null && (
-                          <div>
-                            <p className="text-slate-500 text-[10px] uppercase">
-                              {da ? 'Rente' : 'Interest'}
-                            </p>
-                            <p className="text-slate-300">{Number(h.rente).toFixed(4)}%</p>
-                          </div>
-                        )}
-                        {h.laantype && (
-                          <div>
-                            <p className="text-slate-500 text-[10px] uppercase">
-                              {da ? 'Låntype' : 'Loan type'}
-                            </p>
-                            <p className="text-slate-300">{String(h.laantype)}</p>
-                          </div>
-                        )}
-                        {h.pantebrevFormular && (
-                          <div>
-                            <p className="text-slate-500 text-[10px] uppercase">
-                              {da ? 'Pantebrevformular' : 'Mortgage form'}
-                            </p>
-                            <p className="text-slate-300">{String(h.pantebrevFormular)}</p>
-                          </div>
-                        )}
-                        {h.tinglysningsafgift != null && Number(h.tinglysningsafgift) > 0 && (
-                          <div>
-                            <p className="text-slate-500 text-[10px] uppercase">
-                              {da ? 'Tinglysningsafgift' : 'Reg. fee'}
-                            </p>
-                            <p className="text-slate-300">
-                              {Number(h.tinglysningsafgift).toLocaleString('da-DK')} DKK
-                            </p>
-                          </div>
-                        )}
                       </div>
-                      {h.laanevilkaar &&
-                        Array.isArray(h.laanevilkaar) &&
-                        h.laanevilkaar.length > 0 && (
-                          <div className="mt-2 pt-2 border-t border-slate-700/20">
+
+                      {/* ── Rente-sektion ── */}
+                      {(h.rente != null || h.renteType || h.referenceRenteNavn) && (
+                        <div className="mt-3 pt-2 border-t border-slate-700/20">
+                          <p className="text-slate-500 text-[10px] uppercase font-semibold mb-1.5">
+                            {da ? 'Rente' : 'Interest'}
+                          </p>
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 ml-2">
+                            {h.renteType && (
+                              <div>
+                                <p className="text-slate-500 text-[10px] uppercase">Type</p>
+                                <p className="text-slate-300">{String(h.renteType)}</p>
+                              </div>
+                            )}
+                            <div>
+                              <p className="text-slate-500 text-[10px] uppercase">
+                                {da ? 'Pålydende sats' : 'Nominal rate'}
+                              </p>
+                              <p className="text-slate-300">
+                                {h.rente != null ? `${Number(h.rente).toFixed(4)}%` : '—'}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-slate-500 text-[10px] uppercase">
+                                {da ? 'Foreløbig' : 'Preliminary'}
+                              </p>
+                              <p className="text-slate-300">
+                                {h.renteForeloebig ? (da ? 'Ja' : 'Yes') : da ? 'Nej' : 'No'}
+                              </p>
+                            </div>
+                            {h.referenceRenteNavn && (
+                              <div className="col-span-2 sm:col-span-3">
+                                <p className="text-slate-500 text-[10px] uppercase">
+                                  {da ? 'Referencerente' : 'Reference rate'}
+                                </p>
+                                <p className="text-slate-300">
+                                  {humanizeCode(String(h.referenceRenteNavn))}
+                                  {h.referenceRenteSats != null &&
+                                    ` : ${Number(h.referenceRenteSats).toFixed(4)}%`}
+                                </p>
+                                {h.renteTillaeg != null && (
+                                  <p className="text-slate-300 mt-0.5">
+                                    {da ? 'Tillæg' : 'Spread'}: {Number(h.renteTillaeg).toFixed(2)}%
+                                    {h.renteTillaegType &&
+                                      ` (${humanizeCode(String(h.renteTillaegType))})`}
+                                  </p>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* ── Underpant ── */}
+                      {h.underpant &&
+                        (() => {
+                          const up = h.underpant as TLUnderpant;
+                          return (
+                            <div className="mt-3 pt-2 border-t border-slate-700/20">
+                              <p className="text-slate-500 text-[10px] uppercase font-semibold mb-1.5">
+                                {da ? 'Underpant' : 'Sub-collateral'}
+                              </p>
+                              <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 ml-2">
+                                {up.prioritet != null && (
+                                  <div>
+                                    <p className="text-slate-500 text-[10px] uppercase">
+                                      {da ? 'Prioritet' : 'Priority'}
+                                    </p>
+                                    <p className="text-slate-300">{up.prioritet}</p>
+                                  </div>
+                                )}
+                                {up.beloeb != null && (
+                                  <div>
+                                    <p className="text-slate-500 text-[10px] uppercase">
+                                      {da ? 'Underpantsbeløb' : 'Sub-collateral amount'}
+                                    </p>
+                                    <p className="text-slate-300">
+                                      {Number(up.beloeb).toLocaleString('da-DK')} {up.valuta}
+                                    </p>
+                                  </div>
+                                )}
+                                {up.havere.length > 0 && (
+                                  <div>
+                                    <p className="text-slate-500 text-[10px] uppercase">
+                                      {da ? 'Underpanthavere' : 'Sub-collateral holders'}
+                                    </p>
+                                    {up.havere.map((n, ni) => (
+                                      <p key={ni} className="text-slate-300">
+                                        {n}
+                                      </p>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })()}
+
+                      {/* ── Fuldmagtsbestemmelser ── */}
+                      {Array.isArray(h.fuldmagtsbestemmelser) &&
+                        (h.fuldmagtsbestemmelser as string[]).length > 0 && (
+                          <div className="mt-3 pt-2 border-t border-slate-700/20">
                             <p className="text-slate-500 text-[10px] uppercase mb-0.5">
-                              {da ? 'Lånevilkår' : 'Loan terms'}
+                              {da ? 'Fuldmagtsbestemmelser' : 'Power of attorney'}
                             </p>
-                            <p className="text-slate-400">
-                              {(Array.isArray(h.laanevilkaar) ? (h.laanevilkaar as string[]) : [])
-                                .flatMap((v) => String(v).split(','))
-                                .map((v) => v.trim())
-                                .filter((v) => v.length > 0)
-                                .join(', ')}
-                            </p>
+                            {(h.fuldmagtsbestemmelser as string[]).map((navn, fi) => (
+                              <p key={fi} className="text-slate-300">
+                                {navn}
+                              </p>
+                            ))}
                           </div>
                         )}
+
+                      {/* ── Lånetekst / beskrivelse ── */}
                       {h.laaneTekst && (
-                        <div className="mt-2 pt-2 border-t border-slate-700/20">
+                        <div className="mt-3 pt-2 border-t border-slate-700/20">
                           <p className="text-slate-500 text-[10px] uppercase mb-0.5">
                             {da ? 'Beskrivelse' : 'Description'}
                           </p>
-                          <p className="text-slate-400 leading-relaxed">{String(h.laaneTekst)}</p>
+                          <p className="text-slate-400 whitespace-pre-wrap leading-relaxed">
+                            {String(h.laaneTekst)}
+                          </p>
                         </div>
                       )}
                       {h.dokumentAlias && (
@@ -7074,10 +7255,10 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
                       {formatDato(s.dato as string | null)}
                     </span>
                     <span className="text-sm text-slate-300 truncate">
-                      {s.tekst ?? servitutTypeMap[String(s.type)] ?? String(s.type)}
+                      {String(s.tekst ?? '') || (servitutTypeMap[String(s.type)] ?? String(s.type))}
                       {s.ogsaaLystPaa != null && Number(s.ogsaaLystPaa) > 1 && (
                         <span className="text-slate-600 text-[10px] ml-1">
-                          ({s.ogsaaLystPaa} ejd.)
+                          ({String(s.ogsaaLystPaa)} ejd.)
                         </span>
                       )}
                     </span>
@@ -7201,9 +7382,13 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
                           <p className="text-slate-500 text-[10px] uppercase mb-0.5">
                             {da ? 'Tillægstekst' : 'Supplementary text'}
                           </p>
-                          <p className="text-slate-400 whitespace-pre-wrap leading-relaxed">
-                            {String(s.tillaegsTekst)}
-                          </p>
+                          <div className="text-slate-400 leading-relaxed space-y-1">
+                            {String(s.tillaegsTekst)
+                              .split('\n')
+                              .map((line, li) => (
+                                <p key={li}>{line}</p>
+                              ))}
+                          </div>
                         </div>
                       )}
                       {s.dokumentAlias && (

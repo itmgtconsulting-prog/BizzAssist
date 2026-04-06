@@ -17,7 +17,7 @@
  *   - Sends an immediate critical alert email via Resend
  *   - Logs all actions to service_manager_activity
  *
- * When a deployment succeeds (state=READY), logs success and returns 200.
+ * When a deployment succeeds (state=READY or eventType=deployment.succeeded), logs success and returns 200.
  *
  * Auth: VERCEL_DEPLOY_WEBHOOK_SECRET env var, verified via:
  *   - ?secret= query param (recommended — include in webhook URL above)
@@ -76,8 +76,10 @@ interface ScanIssue {
 
 /** Vercel deploy webhook payload shape */
 interface VercelWebhookBody {
-  /** Event type, e.g. "deployment.error" or "deployment.succeeded" */
+  /** Event type, e.g. "deployment.error" or "deployment.succeeded" (some Vercel versions use `type`, others `eventType`) */
   type?: string;
+  /** Alias for `type` — used by some Vercel webhook payload versions */
+  eventType?: string;
   /** Nested event payload */
   payload?: {
     deployment?: {
@@ -422,7 +424,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const depl = body.payload?.deployment ?? body.deployment ?? {};
   const deploymentId = depl.id ?? '';
   const deploymentState = depl.state ?? '';
-  const eventType = body.type ?? '';
+  // Normalise event type — Vercel uses `type` in most versions but `eventType` in some
+  const eventType = body.type ?? body.eventType ?? '';
   const target = body.payload?.target ?? null;
 
   const commitMessage = depl.meta?.githubCommitMessage ?? deploymentId;

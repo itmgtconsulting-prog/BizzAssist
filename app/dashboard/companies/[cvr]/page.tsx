@@ -201,7 +201,6 @@ const tabIcons: Record<TabId, React.ReactNode> = {
 const tabOrder: TabId[] = [
   'overview',
   'diagram',
-  'tradeHistory',
   'properties',
   'companies',
   'financials',
@@ -366,10 +365,12 @@ export default function VirksomhedDetalje({ params }: PageProps) {
   const [_regnskabError, setRegnskabError] = useState<string | null>(null);
   const regnskabFetchedRef = useRef(false);
 
-  /** XBRL regnskabstal — lazy-loaded when financials tab is activated */
+  /** XBRL regnskabstal — progressivt loaded i batches */
   const [xbrlData, setXbrlData] = useState<RegnskabsAar[] | null>(null);
   const [xbrlLoading, setXbrlLoading] = useState(false);
+  const [xbrlLoadingMore, setXbrlLoadingMore] = useState(false);
   const xbrlFetchedRef = useRef(false);
+  const xbrlAbortRef = useRef<AbortController | null>(null);
 
   /** Relaterede virksomheder (gruppe) — lazy-loaded when companies tab is activated */
   const [relatedCompanies, setRelatedCompanies] = useState<RelateretVirksomhed[]>([]);
@@ -488,6 +489,9 @@ export default function VirksomhedDetalje({ params }: PageProps) {
   /** Oversigt-tab: aktivt filter — null = vis alle, ellers kun valgt sektion */
   const [oversigtFilter, setOversigtFilter] = useState<string | null>(null);
 
+  /** Ejendomme-tab: filter — null = alle, 'portefolje' = ejendomme, 'handler' = ejendomshandler */
+  const [ejendommeFilter, setEjendommeFilter] = useState<string | null>(null);
+
   /** Toggler et dokument-ID i valgteDoc-sættet */
   const toggleDoc = useCallback((id: string) => {
     setValgteDoc((prev) => {
@@ -603,21 +607,103 @@ export default function VirksomhedDetalje({ params }: PageProps) {
     }
   }, [cvr]);
 
-  /** Henter XBRL-regnskabstal fra /api/regnskab/xbrl */
+  /**
+   * Henter XBRL-regnskabstal med Supabase cache-first strategi:
+   * 1. API tjekker Supabase cache — returnerer øjeblikkeligt hvis ES-tidsstempel matcher
+   * 2. Ved cache miss: progressiv batching med XBRL-parsing, gemmes i Supabase
+   */
   const fetchXbrl = useCallback(async () => {
     if (xbrlFetchedRef.current) return;
     xbrlFetchedRef.current = true;
+
+    xbrlAbortRef.current?.abort();
+    const controller = new AbortController();
+    xbrlAbortRef.current = controller;
+
+    const FIRST_BATCH = 4;
+    const REST_BATCH = 8;
+
+    /** Merger nye år ind med deduplikering */
+    const mergeYears = (prev: RegnskabsAar[], incoming: RegnskabsAar[]): RegnskabsAar[] => {
+      const map = new Map<number, RegnskabsAar>();
+      const countF = (y: RegnskabsAar) => {
+        let n = 0;
+        for (const v of Object.values(y.resultat)) if (v !== null) n++;
+        for (const v of Object.values(y.balance)) if (v !== null) n++;
+        return n;
+      };
+      const pDage = (y: RegnskabsAar) =>
+        (new Date(y.periodeSlut).getTime() - new Date(y.periodeStart).getTime()) / 86400000;
+      for (const y of [...prev, ...incoming]) {
+        const ex = map.get(y.aar);
+        if (!ex) {
+          map.set(y.aar, y);
+          continue;
+        }
+        const nf = countF(y),
+          ef = countF(ex);
+        if (nf > ef || (nf === ef && pDage(y) > pDage(ex))) map.set(y.aar, y);
+      }
+      return [...map.values()].sort((a, b) => b.aar - a.aar);
+    };
+
+    setXbrlData([]);
     setXbrlLoading(true);
+    setXbrlLoadingMore(false);
+
     try {
-      const res = await fetch(`/api/regnskab/xbrl?cvr=${cvr}`, {
-        signal: AbortSignal.timeout(30000),
+      // ── Første kald: API tjekker Supabase cache server-side ──
+      const res = await fetch(`/api/regnskab/xbrl?cvr=${cvr}&offset=0&limit=${FIRST_BATCH}`, {
+        signal: controller.signal,
       });
       const json = await res.json();
-      setXbrlData(json.years ?? []);
+      const firstYears: RegnskabsAar[] = json.years ?? [];
+      const total: number = json.total ?? 0;
+      const wasCached: boolean = json.cached === true;
+
+      setXbrlData(firstYears);
+      setXbrlLoading(false);
+
+      // Hvis server returnerede cached data → alt er allerede hentet, vi er færdige
+      if (wasCached) {
+        setXbrlLoadingMore(false);
+        return;
+      }
+
+      // ── Cache miss — hent resten progressivt ──
+      if (total > FIRST_BATCH) {
+        setXbrlLoadingMore(true);
+        let offset = FIRST_BATCH;
+        while (offset < total) {
+          if (controller.signal.aborted) break;
+          const res2 = await fetch(
+            `/api/regnskab/xbrl?cvr=${cvr}&offset=${offset}&limit=${REST_BATCH}`,
+            { signal: controller.signal }
+          );
+          const json2 = await res2.json();
+          const moreYears: RegnskabsAar[] = json2.years ?? [];
+          if (moreYears.length === 0) break;
+          setXbrlData((prev) => mergeYears(prev ?? [], moreYears));
+          offset += REST_BATCH;
+        }
+      }
+
+      // Trigger server-side cache-write: hent alle data i ét kald (baggrund)
+      // Serveren gemmer automatisk i Supabase når offset=0 og limit>=total
+      if (!controller.signal.aborted && total > FIRST_BATCH) {
+        fetch(`/api/regnskab/xbrl?cvr=${cvr}&offset=0&limit=${total}`, {
+          signal: controller.signal,
+        }).catch(() => {
+          /* Cache-write fejl — ignorer */
+        });
+      }
     } catch {
-      setXbrlData([]);
+      if (!controller.signal.aborted) {
+        setXbrlData((prev) => (prev && prev.length > 0 ? prev : []));
+      }
     } finally {
       setXbrlLoading(false);
+      setXbrlLoadingMore(false);
     }
   }, [cvr]);
 
@@ -656,18 +742,23 @@ export default function VirksomhedDetalje({ params }: PageProps) {
     }
   }, [cvr]);
 
+  /** Start regnskab + XBRL-fetch straks når virksomhedsdata er loaded — kører i baggrunden */
+  useEffect(() => {
+    if (data) {
+      fetchRegnskaber();
+      fetchXbrl();
+    }
+  }, [data, fetchRegnskaber, fetchXbrl]);
+
   /** Trigger regnskab-fetch når financials- eller documents-tab aktiveres */
   useEffect(() => {
     if (aktivTab === 'financials' || aktivTab === 'documents') {
       fetchRegnskaber();
     }
-    if (aktivTab === 'financials') {
-      fetchXbrl();
-    }
     if (aktivTab === 'companies' || aktivTab === 'overview') {
       fetchRelated();
     }
-    if (aktivTab === 'tradeHistory') {
+    if (aktivTab === 'tradeHistory' || aktivTab === 'properties') {
       fetchEjendomshandler();
     }
     /* Ejendomme-tab: hent også relaterede virksomheder (datterselskaber) */
@@ -1209,6 +1300,21 @@ export default function VirksomhedDetalje({ params }: PageProps) {
           </div>
         </div>
 
+        {/* ─── Global loading-indikator ─── */}
+        {(xbrlLoading ||
+          xbrlLoadingMore ||
+          ejendommeLoading ||
+          ejendommeLoadingMore ||
+          handlerLoading ||
+          relatedLoading) && (
+          <div className="flex items-center gap-2 px-4 py-1.5 bg-blue-600/10 border-b border-blue-500/20">
+            <Loader2 size={12} className="animate-spin text-blue-400" />
+            <span className="text-blue-300 text-xs">
+              {lang === 'da' ? 'Henter data…' : 'Loading data…'}
+            </span>
+          </div>
+        )}
+
         {/* ─── Scrollable Content Area ─── */}
         <div ref={contentRef} className="flex-1 overflow-y-auto px-3 sm:px-6 py-5">
           {/* ══ OVERBLIK ══ */}
@@ -1666,261 +1772,310 @@ export default function VirksomhedDetalje({ params }: PageProps) {
               return <DiagramForce graph={diagramGraph} lang={lang} />;
             })()}
 
-          {/* ══ EJENDOMSHANDLER ══ */}
-          {aktivTab === 'tradeHistory' && (
-            <div className="space-y-4">
-              {handlerLoading ? (
-                <div className="flex items-center justify-center py-16">
-                  <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
-                  <span className="ml-2 text-slate-400 text-sm">
-                    {lang === 'da' ? 'Henter ejendomshandler…' : 'Loading property trades…'}
-                  </span>
-                </div>
-              ) : ejendomshandler.length > 0 ? (
-                <>
-                  {/* Summary-kort */}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                    <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4 text-center">
-                      <p className="text-xl font-bold text-white">{ejendomshandler.length}</p>
-                      <p className="text-slate-500 text-[10px] mt-0.5">
-                        {lang === 'da' ? 'Handler i alt' : 'Total trades'}
-                      </p>
-                    </div>
-                    <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4 text-center">
-                      <p className="text-xl font-bold text-emerald-400">
-                        {ejendomshandler.filter((h) => h.rolle === 'koeber').length}
-                      </p>
-                      <p className="text-slate-500 text-[10px] mt-0.5">
-                        {lang === 'da' ? 'Køb' : 'Purchases'}
-                      </p>
-                    </div>
-                    <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4 text-center">
-                      <p className="text-xl font-bold text-rose-400">
-                        {ejendomshandler.filter((h) => h.rolle === 'saelger').length}
-                      </p>
-                      <p className="text-slate-500 text-[10px] mt-0.5">
-                        {lang === 'da' ? 'Salg' : 'Sales'}
-                      </p>
-                    </div>
-                    <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4 text-center">
-                      <p className="text-xl font-bold text-white">
-                        {new Set(ejendomshandler.map((h) => h.bfeNummer)).size}
-                      </p>
-                      <p className="text-slate-500 text-[10px] mt-0.5">
-                        {lang === 'da' ? 'Ejendomme' : 'Properties'}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Handels-tabel */}
-                  <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden">
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="text-left text-slate-500 text-xs uppercase tracking-wide border-b border-slate-700/30">
-                            <th className="px-4 py-2.5 whitespace-nowrap">
-                              {lang === 'da' ? 'Dato' : 'Date'}
-                            </th>
-                            <th className="px-4 py-2.5 whitespace-nowrap">
-                              {lang === 'da' ? 'Type' : 'Type'}
-                            </th>
-                            <th className="px-4 py-2.5 whitespace-nowrap">
-                              {lang === 'da' ? 'Rolle' : 'Role'}
-                            </th>
-                            <th className="px-4 py-2.5 whitespace-nowrap">{c.address}</th>
-                            <th className="px-4 py-2.5 whitespace-nowrap text-right">
-                              {lang === 'da' ? 'Kontantpris' : 'Cash price'}
-                            </th>
-                            <th className="px-4 py-2.5 whitespace-nowrap text-right">
-                              {c.totalPrice}
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {ejendomshandler.map((h, i) => {
-                            const dato = h.koebsaftaleDato ?? h.overtagelsesdato ?? '—';
-                            const fmtDato = dato !== '—' ? dato.slice(0, 10) : '—';
-                            const fmtPris = (n: number | null) => {
-                              if (n == null) return '—';
-                              if (Math.abs(n) >= 1_000_000)
-                                return `${(n / 1_000_000).toFixed(1).replace('.', ',')} mio kr`;
-                              return `${n.toLocaleString('da-DK')} kr`;
-                            };
-                            const adr = h.adresse
-                              ? `${h.adresse}${h.postnr ? `, ${h.postnr}` : ''}${h.by ? ` ${h.by}` : ''}`
-                              : `BFE ${h.bfeNummer}`;
-
-                            return (
-                              <tr
-                                key={i}
-                                className="border-b border-slate-700/20 hover:bg-slate-800/30 transition-colors"
-                              >
-                                <td className="px-4 py-2.5 text-white font-mono text-xs whitespace-nowrap">
-                                  {fmtDato}
-                                </td>
-                                <td className="px-4 py-2.5 text-slate-300 text-xs whitespace-nowrap">
-                                  {h.overdragelsesmaade ?? '—'}
-                                </td>
-                                <td className="px-4 py-2.5 whitespace-nowrap">
-                                  {h.rolle === 'koeber' ? (
-                                    <span className="text-[10px] font-medium bg-emerald-500/15 text-emerald-400 px-2 py-0.5 rounded-full">
-                                      {lang === 'da' ? 'Køber' : 'Buyer'}
-                                    </span>
-                                  ) : h.rolle === 'saelger' ? (
-                                    <span className="text-[10px] font-medium bg-rose-500/15 text-rose-400 px-2 py-0.5 rounded-full">
-                                      {lang === 'da' ? 'Sælger' : 'Seller'}
-                                    </span>
-                                  ) : (
-                                    <span className="text-[10px] font-medium bg-slate-500/15 text-slate-400 px-2 py-0.5 rounded-full">
-                                      —
-                                    </span>
-                                  )}
-                                </td>
-                                <td
-                                  className="px-4 py-2.5 text-white text-xs max-w-[250px] truncate"
-                                  title={adr}
-                                >
-                                  {adr}
-                                </td>
-                                <td className="px-4 py-2.5 text-right whitespace-nowrap">
-                                  <span
-                                    className={`text-sm font-medium ${h.kontantKoebesum != null ? 'text-white' : 'text-slate-600'}`}
-                                  >
-                                    {fmtPris(h.kontantKoebesum)}
-                                  </span>
-                                </td>
-                                <td className="px-4 py-2.5 text-right whitespace-nowrap">
-                                  <span
-                                    className={`text-sm font-medium ${h.samletKoebesum != null ? 'text-white' : 'text-slate-600'}`}
-                                  >
-                                    {fmtPris(h.samletKoebesum)}
-                                  </span>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </>
-              ) : handlerManglerAdgang ? (
-                <div className="flex flex-col items-center justify-center py-16 text-center">
-                  <Shield size={32} className="text-amber-500/60 mb-3" />
-                  <p className="text-slate-300 text-sm font-medium mb-1">
-                    {lang === 'da'
-                      ? 'Afventer EJF-adgang fra Datafordeler'
-                      : 'Awaiting EJF access from Datafordeler'}
-                  </p>
-                  <p className="text-slate-500 text-xs max-w-md">
-                    {lang === 'da'
-                      ? 'Ejendomshandler kræver godkendt Dataadgang til Ejerfortegnelsen (EJF) hos Geodatastyrelsen. Ansøgningen er indsendt.'
-                      : 'Property trades require approved data access to EJF from the Danish Geodata Agency. The application has been submitted.'}
-                  </p>
-                </div>
-              ) : (
-                <EmptyState
-                  ikon={<ArrowRightLeft size={32} className="text-slate-600" />}
-                  tekst={c.noTradesFound}
-                />
-              )}
-            </div>
-          )}
-
-          {/* ══ EJENDOMME ══ */}
+          {/* ══ EJENDOMME (inkl. ejendomshandler) ══ */}
           {aktivTab === 'properties' && (
             <div className="space-y-4">
-              {/* Indledende spinner — vises kun før første batch ankommer */}
-              {ejendommeLoading && ejendommeData.length === 0 && (
-                <div className="flex items-center justify-center py-12">
-                  <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
-                  <span className="ml-2 text-slate-400 text-sm">
-                    {lang === 'da' ? 'Henter ejendomsportefølje…' : 'Loading property portfolio…'}
+              {/* ── Filter chips ── */}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => setEjendommeFilter(null)}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-all border ${
+                    ejendommeFilter === null
+                      ? 'bg-white/10 border-white/30 text-white'
+                      : 'bg-slate-800/50 border-slate-700/40 text-slate-400 hover:text-slate-200 hover:border-slate-600'
+                  }`}
+                >
+                  <LayoutDashboard size={12} />
+                  {lang === 'da' ? 'Alle' : 'All'}
+                </button>
+                <button
+                  onClick={() =>
+                    setEjendommeFilter(ejendommeFilter === 'portefolje' ? null : 'portefolje')
+                  }
+                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-all border ${
+                    ejendommeFilter === 'portefolje'
+                      ? 'bg-blue-600/30 border-blue-500/50 text-blue-300'
+                      : 'bg-slate-800/50 border-slate-700/40 text-slate-400 hover:text-slate-200 hover:border-slate-600'
+                  }`}
+                >
+                  <span className={ejendommeFilter === 'portefolje' ? '' : 'text-blue-400'}>
+                    <Home size={12} />
                   </span>
-                </div>
-              )}
+                  {lang === 'da' ? 'Ejendomme' : 'Properties'}
+                </button>
+                <button
+                  onClick={() =>
+                    setEjendommeFilter(ejendommeFilter === 'handler' ? null : 'handler')
+                  }
+                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-all border ${
+                    ejendommeFilter === 'handler'
+                      ? 'bg-emerald-600/30 border-emerald-500/50 text-emerald-300'
+                      : 'bg-slate-800/50 border-slate-700/40 text-slate-400 hover:text-slate-200 hover:border-slate-600'
+                  }`}
+                >
+                  <span className={ejendommeFilter === 'handler' ? '' : 'text-emerald-400'}>
+                    <ArrowRightLeft size={12} />
+                  </span>
+                  {lang === 'da' ? 'Ejendomshandler' : 'Property Trades'}
+                </button>
+              </div>
 
-              {/* Mangler nøgle / adgang — vises når hentning er fuldført */}
-              {ejendommeFetchComplete && ejendommeManglerNoegle && (
-                <div className="flex flex-col items-center justify-center py-12 text-center">
-                  <Home size={36} className="text-slate-600 mb-3" />
-                  <p className="text-slate-400 text-sm max-w-sm">
-                    {lang === 'da'
-                      ? 'Ejendomsopslag kræver Datafordeler OAuth-nøgler (DATAFORDELER_OAUTH_CLIENT_ID / CLIENT_SECRET).'
-                      : 'Property lookup requires Datafordeler OAuth keys (DATAFORDELER_OAUTH_CLIENT_ID / CLIENT_SECRET).'}
-                  </p>
-                </div>
-              )}
-              {ejendommeFetchComplete && ejendommeManglerAdgang && (
-                <div className="flex flex-col items-center justify-center py-12 text-center">
-                  <Home size={36} className="text-slate-600 mb-3" />
-                  <p className="text-slate-400 text-sm max-w-sm">
-                    {lang === 'da'
-                      ? 'Adgang til Ejerfortegnelsen (EJF) er ikke godkendt endnu. Ansøg om Dataadgang på datafordeler.dk.'
-                      : 'Access to the Danish land registry (EJF) has not been approved yet. Apply for Dataadgang at datafordeler.dk.'}
-                  </p>
-                </div>
-              )}
-
-              {/* Ejendomme grid — vises så snart første batch ankommer */}
-              {ejendommeData.length > 0 && (
-                <>
-                  {/* Header med løbende tæller */}
-                  <div className="flex items-center justify-between">
-                    <p className="text-slate-400 text-sm">
-                      {ejendommeLoadingMore
-                        ? lang === 'da'
-                          ? `Indlæser… (${ejendommeData.length} af ${ejendommeTotalBfe} ejendomme)`
-                          : `Loading… (${ejendommeData.length} of ${ejendommeTotalBfe} properties)`
-                        : lang === 'da'
-                          ? `${ejendommeData.length} ejendom${ejendommeData.length !== 1 ? 'me' : ''} fundet`
-                          : `${ejendommeData.length} propert${ejendommeData.length !== 1 ? 'ies' : 'y'} found`}
-                    </p>
-                    {relatedCompanies.length > 0 && (
-                      <span className="text-slate-500 text-xs">
+              {/* ── Ejendomme-portefølje sektion ── */}
+              {(ejendommeFilter === null || ejendommeFilter === 'portefolje') && (
+                <div className="space-y-4">
+                  {/* Indledende spinner */}
+                  {ejendommeLoading && ejendommeData.length === 0 && (
+                    <div className="flex items-center justify-center py-12">
+                      <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
+                      <span className="ml-2 text-slate-400 text-sm">
                         {lang === 'da'
-                          ? `Inkl. ${relatedCompanies.filter((v) => v.aktiv).length} datterselskab${relatedCompanies.filter((v) => v.aktiv).length !== 1 ? 'er' : ''}`
-                          : `Incl. ${relatedCompanies.filter((v) => v.aktiv).length} subsidiar${relatedCompanies.filter((v) => v.aktiv).length !== 1 ? 'ies' : 'y'}`}
+                          ? 'Henter ejendomsportefølje…'
+                          : 'Loading property portfolio…'}
                       </span>
-                    )}
-                  </div>
-
-                  {/* Responsive grid */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-                    {ejendommeData.map((ej) => (
-                      <PropertyOwnerCard
-                        key={ej.bfeNummer}
-                        ejendom={ej}
-                        showOwner={relatedCompanies.length > 0}
-                        lang={lang}
-                      />
-                    ))}
-                  </div>
-
-                  {/* Progressiv loading-indikator i bunden */}
-                  {ejendommeLoadingMore && (
-                    <div className="flex items-center justify-center gap-2 py-4 text-slate-500 text-sm">
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      {lang === 'da' ? `Indlæser flere ejendomme…` : `Loading more properties…`}
                     </div>
                   )}
-                </>
+
+                  {/* Mangler nøgle / adgang */}
+                  {ejendommeFetchComplete && ejendommeManglerNoegle && (
+                    <div className="flex flex-col items-center justify-center py-12 text-center">
+                      <Home size={36} className="text-slate-600 mb-3" />
+                      <p className="text-slate-400 text-sm max-w-sm">
+                        {lang === 'da'
+                          ? 'Ejendomsopslag kræver Datafordeler OAuth-nøgler (DATAFORDELER_OAUTH_CLIENT_ID / CLIENT_SECRET).'
+                          : 'Property lookup requires Datafordeler OAuth keys (DATAFORDELER_OAUTH_CLIENT_ID / CLIENT_SECRET).'}
+                      </p>
+                    </div>
+                  )}
+                  {ejendommeFetchComplete && ejendommeManglerAdgang && (
+                    <div className="flex flex-col items-center justify-center py-12 text-center">
+                      <Home size={36} className="text-slate-600 mb-3" />
+                      <p className="text-slate-400 text-sm max-w-sm">
+                        {lang === 'da'
+                          ? 'Adgang til Ejerfortegnelsen (EJF) er ikke godkendt endnu. Ansøg om Dataadgang på datafordeler.dk.'
+                          : 'Access to the Danish land registry (EJF) has not been approved yet. Apply for Dataadgang at datafordeler.dk.'}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Ejendomme grid */}
+                  {ejendommeData.length > 0 && (
+                    <>
+                      <div className="flex items-center justify-between">
+                        <p className="text-slate-400 text-sm">
+                          {ejendommeLoadingMore
+                            ? lang === 'da'
+                              ? `Indlæser… (${ejendommeData.length} af ${ejendommeTotalBfe} ejendomme)`
+                              : `Loading… (${ejendommeData.length} of ${ejendommeTotalBfe} properties)`
+                            : lang === 'da'
+                              ? `${ejendommeData.length} ejendom${ejendommeData.length !== 1 ? 'me' : ''} fundet`
+                              : `${ejendommeData.length} propert${ejendommeData.length !== 1 ? 'ies' : 'y'} found`}
+                        </p>
+                        {relatedCompanies.length > 0 && (
+                          <span className="text-slate-500 text-xs">
+                            {lang === 'da'
+                              ? `Inkl. ${relatedCompanies.filter((v) => v.aktiv).length} datterselskab${relatedCompanies.filter((v) => v.aktiv).length !== 1 ? 'er' : ''}`
+                              : `Incl. ${relatedCompanies.filter((v) => v.aktiv).length} subsidiar${relatedCompanies.filter((v) => v.aktiv).length !== 1 ? 'ies' : 'y'}`}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                        {ejendommeData.map((ej) => (
+                          <PropertyOwnerCard
+                            key={ej.bfeNummer}
+                            ejendom={ej}
+                            showOwner={relatedCompanies.length > 0}
+                            lang={lang}
+                          />
+                        ))}
+                      </div>
+
+                      {ejendommeLoadingMore && (
+                        <div className="flex items-center justify-center gap-2 py-4 text-slate-500 text-sm">
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          {lang === 'da' ? `Indlæser flere ejendomme…` : `Loading more properties…`}
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {/* Ingen ejendomme */}
+                  {ejendommeFetchComplete &&
+                    !ejendommeManglerNoegle &&
+                    !ejendommeManglerAdgang &&
+                    ejendommeData.length === 0 && (
+                      <div className="flex flex-col items-center justify-center py-12 text-center">
+                        <Home size={36} className="text-slate-600 mb-3" />
+                        <p className="text-slate-400 text-sm">
+                          {lang === 'da'
+                            ? 'Ingen registrerede ejendomme fundet for denne virksomhed eller dens koncern.'
+                            : 'No registered properties found for this company or its group.'}
+                        </p>
+                      </div>
+                    )}
+                </div>
               )}
 
-              {/* Ingen ejendomme — vises kun når hentning er fuldført og listen er tom */}
-              {ejendommeFetchComplete &&
-                !ejendommeManglerNoegle &&
-                !ejendommeManglerAdgang &&
-                ejendommeData.length === 0 && (
-                  <div className="flex flex-col items-center justify-center py-12 text-center">
-                    <Home size={36} className="text-slate-600 mb-3" />
-                    <p className="text-slate-400 text-sm">
-                      {lang === 'da'
-                        ? 'Ingen registrerede ejendomme fundet for denne virksomhed eller dens koncern.'
-                        : 'No registered properties found for this company or its group.'}
-                    </p>
-                  </div>
-                )}
+              {/* ── Ejendomshandler sektion ── */}
+              {(ejendommeFilter === null || ejendommeFilter === 'handler') && (
+                <div className="space-y-4">
+                  {handlerLoading ? (
+                    <div className="flex items-center justify-center py-12">
+                      <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
+                      <span className="ml-2 text-slate-400 text-sm">
+                        {lang === 'da' ? 'Henter ejendomshandler…' : 'Loading property trades…'}
+                      </span>
+                    </div>
+                  ) : ejendomshandler.length > 0 ? (
+                    <>
+                      {/* Summary cards */}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4 text-center">
+                          <p className="text-xl font-bold text-white">{ejendomshandler.length}</p>
+                          <p className="text-slate-500 text-[10px] mt-0.5">
+                            {lang === 'da' ? 'Handler i alt' : 'Total trades'}
+                          </p>
+                        </div>
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4 text-center">
+                          <p className="text-xl font-bold text-emerald-400">
+                            {ejendomshandler.filter((h) => h.rolle === 'koeber').length}
+                          </p>
+                          <p className="text-slate-500 text-[10px] mt-0.5">
+                            {lang === 'da' ? 'Køb' : 'Purchases'}
+                          </p>
+                        </div>
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4 text-center">
+                          <p className="text-xl font-bold text-rose-400">
+                            {ejendomshandler.filter((h) => h.rolle === 'saelger').length}
+                          </p>
+                          <p className="text-slate-500 text-[10px] mt-0.5">
+                            {lang === 'da' ? 'Salg' : 'Sales'}
+                          </p>
+                        </div>
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4 text-center">
+                          <p className="text-xl font-bold text-white">
+                            {new Set(ejendomshandler.map((h) => h.bfeNummer)).size}
+                          </p>
+                          <p className="text-slate-500 text-[10px] mt-0.5">
+                            {lang === 'da' ? 'Ejendomme' : 'Properties'}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Trade table */}
+                      <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden">
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="text-left text-slate-500 text-xs uppercase tracking-wide border-b border-slate-700/30">
+                                <th className="px-4 py-2.5 whitespace-nowrap">
+                                  {lang === 'da' ? 'Dato' : 'Date'}
+                                </th>
+                                <th className="px-4 py-2.5 whitespace-nowrap">
+                                  {lang === 'da' ? 'Type' : 'Type'}
+                                </th>
+                                <th className="px-4 py-2.5 whitespace-nowrap">
+                                  {lang === 'da' ? 'Rolle' : 'Role'}
+                                </th>
+                                <th className="px-4 py-2.5 whitespace-nowrap">{c.address}</th>
+                                <th className="px-4 py-2.5 whitespace-nowrap text-right">
+                                  {lang === 'da' ? 'Kontantpris' : 'Cash price'}
+                                </th>
+                                <th className="px-4 py-2.5 whitespace-nowrap text-right">
+                                  {c.totalPrice}
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {ejendomshandler.map((h, i) => {
+                                const dato = h.koebsaftaleDato ?? h.overtagelsesdato ?? '—';
+                                const fmtDato = dato !== '—' ? dato.slice(0, 10) : '—';
+                                const fmtPris = (n: number | null) => {
+                                  if (n == null) return '—';
+                                  if (Math.abs(n) >= 1_000_000)
+                                    return `${(n / 1_000_000).toFixed(1).replace('.', ',')} mio kr`;
+                                  return `${n.toLocaleString('da-DK')} kr`;
+                                };
+                                const adr = h.adresse
+                                  ? `${h.adresse}${h.postnr ? `, ${h.postnr}` : ''}${h.by ? ` ${h.by}` : ''}`
+                                  : `BFE ${h.bfeNummer}`;
+
+                                return (
+                                  <tr
+                                    key={i}
+                                    className="border-b border-slate-700/20 hover:bg-slate-800/30 transition-colors"
+                                  >
+                                    <td className="px-4 py-2.5 text-white font-mono text-xs whitespace-nowrap">
+                                      {fmtDato}
+                                    </td>
+                                    <td className="px-4 py-2.5 text-slate-300 text-xs whitespace-nowrap">
+                                      {h.overdragelsesmaade ?? '—'}
+                                    </td>
+                                    <td className="px-4 py-2.5 whitespace-nowrap">
+                                      {h.rolle === 'koeber' ? (
+                                        <span className="text-[10px] font-medium bg-emerald-500/15 text-emerald-400 px-2 py-0.5 rounded-full">
+                                          {lang === 'da' ? 'Køber' : 'Buyer'}
+                                        </span>
+                                      ) : h.rolle === 'saelger' ? (
+                                        <span className="text-[10px] font-medium bg-rose-500/15 text-rose-400 px-2 py-0.5 rounded-full">
+                                          {lang === 'da' ? 'Sælger' : 'Seller'}
+                                        </span>
+                                      ) : (
+                                        <span className="text-[10px] font-medium bg-slate-500/15 text-slate-400 px-2 py-0.5 rounded-full">
+                                          —
+                                        </span>
+                                      )}
+                                    </td>
+                                    <td
+                                      className="px-4 py-2.5 text-white text-xs max-w-[250px] truncate"
+                                      title={adr}
+                                    >
+                                      {adr}
+                                    </td>
+                                    <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                                      <span
+                                        className={`text-sm font-medium ${h.kontantKoebesum != null ? 'text-white' : 'text-slate-600'}`}
+                                      >
+                                        {fmtPris(h.kontantKoebesum)}
+                                      </span>
+                                    </td>
+                                    <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                                      <span
+                                        className={`text-sm font-medium ${h.samletKoebesum != null ? 'text-white' : 'text-slate-600'}`}
+                                      >
+                                        {fmtPris(h.samletKoebesum)}
+                                      </span>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </>
+                  ) : handlerManglerAdgang ? (
+                    <div className="flex flex-col items-center justify-center py-12 text-center">
+                      <Shield size={32} className="text-amber-500/60 mb-3" />
+                      <p className="text-slate-300 text-sm font-medium mb-1">
+                        {lang === 'da'
+                          ? 'Afventer EJF-adgang fra Datafordeler'
+                          : 'Awaiting EJF access from Datafordeler'}
+                      </p>
+                      <p className="text-slate-500 text-xs max-w-md">
+                        {lang === 'da'
+                          ? 'Ejendomshandler kræver godkendt Dataadgang til Ejerfortegnelsen (EJF) hos Geodatastyrelsen. Ansøgningen er indsendt.'
+                          : 'Property trades require approved data access to EJF from the Danish Geodata Agency. The application has been submitted.'}
+                      </p>
+                    </div>
+                  ) : !handlerLoading ? (
+                    <EmptyState
+                      ikon={<ArrowRightLeft size={32} className="text-slate-600" />}
+                      tekst={c.noTradesFound}
+                    />
+                  ) : null}
+                </div>
+              )}
             </div>
           )}
 
@@ -2438,7 +2593,7 @@ export default function VirksomhedDetalje({ params }: PageProps) {
           {/* ══ REGNSKAB ══ */}
           {aktivTab === 'financials' && (
             <div className="space-y-4">
-              {/* Loading */}
+              {/* Første batch loader */}
               {xbrlLoading && (
                 <div className="flex items-center justify-center py-16">
                   <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
@@ -2446,13 +2601,23 @@ export default function VirksomhedDetalje({ params }: PageProps) {
                 </div>
               )}
 
-              {/* Data */}
+              {/* Data — vises så snart første batch er klar */}
               {!xbrlLoading && xbrlData && xbrlData.length > 0 && (
-                <RegnskabstalTable years={xbrlData} lang={lang} />
+                <RegnskabstalTable years={xbrlData} lang={lang} regnskaber={regnskaber ?? []} />
               )}
 
-              {/* Empty / fallback */}
-              {!xbrlLoading && (!xbrlData || xbrlData.length === 0) && (
+              {/* Progressiv loading-indikator for efterfølgende batches */}
+              {xbrlLoadingMore && (
+                <div className="flex items-center justify-center gap-2 py-3">
+                  <Loader2 size={14} className="animate-spin text-blue-400" />
+                  <span className="text-slate-400 text-xs">
+                    {lang === 'da' ? 'Henter flere regnskaber…' : 'Loading more financials…'}
+                  </span>
+                </div>
+              )}
+
+              {/* Empty / fallback — kun når alt er hentet og der stadig ingen data er */}
+              {!xbrlLoading && !xbrlLoadingMore && (!xbrlData || xbrlData.length === 0) && (
                 <EmptyState
                   ikon={<BarChart3 size={32} className="text-slate-600" />}
                   tekst={c.noFinancials}
@@ -4670,6 +4835,8 @@ interface RegnskabstalTableProps {
   years: RegnskabsAar[];
   /** Sprog */
   lang: 'da' | 'en';
+  /** Regnskaber med PDF-links fra ES */
+  regnskaber?: Regnskab[];
 }
 
 /** Række-definition for regnskabstabellen */
@@ -4701,7 +4868,7 @@ const CHART_COLORS = [
  *
  * @param props - Se RegnskabstalTableProps
  */
-function RegnskabstalTable({ years, lang }: RegnskabstalTableProps) {
+function RegnskabstalTable({ years, lang, regnskaber = [] }: RegnskabstalTableProps) {
   const da = lang === 'da';
   const [visAlleAar, setVisAlleAar] = useState(false);
   /** Default graf: Bruttofortjeneste, Årets resultat, Egenkapital */
@@ -4720,6 +4887,25 @@ function RegnskabstalTable({ years, lang }: RegnskabstalTableProps) {
 
   /** Viste år — 5 default, alle hvis udfoldet */
   const visteAar = visAlleAar ? years : years.slice(0, 5);
+
+  /**
+   * Map fra år → download URL for regnskabsrapporten.
+   * Prioritet: PDF > XHTML (åbnes i browser) > ZIP.
+   */
+  const pdfPerAar = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const r of regnskaber) {
+      if (!r.periodeSlut) continue;
+      const aar = new Date(r.periodeSlut).getFullYear();
+      if (map.has(aar)) continue; // Nyeste først (ES sorterer desc)
+      const dok =
+        r.dokumenter.find((d) => d.dokumentMimeType === 'application/pdf') ??
+        r.dokumenter.find((d) => d.dokumentMimeType?.includes('xhtml')) ??
+        r.dokumenter.find((d) => d.dokumentMimeType === 'application/zip');
+      if (dok?.dokumentUrl) map.set(aar, dok.dokumentUrl);
+    }
+    return map;
+  }, [regnskaber]);
 
   /** Formaterer et tal med tusindtalsseparator */
   const fmt = (val: number | null): string => {
@@ -5052,14 +5238,31 @@ function RegnskabstalTable({ years, lang }: RegnskabstalTableProps) {
               >
                 <span />
                 <span />
-                {visteAar.map((y) => (
-                  <span
-                    key={y.aar}
-                    className="text-[11px] font-semibold text-blue-400 text-right tabular-nums"
-                  >
-                    {y.aar}
-                  </span>
-                ))}
+                {visteAar.map((y) => {
+                  const pdfUrl = pdfPerAar.get(y.aar);
+                  return (
+                    <div key={y.aar} className="flex items-center justify-end gap-1">
+                      {pdfUrl && (
+                        <a
+                          href={pdfUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-slate-500 hover:text-blue-400 transition-colors"
+                          title={
+                            da
+                              ? `Download ${y.aar} regnskab (PDF)`
+                              : `Download ${y.aar} report (PDF)`
+                          }
+                        >
+                          <Download size={11} />
+                        </a>
+                      )}
+                      <span className="text-[11px] font-semibold text-blue-400 tabular-nums">
+                        {y.aar}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
 
               {/* Datarækker */}

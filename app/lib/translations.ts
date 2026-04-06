@@ -225,7 +225,7 @@ export const translations = {
         tradeHistory: 'Ejendomshandler',
         properties: 'Ejendomme',
         companies: 'Virksomheder',
-        financials: 'Regnskabstal',
+        financials: 'Regnskab',
         keyPersons: 'Personer',
         history: 'Kronologi',
         liens: 'Tinglysning',

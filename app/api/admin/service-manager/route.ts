@@ -205,7 +205,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const scan = scanData as Pick<ServiceManagerScan, 'id'> | null;
 
     if (insertErr || !scan) {
-      console.error('[service-manager POST] insert error:', insertErr?.message);
+      console.error('[service-manager POST] insert error:', insertErr?.code ?? '[DB error]');
       return NextResponse.json({ error: 'Kunne ikke oprette scan' }, { status: 500 });
     }
 

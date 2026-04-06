@@ -16,6 +16,11 @@ const securityHeaders = [
     key: 'Content-Security-Policy',
     value: [
       "default-src 'self'",
+      // 'unsafe-inline': required by Mapbox GL JS (inlines worker bootstrapping code) and Next.js
+      // inline event handlers. Nonces are not currently viable because Mapbox injects scripts
+      // dynamically at runtime without nonce support.
+      // 'unsafe-eval': required by Mapbox GL JS (uses eval() internally for shader compilation).
+      // Both directives should be removed if/when Mapbox drops these requirements.
       "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://browser.sentry-cdn.com",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob: https:",

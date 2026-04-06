@@ -72,7 +72,7 @@ export async function GET(): Promise<NextResponse> {
     const { data, error } = await admin.auth.admin.listUsers({ perPage: 1000 });
 
     if (error) {
-      console.error('[admin/users] listUsers error:', error.message);
+      console.error('[admin/users] listUsers error:', error.code ?? '[DB error]');
       return NextResponse.json({ error: 'Failed to list users' }, { status: 500 });
     }
 
@@ -141,8 +141,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     });
 
     if (createError) {
-      console.error('[admin/users] Create error:', createError.message);
-      return NextResponse.json({ error: createError.message }, { status: 400 });
+      console.error('[admin/users] Create error:', createError.code ?? '[DB error]');
+      return NextResponse.json({ error: 'Failed to create user' }, { status: 400 });
     }
 
     return NextResponse.json({
@@ -215,7 +215,7 @@ export async function DELETE(req: NextRequest): Promise<NextResponse> {
     // Step 3: Delete from Supabase Auth (removes user, sessions, MFA factors)
     const { error: deleteError } = await admin.auth.admin.deleteUser(targetUser.id);
     if (deleteError) {
-      console.error('[admin/users] Delete error:', deleteError.message);
+      console.error('[admin/users] Delete error:', deleteError.code ?? '[DB error]');
       return NextResponse.json({ error: 'Failed to delete user' }, { status: 500 });
     }
 

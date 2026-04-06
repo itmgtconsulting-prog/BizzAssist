@@ -526,7 +526,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const fix = fixData as Pick<ServiceManagerFix, 'id' | 'status' | 'classification'> | null;
 
     if (insertErr || !fix) {
-      console.error('[auto-fix] insert error:', insertErr?.message);
+      console.error('[auto-fix] insert error:', insertErr?.code ?? '[DB error]');
       return NextResponse.json({ error: 'Kunne ikke gemme fix-forslag' }, { status: 500 });
     }
 
@@ -637,7 +637,7 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
       .eq('id', fixId);
 
     if (updateErr) {
-      console.error('[auto-fix PATCH] update error:', updateErr.message);
+      console.error('[auto-fix PATCH] update error:', updateErr.code ?? '[DB error]');
       return NextResponse.json({ error: 'Kunne ikke opdatere fix' }, { status: 500 });
     }
 

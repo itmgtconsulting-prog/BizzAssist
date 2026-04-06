@@ -37,6 +37,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 import { checkRateLimit, braveRateLimit } from '@/app/lib/rateLimit';
 import { withBraveCache } from '@/app/lib/searchCache';
+import { createClient as createServerClient } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -374,9 +375,7 @@ async function searchBravePersonArticles(
     }
   }
 
-  console.log(
-    `[person-article-search] searchBravePersonArticles: ${merged.length} merged resultater for "${personName}"`
-  );
+  // No PII in logs — personName omitted
   return merged;
 }
 
@@ -522,9 +521,7 @@ async function searchBravePersonSocials(
     }
   }
 
-  console.log(
-    `[person-article-search] searchBravePersonSocials: fandt ${Object.keys(socials).length} platforme for "${personName}"`
-  );
+  // No PII in logs — personName omitted
   return { socials, allCandidates: platformUrls as Record<string, string[]> };
 }
 
@@ -575,9 +572,7 @@ async function searchBravePersonContacts(
     }
   }
 
-  console.log(
-    `[person-article-search] searchBravePersonContacts: ${all.length} kontakt-resultater for "${personName}"`
-  );
+  // No PII in logs — personName omitted
   return all;
 }
 
@@ -622,9 +617,7 @@ async function searchBravePersonPhone(
     }
   }
 
-  console.log(
-    `[person-article-search] searchBravePersonPhone: ${all.length} ekstra telefon-resultater for "${personName}"`
-  );
+  // No PII in logs — personName omitted
   return all;
 }
 
@@ -913,10 +906,8 @@ function parsePersonArticleResponse(
         socials[key as keyof SocialsResult] = primaryUrl;
         socialsWithMeta[key] = { url: primaryUrl, confidence, reason };
       } else {
+        // Primary link below threshold — moved to alternatives (URL omitted from log to avoid PII)
         altsWithMeta.unshift({ url: primaryUrl, confidence, reason });
-        console.log(
-          `[person-article-search] ${key}: primær URL "${primaryUrl}" under tærskel (${confidence} < ${threshold}) — flyttes til alternativer`
-        );
       }
 
       if (altsWithMeta.length > 0) {
@@ -976,6 +967,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const limited = await checkRateLimit(request, braveRateLimit);
   if (limited) return limited;
 
+  // Require an authenticated session — person-search consumes paid API tokens
+  const supabase = await createServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const apiKey = process.env.BIZZASSIST_CLAUDE_KEY?.trim();
   if (!apiKey) {
     return NextResponse.json({ error: 'BIZZASSIST_CLAUDE_KEY ikke konfigureret' }, { status: 500 });
@@ -998,7 +998,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'personName er påkrævet' }, { status: 400 });
   }
 
-  console.log('[person-article-search] Companies modtaget:', JSON.stringify(companies));
+  // Company names omitted from logs — PII / competitive data
 
   // ── Hent threshold + lærings-kontekst + Brave-data + ekskluderede domæner parallelt ──
   // Brave results are cached 24h in Supabase search_cache to reduce API usage.
@@ -1053,9 +1053,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     });
   }
 
-  console.log(
-    `[person-article-search] "${personName}": Brave=${braveResults.length} rå resultater, threshold=${confidenceThreshold}`
-  );
+  // personName omitted from log — PII
 
   // ── Byg person-kontekst og bruger-besked ─────────────────────────────────
   const personContext = [
@@ -1152,19 +1150,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // Ensures at Brave-fund altid vises i frontend (socialsWithMeta), selv hvis Claude springer over.
     for (const [platform, url] of Object.entries(braveSocials)) {
       if (url && !socialsWithMeta[platform]) {
+        // URL omitted from log — may contain PII (person's social profile)
         socialsWithMeta[platform] = {
           url,
           confidence: 65,
           reason: 'Fundet via Brave Search (ikke verificeret af AI)',
         };
-        console.log(
-          `[person-article-search] Brave fallback socialsWithMeta: ${platform}=${url} (Claude verificerede ikke platformen)`
-        );
       }
     }
 
+    // personName omitted — PII. Platform keys (linkedin, facebook…) are safe to log.
     console.log(
-      `[person-article-search] "${personName}": ${articles.length} artikler, tokens=${totalTokens}, ` +
+      `[person-article-search] ${articles.length} artikler, tokens=${totalTokens}, ` +
         `brave-socials=[${Object.keys(braveSocials).join(',')}], ` +
         `primære links=[${Object.keys(socialsWithMeta).join(',')}], ` +
         `alternativer=[${Object.keys(alternativesWithMeta).join(',')}], ` +
@@ -1244,9 +1241,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
                       typeof extraData.confidence === 'number' ? extraData.confidence : 60,
                   });
                 }
-                console.log(
-                  `[person-article-search] Sekundær telefon-søgning fandt: phone=${extraData.phone ?? '–'}, email=${extraData.email ?? '–'}`
-                );
+                // Phone/email omitted from log — PII
               }
             }
           } catch {

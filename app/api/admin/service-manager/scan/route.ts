@@ -306,7 +306,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       .eq('id', scanId);
 
     if (updateErr) {
-      console.error('[service-manager/scan] update error:', updateErr.message);
+      console.error('[service-manager/scan] update error:', updateErr.code ?? '[DB error]');
     }
 
     return NextResponse.json({

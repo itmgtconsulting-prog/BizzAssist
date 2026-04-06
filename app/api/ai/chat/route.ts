@@ -28,6 +28,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { checkRateLimit, aiRateLimit } from '@/app/lib/rateLimit';
 import { fetchBbrForAddress } from '@/app/lib/fetchBbrData';
 import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -448,6 +449,17 @@ export async function POST(request: NextRequest): Promise<Response> {
   } = await supabase.auth.getUser();
   if (!user) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // Require an active subscription — read app_metadata via admin client (not exposed to JWT)
+  const adminClient = createAdminClient();
+  const { data: freshUser } = await adminClient.auth.admin.getUserById(user.id);
+  const sub = freshUser?.user?.app_metadata?.subscription as { status?: string } | null | undefined;
+  if (!sub || sub.status !== 'active') {
+    return Response.json(
+      { error: 'Aktivt abonnement kræves for at bruge AI-assistenten' },
+      { status: 403 }
+    );
   }
 
   const apiKey = process.env.BIZZASSIST_CLAUDE_KEY?.trim();

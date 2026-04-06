@@ -260,11 +260,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         );
 
         if (error) {
-          console.error('[admin/plans] Upsert error:', error.message, error.code, error.details);
-          return NextResponse.json(
-            { error: `Failed to update: ${error.message}` },
-            { status: 500 }
-          );
+          // Omit error.message and error.details from log — may expose schema/column names
+          console.error('[admin/plans] Upsert error:', error.code ?? '[DB error]');
+          return NextResponse.json({ error: 'Failed to update plan' }, { status: 500 });
         }
 
         return NextResponse.json({ ok: true });

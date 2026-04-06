@@ -458,16 +458,18 @@ export default function VirksomhedDetalje({ params }: PageProps) {
   const [handlerManglerAdgang, setHandlerManglerAdgang] = useState(false);
   const handlerFetchedRef = useRef(false);
 
-  /** Ejendomme portefølje — lazy-loaded when properties tab is activated */
+  /** Ejendomme portefølje — progressivt lazy-loaded when properties tab is activated */
   const [ejendommeData, setEjendommeData] = useState<EjendomSummary[]>([]);
   const [ejendommeLoading, setEjendommeLoading] = useState(false);
-  const [ejendommeLoadingAll, setEjendommeLoadingAll] = useState(false);
+  const [ejendommeLoadingMore, setEjendommeLoadingMore] = useState(false);
+  const [ejendommeFetchComplete, setEjendommeFetchComplete] = useState(false);
   const [ejendommeManglerNoegle, setEjendommeManglerNoegle] = useState(false);
   const [ejendommeManglerAdgang, setEjendommeManglerAdgang] = useState(false);
   const [ejendommeTotalBfe, setEjendommeTotalBfe] = useState(0);
-  const [ejendommeTruncated, setEjendommeTruncated] = useState(false);
   /** Kommasepereret CVR-nøgle der sidst blev hentet — forhindrer duplicate-fetches */
   const ejendomFetchKeyRef = useRef('');
+  /** AbortController for igangværende progressiv ejendomshentning */
+  const ejendomAbortRef = useRef<AbortController | null>(null);
 
   /** Dokumenter-tab: valgte dokumenter til batch-download */
   const [valgteDoc, setValgteDoc] = useState<Set<string>>(new Set());
@@ -675,9 +677,79 @@ export default function VirksomhedDetalje({ params }: PageProps) {
   }, [aktivTab, fetchRegnskaber, fetchXbrl, fetchRelated, fetchEjendomshandler]);
 
   /**
-   * Henter ejendomsportefølje når properties-tab er aktivt.
+   * Henter ejendomsportefølje progressivt: første batch (5) vises straks,
+   * efterfølgende batches tilføjes automatisk i baggrunden.
+   * Bruger AbortController til at annullere igangværende hentning ved CVR-ændring.
+   */
+  const fetchEjendommeProgressively = useCallback(async (uniqueCvrs: string[]) => {
+    ejendomAbortRef.current?.abort();
+    const controller = new AbortController();
+    ejendomAbortRef.current = controller;
+
+    const FIRST_BATCH = 5;
+    const REST_BATCH = 10;
+
+    setEjendommeData([]);
+    setEjendommeFetchComplete(false);
+    setEjendommeLoadingMore(false);
+    setEjendommeLoading(true);
+    setEjendommeManglerNoegle(false);
+    setEjendommeManglerAdgang(false);
+
+    try {
+      const url = `/api/ejendomme-by-owner?cvr=${uniqueCvrs.join(',')}&offset=0&limit=${FIRST_BATCH}`;
+      const res = await fetch(url, { signal: controller.signal });
+      if (!res.ok) throw new Error(`${res.status}`);
+      const json = (await res.json()) as {
+        ejendomme: EjendomSummary[];
+        totalBfe: number;
+        manglerNoegle: boolean;
+        manglerAdgang: boolean;
+      };
+
+      if (controller.signal.aborted) return;
+
+      setEjendommeData(json.ejendomme ?? []);
+      setEjendommeTotalBfe(json.totalBfe ?? 0);
+      setEjendommeManglerNoegle(json.manglerNoegle === true);
+      setEjendommeManglerAdgang(json.manglerAdgang === true);
+      setEjendommeLoading(false);
+
+      let offset = FIRST_BATCH;
+      const total = json.totalBfe ?? 0;
+
+      if (offset < total) setEjendommeLoadingMore(true);
+
+      while (offset < total) {
+        if (controller.signal.aborted) return;
+
+        const res2 = await fetch(
+          `/api/ejendomme-by-owner?cvr=${uniqueCvrs.join(',')}&offset=${offset}&limit=${REST_BATCH}`,
+          { signal: controller.signal }
+        );
+        if (!res2.ok) break;
+        const json2 = (await res2.json()) as { ejendomme: EjendomSummary[] };
+
+        if (controller.signal.aborted) return;
+
+        setEjendommeData((prev) => [...prev, ...(json2.ejendomme ?? [])]);
+        offset += REST_BATCH;
+      }
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') return;
+      setEjendommeData([]);
+    } finally {
+      if (!controller.signal.aborted) {
+        setEjendommeLoading(false);
+        setEjendommeLoadingMore(false);
+        setEjendommeFetchComplete(true);
+      }
+    }
+  }, []);
+
+  /**
+   * Trigger progressiv ejendomshentning når properties-tab aktiveres eller CVR-sæt ændres.
    * Kører igen når relatedCompanies ændres (datterselskaber loader ind).
-   * Bruger ejendomFetchKeyRef til at undgå duplicate fetches for samme CVR-sæt.
    */
   useEffect(() => {
     if (aktivTab !== 'properties' && aktivTab !== 'diagram') return;
@@ -688,56 +760,14 @@ export default function VirksomhedDetalje({ params }: PageProps) {
       ...relatedCompanies.filter((v) => v.aktiv).map((v) => String(v.cvr).padStart(8, '0')),
     ];
     const uniqueCvrs = [...new Set(cvrList)].slice(0, 30);
-    const fetchKey = uniqueCvrs.sort().join(',');
+    const fetchKey = [...uniqueCvrs].sort().join(',');
 
-    /* Spring over hvis vi allerede har hentet for nøjagtigt dette sæt */
+    /* Spring over hvis vi allerede henter for nøjagtigt dette sæt */
     if (ejendomFetchKeyRef.current === fetchKey) return;
     ejendomFetchKeyRef.current = fetchKey;
 
-    setEjendommeLoading(true);
-    fetch(`/api/ejendomme-by-owner?cvr=${uniqueCvrs.join(',')}`)
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`${res.status}`))))
-      .then((json) => {
-        setEjendommeData(json.ejendomme ?? []);
-        setEjendommeTotalBfe(json.totalBfe ?? 0);
-        setEjendommeTruncated(json.truncated === true);
-        setEjendommeManglerNoegle(json.manglerNoegle === true);
-        setEjendommeManglerAdgang(json.manglerAdgang === true);
-      })
-      .catch(() => {
-        setEjendommeData([]);
-      })
-      .finally(() => {
-        setEjendommeLoading(false);
-      });
-  }, [aktivTab, cvr, relatedCompanies]);
-
-  /**
-   * Henter alle ejendomme (op til 100) ved klik på "Vis alle"-knap.
-   * Kalder API'et med ?all=1 og erstatter den afskårne liste.
-   */
-  const handleVisAlleEjendomme = () => {
-    const cvrList = [
-      cvr,
-      ...relatedCompanies.filter((v) => v.aktiv).map((v) => String(v.cvr).padStart(8, '0')),
-    ];
-    const uniqueCvrs = [...new Set(cvrList)].slice(0, 30);
-
-    setEjendommeLoadingAll(true);
-    fetch(`/api/ejendomme-by-owner?cvr=${uniqueCvrs.join(',')}&all=1`)
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`${res.status}`))))
-      .then((json) => {
-        setEjendommeData(json.ejendomme ?? []);
-        setEjendommeTotalBfe(json.totalBfe ?? 0);
-        setEjendommeTruncated(json.truncated === true);
-      })
-      .catch(() => {
-        /* behold eksisterende data ved fejl */
-      })
-      .finally(() => {
-        setEjendommeLoadingAll(false);
-      });
-  };
+    void fetchEjendommeProgressively(uniqueCvrs);
+  }, [aktivTab, cvr, relatedCompanies, fetchEjendommeProgressively]);
 
   /** Lazy-load regnskabstal for alle relaterede virksomheder (parallelt) */
   useEffect(() => {
@@ -1800,8 +1830,8 @@ export default function VirksomhedDetalje({ params }: PageProps) {
           {/* ══ EJENDOMME ══ */}
           {aktivTab === 'properties' && (
             <div className="space-y-4">
-              {/* Loading */}
-              {ejendommeLoading && (
+              {/* Indledende spinner — vises kun før første batch ankommer */}
+              {ejendommeLoading && ejendommeData.length === 0 && (
                 <div className="flex items-center justify-center py-12">
                   <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
                   <span className="ml-2 text-slate-400 text-sm">
@@ -1810,8 +1840,8 @@ export default function VirksomhedDetalje({ params }: PageProps) {
                 </div>
               )}
 
-              {/* Mangler nøgle / adgang */}
-              {!ejendommeLoading && ejendommeManglerNoegle && (
+              {/* Mangler nøgle / adgang — vises når hentning er fuldført */}
+              {ejendommeFetchComplete && ejendommeManglerNoegle && (
                 <div className="flex flex-col items-center justify-center py-12 text-center">
                   <Home size={36} className="text-slate-600 mb-3" />
                   <p className="text-slate-400 text-sm max-w-sm">
@@ -1821,7 +1851,7 @@ export default function VirksomhedDetalje({ params }: PageProps) {
                   </p>
                 </div>
               )}
-              {!ejendommeLoading && ejendommeManglerAdgang && (
+              {ejendommeFetchComplete && ejendommeManglerAdgang && (
                 <div className="flex flex-col items-center justify-center py-12 text-center">
                   <Home size={36} className="text-slate-600 mb-3" />
                   <p className="text-slate-400 text-sm max-w-sm">
@@ -1832,39 +1862,19 @@ export default function VirksomhedDetalje({ params }: PageProps) {
                 </div>
               )}
 
-              {/* Ingen ejendomme */}
-              {!ejendommeLoading &&
-                !ejendommeManglerNoegle &&
-                !ejendommeManglerAdgang &&
-                ejendommeData.length === 0 && (
-                  <div className="flex flex-col items-center justify-center py-12 text-center">
-                    <Home size={36} className="text-slate-600 mb-3" />
-                    <p className="text-slate-400 text-sm">
-                      {lang === 'da'
-                        ? 'Ingen registrerede ejendomme fundet for denne virksomhed eller dens koncern.'
-                        : 'No registered properties found for this company or its group.'}
-                    </p>
-                  </div>
-                )}
-
-              {/* Ejendomme grid */}
-              {!ejendommeLoading && ejendommeData.length > 0 && (
+              {/* Ejendomme grid — vises så snart første batch ankommer */}
+              {ejendommeData.length > 0 && (
                 <>
-                  {/* Header med tæller og note hvis afskåret */}
+                  {/* Header med løbende tæller */}
                   <div className="flex items-center justify-between">
                     <p className="text-slate-400 text-sm">
-                      {lang === 'da'
-                        ? `${ejendommeData.length} ejendom${ejendommeData.length !== 1 ? 'me' : ''} fundet`
-                        : `${ejendommeData.length} propert${ejendommeData.length !== 1 ? 'ies' : 'y'} found`}
-                      {ejendommeTruncated && (
-                        <span className="text-amber-400 ml-2">
-                          (
-                          {lang === 'da'
-                            ? `viser ${ejendommeData.length} af ${ejendommeTotalBfe}`
-                            : `showing ${ejendommeData.length} of ${ejendommeTotalBfe}`}
-                          )
-                        </span>
-                      )}
+                      {ejendommeLoadingMore
+                        ? lang === 'da'
+                          ? `Indlæser… (${ejendommeData.length} af ${ejendommeTotalBfe} ejendomme)`
+                          : `Loading… (${ejendommeData.length} of ${ejendommeTotalBfe} properties)`
+                        : lang === 'da'
+                          ? `${ejendommeData.length} ejendom${ejendommeData.length !== 1 ? 'me' : ''} fundet`
+                          : `${ejendommeData.length} propert${ejendommeData.length !== 1 ? 'ies' : 'y'} found`}
                     </p>
                     {relatedCompanies.length > 0 && (
                       <span className="text-slate-500 text-xs">
@@ -1887,26 +1897,30 @@ export default function VirksomhedDetalje({ params }: PageProps) {
                     ))}
                   </div>
 
-                  {/* "Vis alle" knap — vises kun når listen er afskåret til de første 20 */}
-                  {ejendommeTruncated && (
-                    <div className="flex justify-center pt-2">
-                      <button
-                        onClick={handleVisAlleEjendomme}
-                        disabled={ejendommeLoadingAll}
-                        className="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium transition-colors"
-                      >
-                        {ejendommeLoadingAll
-                          ? lang === 'da'
-                            ? 'Henter…'
-                            : 'Loading…'
-                          : lang === 'da'
-                            ? `Vis alle ${ejendommeTotalBfe} ejendomme`
-                            : `Show all ${ejendommeTotalBfe} properties`}
-                      </button>
+                  {/* Progressiv loading-indikator i bunden */}
+                  {ejendommeLoadingMore && (
+                    <div className="flex items-center justify-center gap-2 py-4 text-slate-500 text-sm">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      {lang === 'da' ? `Indlæser flere ejendomme…` : `Loading more properties…`}
                     </div>
                   )}
                 </>
               )}
+
+              {/* Ingen ejendomme — vises kun når hentning er fuldført og listen er tom */}
+              {ejendommeFetchComplete &&
+                !ejendommeManglerNoegle &&
+                !ejendommeManglerAdgang &&
+                ejendommeData.length === 0 && (
+                  <div className="flex flex-col items-center justify-center py-12 text-center">
+                    <Home size={36} className="text-slate-600 mb-3" />
+                    <p className="text-slate-400 text-sm">
+                      {lang === 'da'
+                        ? 'Ingen registrerede ejendomme fundet for denne virksomhed eller dens koncern.'
+                        : 'No registered properties found for this company or its group.'}
+                    </p>
+                  </div>
+                )}
             </div>
           )}
 

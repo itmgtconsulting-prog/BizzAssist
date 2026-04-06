@@ -235,14 +235,18 @@ export default function PersonDetailPage({
   const [relatedLoading, setRelatedLoading] = useState(false);
   const relatedFetchedRef = useRef(false);
 
-  /** Ejendomme portefølje — lazy-loaded when properties tab is activated */
+  /** Ejendomme portefølje — progressivt lazy-loaded when properties tab is activated */
   const [ejendommeData, setEjendommeData] = useState<EjendomSummary[]>([]);
   const [ejendommeLoading, setEjendommeLoading] = useState(false);
+  const [ejendommeLoadingMore, setEjendommeLoadingMore] = useState(false);
+  const [ejendommeFetchComplete, setEjendommeFetchComplete] = useState(false);
   const [ejendommeManglerNoegle, setEjendommeManglerNoegle] = useState(false);
   const [ejendommeManglerAdgang, setEjendommeManglerAdgang] = useState(false);
   const [ejendommeTotalBfe, setEjendommeTotalBfe] = useState(0);
   /** Kommasepereret CVR-nøgle der sidst blev hentet — forhindrer duplicate-fetches */
   const ejendomFetchKeyRef = useRef('');
+  /** AbortController for igangværende progressiv ejendomshentning */
+  const ejendomAbortRef = useRef<AbortController | null>(null);
 
   /** Detekterer desktop vs. mobil — nyheder-panel vises som sidebar på desktop, overlay på mobil */
   const [isDesktop, setIsDesktop] = useState(true);
@@ -599,10 +603,79 @@ export default function PersonDetailPage({
   }, [topLevelEjer, derived?.andreVirksomheder]);
 
   /**
-   * Henter ejendomsportefølje når properties-tab er aktivt.
-   * Inkluderer alle virksomheder personen ejer + deres datterselskaber.
-   * Kører igen når relatedCompanies ændres (subsidiaries loader ind).
-   * Bruger ejendomFetchKeyRef til at undgå duplicate fetches for samme CVR-sæt.
+   * Henter ejendomsportefølje progressivt: første batch (5) vises straks,
+   * efterfølgende batches tilføjes automatisk i baggrunden.
+   * Bruger AbortController til at annullere igangværende hentning ved CVR-ændring.
+   */
+  const fetchEjendommeProgressively = useCallback(async (uniqueCvrs: string[]) => {
+    ejendomAbortRef.current?.abort();
+    const controller = new AbortController();
+    ejendomAbortRef.current = controller;
+
+    const FIRST_BATCH = 5;
+    const REST_BATCH = 10;
+
+    setEjendommeData([]);
+    setEjendommeFetchComplete(false);
+    setEjendommeLoadingMore(false);
+    setEjendommeLoading(true);
+    setEjendommeManglerNoegle(false);
+    setEjendommeManglerAdgang(false);
+
+    try {
+      const url = `/api/ejendomme-by-owner?cvr=${uniqueCvrs.join(',')}&offset=0&limit=${FIRST_BATCH}`;
+      const res = await fetch(url, { signal: controller.signal });
+      if (!res.ok) throw new Error(`${res.status}`);
+      const json = (await res.json()) as {
+        ejendomme: EjendomSummary[];
+        totalBfe: number;
+        manglerNoegle: boolean;
+        manglerAdgang: boolean;
+      };
+
+      if (controller.signal.aborted) return;
+
+      setEjendommeData(json.ejendomme ?? []);
+      setEjendommeTotalBfe(json.totalBfe ?? 0);
+      setEjendommeManglerNoegle(json.manglerNoegle === true);
+      setEjendommeManglerAdgang(json.manglerAdgang === true);
+      setEjendommeLoading(false);
+
+      let offset = FIRST_BATCH;
+      const total = json.totalBfe ?? 0;
+
+      if (offset < total) setEjendommeLoadingMore(true);
+
+      while (offset < total) {
+        if (controller.signal.aborted) return;
+
+        const res2 = await fetch(
+          `/api/ejendomme-by-owner?cvr=${uniqueCvrs.join(',')}&offset=${offset}&limit=${REST_BATCH}`,
+          { signal: controller.signal }
+        );
+        if (!res2.ok) break;
+        const json2 = (await res2.json()) as { ejendomme: EjendomSummary[] };
+
+        if (controller.signal.aborted) return;
+
+        setEjendommeData((prev) => [...prev, ...(json2.ejendomme ?? [])]);
+        offset += REST_BATCH;
+      }
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') return;
+      setEjendommeData([]);
+    } finally {
+      if (!controller.signal.aborted) {
+        setEjendommeLoading(false);
+        setEjendommeLoadingMore(false);
+        setEjendommeFetchComplete(true);
+      }
+    }
+  }, []);
+
+  /**
+   * Trigger progressiv ejendomshentning når properties-tab aktiveres eller CVR-sæt ændres.
+   * Kører igen når relatedCompanies ændres (datterselskaber loader ind).
    */
   useEffect(() => {
     if ((aktivTab !== 'properties' && aktivTab !== 'relations') || !derived) return;
@@ -624,6 +697,7 @@ export default function PersonDetailPage({
       /* Personen ejer ingen virksomheder — intet at hente */
       setEjendommeData([]);
       setEjendommeTotalBfe(0);
+      setEjendommeFetchComplete(true);
       return;
     }
 
@@ -631,22 +705,8 @@ export default function PersonDetailPage({
     if (ejendomFetchKeyRef.current === fetchKey) return;
     ejendomFetchKeyRef.current = fetchKey;
 
-    setEjendommeLoading(true);
-    fetch(`/api/ejendomme-by-owner?cvr=${uniqueCvrs.join(',')}`)
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`${res.status}`))))
-      .then((json) => {
-        setEjendommeData(json.ejendomme ?? []);
-        setEjendommeTotalBfe(json.totalBfe ?? 0);
-        setEjendommeManglerNoegle(json.manglerNoegle === true);
-        setEjendommeManglerAdgang(json.manglerAdgang === true);
-      })
-      .catch(() => {
-        setEjendommeData([]);
-      })
-      .finally(() => {
-        setEjendommeLoading(false);
-      });
-  }, [aktivTab, derived, relatedCompanies]);
+    void fetchEjendommeProgressively(uniqueCvrs);
+  }, [aktivTab, derived, relatedCompanies, fetchEjendommeProgressively]);
 
   // ─── Tab config ──────────────────────────────────────────────────────────────
   const tabDef: { id: TabId; label: string; icon: React.ReactNode }[] = [
@@ -1137,7 +1197,7 @@ export default function PersonDetailPage({
           {aktivTab === 'properties' && (
             <div className="space-y-4">
               {/* Ingen ejede virksomheder — personen ejer ingen virksomheder */}
-              {!ejendommeLoading &&
+              {ejendommeFetchComplete &&
                 !ejendommeManglerNoegle &&
                 !ejendommeManglerAdgang &&
                 derived?.ejerVirksomheder.length === 0 && (
@@ -1151,8 +1211,8 @@ export default function PersonDetailPage({
                   </div>
                 )}
 
-              {/* Loading */}
-              {ejendommeLoading && (
+              {/* Indledende spinner — vises kun før første batch ankommer */}
+              {ejendommeLoading && ejendommeData.length === 0 && (
                 <div className="flex items-center justify-center py-12">
                   <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
                   <span className="ml-2 text-slate-400 text-sm">
@@ -1161,8 +1221,8 @@ export default function PersonDetailPage({
                 </div>
               )}
 
-              {/* Mangler nøgle / adgang */}
-              {!ejendommeLoading && ejendommeManglerNoegle && (
+              {/* Mangler nøgle / adgang — vises når hentning er fuldført */}
+              {ejendommeFetchComplete && ejendommeManglerNoegle && (
                 <div className="flex flex-col items-center justify-center py-12 text-center">
                   <Home size={36} className="text-slate-600 mb-3" />
                   <p className="text-slate-400 text-sm max-w-sm">
@@ -1172,7 +1232,7 @@ export default function PersonDetailPage({
                   </p>
                 </div>
               )}
-              {!ejendommeLoading && ejendommeManglerAdgang && (
+              {ejendommeFetchComplete && ejendommeManglerAdgang && (
                 <div className="flex flex-col items-center justify-center py-12 text-center">
                   <Home size={36} className="text-slate-600 mb-3" />
                   <p className="text-slate-400 text-sm max-w-sm">
@@ -1183,8 +1243,43 @@ export default function PersonDetailPage({
                 </div>
               )}
 
-              {/* Ingen ejendomme fundet */}
-              {!ejendommeLoading &&
+              {/* Ejendomme grid — vises så snart første batch ankommer */}
+              {ejendommeData.length > 0 && (
+                <>
+                  <div className="flex items-center justify-between">
+                    <p className="text-slate-400 text-sm">
+                      {ejendommeLoadingMore
+                        ? lang === 'da'
+                          ? `Indlæser… (${ejendommeData.length} af ${ejendommeTotalBfe} ejendomme)`
+                          : `Loading… (${ejendommeData.length} of ${ejendommeTotalBfe} properties)`
+                        : lang === 'da'
+                          ? `${ejendommeData.length} ejendom${ejendommeData.length !== 1 ? 'me' : ''} fundet`
+                          : `${ejendommeData.length} propert${ejendommeData.length !== 1 ? 'ies' : 'y'} found`}
+                    </p>
+                    <span className="text-slate-500 text-xs">
+                      {lang === 'da'
+                        ? `Via ${derived?.ejerVirksomheder.length ?? 0} ejervirksomhed${(derived?.ejerVirksomheder.length ?? 0) !== 1 ? 'er' : ''}`
+                        : `Via ${derived?.ejerVirksomheder.length ?? 0} owned compan${(derived?.ejerVirksomheder.length ?? 0) !== 1 ? 'ies' : 'y'}`}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                    {ejendommeData.map((ej) => (
+                      <PropertyOwnerCard key={ej.bfeNummer} ejendom={ej} showOwner lang={lang} />
+                    ))}
+                  </div>
+
+                  {/* Progressiv loading-indikator i bunden */}
+                  {ejendommeLoadingMore && (
+                    <div className="flex items-center justify-center gap-2 py-4 text-slate-500 text-sm">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      {lang === 'da' ? 'Indlæser flere ejendomme…' : 'Loading more properties…'}
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* Ingen ejendomme fundet — vises kun når hentning er fuldført og listen er tom */}
+              {ejendommeFetchComplete &&
                 !ejendommeManglerNoegle &&
                 !ejendommeManglerAdgang &&
                 ejendommeData.length === 0 &&
@@ -1198,38 +1293,6 @@ export default function PersonDetailPage({
                     </p>
                   </div>
                 )}
-
-              {/* Ejendomme grid */}
-              {!ejendommeLoading && ejendommeData.length > 0 && (
-                <>
-                  <div className="flex items-center justify-between">
-                    <p className="text-slate-400 text-sm">
-                      {lang === 'da'
-                        ? `${ejendommeData.length} ejendom${ejendommeData.length !== 1 ? 'me' : ''} fundet`
-                        : `${ejendommeData.length} propert${ejendommeData.length !== 1 ? 'ies' : 'y'} found`}
-                      {ejendommeTotalBfe > ejendommeData.length && (
-                        <span className="text-amber-400 ml-2">
-                          (
-                          {lang === 'da'
-                            ? `viser 100 af ${ejendommeTotalBfe}`
-                            : `showing 100 of ${ejendommeTotalBfe}`}
-                          )
-                        </span>
-                      )}
-                    </p>
-                    <span className="text-slate-500 text-xs">
-                      {lang === 'da'
-                        ? `Via ${derived?.ejerVirksomheder.length ?? 0} ejervirksomhed${(derived?.ejerVirksomheder.length ?? 0) !== 1 ? 'er' : ''}`
-                        : `Via ${derived?.ejerVirksomheder.length ?? 0} owned compan${(derived?.ejerVirksomheder.length ?? 0) !== 1 ? 'ies' : 'y'}`}
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-                    {ejendommeData.map((ej) => (
-                      <PropertyOwnerCard key={ej.bfeNummer} ejendom={ej} showOwner lang={lang} />
-                    ))}
-                  </div>
-                </>
-              )}
             </div>
           )}
 

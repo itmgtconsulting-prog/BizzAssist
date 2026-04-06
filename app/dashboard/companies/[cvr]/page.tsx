@@ -564,6 +564,10 @@ export default function VirksomhedDetalje({ params }: PageProps) {
         const company = json as CVRPublicData;
         setData(company);
 
+        // Start regnskab + XBRL-fetch i baggrunden med det samme
+        fetchRegnskaber();
+        fetchXbrl();
+
         // Gem i seneste besøgte — kun ved faktisk åbning af detaljesiden
         saveRecentCompany({
           cvr: company.vat,
@@ -751,15 +755,7 @@ export default function VirksomhedDetalje({ params }: PageProps) {
     }
   }, [cvr]);
 
-  /** Start regnskab + XBRL-fetch straks når virksomhedsdata er loaded — kører i baggrunden */
-  const dataLoadedRef = useRef(false);
-  useEffect(() => {
-    if (data && !dataLoadedRef.current) {
-      dataLoadedRef.current = true;
-      fetchRegnskaber();
-      fetchXbrl();
-    }
-  }, [data, fetchRegnskaber, fetchXbrl]);
+  // Regnskab + XBRL-fetch startes i fetchData() når virksomhedsdata loades (se setData-kaldet)
 
   /**
    * Lazy-loader personbogsdata når bruger klikker på Tinglysning-tab.
@@ -811,7 +807,7 @@ export default function VirksomhedDetalje({ params }: PageProps) {
     if (aktivTab === 'liens') {
       fetchPersonbog();
     }
-  }, [aktivTab, fetchRegnskaber, fetchXbrl, fetchRelated, fetchEjendomshandler, fetchPersonbog]);
+  }, [aktivTab, fetchRegnskaber, fetchRelated, fetchEjendomshandler, fetchPersonbog]);
 
   /**
    * Henter ejendomsportefølje progressivt: første batch (5) vises straks,

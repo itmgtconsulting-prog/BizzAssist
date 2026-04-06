@@ -668,7 +668,6 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
   const handleNodeMouseDown = useCallback(
     (e: React.MouseEvent, nodeId: string) => {
       e.stopPropagation();
-      e.preventDefault();
       const pos = positions.get(nodeId);
       if (!pos) return;
       dragRef.current = {
@@ -726,10 +725,8 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
 
   // ── Global mouseup: stop drag or pan ──
   const handleMouseUp = useCallback(() => {
-    // Reset didMove after a short delay so the click handler can check it
-    setTimeout(() => {
-      dragRef.current.didMove = false;
-    }, 10);
+    // didMove is NOT reset here — it's checked by the click handler (which fires after mouseup).
+    // It's reset in the next mousedown instead.
     dragRef.current.active = false;
     dragRef.current.nodeId = null;
     panRef.current.active = false;

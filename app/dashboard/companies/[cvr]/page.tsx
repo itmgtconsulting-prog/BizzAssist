@@ -60,6 +60,7 @@ import type { RegnskabsAar } from '@/app/api/regnskab/xbrl/route';
 import type { RelateretVirksomhed } from '@/app/api/cvr-public/related/route';
 import type { CvrHandelData } from '@/app/api/salgshistorik/cvr/route';
 import type { EjendomSummary } from '@/app/api/ejendomme-by-owner/route';
+import type { PersonbogHaeftelse } from '@/app/api/tinglysning/personbog/route';
 import PropertyOwnerCard from '@/app/components/ejendomme/PropertyOwnerCard';
 import { saveRecentCompany } from '@/app/lib/recentCompanies';
 import { useSubscription } from '@/app/context/SubscriptionContext';
@@ -472,6 +473,14 @@ export default function VirksomhedDetalje({ params }: PageProps) {
   /** AbortController for igangværende progressiv ejendomshentning */
   const ejendomAbortRef = useRef<AbortController | null>(null);
 
+  /** Personbog (tinglysning) — lazy-loaded when liens tab is activated */
+  const [personbogData, setPersonbogData] = useState<PersonbogHaeftelse[]>([]);
+  const [personbogLoading, setPersonbogLoading] = useState(false);
+  const [personbogFejl, setPersonbogFejl] = useState<string | null>(null);
+  const [expandedPant, setExpandedPant] = useState<Set<number>>(new Set());
+  const [selectedPantDocs, setSelectedPantDocs] = useState<Set<string>>(new Set());
+  const personbogFetchedRef = useRef(false);
+
   /** Dokumenter-tab: valgte dokumenter til batch-download */
   const [valgteDoc, setValgteDoc] = useState<Set<string>>(new Set());
   /** Dokumenter-tab: vis alle regnskaber (default: kun 3) */
@@ -743,12 +752,46 @@ export default function VirksomhedDetalje({ params }: PageProps) {
   }, [cvr]);
 
   /** Start regnskab + XBRL-fetch straks når virksomhedsdata er loaded — kører i baggrunden */
+  const dataLoadedRef = useRef(false);
   useEffect(() => {
-    if (data) {
+    if (data && !dataLoadedRef.current) {
+      dataLoadedRef.current = true;
       fetchRegnskaber();
       fetchXbrl();
     }
   }, [data, fetchRegnskaber, fetchXbrl]);
+
+  /**
+   * Lazy-loader personbogsdata når bruger klikker på Tinglysning-tab.
+   * Fetcher kun én gang — cacher i state.
+   */
+  const fetchPersonbog = useCallback(async () => {
+    if (personbogFetchedRef.current) return;
+    personbogFetchedRef.current = true;
+    setPersonbogLoading(true);
+    setPersonbogFejl(null);
+
+    try {
+      const res = await fetch(`/api/tinglysning/personbog?cvr=${encodeURIComponent(cvr)}`);
+      const json = await res.json();
+
+      if (!res.ok) {
+        setPersonbogFejl(json.error ?? c.personbogError);
+        return;
+      }
+
+      if (json.fejl) {
+        setPersonbogFejl(json.fejl);
+        return;
+      }
+
+      setPersonbogData(json.haeftelser ?? []);
+    } catch {
+      setPersonbogFejl(c.personbogError);
+    } finally {
+      setPersonbogLoading(false);
+    }
+  }, [cvr, c.personbogError]);
 
   /** Trigger regnskab-fetch når financials- eller documents-tab aktiveres */
   useEffect(() => {
@@ -765,7 +808,10 @@ export default function VirksomhedDetalje({ params }: PageProps) {
     if (aktivTab === 'properties') {
       fetchRelated();
     }
-  }, [aktivTab, fetchRegnskaber, fetchXbrl, fetchRelated, fetchEjendomshandler]);
+    if (aktivTab === 'liens') {
+      fetchPersonbog();
+    }
+  }, [aktivTab, fetchRegnskaber, fetchXbrl, fetchRelated, fetchEjendomshandler, fetchPersonbog]);
 
   /**
    * Henter ejendomsportefølje progressivt: første batch (5) vises straks,
@@ -2929,13 +2975,18 @@ export default function VirksomhedDetalje({ params }: PageProps) {
             </div>
           )}
 
-          {/* ══ TINGLYSNING ══ */}
+          {/* ══ TINGLYSNING (PERSONBOG) ══ */}
           {aktivTab === 'liens' && (
-            <PlaceholderTab
-              ikon={<Scale size={40} className="text-slate-600" />}
-              titel={c.tabs.liens}
-              beskrivelse={c.noLiens}
-              comingSoon={c.comingSoon}
+            <PersonbogSection
+              haeftelser={personbogData}
+              loading={personbogLoading}
+              fejl={personbogFejl}
+              c={c}
+              da={lang === 'da'}
+              expandedPant={expandedPant}
+              setExpandedPant={setExpandedPant}
+              selectedPantDocs={selectedPantDocs}
+              setSelectedPantDocs={setSelectedPantDocs}
             />
           )}
 
@@ -3798,7 +3849,7 @@ function EmptyState({ ikon, tekst }: EmptyStateProps) {
   );
 }
 
-interface PlaceholderTabProps {
+interface _PlaceholderTabProps {
   /** Ikon centreret over titel */
   ikon: React.ReactNode;
   /** Tab-overskrift */
@@ -3809,13 +3860,599 @@ interface PlaceholderTabProps {
   comingSoon: string;
 }
 
+// ─── Personbog (Tinglysning) ────────────────────────────────────────────────
+
+/** Typekonfig for farvekodede personbog-sektioner */
+const personbogSektioner: {
+  key: string;
+  color: string;
+  bgClass: string;
+  textClass: string;
+  borderClass: string;
+}[] = [
+  {
+    key: 'virksomhedspant',
+    color: 'amber',
+    bgClass: 'bg-amber-500/5',
+    textClass: 'text-amber-400',
+    borderClass: 'border-amber-500/20',
+  },
+  {
+    key: 'loesoerepant',
+    color: 'teal',
+    bgClass: 'bg-teal-500/5',
+    textClass: 'text-teal-400',
+    borderClass: 'border-teal-500/20',
+  },
+  {
+    key: 'fordringspant',
+    color: 'cyan',
+    bgClass: 'bg-cyan-500/5',
+    textClass: 'text-cyan-400',
+    borderClass: 'border-cyan-500/20',
+  },
+  {
+    key: 'ejendomsforbehold',
+    color: 'purple',
+    bgClass: 'bg-purple-500/5',
+    textClass: 'text-purple-400',
+    borderClass: 'border-purple-500/20',
+  },
+];
+
+/** Oversætter personbog-typenøgler til UI-labels */
+function personbogTypeLabel(key: string, c: (typeof translations)['da']['company']): string {
+  const map: Record<string, string> = {
+    virksomhedspant: c.personbogVirksomhedspant,
+    loesoerepant: c.personbogLoesoerepant,
+    fordringspant: c.personbogFordringspant,
+    ejendomsforbehold: c.personbogEjendomsforbehold,
+  };
+  return map[key] ?? key;
+}
+
+/** Oversætter pantomfang-nøgler til UI-labels */
+function pantOmfangLabel(key: string, c: (typeof translations)['da']['company']): string {
+  const lower = key.toLowerCase();
+  if (lower.includes('varelager')) return c.personbogVarelager;
+  if (lower.includes('driftsinventar') || lower.includes('driftsmateriel'))
+    return c.personbogDriftsinventar;
+  if (lower.includes('fordring')) return c.personbogFordringer;
+  if (lower.includes('immateriel')) return c.personbogImmaterielleRettigheder;
+  return key;
+}
+
+interface PersonbogSectionProps {
+  haeftelser: PersonbogHaeftelse[];
+  loading: boolean;
+  fejl: string | null;
+  c: (typeof translations)['da']['company'];
+  da: boolean;
+  expandedPant: Set<number>;
+  setExpandedPant: React.Dispatch<React.SetStateAction<Set<number>>>;
+  selectedPantDocs: Set<string>;
+  setSelectedPantDocs: React.Dispatch<React.SetStateAction<Set<string>>>;
+}
+
+/**
+ * PersonbogSection — Viser personbogshæftelser for en virksomhed.
+ * Farvekodede sektioner grupperet efter type: Virksomhedspant, Løsørepant,
+ * Fordringspant, Ejendomsforbehold. Matcher tinglysning-tab-designet fra ejendomssiden.
+ *
+ * @param props - Se PersonbogSectionProps
+ */
+function PersonbogSection({
+  haeftelser,
+  loading,
+  fejl,
+  c,
+  da,
+  expandedPant,
+  setExpandedPant,
+  selectedPantDocs,
+  setSelectedPantDocs,
+}: PersonbogSectionProps) {
+  /** Loading state */
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 text-center">
+        <Loader2 size={32} className="text-blue-400 animate-spin mb-3" />
+        <p className="text-slate-400 text-sm">{c.loadingPersonbog}</p>
+      </div>
+    );
+  }
+
+  /** Error state */
+  if (fejl) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 text-center">
+        <AlertTriangle size={32} className="text-amber-400 mb-3" />
+        <p className="text-slate-400 text-sm">{fejl}</p>
+      </div>
+    );
+  }
+
+  /** Empty state */
+  if (haeftelser.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 text-center">
+        <Scale size={40} className="text-slate-600 mb-4" />
+        <p className="text-slate-400 text-sm">{c.personbogEmpty}</p>
+      </div>
+    );
+  }
+
+  /** Gruppér hæftelser efter type */
+  const grouped: Record<string, PersonbogHaeftelse[]> = {};
+  for (const h of haeftelser) {
+    const key = h.type;
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(h);
+  }
+
+  /** Beregn samlet hæftelse */
+  const samletHaeftelse = haeftelser.reduce((sum, h) => sum + (h.hovedstol ?? 0), 0);
+
+  /** Selectérbare dokumenter */
+  const allDocs = haeftelser.filter((h) => h.dokumentId).map((h) => h.dokumentId!);
+
+  const toggleExpand = (idx: number) => {
+    setExpandedPant((prev) => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
+      return next;
+    });
+  };
+
+  const toggleDoc = (id: string) => {
+    setSelectedPantDocs((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAllDocs = () => {
+    if (selectedPantDocs.size === allDocs.length) {
+      setSelectedPantDocs(new Set());
+    } else {
+      setSelectedPantDocs(new Set(allDocs));
+    }
+  };
+
+  /** Globalt indeks over hæftelser — bruges til expand-toggle */
+  let globalIdx = 0;
+
+  return (
+    <div className="space-y-2">
+      {/* ── Samlet oversigt ── */}
+      {samletHaeftelse > 0 && (
+        <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl p-4 mb-2">
+          <div className="flex items-center justify-between">
+            <span className="text-slate-400 text-sm">{c.personbogSamletHaeftelse}</span>
+            <span className="text-white font-semibold text-lg">
+              {samletHaeftelse.toLocaleString('da-DK')} DKK
+            </span>
+          </div>
+          <div className="flex gap-3 mt-2 flex-wrap">
+            {personbogSektioner.map(({ key, textClass }) => {
+              const count = grouped[key]?.length ?? 0;
+              if (count === 0) return null;
+              const sum = (grouped[key] ?? []).reduce((s, h) => s + (h.hovedstol ?? 0), 0);
+              return (
+                <span key={key} className={`text-xs ${textClass}`}>
+                  {personbogTypeLabel(key, c)}: {sum.toLocaleString('da-DK')} DKK ({count})
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ── Hovedcontainer ── */}
+      <div
+        className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden overflow-x-auto"
+        style={{ contain: 'layout' }}
+      >
+        {/* Header med download-knap */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700/20">
+          <div className="flex items-center gap-2">
+            <Scale size={16} className="text-slate-400" />
+            <span className="text-white text-sm font-medium">{c.tabs.liens}</span>
+            <span className="text-slate-500 text-xs">({haeftelser.length})</span>
+          </div>
+          <div className="flex items-center gap-2">
+            {selectedPantDocs.size > 0 && (
+              <a
+                href={`/api/tinglysning/dokument?uuid=${[...selectedPantDocs].join(',')}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600/20 text-blue-400 text-xs font-medium hover:bg-blue-600/30 transition-colors"
+              >
+                <Download size={12} />
+                {c.personbogDownloadValgte} ({selectedPantDocs.size})
+              </a>
+            )}
+          </div>
+        </div>
+
+        {/* Kolonneoverskrifter */}
+        <div className="grid grid-cols-[24px_36px_90px_1fr_100px_100px_50px_28px] gap-0 px-4 py-2 border-b border-slate-700/20 text-slate-500 text-[10px] uppercase tracking-wider">
+          <div />
+          <div>{c.personbogPrioritet}</div>
+          <div>{da ? 'Dato' : 'Date'}</div>
+          <div>{c.personbogPantType}</div>
+          <div className="text-right">{c.personbogHovedstol}</div>
+          <div>{c.personbogKreditor}</div>
+          <div />
+          <div className="flex items-center justify-center">
+            <input
+              type="checkbox"
+              checked={allDocs.length > 0 && selectedPantDocs.size === allDocs.length}
+              onChange={toggleAllDocs}
+              className="w-3.5 h-3.5 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-0 cursor-pointer"
+            />
+          </div>
+        </div>
+
+        {/* ── Farvekodede sektioner ── */}
+        {personbogSektioner.map(({ key, bgClass, textClass, borderClass }) => {
+          const items = grouped[key];
+          if (!items || items.length === 0) return null;
+
+          return (
+            <div key={key}>
+              {/* Sektionsheader */}
+              <div className={`${bgClass} px-4 py-2 border-b border-slate-700/15`}>
+                <span className={`text-xs font-medium ${textClass}`}>
+                  {personbogTypeLabel(key, c)} ({items.length})
+                </span>
+              </div>
+
+              {/* Rækker */}
+              {items.map((h) => {
+                const idx = globalIdx++;
+                const isExpanded = expandedPant.has(idx);
+                return (
+                  <div key={idx}>
+                    {/* Kollapset række */}
+                    <div
+                      className="grid grid-cols-[24px_36px_90px_1fr_100px_100px_50px_28px] gap-0 px-4 py-2 border-b border-slate-700/15 cursor-pointer hover:bg-slate-700/10 transition-colors items-center"
+                      onClick={() => toggleExpand(idx)}
+                    >
+                      <div className="flex items-center justify-center">
+                        {isExpanded ? (
+                          <ChevronDown size={14} className="text-slate-500" />
+                        ) : (
+                          <ChevronRight size={14} className="text-slate-500" />
+                        )}
+                      </div>
+                      <div className="text-slate-400 text-xs">{h.prioritet ?? '—'}</div>
+                      <div className="text-slate-400 text-xs">
+                        {h.tinglysningsdato ? formatDatoKort(h.tinglysningsdato) : '—'}
+                      </div>
+                      <div className="text-white text-xs font-medium truncate pr-2">
+                        {personbogTypeLabel(h.type, c)}
+                        {h.pantTyper.length > 0 && (
+                          <span className="text-slate-500 ml-1">
+                            ({h.pantTyper.map((p) => pantOmfangLabel(p, c)).join(', ')})
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-white text-xs text-right tabular-nums">
+                        {h.hovedstol != null
+                          ? `${h.hovedstol.toLocaleString('da-DK')} ${h.valuta}`
+                          : '—'}
+                      </div>
+                      <div className="text-slate-400 text-xs truncate">{h.kreditor ?? '—'}</div>
+                      <div className="flex items-center justify-center">
+                        {h.dokumentId && (
+                          <a
+                            href={`/api/tinglysning/dokument?uuid=${h.dokumentId}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-400 hover:text-blue-300"
+                            onClick={(e) => e.stopPropagation()}
+                            title="PDF"
+                          >
+                            <FileText size={14} />
+                          </a>
+                        )}
+                      </div>
+                      <div
+                        className="flex items-center justify-center"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {h.dokumentId && (
+                          <input
+                            type="checkbox"
+                            checked={selectedPantDocs.has(h.dokumentId)}
+                            onChange={() => toggleDoc(h.dokumentId!)}
+                            className="w-3.5 h-3.5 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-0 cursor-pointer"
+                          />
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Expanderet detalje-panel */}
+                    {isExpanded && (
+                      <div
+                        className={`ml-10 border-l-2 ${borderClass} border-b border-slate-700/15 px-4 py-3 bg-slate-900/30`}
+                      >
+                        {/* Omfang-badges (virksomhedspant) */}
+                        {h.pantTyper.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5 mb-3">
+                            {h.pantTyper.map((p, pi) => (
+                              <span
+                                key={pi}
+                                className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium ${bgClass} ${textClass}`}
+                              >
+                                {pantOmfangLabel(p, c)}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Detalje-grid */}
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-2 text-xs">
+                          {/* Kreditor */}
+                          {h.kreditor && (
+                            <div>
+                              <span className="text-slate-500">{c.personbogKreditor}</span>
+                              <p className="text-white">
+                                {h.kreditorCvr ? (
+                                  <Link
+                                    href={`/dashboard/companies/${h.kreditorCvr}`}
+                                    className="text-blue-400 hover:underline"
+                                  >
+                                    {h.kreditor}
+                                  </Link>
+                                ) : (
+                                  h.kreditor
+                                )}
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Debitor(er) */}
+                          {h.debitorer.length > 0 && (
+                            <div>
+                              <span className="text-slate-500">{c.personbogDebitor}</span>
+                              {h.debitorer.map((d, di) => (
+                                <p key={di} className="text-white">
+                                  {h.debitorCvr[di] ? (
+                                    <Link
+                                      href={`/dashboard/companies/${h.debitorCvr[di]}`}
+                                      className="text-blue-400 hover:underline"
+                                    >
+                                      {d}
+                                    </Link>
+                                  ) : (
+                                    d
+                                  )}
+                                </p>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Hovedstol */}
+                          {h.hovedstol != null && (
+                            <div>
+                              <span className="text-slate-500">{c.personbogHovedstol}</span>
+                              <p className="text-white">
+                                {h.hovedstol.toLocaleString('da-DK')} {h.valuta}
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Rente */}
+                          {h.rente != null && (
+                            <div>
+                              <span className="text-slate-500">{c.personbogRente}</span>
+                              <p className="text-white">
+                                {h.rente}% {h.renteType ? `(${h.renteType})` : ''}
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Tinglysningsdato */}
+                          {h.tinglysningsdato && (
+                            <div>
+                              <span className="text-slate-500">{c.personbogTinglysningsdato}</span>
+                              <p className="text-white">{formatDatoKort(h.tinglysningsdato)}</p>
+                            </div>
+                          )}
+
+                          {/* Registreringsdato */}
+                          {h.registreringsdato && h.registreringsdato !== h.tinglysningsdato && (
+                            <div>
+                              <span className="text-slate-500">{c.personbogRegistreringsdato}</span>
+                              <p className="text-white">{formatDatoKort(h.registreringsdato)}</p>
+                            </div>
+                          )}
+
+                          {/* Tinglysningsafgift */}
+                          {h.tinglysningsafgift != null && (
+                            <div>
+                              <span className="text-slate-500">
+                                {c.personbogTinglysningsafgift}
+                              </span>
+                              <p className="text-white">
+                                {h.tinglysningsafgift.toLocaleString('da-DK')} DKK
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Løbetid */}
+                          {h.loebetid && (
+                            <div>
+                              <span className="text-slate-500">{c.personbogLoebetid}</span>
+                              <p className="text-white">{h.loebetid}</p>
+                            </div>
+                          )}
+
+                          {/* Dokumentalias */}
+                          {h.dokumentAlias && (
+                            <div>
+                              <span className="text-slate-500">{da ? 'Dokument' : 'Document'}</span>
+                              <p className="text-white text-[11px]">{h.dokumentAlias}</p>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Vilkår */}
+                        {h.vilkaar && (
+                          <div className="mt-2 pt-2 border-t border-slate-700/20">
+                            <span className="text-slate-500 text-xs">{c.personbogVilkaar}</span>
+                            <p className="text-slate-300 text-xs mt-0.5 whitespace-pre-line">
+                              {h.vilkaar}
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Anmelder */}
+                        {h.anmelderNavn && (
+                          <div className="mt-2 pt-2 border-t border-slate-700/20">
+                            <span className="text-slate-500 text-xs">{c.personbogAnmelder}</span>
+                            <p className="text-white text-xs">
+                              {h.anmelderCvr ? (
+                                <Link
+                                  href={`/dashboard/companies/${h.anmelderCvr}`}
+                                  className="text-blue-400 hover:underline"
+                                >
+                                  {h.anmelderNavn}
+                                </Link>
+                              ) : (
+                                h.anmelderNavn
+                              )}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+
+        {/* Øvrige hæftelser (ukendte typer) */}
+        {(() => {
+          const knownKeys = personbogSektioner.map((s) => s.key);
+          const oevrige = Object.entries(grouped).filter(([key]) => !knownKeys.includes(key));
+          if (oevrige.length === 0) return null;
+
+          return oevrige.map(([key, items]) => (
+            <div key={key}>
+              <div className="bg-slate-500/5 px-4 py-2 border-b border-slate-700/15">
+                <span className="text-xs font-medium text-slate-400">
+                  {c.personbogOevrige}: {key} ({items.length})
+                </span>
+              </div>
+              {items.map((h) => {
+                const idx = globalIdx++;
+                const isExpanded = expandedPant.has(idx);
+                return (
+                  <div key={idx}>
+                    <div
+                      className="grid grid-cols-[24px_36px_90px_1fr_100px_100px_50px_28px] gap-0 px-4 py-2 border-b border-slate-700/15 cursor-pointer hover:bg-slate-700/10 transition-colors items-center"
+                      onClick={() => toggleExpand(idx)}
+                    >
+                      <div className="flex items-center justify-center">
+                        {isExpanded ? (
+                          <ChevronDown size={14} className="text-slate-500" />
+                        ) : (
+                          <ChevronRight size={14} className="text-slate-500" />
+                        )}
+                      </div>
+                      <div className="text-slate-400 text-xs">{h.prioritet ?? '—'}</div>
+                      <div className="text-slate-400 text-xs">
+                        {h.tinglysningsdato ? formatDatoKort(h.tinglysningsdato) : '—'}
+                      </div>
+                      <div className="text-white text-xs font-medium truncate pr-2">{key}</div>
+                      <div className="text-white text-xs text-right tabular-nums">
+                        {h.hovedstol != null
+                          ? `${h.hovedstol.toLocaleString('da-DK')} ${h.valuta}`
+                          : '—'}
+                      </div>
+                      <div className="text-slate-400 text-xs truncate">{h.kreditor ?? '—'}</div>
+                      <div className="flex items-center justify-center">
+                        {h.dokumentId && (
+                          <a
+                            href={`/api/tinglysning/dokument?uuid=${h.dokumentId}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-400 hover:text-blue-300"
+                            onClick={(e) => e.stopPropagation()}
+                            title="PDF"
+                          >
+                            <FileText size={14} />
+                          </a>
+                        )}
+                      </div>
+                      <div
+                        className="flex items-center justify-center"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {h.dokumentId && (
+                          <input
+                            type="checkbox"
+                            checked={selectedPantDocs.has(h.dokumentId)}
+                            onChange={() => toggleDoc(h.dokumentId!)}
+                            className="w-3.5 h-3.5 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-0 cursor-pointer"
+                          />
+                        )}
+                      </div>
+                    </div>
+                    {isExpanded && (
+                      <div className="ml-10 border-l-2 border-slate-500/20 border-b border-slate-700/15 px-4 py-3 bg-slate-900/30">
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-2 text-xs">
+                          {h.kreditor && (
+                            <div>
+                              <span className="text-slate-500">{c.personbogKreditor}</span>
+                              <p className="text-white">{h.kreditor}</p>
+                            </div>
+                          )}
+                          {h.hovedstol != null && (
+                            <div>
+                              <span className="text-slate-500">{c.personbogHovedstol}</span>
+                              <p className="text-white">
+                                {h.hovedstol.toLocaleString('da-DK')} {h.valuta}
+                              </p>
+                            </div>
+                          )}
+                          {h.tinglysningsdato && (
+                            <div>
+                              <span className="text-slate-500">{c.personbogTinglysningsdato}</span>
+                              <p className="text-white">{formatDatoKort(h.tinglysningsdato)}</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ));
+        })()}
+      </div>
+    </div>
+  );
+}
+
+// ─── PlaceholderTab ─────────────────────────────────────────────────────────
+
 /**
  * PlaceholderTab — Placeholder for tabs der endnu ikke er implementeret.
  * Viser et ikon, titel, "kommer snart"-badge og en beskrivelsestekst.
  *
  * @param props - Se PlaceholderTabProps
  */
-function PlaceholderTab({ ikon, titel, beskrivelse, comingSoon }: PlaceholderTabProps) {
+function _PlaceholderTab({ ikon, titel, beskrivelse, comingSoon }: _PlaceholderTabProps) {
   return (
     <div className="flex flex-col items-center justify-center py-16 text-center">
       <div className="mb-4">{ikon}</div>

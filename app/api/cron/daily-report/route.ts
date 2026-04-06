@@ -55,6 +55,117 @@ interface DailyStats {
   aiConversations: number;
   propertiesMonitored: number;
   notificationsGenerated: number;
+  agentStats: AgentStats;
+}
+
+/** Service Manager og Release Agent aktivitet for perioden */
+interface AgentStats {
+  // Service Manager
+  scansRun: number;
+  issuesByType: { build_error: number; runtime_error: number; config_error: number };
+  fixSuggestionsGenerated: number;
+  fixesApproved: number;
+  fixesRejected: number;
+  fixesPending: number;
+  // Release Agent
+  hotfixBranchesCreated: number;
+  prsCreated: number;
+  deploysTriggered: number;
+}
+
+/**
+ * Indsamler aktivitetsdata for Service Manager Agent og Release Agent
+ * fra de globale (ikke-tenant) tabeller i public-skemaet.
+ *
+ * @param sinceIso - ISO 8601 tidsstempel for periodens start (24h siden)
+ * @returns Aggregerede agent-statistikker
+ */
+async function collectAgentStats(sinceIso: string): Promise<AgentStats> {
+  const admin = createAdminClient();
+
+  const stats: AgentStats = {
+    scansRun: 0,
+    issuesByType: { build_error: 0, runtime_error: 0, config_error: 0 },
+    fixSuggestionsGenerated: 0,
+    fixesApproved: 0,
+    fixesRejected: 0,
+    fixesPending: 0,
+    hotfixBranchesCreated: 0,
+    prsCreated: 0,
+    deploysTriggered: 0,
+  };
+
+  // ── Service Manager: scans ────────────────────────────────────────────────
+  try {
+    const { count: scansCount } = await admin
+      .from('service_manager_scans')
+      .select('id', { count: 'exact', head: true })
+      .gte('created_at', sinceIso);
+    stats.scansRun = scansCount ?? 0;
+
+    // Issues fordelt på type — hent rows og aggreger client-side
+    const { data: scanRows } = await admin
+      .from('service_manager_scans')
+      .select('issue_type')
+      .gte('created_at', sinceIso);
+
+    if (scanRows) {
+      for (const row of scanRows) {
+        const t = row.issue_type as string;
+        if (t === 'build_error') stats.issuesByType.build_error++;
+        else if (t === 'runtime_error') stats.issuesByType.runtime_error++;
+        else if (t === 'config_error') stats.issuesByType.config_error++;
+      }
+    }
+  } catch (err) {
+    console.error('[daily-report] Kunne ikke hente service_manager_scans:', err);
+  }
+
+  // ── Service Manager: fixes ────────────────────────────────────────────────
+  try {
+    const { count: fixTotal } = await admin
+      .from('service_manager_fixes')
+      .select('id', { count: 'exact', head: true })
+      .gte('created_at', sinceIso);
+    stats.fixSuggestionsGenerated = fixTotal ?? 0;
+
+    const { data: fixRows } = await admin
+      .from('service_manager_fixes')
+      .select('status')
+      .gte('created_at', sinceIso);
+
+    if (fixRows) {
+      for (const row of fixRows) {
+        const s = row.status as string;
+        if (s === 'approved') stats.fixesApproved++;
+        else if (s === 'rejected') stats.fixesRejected++;
+        else stats.fixesPending++;
+      }
+    }
+  } catch (err) {
+    console.error('[daily-report] Kunne ikke hente service_manager_fixes:', err);
+  }
+
+  // ── Release Agent: aktivitet ──────────────────────────────────────────────
+  try {
+    const { data: actRows } = await admin
+      .from('service_manager_activity')
+      .select('activity_type')
+      .gte('created_at', sinceIso);
+
+    if (actRows) {
+      for (const row of actRows) {
+        const t = row.activity_type as string;
+        if (t === 'hotfix_branch_created') stats.hotfixBranchesCreated++;
+        else if (t === 'pr_created') stats.prsCreated++;
+        else if (t === 'deploy_triggered') stats.deploysTriggered++;
+      }
+    }
+  } catch (err) {
+    console.error('[daily-report] Kunne ikke hente service_manager_activity:', err);
+  }
+
+  return stats;
 }
 
 /**
@@ -125,6 +236,9 @@ async function collectStats(since: Date): Promise<DailyStats> {
     console.error('[daily-report] Kunne ikke hente abonnementer:', err);
   }
 
+  // ── Agent statistikker (Service Manager + Release Agent) ─────────────────
+  const agentStats = await collectAgentStats(sinceIso);
+
   // ── Per-tenant data (ai_messages, ai_conversations, overvågning) ──────────
   let aiMessages = 0;
   let aiConversations = 0;
@@ -188,6 +302,7 @@ async function collectStats(since: Date): Promise<DailyStats> {
     aiConversations,
     propertiesMonitored,
     notificationsGenerated,
+    agentStats,
   };
 }
 
@@ -195,7 +310,10 @@ async function collectStats(since: Date): Promise<DailyStats> {
  * Bygger HTML-indhold til statusrapporten.
  * Stil matcher BizzAssist-designsystemet (navy baggrund, blå accent).
  *
- * @param stats - Indsamlede statistikker
+ * Sektioner: Brugere · Abonnementer · AI Assistent · Ejendomsovervågning ·
+ * Service Manager Agent · Release Agent
+ *
+ * @param stats - Indsamlede statistikker inkl. agent-aktivitet
  * @param reportDate - Tidspunkt for rapportgenerering
  * @returns HTML-streng klar til afsendelse
  */
@@ -309,6 +427,64 @@ function buildHtml(stats: DailyStats, reportDate: Date): string {
         <tr>
           <td style="padding: 12px 16px; color: #94a3b8; font-size: 13px;">&#9432; Ændringsnotifikationer genereret (24h)</td>
           <td style="padding: 12px 16px; text-align: right; font-size: 15px; font-weight: 700; color: ${stats.notificationsGenerated > 0 ? '#f59e0b' : '#475569'};">${stats.notificationsGenerated}</td>
+        </tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- Service Manager Agent -->
+  <div style="margin-bottom: 20px;">
+    <h3 style="color: #94a3b8; font-size: 11px; margin: 0 0 12px 0; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600;">Service Manager Agent (seneste 24h)</h3>
+    <div style="background: #1e293b; border-radius: 8px; overflow: hidden;">
+      <table style="width: 100%; border-collapse: collapse;">
+        <tr>
+          <td style="padding: 12px 16px; color: #94a3b8; font-size: 13px; border-bottom: 1px solid #0f172a;">Scans k&oslash;rt</td>
+          <td style="padding: 12px 16px; text-align: right; font-size: 15px; font-weight: 700; border-bottom: 1px solid #0f172a; color: ${stats.agentStats.scansRun > 0 ? '#e2e8f0' : '#475569'};">${stats.agentStats.scansRun}</td>
+        </tr>
+        <tr>
+          <td style="padding: 12px 16px; color: #94a3b8; font-size: 13px; border-bottom: 1px solid #0f172a;">
+            Issues fundet
+            <span style="color: #64748b; font-size: 11px; margin-left: 8px;">
+              build: ${stats.agentStats.issuesByType.build_error} &nbsp;&middot;&nbsp;
+              runtime: ${stats.agentStats.issuesByType.runtime_error} &nbsp;&middot;&nbsp;
+              config: ${stats.agentStats.issuesByType.config_error}
+            </span>
+          </td>
+          <td style="padding: 12px 16px; text-align: right; font-size: 15px; font-weight: 700; border-bottom: 1px solid #0f172a; color: ${stats.agentStats.scansRun > 0 ? '#f59e0b' : '#475569'};">${stats.agentStats.issuesByType.build_error + stats.agentStats.issuesByType.runtime_error + stats.agentStats.issuesByType.config_error}</td>
+        </tr>
+        <tr>
+          <td style="padding: 12px 16px; color: #94a3b8; font-size: 13px; border-bottom: 1px solid #0f172a;">Auto-fix forslag genereret</td>
+          <td style="padding: 12px 16px; text-align: right; font-size: 15px; font-weight: 700; border-bottom: 1px solid #0f172a; color: ${stats.agentStats.fixSuggestionsGenerated > 0 ? '#e2e8f0' : '#475569'};">${stats.agentStats.fixSuggestionsGenerated}</td>
+        </tr>
+        <tr>
+          <td style="padding: 12px 16px; color: #94a3b8; font-size: 13px;">
+            Fixes
+            <span style="color: #22c55e; font-size: 12px; margin-left: 6px;">&#10003; godkendt: ${stats.agentStats.fixesApproved}</span>
+            <span style="color: #ef4444; font-size: 12px; margin-left: 6px;">&#10007; afvist: ${stats.agentStats.fixesRejected}</span>
+            <span style="color: #f59e0b; font-size: 12px; margin-left: 6px;">&#8987; ventende: ${stats.agentStats.fixesPending}</span>
+          </td>
+          <td style="padding: 12px 16px; text-align: right; font-size: 15px; font-weight: 700; color: ${stats.agentStats.fixSuggestionsGenerated > 0 ? '#e2e8f0' : '#475569'};">${stats.agentStats.fixesApproved + stats.agentStats.fixesRejected + stats.agentStats.fixesPending}</td>
+        </tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- Release Agent -->
+  <div style="margin-bottom: 32px;">
+    <h3 style="color: #94a3b8; font-size: 11px; margin: 0 0 12px 0; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600;">Release Agent (seneste 24h)</h3>
+    <div style="background: #1e293b; border-radius: 8px; overflow: hidden;">
+      <table style="width: 100%; border-collapse: collapse;">
+        <tr>
+          <td style="padding: 12px 16px; color: #94a3b8; font-size: 13px; border-bottom: 1px solid #0f172a;">Hotfix branches oprettet</td>
+          <td style="padding: 12px 16px; text-align: right; font-size: 15px; font-weight: 700; border-bottom: 1px solid #0f172a; color: ${stats.agentStats.hotfixBranchesCreated > 0 ? '#ef4444' : '#475569'};">${stats.agentStats.hotfixBranchesCreated}</td>
+        </tr>
+        <tr>
+          <td style="padding: 12px 16px; color: #94a3b8; font-size: 13px; border-bottom: 1px solid #0f172a;">PRs oprettet</td>
+          <td style="padding: 12px 16px; text-align: right; font-size: 15px; font-weight: 700; border-bottom: 1px solid #0f172a; color: ${stats.agentStats.prsCreated > 0 ? '#2563eb' : '#475569'};">${stats.agentStats.prsCreated}</td>
+        </tr>
+        <tr>
+          <td style="padding: 12px 16px; color: #94a3b8; font-size: 13px;">Deploys triggered</td>
+          <td style="padding: 12px 16px; text-align: right; font-size: 15px; font-weight: 700; color: ${stats.agentStats.deploysTriggered > 0 ? '#22c55e' : '#475569'};">${stats.agentStats.deploysTriggered}</td>
         </tr>
       </table>
     </div>

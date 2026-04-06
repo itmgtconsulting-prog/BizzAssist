@@ -111,7 +111,7 @@ async function collectAgentStats(sinceIso: string): Promise<AgentStats> {
 
     if (scanRows) {
       for (const row of scanRows) {
-        const t = row.issue_type as string;
+        const t = (row as Record<string, unknown>).issue_type as string;
         if (t === 'build_error') stats.issuesByType.build_error++;
         else if (t === 'runtime_error') stats.issuesByType.runtime_error++;
         else if (t === 'config_error') stats.issuesByType.config_error++;
@@ -136,7 +136,7 @@ async function collectAgentStats(sinceIso: string): Promise<AgentStats> {
 
     if (fixRows) {
       for (const row of fixRows) {
-        const s = row.status as string;
+        const s = (row as Record<string, unknown>).status as string;
         if (s === 'approved') stats.fixesApproved++;
         else if (s === 'rejected') stats.fixesRejected++;
         else stats.fixesPending++;
@@ -155,7 +155,7 @@ async function collectAgentStats(sinceIso: string): Promise<AgentStats> {
 
     if (actRows) {
       for (const row of actRows) {
-        const t = row.activity_type as string;
+        const t = (row as Record<string, unknown>).activity_type as string;
         if (t === 'hotfix_branch_created') stats.hotfixBranchesCreated++;
         else if (t === 'pr_created') stats.prsCreated++;
         else if (t === 'deploy_triggered') stats.deploysTriggered++;

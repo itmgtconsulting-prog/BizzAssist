@@ -21,10 +21,12 @@ import {
   MapPin,
   X,
   FlaskConical,
+  ShieldAlert,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';
+import { createClient } from '@/lib/supabase/client';
 import { hentRecentEjendomme, type RecentEjendom } from '@/app/lib/recentEjendomme';
 import { hentTrackedEjendomme, type TrackedEjendom } from '@/app/lib/trackedEjendomme';
 import { getRecentCompanies, type RecentCompany } from '@/app/lib/recentCompanies';
@@ -58,6 +60,9 @@ export default function DashboardPage() {
   /** Beta banner — hidden if user has dismissed it */
   const [showBetaBanner, setShowBetaBanner] = useState(false);
 
+  /** 2FA recommendation banner — shown to email/password users who haven't enrolled TOTP */
+  const [show2faBanner, setShow2faBanner] = useState(false);
+
   /** Read localStorage after mount to avoid SSR mismatch */
   useEffect(() => {
     if (localStorage.getItem('ba-beta-banner-dismissed') !== '1') {
@@ -69,6 +74,46 @@ export default function DashboardPage() {
   const dismissBetaBanner = () => {
     localStorage.setItem('ba-beta-banner-dismissed', '1');
     setShowBetaBanner(false);
+  };
+
+  /**
+   * Check whether the logged-in user is an email/password user without TOTP enrolled.
+   * OAuth-only users are excluded — they rely on their identity provider's 2FA.
+   * Runs once on mount; dismissal state is stored in localStorage for the session.
+   */
+  useEffect(() => {
+    if (localStorage.getItem('ba-2fa-banner-dismissed') === '1') return;
+
+    const checkMfaStatus = async () => {
+      const supabase = createClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
+
+      // Only show for email/password users (not OAuth-only accounts)
+      const providers = (user.app_metadata?.providers as string[] | undefined) ?? [];
+      const isOAuthOnly =
+        providers.length > 0 &&
+        !providers.includes('email') &&
+        providers.some((p) => ['azure', 'google', 'linkedin_oidc'].includes(p));
+      if (isOAuthOnly) return;
+
+      // Hide if user has already enrolled a verified TOTP factor
+      const { data: factorsData } = await supabase.auth.mfa.listFactors();
+      const hasVerifiedTotp = factorsData?.totp?.some((f) => f.status === 'verified');
+      if (hasVerifiedTotp) return;
+
+      setShow2faBanner(true);
+    };
+
+    checkMfaStatus();
+  }, []);
+
+  /** Dismiss the 2FA recommendation banner for the rest of this browser session */
+  const dismiss2faBanner = () => {
+    localStorage.setItem('ba-2fa-banner-dismissed', '1');
+    setShow2faBanner(false);
   };
 
   /** Toggle a collapsible section open/closed */
@@ -163,6 +208,30 @@ export default function DashboardPage() {
             onClick={dismissBetaBanner}
             aria-label="Luk beta-banner"
             className="mt-0.5 shrink-0 rounded p-0.5 text-amber-400 hover:bg-amber-500/20 hover:text-amber-200 transition-colors"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
+      {/* 2FA recommendation banner — shown to email/password users without TOTP enrolled */}
+      {show2faBanner && (
+        <div className="flex items-start gap-3 rounded-lg border border-yellow-500/40 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-300">
+          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-yellow-400" />
+          <p className="flex-1 leading-snug">
+            Vi anbefaler at aktivere to-faktor autentificering for at beskytte din konto.{' '}
+            <Link
+              href="/dashboard/settings/security"
+              className="font-semibold underline underline-offset-2 hover:text-yellow-200 transition-colors"
+            >
+              Gå til Indstillinger → Sikkerhed
+            </Link>{' '}
+            for at sætte det op.
+          </p>
+          <button
+            onClick={dismiss2faBanner}
+            aria-label="Luk 2FA-anbefaling"
+            className="mt-0.5 shrink-0 rounded p-0.5 text-yellow-400 hover:bg-yellow-500/20 hover:text-yellow-200 transition-colors"
           >
             <X className="h-4 w-4" />
           </button>

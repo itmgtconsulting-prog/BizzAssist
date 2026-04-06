@@ -134,10 +134,9 @@ function LoginForm() {
           setDetectedProvider(result.oauthProvider);
         }
       } else if (result?.mfaRequired) {
-        // MFA step needed — navigate client-side so session cookies are preserved.
-        // mfaEnrolled=true  → TOTP challenge   (/login/mfa)
-        // mfaEnrolled=false → first-time setup (/login/mfa/enroll)
-        window.location.href = result.mfaEnrolled ? '/login/mfa' : '/login/mfa/enroll';
+        // MFA challenge needed — user has enrolled TOTP and must verify it.
+        // Enrollment is optional; this branch only runs for already-enrolled users.
+        window.location.href = '/login/mfa';
         return; // Keep loading state while redirecting
       } else {
         // Login succeeded — redirect client-side so cookies are properly set.

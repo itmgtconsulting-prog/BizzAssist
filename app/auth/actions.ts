@@ -97,10 +97,11 @@ export async function signIn(
     return { error: 'unexpected_error' };
   }
 
-  // Check if MFA is required.
+  // Check if MFA challenge is required.
   // OAuth users (azure, google, linkedin_oidc) already authenticate with 2FA at
   // their identity provider — do NOT add a second TOTP step for them.
-  // Email/password users MUST use TOTP 2FA — enforce both enrollment and challenge.
+  // Email/password users are RECOMMENDED to use TOTP 2FA but it is not mandatory.
+  // Users who have already enrolled TOTP MUST complete the challenge on every login.
   //
   // We return mfaRequired here rather than calling redirect() directly because
   // redirect() in server actions can fail to propagate session cookies to the
@@ -118,23 +119,21 @@ export async function signIn(
   const isLocalDev = process.env.NODE_ENV === 'development';
 
   if (!isOAuthOnly && !isLocalDev) {
-    // List enrolled TOTP factors to decide which MFA step is needed.
+    // List enrolled TOTP factors — only enforce challenge for users who have enrolled.
+    // Enrollment is optional (recommended via dashboard banner); not forced at login.
     const { data: factorsData } = await supabase.auth.mfa.listFactors();
     const verifiedTotp = factorsData?.totp?.find((f) => f.status === 'verified');
 
-    if (!verifiedTotp) {
-      // No TOTP factor enrolled yet — send user to the enrollment page.
-      // The enrollment page runs challengeAndVerify which elevates the session
-      // to aal2 on success, so no separate challenge step is needed afterwards.
-      return { error: null, mfaRequired: true, mfaEnrolled: false };
+    if (verifiedTotp) {
+      // Factor is enrolled — check if the session still needs to be elevated to aal2.
+      const { data: aalData } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+      if (aalData?.nextLevel === 'aal2' && aalData.nextLevel !== aalData.currentLevel) {
+        // Session is aal1 but aal2 is required — redirect to TOTP challenge.
+        return { error: null, mfaRequired: true, mfaEnrolled: true };
+      }
     }
-
-    // Factor is enrolled — check if the session still needs to be elevated.
-    const { data: aalData } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-    if (aalData?.nextLevel === 'aal2' && aalData.nextLevel !== aalData.currentLevel) {
-      // Session is aal1 but aal2 is required — redirect to TOTP challenge.
-      return { error: null, mfaRequired: true, mfaEnrolled: true };
-    }
+    // No TOTP enrolled — MFA is optional, proceed to dashboard.
+    // The dashboard shows a recommendation banner to encourage enrollment.
   }
 
   // ── Subscription gate — check FRESH data from Supabase Auth database ────

@@ -4008,7 +4008,7 @@ function PersonbogSection({
     });
   };
 
-  const toggleAllDocs = () => {
+  const _toggleAllDocs = () => {
     if (selectedPantDocs.size === allDocs.length) {
       setSelectedPantDocs(new Set());
     } else {
@@ -4047,48 +4047,53 @@ function PersonbogSection({
 
       {/* ── Hovedcontainer ── */}
       <div
-        className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden overflow-x-auto"
+        className="bg-slate-800/20 border border-slate-700/30 rounded-2xl"
         style={{ contain: 'layout' }}
       >
-        {/* Header med download-knap */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700/20">
-          <div className="flex items-center gap-2">
-            <Scale size={16} className="text-slate-400" />
-            <span className="text-white text-sm font-medium">{c.tabs.liens}</span>
-            <span className="text-slate-500 text-xs">({haeftelser.length})</span>
-          </div>
-          <div className="flex items-center gap-2">
-            {selectedPantDocs.size > 0 && (
-              <a
-                href={`/api/tinglysning/dokument?uuid=${[...selectedPantDocs].join(',')}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600/20 text-blue-400 text-xs font-medium hover:bg-blue-600/30 transition-colors"
-              >
-                <Download size={12} />
-                {c.personbogDownloadValgte} ({selectedPantDocs.size})
-              </a>
-            )}
-          </div>
+        {/* Header med download-knap — matcher ejendomssiden */}
+        <div className="px-4 py-2.5 border-b border-slate-700/30 flex items-center gap-2">
+          <Scale size={15} className="text-slate-400" />
+          <span className="text-sm font-semibold text-slate-200">
+            {da ? 'Tinglyste dokumenter' : 'Registered documents'}
+          </span>
+          <span className="text-slate-600 text-xs">({haeftelser.length})</span>
+          <button
+            onClick={async () => {
+              for (const docId of selectedPantDocs) {
+                const url = `/api/tinglysning/dokument?uuid=${docId}`;
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `tinglysning-${docId.slice(0, 14)}.pdf`;
+                a.click();
+                await new Promise((r) => setTimeout(r, 500));
+              }
+            }}
+            disabled={selectedPantDocs.size === 0}
+            className="ml-auto flex items-center gap-1.5 px-3 py-1 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 disabled:cursor-not-allowed border border-slate-600 rounded-lg text-slate-300 text-xs font-medium transition-all"
+          >
+            <Download size={12} />
+            {c.personbogDownloadValgte} ({selectedPantDocs.size})
+          </button>
         </div>
 
-        {/* Kolonneoverskrifter */}
-        <div className="grid grid-cols-[24px_36px_90px_1fr_100px_100px_50px_28px] gap-0 px-4 py-2 border-b border-slate-700/20 text-slate-500 text-[10px] uppercase tracking-wider">
-          <div />
-          <div>{c.personbogPrioritet}</div>
-          <div>{da ? 'Dato' : 'Date'}</div>
-          <div>{c.personbogPantType}</div>
-          <div className="text-right">{c.personbogHovedstol}</div>
-          <div>{c.personbogKreditor}</div>
-          <div />
-          <div className="flex items-center justify-center">
-            <input
-              type="checkbox"
-              checked={allDocs.length > 0 && selectedPantDocs.size === allDocs.length}
-              onChange={toggleAllDocs}
-              className="w-3.5 h-3.5 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-0 cursor-pointer"
-            />
-          </div>
+        {/* Kolonneoverskrifter — matcher ejendomssiden */}
+        <div className="grid grid-cols-[24px_36px_90px_1fr_100px_100px_50px_28px] gap-x-2 px-4 py-1.5 border-b border-slate-700/20">
+          <span />
+          <span className="text-[10px] font-medium text-slate-500 uppercase">Pri.</span>
+          <span className="text-[10px] font-medium text-slate-500 uppercase">
+            {da ? 'Dato' : 'Date'}
+          </span>
+          <span className="text-[10px] font-medium text-slate-500 uppercase">
+            {da ? 'Dokument' : 'Document'}
+          </span>
+          <span className="text-[10px] font-medium text-slate-500 uppercase">
+            {da ? 'Beløb' : 'Amount'}
+          </span>
+          <span className="text-[10px] font-medium text-slate-500 uppercase">Type</span>
+          <span className="text-[10px] font-medium text-slate-500 uppercase">
+            {da ? 'Dok.' : 'Doc.'}
+          </span>
+          <span />
         </div>
 
         {/* ── Farvekodede sektioner ── */}
@@ -4098,9 +4103,9 @@ function PersonbogSection({
 
           return (
             <div key={key}>
-              {/* Sektionsheader */}
-              <div className={`${bgClass} px-4 py-2 border-b border-slate-700/15`}>
-                <span className={`text-xs font-medium ${textClass}`}>
+              {/* Sektionsheader — matcher ejendomssiden */}
+              <div className={`${bgClass} px-4 py-1.5 border-b border-slate-700/20`}>
+                <span className={`text-[10px] font-semibold ${textClass} uppercase tracking-wider`}>
                   {personbogTypeLabel(key, c)} ({items.length})
                 </span>
               </div>
@@ -4111,70 +4116,90 @@ function PersonbogSection({
                 const isExpanded = expandedPant.has(idx);
                 return (
                   <div key={idx}>
-                    {/* Kollapset række */}
+                    {/* Kollapset række — matcher ejendomssiden */}
                     <div
-                      className="grid grid-cols-[24px_36px_90px_1fr_100px_100px_50px_28px] gap-0 px-4 py-2 border-b border-slate-700/15 cursor-pointer hover:bg-slate-700/10 transition-colors items-center"
+                      className="grid grid-cols-[24px_36px_90px_1fr_100px_100px_50px_28px] gap-x-2 px-4 py-2 hover:bg-slate-700/10 transition-colors items-center cursor-pointer border-b border-slate-700/15"
                       onClick={() => toggleExpand(idx)}
                     >
-                      <div className="flex items-center justify-center">
-                        {isExpanded ? (
-                          <ChevronDown size={14} className="text-slate-500" />
-                        ) : (
-                          <ChevronRight size={14} className="text-slate-500" />
-                        )}
-                      </div>
-                      <div className="text-slate-400 text-xs">{h.prioritet ?? '—'}</div>
-                      <div className="text-slate-400 text-xs">
-                        {h.tinglysningsdato ? formatDatoKort(h.tinglysningsdato) : '—'}
-                      </div>
-                      <div className="text-white text-xs font-medium truncate pr-2">
-                        {personbogTypeLabel(h.type, c)}
-                        {h.pantTyper.length > 0 && (
-                          <span className="text-slate-500 ml-1">
-                            ({h.pantTyper.map((p) => pantOmfangLabel(p, c)).join(', ')})
+                      {isExpanded ? (
+                        <ChevronDown size={12} className="text-slate-500" />
+                      ) : (
+                        <ChevronRight size={12} className="text-slate-500" />
+                      )}
+                      <span className="text-xs text-slate-400 tabular-nums">
+                        {String(h.prioritet ?? '')}
+                      </span>
+                      <span className="text-xs text-slate-400 tabular-nums whitespace-nowrap">
+                        {h.tinglysningsdato ? formatDatoKort(h.tinglysningsdato) : ''}
+                      </span>
+                      <div className="min-w-0">
+                        <span className="text-sm text-slate-200 truncate block">
+                          {personbogTypeLabel(h.type, c)}
+                        </span>
+                        {h.debitorer.length > 0 && (
+                          <span className="text-[10px] text-slate-500 truncate block">
+                            {h.debitorer.join(', ')}
                           </span>
                         )}
                       </div>
-                      <div className="text-white text-xs text-right tabular-nums">
-                        {h.hovedstol != null
+                      <span className="text-xs text-slate-300 tabular-nums text-right">
+                        {h.hovedstol != null && h.hovedstol > 0
                           ? `${h.hovedstol.toLocaleString('da-DK')} ${h.valuta}`
-                          : '—'}
-                      </div>
-                      <div className="text-slate-400 text-xs truncate">{h.kreditor ?? '—'}</div>
-                      <div className="flex items-center justify-center">
+                          : ''}
+                      </span>
+                      <span className="text-xs text-slate-400 truncate">
+                        {String(h.kreditor ?? '')}
+                      </span>
+                      <div
+                        className="flex items-center gap-1.5"
+                        onClick={(ev) => ev.stopPropagation()}
+                      >
                         {h.dokumentId && (
                           <a
                             href={`/api/tinglysning/dokument?uuid=${h.dokumentId}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-blue-400 hover:text-blue-300"
-                            onClick={(e) => e.stopPropagation()}
-                            title="PDF"
+                            download
+                            className="inline-flex items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
                           >
-                            <FileText size={14} />
+                            <FileText size={11} />
+                            PDF
                           </a>
                         )}
                       </div>
-                      <div
-                        className="flex items-center justify-center"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {h.dokumentId && (
+                      {h.dokumentId ? (
+                        <label
+                          className="flex items-center cursor-pointer flex-shrink-0"
+                          onClick={(ev) => ev.stopPropagation()}
+                        >
                           <input
                             type="checkbox"
+                            className="sr-only"
                             checked={selectedPantDocs.has(h.dokumentId)}
                             onChange={() => toggleDoc(h.dokumentId!)}
-                            className="w-3.5 h-3.5 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-0 cursor-pointer"
                           />
-                        )}
-                      </div>
+                          <span
+                            className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors ${selectedPantDocs.has(h.dokumentId) ? 'bg-blue-500 border-blue-500' : 'bg-[#0a1020] border-slate-400'}`}
+                          >
+                            {selectedPantDocs.has(h.dokumentId) && (
+                              <svg
+                                viewBox="0 0 10 10"
+                                className="w-2 h-2 text-white"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2.5"
+                              >
+                                <path d="M1.5 5.5l2.5 2.5 4.5-4.5" />
+                              </svg>
+                            )}
+                          </span>
+                        </label>
+                      ) : (
+                        <span />
+                      )}
                     </div>
 
-                    {/* Expanderet detalje-panel */}
+                    {/* Expanderet detalje-panel — matcher ejendomssiden */}
                     {isExpanded && (
-                      <div
-                        className={`ml-10 border-l-2 ${borderClass} border-b border-slate-700/15 px-4 py-3 bg-slate-900/30`}
-                      >
+                      <div className={`px-4 pb-3 ml-10 border-l-2 ${borderClass}`}>
                         {/* Omfang-badges (virksomhedspant) */}
                         {h.pantTyper.length > 0 && (
                           <div className="flex flex-wrap gap-1.5 mb-3">
@@ -4190,11 +4215,13 @@ function PersonbogSection({
                         )}
 
                         {/* Detalje-grid */}
-                        <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-2 text-xs">
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-2 text-xs mt-1">
                           {/* Kreditor */}
                           {h.kreditor && (
                             <div>
-                              <span className="text-slate-500">{c.personbogKreditor}</span>
+                              <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                {c.personbogKreditor}
+                              </p>
                               <p className="text-white">
                                 {h.kreditorCvr ? (
                                   <Link
@@ -4213,7 +4240,9 @@ function PersonbogSection({
                           {/* Debitor(er) */}
                           {h.debitorer.length > 0 && (
                             <div>
-                              <span className="text-slate-500">{c.personbogDebitor}</span>
+                              <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                {c.personbogDebitor}
+                              </p>
                               {h.debitorer.map((d, di) => (
                                 <p key={di} className="text-white">
                                   {h.debitorCvr[di] ? (
@@ -4234,7 +4263,9 @@ function PersonbogSection({
                           {/* Hovedstol */}
                           {h.hovedstol != null && (
                             <div>
-                              <span className="text-slate-500">{c.personbogHovedstol}</span>
+                              <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                {c.personbogHovedstol}
+                              </p>
                               <p className="text-white">
                                 {h.hovedstol.toLocaleString('da-DK')} {h.valuta}
                               </p>
@@ -4244,7 +4275,9 @@ function PersonbogSection({
                           {/* Rente */}
                           {h.rente != null && (
                             <div>
-                              <span className="text-slate-500">{c.personbogRente}</span>
+                              <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                {c.personbogRente}
+                              </p>
                               <p className="text-white">
                                 {h.rente}% {h.renteType ? `(${h.renteType})` : ''}
                               </p>
@@ -4254,7 +4287,9 @@ function PersonbogSection({
                           {/* Tinglysningsdato */}
                           {h.tinglysningsdato && (
                             <div>
-                              <span className="text-slate-500">{c.personbogTinglysningsdato}</span>
+                              <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                {c.personbogTinglysningsdato}
+                              </p>
                               <p className="text-white">{formatDatoKort(h.tinglysningsdato)}</p>
                             </div>
                           )}
@@ -4262,7 +4297,9 @@ function PersonbogSection({
                           {/* Registreringsdato */}
                           {h.registreringsdato && h.registreringsdato !== h.tinglysningsdato && (
                             <div>
-                              <span className="text-slate-500">{c.personbogRegistreringsdato}</span>
+                              <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                {c.personbogRegistreringsdato}
+                              </p>
                               <p className="text-white">{formatDatoKort(h.registreringsdato)}</p>
                             </div>
                           )}
@@ -4270,9 +4307,9 @@ function PersonbogSection({
                           {/* Tinglysningsafgift */}
                           {h.tinglysningsafgift != null && (
                             <div>
-                              <span className="text-slate-500">
+                              <p className="text-slate-500 text-[10px] uppercase mb-0.5">
                                 {c.personbogTinglysningsafgift}
-                              </span>
+                              </p>
                               <p className="text-white">
                                 {h.tinglysningsafgift.toLocaleString('da-DK')} DKK
                               </p>
@@ -4282,7 +4319,9 @@ function PersonbogSection({
                           {/* Løbetid */}
                           {h.loebetid && (
                             <div>
-                              <span className="text-slate-500">{c.personbogLoebetid}</span>
+                              <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                {c.personbogLoebetid}
+                              </p>
                               <p className="text-white">{h.loebetid}</p>
                             </div>
                           )}
@@ -4290,7 +4329,9 @@ function PersonbogSection({
                           {/* Dokumentalias */}
                           {h.dokumentAlias && (
                             <div>
-                              <span className="text-slate-500">{da ? 'Dokument' : 'Document'}</span>
+                              <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                {da ? 'Dokument' : 'Document'}
+                              </p>
                               <p className="text-white text-[11px]">{h.dokumentAlias}</p>
                             </div>
                           )}
@@ -4299,7 +4340,9 @@ function PersonbogSection({
                         {/* Vilkår */}
                         {h.vilkaar && (
                           <div className="mt-2 pt-2 border-t border-slate-700/20">
-                            <span className="text-slate-500 text-xs">{c.personbogVilkaar}</span>
+                            <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                              {c.personbogVilkaar}
+                            </p>
                             <p className="text-slate-300 text-xs mt-0.5 whitespace-pre-line">
                               {h.vilkaar}
                             </p>
@@ -4309,7 +4352,9 @@ function PersonbogSection({
                         {/* Anmelder */}
                         {h.anmelderNavn && (
                           <div className="mt-2 pt-2 border-t border-slate-700/20">
-                            <span className="text-slate-500 text-xs">{c.personbogAnmelder}</span>
+                            <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                              {c.personbogAnmelder}
+                            </p>
                             <p className="text-white text-xs">
                               {h.anmelderCvr ? (
                                 <Link
@@ -4341,78 +4386,102 @@ function PersonbogSection({
 
           return oevrige.map(([key, items]) => (
             <div key={key}>
-              <div className="bg-slate-500/5 px-4 py-2 border-b border-slate-700/15">
-                <span className="text-xs font-medium text-slate-400">
+              <div className="bg-slate-500/5 px-4 py-1.5 border-b border-slate-700/20">
+                <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
                   {c.personbogOevrige}: {key} ({items.length})
                 </span>
               </div>
               {items.map((h) => {
                 const idx = globalIdx++;
                 const isExpanded = expandedPant.has(idx);
+                const docId = String(h.dokumentId ?? '');
                 return (
-                  <div key={idx}>
+                  <div key={idx} className="border-b border-slate-700/15">
                     <div
-                      className="grid grid-cols-[24px_36px_90px_1fr_100px_100px_50px_28px] gap-0 px-4 py-2 border-b border-slate-700/15 cursor-pointer hover:bg-slate-700/10 transition-colors items-center"
+                      className="grid grid-cols-[24px_36px_90px_1fr_100px_100px_50px_28px] gap-x-2 px-4 py-2 hover:bg-slate-700/10 transition-colors items-center cursor-pointer"
                       onClick={() => toggleExpand(idx)}
                     >
-                      <div className="flex items-center justify-center">
-                        {isExpanded ? (
-                          <ChevronDown size={14} className="text-slate-500" />
-                        ) : (
-                          <ChevronRight size={14} className="text-slate-500" />
-                        )}
-                      </div>
-                      <div className="text-slate-400 text-xs">{h.prioritet ?? '—'}</div>
-                      <div className="text-slate-400 text-xs">
-                        {h.tinglysningsdato ? formatDatoKort(h.tinglysningsdato) : '—'}
-                      </div>
-                      <div className="text-white text-xs font-medium truncate pr-2">{key}</div>
-                      <div className="text-white text-xs text-right tabular-nums">
-                        {h.hovedstol != null
+                      {isExpanded ? (
+                        <ChevronDown size={12} className="text-slate-500" />
+                      ) : (
+                        <ChevronRight size={12} className="text-slate-500" />
+                      )}
+                      <span className="text-xs text-slate-400 tabular-nums">
+                        {String(h.prioritet ?? '')}
+                      </span>
+                      <span className="text-xs text-slate-400 tabular-nums whitespace-nowrap">
+                        {h.tinglysningsdato ? formatDatoKort(h.tinglysningsdato) : ''}
+                      </span>
+                      <span className="text-sm text-slate-200 truncate">{key}</span>
+                      <span className="text-xs text-slate-300 tabular-nums text-right">
+                        {h.hovedstol != null && h.hovedstol > 0
                           ? `${h.hovedstol.toLocaleString('da-DK')} ${h.valuta}`
-                          : '—'}
-                      </div>
-                      <div className="text-slate-400 text-xs truncate">{h.kreditor ?? '—'}</div>
-                      <div className="flex items-center justify-center">
-                        {h.dokumentId && (
+                          : ''}
+                      </span>
+                      <span className="text-xs text-slate-400 truncate">
+                        {String(h.kreditor ?? '')}
+                      </span>
+                      <div
+                        className="flex items-center gap-1.5"
+                        onClick={(ev) => ev.stopPropagation()}
+                      >
+                        {docId && (
                           <a
-                            href={`/api/tinglysning/dokument?uuid=${h.dokumentId}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-blue-400 hover:text-blue-300"
-                            onClick={(e) => e.stopPropagation()}
-                            title="PDF"
+                            href={`/api/tinglysning/dokument?uuid=${docId}`}
+                            download
+                            className="inline-flex items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
                           >
-                            <FileText size={14} />
+                            <FileText size={11} /> PDF
                           </a>
                         )}
                       </div>
-                      <div
-                        className="flex items-center justify-center"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {h.dokumentId && (
+                      {docId ? (
+                        <label
+                          className="flex items-center cursor-pointer flex-shrink-0"
+                          onClick={(ev) => ev.stopPropagation()}
+                        >
                           <input
                             type="checkbox"
-                            checked={selectedPantDocs.has(h.dokumentId)}
-                            onChange={() => toggleDoc(h.dokumentId!)}
-                            className="w-3.5 h-3.5 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-0 cursor-pointer"
+                            className="sr-only"
+                            checked={selectedPantDocs.has(docId)}
+                            onChange={() => toggleDoc(docId)}
                           />
-                        )}
-                      </div>
+                          <span
+                            className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors ${selectedPantDocs.has(docId) ? 'bg-blue-500 border-blue-500' : 'bg-[#0a1020] border-slate-400'}`}
+                          >
+                            {selectedPantDocs.has(docId) && (
+                              <svg
+                                viewBox="0 0 10 10"
+                                className="w-2 h-2 text-white"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2.5"
+                              >
+                                <path d="M1.5 5.5l2.5 2.5 4.5-4.5" />
+                              </svg>
+                            )}
+                          </span>
+                        </label>
+                      ) : (
+                        <span />
+                      )}
                     </div>
                     {isExpanded && (
-                      <div className="ml-10 border-l-2 border-slate-500/20 border-b border-slate-700/15 px-4 py-3 bg-slate-900/30">
-                        <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-2 text-xs">
+                      <div className="px-4 pb-3 ml-10 border-l-2 border-slate-500/20">
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-2 text-xs mt-1">
                           {h.kreditor && (
                             <div>
-                              <span className="text-slate-500">{c.personbogKreditor}</span>
+                              <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                {c.personbogKreditor}
+                              </p>
                               <p className="text-white">{h.kreditor}</p>
                             </div>
                           )}
                           {h.hovedstol != null && (
                             <div>
-                              <span className="text-slate-500">{c.personbogHovedstol}</span>
+                              <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                {c.personbogHovedstol}
+                              </p>
                               <p className="text-white">
                                 {h.hovedstol.toLocaleString('da-DK')} {h.valuta}
                               </p>
@@ -4420,7 +4489,9 @@ function PersonbogSection({
                           )}
                           {h.tinglysningsdato && (
                             <div>
-                              <span className="text-slate-500">{c.personbogTinglysningsdato}</span>
+                              <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                {c.personbogTinglysningsdato}
+                              </p>
                               <p className="text-white">{formatDatoKort(h.tinglysningsdato)}</p>
                             </div>
                           )}
@@ -4678,12 +4749,19 @@ function RelationsDiagram({
       : extractOwners(data.deltagere).map((o) => ({ ...o, cvr: null, parents: [] }));
 
   // ── Aktive datterselskaber sorteret efter ejerandel (højeste først) ──
-  const datterselskaber = relatedCompanies
-    .filter((v) => v.aktiv)
-    .sort((a, b) => (b.ejerandelNum ?? 0) - (a.ejerandelNum ?? 0));
+  const datterselskaber = useMemo(
+    () =>
+      relatedCompanies
+        .filter((v) => v.aktiv)
+        .sort((a, b) => (b.ejerandelNum ?? 0) - (a.ejerandelNum ?? 0)),
+    [relatedCompanies]
+  );
 
   // ── Direkte datter (ejet af denne virksomhed) vs. indirekte (ejet af et datterselskab) ──
-  const direkteDatter = datterselskaber.filter((v) => !v.ejetAfCvr || v.ejetAfCvr === data.vat);
+  const direkteDatter = useMemo(
+    () => datterselskaber.filter((v) => !v.ejetAfCvr || v.ejetAfCvr === data.vat),
+    [datterselskaber, data.vat]
+  );
   const indirekteDatterMap = new Map<number, RelateretVirksomhed[]>();
   for (const v of datterselskaber) {
     if (v.ejetAfCvr && v.ejetAfCvr !== data.vat) {
@@ -4751,7 +4829,6 @@ function RelationsDiagram({
       ids.add(d.cvr);
     }
     return ids;
-    // eslint-disable-next-line react-hooks/preserve-manual-memoization
   }, [chains, direkteDatter, data.vat, parentEnhedsNummer]);
 
   // ── Dynamisk state: expandede ejere + on-demand loaded subsidiaries ──
@@ -4764,7 +4841,8 @@ function RelationsDiagram({
   const containerRef = useRef<HTMLDivElement>(null);
   const contentRef2 = useRef<HTMLDivElement>(null);
 
-  // Auto-zoom to fit efter render
+  // Auto-zoom to fit efter render — trigges af ændret antal noder (ikke loading-state)
+  const autoZoomKey = `${direkteDatter.length}-${expandedOwners.size}-${dynSubs.size}`;
   useEffect(() => {
     if (!containerRef.current || !contentRef2.current) return;
     const timer = setTimeout(() => {
@@ -4781,7 +4859,7 @@ function RelationsDiagram({
       }
     }, 300);
     return () => clearTimeout(timer);
-  }, [direkteDatter.length, expandedOwners.size, dynSubs.size, chainLoading, relatedLoading]);
+  }, [autoZoomKey]);
 
   // ── Ekstra ejere per datterselskab (filtreret for allerede synlige) ──
 
@@ -4809,7 +4887,6 @@ function RelationsDiagram({
       if (extras.length > 0) map.set(d.cvr, extras);
     }
     return map;
-    // eslint-disable-next-line react-hooks/preserve-manual-memoization
   }, [direkteDatter, data.vat, allVisibleIds]);
 
   const hasContent = owners.length > 0 || datterselskaber.length > 0;

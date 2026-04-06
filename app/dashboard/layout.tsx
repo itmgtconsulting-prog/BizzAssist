@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useTransition } from 'react';
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
@@ -83,6 +83,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
   const s = t.sidebar;
   const pathname = usePathname();
   const router = useRouter();
+  const [isPending, startTransition] = useTransition();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const profileRef = useRef<HTMLDivElement>(null);
@@ -490,13 +491,25 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                   <Link
                     key={item.href}
                     href={locked ? '/dashboard/settings' : item.href}
-                    onClick={() => setSidebarOpen(false)}
+                    prefetch={false}
+                    onClick={(e) => {
+                      setSidebarOpen(false);
+                      // Brug startTransition for at lade React afbryde tung rendering
+                      if (!locked) {
+                        e.preventDefault();
+                        startTransition(() => {
+                          router.push(locked ? '/dashboard/settings' : item.href);
+                        });
+                      }
+                    }}
                     className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
                       locked
                         ? 'text-slate-600 cursor-not-allowed'
                         : active
                           ? 'bg-blue-600 text-white'
-                          : 'text-slate-400 hover:text-white hover:bg-white/5'
+                          : isPending && item.href !== pathname
+                            ? 'text-blue-300 bg-blue-600/10'
+                            : 'text-slate-400 hover:text-white hover:bg-white/5'
                     }`}
                   >
                     <Icon size={18} className={locked ? 'opacity-40' : ''} />

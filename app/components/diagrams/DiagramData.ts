@@ -290,7 +290,7 @@ export function buildDiagramGraph(
       const overflowId = `overflow-${parentId}`;
       nodes.push({
         id: overflowId,
-        label: `+${overflow.length} virksomheder`,
+        label: `+${overflow.length} flere virksomheder`,
         type: 'company',
         overflowItems: overflow.map((v) => ({
           label: v.navn,

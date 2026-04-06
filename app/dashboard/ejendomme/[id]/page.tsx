@@ -841,7 +841,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
   const [visVurderingHistorik, setVisVurderingHistorik] = useState(false);
 
   /** Ejere fra Ejerfortegnelsen (Datafordeler) */
-  const [ejere, setEjere] = useState<EjerData[] | null>(null);
+  const [_ejere, setEjere] = useState<EjerData[] | null>(null);
   /** True mens ejerdata hentes (bruges kun internt i fetch-effekt) */
   const [_ejereLoader, setEjereLoader] = useState(false);
   /** True hvis Datafordeler returnerer 403 — Dataadgang-ansøgning mangler for EJF */
@@ -1291,122 +1291,6 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
 
   /** True mens ZIP-filen genereres og downloades */
   const [zipLoader, setZipLoader] = useState(false);
-  /** True mens PDF-rapport genereres */
-  const [rapportLoader, setRapportLoader] = useState(false);
-
-  /**
-   * Genererer og downloader en PDF-rapport med al ejendomsdata.
-   * POSTer samlet data til /api/rapport og trigger browser-download af resultatet.
-   */
-  const handleDownloadRapport = async () => {
-    if (rapportLoader) return;
-    setRapportLoader(true);
-    try {
-      const rel = bbrData?.ejendomsrelationer?.[0];
-      const adresse = dawaAdresse
-        ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
-        : (ejendom?.adresse ?? t.unknownAddress);
-
-      const payload = {
-        adresse,
-        kommune: dawaAdresse?.kommunenavn ?? null,
-        postnr: dawaAdresse?.postnr ?? null,
-        by: dawaAdresse?.postnrnavn ?? null,
-        bfeNummer: rel?.bfeNummer ?? null,
-        matrikelnr: rel?.matrikelnr ?? null,
-        ejerlavKode: rel?.ejerlavKode ?? null,
-        bygninger: (bbrData?.bbr ?? []).map((b: LiveBBRBygning) => ({
-          id: b.id,
-          opfoerelsesaar: b.opfoerelsesaar,
-          bygningsareal: b.samletBygningsareal ?? b.bebyggetAreal,
-          boligareal: b.samletBoligareal,
-          samletAreal: b.samletBygningsareal,
-          etager: b.antalEtager,
-          anvendelsestekst: b.anvendelse,
-          tagmateriale: b.tagmateriale,
-          ydervaeggene: b.ydervaeg,
-          energimaerke: b.energimaerke,
-          varmeinstallation: b.varmeinstallation !== '–' ? b.varmeinstallation : null,
-          opvarmningsform: b.opvarmningsform !== '–' ? b.opvarmningsform : null,
-          supplerendeVarme: b.supplerendeVarme,
-          vandforsyning: b.vandforsyning !== '–' ? b.vandforsyning : null,
-          bevaringsvaerdighed: b.bevaringsvaerdighed,
-        })),
-        vurdering: vurdering
-          ? {
-              aar: vurdering.aar,
-              ejendomsvaerdi: vurdering.ejendomsvaerdi,
-              grundvaerdi: vurdering.grundvaerdi,
-              estimereretGrundskyld: vurdering.estimereretGrundskyld,
-              grundskyldspromille: vurdering.grundskyldspromille,
-            }
-          : null,
-        alleVurderinger: alleVurderinger.map((v) => ({
-          aar: v.aar,
-          ejendomsvaerdi: v.ejendomsvaerdi,
-          grundvaerdi: v.grundvaerdi,
-        })),
-        ejere: (ejere ?? []).map((e: EjerData) => ({
-          navn: e.cvr ? `CVR ${e.cvr}` : e.ejertype === 'person' ? 'Person' : 'Ukendt',
-          ejertype: e.ejertype,
-          cvr: e.cvr ?? null,
-          ejerandel:
-            e.ejerandel_taeller != null && e.ejerandel_naevner != null
-              ? { taeller: e.ejerandel_taeller, naevner: e.ejerandel_naevner }
-              : null,
-        })),
-        salgshistorik: (salgshistorik ?? []).map((h: HandelData) => ({
-          koebsaftaleDato: h.koebsaftaleDato,
-          kontantKoebesum: h.kontantKoebesum,
-          overdragelsesmaade: h.overdragelsesmaade,
-        })),
-        matrikel:
-          matrikelData?.jordstykker?.map((js) => ({
-            matrikelnummer: js.matrikelnummer,
-            registreretAreal: js.registreretAreal,
-            vejareal: js.vejareal,
-            fredskov: js.fredskov,
-            strandbeskyttelse: js.strandbeskyttelse,
-          })) ?? [],
-        plandata: (plandata ?? []).map((p: PlandataItem) => ({
-          type: p.type,
-          navn: p.navn,
-          nummer: p.nummer,
-          status: p.status,
-        })),
-        jordforurening: (jordData ?? []).map((j: JordParcelItem) => ({
-          pollutionStatusCodeText: j.pollutionStatusText,
-          locationNames: j.locationNames,
-        })),
-        jordIngenData,
-      };
-
-      const res = await fetch('/api/rapport', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        const err = (await res.json().catch(() => ({ fejl: t.unknownError }))) as { fejl?: string };
-        alert(`Rapport-download fejlede: ${err.fejl ?? res.statusText}`);
-        return;
-      }
-
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download =
-        res.headers.get('Content-Disposition')?.match(/filename="([^"]+)"/)?.[1] ?? 'rapport.pdf';
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      alert(`Rapport-download fejlede: ${err instanceof Error ? err.message : t.unknownError}`);
-    } finally {
-      setRapportLoader(false);
-    }
-  };
 
   /**
    * Henter de valgte dokumenter fra Dokumenter-tabben og downloader dem som ZIP.
@@ -1674,26 +1558,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                   <MapIcon size={14} />
                   {da ? 'Kort' : 'Map'}
                 </button>
-                <button
-                  onClick={handleDownloadRapport}
-                  disabled={rapportLoader}
-                  className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-wait border border-blue-500/60 rounded-lg text-white text-sm font-medium transition-all"
-                  title={
-                    da ? 'Download ejendomsrapport som PDF' : 'Download property report as PDF'
-                  }
-                >
-                  {rapportLoader ? (
-                    <>
-                      <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                      {t.generating}
-                    </>
-                  ) : (
-                    <>
-                      <Download size={14} />
-                      {t.report}
-                    </>
-                  )}
-                </button>
+
                 <div
                   className="relative"
                   onMouseEnter={() => !erFulgt && setVisFoelgTooltip(true)}

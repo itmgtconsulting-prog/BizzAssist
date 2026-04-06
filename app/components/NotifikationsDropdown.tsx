@@ -16,7 +16,7 @@
  * hvis brugeren ikke er logget ind. Supabase-data har højere prioritet.
  */
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, memo } from 'react';
 import { useRouter } from 'next/navigation';
 import { Bell, BellOff, Building2, CheckCheck, ChevronRight, X } from 'lucide-react';
 import {
@@ -42,7 +42,7 @@ interface NotifikationsDropdownProps {
  *
  * @param props - Sprog-prop fra layout
  */
-export default function NotifikationsDropdown({ lang }: NotifikationsDropdownProps) {
+function NotifikationsDropdown({ lang }: NotifikationsDropdownProps) {
   const router = useRouter();
   const ref = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
@@ -376,3 +376,5 @@ export default function NotifikationsDropdown({ lang }: NotifikationsDropdownPro
     </div>
   );
 }
+
+export default memo(NotifikationsDropdown);

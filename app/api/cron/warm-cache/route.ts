@@ -37,10 +37,7 @@ const FETCH_TIMEOUT_MS = 10_000;
 function verifyCronSecret(request: NextRequest): boolean {
   const secret = process.env.CRON_SECRET;
   if (!secret) return false;
-  return (
-    request.headers.get('authorization') === `Bearer ${secret}` ||
-    new URL(request.url).searchParams.get('secret') === secret
-  );
+  return request.headers.get('authorization') === `Bearer ${secret}`;
 }
 
 /**

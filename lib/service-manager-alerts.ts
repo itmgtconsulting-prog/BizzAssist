@@ -92,7 +92,7 @@ export interface CriticalAlertParams {
  * @returns HTML string ready to send via Resend.
  */
 function buildCriticalAlertHtml(params: CriticalAlertParams): string {
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://app.bizzassist.dk';
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://bizzassist.dk';
   const adminUrl = `${appUrl}/dashboard/admin/service-manager`;
 
   const datetimeStr = params.detectedAt.toLocaleString('da-DK', {

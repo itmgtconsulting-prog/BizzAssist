@@ -149,10 +149,7 @@ interface NpmAuditResponse {
 function verifyCronSecret(request: NextRequest): boolean {
   const secret = process.env.CRON_SECRET;
   if (!secret) return false;
-  return (
-    request.headers.get('authorization') === `Bearer ${secret}` ||
-    new URL(request.url).searchParams.get('secret') === secret
-  );
+  return request.headers.get('authorization') === `Bearer ${secret}`;
 }
 
 // ─── Vercel API helpers ───────────────────────────────────────────────────────
@@ -520,7 +517,7 @@ async function checkDependencyVulnerabilities(): Promise<CheckResult> {
  * @returns HTML string ready to send via Resend.
  */
 function buildDeepScanReportHtml(checkResults: CheckResult[], scanId: string, now: Date): string {
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://app.bizzassist.dk';
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://bizzassist.dk';
   const adminUrl = `${appUrl}/dashboard/admin/service-manager`;
 
   const totalIssues = checkResults.reduce((sum, cr) => sum + cr.issues.length, 0);

@@ -259,10 +259,41 @@ VIGTIGT: Kald så mange tools som muligt i SAMME runde for at spare tid. Vent ik
 - Kald gerne flere tools for at give et komplet billede
 - BFE-nummer findes typisk i jordstykke-objektet fra dawa_adresse_detaljer (feltet "bfenummer" eller i ejendomsrelationer fra BBR)`;
 
+// ─── Tool result cache ──────────────────────────────────────────────────────
+
+/** TTL for cached tool results — 5 minutes */
+const TOOL_CACHE_TTL_MS = 5 * 60 * 1000;
+
+interface CacheEntry {
+  result: unknown;
+  expiresAt: number;
+}
+
+/** Module-level cache shared across requests within the same serverless instance */
+const toolCache = new Map<string, CacheEntry>();
+
+/** Returns cached result if still valid, otherwise null */
+function getCached(name: string, input: Record<string, string>): unknown | null {
+  const key = `${name}:${JSON.stringify(input)}`;
+  const entry = toolCache.get(key);
+  if (!entry || Date.now() > entry.expiresAt) {
+    toolCache.delete(key);
+    return null;
+  }
+  return entry.result;
+}
+
+/** Stores a tool result in the cache */
+function setCache(name: string, input: Record<string, string>, result: unknown): void {
+  const key = `${name}:${JSON.stringify(input)}`;
+  toolCache.set(key, { result, expiresAt: Date.now() + TOOL_CACHE_TTL_MS });
+}
+
 // ─── Tool executor ──────────────────────────────────────────────────────────
 
 /**
  * Executes a tool by calling the appropriate internal API route or external endpoint.
+ * Results are cached in-memory for 5 minutes to avoid duplicate API calls within a session.
  *
  * @param name - Tool name matching one of TOOLS[].name
  * @param input - Tool input parameters from Claude
@@ -274,20 +305,27 @@ async function executeTool(
   input: Record<string, string>,
   baseUrl: string
 ): Promise<unknown> {
+  const cached = getCached(name, input);
+  if (cached !== null) return cached;
+
   const timeout = 15_000;
 
   try {
+    let result: unknown;
     switch (name) {
-      // TODO: Migrate dawa_adresse_soeg to DAR before July 2026 — currently uses direct DAWA REST calls
+      // TODO(BIZZ-92): Migrate to DAR before 1 July 2026
       case 'dawa_adresse_soeg': {
         // Server-side proxy via DAR (DAWA lukker 1. juli 2026)
         const res = await fetch(
           `${baseUrl}/api/adresse/autocomplete?q=${encodeURIComponent(input.q)}`,
           { signal: AbortSignal.timeout(timeout) }
         );
-        if (!res.ok) return { fejl: `Adresse-autocomplete svarede ${res.status}` };
+        if (!res.ok) {
+          result = { fejl: `Adresse-autocomplete svarede ${res.status}` };
+          break;
+        }
         const data = await res.json();
-        return (
+        result = (
           data as Array<{
             tekst: string;
             adresse: {
@@ -306,18 +344,22 @@ async function executeTool(
           postnr: r.adresse.postnr,
           by: r.adresse.postnrnavn,
         }));
+        break;
       }
 
-      // TODO: Migrate dawa_adresse_detaljer to DAR before July 2026 — currently uses direct DAWA REST calls
+      // TODO(BIZZ-92): Migrate to DAR before 1 July 2026
       case 'dawa_adresse_detaljer': {
         // Server-side proxy via DAR (DAWA lukker 1. juli 2026)
         const res = await fetch(
           `${baseUrl}/api/adresse/lookup?id=${encodeURIComponent(input.dawaId)}`,
           { signal: AbortSignal.timeout(timeout) }
         );
-        if (!res.ok) return { fejl: `Adresse-opslag svarede ${res.status}` };
+        if (!res.ok) {
+          result = { fejl: `Adresse-opslag svarede ${res.status}` };
+          break;
+        }
         const d = (await res.json()) as Record<string, unknown>;
-        return {
+        result = {
           id: d.id,
           vejnavn: d.vejnavn,
           husnr: d.husnr,
@@ -330,12 +372,14 @@ async function executeTool(
           ejerlavkode: d.ejerlavskode,
           ejerlavnavn: d.ejerlavsnavn,
         };
+        break;
       }
 
       case 'hent_bbr_data': {
         // Direct function call — no HTTP self-call (self-calls are unreliable on Vercel serverless)
         const data = await fetchBbrForAddress(input.dawaId);
-        return { dawaId: input.dawaId, ...data };
+        result = { dawaId: input.dawaId, ...data };
+        break;
       }
 
       case 'hent_vurdering': {
@@ -345,8 +389,12 @@ async function executeTool(
         const res = await fetch(`${baseUrl}/api/vurdering?${params}`, {
           signal: AbortSignal.timeout(timeout),
         });
-        if (!res.ok) return { fejl: `Vurderings-API svarede ${res.status}` };
-        return await res.json();
+        if (!res.ok) {
+          result = { fejl: `Vurderings-API svarede ${res.status}` };
+          break;
+        }
+        result = await res.json();
+        break;
       }
 
       case 'hent_forelobig_vurdering': {
@@ -356,19 +404,25 @@ async function executeTool(
         const res = await fetch(`${baseUrl}/api/vurdering-forelobig?${params}`, {
           signal: AbortSignal.timeout(timeout),
         });
-        if (!res.ok) return { fejl: `Foreløbig-vurdering-API svarede ${res.status}` };
-        return await res.json();
+        if (!res.ok) {
+          result = { fejl: `Foreløbig-vurdering-API svarede ${res.status}` };
+          break;
+        }
+        result = await res.json();
+        break;
       }
 
       case 'hent_ejerskab': {
         const res = await fetch(
           `${baseUrl}/api/ejerskab?bfeNummer=${encodeURIComponent(input.bfeNummer)}`,
-          {
-            signal: AbortSignal.timeout(timeout),
-          }
+          { signal: AbortSignal.timeout(timeout) }
         );
-        if (!res.ok) return { fejl: `Ejerskabs-API svarede ${res.status}` };
-        return await res.json();
+        if (!res.ok) {
+          result = { fejl: `Ejerskabs-API svarede ${res.status}` };
+          break;
+        }
+        result = await res.json();
+        break;
       }
 
       case 'hent_salgshistorik': {
@@ -376,8 +430,12 @@ async function executeTool(
           `${baseUrl}/api/salgshistorik?bfeNummer=${encodeURIComponent(input.bfeNummer)}`,
           { signal: AbortSignal.timeout(timeout) }
         );
-        if (!res.ok) return { fejl: `Salgshistorik-API svarede ${res.status}` };
-        return await res.json();
+        if (!res.ok) {
+          result = { fejl: `Salgshistorik-API svarede ${res.status}` };
+          break;
+        }
+        result = await res.json();
+        break;
       }
 
       case 'hent_energimaerke': {
@@ -385,8 +443,12 @@ async function executeTool(
           `${baseUrl}/api/energimaerke?bfeNummer=${encodeURIComponent(input.bfeNummer)}`,
           { signal: AbortSignal.timeout(timeout) }
         );
-        if (!res.ok) return { fejl: `Energimærke-API svarede ${res.status}` };
-        return await res.json();
+        if (!res.ok) {
+          result = { fejl: `Energimærke-API svarede ${res.status}` };
+          break;
+        }
+        result = await res.json();
+        break;
       }
 
       case 'hent_jordforurening': {
@@ -397,8 +459,12 @@ async function executeTool(
         const res = await fetch(`${baseUrl}/api/jord?${params}`, {
           signal: AbortSignal.timeout(timeout),
         });
-        if (!res.ok) return { fejl: `Jord-API svarede ${res.status}` };
-        return await res.json();
+        if (!res.ok) {
+          result = { fejl: `Jord-API svarede ${res.status}` };
+          break;
+        }
+        result = await res.json();
+        break;
       }
 
       case 'hent_plandata': {
@@ -406,16 +472,24 @@ async function executeTool(
           `${baseUrl}/api/plandata?adresseId=${encodeURIComponent(input.adresseId)}`,
           { signal: AbortSignal.timeout(timeout) }
         );
-        if (!res.ok) return { fejl: `Plandata-API svarede ${res.status}` };
-        return await res.json();
+        if (!res.ok) {
+          result = { fejl: `Plandata-API svarede ${res.status}` };
+          break;
+        }
+        result = await res.json();
+        break;
       }
 
       case 'hent_cvr_virksomhed': {
         const res = await fetch(`${baseUrl}/api/cvr/${encodeURIComponent(input.cvr)}`, {
           signal: AbortSignal.timeout(timeout),
         });
-        if (!res.ok) return { fejl: `CVR-API svarede ${res.status}` };
-        return await res.json();
+        if (!res.ok) {
+          result = { fejl: `CVR-API svarede ${res.status}` };
+          break;
+        }
+        result = await res.json();
+        break;
       }
 
       case 'hent_matrikeldata': {
@@ -423,13 +497,19 @@ async function executeTool(
         const matRes = await fetch(`${baseUrl}/api/matrikel?bfeNummer=${encodeURIComponent(bfe)}`, {
           signal: AbortSignal.timeout(timeout),
         });
-        if (!matRes.ok) return { matrikel: null, fejl: `HTTP ${matRes.status}` };
-        return await matRes.json();
+        if (!matRes.ok) {
+          result = { matrikel: null, fejl: `HTTP ${matRes.status}` };
+          break;
+        }
+        result = await matRes.json();
+        break;
       }
 
       default:
         return { fejl: `Ukendt tool: ${name}` };
     }
+    setCache(name, input, result);
+    return result;
   } catch (err) {
     return { fejl: err instanceof Error ? err.message : 'Ukendt fejl ved tool-kald' };
   }

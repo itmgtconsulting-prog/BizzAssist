@@ -19,7 +19,7 @@
  *
  * Trigger:
  *   - Vercel Cron: tilføj til vercel.json
- *   - Manuel: GET /api/cron/poll-properties?secret=<CRON_SECRET>
+ *   - Manuel: GET /api/cron/poll-properties med Authorization: Bearer <CRON_SECRET>
  *
  * @module api/cron/poll-properties
  */
@@ -30,15 +30,11 @@ import type { SnapshotType, NotificationType } from '@/lib/db/tenant';
 /** Max antal ejendomme pr. cron-kørsel */
 const MAX_PER_RUN = 50;
 
-/** Vercel Cron eller manuelt kald — simpel shared-secret auth */
+/** Vercel Cron — kræver CRON_SECRET som Bearer token i Authorization-header */
 function verifyCronSecret(request: NextRequest): boolean {
   const secret = process.env.CRON_SECRET;
   if (!secret) return false; // Kræver CRON_SECRET i .env
-  // Header (Vercel Cron) eller query param (manuel test)
-  return (
-    request.headers.get('authorization') === `Bearer ${secret}` ||
-    new URL(request.url).searchParams.get('secret') === secret
-  );
+  return request.headers.get('authorization') === `Bearer ${secret}`;
 }
 
 /**

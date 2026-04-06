@@ -358,7 +358,7 @@ async function logActivity(action: string, details: Record<string, unknown>): Pr
  * @param scanId - UUID of the parent scan record.
  */
 async function triggerReleaseAgent(fixId: string, scanId: string): Promise<void> {
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://test.bizzassist.dk';
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://bizzassist.dk';
   try {
     const res = await fetch(`${appUrl}/api/admin/release-agent`, {
       method: 'POST',

@@ -411,7 +411,7 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice): Promise<void> {
     `[stripe/webhook] invoice.payment_succeeded — plan="${planId}" amount=${priceDkk}kr resend=${!!process.env.RESEND_API_KEY}`
   );
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.bizzassist.dk';
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://bizzassist.dk';
   const cancelUrl = `${appUrl}/dashboard/settings`;
 
   // Resolve plan display name: check DB first, then hardcoded fallbacks, then raw plan ID

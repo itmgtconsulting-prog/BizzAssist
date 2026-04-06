@@ -13,7 +13,7 @@
  *   NEXT_PUBLIC_MAPBOX_TOKEN  — fra mapbox.com (pk.ey...)
  */
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, memo } from 'react';
 import Link from 'next/link';
 import Map, {
   Marker,
@@ -553,7 +553,7 @@ async function hentMatrikelGeojson(
  * @param adresse - Adresse til markør-label
  * @param visMatrikel - Skal matrikellag vises (default: true)
  */
-export default function PropertyMap({
+function PropertyMap({
   lat,
   lng,
   adresse,
@@ -1593,3 +1593,5 @@ export default function PropertyMap({
     </div>
   );
 }
+
+export default memo(PropertyMap);

@@ -134,10 +134,7 @@ interface ClaudeFixResponse {
 function verifyCronSecret(request: NextRequest): boolean {
   const secret = process.env.CRON_SECRET;
   if (!secret) return false;
-  return (
-    request.headers.get('authorization') === `Bearer ${secret}` ||
-    new URL(request.url).searchParams.get('secret') === secret
-  );
+  return request.headers.get('authorization') === `Bearer ${secret}`;
 }
 
 // ─── Vercel API helpers ───────────────────────────────────────────────────────
@@ -467,7 +464,7 @@ function buildAlertHtml(
   proposedFixCount: number,
   now: Date
 ): string {
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://app.bizzassist.dk';
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://bizzassist.dk';
   const adminUrl = `${appUrl}/dashboard/admin/service-manager`;
 
   const datetimeStr = now.toLocaleString('da-DK', {

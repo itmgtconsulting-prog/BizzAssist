@@ -10,7 +10,7 @@
  * Kontekst-bevidst: sender den aktuelle pathname som kontekst til Claude.
  */
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, memo } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { ChevronDown, Send, Bot, Sparkles, Square } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
@@ -60,7 +60,7 @@ function syncTokenUsageToServer(tokensUsed: number) {
  * streamer Claude-svar i realtid via SSE.
  * Tæller tokens fra Claude API-svar og opdaterer brugerens abonnement.
  */
-export default function AIChatPanel() {
+function AIChatPanel() {
   const { lang } = useLanguage();
   const a = translations[lang].ai;
   const pathname = usePathname();
@@ -553,3 +553,5 @@ export default function AIChatPanel() {
     </div>
   );
 }
+
+export default memo(AIChatPanel);

@@ -34,6 +34,7 @@ import { gemRecentEjendom } from '@/app/lib/recentEjendomme';
 import { getRecentSearches, saveRecentSearch, type RecentSearch } from '@/app/lib/recentSearches';
 import type { UnifiedSearchResult } from '@/app/api/search/route';
 import AIChatPanel from '@/app/components/AIChatPanel';
+import ErrorBoundary from '@/app/components/ErrorBoundary';
 import NotifikationsDropdown from '@/app/components/NotifikationsDropdown';
 import SessionTimeoutWarning from '@/app/components/SessionTimeoutWarning';
 import { useSessionTimeout } from '@/app/hooks/useSessionTimeout';
@@ -507,7 +508,22 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
           </nav>
 
           {/* AI Chat Panel — resizable, nederst i sidebar */}
-          <AIChatPanel />
+          <ErrorBoundary
+            lang={lang}
+            fallback={
+              <div className="p-4 text-center">
+                <p className="text-sm text-slate-400 mb-3">Chat er midlertidigt utilgængelig</p>
+                <button
+                  onClick={() => window.location.reload()}
+                  className="text-xs text-blue-400 hover:text-blue-300 border border-slate-700 rounded-lg px-3 py-1.5 transition-colors"
+                >
+                  Prøv igen
+                </button>
+              </div>
+            }
+          >
+            <AIChatPanel />
+          </ErrorBoundary>
         </aside>
 
         {/* Resize-bjælke — kun desktop */}

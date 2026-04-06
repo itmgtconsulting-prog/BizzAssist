@@ -11,10 +11,14 @@ interface State {
 }
 
 export default class ErrorBoundary extends React.Component<
-  { children: React.ReactNode; lang?: 'da' | 'en' },
+  { children: React.ReactNode; lang?: 'da' | 'en'; fallback?: React.ReactNode },
   State
 > {
-  constructor(props: { children: React.ReactNode; lang?: 'da' | 'en' }) {
+  constructor(props: {
+    children: React.ReactNode;
+    lang?: 'da' | 'en';
+    fallback?: React.ReactNode;
+  }) {
     super(props);
     this.state = { hasError: false, eventId: null, showReport: false };
   }
@@ -31,10 +35,11 @@ export default class ErrorBoundary extends React.Component<
   }
 
   render() {
-    const { lang = 'da' } = this.props;
+    const { lang = 'da', fallback } = this.props;
     const { hasError, showReport } = this.state;
 
     if (hasError) {
+      if (fallback !== undefined) return <>{fallback}</>;
       return (
         <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
           <div className="bg-white border border-slate-200 rounded-2xl p-10 max-w-md w-full text-center shadow-sm">

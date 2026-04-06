@@ -1245,8 +1245,15 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
             key={node.id}
             style={{ cursor: node.link ? 'pointer' : 'grab' }}
             onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
-            onClick={() => {
-              if (node.link && !dragRef.current.didMove) router.push(node.link);
+            onMouseUp={(e) => {
+              // Naviger ved klik (mouseup uden bevægelse) — mere robust end onClick med didMove
+              if (!node.link) return;
+              const dx = Math.abs(e.clientX - dragRef.current.startX);
+              const dy = Math.abs(e.clientY - dragRef.current.startY);
+              if (dx < 5 && dy < 5) {
+                e.stopPropagation();
+                router.push(node.link);
+              }
             }}
           >
             <rect

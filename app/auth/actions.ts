@@ -114,7 +114,10 @@ export async function signIn(
     !providers.includes('email') &&
     providers.some((p) => ['azure', 'google', 'linkedin_oidc'].includes(p));
 
-  if (!isOAuthOnly) {
+  // On localhost (development) skip MFA entirely so developers can log in without a TOTP app.
+  const isLocalDev = process.env.NODE_ENV === 'development';
+
+  if (!isOAuthOnly && !isLocalDev) {
     // List enrolled TOTP factors to decide which MFA step is needed.
     const { data: factorsData } = await supabase.auth.mfa.listFactors();
     const verifiedTotp = factorsData?.totp?.find((f) => f.status === 'verified');

@@ -461,9 +461,11 @@ export default function VirksomhedDetalje({ params }: PageProps) {
   /** Ejendomme portefølje — lazy-loaded when properties tab is activated */
   const [ejendommeData, setEjendommeData] = useState<EjendomSummary[]>([]);
   const [ejendommeLoading, setEjendommeLoading] = useState(false);
+  const [ejendommeLoadingAll, setEjendommeLoadingAll] = useState(false);
   const [ejendommeManglerNoegle, setEjendommeManglerNoegle] = useState(false);
   const [ejendommeManglerAdgang, setEjendommeManglerAdgang] = useState(false);
   const [ejendommeTotalBfe, setEjendommeTotalBfe] = useState(0);
+  const [ejendommeTruncated, setEjendommeTruncated] = useState(false);
   /** Kommasepereret CVR-nøgle der sidst blev hentet — forhindrer duplicate-fetches */
   const ejendomFetchKeyRef = useRef('');
 
@@ -698,6 +700,7 @@ export default function VirksomhedDetalje({ params }: PageProps) {
       .then((json) => {
         setEjendommeData(json.ejendomme ?? []);
         setEjendommeTotalBfe(json.totalBfe ?? 0);
+        setEjendommeTruncated(json.truncated === true);
         setEjendommeManglerNoegle(json.manglerNoegle === true);
         setEjendommeManglerAdgang(json.manglerAdgang === true);
       })
@@ -708,6 +711,33 @@ export default function VirksomhedDetalje({ params }: PageProps) {
         setEjendommeLoading(false);
       });
   }, [aktivTab, cvr, relatedCompanies]);
+
+  /**
+   * Henter alle ejendomme (op til 100) ved klik på "Vis alle"-knap.
+   * Kalder API'et med ?all=1 og erstatter den afskårne liste.
+   */
+  const handleVisAlleEjendomme = () => {
+    const cvrList = [
+      cvr,
+      ...relatedCompanies.filter((v) => v.aktiv).map((v) => String(v.cvr).padStart(8, '0')),
+    ];
+    const uniqueCvrs = [...new Set(cvrList)].slice(0, 30);
+
+    setEjendommeLoadingAll(true);
+    fetch(`/api/ejendomme-by-owner?cvr=${uniqueCvrs.join(',')}&all=1`)
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`${res.status}`))))
+      .then((json) => {
+        setEjendommeData(json.ejendomme ?? []);
+        setEjendommeTotalBfe(json.totalBfe ?? 0);
+        setEjendommeTruncated(json.truncated === true);
+      })
+      .catch(() => {
+        /* behold eksisterende data ved fejl */
+      })
+      .finally(() => {
+        setEjendommeLoadingAll(false);
+      });
+  };
 
   /** Lazy-load regnskabstal for alle relaterede virksomheder (parallelt) */
   useEffect(() => {
@@ -1826,12 +1856,12 @@ export default function VirksomhedDetalje({ params }: PageProps) {
                       {lang === 'da'
                         ? `${ejendommeData.length} ejendom${ejendommeData.length !== 1 ? 'me' : ''} fundet`
                         : `${ejendommeData.length} propert${ejendommeData.length !== 1 ? 'ies' : 'y'} found`}
-                      {ejendommeTotalBfe > ejendommeData.length && (
+                      {ejendommeTruncated && (
                         <span className="text-amber-400 ml-2">
                           (
                           {lang === 'da'
-                            ? `viser 100 af ${ejendommeTotalBfe}`
-                            : `showing 100 of ${ejendommeTotalBfe}`}
+                            ? `viser ${ejendommeData.length} af ${ejendommeTotalBfe}`
+                            : `showing ${ejendommeData.length} of ${ejendommeTotalBfe}`}
                           )
                         </span>
                       )}
@@ -1856,6 +1886,25 @@ export default function VirksomhedDetalje({ params }: PageProps) {
                       />
                     ))}
                   </div>
+
+                  {/* "Vis alle" knap — vises kun når listen er afskåret til de første 20 */}
+                  {ejendommeTruncated && (
+                    <div className="flex justify-center pt-2">
+                      <button
+                        onClick={handleVisAlleEjendomme}
+                        disabled={ejendommeLoadingAll}
+                        className="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium transition-colors"
+                      >
+                        {ejendommeLoadingAll
+                          ? lang === 'da'
+                            ? 'Henter…'
+                            : 'Loading…'
+                          : lang === 'da'
+                            ? `Vis alle ${ejendommeTotalBfe} ejendomme`
+                            : `Show all ${ejendommeTotalBfe} properties`}
+                      </button>
+                    </div>
+                  )}
                 </>
               )}
             </div>

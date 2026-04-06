@@ -344,8 +344,11 @@ export async function GET(req: NextRequest) {
       ].map((m) => m[1]);
       const pantebrevFormular =
         entry.match(/HaeftelsePantebrevFormularLovpligtigKode[^>]*>([^<]+)/)?.[1] ?? null;
-      // Lånetekst
-      const laaneTekst = entry.match(/Afsnit[^>]*>([^<]{5,})/)?.[1]?.trim() ?? null;
+      // Lånetekst — saml alle Afsnit-elementer (kan være flere)
+      const laaneTekstAfsnit = [...entry.matchAll(/Afsnit[^>]*>([^<]{5,})/g)]
+        .map((m) => m[1].trim())
+        .filter((v) => v.length > 0);
+      const laaneTekst = laaneTekstAfsnit.length > 0 ? laaneTekstAfsnit.join('\n') : null;
       // Tinglysningsafgift
       const afgiftStr = entry.match(/TinglysningAfgiftBetalt[^>]*>([^<]+)/)?.[1];
       const tinglysningsafgift = afgiftStr ? parseInt(afgiftStr, 10) : null;
@@ -397,8 +400,11 @@ export async function GET(req: NextRequest) {
       ]
         .map((m) => (m[1] || m[2] || m[3]).trim())
         .filter((k) => k.length > 1);
-      // Tillægstekst
-      const tillaegsTekst = entry.match(/Afsnit[^>]*>([^<]{3,})/)?.[1]?.trim() ?? null;
+      // Tillægstekst — saml alle Afsnit-elementer (kan være flere linjer)
+      const tillaegsTekstAfsnit = [...entry.matchAll(/Afsnit[^>]*>([^<]{3,})/g)]
+        .map((m) => m[1].trim())
+        .filter((v) => v.length > 0);
+      const tillaegsTekst = tillaegsTekstAfsnit.length > 0 ? tillaegsTekstAfsnit.join('\n') : null;
       // Påtaleberettiget
       const paataleberettiget =
         entry.match(/PaataleberettigetSamling[\s\S]*?LegalUnitName[^>]*>([^<]+)/)?.[1] ?? null;

@@ -6816,6 +6816,11 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
                           </p>
                         </div>
                       )}
+                      {first.dokumentAlias && (
+                        <p className="text-slate-600 text-[10px] mt-2">
+                          Dok: {String(first.dokumentAlias)}
+                        </p>
+                      )}
                     </div>
                   )}
                 </div>
@@ -6936,18 +6941,20 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
                             )}
                           </div>
                         )}
-                        {Array.isArray(h.debitorer) && (h.debitorer as string[]).length > 0 && (
-                          <div>
-                            <p className="text-slate-500 text-[10px] uppercase">
-                              {da ? 'Debitor' : 'Debtor'}
-                            </p>
-                            {(h.debitorer as string[]).map((navn, di) => (
+                        <div>
+                          <p className="text-slate-500 text-[10px] uppercase">
+                            {da ? 'Debitor' : 'Debtor'}
+                          </p>
+                          {Array.isArray(h.debitorer) && (h.debitorer as string[]).length > 0 ? (
+                            (h.debitorer as string[]).map((navn, di) => (
                               <p key={di} className="text-slate-300">
                                 {navn}
                               </p>
-                            ))}
-                          </div>
-                        )}
+                            ))
+                          ) : (
+                            <p className="text-slate-500">—</p>
+                          )}
+                        </div>
                         {h.rente != null && (
                           <div>
                             <p className="text-slate-500 text-[10px] uppercase">
@@ -6991,7 +6998,11 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
                               {da ? 'Lånevilkår' : 'Loan terms'}
                             </p>
                             <p className="text-slate-400">
-                              {(Array.isArray(h.laanevilkaar) ? h.laanevilkaar : []).join(', ')}
+                              {(Array.isArray(h.laanevilkaar) ? (h.laanevilkaar as string[]) : [])
+                                .flatMap((v) => String(v).split(','))
+                                .map((v) => v.trim())
+                                .filter((v) => v.length > 0)
+                                .join(', ')}
                             </p>
                           </div>
                         )}
@@ -7031,7 +7042,8 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
                 s.tillaegsTekst ||
                 s.paataleberettiget ||
                 (s.indholdKoder && Array.isArray(s.indholdKoder) && s.indholdKoder.length > 0) ||
-                s.tinglysningsafgift;
+                s.tinglysningsafgift ||
+                s.harBetydningForVaerdi;
               return (
                 <div key={`s-${i}`} className="border-b border-slate-700/15">
                   <div
@@ -7134,29 +7146,68 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
                   </div>
                   {isOpen && hasDetails && (
                     <div className="px-4 pb-3 ml-10 border-l-2 border-teal-500/20 text-xs">
-                      {s.tillaegsTekst && (
-                        <p className="text-slate-400 text-xs">{String(s.tillaegsTekst)}</p>
-                      )}
-                      {s.paataleberettiget && (
-                        <p className="text-slate-400 text-xs">
-                          {da ? 'Påtaleberettiget' : 'Enforcement'}: {String(s.paataleberettiget)}
+                      {s.harBetydningForVaerdi && (
+                        <p className="text-amber-400 text-[10px] font-semibold mb-1.5">
+                          ⚠ {da ? 'Har betydning for ejendommens værdi' : 'Affects property value'}
                         </p>
                       )}
-                      {s.indholdKoder &&
-                        Array.isArray(s.indholdKoder) &&
-                        s.indholdKoder.length > 0 && (
-                          <p className="text-slate-400 text-xs">
-                            {da ? 'Indhold' : 'Content'}: {s.indholdKoder.join(', ')}
-                          </p>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 mt-1">
+                        {s.paataleberettiget && (
+                          <div>
+                            <p className="text-slate-500 text-[10px] uppercase">
+                              {da ? 'Påtaleberettiget' : 'Enforcement'}
+                            </p>
+                            {s.paataleberettigetCvr ? (
+                              <button
+                                onClick={() =>
+                                  router.push(
+                                    `/dashboard/companies/${String(s.paataleberettigetCvr)}`
+                                  )
+                                }
+                                className="text-blue-400 hover:text-blue-300"
+                              >
+                                {String(s.paataleberettiget)} →
+                              </button>
+                            ) : (
+                              <p className="text-slate-300">{String(s.paataleberettiget)}</p>
+                            )}
+                          </div>
                         )}
-                      {s.tinglysningsafgift != null && Number(s.tinglysningsafgift) > 0 && (
-                        <p className="text-slate-400 text-xs">
-                          {da ? 'Afgift' : 'Fee'}:{' '}
-                          {Number(s.tinglysningsafgift).toLocaleString('da-DK')} DKK
-                        </p>
+                        {s.indholdKoder &&
+                          Array.isArray(s.indholdKoder) &&
+                          s.indholdKoder.length > 0 && (
+                            <div>
+                              <p className="text-slate-500 text-[10px] uppercase">
+                                {da ? 'Indhold' : 'Content'}
+                              </p>
+                              <p className="text-slate-300">
+                                {(s.indholdKoder as string[]).join(', ')}
+                              </p>
+                            </div>
+                          )}
+                        {s.tinglysningsafgift != null && Number(s.tinglysningsafgift) > 0 && (
+                          <div>
+                            <p className="text-slate-500 text-[10px] uppercase">
+                              {da ? 'Afgift' : 'Fee'}
+                            </p>
+                            <p className="text-slate-300">
+                              {Number(s.tinglysningsafgift).toLocaleString('da-DK')} DKK
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                      {s.tillaegsTekst && (
+                        <div className="mt-2 pt-2 border-t border-slate-700/20">
+                          <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                            {da ? 'Tillægstekst' : 'Supplementary text'}
+                          </p>
+                          <p className="text-slate-400 whitespace-pre-wrap leading-relaxed">
+                            {String(s.tillaegsTekst)}
+                          </p>
+                        </div>
                       )}
                       {s.dokumentAlias && (
-                        <p className="text-slate-600 text-[10px] mt-1">
+                        <p className="text-slate-600 text-[10px] mt-2">
                           Dok: {String(s.dokumentAlias)}
                         </p>
                       )}

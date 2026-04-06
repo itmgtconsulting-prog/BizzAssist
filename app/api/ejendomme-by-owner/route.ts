@@ -21,6 +21,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { getCertOAuthToken, isCertAuthConfigured } from '@/app/lib/dfCertAuth';
 
+/** Forlæng Vercel serverless timeout til 30 sek. (kræver Pro-plan) */
+export const maxDuration = 30;
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 /** Opsummerede data for én ejendom i porteføljeoversigten */
@@ -47,10 +50,12 @@ export interface EjendomSummary {
 
 /** API-svaret fra denne route */
 export interface EjendommeByOwnerResponse {
-  /** Liste af fundne ejendomme (maks. MAX_BFE) */
+  /** Liste af fundne ejendomme (maks. MAX_BFE_INITIAL ved første load, MAX_BFE_FULL ved ?all=1) */
   ejendomme: EjendomSummary[];
   /** Det totale antal BFE-numre fundet (kan overstige ejendomme.length) */
   totalBfe: number;
+  /** true hvis svaret er afskåret — brug ?all=1 for at hente alle (op til MAX_BFE_FULL) */
+  truncated: boolean;
   /** true hvis OAuth-nøgler mangler i miljøvariabler */
   manglerNoegle: boolean;
   /** true hvis Datafordeler returnerer 403 (Dataadgang-ansøgning mangler) */
@@ -66,8 +71,10 @@ const TOKEN_URL = 'https://auth.datafordeler.dk/realms/distribution/protocol/ope
 
 /** Maks antal CVR-numre der accepteres per kald */
 const MAX_CVR = 30;
-/** Maks antal BFE-numre der beriges med adressedata */
-const MAX_BFE = 100;
+/** Antal BFE-numre der beriges ved første load (hurtig respons) */
+const MAX_BFE_INITIAL = 20;
+/** Maks antal BFE-numre ved fuld load (?all=1) */
+const MAX_BFE_FULL = 100;
 /** Maks antal samtidige DAWA BFE-opslag */
 const DAWA_CONCURRENCY = 10;
 
@@ -333,6 +340,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
     return NextResponse.json({
       ejendomme: [],
       totalBfe: 0,
+      truncated: false,
       manglerNoegle: true,
       manglerAdgang: false,
       fejl: null,
@@ -347,6 +355,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
       {
         ejendomme: [],
         totalBfe: 0,
+        truncated: false,
         manglerNoegle: false,
         manglerAdgang: false,
         fejl: 'cvr parameter er påkrævet',
@@ -366,6 +375,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
       {
         ejendomme: [],
         totalBfe: 0,
+        truncated: false,
         manglerNoegle: false,
         manglerAdgang: false,
         fejl: 'Ingen gyldige CVR-numre angivet',
@@ -373,6 +383,10 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
       { status: 400 }
     );
   }
+
+  /* ?all=1 → fuld load (op til MAX_BFE_FULL), ellers kun MAX_BFE_INITIAL */
+  const loadAll = searchParams.get('all') === '1';
+  const maxBfe = loadAll ? MAX_BFE_FULL : MAX_BFE_INITIAL;
 
   const cvrNumre = [...new Set(rawCvrs.map((s) => parseInt(s, 10)))].slice(0, MAX_CVR);
 
@@ -392,6 +406,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
     return NextResponse.json({
       ejendomme: [],
       totalBfe: 0,
+      truncated: false,
       manglerNoegle: false,
       manglerAdgang: false,
       fejl: 'Kunne ikke hente OAuth token',
@@ -408,6 +423,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
       return NextResponse.json({
         ejendomme: [],
         totalBfe: 0,
+        truncated: false,
         manglerNoegle: false,
         manglerAdgang: true,
         fejl: null,
@@ -433,14 +449,16 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
       return NextResponse.json({
         ejendomme: [],
         totalBfe: 0,
+        truncated: false,
         manglerNoegle: false,
         manglerAdgang: false,
         fejl: null,
       });
     }
 
-    /* Begræns til MAX_BFE for performance */
-    const begransetBfe = alleBfe.slice(0, MAX_BFE);
+    /* Begræns til maxBfe (20 ved første load, 100 ved ?all=1) */
+    const begransetBfe = alleBfe.slice(0, maxBfe);
+    const truncated = totalBfe > maxBfe;
 
     /* ── Trin 2: Hent adressedata for hvert BFE (begrænset parallelisme) ── */
     const adresseData = await pMap(begransetBfe, DAWA_CONCURRENCY, hentDawaBfeData);
@@ -464,6 +482,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
       {
         ejendomme,
         totalBfe,
+        truncated,
         manglerNoegle: false,
         manglerAdgang: false,
         fejl: null,
@@ -477,6 +496,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
     return NextResponse.json({
       ejendomme: [],
       totalBfe: 0,
+      truncated: false,
       manglerNoegle: false,
       manglerAdgang: false,
       fejl: err instanceof Error ? err.message : 'Ukendt fejl',

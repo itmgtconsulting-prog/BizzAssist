@@ -145,8 +145,32 @@ const DEFAULT_ZOOM = 17;
 
 // ─── Overlay-lag ──────────────────────────────────────────────────────────────
 
-/** Nøgler for PropertyMap's toggle-bare overlay-lag */
-type OverlayNøgle = 'matrikel' | 'lokalplaner' | 'zonekort' | 'kommuneplan' | 'jordforurening';
+/** Nøgler for PropertyMap's toggle-bare overlay-lag — spejler LagNøgle i kort/page.tsx */
+type OverlayNøgle =
+  | 'matrikel'
+  | 'lokalplaner'
+  | 'kommuneplan'
+  | 'zonekort'
+  | 'byggefelt'
+  | 'kloakopland'
+  | 'detailhandel'
+  | 'bev_landskaber'
+  | 'kulturhistorie'
+  | 'natura2000'
+  | 'skovbyggelinje'
+  | 'fredninger'
+  | 'natur_reservat'
+  | 'ramsar'
+  | 'jordforurening'
+  | 'aabeskyttelse'
+  | 'soebeskyttelse'
+  | 'kirkeomgivelser'
+  | 'jorddiger'
+  | 'bev_vandloeb'
+  | 'bnbo'
+  | 'raastof'
+  | 'indsatsplaner'
+  | 'omr_klassificering';
 
 /**
  * Bygger en WMS tile-URL via server-side proxy (/api/wms).
@@ -166,45 +190,211 @@ function buildWmsUrl(service: 'plandata' | 'miljo', layers: string): string {
   );
 }
 
-/** WMS overlay-lag tilgængelige i PropertyMap's lag-panel */
-const OVERLAY_WMS = [
+/**
+ * WMS overlay-lag tilgængelige i PropertyMap's lag-panel.
+ * Spejler WMS_LAG i kort/page.tsx — begge bruger /api/wms proxy.
+ */
+const OVERLAY_WMS: Array<{
+  id: OverlayNøgle;
+  navn: string;
+  url: string;
+  opacity: number;
+  farveClass: string;
+}> = [
+  // ── Planer & Regulering (Plandata) ──
   {
-    id: 'lokalplaner' as OverlayNøgle,
+    id: 'lokalplaner',
     navn: 'Lokalplaner',
     url: buildWmsUrl('plandata', 'pdk:theme_pdk_lokalplan_vedtaget'),
     opacity: 0.8,
-    farveClass: 'bg-violet-600 border-violet-600',
+    farveClass: 'bg-amber-500 border-amber-500',
   },
   {
-    id: 'zonekort' as OverlayNøgle,
-    navn: 'Zonekort',
-    url: buildWmsUrl('plandata', 'pdk:theme_pdk_zonekort_samlet_v'),
-    opacity: 0.7,
+    id: 'kommuneplan',
+    navn: 'Kommuneplanrammer',
+    url: buildWmsUrl('plandata', 'pdk:theme_pdk_kommuneplanramme_vedtaget_v'),
+    opacity: 0.8,
     farveClass: 'bg-amber-600 border-amber-600',
   },
   {
-    id: 'kommuneplan' as OverlayNøgle,
-    navn: 'Kommuneplan',
-    url: buildWmsUrl('plandata', 'pdk:theme_pdk_kommuneplanramme_vedtaget_v'),
-    opacity: 0.8,
+    id: 'zonekort',
+    navn: 'Zonekort',
+    url: buildWmsUrl('plandata', 'pdk:theme_pdk_zonekort_samlet_v'),
+    opacity: 0.7,
+    farveClass: 'bg-amber-700 border-amber-700',
+  },
+  {
+    id: 'byggefelt',
+    navn: 'Byggefelt',
+    url: buildWmsUrl('plandata', 'pdk:theme_pdk_byggefelt_vedtaget'),
+    opacity: 0.75,
+    farveClass: 'bg-yellow-600 border-yellow-600',
+  },
+  {
+    id: 'kloakopland',
+    navn: 'Kloakopland',
+    url: buildWmsUrl('plandata', 'pdk:theme_pdk_kloakopland_vedtaget_v'),
+    opacity: 0.65,
+    farveClass: 'bg-yellow-700 border-yellow-700',
+  },
+  {
+    id: 'detailhandel',
+    navn: 'Detailhandel',
+    url: buildWmsUrl('plandata', 'pdk:theme_pdk_detailhandel_vedtaget'),
+    opacity: 0.7,
+    farveClass: 'bg-yellow-500 border-yellow-500',
+  },
+  // ── Bevaringsværdi (Plandata) ──
+  {
+    id: 'bev_landskaber',
+    navn: 'Bevaringsværdige landskaber',
+    url: buildWmsUrl('plandata', 'pdk:theme_pdk_bevaringsvaerdigelandskaber_vedtaget'),
+    opacity: 0.7,
+    farveClass: 'bg-orange-600 border-orange-600',
+  },
+  {
+    id: 'kulturhistorie',
+    navn: 'Kulturhistorisk bevaringsværdi',
+    url: buildWmsUrl('plandata', 'pdk:theme_pdk_kulturhistoriskbevaringsvaerdi_vedtaget'),
+    opacity: 0.7,
+    farveClass: 'bg-orange-500 border-orange-500',
+  },
+  // ── Natur & Miljø (Miljøportal) ──
+  {
+    id: 'natura2000',
+    navn: 'Natura 2000 & §3 natur',
+    url: buildWmsUrl('miljo', 'dai:bes_naturtyper,dai:habitat_omr,dai:fugle_bes_omr'),
+    opacity: 0.7,
     farveClass: 'bg-emerald-600 border-emerald-600',
   },
   {
-    id: 'jordforurening' as OverlayNøgle,
+    id: 'skovbyggelinje',
+    navn: 'Skovbyggelinje',
+    url: buildWmsUrl('miljo', 'dai:skovbyggelinjer'),
+    opacity: 0.85,
+    farveClass: 'bg-emerald-700 border-emerald-700',
+  },
+  {
+    id: 'fredninger',
+    navn: 'Fredede arealer',
+    url: buildWmsUrl('miljo', 'dai:fredede_omr'),
+    opacity: 0.7,
+    farveClass: 'bg-green-600 border-green-600',
+  },
+  {
+    id: 'natur_reservat',
+    navn: 'Natur- og vildtreservat',
+    url: buildWmsUrl('miljo', 'dai:natur_vildt_reservat'),
+    opacity: 0.7,
+    farveClass: 'bg-green-700 border-green-700',
+  },
+  {
+    id: 'ramsar',
+    navn: 'Ramsar-områder',
+    url: buildWmsUrl('miljo', 'dai:ramsar_omr'),
+    opacity: 0.7,
+    farveClass: 'bg-teal-600 border-teal-600',
+  },
+  {
+    id: 'jordforurening',
     navn: 'Jordforurening',
     url: buildWmsUrl('miljo', 'dai:Jordforurening'),
     opacity: 0.7,
     farveClass: 'bg-rose-600 border-rose-600',
   },
-] as const;
+  // ── Beskyttelseslinjer (Miljøportal) ──
+  {
+    id: 'aabeskyttelse',
+    navn: 'Åbeskyttelseslinje',
+    url: buildWmsUrl('miljo', 'dai:aa_bes_linjer'),
+    opacity: 0.85,
+    farveClass: 'bg-violet-600 border-violet-600',
+  },
+  {
+    id: 'soebeskyttelse',
+    navn: 'Søbeskyttelseslinje',
+    url: buildWmsUrl('miljo', 'dai:soe_bes_linjer'),
+    opacity: 0.85,
+    farveClass: 'bg-violet-700 border-violet-700',
+  },
+  {
+    id: 'kirkeomgivelser',
+    navn: 'Kirkeomgivelser',
+    url: buildWmsUrl('miljo', 'dai:kirkebyggelinjer'),
+    opacity: 0.8,
+    farveClass: 'bg-purple-600 border-purple-600',
+  },
+  {
+    id: 'jorddiger',
+    navn: 'Sten- og jorddiger',
+    url: buildWmsUrl('miljo', 'dai:bes_sten_jorddiger_2022'),
+    opacity: 0.85,
+    farveClass: 'bg-purple-700 border-purple-700',
+  },
+  {
+    id: 'bev_vandloeb',
+    navn: 'Beskyttede vandløb',
+    url: buildWmsUrl('miljo', 'dai:bes_vandloeb'),
+    opacity: 0.8,
+    farveClass: 'bg-indigo-600 border-indigo-600',
+  },
+  // ── Grundvand & Ressourcer (Miljøportal) ──
+  {
+    id: 'bnbo',
+    navn: 'BNBO — boringsnær beskyttelse',
+    url: buildWmsUrl('miljo', 'dai:status_bnbo'),
+    opacity: 0.7,
+    farveClass: 'bg-rose-700 border-rose-700',
+  },
+  {
+    id: 'raastof',
+    navn: 'Råstofområder',
+    url: buildWmsUrl('miljo', 'dai:raastofomr'),
+    opacity: 0.65,
+    farveClass: 'bg-red-600 border-red-600',
+  },
+  {
+    id: 'indsatsplaner',
+    navn: 'Indsatsplaner',
+    url: buildWmsUrl('miljo', 'dai:indsatsplaner'),
+    opacity: 0.65,
+    farveClass: 'bg-red-700 border-red-700',
+  },
+  {
+    id: 'omr_klassificering',
+    navn: 'Områdeklassificering',
+    url: buildWmsUrl('miljo', 'dai:omr_klassificering'),
+    opacity: 0.6,
+    farveClass: 'bg-pink-600 border-pink-600',
+  },
+];
 
-/** Standard synlighedstilstand — matrikel til, WMS fra */
+/** Standard synlighedstilstand — matrikel til, alle WMS-lag fra */
 const OVERLAY_START: Record<OverlayNøgle, boolean> = {
   matrikel: true,
   lokalplaner: false,
-  zonekort: false,
   kommuneplan: false,
+  zonekort: false,
+  byggefelt: false,
+  kloakopland: false,
+  detailhandel: false,
+  bev_landskaber: false,
+  kulturhistorie: false,
+  natura2000: false,
+  skovbyggelinje: false,
+  fredninger: false,
+  natur_reservat: false,
+  ramsar: false,
   jordforurening: false,
+  aabeskyttelse: false,
+  soebeskyttelse: false,
+  kirkeomgivelser: false,
+  jorddiger: false,
+  bev_vandloeb: false,
+  bnbo: false,
+  raastof: false,
+  indsatsplaner: false,
+  omr_klassificering: false,
 };
 
 /** Læs gemt zoom fra localStorage — fallback til DEFAULT_ZOOM */
@@ -628,14 +818,23 @@ export default function PropertyMap({
     synkWmsLagSynlighed();
   }, [visOverlay, synkWmsLagSynlighed]);
 
-  /** Lukker lag-panelet ved klik udenfor */
+  /**
+   * Lukker lag-panelet ved klik eller touch udenfor.
+   * Lytter på både mousedown (desktop) og touchstart (mobil) for at
+   * sikre korrekt opførsel på touch-enheder (iOS Safari, Android Chrome).
+   */
   useEffect(() => {
-    const h = (e: MouseEvent) => {
-      if (lagPanel && lagPanelRef.current && !lagPanelRef.current.contains(e.target as Node))
+    const h = (e: Event) => {
+      const target = (e as MouseEvent).target as Node | null;
+      if (lagPanel && lagPanelRef.current && !lagPanelRef.current.contains(target))
         setLagPanel(false);
     };
     document.addEventListener('mousedown', h);
-    return () => document.removeEventListener('mousedown', h);
+    document.addEventListener('touchstart', h, { passive: true });
+    return () => {
+      document.removeEventListener('mousedown', h);
+      document.removeEventListener('touchstart', h);
+    };
   }, [lagPanel]);
 
   /**
@@ -1065,7 +1264,7 @@ export default function PropertyMap({
                   }
                 }}
                 disabled={!bygningPunkter || bygningPunkter.length === 0}
-                className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-px transition-colors text-left ${
+                className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-px transition-colors text-left touch-manipulation ${
                   mapStyle === 'bbr' ? 'bg-white/5' : 'hover:bg-white/[0.03]'
                 } disabled:opacity-40 disabled:cursor-not-allowed`}
               >
@@ -1105,7 +1304,7 @@ export default function PropertyMap({
               <button
                 onClick={() => setVisEjendomsBadges((p) => !p)}
                 disabled={(!bygningPunkter || bygningPunkter.length === 0) && !erEjerlejlighed}
-                className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-px transition-colors text-left ${
+                className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-px transition-colors text-left touch-manipulation ${
                   visEjendomsBadges ? 'bg-white/5' : 'hover:bg-white/[0.03]'
                 } disabled:opacity-40 disabled:cursor-not-allowed`}
               >
@@ -1158,7 +1357,7 @@ export default function PropertyMap({
               {/* Husnumre toggle — vises i alle tre kortstile */}
               <button
                 onClick={() => setVisHusnumre(!visHusnumre)}
-                className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-px transition-colors text-left ${
+                className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-px transition-colors text-left touch-manipulation ${
                   visHusnumre ? 'bg-white/5' : 'hover:bg-white/[0.03]'
                 }`}
               >
@@ -1188,7 +1387,7 @@ export default function PropertyMap({
               {visMatrikel && (
                 <button
                   onClick={() => setVisOverlay((prev) => ({ ...prev, matrikel: !prev.matrikel }))}
-                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-px transition-colors text-left ${
+                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-px transition-colors text-left touch-manipulation ${
                     visOverlay.matrikel ? 'bg-white/5' : 'hover:bg-white/[0.03]'
                   }`}
                 >
@@ -1217,79 +1416,95 @@ export default function PropertyMap({
                 </button>
               )}
 
-              {/* WMS overlay-lag */}
-              <p className="text-[9px] font-bold uppercase tracking-widest px-1 pt-2 pb-1 text-violet-400">
-                Plandata
-              </p>
-              {OVERLAY_WMS.filter((w) =>
-                ['lokalplaner', 'zonekort', 'kommuneplan'].includes(w.id)
-              ).map((wms) => (
-                <button
-                  key={wms.id}
-                  onClick={() => setVisOverlay((prev) => ({ ...prev, [wms.id]: !prev[wms.id] }))}
-                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-px transition-colors text-left ${
-                    visOverlay[wms.id] ? 'bg-white/5' : 'hover:bg-white/[0.03]'
-                  }`}
-                >
-                  <div
-                    className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center shrink-0 border transition-colors ${
-                      visOverlay[wms.id] ? wms.farveClass : 'border-white/20'
-                    }`}
-                  >
-                    {visOverlay[wms.id] && (
-                      <svg width="8" height="6" viewBox="0 0 10 8" fill="none">
-                        <path
-                          d="M1 4L3.5 6.5L9 1"
-                          stroke="white"
-                          strokeWidth="1.8"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                    )}
-                  </div>
+              {/* WMS overlay-lag — grupperet som på hovedkortet */}
+              {[
+                {
+                  label: 'Planer & Regulering',
+                  klasse: 'text-amber-400',
+                  ids: [
+                    'lokalplaner',
+                    'kommuneplan',
+                    'zonekort',
+                    'byggefelt',
+                    'kloakopland',
+                    'detailhandel',
+                  ],
+                },
+                {
+                  label: 'Bevaringsværdi',
+                  klasse: 'text-orange-400',
+                  ids: ['bev_landskaber', 'kulturhistorie'],
+                },
+                {
+                  label: 'Natur & Miljø',
+                  klasse: 'text-emerald-400',
+                  ids: [
+                    'natura2000',
+                    'skovbyggelinje',
+                    'fredninger',
+                    'natur_reservat',
+                    'ramsar',
+                    'jordforurening',
+                  ],
+                },
+                {
+                  label: 'Beskyttelseslinjer',
+                  klasse: 'text-violet-400',
+                  ids: [
+                    'aabeskyttelse',
+                    'soebeskyttelse',
+                    'kirkeomgivelser',
+                    'jorddiger',
+                    'bev_vandloeb',
+                  ],
+                },
+                {
+                  label: 'Grundvand & Ressourcer',
+                  klasse: 'text-rose-400',
+                  ids: ['bnbo', 'raastof', 'indsatsplaner', 'omr_klassificering'],
+                },
+              ].map((gruppe) => (
+                <div key={gruppe.label}>
                   <p
-                    className={`text-xs leading-tight truncate ${visOverlay[wms.id] ? 'text-white' : 'text-slate-400'}`}
+                    className={`text-[9px] font-bold uppercase tracking-widest px-1 pt-2 pb-1 ${gruppe.klasse}`}
                   >
-                    {wms.navn}
+                    {gruppe.label}
                   </p>
-                </button>
-              ))}
-
-              <p className="text-[9px] font-bold uppercase tracking-widest px-1 pt-2 pb-1 text-rose-400">
-                Miljø
-              </p>
-              {OVERLAY_WMS.filter((w) => w.id === 'jordforurening').map((wms) => (
-                <button
-                  key={wms.id}
-                  onClick={() => setVisOverlay((prev) => ({ ...prev, [wms.id]: !prev[wms.id] }))}
-                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-px transition-colors text-left ${
-                    visOverlay[wms.id] ? 'bg-white/5' : 'hover:bg-white/[0.03]'
-                  }`}
-                >
-                  <div
-                    className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center shrink-0 border transition-colors ${
-                      visOverlay[wms.id] ? wms.farveClass : 'border-white/20'
-                    }`}
-                  >
-                    {visOverlay[wms.id] && (
-                      <svg width="8" height="6" viewBox="0 0 10 8" fill="none">
-                        <path
-                          d="M1 4L3.5 6.5L9 1"
-                          stroke="white"
-                          strokeWidth="1.8"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                    )}
-                  </div>
-                  <p
-                    className={`text-xs leading-tight truncate ${visOverlay[wms.id] ? 'text-white' : 'text-slate-400'}`}
-                  >
-                    {wms.navn}
-                  </p>
-                </button>
+                  {OVERLAY_WMS.filter((w) => gruppe.ids.includes(w.id)).map((wms) => (
+                    <button
+                      key={wms.id}
+                      onClick={() =>
+                        setVisOverlay((prev) => ({ ...prev, [wms.id]: !prev[wms.id] }))
+                      }
+                      className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-px transition-colors text-left touch-manipulation ${
+                        visOverlay[wms.id] ? 'bg-white/5' : 'hover:bg-white/[0.03]'
+                      }`}
+                    >
+                      <div
+                        className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center shrink-0 border transition-colors ${
+                          visOverlay[wms.id] ? wms.farveClass : 'border-white/20'
+                        }`}
+                      >
+                        {visOverlay[wms.id] && (
+                          <svg width="8" height="6" viewBox="0 0 10 8" fill="none">
+                            <path
+                              d="M1 4L3.5 6.5L9 1"
+                              stroke="white"
+                              strokeWidth="1.8"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
+                          </svg>
+                        )}
+                      </div>
+                      <p
+                        className={`text-xs leading-tight truncate ${visOverlay[wms.id] ? 'text-white' : 'text-slate-400'}`}
+                      >
+                        {wms.navn}
+                      </p>
+                    </button>
+                  ))}
+                </div>
               ))}
             </div>
           </div>

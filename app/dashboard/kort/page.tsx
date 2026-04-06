@@ -257,7 +257,8 @@ type LagNøgle =
   | 'bnbo'
   | 'raastof'
   | 'indsatsplaner'
-  | 'omr_klassificering';
+  | 'omr_klassificering'
+  | 'jordforurening';
 
 /** Synlighedstilstand for alle lag */
 type LagSynlighed = Record<LagNøgle, boolean>;
@@ -289,6 +290,7 @@ const LAG_START: LagSynlighed = {
   raastof: false,
   indsatsplaner: false,
   omr_klassificering: false,
+  jordforurening: false,
 };
 
 /** WMS-lag definition — kilde, URL og standard opacity */
@@ -395,6 +397,8 @@ const WMS_LAG: WmsLagDef[] = [
   { id: 'raastof', wmsUrl: wmsUrl('miljo', 'dai:raastofomr'), opacity: 0.65 },
   { id: 'indsatsplaner', wmsUrl: wmsUrl('miljo', 'dai:indsatsplaner'), opacity: 0.65 },
   { id: 'omr_klassificering', wmsUrl: wmsUrl('miljo', 'dai:omr_klassificering'), opacity: 0.6 },
+  // ── Jordforurening (Miljøportal) ──
+  { id: 'jordforurening', wmsUrl: wmsUrl('miljo', 'dai:Jordforurening'), opacity: 0.7 },
 ];
 
 /** Farveaccenter til gruppeoverskrifter */
@@ -449,6 +453,7 @@ const LAG_GRUPPER: Array<{
       { id: 'fredninger', navn: 'Fredede arealer' },
       { id: 'natur_reservat', navn: 'Natur- og vildtreservat' },
       { id: 'ramsar', navn: 'Ramsar-områder' },
+      { id: 'jordforurening', navn: 'Jordforurening' },
     ],
   },
   {
@@ -1105,7 +1110,12 @@ function KortInner() {
     }, 200);
   }, []);
 
-  const vælgForslag = useCallback((r: DawaAutocompleteResult) => {
+  /**
+   * Flyver kortet til det valgte søgeresultat.
+   * darAutocomplete returnerer x=0, y=0 — koordinater hentes via separat opslag
+   * mod /api/adresse/lookup når de mangler i autocomplete-svaret.
+   */
+  const vælgForslag = useCallback(async (r: DawaAutocompleteResult) => {
     if (r.type === 'vejnavn') {
       setSøgeTekst(r.tekst);
       setForslag([]);
@@ -1115,7 +1125,23 @@ function KortInner() {
     setSøgeTekst(r.tekst);
     setForslag([]);
     setMarkeret(-1);
-    const { x: lng, y: lat } = r.adresse;
+    let lng = r.adresse.x;
+    let lat = r.adresse.y;
+    // darAutocomplete returnerer x=0, y=0 — hent koordinater via separat opslag
+    if (!lng || !lat) {
+      try {
+        const res = await fetch(`/api/adresse/lookup?id=${encodeURIComponent(r.adresse.id)}`);
+        if (res.ok) {
+          const data: { x?: number; y?: number } | null = await res.json();
+          if (data?.x && data?.y) {
+            lng = data.x;
+            lat = data.y;
+          }
+        }
+      } catch {
+        /* ignorer netværksfejl */
+      }
+    }
     if (lng && lat) {
       mapRef.current?.flyTo({ center: [lng, lat], zoom: 17, duration: 1000 });
       setSøgtMarkør({ lng, lat });
@@ -1135,7 +1161,7 @@ function KortInner() {
       } else if (e.key === 'Enter') {
         e.preventDefault();
         const i = markeret >= 0 ? markeret : 0;
-        if (forslag[i]) vælgForslag(forslag[i]);
+        if (forslag[i]) void vælgForslag(forslag[i]);
       } else if (e.key === 'Escape') {
         setForslag([]);
         setMarkeret(-1);

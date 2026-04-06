@@ -1161,22 +1161,30 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
    * Henter forelobige ejendomsvurderinger fra Vurderingsportalen.
    * Proever foerst adgangsadresse-ID fra DAWA, derefter BFE-nummer fra BBR.
    * Disse er separate fra de endelige vurderinger fra Datafordeler.
+   *
+   * BFE-valg: for moderejendomme (ingen etage + ejerlejlighedBfe sat) bruger vi moderBfe
+   * direkte fremfor adresseId, fordi adresseId-søgning returnerer child-enheder på adressen
+   * og kan give forelobige vurderinger for en forkert ejerlejlighed.
    */
   useEffect(() => {
     if (!erDAWA) return;
 
-    // Byg soegeparametre — brug adresseId (DAWA UUID) hvis tilgaengeligt, ellers bfeNummer
-    const adresseId = dawaAdresse?.id;
-    const bfeNummer = bbrData?.ejendomsrelationer?.[0]?.bfeNummer;
-
-    if (!adresseId && !bfeNummer) return;
+    // Moderejandom: ingen etage OG VP fandt child-ejerlejlighed → brug moderBfe direkte.
+    // adresseId-søgning returnerer child-enheder på adressen; moderBfe giver korrekt parent-dokument.
+    const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
 
     const params = new URLSearchParams();
-    if (adresseId) {
-      params.set('adresseId', adresseId);
-    }
-    if (bfeNummer) {
-      params.set('bfeNummer', String(bfeNummer));
+    if (erModer) {
+      const moderBfe = bbrData?.moderBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer;
+      if (!moderBfe) return;
+      params.set('bfeNummer', String(moderBfe));
+    } else {
+      // Byg soegeparametre — brug adresseId (DAWA UUID) hvis tilgaengeligt, ellers bfeNummer
+      const adresseId = dawaAdresse?.id;
+      const bfeNummer = bbrData?.ejendomsrelationer?.[0]?.bfeNummer;
+      if (!adresseId && !bfeNummer) return;
+      if (adresseId) params.set('adresseId', adresseId);
+      if (bfeNummer) params.set('bfeNummer', String(bfeNummer));
     }
 
     setForelobigLoader(true);
@@ -1746,6 +1754,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
             <div className="mb-3">
               <div className="flex items-center gap-3">
                 <h1 className="text-white text-xl font-bold">{adresseStreng}</h1>
+                {/* Child unit (ejerlejlighed med etage): link til moderejandommen */}
                 {bbrData?.ejerlejlighedBfe && bbrData?.moderBfe && !!dawaAdresse?.etage && (
                   <button
                     onClick={async () => {
@@ -1774,6 +1783,20 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                     <Building2 size={12} />
                     {lang === 'da' ? 'Gå til hovedejendom' : 'Go to main property'}
                   </button>
+                )}
+                {/* Moderejandom (ingen etage, men har ejerlejlighedBfe): statisk badge */}
+                {bbrData?.ejerlejlighedBfe && !dawaAdresse?.etage && (
+                  <span
+                    className="flex items-center gap-1.5 px-3 py-1 bg-amber-500/15 border border-amber-500/30 rounded-lg text-amber-400 text-xs font-medium flex-shrink-0"
+                    title={
+                      lang === 'da'
+                        ? `Denne ejendom er en hovedejendom (BFE ${bbrData.moderBfe ?? bbrData.ejerlejlighedBfe})`
+                        : `This property is a main property (BFE ${bbrData.moderBfe ?? bbrData.ejerlejlighedBfe})`
+                    }
+                  >
+                    <Building2 size={12} />
+                    {lang === 'da' ? 'Hovedejendom' : 'Main property'}
+                  </span>
                 )}
                 {bbrData?.ejerlejlighedBfe && (
                   <span className="flex items-center gap-1 px-2 py-0.5 bg-purple-500/15 border border-purple-500/30 rounded-full text-purple-400 text-[10px] font-medium flex-shrink-0">

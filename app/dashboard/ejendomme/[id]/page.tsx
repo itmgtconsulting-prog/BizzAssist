@@ -6731,7 +6731,8 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
                         : ''}
                     </span>
                     <span className="text-xs text-slate-400 truncate">
-                      {typeMap[String(e.adkomstType ?? '')] ?? String(e.adkomstType ?? '')}
+                      {typeMap[String(e.adkomstType ?? '').toLowerCase()] ??
+                        String(e.adkomstType ?? '')}
                     </span>
                     <div
                       className="flex items-center gap-1.5"
@@ -6782,6 +6783,15 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
                   {isOpen && (
                     <div className="px-4 pb-3 ml-10 border-l-2 border-purple-500/20">
                       <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 mt-1 text-xs">
+                        <div>
+                          <p className="text-slate-500 text-[10px] uppercase">
+                            {da ? 'Adkomsthaver' : 'Owner'}
+                          </p>
+                          <p className="text-slate-200">{String(e.navn)}</p>
+                          {e.adresse && (
+                            <p className="text-slate-400 text-[11px]">{String(e.adresse)}</p>
+                          )}
+                        </div>
                         {e.tinglysningsafgift != null && Number(e.tinglysningsafgift) > 0 && (
                           <div>
                             <p className="text-slate-500 text-[10px] uppercase">

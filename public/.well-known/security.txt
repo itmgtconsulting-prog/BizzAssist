@@ -1,0 +1,5 @@
+Contact: mailto:security@bizzassist.dk
+Expires: 2027-01-01T00:00:00.000Z
+Preferred-Languages: da, en
+Canonical: https://bizzassist.dk/.well-known/security.txt
+Policy: https://bizzassist.dk/security-policy

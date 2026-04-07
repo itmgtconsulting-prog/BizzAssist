@@ -92,6 +92,8 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
   const [accessGranted, setAccessGranted] = useState(false);
   /** Whether user has an active paid subscription (gates search + AI) */
   const [_hasActiveSub, setHasActiveSub] = useState(false);
+  /** Whether to show the 2FA setup recommendation banner */
+  const [show2FaBanner, setShow2FaBanner] = useState(false);
   /** Whether the subscription is functional (paid, free, or within trial) — gates features */
   const [isFunctional, setIsFunctional] = useState(false);
   /**
@@ -217,6 +219,13 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
 
           if (email) {
             setProfile(email, json.fullName || '');
+
+            // Show 2FA banner for email/password users who haven't set up TOTP yet.
+            // OAuth users (Microsoft/Google) are excluded — they have 2FA at their IdP.
+            const dismissed2Fa = sessionStorage.getItem('bizzassist_2fa_banner_dismissed');
+            if (!dismissed2Fa && json.isEmailUser && !json.hasMfa) {
+              setShow2FaBanner(true);
+            }
 
             // Admin users bypass all subscription gates
             if (json.isAdmin) {
@@ -945,6 +954,36 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
             </div>
           </div>
         </header>
+
+        {/* 2FA recommendation banner — only for email/password users without TOTP */}
+        {show2FaBanner && (
+          <div className="flex items-center justify-between gap-3 bg-amber-500/10 border-b border-amber-500/30 px-4 py-2.5 shrink-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <AlertCircle size={15} className="text-amber-400 shrink-0" />
+              <p className="text-amber-300 text-sm truncate">
+                {lang === 'da'
+                  ? 'Din konto er ikke beskyttet med to-faktor-godkendelse (2FA). '
+                  : 'Your account is not protected with two-factor authentication (2FA). '}
+                <a
+                  href="/login/mfa/enroll"
+                  className="underline font-medium hover:text-amber-200 transition-colors"
+                >
+                  {lang === 'da' ? 'Opsæt 2FA nu' : 'Set up 2FA now'}
+                </a>
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                sessionStorage.setItem('bizzassist_2fa_banner_dismissed', '1');
+                setShow2FaBanner(false);
+              }}
+              className="text-amber-500 hover:text-amber-300 text-lg leading-none shrink-0 transition-colors"
+              aria-label="Luk"
+            >
+              ×
+            </button>
+          </div>
+        )}
 
         {/* Page content — gated by subscription for non-free pages */}
         <main className="flex-1 flex overflow-hidden">

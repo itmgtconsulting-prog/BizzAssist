@@ -148,8 +148,8 @@ export default function MfaEnrollPage() {
             </h1>
             <p className="text-slate-400 text-sm">
               {lang === 'da'
-                ? '2FA er påkrævet for alle konti. Scan QR-koden med din authenticator-app.'
-                : '2FA is required for all accounts. Scan the QR code with your authenticator app.'}
+                ? 'Øg sikkerheden på din konto ved at tilknytte en authenticator-app.'
+                : 'Increase your account security by linking an authenticator app.'}
             </p>
           </div>
 
@@ -252,7 +252,15 @@ export default function MfaEnrollPage() {
             </div>
           ) : null}
 
-          <div className="mt-6 text-center">
+          <div className="mt-6 flex flex-col items-center gap-3">
+            <button
+              onClick={() => {
+                window.location.href = '/dashboard';
+              }}
+              className="text-amber-400 hover:text-amber-300 text-sm transition-colors"
+            >
+              {lang === 'da' ? 'Spring over for nu' : 'Skip for now'}
+            </button>
             <button
               onClick={async () => {
                 await signOut();

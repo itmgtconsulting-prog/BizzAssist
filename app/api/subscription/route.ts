@@ -161,6 +161,46 @@ export async function GET(): Promise<NextResponse> {
     const fullName = (freshUser.user.user_metadata?.full_name as string) ?? '';
     const isAdmin = !!freshUser.user.app_metadata?.isAdmin;
 
+    // Determine if user is email/password (not OAuth-only) for 2FA banner logic
+    const providers =
+      (freshUser.user.app_metadata?.providers as string[] | undefined) ??
+      (freshUser.user.app_metadata?.provider
+        ? [freshUser.user.app_metadata.provider as string]
+        : []);
+    const isEmailUser =
+      providers.includes('email') ||
+      (!providers.some((p) => ['azure', 'google', 'linkedin_oidc', 'github'].includes(p)) &&
+        !!freshUser.user.email);
+
+    // Check if user has a verified TOTP factor (for 2FA banner)
+    let hasMfa = false;
+    if (isEmailUser) {
+      const { data: factorsData } = await (
+        admin as ReturnType<typeof import('@supabase/supabase-js').createClient>
+      )
+        .from('auth.mfa_factors')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('status', 'verified')
+        .limit(1);
+      hasMfa = Array.isArray(factorsData) && factorsData.length > 0;
+      if (!hasMfa) {
+        // Fallback: use admin MFA API
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: mfaData } = await (admin.auth.admin as any).mfa.listFactors({
+            userId: user.id,
+          });
+          hasMfa = (mfaData?.factors ?? []).some(
+            (f: { status: string; factor_type: string }) =>
+              f.status === 'verified' && f.factor_type === 'totp'
+          );
+        } catch {
+          hasMfa = false;
+        }
+      }
+    }
+
     // Step 3b: Fetch plan definition from DB for the user's plan
     let resolvedPlan: PlanDef | null = null;
     if (subscription?.planId) {
@@ -268,6 +308,8 @@ export async function GET(): Promise<NextResponse> {
             : null,
           isFunctional,
           isAdmin,
+          isEmailUser,
+          hasMfa,
           billing,
         });
       }
@@ -288,6 +330,8 @@ export async function GET(): Promise<NextResponse> {
         : null,
       isFunctional,
       isAdmin,
+      isEmailUser,
+      hasMfa,
       billing,
     });
   } catch (err) {

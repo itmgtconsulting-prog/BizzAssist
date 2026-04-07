@@ -212,7 +212,19 @@ export default function DiagramSimple({ graph, lang }: DiagramVariantProps) {
     setPan({ x: 0, y: 0 });
   }, [autoFitZoom]);
 
-  const toggleFullscreen = useCallback(() => setIsFullscreen((f) => !f), []);
+  const toggleFullscreen = useCallback(() => {
+    setIsFullscreen((f) => !f);
+    // Reset zoom+pan efter render så diagrammet passer til den nye containerstørrelse
+    setTimeout(() => {
+      setPan({ x: 0, y: 0 });
+      if (containerRef.current && totalW > 0 && totalH > 0) {
+        const w = containerRef.current.clientWidth;
+        const h = containerRef.current.clientHeight;
+        const fitZoom = Math.min((w - 64) / totalW, (h - 64) / totalH, 1.5);
+        setZoom(Math.max(0.2, fitZoom));
+      }
+    }, 50);
+  }, [totalW, totalH]);
 
   const da = lang === 'da';
 

@@ -1211,7 +1211,10 @@ function PropertyMap({
 
       {/* Luftfoto / Gade / BBR toggle — BBR yderst til venstre, Luftfoto yderst til højre */}
       {/* z-30 sikrer at knapperne er over alle overlejringer i forælderkomponenten (z-20) */}
-      <div className="absolute top-3 left-3 flex gap-1.5 z-30">
+      <div
+        className="absolute top-3 left-3 flex flex-wrap gap-1.5 z-30"
+        style={{ maxWidth: 'calc(100% - 5.5rem)' }}
+      >
         {bygningPunkter && bygningPunkter.length > 0 && (
           <button
             onClick={() => {

@@ -1386,7 +1386,10 @@ function KortInner() {
       </div>
 
       {/* ── Stil-toggle (venstre) ────────────────────────────────────────── */}
-      <div className="absolute top-4 left-4 z-20 flex gap-1.5">
+      <div
+        className="absolute top-4 left-4 z-20 flex flex-wrap gap-1.5"
+        style={{ maxWidth: 'calc(100% - 5rem)' }}
+      >
         {(['dark', 'satellite'] as KortStyle[]).map((s) => (
           <button
             key={s}

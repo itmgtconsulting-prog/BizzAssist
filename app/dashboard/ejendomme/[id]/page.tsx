@@ -102,6 +102,10 @@ const DiagramForce = dynamic(() => import('@/app/components/diagrams/DiagramForc
   ssr: false,
   loading: () => <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />,
 });
+const DiagramSimple = dynamic(() => import('@/app/components/diagrams/DiagramSimple'), {
+  ssr: false,
+  loading: () => <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />,
+});
 
 type Tab =
   | 'overblik'
@@ -6210,6 +6214,8 @@ function PropertyOwnerDiagram({
   const [ejerDetaljer, setEjerDetaljer] = useState<EjerDetalje[]>([]);
   const [loading, setLoading] = useState(true);
   const fetchedRef = useRef(false);
+  /** Toggle: false = DiagramForce (original), true = DiagramSimple (nyt — under test) */
+  const [useSimpeltDiagram, setUseSimpeltDiagram] = useState(false);
 
   useEffect(() => {
     if (fetchedRef.current) return;
@@ -6385,8 +6391,34 @@ function PropertyOwnerDiagram({
         </div>
       ))}
 
-      {/* Ejerskabsdiagram */}
-      <DiagramForce graph={graph} lang={lang} />
+      {/* Ejerskabsdiagram — toggle mellem original (Force) og nyt (Simple) */}
+      <div className="flex items-center gap-2 mb-2">
+        <button
+          onClick={() => setUseSimpeltDiagram(false)}
+          className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+            !useSimpeltDiagram
+              ? 'bg-blue-600 text-white'
+              : 'bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700'
+          }`}
+        >
+          {da ? 'Relationsdiagram' : 'Relations diagram'}
+        </button>
+        <button
+          onClick={() => setUseSimpeltDiagram(true)}
+          className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+            useSimpeltDiagram
+              ? 'bg-blue-600 text-white'
+              : 'bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700'
+          }`}
+        >
+          {da ? 'Simpelt diagram' : 'Simple diagram'}
+        </button>
+      </div>
+      {useSimpeltDiagram ? (
+        <DiagramSimple graph={graph} lang={lang} />
+      ) : (
+        <DiagramForce graph={graph} lang={lang} />
+      )}
     </div>
   );
 }

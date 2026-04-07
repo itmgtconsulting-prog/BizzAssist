@@ -54,11 +54,23 @@ import { resolvePlan, formatTokens, isSubscriptionFunctional } from '@/app/lib/s
 
 const DiagramForce = dynamic(() => import('@/app/components/diagrams/DiagramForce'), {
   ssr: false,
+  loading: () => <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />,
+});
+const DiagramSimple = dynamic(() => import('@/app/components/diagrams/DiagramSimple'), {
+  ssr: false,
+  loading: () => <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />,
 });
 
 // ─── Tab Types ──────────────────────────────────────────────────────────────
 
-type TabId = 'overview' | 'relations' | 'properties' | 'group' | 'chronology' | 'liens';
+type TabId =
+  | 'overview'
+  | 'relations'
+  | 'diagram2'
+  | 'properties'
+  | 'group'
+  | 'chronology'
+  | 'liens';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -1299,6 +1311,11 @@ export default function PersonDetailPage({
   const tabDef: { id: TabId; label: string; icon: React.ReactNode }[] = [
     { id: 'overview', label: c.tabs.overview, icon: <LayoutDashboard size={14} /> },
     { id: 'relations', label: c.tabs.relations, icon: <Briefcase size={14} /> },
+    {
+      id: 'diagram2',
+      label: lang === 'da' ? 'Simpelt diagram' : 'Simple diagram',
+      icon: <Briefcase size={14} />,
+    },
     { id: 'properties', label: c.tabs.properties, icon: <Home size={14} /> },
     { id: 'group', label: c.tabs.group, icon: <Building2 size={14} /> },
     { id: 'chronology', label: c.tabs.chronology, icon: <Clock size={14} /> },
@@ -1755,10 +1772,9 @@ export default function PersonDetailPage({
             </div>
           )}
 
-          {/* ══ RELATIONSDIAGRAM (Force Graph — identical to company page) ══ */}
+          {/* ══ RELATIONSDIAGRAM (Force Graph — original) ══ */}
           {aktivTab === 'relations' &&
             (() => {
-              // Build properties map grouped by owning CVR
               const propertiesByCvr =
                 ejendommeData.length > 0
                   ? ejendommeData.reduce((map, p) => {
@@ -1778,6 +1794,30 @@ export default function PersonDetailPage({
                 propertiesByCvr
               );
               return <DiagramForce graph={diagramGraph} lang={lang} />;
+            })()}
+
+          {/* ══ SIMPELT DIAGRAM (nyt — test ved siden af det gamle) ══ */}
+          {aktivTab === 'diagram2' &&
+            (() => {
+              const propertiesByCvr =
+                ejendommeData.length > 0
+                  ? ejendommeData.reduce((map, p) => {
+                      const cvrNum = parseInt(p.ownerCvr, 10);
+                      if (!map.has(cvrNum)) map.set(cvrNum, []);
+                      map.get(cvrNum)!.push(p as DiagramPropertySummary);
+                      return map;
+                    }, new Map<number, DiagramPropertySummary[]>())
+                  : undefined;
+              const diagramGraph = buildPersonDiagramGraph(
+                data.navn,
+                data.enhedsNummer,
+                topLevelEjer,
+                relatedCompanies,
+                noeglePersonerMap,
+                andreVirksomheder,
+                propertiesByCvr
+              );
+              return <DiagramSimple graph={diagramGraph} lang={lang} />;
             })()}
 
           {/* ══ EJENDOMME ══ */}

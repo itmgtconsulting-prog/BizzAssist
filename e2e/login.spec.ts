@@ -63,10 +63,8 @@ test.describe('Login page', () => {
     await expect(page.getByText(/Fortsæt med Google/i)).toBeVisible();
   });
 
-  test('LinkedIn OAuth button is visible and disabled', async ({ page }) => {
-    const linkedinBtn = page.getByRole('button', { name: /Fortsæt med LinkedIn/i });
-    await expect(linkedinBtn).toBeVisible();
-    await expect(linkedinBtn).toBeDisabled();
+  test('Microsoft OAuth button is visible', async ({ page }) => {
+    await expect(page.getByText(/Fortsæt med Microsoft/i)).toBeVisible();
   });
 
   /* ── Form validation ───────────────────────────────────────────── */
@@ -90,10 +88,10 @@ test.describe('Login page', () => {
   /* ── Navigation links ──────────────────────────────────────────── */
 
   test('signup link navigates to /login/signup', async ({ page }) => {
-    const signupLink = page.getByRole('link', { name: /Opret konto/i });
-    await expect(signupLink).toBeVisible();
+    const signupLink = page.locator('a[href="/login/signup"]').first();
+    await expect(signupLink).toBeVisible({ timeout: 5_000 });
     await signupLink.click({ force: true });
-    await expect(page).toHaveURL('/login/signup');
+    await expect(page).toHaveURL(/\/login\/signup/, { timeout: 10_000 });
   });
 
   test('forgot password link is visible', async ({ page }) => {

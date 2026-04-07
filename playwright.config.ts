@@ -1,5 +1,9 @@
 import { defineConfig, devices } from '@playwright/test';
 import path from 'path';
+import { config as loadDotenv } from 'dotenv';
+
+// Load .env.local so E2E_TEST_EMAIL / E2E_TEST_PASS are available to the test runner
+loadDotenv({ path: path.join(process.cwd(), '.env.local') });
 
 /**
  * Playwright configuration for BizzAssist end-to-end tests.

@@ -25,8 +25,8 @@ const securityHeaders = [
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob: https:",
       "font-src 'self' https://fonts.gstatic.com",
-      // DAWA (Danmarks Adressers Web API) + Mapbox tile servers + Sentry
-      "connect-src 'self' https://*.sentry.io https://o4511077193416704.ingest.de.sentry.io wss: https://api.dataforsyningen.dk https://*.mapbox.com https://events.mapbox.com",
+      // Supabase + DAWA (Danmarks Adressers Web API) + Mapbox tile servers + Sentry
+      "connect-src 'self' https://*.supabase.co https://*.supabase.io wss://*.supabase.co https://*.sentry.io https://o4511077193416704.ingest.de.sentry.io wss: https://api.dataforsyningen.dk https://*.mapbox.com https://events.mapbox.com",
       // Mapbox GL JS kræver blob: WebWorkers til tile-dekodning
       "worker-src blob: 'self'",
       "child-src blob: 'self'",

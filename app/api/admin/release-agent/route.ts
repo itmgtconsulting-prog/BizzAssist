@@ -211,6 +211,7 @@ async function createGitHubPR(branch: string, title: string, body: string): Prom
         base: BASE_BRANCH,
         draft: false,
       }),
+      signal: AbortSignal.timeout(15000),
     });
 
     if (!res.ok) {
@@ -397,6 +398,7 @@ async function deployToTest(
           ref: branch,
         },
       }),
+      signal: AbortSignal.timeout(30000),
     }
   );
 

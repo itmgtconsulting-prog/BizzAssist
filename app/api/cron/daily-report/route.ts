@@ -530,6 +530,7 @@ async function sendReport(html: string, subject: string): Promise<void> {
         subject,
         html,
       }),
+      signal: AbortSignal.timeout(10000),
     });
 
     if (!res.ok) {

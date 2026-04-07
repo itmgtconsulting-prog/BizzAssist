@@ -143,6 +143,7 @@ async function searchBrave(
   const url = `https://api.search.brave.com/res/v1/web/search?${params}`;
   const res = await fetch(url, {
     headers: { 'X-Subscription-Token': key, Accept: 'application/json' },
+    signal: AbortSignal.timeout(10000),
   });
   if (!res.ok) throw new Error(`Brave HTTP ${res.status}`);
   const data = await res.json();

@@ -113,6 +113,7 @@ async function createJiraIssue(payload: BugReportPayload) {
       Accept: 'application/json',
     },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(10000),
   });
 
   if (!res.ok) {
@@ -149,6 +150,7 @@ async function attachScreenshotToJira(issueKey: string, screenshotB64: string): 
       'X-Atlassian-Token': 'no-check',
     },
     body: formData,
+    signal: AbortSignal.timeout(15000),
   });
 }
 

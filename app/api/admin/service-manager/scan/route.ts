@@ -69,6 +69,7 @@ async function getDeployments(): Promise<VercelDeployment[] | null> {
     const qs = vercelParams({ projectId, limit: '10' });
     const res = await fetch(`${VERCEL_API}/v6/deployments?${qs}`, {
       headers: vercelHeaders(),
+      signal: AbortSignal.timeout(10000),
     });
     if (!res.ok) return null;
     const data = await res.json();
@@ -101,6 +102,7 @@ async function getDeploymentErrors(deploymentId: string): Promise<VercelEvent[]>
     const qs = vercelParams({ direction: 'backward', limit: '100' });
     const res = await fetch(`${VERCEL_API}/v2/deployments/${deploymentId}/events?${qs}`, {
       headers: vercelHeaders(),
+      signal: AbortSignal.timeout(10000),
     });
     if (!res.ok) return [];
     const events: VercelEvent[] = await res.json();

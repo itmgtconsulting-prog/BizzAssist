@@ -115,6 +115,7 @@ async function fetchVercelDeployments(): Promise<VercelDeployment[] | null> {
     const res = await fetch(`${VERCEL_API}/v6/deployments?${params}`, {
       headers: { Authorization: `Bearer ${token}` },
       next: { revalidate: 0 },
+      signal: AbortSignal.timeout(10000),
     });
     if (!res.ok) return null;
     const data = await res.json();

@@ -75,6 +75,7 @@ async function searchBrave(key: string, query: string, count = 5): Promise<Artic
   const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}&country=dk`;
   const res = await fetch(url, {
     headers: { 'X-Subscription-Token': key, Accept: 'application/json' },
+    signal: AbortSignal.timeout(10000),
   });
   if (!res.ok) return [];
   const data = await res.json();

@@ -197,6 +197,7 @@ async function createSupportTicket(
         Accept: 'application/json',
       },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(10000),
     });
 
     if (!res.ok) return null;

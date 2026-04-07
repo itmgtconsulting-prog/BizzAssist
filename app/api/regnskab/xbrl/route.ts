@@ -560,13 +560,12 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     if (supabase && latestTimestamp) {
       try {
-        const { data: cached } = await (
-          supabase as ReturnType<typeof import('@supabase/supabase-js').createClient>
-        )
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: cached } = (await (supabase as any)
           .from('regnskab_cache')
           .select('years, es_timestamp')
           .eq('cvr', cvr)
-          .single();
+          .single()) as { data: { years: unknown; es_timestamp: string } | null; error: unknown };
 
         if (cached?.es_timestamp === latestTimestamp && cached?.years) {
           // Fuld cache hit — ES-tidsstempel matcher, data er uændret
@@ -649,17 +648,16 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // ── 4. Gem opdateret cache i Supabase (kun ved komplet fetch) ──
     if (supabase && latestTimestamp && offset === 0 && limit >= total && uniqueYears.length > 0) {
       try {
-        await (supabase as ReturnType<typeof import('@supabase/supabase-js').createClient>)
-          .from('regnskab_cache')
-          .upsert(
-            {
-              cvr,
-              years: uniqueYears,
-              es_timestamp: latestTimestamp,
-              fetched_at: new Date().toISOString(),
-            },
-            { onConflict: 'cvr' }
-          );
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (supabase as any).from('regnskab_cache').upsert(
+          {
+            cvr,
+            years: uniqueYears,
+            es_timestamp: latestTimestamp,
+            fetched_at: new Date().toISOString(),
+          },
+          { onConflict: 'cvr' }
+        );
       } catch {
         // Cache-skrivefejl — ignorer
       }

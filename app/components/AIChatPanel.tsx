@@ -37,41 +37,47 @@ const COLLAPSED_HEIGHT = 48;
 // ─── Token usage tracking ────────────────────────────────────────────────────
 
 /**
- * Fetch with automatic retry on network failure.
+ * Retry a fetch-like function with exponential backoff.
+ * Silently gives up after maxRetries attempts — never throws.
+ * Handles both network errors and non-ok HTTP responses.
  *
- * @param url - The URL to fetch
- * @param options - Standard fetch options
- * @param retries - Number of remaining retries (default 2)
- * @returns The successful Response
+ * @param fn - Async factory that performs one fetch attempt and returns a Response
+ * @param maxRetries - Maximum number of attempts (default 3 → delays: 1s, 2s, 4s)
  */
-async function fetchWithRetry(url: string, options: RequestInit, retries = 2): Promise<Response> {
-  try {
-    return await fetch(url, options);
-  } catch (err) {
-    if (retries <= 0) throw err;
-    await new Promise((r) => setTimeout(r, 2000));
-    return fetchWithRetry(url, options, retries - 1);
+async function syncWithRetry(fn: () => Promise<Response>, maxRetries = 3): Promise<void> {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const res = await fn();
+      if (res.ok) return; // success — stop retrying
+    } catch {
+      // Network error — fall through to backoff
+      if (attempt === maxRetries - 1) return; // Silently fail on last attempt
+    }
+    // Exponential backoff: 1s, 2s, 4s
+    await new Promise((resolve) => setTimeout(resolve, 1000 * Math.pow(2, attempt)));
   }
 }
 
 /**
  * Sync token usage to Supabase in background (fire-and-forget).
- * Retries up to 2 times on network failure before giving up.
- * In-memory state is updated via SubscriptionContext.addTokenUsage().
+ * Uses exponential backoff (1s → 2s → 4s) with up to 3 attempts.
+ * Failures are silent — billing accuracy is best-effort; in-memory
+ * state is always updated immediately via SubscriptionContext.addTokenUsage().
  *
  * @param tokensUsed - Number of tokens consumed in this request
  */
 function syncTokenUsageToServer(tokensUsed: number) {
   if (tokensUsed <= 0) return;
 
-  // Sync to Supabase in background (fire-and-forget) with retry
-  fetchWithRetry('/api/subscription/track-tokens', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ tokensUsed }),
-  }).catch((err) => {
-    console.error('[token-sync] Failed after retries:', err);
-  });
+  // Fire-and-forget: intentionally not awaited so the UI is never blocked.
+  // syncWithRetry swallows all errors after maxRetries is exhausted.
+  syncWithRetry(() =>
+    fetch('/api/subscription/track-tokens', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tokensUsed }),
+    })
+  );
 }
 
 // ─── Component ──────────────────────────────────────────────────────────────

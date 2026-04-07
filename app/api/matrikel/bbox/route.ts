@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
   if (lngSpan > 0.5 || latSpan > 0.5) {
     return NextResponse.json(
       { error: 'Bbox for stor — zoom ind for at se matrikeldata', features: [] },
-      { status: 400 }
+      { status: 413 }
     );
   }
 

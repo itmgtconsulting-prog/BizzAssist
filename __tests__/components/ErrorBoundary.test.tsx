@@ -11,7 +11,8 @@
  * - Reset / Genindlæs button calls the reset prop (or window.location.reload)
  * - Digest code is shown when provided
  */
-import { describe, it, expect, vi } from 'vitest';
+import React from 'react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import GlobalError from '@/app/error';
 import DashboardError from '@/app/dashboard/error';
@@ -101,7 +102,7 @@ describe('DashboardError (app/dashboard/error.tsx)', () => {
 // ─── ErrorBoundary class component (app/components/ErrorBoundary.tsx) ───────
 
 /** Throws an error on render so ErrorBoundary.getDerivedStateFromError fires */
-function ThrowingChild() {
+function ThrowingChild(): React.ReactNode {
   throw new Error('render boom');
 }
 

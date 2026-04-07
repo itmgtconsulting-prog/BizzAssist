@@ -84,11 +84,13 @@ const mockFrom = vi.fn((table: string) => {
     return { select: mockSelect, from: mockSchemaChain.from, insert: mockInsert };
   }
   if (table === 'audit_log') {
-    return { insert: mockInsert };
+    return { select: mockSelect, from: mockSchemaChain.from, insert: mockInsert };
   }
   // Tenant-schema tables
   return {
     select: vi.fn().mockReturnValue({ eq: mockTenantEq }),
+    from: mockSchemaChain.from,
+    insert: mockInsert,
     delete: vi.fn().mockReturnValue({ eq: mockEq }),
   };
 });
@@ -144,10 +146,12 @@ describe('GET /api/user/export-data', () => {
     mockConvoEq.mockReturnValue({ order: vi.fn().mockResolvedValue({ data: [], error: null }) });
     mockFrom.mockImplementation((table: string) => {
       if (table === 'tenants' || table === 'tenant_memberships') {
-        return { select: mockSelect };
+        return { select: mockSelect, from: mockSchemaChain.from, insert: mockInsert };
       }
       return {
         select: vi.fn().mockReturnValue({ eq: mockTenantEq }),
+        from: mockSchemaChain.from,
+        insert: mockInsert,
       };
     });
   });
@@ -240,12 +244,15 @@ describe('DELETE /api/user/delete-account', () => {
     });
     mockFrom.mockImplementation((table: string) => {
       if (table === 'tenants' || table === 'tenant_memberships') {
-        return { select: mockSelect };
+        return { select: mockSelect, from: mockSchemaChain.from, insert: mockInsert };
       }
       if (table === 'audit_log') {
-        return { insert: mockInsert };
+        return { select: mockSelect, from: mockSchemaChain.from, insert: mockInsert };
       }
       return {
+        select: mockSelect,
+        from: mockSchemaChain.from,
+        insert: mockInsert,
         delete: vi.fn().mockReturnValue({ eq: mockEq }),
       };
     });

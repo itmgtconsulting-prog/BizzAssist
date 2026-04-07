@@ -103,6 +103,7 @@ describe('GET /api/cron/purge-old-data', () => {
     mockSchemaFrom.mockImplementation(() => ({
       delete: vi.fn(() => mockDeleteChain),
       insert: vi.fn().mockResolvedValue({ error: null }),
+      from: vi.fn(),
     }));
 
     mockPublicSelect.mockImplementation(async () => ({

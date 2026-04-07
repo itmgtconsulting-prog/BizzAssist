@@ -239,6 +239,8 @@ describe('DELETE /api/recents', () => {
     mockDeleteChain.in.mockResolvedValue({ error: null });
 
     mockFrom.mockImplementation((_table: string) => ({
+      select: vi.fn().mockReturnValue({ eq: vi.fn().mockReturnValue({ order: vi.fn() }) }),
+      upsert: vi.fn(),
       delete: vi.fn().mockReturnValue(mockDeleteChain),
     }));
   });

@@ -8,7 +8,7 @@
  * - "Kun nødvendige" (decline) button stores 'declined' and hides the banner
  * - Links to /cookies policy are present
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import CookieBanner from '@/app/components/CookieBanner';
 import { LanguageProvider } from '@/app/context/LanguageContext';

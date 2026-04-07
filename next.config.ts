@@ -1,4 +1,5 @@
 import type { NextConfig } from 'next';
+import { withSentryConfig } from '@sentry/nextjs';
 
 /**
  * HTTP security headers applied to all responses.
@@ -81,4 +82,34 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+/**
+ * Wraps the Next.js config with Sentry's build-time plugin.
+ *
+ * withSentryConfig does three things critical for BIZZ-125:
+ *  1. Auto-instruments all API routes so uncaught errors are captured in Sentry
+ *     without needing `captureException` in every route file.
+ *  2. Uploads source maps to Sentry on each build (so stack traces are readable).
+ *  3. Injects Sentry initialization into the server, edge, and client bundles.
+ *
+ * tunnelRoute: routes Sentry events through /monitoring so adblockers can't
+ * block them. Matches the CSP connect-src allow-list in securityHeaders above.
+ *
+ * disableLogger: strips Sentry's verbose build-time logger from the production
+ * bundle to reduce bundle size.
+ */
+export default withSentryConfig(nextConfig, {
+  org: 'bizzassist',
+  project: 'bizzassist',
+  // Silences the Sentry CLI output during builds — errors still surface via exit code
+  silent: !process.env.CI,
+  // Upload source maps only in CI/production — not during local dev
+  sourcemaps: {
+    disable: !process.env.CI,
+  },
+  // Route Sentry tunnel through our own domain (avoids adblocker blocking)
+  tunnelRoute: '/monitoring',
+  // Drop Sentry's verbose logger from production bundles
+  disableLogger: true,
+  // Auto-instrument API routes, server actions, and middleware
+  autoInstrumentServerFunctions: true,
+});

@@ -53,11 +53,13 @@ export interface TinglysningData {
 
 // ─── Config ─────────────────────────────────────────────────────────────────
 
-/** Cert path + password fra env */
-const CERT_PATH = process.env.NEMLOGIN_DEVTEST4_CERT_PATH ?? '';
-const CERT_PASSWORD = process.env.NEMLOGIN_DEVTEST4_CERT_PASSWORD ?? '';
+/** Cert path + password fra env — brug TINGLYSNING_CERT_* for produktion, NEMLOGIN_DEVTEST4_CERT_* for test */
+const CERT_PATH =
+  process.env.TINGLYSNING_CERT_PATH ?? process.env.NEMLOGIN_DEVTEST4_CERT_PATH ?? '';
+const CERT_PASSWORD =
+  process.env.TINGLYSNING_CERT_PASSWORD ?? process.env.NEMLOGIN_DEVTEST4_CERT_PASSWORD ?? '';
 /** Base64-encodet certifikat — bruges i serverless (Vercel) hvor filsystemet ikke er tilgængeligt */
-const CERT_B64 = process.env.NEMLOGIN_DEVTEST4_CERT_B64 ?? '';
+const CERT_B64 = process.env.TINGLYSNING_CERT_B64 ?? process.env.NEMLOGIN_DEVTEST4_CERT_B64 ?? '';
 
 /** Base URL — test vs prod */
 const TL_BASE = process.env.TINGLYSNING_BASE_URL ?? 'https://test.tinglysning.dk';

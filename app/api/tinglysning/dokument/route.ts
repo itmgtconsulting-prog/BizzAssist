@@ -17,9 +17,11 @@ import PDFDocument from 'pdfkit';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
-const CERT_PATH = process.env.NEMLOGIN_DEVTEST4_CERT_PATH ?? '';
-const CERT_PASSWORD = process.env.NEMLOGIN_DEVTEST4_CERT_PASSWORD ?? '';
-const CERT_B64 = process.env.NEMLOGIN_DEVTEST4_CERT_B64 ?? '';
+const CERT_PATH =
+  process.env.TINGLYSNING_CERT_PATH ?? process.env.NEMLOGIN_DEVTEST4_CERT_PATH ?? '';
+const CERT_PASSWORD =
+  process.env.TINGLYSNING_CERT_PASSWORD ?? process.env.NEMLOGIN_DEVTEST4_CERT_PASSWORD ?? '';
+const CERT_B64 = process.env.TINGLYSNING_CERT_B64 ?? process.env.NEMLOGIN_DEVTEST4_CERT_B64 ?? '';
 const TL_BASE = process.env.TINGLYSNING_BASE_URL ?? 'https://test.tinglysning.dk';
 
 /** Loader certifikat som Buffer — foretrækker base64 env var over filsti */

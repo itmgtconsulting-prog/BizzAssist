@@ -2521,8 +2521,8 @@ function PersonArticleSearchPanel({
         {aiDisclaimer}
         <p className="text-slate-500 text-xs mb-3 leading-relaxed">
           {da
-            ? `Klik for at finde op til 15 seneste nyheder om ${personData.navn}.`
-            : `Click to find up to 15 latest news articles about ${personData.navn}.`}
+            ? `Klik for at finde op til 15 seneste nyheder om ${personData.navn} og link til personlige sider på sociale medier.`
+            : `Click to find up to 15 latest news articles about ${personData.navn} and links to personal social media pages.`}
         </p>
         <button
           onClick={handleSearch}

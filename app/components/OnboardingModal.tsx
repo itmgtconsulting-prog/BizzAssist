@@ -14,7 +14,7 @@
  * @returns Modal component or null if already completed
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Building2,
   Search,
@@ -88,6 +88,7 @@ export default function OnboardingModal() {
   const da = lang === 'da';
   const [show, setShow] = useState(false);
   const [step, setStep] = useState(0);
+  const modalRef = useRef<HTMLDivElement>(null);
 
   /**
    * Check if onboarding has been completed.
@@ -159,6 +160,38 @@ export default function OnboardingModal() {
     }
   };
 
+  /**
+   * Focus trap: keeps keyboard focus inside the modal while it is open.
+   * Focuses the first focusable element on mount.
+   */
+  useEffect(() => {
+    if (!show) return;
+    const modal = modalRef.current;
+    if (!modal) return;
+    const focusable = modal.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const trap = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab') return;
+      if (e.shiftKey) {
+        if (document.activeElement === first) {
+          e.preventDefault();
+          last?.focus();
+        }
+      } else {
+        if (document.activeElement === last) {
+          e.preventDefault();
+          first?.focus();
+        }
+      }
+    };
+    document.addEventListener('keydown', trap);
+    first?.focus();
+    return () => document.removeEventListener('keydown', trap);
+  }, [show]);
+
   if (!show) return null;
 
   const isLast = step === TOTAL_STEPS - 1;
@@ -174,6 +207,7 @@ export default function OnboardingModal() {
 
       {/* Modal */}
       <div
+        ref={modalRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="onboarding-modal-title"

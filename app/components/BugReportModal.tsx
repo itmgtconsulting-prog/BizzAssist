@@ -383,10 +383,14 @@ export default function BugReportModal({ open, onClose, lang = 'da', currentPage
 
             {/* Email */}
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1.5">
+              <label
+                htmlFor="bug-email"
+                className="block text-sm font-medium text-slate-700 mb-1.5"
+              >
                 {t.emailLabel}
               </label>
               <input
+                id="bug-email"
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -417,6 +421,7 @@ export default function BugReportModal({ open, onClose, lang = 'da', currentPage
                   <button
                     type="button"
                     onClick={() => setScreenshot(null)}
+                    aria-label={t.removeScreenshot}
                     className="absolute top-2 right-2 bg-red-500 text-white rounded-lg p-1 hover:bg-red-600 transition-colors"
                   >
                     <Trash2 size={14} />

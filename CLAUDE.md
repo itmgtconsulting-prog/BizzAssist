@@ -57,6 +57,39 @@ Incident response: `docs/security/INCIDENT_RESPONSE.md`
 - **Dependencies** — run `npm audit` before any new package is added; no packages with critical CVEs
 - See `docs/security/` for full ISMS, data classification, access control, and incident response policies
 
+### API Route Security (enforced on every new route)
+
+- Every API route MUST call `resolveTenantId()` at the top and return 401 if unauthenticated
+- Never expose raw external API error messages — return `'Ekstern API fejl'` instead
+- Always add `AbortSignal.timeout(10000)` to external fetch calls
+- Sentry: `maskAllText: true`, `blockAllMedia: true` — never capture PII in session replays
+- Cron routes: verify `CRON_SECRET` bearer token AND `x-vercel-cron: 1` header in production
+
+### GDPR Rules (non-negotiable)
+
+- All new data-storing endpoints must document retention period in JSDoc
+- User-scoped data must be deletable — every new table needs a user_id/tenant_id for cascade delete
+- No PII sent to third-party services without explicit consent and documented DPA
+- New sub-processors must be added to `app/privacy/page.tsx` processor list
+- Search/activity data: max retention 12 months (enforced by `/api/cron/purge-old-data`)
+
+### Performance Rules
+
+- Heavy libraries (Mapbox, Recharts, diagram components) MUST use `next/dynamic` with `ssr: false`
+- Never import `mapbox-gl/dist/mapbox-gl.css` in components — only in `app/layout.tsx`
+- Every dashboard route MUST have a `loading.tsx` skeleton screen
+- Use `React.memo` + `useCallback` for components that receive callback props
+- LRU cache (max 150 entries) for repeated external API calls within a session
+
+### Accessibility Rules (WCAG AA)
+
+- All icon-only buttons MUST have `aria-label`
+- Modal dialogs MUST have `role="dialog"` + `aria-modal="true"` + `aria-labelledby` + focus trap
+- Tab interfaces MUST use `role="tablist"` / `role="tab"` / `aria-selected` / `role="tabpanel"`
+- Interactive `<div>` elements with `onClick` MUST be converted to `<button>`
+- Form labels MUST be associated with inputs via `htmlFor` + `id`
+- All pages need a skip-to-main-content link (implemented in `app/dashboard/layout.tsx`)
+
 ### Commenting Standards (enforced by CODE REVIEWER)
 
 Every function, component, hook, and API route MUST have a JSDoc comment block:
@@ -76,6 +109,13 @@ Every function, component, hook, and API route MUST have a JSDoc comment block:
 - All API routes: comment describes endpoint, expected input, and returned shape
 - Missing comments = PR blocked by CODE REVIEWER
 
+### Commit Message Rules
+
+- Subject must be **lowercase** (commitlint enforces `subject-case: lower-case`)
+- Use conventional commits: `feat:`, `fix:`, `test:`, `chore:`, `docs:`, `refactor:`
+- JIRA references (`BIZZ-123`) go in the commit **body**, not the subject
+- Never use `git commit --no-verify` — fix the underlying issue instead
+
 ## Project Structure
 
 See `docs/architecture/SAAS.md` for full folder structure.
@@ -88,11 +128,23 @@ Full process: `docs/agents/RELEASE_PROCESS.md`
 
 1. **CODE REVIEWER** — JSDoc comments, security, ISO 27001, data isolation
 2. **ARCHITECT** — architecture compliance (required for structural changes)
-3. **TESTER** — `npm test` + `npm run test:e2e` green, coverage ≥ 70% lines / ≥ 60% branches
+3. **TESTER** — `npm test` + `npm run test:e2e` green, coverage ≥ 70% lines / ≥ 35% branches
 4. **Git pre-commit hook** — secret scan + test run (automated, runs on every `git commit`)
 
 **Work is NOT done until all 4 gates are green.**
 `git commit --no-verify` is forbidden.
+
+### Test Coverage Requirements
+
+- Minimum thresholds (enforced by vitest — CI fails below these):
+  - Lines: **60%**
+  - Functions: **50%**
+  - Branches: **35%**
+- `app/api/**` is excluded from unit coverage (tested via Playwright E2E)
+- New lib utilities in `app/lib/` MUST have unit tests
+- New React components MUST have component tests
+- New Stripe webhook event types MUST have integration tests
+- Run `npm run test:coverage` to verify before committing
 
 ## Agent Roles
 

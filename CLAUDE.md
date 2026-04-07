@@ -261,6 +261,10 @@ These are the authoritative sources. Never assume — read first.
 External API integration specs are in:
 
 - `docs/http_api_beskrivelse_v112.docx` — HTTP API description v1.12 (primary interface reference)
+- `docs/tinglysning/` — e-TL (Den Digitale Tinglysning) system documentation:
+  - `guide-til-systemadgang-v1.7.txt` — System access guide (test + prod environments, required services, application process)
+  - `http-api-beskrivelse-v1.12.txt` — HTTP API reference (search/lookup endpoints for properties, vehicles, companies, documents)
+  - `system-systemmanual-v1.53.txt` — Full system manual for HTTP XML API (S2S)
 - `docs/adr/` — Architecture Decision Records (ADRs) for significant decisions
 
 When integrating a new external API, check this document first to see if the interface is already specified.

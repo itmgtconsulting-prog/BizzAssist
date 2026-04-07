@@ -665,6 +665,20 @@ export async function POST(request: NextRequest): Promise<Response> {
 
             sse(controller, '[DONE]');
             controller.close();
+
+            // Fire-and-forget: persist token usage so quota check works next request
+            adminClient.auth.admin
+              .updateUserById(user.id, {
+                app_metadata: {
+                  ...freshUser?.user?.app_metadata,
+                  subscription: {
+                    ...sub,
+                    tokensUsedThisMonth: tokensUsedThisMonth + totalTokens,
+                  },
+                },
+              })
+              .catch(() => {}); // non-critical — best-effort tracking
+
             return;
           }
 
@@ -718,6 +732,19 @@ export async function POST(request: NextRequest): Promise<Response> {
         );
         sse(controller, '[DONE]');
         controller.close();
+
+        // Fire-and-forget: persist token usage so quota check works next request
+        adminClient.auth.admin
+          .updateUserById(user.id, {
+            app_metadata: {
+              ...freshUser?.user?.app_metadata,
+              subscription: {
+                ...sub,
+                tokensUsedThisMonth: tokensUsedThisMonth + totalTokens,
+              },
+            },
+          })
+          .catch(() => {}); // non-critical — best-effort tracking
       } catch (err) {
         // Capture unexpected errors (not routine Claude API errors) in Sentry
         if (!(err instanceof Anthropic.APIError)) {

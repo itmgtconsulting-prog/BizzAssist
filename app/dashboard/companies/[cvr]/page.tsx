@@ -286,7 +286,8 @@ function extractOwners(deltagere: CVRPublicData['deltagere']): {
             role.includes('LEGALE') ||
             role.includes('REEL') ||
             role.includes('INTERESSENT') ||
-            role.includes('FULDT_ANSVARLIG')) &&
+            // CVR ES uses spaces: "Fuldt ansvarlig deltager" — match both space and underscore forms
+            (role.includes('FULDT') && role.includes('ANSVARLIG'))) &&
           !r.til
         );
       })
@@ -299,7 +300,8 @@ function extractOwners(deltagere: CVRPublicData['deltagere']): {
             role.includes('LEGALE') ||
             role.includes('REEL') ||
             role.includes('INTERESSENT') ||
-            role.includes('FULDT_ANSVARLIG')) &&
+            // CVR ES uses spaces: "Fuldt ansvarlig deltager" — match both space and underscore forms
+            (role.includes('FULDT') && role.includes('ANSVARLIG'))) &&
           !r.til
         );
       });

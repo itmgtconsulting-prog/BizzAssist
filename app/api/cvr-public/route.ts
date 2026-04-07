@@ -641,7 +641,8 @@ function mapESHit(hit: Record<string, unknown>): CVRPublicData | null {
           upper.includes('LEGALE') ||
           upper.includes('REEL') ||
           upper.includes('INTERESSENT') ||
-          upper.includes('FULDT_ANSVARLIG')) &&
+          // CVR ES role names use spaces: "Fuldt ansvarlig deltager" — match both forms
+          (upper.includes('FULDT') && upper.includes('ANSVARLIG'))) &&
         r.til === null
       );
     });

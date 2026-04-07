@@ -93,7 +93,8 @@ async function loadAllTags(): Promise<RecentTag[]> {
     }
   }
 
-  return [...tags.values()];
+  const ORDER: RecentTag['type'][] = ['property', 'company', 'person'];
+  return [...tags.values()].sort((a, b) => ORDER.indexOf(a.type) - ORDER.indexOf(b.type));
 }
 
 interface RecentEntityTagBarProps {

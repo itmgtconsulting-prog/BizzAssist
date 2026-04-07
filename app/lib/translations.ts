@@ -348,7 +348,7 @@ export const translations = {
       title: 'Persondetaljer',
       tabs: {
         overview: 'Oversigt',
-        relations: 'Relationsdiagram',
+        relations: 'Diagram',
         properties: 'Ejendomme',
         group: 'Virksomheder',
         chronology: 'Kronologi',
@@ -791,7 +791,7 @@ export const translations = {
       title: 'Person Details',
       tabs: {
         overview: 'Overview',
-        relations: 'Ownership Diagram',
+        relations: 'Diagram',
         properties: 'Properties',
         group: 'Companies',
         chronology: 'Chronology',

@@ -191,6 +191,44 @@ export async function POST(request: NextRequest): Promise<Response> {
   const tenantId = membership.tenant_id;
   const schemaName = membership.tenants?.schema_name ?? null;
 
+  // ── Monthly token limit for support chat (100k tokens/month per user) ──────
+  // Checked against support_chat_sessions tokens_used column.
+  // Fails-open on DB error to avoid blocking legitimate users.
+  const SUPPORT_MONTHLY_LIMIT = 100_000;
+  try {
+    const monthStart = new Date();
+    monthStart.setDate(1);
+    monthStart.setHours(0, 0, 0, 0);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = (adminClient as unknown as { schema: (s: string) => any }).schema(
+      schemaName ?? 'tenant'
+    );
+    const { data: usageRows } = (await db
+      .from('support_chat_sessions')
+      .select('tokens_used')
+      .eq('user_id', user.id)
+      .gte('created_at', monthStart.toISOString())) as {
+      data: Array<{ tokens_used: number }> | null;
+    };
+
+    const monthlyUsed = (usageRows ?? []).reduce(
+      (sum: number, r: { tokens_used: number }) => sum + (r.tokens_used ?? 0),
+      0
+    );
+
+    if (monthlyUsed >= SUPPORT_MONTHLY_LIMIT) {
+      return new Response(
+        JSON.stringify({
+          error: 'Månedlig kvote for support-chat nået. Prøv igen næste måned.',
+        }),
+        { status: 429, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+  } catch {
+    // Fail-open: do not block on DB error
+  }
+
   // ── Validate API key ──
   const apiKey = process.env.BIZZASSIST_CLAUDE_KEY?.trim();
   if (!apiKey) {

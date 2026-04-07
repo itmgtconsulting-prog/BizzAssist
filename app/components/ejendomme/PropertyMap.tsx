@@ -13,7 +13,7 @@
  *   NEXT_PUBLIC_MAPBOX_TOKEN  — fra mapbox.com (pk.ey...)
  */
 
-import { useState, useCallback, useRef, useEffect, memo } from 'react';
+import React, { useState, useCallback, useRef, useEffect, memo } from 'react';
 import Link from 'next/link';
 import Map, {
   Marker,
@@ -119,6 +119,13 @@ const EMPTY_GEOJSON: GeoJSONSourceSpecification['data'] = {
   type: 'FeatureCollection',
   features: [],
 };
+
+/**
+ * Stabil CSS-style til react-map-gl Map-komponenten.
+ * Defineret som modul-konstant så objektreferancen er stabil på tværs af
+ * re-renders — undgår at react-map-gl diff'er et nyt objekt hvert render.
+ */
+const MAP_STYLE: React.CSSProperties = { width: '100%', height: '100%' };
 
 /** Et enkelt BBR-bygningspunkt til kortvisning */
 export interface BBRBygningPunkt {
@@ -1110,7 +1117,7 @@ function PropertyMap({
         ref={mapRef}
         mapboxAccessToken={mapboxToken}
         initialViewState={{ longitude: lng, latitude: lat, zoom: DEFAULT_ZOOM }}
-        style={{ width: '100%', height: '100%' }}
+        style={MAP_STYLE}
         mapStyle={STYLES[mapStyle]}
         attributionControl={false}
         onLoad={handleMapLoad}

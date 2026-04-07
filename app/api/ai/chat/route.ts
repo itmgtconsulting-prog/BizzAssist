@@ -937,6 +937,87 @@ async function executeTool(
   }
 }
 
+// ─── Token budget helpers ────────────────────────────────────────────────────
+
+/** Default monthly token limit per tenant when no plan-level override exists. */
+const TENANT_MONTHLY_TOKEN_LIMIT = 2_000_000; // 2 M tokens/month
+
+/**
+ * Checks whether the tenant has exceeded their monthly AI token budget
+ * by summing rows in `tenant.ai_token_usage` since the 1st of the current month.
+ * Fails-open on any DB error so transient failures never block legitimate users.
+ *
+ * @param adminClient - Supabase admin client (service-role, can access all schemas)
+ * @param tenantId    - The tenant UUID to check, or null (skips check)
+ * @returns true if the tenant has reached or exceeded TENANT_MONTHLY_TOKEN_LIMIT
+ */
+async function isTenantMonthlyBudgetExceeded(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  adminClient: any,
+  tenantId: string | null
+): Promise<boolean> {
+  if (!tenantId) return false;
+  try {
+    const monthStart = new Date();
+    monthStart.setDate(1);
+    monthStart.setHours(0, 0, 0, 0);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = (adminClient as unknown as { schema: (s: string) => any }).schema('tenant');
+    const { data: usageData } = (await db
+      .from('ai_token_usage')
+      .select('tokens_in, tokens_out')
+      .eq('tenant_id', tenantId)
+      .gte('created_at', monthStart.toISOString())) as {
+      data: Array<{ tokens_in: number; tokens_out: number }> | null;
+    };
+
+    const monthlyTokens = (usageData ?? []).reduce(
+      (sum, r) => sum + (r.tokens_in ?? 0) + (r.tokens_out ?? 0),
+      0
+    );
+    return monthlyTokens >= TENANT_MONTHLY_TOKEN_LIMIT;
+  } catch {
+    // Fail-open: do not block request on DB error
+    return false;
+  }
+}
+
+/**
+ * Inserts a token-usage record into `tenant.ai_token_usage` for billing and auditing.
+ * Fire-and-forget — failures are silently swallowed so they never affect streaming.
+ *
+ * @param adminClient - Supabase admin client (service-role)
+ * @param tenantId    - The tenant UUID
+ * @param userId      - The authenticated user UUID
+ * @param tokensIn    - Input tokens consumed in this Claude API call
+ * @param tokensOut   - Output tokens consumed in this Claude API call
+ */
+function recordTenantTokenUsage(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  adminClient: any,
+  tenantId: string,
+  userId: string,
+  tokensIn: number,
+  tokensOut: number
+): void {
+  void (async () => {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const db = (adminClient as unknown as { schema: (s: string) => any }).schema('tenant');
+      await db.from('ai_token_usage').insert({
+        tenant_id: tenantId,
+        user_id: userId,
+        tokens_in: tokensIn,
+        tokens_out: tokensOut,
+        model: 'claude-sonnet-4-6',
+      });
+    } catch {
+      // Non-critical — best-effort tracking
+    }
+  })();
+}
+
 // ─── Handler ────────────────────────────────────────────────────────────────
 
 export async function POST(request: NextRequest): Promise<Response> {
@@ -1071,6 +1152,19 @@ export async function POST(request: NextRequest): Promise<Response> {
     }
   } catch {
     // Non-critical — AI still works without recent entities context
+  }
+
+  // ── Per-tenant monthly token budget check (Supabase table-based) ─────────
+  // Supplements the app_metadata check above with a durable, per-tenant record
+  // in tenant.ai_token_usage. On DB error we fail-open (let the request through)
+  // to avoid false-positives caused by transient DB issues.
+  // resolvedTenantId is populated by the membership lookup above.
+  const tenantBudgetExceeded = await isTenantMonthlyBudgetExceeded(adminClient, resolvedTenantId);
+  if (tenantBudgetExceeded) {
+    return new Response(
+      JSON.stringify({ error: 'Månedlig AI-kvote nået. Kontakt support for at opgradere.' }),
+      { status: 429, headers: { 'Content-Type': 'application/json' } }
+    );
   }
 
   let body: ChatRequestBody;
@@ -1212,6 +1306,17 @@ export async function POST(request: NextRequest): Promise<Response> {
               })
               .catch(() => {}); // non-critical — best-effort tracking
 
+            // Fire-and-forget: record in tenant.ai_token_usage for auditable per-tenant billing
+            if (resolvedTenantId) {
+              recordTenantTokenUsage(
+                adminClient,
+                resolvedTenantId,
+                user.id,
+                totalInputTokens,
+                totalOutputTokens
+              );
+            }
+
             return;
           }
 
@@ -1278,6 +1383,17 @@ export async function POST(request: NextRequest): Promise<Response> {
             },
           })
           .catch(() => {}); // non-critical — best-effort tracking
+
+        // Fire-and-forget: record in tenant.ai_token_usage for auditable per-tenant billing
+        if (resolvedTenantId) {
+          recordTenantTokenUsage(
+            adminClient,
+            resolvedTenantId,
+            user.id,
+            totalInputTokens,
+            totalOutputTokens
+          );
+        }
       } catch (err) {
         // Capture unexpected errors (not routine Claude API errors) in Sentry
         if (!(err instanceof Anthropic.APIError)) {

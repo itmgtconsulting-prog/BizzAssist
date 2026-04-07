@@ -13,7 +13,7 @@
  * - SVG-baseret ejerstrukturtræ
  */
 
-import { useState, use, useEffect, useRef, useCallback, Suspense } from 'react';
+import { useState, use, useEffect, useRef, useCallback, useMemo, Suspense } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -957,6 +957,22 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
 
   // Grundskyld stigningsbegrænsning (4,75% loft, ESL § 45) — fjernet fra UI.
   // Kræver historisk grundskyld-data for korrekt beregning. Se backlog.
+
+  /**
+   * Memoized filtered BBR-bygningspunkter til PropertyMap.
+   * Stable reference prevents PropertyMap (memo'd) from re-rendering when the parent
+   * re-renders — without this the inline .filter() would create a new array each time.
+   */
+  const aktiveBygningPunkter = useMemo(
+    () =>
+      bbrData?.bygningPunkter?.filter(
+        (p) =>
+          p.status !== 'Nedrevet/slettet' &&
+          p.status !== 'Bygning nedrevet' &&
+          p.status !== 'Bygning bortfaldet'
+      ) ?? undefined,
+    [bbrData?.bygningPunkter]
+  );
 
   /**
    * Memoized callback til PropertyMap — navigerer til en anden ejendom ved klik på markør.
@@ -4363,16 +4379,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                   onAdresseValgt={handleAdresseValgt}
                   fullMapHref={`/dashboard/kort?ejendom=${id}`}
                   erEjerlejlighed={!!bbrData?.ejerlejlighedBfe}
-                  bygningPunkter={
-                    bbrData?.bygningPunkter
-                      ? bbrData.bygningPunkter.filter(
-                          (p) =>
-                            p.status !== 'Nedrevet/slettet' &&
-                            p.status !== 'Bygning nedrevet' &&
-                            p.status !== 'Bygning bortfaldet'
-                        )
-                      : undefined
-                  }
+                  bygningPunkter={aktiveBygningPunkter}
                 />
               </Suspense>
             </div>
@@ -4421,16 +4428,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                   visMatrikel={true}
                   onAdresseValgt={handleAdresseValgtMobil}
                   erEjerlejlighed={!!bbrData?.ejerlejlighedBfe}
-                  bygningPunkter={
-                    bbrData?.bygningPunkter
-                      ? bbrData.bygningPunkter.filter(
-                          (p) =>
-                            p.status !== 'Nedrevet/slettet' &&
-                            p.status !== 'Bygning nedrevet' &&
-                            p.status !== 'Bygning bortfaldet'
-                        )
-                      : undefined
-                  }
+                  bygningPunkter={aktiveBygningPunkter}
                 />
               </Suspense>
             </div>

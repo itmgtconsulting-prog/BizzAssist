@@ -28,6 +28,7 @@ import {
   AlertCircle,
   ChevronLeft,
   ChevronRight,
+  BarChart2,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';
@@ -60,6 +61,7 @@ const navItems = [
   { icon: Users, key: 'owners' as const, href: '/dashboard/owners', adminOnly: false },
   { icon: Map, key: 'map' as const, href: '/dashboard/kort', adminOnly: false },
   { icon: Search, key: 'search' as const, href: '/dashboard/search', adminOnly: false },
+  { icon: BarChart2, key: 'analysis' as const, href: '/dashboard/analysis', adminOnly: false },
   { icon: Shield, key: 'admin' as const, href: '/dashboard/admin/users', adminOnly: true },
 ];
 

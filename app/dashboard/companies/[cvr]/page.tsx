@@ -3687,7 +3687,7 @@ function AIArticleSearchPanel({
       <div>
         {tokenBar}
         {aiDisclaimer}
-        <p className="text-slate-500 text-xs mb-3 leading-relaxed">
+        <p className="text-slate-300 text-xs mb-3 leading-relaxed">
           {da
             ? `Klik for at finde op til 30 seneste danske nyheder om ${companyData.name} og link til virksomhedens sider på sociale medier.`
             : `Click to find up to 30 latest Danish news articles about ${companyData.name} and links to the company's social media pages.`}

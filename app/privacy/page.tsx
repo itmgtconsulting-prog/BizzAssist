@@ -117,13 +117,14 @@ function DanishPrivacy() {
             (EU-region, ingen overførsel til tredjelande).
           </li>
           <li>
-            <strong className="text-white">Vercel Inc.</strong> (USA) — Hosting og deployment.
-            Overførsel sker på grundlag af standardkontraktbestemmelser (SCC).
+            <strong className="text-white">Anthropic, Inc.</strong> (USA) — AI-sprogmodel til
+            chat-assistance. Behandler: brugerforespørgsler sendt til AI-assistenten.
+            Overførselsgrundlag: EU-US Data Privacy Framework / standardkontraktbestemmelser (SCC).
           </li>
           <li>
-            <strong className="text-white">Anthropic PBC</strong> (USA) — AI-analyse af erhvervs- og
-            ejendomsdata. Ingen personhenførbare oplysninger sendes til AI. Overførsel sker på
-            grundlag af standardkontraktbestemmelser (SCC).
+            <strong className="text-white">Vercel, Inc.</strong> (USA) — Hosting og
+            deploymentplatform. Behandler: al applikationstrafik og serverside-logfiler.
+            Overførselsgrundlag: EU-US Data Privacy Framework / standardkontraktbestemmelser (SCC).
           </li>
           <li>
             <strong className="text-white">Sentry Inc.</strong> (USA) — Fejlovervågning og
@@ -306,13 +307,14 @@ function EnglishPrivacy() {
             region, no third-country transfer).
           </li>
           <li>
-            <strong className="text-white">Vercel Inc.</strong> (USA) — Hosting and deployment.
-            Transfer is based on Standard Contractual Clauses (SCC).
+            <strong className="text-white">Anthropic, Inc.</strong> (USA) — AI language model for
+            chat assistance. Processes: user queries sent to the AI assistant. Transfer basis: EU-US
+            Data Privacy Framework / Standard Contractual Clauses (SCC).
           </li>
           <li>
-            <strong className="text-white">Anthropic PBC</strong> (USA) — AI analysis of business
-            and property data. No personally identifiable information is sent to the AI. Transfer is
-            based on Standard Contractual Clauses (SCC).
+            <strong className="text-white">Vercel, Inc.</strong> (USA) — Hosting and deployment
+            platform. Processes: all application traffic and server-side logs. Transfer basis: EU-US
+            Data Privacy Framework / Standard Contractual Clauses (SCC).
           </li>
           <li>
             <strong className="text-white">Sentry Inc.</strong> (USA) — Error monitoring and

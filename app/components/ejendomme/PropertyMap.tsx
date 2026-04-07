@@ -1063,6 +1063,16 @@ function PropertyMap({
     sætHusnumreSynlighed(visHusnumre);
   }, [visHusnumre, sætHusnumreSynlighed]);
 
+  /**
+   * Stabil zoom-end handler — gemmer brugerzoom i localStorage + intern ref.
+   * Stable reference prevents react-map-gl from considering the Map prop changed
+   * on every parent render, which would force mapbox-gl to re-evaluate events.
+   */
+  const handleZoomEnd = useCallback((e: { viewState: { zoom: number } }) => {
+    zoomRef.current = e.viewState.zoom;
+    window.localStorage.setItem(ZOOM_STORAGE_KEY, String(e.viewState.zoom));
+  }, []);
+
   /** Vis fallback UI hvis Mapbox-token mangler */
   if (!harToken) {
     return (
@@ -1097,10 +1107,7 @@ function PropertyMap({
         onMouseMove={onAdresseValgt ? handleMouseMove : undefined}
         onMouseLeave={onAdresseValgt ? handleMouseLeave : undefined}
         cursor={onAdresseValgt ? (søgerAdresse ? 'wait' : 'crosshair') : 'grab'}
-        onZoomEnd={(e) => {
-          zoomRef.current = e.viewState.zoom;
-          window.localStorage.setItem(ZOOM_STORAGE_KEY, String(e.viewState.zoom));
-        }}
+        onZoomEnd={handleZoomEnd}
       >
         <NavigationControl position="bottom-right" showCompass={false} />
 

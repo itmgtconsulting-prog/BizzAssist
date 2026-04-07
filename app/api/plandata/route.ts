@@ -317,6 +317,12 @@ export async function GET(request: NextRequest): Promise<NextResponse<PlandataRe
     return NextResponse.json({ planer: null, fejl: 'Mangler adresseId parameter' });
   }
 
+  // Validate UUID format to prevent path traversal / SSRF via DAWA URL construction
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!UUID_RE.test(adresseId)) {
+    return NextResponse.json({ planer: null, fejl: 'Ugyldigt adresseId format' }, { status: 400 });
+  }
+
   try {
     // ── Hent koordinater fra DAWA ──────────────────────────────────────────
     // ID kan være adresse-UUID eller adgangsadresse-UUID — prøv begge endpoints.

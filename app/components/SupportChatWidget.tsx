@@ -1,17 +1,20 @@
 'use client';
 
 /**
- * Support chat widget — replaces the old FeedbackButton.
+ * SupportChatWidget — AI-powered floating support chat.
  *
- * Fixed-position chat bubble in the bottom-right corner.
- * Opens a chat panel where users can:
- *   - Ask questions about features, subscriptions, data
- *   - Report bugs (creates JIRA tickets automatically)
- *   - Get help with subscription/plan questions
+ * Fixed-position chat bubble in the bottom-right corner of the dashboard.
+ * Opens a chat panel where users can ask questions about BizzAssist
+ * features, subscriptions, data types, and troubleshooting.
  *
- * All questions are logged to /api/support for analytics.
+ * Streams responses from /api/support/chat (Claude AI, no tool use).
+ * Handles lockout errors (403 permanently locked, 429 temporary lockout)
+ * with localised Danish/English messages.
  *
- * @returns Chat widget with floating trigger button
+ * Retains the same floating button design as the previous widget.
+ * No tool status indicators — support chat has no tools.
+ *
+ * @returns Floating chat widget with streaming AI responses
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react';
@@ -19,21 +22,30 @@ import { MessageCircle, X, Send, Loader2, Bot, Bug, ArrowLeft } from 'lucide-rea
 import { useLanguage } from '@/app/context/LanguageContext';
 import { usePathname } from 'next/navigation';
 
-/** Chat message */
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+/** A single conversation message */
 interface ChatMsg {
-  role: 'user' | 'bot';
+  role: 'user' | 'assistant';
   content: string;
 }
 
-/** Translations for the widget */
-const t = {
+/** Lockout state when the server returns 403 or 429 */
+interface LockoutState {
+  permanent: boolean;
+  retryAfterMinutes?: number;
+}
+
+// ─── Translations ─────────────────────────────────────────────────────────────
+
+const TRANSLATIONS = {
   da: {
     title: 'Support',
-    subtitle: 'Stil et spørgsmål eller rapportér en fejl',
+    subtitle: 'Stil et spørgsmål om BizzAssist',
     placeholder: 'Skriv dit spørgsmål…',
     send: 'Send',
     greeting:
-      'Hej! Jeg er BizzAssists support-assistent. Hvad kan jeg hjælpe med?\n\nJeg kan svare på spørgsmål om:\n• Abonnementer og priser\n• Ejendomsdata og BBR\n• AI-assistenten\n• Eksport, rapporter og kort\n\nHvis du har fundet en fejl, beskriv den så opretter jeg en rapport.',
+      'Hej! Jeg er BizzAssists support-assistent. Hvad kan jeg hjælpe med?\n\nJeg kan svare på spørgsmål om:\n• Abonnementer og priser\n• Ejendomsdata og BBR\n• AI-assistenten\n• Eksport, rapporter og kort\n• GDPR og databeskyttelse',
     reportBug: 'Rapportér fejl',
     bugTitle: 'Beskriv fejlen',
     bugTitlePlaceholder: 'Kort beskrivelse af problemet',
@@ -42,14 +54,17 @@ const t = {
     bugCancel: 'Annuller',
     sending: 'Sender…',
     error: 'Noget gik galt. Prøv igen.',
+    permanentLock: 'Din adgang til support-chat er spærret. Kontakt admin@bizzassist.dk.',
+    tempLock: (mins: number) =>
+      `For mange henvendelser. Prøv igen om ${mins} ${mins === 1 ? 'minut' : 'minutter'}.`,
   },
   en: {
     title: 'Support',
-    subtitle: 'Ask a question or report a bug',
+    subtitle: 'Ask a question about BizzAssist',
     placeholder: 'Type your question…',
     send: 'Send',
     greeting:
-      "Hi! I'm the BizzAssist support assistant. How can I help?\n\nI can answer questions about:\n• Subscriptions and pricing\n• Property data and BBR\n• AI assistant\n• Export, reports, and maps\n\nIf you found a bug, describe it and I'll create a report.",
+      "Hi! I'm the BizzAssist support assistant. How can I help?\n\nI can answer questions about:\n• Subscriptions and pricing\n• Property data and BBR\n• AI assistant\n• Export, reports, and maps\n• GDPR and data protection",
     reportBug: 'Report bug',
     bugTitle: 'Describe the bug',
     bugTitlePlaceholder: 'Short description of the issue',
@@ -58,84 +73,206 @@ const t = {
     bugCancel: 'Cancel',
     sending: 'Sending…',
     error: 'Something went wrong. Please try again.',
+    permanentLock: 'Your support chat access is blocked. Contact admin@bizzassist.dk.',
+    tempLock: (mins: number) =>
+      `Too many requests. Try again in ${mins} ${mins === 1 ? 'minute' : 'minutes'}.`,
   },
-};
+} as const;
+
+// ─── Component ────────────────────────────────────────────────────────────────
 
 export default function SupportChatWidget() {
   const { lang } = useLanguage();
   const pathname = usePathname();
-  const txt = t[lang];
+  const txt = TRANSLATIONS[lang];
 
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [streaming, setStreaming] = useState(false);
   const [showBugForm, setShowBugForm] = useState(false);
   const [bugTitle, setBugTitle] = useState('');
   const [bugDesc, setBugDesc] = useState('');
+  const [lockout, setLockout] = useState<LockoutState | null>(null);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  /** AbortController for the active streaming request */
+  const abortRef = useRef<AbortController | null>(null);
 
-  /** Scroll to bottom when new messages arrive */
+  /** Scroll to bottom whenever messages change or streaming starts/stops */
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, loading]);
+  }, [messages, streaming]);
 
-  /** Focus input when panel opens */
+  /** Focus input when the chat panel opens (and not on the bug form) */
   useEffect(() => {
     if (open && !showBugForm) {
       setTimeout(() => inputRef.current?.focus(), 200);
     }
   }, [open, showBugForm]);
 
-  /** Add greeting on first open */
+  /** Inject greeting on first open */
   useEffect(() => {
     if (open && messages.length === 0) {
-      setMessages([{ role: 'bot', content: txt.greeting }]);
+      setMessages([{ role: 'assistant', content: txt.greeting }]);
     }
   }, [open, messages.length, txt.greeting]);
 
-  /** Send a question to the support API */
+  /** Abort any in-flight stream when the widget is closed */
+  useEffect(() => {
+    if (!open) {
+      abortRef.current?.abort();
+    }
+  }, [open]);
+
+  /**
+   * Sends the current input as a user message to /api/support/chat and
+   * streams the assistant's response token-by-token into the messages state.
+   *
+   * Handles 403 (permanently locked) and 429 (temporary lockout) by
+   * surfacing a localised lockout message instead of an assistant bubble.
+   */
   const sendMessage = useCallback(async () => {
     const text = input.trim();
-    if (!text || loading) return;
+    if (!text || streaming) return;
 
     setInput('');
-    setMessages((prev) => [...prev, { role: 'user', content: text }]);
-    setLoading(true);
+    setLockout(null);
+
+    // Append user message and a placeholder assistant message for streaming
+    const userMsg: ChatMsg = { role: 'user', content: text };
+    setMessages((prev) => [...prev, userMsg, { role: 'assistant', content: '' }]);
+    setStreaming(true);
+
+    // Build the full conversation history to send (exclude the empty placeholder)
+    const history: ChatMsg[] = messages.filter((m) => m.content.length > 0).concat(userMsg);
+
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     try {
-      const res = await fetch('/api/support', {
+      const res = await fetch('/api/support/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: text,
-          lang,
-          context: { page: pathname },
-        }),
+        body: JSON.stringify({ messages: history }),
+        signal: controller.signal,
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        setMessages((prev) => [...prev, { role: 'bot', content: data.reply }]);
-        if (data.suggestTicket) {
-          setShowBugForm(true);
-          setBugDesc(text); // Pre-fill with the user's description
-        }
-      } else {
-        setMessages((prev) => [...prev, { role: 'bot', content: txt.error }]);
+      // ── Handle lockout responses before reading the stream ──
+      if (res.status === 403) {
+        const data = (await res.json()) as { error?: string };
+        setMessages((prev) => {
+          const copy = [...prev];
+          copy[copy.length - 1] = {
+            role: 'assistant',
+            content: data.error ?? txt.permanentLock,
+          };
+          return copy;
+        });
+        setLockout({ permanent: true });
+        setStreaming(false);
+        return;
       }
-    } catch {
-      setMessages((prev) => [...prev, { role: 'bot', content: txt.error }]);
+
+      if (res.status === 429) {
+        const data = (await res.json()) as {
+          error?: string;
+          retryAfterMinutes?: number;
+        };
+        const mins = data.retryAfterMinutes ?? 30;
+        setMessages((prev) => {
+          const copy = [...prev];
+          copy[copy.length - 1] = {
+            role: 'assistant',
+            content: data.error ?? txt.tempLock(mins),
+          };
+          return copy;
+        });
+        setLockout({ permanent: false, retryAfterMinutes: mins });
+        setStreaming(false);
+        return;
+      }
+
+      if (!res.ok || !res.body) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+
+      // ── Stream SSE events ──
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        // Keep the last (possibly incomplete) line in the buffer
+        buffer = lines.pop() ?? '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const payload = line.slice(6).trim();
+          if (payload === '[DONE]') break;
+
+          try {
+            const event = JSON.parse(payload) as { t: string } | { error: string };
+
+            if ('t' in event) {
+              // Append streamed text chunk to the last assistant message
+              setMessages((prev) => {
+                const copy = [...prev];
+                const last = copy[copy.length - 1];
+                if (last?.role === 'assistant') {
+                  copy[copy.length - 1] = {
+                    ...last,
+                    content: last.content + event.t,
+                  };
+                }
+                return copy;
+              });
+            } else if ('error' in event) {
+              setMessages((prev) => {
+                const copy = [...prev];
+                copy[copy.length - 1] = {
+                  role: 'assistant',
+                  content: event.error,
+                };
+                return copy;
+              });
+            }
+          } catch {
+            // Malformed SSE chunk — skip
+          }
+        }
+      }
+    } catch (err) {
+      // Ignore abort errors (user closed the widget)
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+
+      setMessages((prev) => {
+        const copy = [...prev];
+        const last = copy[copy.length - 1];
+        if (last?.role === 'assistant' && last.content === '') {
+          copy[copy.length - 1] = { role: 'assistant', content: txt.error };
+        }
+        return copy;
+      });
+    } finally {
+      setStreaming(false);
+      abortRef.current = null;
     }
+  }, [input, streaming, messages, txt]);
 
-    setLoading(false);
-  }, [input, loading, lang, pathname, txt.error]);
-
-  /** Submit a bug report via the support API */
+  /**
+   * Submits a bug report via the legacy /api/support route.
+   * Pre-fills the bug description with whatever the user typed.
+   */
   const submitBugReport = useCallback(async () => {
     if (!bugTitle.trim() || !bugDesc.trim()) return;
-    setLoading(true);
+    setStreaming(true);
 
     try {
       const res = await fetch('/api/support', {
@@ -153,21 +290,19 @@ export default function SupportChatWidget() {
         }),
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        setMessages((prev) => [...prev, { role: 'bot', content: data.reply }]);
-      } else {
-        setMessages((prev) => [...prev, { role: 'bot', content: txt.error }]);
-      }
+      const data = (await res.json()) as { reply?: string };
+      setMessages((prev) => [...prev, { role: 'assistant', content: data.reply ?? txt.error }]);
     } catch {
-      setMessages((prev) => [...prev, { role: 'bot', content: txt.error }]);
+      setMessages((prev) => [...prev, { role: 'assistant', content: txt.error }]);
     }
 
     setShowBugForm(false);
     setBugTitle('');
     setBugDesc('');
-    setLoading(false);
-  }, [bugTitle, bugDesc, lang, pathname, txt.error]);
+    setStreaming(false);
+  }, [bugTitle, bugDesc, lang, pathname, txt]);
+
+  // ─── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <>
@@ -187,29 +322,35 @@ export default function SupportChatWidget() {
       {/* ── Chat panel ── */}
       {open && (
         <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="support-chat-title"
           className="fixed bottom-24 right-6 z-40 w-96 max-w-[calc(100vw-3rem)] bg-[#1e293b] border border-white/10 rounded-2xl shadow-2xl flex flex-col overflow-hidden"
           style={{ maxHeight: 'min(520px, calc(100vh - 8rem))' }}
         >
-          {/* Header */}
+          {/* ── Header ── */}
           <div className="px-4 py-3 border-b border-white/10 shrink-0">
             <div className="flex items-center gap-2">
               <div className="w-7 h-7 bg-blue-600/25 rounded-lg flex items-center justify-center">
                 <Bot size={14} className="text-blue-400" />
               </div>
               <div>
-                <h3 className="text-white text-sm font-semibold">{txt.title}</h3>
+                <h3 id="support-chat-title" className="text-white text-sm font-semibold">
+                  {txt.title}
+                </h3>
                 <p className="text-slate-500 text-[10px]">{txt.subtitle}</p>
               </div>
             </div>
           </div>
 
-          {/* Bug report form */}
+          {/* ── Bug report form ── */}
           {showBugForm ? (
             <div className="flex-1 p-4 space-y-3 overflow-y-auto">
               <div className="flex items-center gap-2 mb-2">
                 <button
                   onClick={() => setShowBugForm(false)}
                   className="text-slate-400 hover:text-white transition-colors"
+                  aria-label={txt.bugCancel}
                 >
                   <ArrowLeft size={16} />
                 </button>
@@ -218,14 +359,22 @@ export default function SupportChatWidget() {
                   {txt.bugTitle}
                 </h4>
               </div>
+              <label htmlFor="bug-title" className="text-slate-400 text-[11px]">
+                {txt.bugTitlePlaceholder}
+              </label>
               <input
+                id="bug-title"
                 type="text"
                 value={bugTitle}
                 onChange={(e) => setBugTitle(e.target.value)}
                 placeholder={txt.bugTitlePlaceholder}
                 className="w-full bg-slate-800/60 border border-slate-700/40 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-blue-500/60"
               />
+              <label htmlFor="bug-desc" className="text-slate-400 text-[11px]">
+                {txt.bugDescPlaceholder}
+              </label>
               <textarea
+                id="bug-desc"
                 value={bugDesc}
                 onChange={(e) => setBugDesc(e.target.value)}
                 placeholder={txt.bugDescPlaceholder}
@@ -241,17 +390,17 @@ export default function SupportChatWidget() {
                 </button>
                 <button
                   onClick={submitBugReport}
-                  disabled={!bugTitle.trim() || !bugDesc.trim() || loading}
+                  disabled={!bugTitle.trim() || !bugDesc.trim() || streaming}
                   className="flex-1 py-2 text-sm bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
                 >
-                  {loading ? <Loader2 size={14} className="animate-spin" /> : <Bug size={14} />}
-                  {loading ? txt.sending : txt.bugSubmit}
+                  {streaming ? <Loader2 size={14} className="animate-spin" /> : <Bug size={14} />}
+                  {streaming ? txt.sending : txt.bugSubmit}
                 </button>
               </div>
             </div>
           ) : (
             <>
-              {/* Messages */}
+              {/* ── Messages list ── */}
               <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2.5 min-h-0">
                 {messages.map((msg, i) => (
                   <div
@@ -266,10 +415,16 @@ export default function SupportChatWidget() {
                       }`}
                     >
                       {msg.content}
+                      {/* Blinking cursor on the last assistant message while streaming */}
+                      {streaming && i === messages.length - 1 && msg.role === 'assistant' && (
+                        <span className="inline-block w-0.5 h-3 bg-blue-400 ml-0.5 animate-pulse align-middle" />
+                      )}
                     </div>
                   </div>
                 ))}
-                {loading && (
+
+                {/* Typing indicator — shown only before the first token arrives */}
+                {streaming && messages[messages.length - 1]?.content === '' && (
                   <div className="flex justify-start">
                     <div className="bg-slate-800/80 border border-slate-700/40 rounded-xl px-3 py-2.5 flex gap-1">
                       <span
@@ -287,14 +442,25 @@ export default function SupportChatWidget() {
                     </div>
                   </div>
                 )}
+
+                {/* Lockout banner */}
+                {lockout && (
+                  <div className="rounded-xl px-3 py-2 bg-red-900/30 border border-red-700/40 text-red-300 text-xs">
+                    {lockout.permanent
+                      ? txt.permanentLock
+                      : txt.tempLock(lockout.retryAfterMinutes ?? 30)}
+                  </div>
+                )}
+
                 <div ref={messagesEndRef} />
               </div>
 
-              {/* Input + bug report shortcut */}
+              {/* ── Input row ── */}
               <div className="px-3 pb-3 pt-1 shrink-0 space-y-2">
                 <div className="flex items-center gap-2 bg-slate-800/60 border border-slate-700/40 rounded-xl px-3 py-2 focus-within:border-blue-500/40 transition-colors">
                   <input
                     ref={inputRef}
+                    id="support-chat-input"
                     type="text"
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
@@ -305,17 +471,25 @@ export default function SupportChatWidget() {
                       }
                     }}
                     placeholder={txt.placeholder}
-                    className="flex-1 bg-transparent text-slate-300 text-xs placeholder-slate-600 focus:outline-none"
+                    disabled={lockout?.permanent === true}
+                    className="flex-1 bg-transparent text-slate-300 text-xs placeholder-slate-600 focus:outline-none disabled:opacity-40"
+                    aria-label={txt.placeholder}
                   />
                   <button
                     onClick={sendMessage}
-                    disabled={!input.trim() || loading}
+                    disabled={!input.trim() || streaming || lockout?.permanent === true}
                     className="text-blue-400 hover:text-blue-300 disabled:text-slate-600 transition-colors shrink-0"
                     aria-label={txt.send}
                   >
-                    <Send size={13} />
+                    {streaming ? (
+                      <Loader2 size={13} className="animate-spin" />
+                    ) : (
+                      <Send size={13} />
+                    )}
                   </button>
                 </div>
+
+                {/* Bug report shortcut */}
                 <button
                   onClick={() => setShowBugForm(true)}
                   className="w-full flex items-center justify-center gap-2 py-1.5 text-[11px] text-red-400/70 hover:text-red-400 transition-colors"

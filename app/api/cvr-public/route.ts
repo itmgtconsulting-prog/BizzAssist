@@ -15,6 +15,9 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { resolveTenantId } from '@/lib/api/auth';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { logActivity } from '@/app/lib/activityLog';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -868,6 +871,21 @@ export async function GET(req: NextRequest): Promise<NextResponse<CVRPublicData 
 
   if (!CVR_ES_USER || !CVR_ES_PASS) {
     return NextResponse.json({ error: 'CVR-adgang ikke konfigureret' }, { status: 503 });
+  }
+
+  // Fire-and-forget: log company_open for authenticated users.
+  // cvrNummer is a public business identifier — not PII.
+  // Only logged when a specific CVR number is looked up (not name searches).
+  if (vat) {
+    resolveTenantId()
+      .then((auth) => {
+        if (auth) {
+          logActivity(createAdminClient(), auth.tenantId, auth.userId, 'company_open', {
+            cvrNummer: vat,
+          });
+        }
+      })
+      .catch(() => {}); // non-critical — never surface logging errors
   }
 
   // Build ES query

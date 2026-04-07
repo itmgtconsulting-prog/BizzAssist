@@ -1722,6 +1722,31 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
 
   const ejendom = erDAWA ? null : getEjendomById(id);
 
+  /**
+   * Memoized adressestreng til PropertyMap i den ikke-DAWA renderingssti
+   * (BFE-baseret ejendom-objekt fra server-side opslag).
+   * Beregnes ud fra ejendom.adresse / postnummer / by — stable string-reference
+   * der kun ændres når adressen selv ændres. Konsistent med projektets
+   * React.memo + useMemo-mønster.
+   */
+  const bfrAdresseStreng = useMemo(
+    () => (ejendom ? `${ejendom.adresse}, ${ejendom.postnummer} ${ejendom.by}` : ''),
+    // ejendom is a derived constant (not state) so object identity is stable;
+    // we depend on individual string fields to be precise about what triggers recompute.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [ejendom?.adresse, ejendom?.postnummer, ejendom?.by]
+  );
+
+  /**
+   * Memoized BBR-bygningspunkter til PropertyMap i den ikke-DAWA renderingssti.
+   * Stabil reference forhindrer unødvendig genrendering af det memo-wrapped PropertyMap
+   * når bbrData opdateres med data der ikke vedrører bygningPunkter-arrayet.
+   */
+  const bfrBygningPunkter = useMemo(
+    () => bbrData?.bygningPunkter ?? undefined,
+    [bbrData?.bygningPunkter]
+  );
+
   // ── DAWA: Loading ──
   if (erDAWA && dawaStatus === 'loader') {
     return (
@@ -6139,12 +6164,12 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                 <PropertyMap
                   lat={ejendom.lat}
                   lng={ejendom.lng}
-                  adresse={`${ejendom.adresse}, ${ejendom.postnummer} ${ejendom.by}`}
+                  adresse={bfrAdresseStreng}
                   visMatrikel={true}
                   onAdresseValgt={handleAdresseValgt}
                   fullMapHref={`/dashboard/kort?ejendom=${id}`}
                   erEjerlejlighed={!!bbrData?.ejerlejlighedBfe}
-                  bygningPunkter={bbrData?.bygningPunkter ?? undefined}
+                  bygningPunkter={bfrBygningPunkter}
                 />
               </Suspense>
             </div>
@@ -6192,11 +6217,11 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
               <PropertyMap
                 lat={ejendom.lat}
                 lng={ejendom.lng}
-                adresse={`${ejendom.adresse}, ${ejendom.postnummer} ${ejendom.by}`}
+                adresse={bfrAdresseStreng}
                 visMatrikel={true}
                 onAdresseValgt={handleAdresseValgtMobil}
                 erEjerlejlighed={!!bbrData?.ejerlejlighedBfe}
-                bygningPunkter={bbrData?.bygningPunkter ?? undefined}
+                bygningPunkter={bfrBygningPunkter}
               />
             </Suspense>
           </div>

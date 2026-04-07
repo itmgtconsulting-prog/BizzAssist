@@ -18,6 +18,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import * as Sentry from '@sentry/nextjs';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -722,6 +723,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<VurderingR
       }
     );
   } catch (err) {
+    Sentry.captureException(err);
     console.error('[vurdering] Fejl:', err);
     return NextResponse.json(
       {

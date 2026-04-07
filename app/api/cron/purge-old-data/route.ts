@@ -32,6 +32,8 @@ interface TenantPurgeResult {
   recentEntitiesDeleted: number;
   notificationsDeleted: number;
   aiConversationsDeleted: number;
+  recentSearchesDeleted: number;
+  activityLogDeleted: number;
   error?: string;
 }
 
@@ -126,10 +128,13 @@ async function writeAuditLog(
  *   1. Deletes recent_entities rows older than 12 months (by visited_at).
  *      recent_entities uses visited_at (not created_at) as its primary timestamp.
  *   2. Deletes read notifications older than 6 months (is_read = true, by created_at).
+ *   3. Deletes recent_searches rows older than 12 months (BIZZ-133 — GDPR Art. 5(1)(e)).
+ *   4. Deletes activity_log rows older than 12 months (BIZZ-133 — GDPR Art. 5(1)(e)).
  *
  * For closed tenants (closed_at IS NOT NULL AND closed_at < NOW() - 30 days):
- *   - Deletes ALL rows in recent_entities, notifications, saved_entities, and
- *     property_snapshots within that tenant schema to fulfil post-closure GDPR erasure.
+ *   - Deletes ALL rows in recent_entities, notifications, saved_entities,
+ *     property_snapshots, recent_searches, and activity_log within that tenant
+ *     schema to fulfil post-closure GDPR erasure.
  *
  * Returns a JSON summary of rows deleted per tenant.
  *
@@ -167,6 +172,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       recentEntitiesDeleted: 0,
       notificationsDeleted: 0,
       aiConversationsDeleted: 0,
+      recentSearchesDeleted: 0,
+      activityLogDeleted: 0,
     };
 
     try {
@@ -189,10 +196,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           .delete({ count: 'exact' })
           .not('id', 'is', null);
 
-        // Also purge snapshots, saved_entities, and ai_conversations — no count needed
+        // Also purge snapshots, saved_entities, ai_conversations, recent_searches,
+        // and activity_log — no count needed for these (BIZZ-133: search history retention).
         await db.from('property_snapshots').delete().not('id', 'is', null);
         await db.from('saved_entities').delete().not('id', 'is', null);
         await db.from('ai_conversations').delete().not('id', 'is', null);
+        await db.from('recent_searches').delete().not('id', 'is', null);
+        await db.from('activity_log').delete().not('id', 'is', null);
 
         result.recentEntitiesDeleted = recentCount ?? 0;
         result.notificationsDeleted = notifCount ?? 0;
@@ -239,17 +249,41 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
         result.aiConversationsDeleted = aiCount ?? 0;
 
+        // 4. recent_searches: purge rows older than 12 months (BIZZ-133).
+        //    GDPR Art. 5(1)(e) — storage limitation; search queries are personal data.
+        //    Column used is created_at (set at insert time, never updated).
+        const { count: searchCount } = await db
+          .from('recent_searches')
+          .delete({ count: 'exact' })
+          .lt('created_at', twelveMonthsAgo);
+
+        result.recentSearchesDeleted = searchCount ?? 0;
+
+        // 5. activity_log: purge rows older than 12 months (BIZZ-133).
+        //    Audit/activity entries older than 12 months are no longer required for
+        //    operational purposes and must be purged under GDPR storage limitation.
+        const { count: activityCount } = await db
+          .from('activity_log')
+          .delete({ count: 'exact' })
+          .lt('created_at', twelveMonthsAgo);
+
+        result.activityLogDeleted = activityCount ?? 0;
+
         // Write audit log only if something was actually purged
         if (
           result.recentEntitiesDeleted > 0 ||
           result.notificationsDeleted > 0 ||
-          result.aiConversationsDeleted > 0
+          result.aiConversationsDeleted > 0 ||
+          result.recentSearchesDeleted > 0 ||
+          result.activityLogDeleted > 0
         ) {
           await writeAuditLog(admin, tenant.schema_name, tenant.id, {
             event: 'ttl_purge',
             recentEntitiesDeleted: result.recentEntitiesDeleted,
             notificationsDeleted: result.notificationsDeleted,
             aiConversationsDeleted: result.aiConversationsDeleted,
+            recentSearchesDeleted: result.recentSearchesDeleted,
+            activityLogDeleted: result.activityLogDeleted,
           });
         }
       }

@@ -154,8 +154,8 @@ describe('GET /api/recents', () => {
     expect(Array.isArray(body.recents)).toBe(true);
   });
 
-  /** DB error → returns empty array, not a 500 */
-  it('returns empty recents on DB error', async () => {
+  /** DB error → returns 500 so the client knows something went wrong (BIZZ-124) */
+  it('returns 500 on DB error', async () => {
     mockAuthResult = { tenantId: 'tenant-1', userId: 'user-1' };
     mockSelectChain.limit.mockResolvedValue({ data: null, error: { message: 'DB error' } });
 
@@ -163,9 +163,7 @@ describe('GET /api/recents', () => {
     const req = makeRequest('GET', { type: 'property' });
     const res = await GET(req);
 
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { recents: unknown[] };
-    expect(body.recents).toHaveLength(0);
+    expect(res.status).toBe(500);
   });
 });
 

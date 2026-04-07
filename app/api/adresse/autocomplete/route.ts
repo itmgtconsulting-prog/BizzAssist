@@ -5,6 +5,9 @@
  * Nødvendig fordi DAR kræver API-nøgle (server-side env var),
  * mens autocomplete bruges fra client-side komponenter.
  *
+ * Logs 'address_search' events to activity_log for usage analytics.
+ * Payload: { queryLength } — no raw query string stored (avoids PII risk).
+ *
  * @param request - Next.js request med ?q=søgestreng
  * @returns Array af DawaAutocompleteResult (DAR-kompatibelt format)
  */
@@ -12,6 +15,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { darAutocomplete } from '@/app/lib/dar';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
+import { resolveTenantId } from '@/lib/api/auth';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { logActivity } from '@/app/lib/activityLog';
 
 export async function GET(request: NextRequest) {
   const limited = await checkRateLimit(request, rateLimit);
@@ -21,6 +27,16 @@ export async function GET(request: NextRequest) {
 
   if (q.trim().length < 2) {
     return NextResponse.json([]);
+  }
+
+  // Resolve auth context for activity logging — non-blocking if unauthenticated
+  // (autocomplete is also called during login flow, so we don't gate on auth here)
+  const auth = await resolveTenantId();
+  if (auth) {
+    logActivity(createAdminClient(), auth.tenantId, auth.userId, 'address_search', {
+      // Store query length only — raw query string is omitted to avoid PII risk
+      queryLength: q.trim().length,
+    });
   }
 
   try {

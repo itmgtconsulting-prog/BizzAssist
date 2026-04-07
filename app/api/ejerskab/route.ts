@@ -19,6 +19,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import * as Sentry from '@sentry/nextjs';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { getCertOAuthToken, isCertAuthConfigured } from '@/app/lib/dfCertAuth';
 
@@ -268,6 +269,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjerskabRe
         }
       } catch (err) {
         console.error('[ejerskab] Shared Secret fejl:', err instanceof Error ? err.message : err);
+        Sentry.captureException(err);
       }
     }
   }
@@ -290,6 +292,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjerskabRe
         result = certResult;
       } catch (err) {
         console.error('[ejerskab] Certifikat fejl:', err instanceof Error ? err.message : err);
+        Sentry.captureException(err);
       }
     } else {
       console.error('[ejerskab] Certifikat: Kunne ikke hente OAuth token via mTLS');

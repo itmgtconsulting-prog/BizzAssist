@@ -323,24 +323,39 @@ function LoginCTA({ navn }: { navn: string }) {
 
 /**
  * Genererer schema.org JSON-LD structured data for virksomhedssiden.
- * Inkluderer Organization-schema og BreadcrumbList for SEO-brødkrummer.
+ * Inkluderer Organization/LocalBusiness-schema og BreadcrumbList for SEO-brødkrummer.
+ *
+ * Bruger `@type: "LocalBusiness"` når adresse er tilgængelig, ellers `"Organization"`.
+ * Inkluderer `identifier` (CVR), `url`, `address`, `telephone`, `email` og `description`.
  *
  * @param v    - Virksomhedsdata
  * @param slug - SEO-venlig virksomhedsnavn-slug (til kanonisk URL)
  */
 function JsonLd({ v, slug }: { v: VirksomhedPublicData; slug: string }) {
+  /** Kanonisk URL for virksomhedssiden */
+  const canonicalUrl = `https://bizzassist.dk/virksomhed/${slug}/${v.cvr}`;
+
+  /** Brug LocalBusiness når adresse er tilgængelig — giver rigere schema-support */
+  const hasAddress = Boolean(v.adresse || v.postnr || v.by);
+  const schemaType = hasAddress ? 'LocalBusiness' : 'Organization';
+
   const organizationSchema = {
     '@context': 'https://schema.org',
-    '@type': 'Organization',
+    '@type': schemaType,
     name: v.navn,
-    taxID: v.cvr,
-    address: {
-      '@type': 'PostalAddress',
-      streetAddress: v.adresse,
-      postalCode: v.postnr,
-      addressLocality: v.by,
-      addressCountry: 'DK',
-    },
+    identifier: v.cvr,
+    url: canonicalUrl,
+    ...(hasAddress
+      ? {
+          address: {
+            '@type': 'PostalAddress',
+            streetAddress: v.adresse || undefined,
+            postalCode: v.postnr || undefined,
+            addressLocality: v.by || undefined,
+            addressCountry: 'DK',
+          },
+        }
+      : {}),
     ...(v.telefon ? { telephone: v.telefon } : {}),
     ...(v.email ? { email: v.email } : {}),
     ...(v.branche ? { description: v.branche } : {}),

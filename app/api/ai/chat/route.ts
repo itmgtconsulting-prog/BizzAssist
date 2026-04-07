@@ -30,6 +30,7 @@ import { checkRateLimit, aiRateLimit } from '@/app/lib/rateLimit';
 import { fetchBbrForAddress } from '@/app/lib/fetchBbrData';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { logActivity } from '@/app/lib/activityLog';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -996,6 +997,8 @@ export async function POST(request: NextRequest): Promise<Response> {
   // without the user having to re-explain what they were looking at.
   // Non-critical — failures are silently swallowed.
   let recentEntitiesContext = '';
+  // Captured for activity logging below — avoids a second membership lookup
+  let resolvedTenantId: string | null = null;
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: membership } = await (adminClient as any)
@@ -1004,6 +1007,9 @@ export async function POST(request: NextRequest): Promise<Response> {
       .eq('user_id', user.id)
       .limit(1)
       .single();
+    if (membership?.tenant_id) {
+      resolvedTenantId = membership.tenant_id as string;
+    }
 
     if (membership?.tenant_id) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1077,6 +1083,14 @@ export async function POST(request: NextRequest): Promise<Response> {
   const { messages, context } = body;
   if (!messages || !Array.isArray(messages) || messages.length === 0) {
     return Response.json({ error: 'Ingen beskeder' }, { status: 400 });
+  }
+
+  // Fire-and-forget: log this AI chat call for usage analytics.
+  // promptLength is the character count of the last user message — no raw text stored.
+  if (resolvedTenantId) {
+    const lastMessage = messages[messages.length - 1];
+    const promptLength = typeof lastMessage?.content === 'string' ? lastMessage.content.length : 0;
+    logActivity(adminClient, resolvedTenantId, user.id, 'ai_chat', { promptLength });
   }
 
   // Resolve base URL for internal API calls

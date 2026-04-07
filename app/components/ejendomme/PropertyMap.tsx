@@ -582,15 +582,26 @@ async function hentMatrikelGeojson(
 }
 
 /**
- * Interaktiv Mapbox-kort til ejendomssider.
+ * PropertyMap — Mapbox-baseret interaktivt ejendomskort.
  *
  * Viser ejendomsmarkør, luftfoto/gade toggle og officielle matrikelgrænser
  * fra DAWA (Dataforsyningen) — uden API-nøgle.
+ *
+ * Wrapped in React.memo (via `memo` from 'react') to prevent re-renders when
+ * the parent component's state changes but map props remain the same — for
+ * example when the user switches tabs on the property detail page. Callers
+ * MUST pass stable prop references: use `useMemo` for array/object props such
+ * as `bygningPunkter`, and `useCallback` for function props such as
+ * `onAdresseValgt`, so the memo bail-out actually takes effect.
  *
  * @param lat - Breddegrad
  * @param lng - Længdegrad
  * @param adresse - Adresse til markør-label
  * @param visMatrikel - Skal matrikellag vises (default: true)
+ * @param onAdresseValgt - Callback med DAWA UUID når bruger klikker på markør
+ * @param bygningPunkter - BBR-bygningspunkter — skal overføres med stabil reference (useMemo)
+ * @param fullMapHref - Href til "Åbn på fuldt kort"-knap inde i kortet
+ * @param erEjerlejlighed - True hvis ejendommen er en ejerlejlighed
  */
 function PropertyMap({
   lat,
@@ -1643,4 +1654,10 @@ function PropertyMap({
   );
 }
 
+/**
+ * Memo-wrapped export — prevents re-renders when parent state changes but
+ * PropertyMap props are unchanged (e.g. tab switches on the property detail page).
+ * Uses shallow prop comparison via Object.is, so array/function props MUST be
+ * stabilised with useMemo / useCallback in the parent.
+ */
 export default memo(PropertyMap);

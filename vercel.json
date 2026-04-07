@@ -21,6 +21,10 @@
       "schedule": "0 7 * * *"
     },
     {
+      "path": "/api/cron/daily-status",
+      "schedule": "0 6 * * *"
+    },
+    {
       "path": "/api/cron/service-scan",
       "schedule": "0 * * * *"
     }

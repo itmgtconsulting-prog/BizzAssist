@@ -15,6 +15,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import * as Sentry from '@sentry/nextjs';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -380,6 +381,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
       }
     );
   } catch (err) {
+    Sentry.captureException(err);
     const msg = err instanceof Error ? err.message : 'Ukendt fejl';
     return NextResponse.json(
       {

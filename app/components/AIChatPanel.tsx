@@ -472,9 +472,11 @@ function AIChatPanel() {
     >
       {/* ── Header / toggle ──────────────────────────────────────────────── */}
       <div className="shrink-0">
-        <div
+        <button
           onClick={togglePanel}
-          className="flex items-center justify-between px-4 py-3 cursor-pointer select-none hover:bg-white/3 transition-colors"
+          aria-expanded={isOpen}
+          aria-label={isOpen ? 'Luk AI-assistent' : 'Åbn AI-assistent'}
+          className="w-full flex items-center justify-between px-4 py-3 cursor-pointer select-none hover:bg-white/5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
         >
           <div className="flex items-center gap-2.5">
             <div className="w-6 h-6 bg-blue-600/25 rounded-md flex items-center justify-center shrink-0">
@@ -489,7 +491,7 @@ function AIChatPanel() {
             {/* Pop-out knap — åbner modal */}
             <button
               onClick={toggleExpanded}
-              className="text-slate-500 hover:text-slate-300 transition-colors shrink-0 p-0.5 rounded"
+              className="text-slate-500 hover:text-slate-300 transition-colors shrink-0 p-0.5 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
               aria-label={isExpanded ? 'Luk pop-out' : 'Åbn i større vindue'}
               title={isExpanded ? 'Luk pop-out' : 'Åbn i større vindue'}
             >
@@ -500,7 +502,7 @@ function AIChatPanel() {
               className={`text-slate-500 transition-transform duration-200 shrink-0 ${isOpen ? 'rotate-180' : ''}`}
             />
           </div>
-        </div>
+        </button>
 
         {/* ── Token status — mini bar under overskriften ── */}
         {tokenInfo &&
@@ -510,7 +512,7 @@ function AIChatPanel() {
             const Wrapper = isRed ? 'button' : 'div';
             return (
               <Wrapper
-                className={`flex items-center gap-2 px-4 pb-2 w-full ${isRed ? 'cursor-pointer hover:bg-white/3 rounded-lg transition-colors group' : ''}`}
+                className={`flex items-center gap-2 px-4 pb-2 w-full ${isRed ? 'cursor-pointer hover:bg-white/5 rounded-lg transition-colors group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-inset' : ''}`}
                 {...(isRed
                   ? {
                       onClick: () => router.push('/dashboard/tokens'),
@@ -678,7 +680,7 @@ function AIChatPanel() {
               {isLoading ? (
                 <button
                   onClick={stopStreaming}
-                  className="text-red-400 hover:text-red-300 transition-colors shrink-0"
+                  className="text-red-400 hover:text-red-300 transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 rounded"
                   aria-label={a.stopLabel}
                 >
                   <Square size={13} />
@@ -687,7 +689,7 @@ function AIChatPanel() {
                 <button
                   onClick={sendMessage}
                   disabled={!input.trim()}
-                  className="text-blue-400 hover:text-blue-300 disabled:text-slate-600 transition-colors shrink-0"
+                  className="text-blue-400 hover:text-blue-300 disabled:text-slate-600 transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded"
                   aria-label={a.sendLabel}
                 >
                   <Send size={13} />
@@ -732,7 +734,7 @@ function AIChatPanel() {
                 </div>
                 <button
                   onClick={() => setIsExpanded(false)}
-                  className="text-slate-500 hover:text-slate-200 transition-colors p-1 rounded-lg hover:bg-white/5"
+                  className="text-slate-500 hover:text-slate-200 transition-colors p-1 rounded-lg hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                   aria-label="Luk pop-out"
                 >
                   <Minimize2 size={15} />
@@ -884,7 +886,7 @@ function AIChatPanel() {
                       {isLoading ? (
                         <button
                           onClick={stopStreaming}
-                          className="text-red-400 hover:text-red-300 transition-colors shrink-0"
+                          className="text-red-400 hover:text-red-300 transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 rounded"
                           aria-label={a.stopLabel}
                         >
                           <Square size={16} />
@@ -893,7 +895,7 @@ function AIChatPanel() {
                         <button
                           onClick={sendMessage}
                           disabled={!input.trim()}
-                          className="text-blue-400 hover:text-blue-300 disabled:text-slate-600 transition-colors shrink-0"
+                          className="text-blue-400 hover:text-blue-300 disabled:text-slate-600 transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded"
                           aria-label={a.sendLabel}
                         >
                           <Send size={16} />

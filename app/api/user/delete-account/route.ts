@@ -114,9 +114,12 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
 
         // Delete personal data from all tenant-schema tables.
         // Errors are non-fatal: the auth deletion below is the definitive erasure.
+        // BIZZ-128: all tables must be covered to satisfy GDPR Art. 17 right to erasure.
         await db.from('recent_entities').delete().eq('user_id', user.id);
         await db.from('saved_entities').delete().eq('user_id', user.id);
         await db.from('notifications').delete().eq('user_id', user.id);
+        await db.from('recent_searches').delete().eq('user_id', user.id);
+        await db.from('activity_log').delete().eq('user_id', user.id);
       }
     }
 

@@ -550,7 +550,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
             <div className="flex items-center gap-1 shrink-0">
               {/* Collapse-toggle — kun desktop */}
               <button
-                className="hidden lg:flex text-slate-500 hover:text-white p-1 rounded-lg hover:bg-white/5 transition-colors"
+                className="hidden lg:flex text-slate-500 hover:text-white p-1 rounded-lg hover:bg-white/5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                 onClick={() => setSidebarCollapsed((c) => !c)}
                 aria-label={sidebarCollapsed ? 'Udvid sidebar' : 'Fold sidebar sammen'}
                 title={sidebarCollapsed ? 'Udvid' : 'Fold sammen'}
@@ -559,7 +559,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
               </button>
               {/* Luk-knap — kun mobil */}
               <button
-                className="lg:hidden text-slate-400 hover:text-white shrink-0"
+                className="lg:hidden text-slate-400 hover:text-white shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded-lg"
                 onClick={() => setSidebarOpen(false)}
                 aria-label="Luk navigationsmenu"
               >
@@ -596,7 +596,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                       }
                     }}
                     title={sidebarCollapsed ? label : undefined}
-                    className={`flex items-center rounded-xl text-sm font-medium transition-all ${sidebarCollapsed ? 'justify-center px-0 py-3' : 'gap-3 px-4 py-3'} ${
+                    className={`flex items-center rounded-xl text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${sidebarCollapsed ? 'justify-center px-0 py-3' : 'gap-3 px-4 py-3'} ${
                       locked
                         ? 'text-slate-600 cursor-not-allowed'
                         : active
@@ -653,7 +653,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
         <header className="bg-[#0f172a] border-b border-white/8 px-6 py-4 flex items-center gap-4 shrink-0">
           <div className="flex items-center gap-4">
             <button
-              className="lg:hidden text-slate-400 hover:text-white"
+              className="lg:hidden text-slate-400 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded-lg"
               onClick={() => setSidebarOpen(true)}
               aria-label="Åbn navigationsmenu"
             >
@@ -992,7 +992,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                 onClick={() => setLang('da')}
                 aria-label="Vælg dansk"
                 aria-pressed={lang === 'da'}
-                className={`px-2.5 py-1 rounded-full text-xs font-semibold transition-all ${
+                className={`px-2.5 py-1 rounded-full text-xs font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
                   lang === 'da' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
                 }`}
               >
@@ -1002,7 +1002,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                 onClick={() => setLang('en')}
                 aria-label="Select English"
                 aria-pressed={lang === 'en'}
-                className={`px-2.5 py-1 rounded-full text-xs font-semibold transition-all ${
+                className={`px-2.5 py-1 rounded-full text-xs font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
                   lang === 'en' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
                 }`}
               >
@@ -1014,7 +1014,9 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
             <div className="relative" ref={profileRef}>
               <button
                 onClick={() => setProfileOpen((o) => !o)}
-                className="w-9 h-9 bg-blue-600 hover:bg-blue-500 rounded-full flex items-center justify-center text-white text-sm font-bold transition-colors"
+                aria-label={userProfile ? `Brugermenu for ${userProfile.name}` : 'Brugermenu'}
+                aria-expanded={profileOpen}
+                className="w-9 h-9 bg-blue-600 hover:bg-blue-500 rounded-full flex items-center justify-center text-white text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0f172a]"
               >
                 {userProfile?.initials ?? '..'}
               </button>

@@ -102,14 +102,18 @@ async function fetchMatrikelBbox(
   w: number,
   s: number,
   e: number,
-  n: number
+  n: number,
+  abortSignal?: AbortSignal
 ): Promise<GeoJSON.FeatureCollection> {
   try {
     // polygon-parameteren accepterer WGS84 direkte — bbox+bboxsrid=4326 virker ikke
     // Server-side proxy — undgår direkte DAWA-kald (DAWA lukker 1. juli 2026)
     const url = `/api/matrikel/bbox?w=${w}&s=${s}&e=${e}&n=${n}`;
     console.log('[matrikel] henter:', url);
-    const res = await fetch(url, { signal: AbortSignal.timeout(25000) });
+    // Kombiner ekstern AbortSignal med timeout — den der affyres først vinder
+    const timeoutSignal = AbortSignal.timeout(25000);
+    const signal = abortSignal ? AbortSignal.any([abortSignal, timeoutSignal]) : timeoutSignal;
+    const res = await fetch(url, { signal });
     if (!res.ok) {
       console.warn('[matrikel] HTTP', res.status, await res.text());
       return EMPTY_FC;
@@ -150,12 +154,15 @@ async function fetchHusnumre(
   w: number,
   s: number,
   e: number,
-  n: number
+  n: number,
+  abortSignal?: AbortSignal
 ): Promise<GeoJSON.FeatureCollection> {
   try {
     // Server-side proxy — undgår direkte DAWA-kald (DAWA lukker 1. juli 2026)
+    const timeoutSignal = AbortSignal.timeout(10000);
+    const signal = abortSignal ? AbortSignal.any([abortSignal, timeoutSignal]) : timeoutSignal;
     const res = await fetch(`/api/adresse/husnumre-bbox?w=${w}&s=${s}&e=${e}&n=${n}`, {
-      signal: AbortSignal.timeout(10000),
+      signal,
     });
     if (!res.ok) return EMPTY_FC;
     const json = (await res.json()) as GeoJSON.FeatureCollection;
@@ -652,6 +659,19 @@ function KortInner() {
    */
   const [viewport, setViewport] = useState<ViewportState | null>(null);
 
+  /**
+   * Debounce-timer til viewport-opdateringer — forhindrer hurtige successive
+   * pan/zoom-events i at trigge parallelle data-fetches.
+   * 300 ms er tilstrækkelig til at samle slut-positionen efter en pan-sekvens.
+   */
+  const viewportDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /**
+   * AbortController til igangværende matrikel/husnr-fetch.
+   * Afbrydes ved ny viewport-opdatering for at frigøre netværksressourcer.
+   */
+  const fetchAbortRef = useRef<AbortController | null>(null);
+
   // Søgefelt
   const [søgeTekst, setSøgeTekst] = useState('');
   const [forslag, setForslag] = useState<DawaAutocompleteResult[]>([]);
@@ -663,6 +683,14 @@ function KortInner() {
   useEffect(() => {
     return () => {
       if (søgeTimer.current) clearTimeout(søgeTimer.current);
+    };
+  }, []);
+
+  /** Ryd viewport-debounce og afbryd evt. igangværende fetch ved unmount. */
+  useEffect(() => {
+    return () => {
+      if (viewportDebounceRef.current) clearTimeout(viewportDebounceRef.current);
+      if (fetchAbortRef.current) fetchAbortRef.current.abort();
     };
   }, []);
 
@@ -922,19 +950,39 @@ function KortInner() {
   /**
    * Læser viewport fra kortet og gemmer i state — bruges til at trigge data-fetch.
    * Kaldes fra onMoveEnd, onZoomEnd og handleMapLoad.
+   *
+   * Debounces 300 ms for at undgå at trigge et nyt fetch for hvert trin i en
+   * pan/zoom-sekvens — kun den endelige position fører til et API-kald.
+   * Afbryder desuden evt. igangværende fetch (AbortController) straks ved ny
+   * viewport-ændring, så netværksressourcer frigøres hurtigt.
    */
   const opdaterViewport = useCallback(() => {
     const map = mapRef.current?.getMap();
     if (!map) return;
     const b = map.getBounds();
     if (!b) return;
-    setViewport({
-      zoom: map.getZoom(),
-      w: b.getWest(),
-      s: b.getSouth(),
-      e: b.getEast(),
-      n: b.getNorth(),
-    });
+
+    // Afbryd igangværende fetch straks — ny position er undervejs
+    if (fetchAbortRef.current) {
+      fetchAbortRef.current.abort();
+      fetchAbortRef.current = null;
+    }
+
+    // Debounce: vent 300 ms på at pan/zoom er afsluttet
+    if (viewportDebounceRef.current) clearTimeout(viewportDebounceRef.current);
+    viewportDebounceRef.current = setTimeout(() => {
+      const innerMap = mapRef.current?.getMap();
+      if (!innerMap) return;
+      const innerB = innerMap.getBounds();
+      if (!innerB) return;
+      setViewport({
+        zoom: innerMap.getZoom(),
+        w: innerB.getWest(),
+        s: innerB.getSouth(),
+        e: innerB.getEast(),
+        n: innerB.getNorth(),
+      });
+    }, 300);
   }, []);
 
   // ── Map load ────────────────────────────────────────────────────────────────
@@ -982,6 +1030,7 @@ function KortInner() {
   /**
    * Henter matrikel- og husnr-data når viewport ændres.
    * Rydder automatisk op (cancelled) hvis viewport ændres igen under fetch.
+   * Bruger AbortController til at afbryde igangværende HTTP-kald ved ny viewport.
    */
   useEffect(() => {
     if (!viewport) return;
@@ -993,12 +1042,17 @@ function KortInner() {
       return;
     }
 
+    // Afbryd evt. forrige in-flight fetch og opret ny controller
+    if (fetchAbortRef.current) fetchAbortRef.current.abort();
+    const abortController = new AbortController();
+    fetchAbortRef.current = abortController;
+
     let cancelled = false;
     const { w, s, e, n, zoom: z } = viewport;
 
     const hent = async () => {
       setHenterMatrikel(true);
-      const matrikel = await fetchMatrikelBbox(w, s, e, n);
+      const matrikel = await fetchMatrikelBbox(w, s, e, n, abortController.signal);
       if (!cancelled) {
         matrikelDataRef.current = matrikel;
         setHenterMatrikel(false);
@@ -1017,7 +1071,7 @@ function KortInner() {
 
       if (z >= MIN_ZOOM_HUSNR) {
         if (!cancelled) setHenterHusnr(true);
-        const husnr = await fetchHusnumre(w, s, e, n);
+        const husnr = await fetchHusnumre(w, s, e, n, abortController.signal);
         if (!cancelled) {
           husnrDataRef.current = husnr;
           setHenterHusnr(false);
@@ -1041,6 +1095,8 @@ function KortInner() {
     hent();
     return () => {
       cancelled = true;
+      abortController.abort();
+      fetchAbortRef.current = null;
     };
   }, [viewport, synkLagData, setupLag]);
 

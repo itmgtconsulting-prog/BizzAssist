@@ -51,14 +51,14 @@ export async function GET(request: NextRequest) {
       .limit(MAX_RECENTS[entityType] ?? 6);
 
     if (error) {
-      console.error('[recents GET]', error);
-      return NextResponse.json({ recents: [] });
+      console.error('[recents GET] DB error:', error);
+      return NextResponse.json({ error: 'Databasefejl ved hentning af seneste' }, { status: 500 });
     }
 
     return NextResponse.json({ recents: data ?? [] });
   } catch (err) {
-    console.error('[recents GET]', err);
-    return NextResponse.json({ recents: [] });
+    console.error('[recents GET] Unexpected error:', err);
+    return NextResponse.json({ error: 'Serverfejl' }, { status: 500 });
   }
 }
 

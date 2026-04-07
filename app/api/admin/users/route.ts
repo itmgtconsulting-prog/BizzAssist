@@ -276,6 +276,10 @@ export async function DELETE(req: NextRequest): Promise<NextResponse> {
           await db.from('recent_entities').delete().eq('user_id', targetUser.id);
           await db.from('saved_entities').delete().eq('user_id', targetUser.id);
           await db.from('notifications').delete().eq('user_id', targetUser.id);
+          // BIZZ-134: also erase search history and activity entries for this user.
+          // GDPR Art. 17 requires complete erasure of all personal data on deletion.
+          await db.from('recent_searches').delete().eq('user_id', targetUser.id);
+          await db.from('activity_log').delete().eq('user_id', targetUser.id);
         }
 
         // Mark the tenant as closed for 30-day retention enforcement.

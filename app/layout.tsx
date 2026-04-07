@@ -32,26 +32,28 @@ export const metadata: Metadata = {
   },
   // Hreflang alternates — appen er fuldt tosproget (DA/EN) på samme URL-struktur
   alternates: {
-    canonical: 'https://bizzassist.dk',
+    canonical: process.env.NEXT_PUBLIC_APP_URL ?? 'https://bizzassist.dk',
     languages: {
-      da: 'https://bizzassist.dk',
-      en: 'https://bizzassist.dk',
-      'x-default': 'https://bizzassist.dk',
+      da: process.env.NEXT_PUBLIC_APP_URL ?? 'https://bizzassist.dk',
+      en: `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://bizzassist.dk'}/en`,
+      'x-default': process.env.NEXT_PUBLIC_APP_URL ?? 'https://bizzassist.dk',
     },
   },
   openGraph: {
     title: 'BizzAssist',
     description: 'Dansk erhvervs- og ejendomsintelligens',
     type: 'website',
-    // TODO: Erstat /images/og-image.svg med en rigtig 1200×630 PNG før launch
-    images: [{ url: '/images/og-image.svg', width: 1200, height: 630, alt: 'BizzAssist' }],
+    siteName: 'BizzAssist',
+    locale: 'da_DK',
+    // TODO: Erstat /icons/og-image.png med en rigtig 1200×630 PNG før launch
+    images: [{ url: '/icons/og-image.png', width: 1200, height: 630, alt: 'BizzAssist' }],
   },
   twitter: {
     card: 'summary_large_image',
     title: 'BizzAssist',
     description: 'Dansk erhvervs- og ejendomsintelligens',
-    // TODO: Erstat /images/og-image.svg med en rigtig 1200×630 PNG før launch
-    images: ['/images/og-image.svg'],
+    // TODO: Erstat /icons/og-image.png med en rigtig 1200×630 PNG før launch
+    images: ['/icons/og-image.png'],
   },
   // Bloker alle sider fra indeksering på test/preview-miljøer
   ...(!isProduction && {

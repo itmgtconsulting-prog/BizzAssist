@@ -39,11 +39,13 @@ import {
   X,
   Navigation,
   Layers,
+  Building2,
 } from 'lucide-react';
 
 import { useRouter } from 'next/navigation';
 import { type DawaAutocompleteResult, type DawaAdresse } from '@/app/lib/dawa';
 import { useLanguage } from '@/app/context/LanguageContext';
+import { type VirksomhedMarkør, type CVRBboxResponse } from '@/app/api/cvr/bbox/route';
 
 // ─── Konstanter ───────────────────────────────────────────────────────────────
 
@@ -204,6 +206,32 @@ async function fetchBBRType(w: number, s: number, e: number, n: number): Promise
   }
 }
 
+/**
+ * Henter aktive virksomheder med kendte koordinater inden for `radius` km
+ * fra et centralt punkt via /api/cvr/bbox.
+ * Returnerer tomt array ved fejl eller manglende CVR-adgang.
+ *
+ * @param lat    - Breddegrad for søgecentrum (WGS84)
+ * @param lng    - Længdegrad for søgecentrum (WGS84)
+ * @param radius - Søgeradius i kilometer
+ * @returns Array af VirksomhedMarkør
+ */
+async function fetchVirksomheder(
+  lat: number,
+  lng: number,
+  radius: number
+): Promise<VirksomhedMarkør[]> {
+  try {
+    const url = `/api/cvr/bbox?lat=${lat}&lng=${lng}&radius=${radius}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    if (!res.ok) return [];
+    const data = (await res.json()) as CVRBboxResponse;
+    return data.virksomheder ?? [];
+  } catch {
+    return [];
+  }
+}
+
 // TODO: Migrate reverseGeocode to DAR when DAR supports reverse geocoding (before July 2026)
 /**
  * Reverse geocoder — finder nærmeste DAWA adresse for koordinat.
@@ -243,6 +271,7 @@ type LagNøgle =
   | 'matrikel'
   | 'husnumre'
   | 'bbr_type'
+  | 'virksomheder'
   | 'lokalplaner'
   | 'kommuneplan'
   | 'zonekort'
@@ -275,6 +304,7 @@ const LAG_START: LagSynlighed = {
   matrikel: true,
   husnumre: true,
   bbr_type: true,
+  virksomheder: false,
   lokalplaner: false,
   kommuneplan: false,
   zonekort: false,
@@ -429,6 +459,7 @@ const LAG_GRUPPER: Array<{
       { id: 'matrikel', navn: 'Matrikelgrænser' },
       { id: 'husnumre', navn: 'Husnumre' },
       { id: 'bbr_type', navn: 'Ejendomstype (EL/AB) zoom 15+' },
+      { id: 'virksomheder', navn: 'Virksomheder (CVR)' },
     ],
   },
   {
@@ -646,6 +677,10 @@ function KortInner() {
     cadastre: da ? 'Ejerlav' : 'Cadastre',
     landArea: da ? 'Grundareal' : 'Land area',
     propertyData: da ? 'Ejendomsdata' : 'Property data',
+    companies: da ? 'Virksomheder' : 'Companies',
+    openCompany: da ? 'Åbn virksomhed' : 'Open company',
+    cvr: 'CVR',
+    industry: da ? 'Branche' : 'Industry',
   };
 
   const [kortStyle, setKortStyle] = useState<KortStyle>('dark');
@@ -718,6 +753,14 @@ function KortInner() {
   const [visLag, setVisLag] = useState<LagSynlighed>(LAG_START);
   /** BBR ejendomstype-punkter (AB/AL) — hentes ved bbr_type toggle + zoom ≥ 15 */
   const [bbrTypePunkter, setBbrTypePunkter] = useState<BBRTypePunkt[]>([]);
+
+  /** CVR virksomheds-markører — hentes når virksomheder-laget er aktivt */
+  const [virksomhedsMarkører, setVirksomhedsMarkører] = useState<VirksomhedMarkør[]>([]);
+  /** Henter-tilstand for virksomhedsmarkører — vises på toggle-knappen */
+  const [henterVirksomheder, setHenterVirksomheder] = useState(false);
+  /** Valgt virksomhed-popup */
+  const [virksomhedPopup, setVirksomhedPopup] = useState<VirksomhedMarkør | null>(null);
+
   const visLagRef = useRef<LagSynlighed>(LAG_START);
   const lagPanelRef = useRef<HTMLDivElement>(null);
 
@@ -1119,6 +1162,42 @@ function KortInner() {
     };
   }, [viewport, visLag.bbr_type]);
 
+  /**
+   * Henter CVR virksomheds-markører når virksomheder-laget er aktivt.
+   * Radius beregnes ud fra zoom-niveau — jo mere zoomet ud, jo større radius.
+   * Rydder listen når laget slås fra, og re-henter ved viewport-ændring.
+   */
+  useEffect(() => {
+    if (!viewport || !visLag.virksomheder) {
+      if (!visLag.virksomheder) {
+        setVirksomhedsMarkører([]);
+        setVirksomhedPopup(null);
+      }
+      return;
+    }
+
+    let cancelled = false;
+
+    // Beregn radius ud fra zoom: zoom 10 → ~15 km, zoom 14 → ~2 km
+    const radiusKm = Math.max(1, Math.min(15, Math.pow(2, 14 - viewport.zoom) * 2));
+    // Kortcentrum
+    const centerLat = (viewport.s + viewport.n) / 2;
+    const centerLng = (viewport.w + viewport.e) / 2;
+
+    setHenterVirksomheder(true);
+    fetchVirksomheder(centerLat, centerLng, radiusKm).then((data) => {
+      if (!cancelled) {
+        setVirksomhedsMarkører(data);
+        setHenterVirksomheder(false);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      setHenterVirksomheder(false);
+    };
+  }, [viewport, visLag.virksomheder]);
+
   // ── Hover-data → Mapbox source (direkte) ────────────────────────────────────
 
   /**
@@ -1178,39 +1257,42 @@ function KortInner() {
    * darAutocomplete returnerer x=0, y=0 — koordinater hentes via separat opslag
    * mod /api/adresse/lookup når de mangler i autocomplete-svaret.
    */
-  const vælgForslag = useCallback(async (r: DawaAutocompleteResult) => {
-    if (r.type === 'vejnavn') {
+  const vælgForslag = useCallback(
+    async (r: DawaAutocompleteResult) => {
+      if (r.type === 'vejnavn') {
+        setSøgeTekst(r.tekst);
+        setForslag([]);
+        searchRef.current?.focus();
+        return;
+      }
       setSøgeTekst(r.tekst);
       setForslag([]);
-      searchRef.current?.focus();
-      return;
-    }
-    setSøgeTekst(r.tekst);
-    setForslag([]);
-    setMarkeret(-1);
-    let lng = r.adresse.x;
-    let lat = r.adresse.y;
-    // darAutocomplete returnerer x=0, y=0 — hent koordinater via separat opslag
-    if (!lng || !lat) {
-      try {
-        const res = await fetch(`/api/adresse/lookup?id=${encodeURIComponent(r.adresse.id)}`);
-        if (res.ok) {
-          const data: { x?: number; y?: number } | null = await res.json();
-          if (data?.x && data?.y) {
-            lng = data.x;
-            lat = data.y;
+      setMarkeret(-1);
+      let lng = r.adresse.x;
+      let lat = r.adresse.y;
+      // darAutocomplete returnerer x=0, y=0 — hent koordinater via separat opslag
+      if (!lng || !lat) {
+        try {
+          const res = await fetch(`/api/adresse/lookup?id=${encodeURIComponent(r.adresse.id)}`);
+          if (res.ok) {
+            const data: { x?: number; y?: number } | null = await res.json();
+            if (data?.x && data?.y) {
+              lng = data.x;
+              lat = data.y;
+            }
           }
+        } catch {
+          /* ignorer netværksfejl */
         }
-      } catch {
-        /* ignorer netværksfejl */
       }
-    }
-    if (lng && lat) {
-      mapRef.current?.flyTo({ center: [lng, lat], zoom: 17, duration: 1000 });
-      setSøgtMarkør({ lng, lat });
-      setPopup(null);
-    }
-  }, []);
+      if (lng && lat) {
+        mapRef.current?.flyTo({ center: [lng, lat], zoom: 17, duration: 1000 });
+        setSøgtMarkør({ lng, lat });
+        setPopup(null);
+      }
+    },
+    [setPopup]
+  );
 
   const handleTastatur = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -1260,38 +1342,42 @@ function KortInner() {
    * Viser popup med matrikel-info ved klik.
    * Reverse geocoder adressen asynkront.
    */
-  const handleKlik = useCallback(async (e: MapMouseEvent) => {
-    const map = mapRef.current?.getMap();
-    if (!map) return;
-    const features = map.queryRenderedFeatures(e.point, { layers: ['matrikel-fill'] });
-    if (features.length === 0) {
-      setPopup(null);
-      setSøgtMarkør(null);
-      return;
-    }
+  const handleKlik = useCallback(
+    async (e: MapMouseEvent) => {
+      const map = mapRef.current?.getMap();
+      if (!map) return;
+      const features = map.queryRenderedFeatures(e.point, { layers: ['matrikel-fill'] });
+      if (features.length === 0) {
+        setPopup(null);
+        setSøgtMarkør(null);
+        return;
+      }
 
-    const props = features[0].properties as Record<string, unknown>;
-    const matrikelnr = typeof props.matrikelnr === 'string' ? props.matrikelnr : '?';
-    const ejerlavNavn = typeof props.ejerlavsnavn === 'string' ? props.ejerlavsnavn : '';
-    const grundareal = typeof props.registreretareal === 'number' ? props.registreretareal : null;
-    const zone = typeof props.zone === 'string' ? props.zone : null;
-    const titel = ejerlavNavn ? `${ejerlavNavn}, ${matrikelnr}` : matrikelnr;
+      const props = features[0].properties as Record<string, unknown>;
+      const matrikelnr = typeof props.matrikelnr === 'string' ? props.matrikelnr : '?';
+      const ejerlavNavn = typeof props.ejerlavsnavn === 'string' ? props.ejerlavsnavn : '';
+      const grundareal = typeof props.registreretareal === 'number' ? props.registreretareal : null;
+      const zone = typeof props.zone === 'string' ? props.zone : null;
+      const titel = ejerlavNavn ? `${ejerlavNavn}, ${matrikelnr}` : matrikelnr;
 
-    setPopup({
-      x: e.point.x,
-      y: e.point.y,
-      titel,
-      matrikelnr,
-      grundareal,
-      zone,
-      adresse: null,
-      dawaId: null,
-    });
-    setHenterAdresse(true);
-    const geo = await reverseGeocode(e.lngLat.lng, e.lngLat.lat);
-    setHenterAdresse(false);
-    if (geo) setPopup((prev) => (prev ? { ...prev, adresse: geo.adresse, dawaId: geo.id } : null));
-  }, []);
+      setPopup({
+        x: e.point.x,
+        y: e.point.y,
+        titel,
+        matrikelnr,
+        grundareal,
+        zone,
+        adresse: null,
+        dawaId: null,
+      });
+      setHenterAdresse(true);
+      const geo = await reverseGeocode(e.lngLat.lng, e.lngLat.lat);
+      setHenterAdresse(false);
+      if (geo)
+        setPopup((prev) => (prev ? { ...prev, adresse: geo.adresse, dawaId: geo.id } : null));
+    },
+    [setPopup]
+  );
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
@@ -1357,6 +1443,28 @@ function KortInner() {
               </Marker>
             );
           })}
+
+        {/* Virksomheds-markører — blå cirkler, klik åbner popup */}
+        {visLag.virksomheder &&
+          virksomhedsMarkører.map((v) => (
+            <Marker
+              key={v.cvr}
+              longitude={v.lng}
+              latitude={v.lat}
+              anchor="center"
+              onClick={(e) => {
+                // Forhindrer map-klik-event i at propagere (lukker matrikel-popup)
+                e.originalEvent.stopPropagation();
+                setVirksomhedPopup((prev) => (prev?.cvr === v.cvr ? null : v));
+                setPopup(null);
+              }}
+            >
+              <button
+                aria-label={`Virksomhed: ${v.navn}`}
+                className="w-4 h-4 rounded-full bg-blue-600 border-2 border-white shadow-lg ring-2 ring-blue-600/40 hover:scale-125 transition-transform cursor-pointer"
+              />
+            </Marker>
+          ))}
       </Map>
 
       {/* ── Søgebar ───────────────────────────────────────────────────────── */}
@@ -1606,6 +1714,21 @@ function KortInner() {
                 : `${mt.houseNumbersShort} zoom ${MIN_ZOOM_HUSNR}+`}
           </span>
         </div>
+        {/* Virksomheds-badge — vises kun når laget er aktivt */}
+        {visLag.virksomheder && (
+          <div className="flex items-center gap-1.5 bg-[#0f172a]/90 border border-blue-500/30 rounded-lg px-2.5 py-1.5 shadow">
+            {henterVirksomheder ? (
+              <Loader2 size={11} className="text-blue-400 animate-spin" />
+            ) : (
+              <Building2 size={11} className="text-blue-400" />
+            )}
+            <span className="text-xs text-slate-300">
+              {henterVirksomheder
+                ? mt.fetching
+                : `${virksomhedsMarkører.length} ${mt.companies.toLowerCase()}`}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* ── Ejendoms-panel (fast bund-placering) ─────────────────────────── */}
@@ -1682,6 +1805,62 @@ function KortInner() {
                 className="w-full flex items-center justify-between bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-xl px-5 py-3 transition-colors group"
               >
                 <span>{mt.propertyData}</span>
+                <ArrowRight
+                  size={16}
+                  className="group-hover:translate-x-0.5 transition-transform"
+                />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Virksomheds-popup (fast bund-placering) ─────────────────────────── */}
+      {virksomhedPopup && (
+        <div className="absolute bottom-16 left-1/2 -translate-x-1/2 z-30 w-full max-w-md px-4 pointer-events-auto">
+          <div className="bg-[#0d1625]/98 border border-blue-500/20 rounded-2xl shadow-2xl backdrop-blur-sm overflow-hidden">
+            {/* Header */}
+            <div className="flex items-start justify-between px-5 pt-4 pb-3">
+              <div className="flex items-start gap-3 flex-1 min-w-0 pr-3">
+                <div className="w-9 h-9 rounded-xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center shrink-0 mt-0.5">
+                  <Building2 size={16} className="text-blue-400" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-white text-base font-semibold leading-snug truncate">
+                    {virksomhedPopup.navn}
+                  </p>
+                  {virksomhedPopup.branche && (
+                    <p className="text-slate-400 text-xs mt-0.5 truncate">
+                      {virksomhedPopup.branche}
+                    </p>
+                  )}
+                </div>
+              </div>
+              <button
+                onClick={() => setVirksomhedPopup(null)}
+                className="text-slate-500 hover:text-slate-300 transition-colors shrink-0 mt-0.5 p-1 rounded-lg hover:bg-white/5"
+              >
+                <X size={15} />
+              </button>
+            </div>
+
+            {/* Detaljer — CVR-nummer */}
+            <div className="px-5 pb-4 border-t border-white/5 pt-3">
+              <div>
+                <p className="text-slate-500 text-[10px] uppercase tracking-wider mb-1">{mt.cvr}</p>
+                <p className="text-white text-sm font-semibold tabular-nums">
+                  {virksomhedPopup.cvr.toString().padStart(8, '0')}
+                </p>
+              </div>
+            </div>
+
+            {/* CTA — åbn virksomhedsside */}
+            <div className="px-4 pb-4">
+              <button
+                onClick={() => router.push(`/dashboard/companies/${virksomhedPopup.cvr}`)}
+                className="w-full flex items-center justify-between bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-xl px-5 py-3 transition-colors group"
+              >
+                <span>{mt.openCompany}</span>
                 <ArrowRight
                   size={16}
                   className="group-hover:translate-x-0.5 transition-transform"

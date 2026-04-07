@@ -167,6 +167,24 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
       sub: UserSubscription | null = null,
       admin = false
     ) => {
+      // ── Onboarding gate ──────────────────────────────────────────────────────
+      // Before granting any dashboard access, check whether the user has completed
+      // the onboarding wizard. Admins bypass this check so they can always access
+      // the dashboard (they were provisioned without going through onboarding).
+      if (!admin && status !== 'cancelled') {
+        try {
+          const {
+            data: { user: currentUser },
+          } = await supabase.auth.getUser();
+          if (currentUser && currentUser.user_metadata?.onboarding_complete !== true) {
+            window.location.href = '/onboarding';
+            return;
+          }
+        } catch {
+          // If check fails, let user through — onboarding page guards itself
+        }
+      }
+
       if (status === 'ok') {
         setAccessGranted(true);
         setHasActiveSub(true);

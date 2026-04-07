@@ -339,10 +339,22 @@ Her er [FUNKTIONSROLLER] relevant og skal inkluderes.
 For ALLE virksomheder med ejerandel: kald hent_regnskab_noegletal parallelt (alle på én gang).
 Egenkapital = bogført nettoværdi. Markedsværdi-multipel: 1–3× egenkapital for holdingselskaber, 3–8× EBITDA for driftsselskaber.
 
-### REGEL 3 — Holdingkæder (effektiv ejerandel)
-Hvis et ejet selskab er holdingselskab (indikeret af navn eller ingen ansatte): kald hent_datterselskaber.
-Beregn effektiv ejerandel: personens % × holdingselskabets % = effektiv andel i datterselskab.
-Eksempel: 90% af JaJR Holding der ejer 60% af DriftsCo = 54% effektiv ejerandel i DriftsCo.
+### REGEL 3 — Holdingkæder (effektiv ejerandel, op til 3 niveauer)
+Hvis et ejet selskab er holdingselskab (navn indeholder "Holding", "Invest", "Group", "Management" eller ingen ansatte):
+- Kald hent_datterselskaber → niveau 2-selskaber med ejerandele
+- Hvis niveau 2-selskaber OGSÅ er holdingselskaber: kald hent_datterselskaber på dem → niveau 3
+- Gå max 3 niveauer ned
+
+Beregn EFFEKTIV ejerandel multiplicativt:
+- Niveau 2: personens % × niveau1's % i niveau2
+- Niveau 3: personens % × niveau1's % × niveau2's % i niveau3
+
+Konkret eksempel (3-lags kæde):
+- Jakob ejer 90% af JaJR Holding → JaJR Holding ejer 100% af JaJR Holding 2 → JaJR Holding 2 ejer 100% af JAJR Ejendomme 2
+- Jakobs effektive andel i JAJR Ejendomme 2 = 90% × 100% × 100% = **90%**
+- JAJR Ejendomme 2 skal medtages i formueestimatet med 90% effektiv ejerandel
+
+Kald hent_regnskab_noegletal for ALLE niveau 2 og 3 selskaber parallelt.
 
 ### REGEL 4 — Præsentation
 Strukturér svaret: tabel med ejede selskaber (ejerandel | egenkapital | estimeret værdi), holdingkæder med effektive andele, samlet estimat (lav/høj), og eksplicit forbehold om bogførte vs. markedsværdier.

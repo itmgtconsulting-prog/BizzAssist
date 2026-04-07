@@ -16,6 +16,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import * as Sentry from '@sentry/nextjs';
+import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -177,6 +178,9 @@ async function queryEJF<T>(
 // ─── Route handler ───────────────────────────────────────────────────────────
 
 export async function GET(request: NextRequest): Promise<NextResponse<SalgshistorikResponse>> {
+  const limited = await checkRateLimit(request, rateLimit);
+  if (limited) return limited as NextResponse<SalgshistorikResponse>;
+
   const clientId = process.env.DATAFORDELER_OAUTH_CLIENT_ID;
   const clientSecret = process.env.DATAFORDELER_OAUTH_CLIENT_SECRET;
 

@@ -20,6 +20,7 @@
  * @module api/tracked
  */
 import { NextRequest, NextResponse } from 'next/server';
+import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { getTenantContext } from '@/lib/db/tenant';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
@@ -144,7 +145,10 @@ async function resolveTenantId(): Promise<{ tenantId: string; userId: string } |
  *
  * Returnerer alle fulgte ejendomme (saved_entities med is_monitored=true).
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const limited = await checkRateLimit(request, rateLimit);
+  if (limited) return limited;
+
   const auth = await resolveTenantId();
   if (!auth) {
     return NextResponse.json({ tracked: [] });
@@ -172,6 +176,9 @@ export async function GET() {
  * Body: { entity_id, label, entity_data? }
  */
 export async function POST(request: NextRequest) {
+  const limited = await checkRateLimit(request, rateLimit);
+  if (limited) return limited;
+
   const auth = await resolveTenantId();
   if (!auth) {
     return NextResponse.json({ error: 'Ikke logget ind' }, { status: 401 });
@@ -217,6 +224,9 @@ export async function POST(request: NextRequest) {
  * Stop følgning — sætter is_monitored=false (beholder saved_entity).
  */
 export async function DELETE(request: NextRequest) {
+  const limited = await checkRateLimit(request, rateLimit);
+  if (limited) return limited;
+
   const auth = await resolveTenantId();
   if (!auth) {
     return NextResponse.json({ error: 'Ikke logget ind' }, { status: 401 });

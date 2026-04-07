@@ -18,6 +18,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { checkRateLimit, heavyRateLimit } from '@/app/lib/rateLimit';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -248,6 +249,9 @@ function buildBfeQuery(bfeNummer: string): Record<string, unknown> {
 // ─── Route handler ───────────────────────────────────────────────────────────
 
 export async function GET(request: NextRequest): Promise<NextResponse<ForelobigVurderingResponse>> {
+  const limited = await checkRateLimit(request, heavyRateLimit);
+  if (limited) return limited as NextResponse<ForelobigVurderingResponse>;
+
   const { searchParams } = request.nextUrl;
 
   const adresseId = searchParams.get('adresseId');

@@ -5,9 +5,10 @@
  * in-memory token bucket implementation so limits are shared across all
  * serverless function instances (Vercel edge workers included).
  *
- * Three limiters are exported:
- *   - rateLimit     — general API routes: 60 req/min
- *   - aiRateLimit   — Claude AI routes: 10 req/min
+ * Four limiters are exported:
+ *   - rateLimit      — general API routes: 60 req/min
+ *   - heavyRateLimit — heavy data routes (VUR, EJF, Tinglysning, PDF): 30 req/min
+ *   - aiRateLimit    — Claude AI routes: 10 req/min
  *   - braveRateLimit — Brave Search routes: 500 req/day
  *
  * Usage:
@@ -34,6 +35,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 let _redis: Redis | null = null;
 let _rateLimit: Ratelimit | null = null;
+let _heavyRateLimit: Ratelimit | null = null;
 let _aiRateLimit: Ratelimit | null = null;
 let _braveRateLimit: Ratelimit | null = null;
 
@@ -78,6 +80,21 @@ export const aiRateLimit: Ratelimit = new Proxy({} as Ratelimit, {
       });
     }
     return (_aiRateLimit as unknown as Record<string | symbol, unknown>)[prop];
+  },
+});
+
+/** Heavy data routes (VUR, EJF, Tinglysning, PDF): 30 req/min per IP — costly upstream calls */
+export const heavyRateLimit: Ratelimit = new Proxy({} as Ratelimit, {
+  get(_target, prop) {
+    if (!_heavyRateLimit) {
+      _heavyRateLimit = new Ratelimit({
+        redis: getRedis(),
+        limiter: Ratelimit.slidingWindow(30, '1 m'),
+        analytics: true,
+        prefix: 'ba:heavy-ratelimit',
+      });
+    }
+    return (_heavyRateLimit as unknown as Record<string | symbol, unknown>)[prop];
   },
 });
 

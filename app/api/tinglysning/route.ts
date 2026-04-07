@@ -14,6 +14,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import * as Sentry from '@sentry/nextjs';
+import { checkRateLimit, heavyRateLimit } from '@/app/lib/rateLimit';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -147,6 +148,9 @@ function parseEjdsummariskXml(xml: string): Partial<TinglysningData> {
 // ─── Route Handler ──────────────────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
+  const limited = await checkRateLimit(req, heavyRateLimit);
+  if (limited) return limited;
+
   const bfe = req.nextUrl.searchParams.get('bfe');
 
   if (!bfe || !/^\d+$/.test(bfe)) {

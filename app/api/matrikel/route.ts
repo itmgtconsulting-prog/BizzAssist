@@ -18,6 +18,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -302,6 +303,9 @@ function mapEjendom(raw: RawSamletFastEjendom): MatrikelEjendom {
  * @returns MatrikelResponse med matrikeldata eller fejlbesked
  */
 export async function GET(request: NextRequest): Promise<NextResponse<MatrikelResponse>> {
+  const limited = await checkRateLimit(request, rateLimit);
+  if (limited) return limited as NextResponse<MatrikelResponse>;
+
   if (!DF_API_KEY) {
     return NextResponse.json(
       { matrikel: null, fejl: 'DATAFORDELER_API_KEY er ikke konfigureret' },

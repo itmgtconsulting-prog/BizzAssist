@@ -19,6 +19,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import * as Sentry from '@sentry/nextjs';
+import { checkRateLimit, heavyRateLimit } from '@/app/lib/rateLimit';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -518,6 +519,9 @@ async function fetchUdvidedeData(
 // ─── Route handler ────────────────────────────────────────────────────────────
 
 export async function GET(request: NextRequest): Promise<NextResponse<VurderingResponse>> {
+  const limited = await checkRateLimit(request, heavyRateLimit);
+  if (limited) return limited as NextResponse<VurderingResponse>;
+
   const emptyExtended = {
     fordeling: [] as FordelingData[],
     grundvaerdispec: [] as GrundvaerdispecifikationData[],

@@ -81,7 +81,8 @@ export async function GET(_req: NextRequest) {
   const { data, error } = await serviceClient.from('ai_settings').select('key, value');
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error('[admin/ai-settings GET] DB error:', error.message);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 
   // Flad ud til { key: value } objekt for nem brug i frontend
@@ -155,7 +156,8 @@ export async function PUT(req: NextRequest) {
     .upsert({ key, value }, { onConflict: 'key' });
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error('[admin/ai-settings PUT] DB error:', error.message);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 
   return NextResponse.json({ success: true });

@@ -93,7 +93,8 @@ export async function GET(): Promise<NextResponse> {
     };
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      console.error('[admin/plans GET] DB error:', error.message);
+      return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
     }
 
     const dbMap = new Map<string, PlanConfigRow>();
@@ -183,14 +184,20 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           updated_by: user.id,
         };
         const { error } = await admin.from('plan_configs').insert(row as never);
-        if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+        if (error) {
+          console.error('[admin/plans create] DB error:', error.message);
+          return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+        }
         return NextResponse.json({ ok: true });
       }
 
       case 'delete': {
         if (!planId) return NextResponse.json({ error: 'planId required' }, { status: 400 });
         const { error } = await admin.from('plan_configs').delete().eq('plan_id', planId);
-        if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+        if (error) {
+          console.error('[admin/plans delete] DB error:', error.message);
+          return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+        }
         return NextResponse.json({ ok: true });
       }
 

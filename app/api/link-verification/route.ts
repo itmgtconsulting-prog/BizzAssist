@@ -93,7 +93,8 @@ export async function GET(req: NextRequest) {
     .eq('cvr', cvr);
 
   if (countsErr) {
-    return NextResponse.json({ error: countsErr.message }, { status: 500 });
+    console.error('[link-verification GET] counts error:', countsErr.message);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 
   // Hent brugerens egne verdicts (kun hvis autentificeret)
@@ -174,7 +175,8 @@ export async function POST(req: NextRequest) {
   );
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error('[link-verification POST] upsert error:', error.message);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 
   return NextResponse.json({ success: true });
@@ -213,7 +215,8 @@ export async function DELETE(req: NextRequest) {
     .eq('link_url', link_url);
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error('[link-verification DELETE] delete error:', error.message);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 
   return NextResponse.json({ success: true });

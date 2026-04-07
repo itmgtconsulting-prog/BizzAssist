@@ -16,6 +16,19 @@ import {
 } from 'lucide-react';
 import type { BugReportPayload } from '@/app/api/report-bug/route';
 
+/**
+ * Returns true when running on a mobile device (iOS or Android).
+ * Used to switch screenshot capture strategy: desktop browsers support
+ * `getDisplayMedia`, but iOS Safari does not implement it at all.
+ * Must only be called client-side (after mount).
+ *
+ * @returns Whether the current UA is a mobile device
+ */
+function erMobilEnhed(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+}
+
 interface Props {
   open: boolean;
   onClose: () => void;
@@ -48,6 +61,7 @@ const text = {
     screenshotLabel: 'Skærmbillede (valgfrit)',
     captureBtn: 'Tag skærmbillede',
     uploadBtn: 'Upload billede',
+    cameraBtn: 'Tag billede med kamera',
     removeScreenshot: 'Fjern',
     submit: 'Send rapport',
     sending: 'Sender...',
@@ -81,6 +95,7 @@ const text = {
     screenshotLabel: 'Screenshot (optional)',
     captureBtn: 'Capture screen',
     uploadBtn: 'Upload image',
+    cameraBtn: 'Take photo with camera',
     removeScreenshot: 'Remove',
     submit: 'Send report',
     sending: 'Sending...',
@@ -112,6 +127,13 @@ export default function BugReportModal({ open, onClose, lang = 'da', currentPage
   const [status, setStatus] = useState<'idle' | 'sending' | 'success' | 'error'>('idle');
   const [errorMsg, setErrorMsg] = useState('');
   const [issueKey, setIssueKey] = useState('');
+  /**
+   * True after mount when the UA identifies as a mobile device.
+   * iOS Safari does not support `getDisplayMedia`, so we replace the
+   * "Tag skærmbillede" button with a camera-capture file input (BIZZ-77).
+   * Initialises false (SSR-safe) and flips once on the client.
+   */
+  const [isMobile, setIsMobile] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
 
@@ -146,6 +168,16 @@ export default function BugReportModal({ open, onClose, lang = 'da', currentPage
     first?.focus();
     return () => document.removeEventListener('keydown', trap);
   }, [open]);
+
+  /**
+   * Detects mobile UA once after mount.
+   * `getDisplayMedia` is unavailable on iOS Safari (BIZZ-77), so mobile devices
+   * get a camera-capture file input instead of the screen-capture button.
+   * Runs only once — UA never changes during a session.
+   */
+  useEffect(() => {
+    setIsMobile(erMobilEnhed());
+  }, []);
 
   if (!open) return null;
 
@@ -404,13 +436,37 @@ export default function BugReportModal({ open, onClose, lang = 'da', currentPage
               <label className="block text-sm font-medium text-slate-700 mb-1.5">
                 {t.screenshotLabel}
               </label>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={handleFileUpload}
-              />
+              {/*
+               * BIZZ-77: iOS Safari does not implement getDisplayMedia, so the
+               * screen-capture button is replaced on mobile with a camera-capture
+               * file input (`capture="environment"`), which opens the native camera
+               * or photo-picker directly when tapped.
+               * Desktop retains both buttons: screen-capture + file upload.
+               */}
+              {isMobile ? (
+                /*
+                 * Mobile path: single hidden file input with `capture="environment"`.
+                 * `accept="image/*"` combined with `capture` makes iOS open the
+                 * camera app (or the Files picker on iPadOS) instead of the
+                 * generic file browser, giving a better UX than a plain upload.
+                 */
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  className="hidden"
+                  onChange={handleFileUpload}
+                />
+              ) : (
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleFileUpload}
+                />
+              )}
               {screenshot ? (
                 <div className="relative">
                   <img
@@ -427,7 +483,18 @@ export default function BugReportModal({ open, onClose, lang = 'da', currentPage
                     <Trash2 size={14} />
                   </button>
                 </div>
+              ) : isMobile ? (
+                /* Mobile: single full-width camera button */
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="w-full flex items-center justify-center gap-2 border border-slate-200 rounded-xl py-2.5 text-sm text-slate-600 hover:bg-slate-50 transition-colors"
+                >
+                  <Camera size={15} />
+                  {t.cameraBtn}
+                </button>
               ) : (
+                /* Desktop: screen-capture + file upload */
                 <div className="flex gap-2">
                   <button
                     type="button"

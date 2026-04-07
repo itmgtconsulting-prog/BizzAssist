@@ -31,9 +31,13 @@ jobs:
 
       - name: Run ESLint
         run: npm run lint
+        env:
+          SKIP_ENV_VALIDATION: '1'
 
       - name: Run Prettier check
         run: npm run format:check
+        env:
+          SKIP_ENV_VALIDATION: '1'
 
   # ── 2. TypeScript type check ─────────────────────────────────────────────
   typecheck:
@@ -54,6 +58,8 @@ jobs:
 
       - name: TypeScript check
         run: npm run type-check
+        env:
+          SKIP_ENV_VALIDATION: '1'
 
   # ── 3. Unit & Component tests ────────────────────────────────────────────
   test-unit:
@@ -74,6 +80,12 @@ jobs:
 
       - name: Run unit tests with coverage
         run: npm run test:coverage
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
@@ -171,9 +183,13 @@ jobs:
       - name: Build Next.js production bundle
         run: npm run build
         env:
+          SKIP_ENV_VALIDATION: '1'
           NODE_ENV: production
           NEXT_PUBLIC_APP_URL: https://bizzassist.dk
+          NEXT_PUBLIC_SUPABASE_URL: 'https://placeholder.supabase.co'
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: 'placeholder'
           # Sentry build-time vars (use GitHub secrets in production)
+          NEXT_PUBLIC_SENTRY_DSN: ${{ secrets.NEXT_PUBLIC_SENTRY_DSN }}
           SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}

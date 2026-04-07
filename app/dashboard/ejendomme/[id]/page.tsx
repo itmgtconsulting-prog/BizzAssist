@@ -14,6 +14,7 @@
  */
 
 import { useState, use, useEffect, useRef, useCallback, useMemo, Suspense } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -4440,54 +4441,64 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
           </div>
         )}
 
-        {/* ─── Mobil: Kortoverlay — fylder hele skærmen ─── */}
-        {!visKort && mobilKortAaben && (
-          <div className="fixed inset-0 z-50 flex flex-col bg-slate-950">
-            {/* Overlay-header */}
-            <div className="flex items-center justify-between px-4 py-3 bg-slate-900 border-b border-slate-700/50 flex-shrink-0">
-              <div className="flex items-center gap-2 min-w-0">
-                <MapIcon size={15} className="text-blue-400 flex-shrink-0" />
-                <span className="text-white text-sm font-medium truncate">{adresseStreng}</span>
+        {/*
+         * ─── Mobil: Kortoverlay — fylder hele skærmen ───
+         *
+         * Portalen er påkrævet fordi iOS Safari ikke respekterer `position: fixed`
+         * korrekt inde i en `overflow: hidden`-beholder (BIZZ-76).
+         * createPortal løfter overlayet ud af DOM-træet til document.body,
+         * hvorved det altid dækker hele viewport uanset forældrets overflow-mode.
+         */}
+        {!visKort &&
+          mobilKortAaben &&
+          createPortal(
+            <div className="fixed inset-0 z-50 flex flex-col bg-slate-950">
+              {/* Overlay-header */}
+              <div className="flex items-center justify-between px-4 py-3 bg-slate-900 border-b border-slate-700/50 flex-shrink-0">
+                <div className="flex items-center gap-2 min-w-0">
+                  <MapIcon size={15} className="text-blue-400 flex-shrink-0" />
+                  <span className="text-white text-sm font-medium truncate">{adresseStreng}</span>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0 ml-3">
+                  <Link
+                    href={`/dashboard/kort?ejendom=${id}`}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-slate-300 text-xs font-medium transition-all"
+                  >
+                    <MapIcon size={11} />
+                    {da ? 'Fuldt kort' : 'Full map'}
+                  </Link>
+                  <button
+                    onClick={() => setMobilKortAaben(false)}
+                    className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors"
+                    aria-label={da ? 'Luk kort' : 'Close map'}
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
               </div>
-              <div className="flex items-center gap-2 flex-shrink-0 ml-3">
-                <Link
-                  href={`/dashboard/kort?ejendom=${id}`}
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-slate-300 text-xs font-medium transition-all"
+              {/* Kortindhold */}
+              <div className="flex-1 relative">
+                <Suspense
+                  fallback={
+                    <div className="absolute inset-0 flex items-center justify-center bg-slate-900">
+                      <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                    </div>
+                  }
                 >
-                  <MapIcon size={11} />
-                  {da ? 'Fuldt kort' : 'Full map'}
-                </Link>
-                <button
-                  onClick={() => setMobilKortAaben(false)}
-                  className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors"
-                  aria-label={da ? 'Luk kort' : 'Close map'}
-                >
-                  <X size={18} />
-                </button>
+                  <PropertyMap
+                    lat={dawaAdresse.y}
+                    lng={dawaAdresse.x}
+                    adresse={adresseStreng}
+                    visMatrikel={true}
+                    onAdresseValgt={handleAdresseValgtMobil}
+                    erEjerlejlighed={!!bbrData?.ejerlejlighedBfe}
+                    bygningPunkter={aktiveBygningPunkter}
+                  />
+                </Suspense>
               </div>
-            </div>
-            {/* Kortindhold */}
-            <div className="flex-1 relative">
-              <Suspense
-                fallback={
-                  <div className="absolute inset-0 flex items-center justify-center bg-slate-900">
-                    <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-                  </div>
-                }
-              >
-                <PropertyMap
-                  lat={dawaAdresse.y}
-                  lng={dawaAdresse.x}
-                  adresse={adresseStreng}
-                  visMatrikel={true}
-                  onAdresseValgt={handleAdresseValgtMobil}
-                  erEjerlejlighed={!!bbrData?.ejerlejlighedBfe}
-                  bygningPunkter={aktiveBygningPunkter}
-                />
-              </Suspense>
-            </div>
-          </div>
-        )}
+            </div>,
+            document.body
+          )}
       </div>
     );
   }
@@ -6177,56 +6188,66 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
         )}
       </div>
 
-      {/* ─── Mobil: Kortoverlay — fylder hele skærmen ─── */}
-      {!visKort && mobilKortAaben && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-slate-950">
-          {/* Overlay-header */}
-          <div className="flex items-center justify-between px-4 py-3 bg-slate-900 border-b border-slate-700/50 flex-shrink-0">
-            <div className="flex items-center gap-2 min-w-0">
-              <MapIcon size={15} className="text-blue-400 flex-shrink-0" />
-              <span className="text-white text-sm font-medium truncate">
-                {ejendom.adresse}, {ejendom.postnummer} {ejendom.by}
-              </span>
+      {/*
+       * ─── Mobil: Kortoverlay — fylder hele skærmen ───
+       *
+       * Portalen er påkrævet fordi iOS Safari ikke respekterer `position: fixed`
+       * korrekt inde i en `overflow: hidden`-beholder (BIZZ-76).
+       * createPortal løfter overlayet ud af DOM-træet til document.body,
+       * hvorved det altid dækker hele viewport uanset forældrets overflow-mode.
+       */}
+      {!visKort &&
+        mobilKortAaben &&
+        createPortal(
+          <div className="fixed inset-0 z-50 flex flex-col bg-slate-950">
+            {/* Overlay-header */}
+            <div className="flex items-center justify-between px-4 py-3 bg-slate-900 border-b border-slate-700/50 flex-shrink-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <MapIcon size={15} className="text-blue-400 flex-shrink-0" />
+                <span className="text-white text-sm font-medium truncate">
+                  {ejendom.adresse}, {ejendom.postnummer} {ejendom.by}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0 ml-3">
+                <Link
+                  href={`/dashboard/kort?ejendom=${id}`}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-slate-300 text-xs font-medium transition-all"
+                >
+                  <MapIcon size={11} />
+                  {da ? 'Fuldt kort' : 'Full map'}
+                </Link>
+                <button
+                  onClick={() => setMobilKortAaben(false)}
+                  className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors"
+                  aria-label={da ? 'Luk kort' : 'Close map'}
+                >
+                  <X size={18} />
+                </button>
+              </div>
             </div>
-            <div className="flex items-center gap-2 flex-shrink-0 ml-3">
-              <Link
-                href={`/dashboard/kort?ejendom=${id}`}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-slate-300 text-xs font-medium transition-all"
+            {/* Kortindhold */}
+            <div className="flex-1 relative">
+              <Suspense
+                fallback={
+                  <div className="absolute inset-0 flex items-center justify-center bg-slate-900">
+                    <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                  </div>
+                }
               >
-                <MapIcon size={11} />
-                {da ? 'Fuldt kort' : 'Full map'}
-              </Link>
-              <button
-                onClick={() => setMobilKortAaben(false)}
-                className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors"
-                aria-label={da ? 'Luk kort' : 'Close map'}
-              >
-                <X size={18} />
-              </button>
+                <PropertyMap
+                  lat={ejendom.lat}
+                  lng={ejendom.lng}
+                  adresse={bfrAdresseStreng}
+                  visMatrikel={true}
+                  onAdresseValgt={handleAdresseValgtMobil}
+                  erEjerlejlighed={!!bbrData?.ejerlejlighedBfe}
+                  bygningPunkter={bfrBygningPunkter}
+                />
+              </Suspense>
             </div>
-          </div>
-          {/* Kortindhold */}
-          <div className="flex-1 relative">
-            <Suspense
-              fallback={
-                <div className="absolute inset-0 flex items-center justify-center bg-slate-900">
-                  <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-                </div>
-              }
-            >
-              <PropertyMap
-                lat={ejendom.lat}
-                lng={ejendom.lng}
-                adresse={bfrAdresseStreng}
-                visMatrikel={true}
-                onAdresseValgt={handleAdresseValgtMobil}
-                erEjerlejlighed={!!bbrData?.ejerlejlighedBfe}
-                bygningPunkter={bfrBygningPunkter}
-              />
-            </Suspense>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body
+        )}
     </div>
   );
 }

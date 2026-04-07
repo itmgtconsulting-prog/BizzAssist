@@ -7,9 +7,17 @@ Sentry.init({
   // Capture 100% of transactions in development, 10% in production
   tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.1 : 1.0,
 
-  // Capture replays for 10% of sessions, 100% on error
-  replaysSessionSampleRate: 0.1,
+  // BIZZ-61: Continuous profiling — 10% of sampled transactions
+  profilesSampleRate: 0.1,
+
+  // BIZZ-61: Capture replays for 5% of sessions, 100% on error
+  // Lower session rate (0.05) reduces storage costs while preserving full error coverage.
+  replaysSessionSampleRate: 0.05,
   replaysOnErrorSampleRate: 1.0,
+
+  // BIZZ-61: Alert thresholds are configured in the Sentry dashboard (not in code).
+  // Current rule: alert when error rate exceeds 5 errors/minute on the bizzassist project.
+  // To update: Sentry → Alerts → bizzassist → "High error rate" rule.
 
   integrations: [
     Sentry.replayIntegration({
@@ -17,6 +25,8 @@ Sentry.init({
       maskAllText: true,
       blockAllMedia: true,
     }),
+    // BIZZ-61: Core Web Vitals + navigation/resource timing tracing
+    Sentry.browserTracingIntegration(),
   ],
 
   /**

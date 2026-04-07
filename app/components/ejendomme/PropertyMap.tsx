@@ -1209,236 +1209,110 @@ function PropertyMap({
         })}
       </Map>
 
-      {/* Luftfoto / Gade / BBR toggle — BBR yderst til venstre, Luftfoto yderst til højre */}
-      {/* z-30 sikrer at knapperne er over alle overlejringer i forælderkomponenten (z-20) */}
-      <div
-        className="absolute top-3 left-3 flex flex-wrap gap-1.5 z-30"
-        style={{ maxWidth: 'calc(100% - 5.5rem)' }}
-      >
-        {bygningPunkter && bygningPunkter.length > 0 && (
+      {/* Kortknapper øverst — venstre + højre i fælles row, kan aldrig overlappe */}
+      <div className="absolute top-3 left-3 right-3 z-30 flex items-start justify-between gap-2">
+        {/* Venstre gruppe: BBR / Gade / Luftfoto */}
+        <div className="flex flex-wrap gap-1.5">
+          {bygningPunkter && bygningPunkter.length > 0 && (
+            <button
+              onClick={() => {
+                setMapStyle('bbr');
+                setAktivBygning(null);
+              }}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-all ${
+                mapStyle === 'bbr'
+                  ? 'bg-emerald-600 text-white'
+                  : 'bg-slate-900/90 text-slate-300 hover:bg-slate-800 border border-slate-700'
+              }`}
+            >
+              <Building2 size={12} />
+              BBR
+              <span
+                className={`ml-0.5 rounded-full px-1 py-0 text-[10px] font-bold ${mapStyle === 'bbr' ? 'bg-emerald-500 text-white' : 'bg-slate-700 text-slate-300'}`}
+              >
+                {bygningPunkter.length}
+              </span>
+            </button>
+          )}
           <button
-            onClick={() => {
-              setMapStyle('bbr');
-              setAktivBygning(null);
-            }}
+            onClick={() => setMapStyle('dark')}
             className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-all ${
-              mapStyle === 'bbr'
-                ? 'bg-emerald-600 text-white'
+              mapStyle === 'dark'
+                ? 'bg-blue-600 text-white'
                 : 'bg-slate-900/90 text-slate-300 hover:bg-slate-800 border border-slate-700'
             }`}
           >
-            <Building2 size={12} />
-            BBR
-            <span
-              className={`ml-0.5 rounded-full px-1 py-0 text-[10px] font-bold ${mapStyle === 'bbr' ? 'bg-emerald-500 text-white' : 'bg-slate-700 text-slate-300'}`}
-            >
-              {bygningPunkter.length}
-            </span>
+            <MapIcon size={12} />
+            Gade
           </button>
-        )}
-        <button
-          onClick={() => setMapStyle('dark')}
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-all ${
-            mapStyle === 'dark'
-              ? 'bg-blue-600 text-white'
-              : 'bg-slate-900/90 text-slate-300 hover:bg-slate-800 border border-slate-700'
-          }`}
-        >
-          <MapIcon size={12} />
-          Gade
-        </button>
-        <button
-          onClick={() => setMapStyle('satellite')}
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-all ${
-            mapStyle === 'satellite'
-              ? 'bg-blue-600 text-white'
-              : 'bg-slate-900/90 text-slate-300 hover:bg-slate-800 border border-slate-700'
-          }`}
-        >
-          <Satellite size={12} />
-          Luftfoto
-        </button>
-      </div>
+          <button
+            onClick={() => setMapStyle('satellite')}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-all ${
+              mapStyle === 'satellite'
+                ? 'bg-blue-600 text-white'
+                : 'bg-slate-900/90 text-slate-300 hover:bg-slate-800 border border-slate-700'
+            }`}
+          >
+            <Satellite size={12} />
+            Luftfoto
+          </button>
+        </div>
 
-      {/* Øverst til højre: Lag-knap + "Fuldt kort"-link (hvis angivet) + fullscreen toggle */}
-      {/* z-30 matcher lag-knapperne — ingen konflikt med forælderkomponentens z-indeks */}
-      <div ref={lagPanelRef} className="absolute top-3 right-3 z-30 flex items-center gap-1.5">
-        {/* Lag-knap */}
-        <button
-          onClick={() => setLagPanel((p) => !p)}
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-all ${
-            lagPanel || Object.entries(visOverlay).some(([k, v]) => k !== 'matrikel' && v)
-              ? 'bg-blue-600 text-white'
-              : 'bg-slate-900/90 text-slate-300 hover:bg-slate-800 border border-slate-700'
-          }`}
-          title="Kortlag"
-        >
-          <Layers size={12} />
-          Lag
-        </button>
+        {/* Højre gruppe: Lag / Fuldt kort / Fullscreen */}
+        <div ref={lagPanelRef} className="flex items-center gap-1.5 shrink-0">
+          {/* Lag-knap */}
+          <button
+            onClick={() => setLagPanel((p) => !p)}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-all ${
+              lagPanel || Object.entries(visOverlay).some(([k, v]) => k !== 'matrikel' && v)
+                ? 'bg-blue-600 text-white'
+                : 'bg-slate-900/90 text-slate-300 hover:bg-slate-800 border border-slate-700'
+            }`}
+            title="Kortlag"
+          >
+            <Layers size={12} />
+            Lag
+          </button>
 
-        {/* Lag-panel dropdown */}
-        {lagPanel && (
-          <div className="absolute top-9 right-0 w-52 max-w-[calc(100vw-1.5rem)] bg-slate-900/98 border border-white/10 rounded-xl shadow-2xl backdrop-blur-sm overflow-hidden">
-            {/* Header */}
-            <div className="flex items-center justify-between px-3 py-2 border-b border-white/5">
-              <span className="text-white text-xs font-semibold">Kortlag</span>
-              <button
-                onClick={() => setLagPanel(false)}
-                className="text-slate-500 hover:text-slate-300 transition-colors p-0.5 rounded hover:bg-white/5"
-              >
-                <X size={12} />
-              </button>
-            </div>
-            <div className="px-2 py-1.5 max-h-[60vh] overflow-y-auto touch-pan-y overscroll-contain">
-              {/* BBR Bygninger */}
-              <p className="text-[9px] font-bold uppercase tracking-widest px-1 pt-1.5 pb-1 text-emerald-400">
-                Bygninger
-              </p>
-              <button
-                onClick={() => {
-                  if (mapStyle === 'bbr') {
-                    setMapStyle('satellite');
-                    setAktivBygning(null);
-                  } else {
-                    setMapStyle('bbr');
-                    setAktivBygning(null);
-                  }
-                }}
-                disabled={!bygningPunkter || bygningPunkter.length === 0}
-                className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-px transition-colors text-left touch-manipulation ${
-                  mapStyle === 'bbr' ? 'bg-white/5' : 'hover:bg-white/[0.03]'
-                } disabled:opacity-40 disabled:cursor-not-allowed`}
-              >
-                <div
-                  className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center shrink-0 border transition-colors ${
-                    mapStyle === 'bbr' ? 'bg-emerald-600 border-emerald-600' : 'border-white/20'
-                  }`}
-                >
-                  {mapStyle === 'bbr' && (
-                    <svg width="8" height="6" viewBox="0 0 10 8" fill="none">
-                      <path
-                        d="M1 4L3.5 6.5L9 1"
-                        stroke="white"
-                        strokeWidth="1.8"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  )}
-                </div>
-                <p
-                  className={`text-xs leading-tight truncate ${mapStyle === 'bbr' ? 'text-white' : 'text-slate-400'}`}
-                >
-                  BBR Bygninger
-                  {(!bygningPunkter || bygningPunkter.length === 0) && (
-                    <span className="ml-1 text-[10px] text-slate-600">— ingen data</span>
-                  )}
-                </p>
-                {bygningPunkter && bygningPunkter.length > 0 && (
-                  <span className="ml-auto text-[10px] bg-slate-700 text-slate-300 rounded-full px-1.5 py-0.5 font-bold shrink-0">
-                    {bygningPunkter.length}
-                  </span>
-                )}
-              </button>
-
-              {/* Ejendomstype-badges — EL / AB / AL */}
-              <button
-                onClick={() => setVisEjendomsBadges((p) => !p)}
-                disabled={(!bygningPunkter || bygningPunkter.length === 0) && !erEjerlejlighed}
-                className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-px transition-colors text-left touch-manipulation ${
-                  visEjendomsBadges ? 'bg-white/5' : 'hover:bg-white/[0.03]'
-                } disabled:opacity-40 disabled:cursor-not-allowed`}
-              >
-                <div
-                  className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center shrink-0 border transition-colors ${
-                    visEjendomsBadges ? 'bg-blue-600 border-blue-600' : 'border-white/20'
-                  }`}
-                >
-                  {visEjendomsBadges && (
-                    <svg width="8" height="6" viewBox="0 0 10 8" fill="none">
-                      <path
-                        d="M1 4L3.5 6.5L9 1"
-                        stroke="white"
-                        strokeWidth="1.8"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  )}
-                </div>
-                <p
-                  className={`text-xs leading-tight truncate ${visEjendomsBadges ? 'text-white' : 'text-slate-400'}`}
-                >
-                  Ejerlejlighed/Andel
-                </p>
-                {/* Forhåndsvisning af badges der vil blive vist */}
-                <div className="ml-auto flex gap-0.5 shrink-0">
-                  {erEjerlejlighed && (
-                    <span className="text-[8px] bg-blue-600/30 text-blue-400 border border-blue-500/30 rounded px-1 font-bold leading-none py-0.5">
-                      EL
-                    </span>
-                  )}
-                  {!erEjerlejlighed && bygningPunkter?.some((b) => b.ejerforholdskode === '50') && (
-                    <span className="text-[8px] bg-emerald-600/30 text-emerald-400 border border-emerald-500/30 rounded px-1 font-bold leading-none py-0.5">
-                      AB
-                    </span>
-                  )}
-                  {bygningPunkter?.some((b) => b.ejerforholdskode === '60') && (
-                    <span className="text-[8px] bg-indigo-600/30 text-indigo-400 border border-indigo-500/30 rounded px-1 font-bold leading-none py-0.5">
-                      AL
-                    </span>
-                  )}
-                </div>
-              </button>
-
-              {/* Basiskort-lag */}
-              <p className="text-[9px] font-bold uppercase tracking-widest px-1 pt-2 pb-1 text-blue-400">
-                Basiskort
-              </p>
-              {/* Husnumre toggle — vises i alle tre kortstile */}
-              <button
-                onClick={() => setVisHusnumre(!visHusnumre)}
-                className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-px transition-colors text-left touch-manipulation ${
-                  visHusnumre ? 'bg-white/5' : 'hover:bg-white/[0.03]'
-                }`}
-              >
-                <div
-                  className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center shrink-0 border transition-colors ${
-                    visHusnumre ? 'bg-blue-600 border-blue-600' : 'border-white/20'
-                  }`}
-                >
-                  {visHusnumre && (
-                    <svg width="8" height="6" viewBox="0 0 10 8" fill="none">
-                      <path
-                        d="M1 4L3.5 6.5L9 1"
-                        stroke="white"
-                        strokeWidth="1.8"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  )}
-                </div>
-                <p
-                  className={`text-xs leading-tight truncate ${visHusnumre ? 'text-white' : 'text-slate-400'}`}
-                >
-                  Husnumre
-                </p>
-              </button>
-              {visMatrikel && (
+          {/* Lag-panel dropdown */}
+          {lagPanel && (
+            <div className="absolute top-9 right-0 w-52 max-w-[calc(100vw-1.5rem)] bg-slate-900/98 border border-white/10 rounded-xl shadow-2xl backdrop-blur-sm overflow-hidden">
+              {/* Header */}
+              <div className="flex items-center justify-between px-3 py-2 border-b border-white/5">
+                <span className="text-white text-xs font-semibold">Kortlag</span>
                 <button
-                  onClick={() => setVisOverlay((prev) => ({ ...prev, matrikel: !prev.matrikel }))}
+                  onClick={() => setLagPanel(false)}
+                  className="text-slate-500 hover:text-slate-300 transition-colors p-0.5 rounded hover:bg-white/5"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+              <div className="px-2 py-1.5 max-h-[60vh] overflow-y-auto touch-pan-y overscroll-contain">
+                {/* BBR Bygninger */}
+                <p className="text-[9px] font-bold uppercase tracking-widest px-1 pt-1.5 pb-1 text-emerald-400">
+                  Bygninger
+                </p>
+                <button
+                  onClick={() => {
+                    if (mapStyle === 'bbr') {
+                      setMapStyle('satellite');
+                      setAktivBygning(null);
+                    } else {
+                      setMapStyle('bbr');
+                      setAktivBygning(null);
+                    }
+                  }}
+                  disabled={!bygningPunkter || bygningPunkter.length === 0}
                   className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-px transition-colors text-left touch-manipulation ${
-                    visOverlay.matrikel ? 'bg-white/5' : 'hover:bg-white/[0.03]'
-                  }`}
+                    mapStyle === 'bbr' ? 'bg-white/5' : 'hover:bg-white/[0.03]'
+                  } disabled:opacity-40 disabled:cursor-not-allowed`}
                 >
                   <div
                     className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center shrink-0 border transition-colors ${
-                      visOverlay.matrikel ? 'bg-blue-600 border-blue-600' : 'border-white/20'
+                      mapStyle === 'bbr' ? 'bg-emerald-600 border-emerald-600' : 'border-white/20'
                     }`}
                   >
-                    {visOverlay.matrikel && (
+                    {mapStyle === 'bbr' && (
                       <svg width="8" height="6" viewBox="0 0 10 8" fill="none">
                         <path
                           d="M1 4L3.5 6.5L9 1"
@@ -1451,124 +1325,250 @@ function PropertyMap({
                     )}
                   </div>
                   <p
-                    className={`text-xs leading-tight truncate ${visOverlay.matrikel ? 'text-white' : 'text-slate-400'}`}
+                    className={`text-xs leading-tight truncate ${mapStyle === 'bbr' ? 'text-white' : 'text-slate-400'}`}
                   >
-                    Matrikel
+                    BBR Bygninger
+                    {(!bygningPunkter || bygningPunkter.length === 0) && (
+                      <span className="ml-1 text-[10px] text-slate-600">— ingen data</span>
+                    )}
+                  </p>
+                  {bygningPunkter && bygningPunkter.length > 0 && (
+                    <span className="ml-auto text-[10px] bg-slate-700 text-slate-300 rounded-full px-1.5 py-0.5 font-bold shrink-0">
+                      {bygningPunkter.length}
+                    </span>
+                  )}
+                </button>
+
+                {/* Ejendomstype-badges — EL / AB / AL */}
+                <button
+                  onClick={() => setVisEjendomsBadges((p) => !p)}
+                  disabled={(!bygningPunkter || bygningPunkter.length === 0) && !erEjerlejlighed}
+                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-px transition-colors text-left touch-manipulation ${
+                    visEjendomsBadges ? 'bg-white/5' : 'hover:bg-white/[0.03]'
+                  } disabled:opacity-40 disabled:cursor-not-allowed`}
+                >
+                  <div
+                    className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center shrink-0 border transition-colors ${
+                      visEjendomsBadges ? 'bg-blue-600 border-blue-600' : 'border-white/20'
+                    }`}
+                  >
+                    {visEjendomsBadges && (
+                      <svg width="8" height="6" viewBox="0 0 10 8" fill="none">
+                        <path
+                          d="M1 4L3.5 6.5L9 1"
+                          stroke="white"
+                          strokeWidth="1.8"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    )}
+                  </div>
+                  <p
+                    className={`text-xs leading-tight truncate ${visEjendomsBadges ? 'text-white' : 'text-slate-400'}`}
+                  >
+                    Ejerlejlighed/Andel
+                  </p>
+                  {/* Forhåndsvisning af badges der vil blive vist */}
+                  <div className="ml-auto flex gap-0.5 shrink-0">
+                    {erEjerlejlighed && (
+                      <span className="text-[8px] bg-blue-600/30 text-blue-400 border border-blue-500/30 rounded px-1 font-bold leading-none py-0.5">
+                        EL
+                      </span>
+                    )}
+                    {!erEjerlejlighed &&
+                      bygningPunkter?.some((b) => b.ejerforholdskode === '50') && (
+                        <span className="text-[8px] bg-emerald-600/30 text-emerald-400 border border-emerald-500/30 rounded px-1 font-bold leading-none py-0.5">
+                          AB
+                        </span>
+                      )}
+                    {bygningPunkter?.some((b) => b.ejerforholdskode === '60') && (
+                      <span className="text-[8px] bg-indigo-600/30 text-indigo-400 border border-indigo-500/30 rounded px-1 font-bold leading-none py-0.5">
+                        AL
+                      </span>
+                    )}
+                  </div>
+                </button>
+
+                {/* Basiskort-lag */}
+                <p className="text-[9px] font-bold uppercase tracking-widest px-1 pt-2 pb-1 text-blue-400">
+                  Basiskort
+                </p>
+                {/* Husnumre toggle — vises i alle tre kortstile */}
+                <button
+                  onClick={() => setVisHusnumre(!visHusnumre)}
+                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-px transition-colors text-left touch-manipulation ${
+                    visHusnumre ? 'bg-white/5' : 'hover:bg-white/[0.03]'
+                  }`}
+                >
+                  <div
+                    className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center shrink-0 border transition-colors ${
+                      visHusnumre ? 'bg-blue-600 border-blue-600' : 'border-white/20'
+                    }`}
+                  >
+                    {visHusnumre && (
+                      <svg width="8" height="6" viewBox="0 0 10 8" fill="none">
+                        <path
+                          d="M1 4L3.5 6.5L9 1"
+                          stroke="white"
+                          strokeWidth="1.8"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    )}
+                  </div>
+                  <p
+                    className={`text-xs leading-tight truncate ${visHusnumre ? 'text-white' : 'text-slate-400'}`}
+                  >
+                    Husnumre
                   </p>
                 </button>
-              )}
-
-              {/* WMS overlay-lag — grupperet som på hovedkortet */}
-              {[
-                {
-                  label: 'Planer & Regulering',
-                  klasse: 'text-amber-400',
-                  ids: [
-                    'lokalplaner',
-                    'kommuneplan',
-                    'zonekort',
-                    'byggefelt',
-                    'kloakopland',
-                    'detailhandel',
-                  ],
-                },
-                {
-                  label: 'Bevaringsværdi',
-                  klasse: 'text-orange-400',
-                  ids: ['bev_landskaber', 'kulturhistorie'],
-                },
-                {
-                  label: 'Natur & Miljø',
-                  klasse: 'text-emerald-400',
-                  ids: [
-                    'natura2000',
-                    'skovbyggelinje',
-                    'fredninger',
-                    'natur_reservat',
-                    'ramsar',
-                    'jordforurening',
-                  ],
-                },
-                {
-                  label: 'Beskyttelseslinjer',
-                  klasse: 'text-violet-400',
-                  ids: [
-                    'aabeskyttelse',
-                    'soebeskyttelse',
-                    'kirkeomgivelser',
-                    'jorddiger',
-                    'bev_vandloeb',
-                  ],
-                },
-                {
-                  label: 'Grundvand & Ressourcer',
-                  klasse: 'text-rose-400',
-                  ids: ['bnbo', 'raastof', 'indsatsplaner', 'omr_klassificering'],
-                },
-              ].map((gruppe) => (
-                <div key={gruppe.label}>
-                  <p
-                    className={`text-[9px] font-bold uppercase tracking-widest px-1 pt-2 pb-1 ${gruppe.klasse}`}
+                {visMatrikel && (
+                  <button
+                    onClick={() => setVisOverlay((prev) => ({ ...prev, matrikel: !prev.matrikel }))}
+                    className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-px transition-colors text-left touch-manipulation ${
+                      visOverlay.matrikel ? 'bg-white/5' : 'hover:bg-white/[0.03]'
+                    }`}
                   >
-                    {gruppe.label}
-                  </p>
-                  {OVERLAY_WMS.filter((w) => gruppe.ids.includes(w.id)).map((wms) => (
-                    <button
-                      key={wms.id}
-                      onClick={() =>
-                        setVisOverlay((prev) => ({ ...prev, [wms.id]: !prev[wms.id] }))
-                      }
-                      className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-px transition-colors text-left touch-manipulation ${
-                        visOverlay[wms.id] ? 'bg-white/5' : 'hover:bg-white/[0.03]'
+                    <div
+                      className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center shrink-0 border transition-colors ${
+                        visOverlay.matrikel ? 'bg-blue-600 border-blue-600' : 'border-white/20'
                       }`}
                     >
-                      <div
-                        className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center shrink-0 border transition-colors ${
-                          visOverlay[wms.id] ? wms.farveClass : 'border-white/20'
+                      {visOverlay.matrikel && (
+                        <svg width="8" height="6" viewBox="0 0 10 8" fill="none">
+                          <path
+                            d="M1 4L3.5 6.5L9 1"
+                            stroke="white"
+                            strokeWidth="1.8"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      )}
+                    </div>
+                    <p
+                      className={`text-xs leading-tight truncate ${visOverlay.matrikel ? 'text-white' : 'text-slate-400'}`}
+                    >
+                      Matrikel
+                    </p>
+                  </button>
+                )}
+
+                {/* WMS overlay-lag — grupperet som på hovedkortet */}
+                {[
+                  {
+                    label: 'Planer & Regulering',
+                    klasse: 'text-amber-400',
+                    ids: [
+                      'lokalplaner',
+                      'kommuneplan',
+                      'zonekort',
+                      'byggefelt',
+                      'kloakopland',
+                      'detailhandel',
+                    ],
+                  },
+                  {
+                    label: 'Bevaringsværdi',
+                    klasse: 'text-orange-400',
+                    ids: ['bev_landskaber', 'kulturhistorie'],
+                  },
+                  {
+                    label: 'Natur & Miljø',
+                    klasse: 'text-emerald-400',
+                    ids: [
+                      'natura2000',
+                      'skovbyggelinje',
+                      'fredninger',
+                      'natur_reservat',
+                      'ramsar',
+                      'jordforurening',
+                    ],
+                  },
+                  {
+                    label: 'Beskyttelseslinjer',
+                    klasse: 'text-violet-400',
+                    ids: [
+                      'aabeskyttelse',
+                      'soebeskyttelse',
+                      'kirkeomgivelser',
+                      'jorddiger',
+                      'bev_vandloeb',
+                    ],
+                  },
+                  {
+                    label: 'Grundvand & Ressourcer',
+                    klasse: 'text-rose-400',
+                    ids: ['bnbo', 'raastof', 'indsatsplaner', 'omr_klassificering'],
+                  },
+                ].map((gruppe) => (
+                  <div key={gruppe.label}>
+                    <p
+                      className={`text-[9px] font-bold uppercase tracking-widest px-1 pt-2 pb-1 ${gruppe.klasse}`}
+                    >
+                      {gruppe.label}
+                    </p>
+                    {OVERLAY_WMS.filter((w) => gruppe.ids.includes(w.id)).map((wms) => (
+                      <button
+                        key={wms.id}
+                        onClick={() =>
+                          setVisOverlay((prev) => ({ ...prev, [wms.id]: !prev[wms.id] }))
+                        }
+                        className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-px transition-colors text-left touch-manipulation ${
+                          visOverlay[wms.id] ? 'bg-white/5' : 'hover:bg-white/[0.03]'
                         }`}
                       >
-                        {visOverlay[wms.id] && (
-                          <svg width="8" height="6" viewBox="0 0 10 8" fill="none">
-                            <path
-                              d="M1 4L3.5 6.5L9 1"
-                              stroke="white"
-                              strokeWidth="1.8"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            />
-                          </svg>
-                        )}
-                      </div>
-                      <p
-                        className={`text-xs leading-tight truncate ${visOverlay[wms.id] ? 'text-white' : 'text-slate-400'}`}
-                      >
-                        {wms.navn}
-                      </p>
-                    </button>
-                  ))}
-                </div>
-              ))}
+                        <div
+                          className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center shrink-0 border transition-colors ${
+                            visOverlay[wms.id] ? wms.farveClass : 'border-white/20'
+                          }`}
+                        >
+                          {visOverlay[wms.id] && (
+                            <svg width="8" height="6" viewBox="0 0 10 8" fill="none">
+                              <path
+                                d="M1 4L3.5 6.5L9 1"
+                                stroke="white"
+                                strokeWidth="1.8"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              />
+                            </svg>
+                          )}
+                        </div>
+                        <p
+                          className={`text-xs leading-tight truncate ${visOverlay[wms.id] ? 'text-white' : 'text-slate-400'}`}
+                        >
+                          {wms.navn}
+                        </p>
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {fullMapHref && (
-          <Link
-            href={fullMapHref}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-900/90 hover:bg-slate-800 border border-slate-700 rounded-lg text-slate-300 text-xs font-medium shadow-lg transition-all"
-            title="Åbn på fuldt kort"
+          {fullMapHref && (
+            <Link
+              href={fullMapHref}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-900/90 hover:bg-slate-800 border border-slate-700 rounded-lg text-slate-300 text-xs font-medium shadow-lg transition-all"
+              title="Åbn på fuldt kort"
+            >
+              <ExternalLink size={12} />
+              <span className="hidden sm:inline">Fuldt kort</span>
+            </Link>
+          )}
+          <button
+            onClick={() => setFullscreen((f) => !f)}
+            className="p-1.5 bg-slate-900/90 hover:bg-slate-800 border border-slate-700 rounded-lg text-slate-300 shadow-lg transition-all"
           >
-            <ExternalLink size={12} />
-            <span className="hidden sm:inline">Fuldt kort</span>
-          </Link>
-        )}
-        <button
-          onClick={() => setFullscreen((f) => !f)}
-          className="p-1.5 bg-slate-900/90 hover:bg-slate-800 border border-slate-700 rounded-lg text-slate-300 shadow-lg transition-all"
-        >
-          {fullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
-        </button>
+            {fullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+          </button>
+        </div>
       </div>
+      {/* /Kortknapper */}
 
       {/* Loading-overlay ved korteklik */}
       {søgerAdresse && (

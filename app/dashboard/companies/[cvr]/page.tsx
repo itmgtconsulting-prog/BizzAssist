@@ -65,6 +65,7 @@ import type { EjendomSummary } from '@/app/api/ejendomme-by-owner/route';
 import type { PersonbogHaeftelse } from '@/app/api/tinglysning/personbog/route';
 import PropertyOwnerCard from '@/app/components/ejendomme/PropertyOwnerCard';
 import { saveRecentCompany } from '@/app/lib/recentCompanies';
+import { recordRecentVisit } from '@/app/lib/recordRecentVisit';
 import { useSubscription } from '@/app/context/SubscriptionContext';
 import { useSubscriptionAccess } from '@/app/components/SubscriptionGate';
 import { resolvePlan, formatTokens, isSubscriptionFunctional } from '@/app/lib/subscriptions';
@@ -203,17 +204,17 @@ type TabId =
 
 /** Tab-ikoner */
 const tabIcons: Record<TabId, React.ReactNode> = {
-  overview: <LayoutDashboard size={14} />,
-  diagram: <Briefcase size={14} />,
-  diagram2: <Briefcase size={14} />,
-  tradeHistory: <ArrowRightLeft size={14} />,
-  properties: <Home size={14} />,
-  companies: <Building2 size={14} />,
-  financials: <CreditCard size={14} />,
-  keyPersons: <Users size={14} />,
-  history: <Clock size={14} />,
-  liens: <Scale size={14} />,
-  documents: <FolderOpen size={14} />,
+  overview: <LayoutDashboard size={12} />,
+  diagram: <Briefcase size={12} />,
+  diagram2: <Briefcase size={12} />,
+  tradeHistory: <ArrowRightLeft size={12} />,
+  properties: <Home size={12} />,
+  companies: <Building2 size={12} />,
+  financials: <CreditCard size={12} />,
+  keyPersons: <Users size={12} />,
+  history: <Clock size={12} />,
+  liens: <Scale size={12} />,
+  documents: <FolderOpen size={12} />,
 };
 
 /** Rækkefølge af tabs */
@@ -329,7 +330,7 @@ export default function VirksomhedDetalje({ params }: PageProps) {
   /** Tab-labels hentet fra centraliseret oversættelsessystem */
   const tabLabelMap: Record<TabId, string> = {
     overview: c.tabs.overview,
-    diagram: lang === 'da' ? 'Relationsdiagram' : 'Relations Diagram',
+    diagram: lang === 'da' ? 'Diagram' : 'Diagram',
     diagram2: lang === 'da' ? 'Diagram' : 'Diagram',
     tradeHistory: c.tabs.tradeHistory,
     properties: c.tabs.properties,
@@ -593,6 +594,13 @@ export default function VirksomhedDetalje({ params }: PageProps) {
           city: company.city,
           active: !company.enddate,
         });
+        // Opdater recent tag-bar (virker også ved direkte URL-navigation)
+        recordRecentVisit(
+          'company',
+          String(company.vat),
+          company.name,
+          `/dashboard/companies/${company.vat}`
+        );
       } catch {
         if (!cancelled) {
           setError(c.networkError);
@@ -1346,7 +1354,7 @@ export default function VirksomhedDetalje({ params }: PageProps) {
               <button
                 key={tabId}
                 onClick={() => setAktivTab(tabId)}
-                className={`flex items-center gap-1.5 px-3 py-2.5 text-sm font-medium border-b-2 transition-all ${'whitespace-nowrap'} ${
+                className={`flex items-center gap-1 px-2 py-1.5 text-xs font-medium border-b-2 transition-all whitespace-nowrap ${
                   aktivTab === tabId
                     ? 'border-blue-500 text-blue-300'
                     : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600'
@@ -3328,12 +3336,6 @@ export default function VirksomhedDetalje({ params }: PageProps) {
                 confidenceThreshold={confidenceThreshold}
               />
             </div>
-          </div>
-          {/* Build-nummer — diskret footer i bunden af nyheder-panelet */}
-          <div className="px-4 py-2 border-t border-slate-700/30 flex-shrink-0">
-            <p className="text-slate-600 text-xs">
-              Build: {process.env.NEXT_PUBLIC_BUILD_ID ?? 'dev'}
-            </p>
           </div>
         </div>
       )}

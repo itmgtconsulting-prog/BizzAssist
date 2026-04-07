@@ -3,14 +3,15 @@
  *
  * Verifies:
  * - GET without auth → 401
- * - GET with auth and valid tenant → returns recents array
- * - GET with auth but no schema found → returns empty recents
+ * - GET with auth → returns recents array
  * - POST without auth → 401
  * - POST with valid body → 200 { ok: true }
  * - POST missing required fields → 400
  * - DELETE without auth → 401
  * - DELETE with valid type param → 200 { ok: true }
  * - DELETE without type param → 400
+ *
+ * Note: route uses public.recent_entities (migration 027) — no tenant schema lookup.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -28,8 +29,8 @@ vi.mock('@/lib/api/auth', () => ({
 // ── Supabase admin mock ───────────────────────────────────────────────────────
 
 /**
- * The recents route calls admin.from(table).select / upsert / delete.
- * We build a chainable stub that resolves to configurable data.
+ * The recents route calls admin.from('recent_entities').select / upsert / delete.
+ * Chainable stub: supports .select().eq().eq().eq().order().limit()
  */
 const mockRecentsData = [
   {
@@ -41,44 +42,48 @@ const mockRecentsData = [
   },
 ];
 
-const mockDeleteChain = {
-  in: vi.fn().mockResolvedValue({ error: null }),
-  eq: vi.fn(),
-};
-mockDeleteChain.eq.mockReturnValue(mockDeleteChain);
-
+/** Chainable select chain — supports up to 3 .eq() calls + .order().limit() */
 const mockSelectChain = {
   eq: vi.fn(),
   order: vi.fn(),
   limit: vi.fn(),
 };
-mockSelectChain.limit.mockResolvedValue({ data: mockRecentsData, error: null });
-mockSelectChain.order.mockReturnValue(mockSelectChain);
 mockSelectChain.eq.mockReturnValue(mockSelectChain);
+mockSelectChain.order.mockReturnValue(mockSelectChain);
+mockSelectChain.limit.mockResolvedValue({ data: mockRecentsData, error: null });
+
+/** Prune select chain (3 .eq() + .order() → resolves) */
+const mockPruneChain = {
+  eq: vi.fn(),
+  order: vi.fn(),
+};
+mockPruneChain.eq.mockReturnValue(mockPruneChain);
+mockPruneChain.order.mockResolvedValue({ data: [], error: null });
+
+/** Delete chain */
+const mockDeleteChain = {
+  eq: vi.fn(),
+  in: vi.fn().mockResolvedValue({ error: null }),
+};
+mockDeleteChain.eq.mockReturnValue(mockDeleteChain);
 
 const mockUpsertChain = vi.fn().mockResolvedValue({ error: null });
-const mockSelectForPrune = vi.fn().mockResolvedValue({ data: [], error: null });
 
-/** Tenant schema lookup chain */
-const mockTenantSelectSingle = vi.fn().mockResolvedValue({
-  data: { schema_name: 'tenant_test' },
-  error: null,
-});
-const mockTenantEq = vi.fn().mockReturnValue({ single: mockTenantSelectSingle });
-const mockTenantSelect = vi.fn().mockReturnValue({ eq: mockTenantEq });
-
-/** Route calls from() with either 'tenants' or a schema-qualified table */
-const mockFrom = vi.fn((table: string) => {
-  if (table === 'tenants') {
-    return { select: mockTenantSelect };
-  }
-  // tenant-schema table — return chainable operations
-  return {
-    select: vi.fn().mockReturnValue(mockSelectChain),
-    upsert: mockUpsertChain,
-    delete: vi.fn().mockReturnValue(mockDeleteChain),
-  };
-});
+/**
+ * Route only calls admin.from('recent_entities') — no tenant lookup in new impl.
+ * First .select() call is for GET/prune, .upsert() for POST, .delete() for DELETE.
+ */
+let selectCallCount = 0;
+const mockFrom = vi.fn((_table: string) => ({
+  select: vi.fn(() => {
+    selectCallCount += 1;
+    // First call = GET (returns data), second call = prune (returns empty)
+    if (selectCallCount === 1) return mockSelectChain;
+    return mockPruneChain;
+  }),
+  upsert: mockUpsertChain,
+  delete: vi.fn().mockReturnValue(mockDeleteChain),
+}));
 
 vi.mock('@/lib/supabase/admin', () => ({
   createAdminClient: vi.fn(() => ({ from: mockFrom })),
@@ -114,26 +119,17 @@ function makeRequest(
 describe('GET /api/recents', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    selectCallCount = 0;
 
-    // Restore default chain behaviours after clearAllMocks
-    mockTenantSelectSingle.mockResolvedValue({ data: { schema_name: 'tenant_test' }, error: null });
-    mockTenantEq.mockReturnValue({ single: mockTenantSelectSingle });
-    mockTenantSelect.mockReturnValue({ eq: mockTenantEq });
-
-    mockSelectChain.limit.mockResolvedValue({ data: mockRecentsData, error: null });
-    mockSelectChain.order.mockReturnValue(mockSelectChain);
     mockSelectChain.eq.mockReturnValue(mockSelectChain);
+    mockSelectChain.order.mockReturnValue(mockSelectChain);
+    mockSelectChain.limit.mockResolvedValue({ data: mockRecentsData, error: null });
 
-    mockFrom.mockImplementation((table: string) => {
-      if (table === 'tenants') {
-        return { select: mockTenantSelect };
-      }
-      return {
-        select: vi.fn().mockReturnValue(mockSelectChain),
-        upsert: mockUpsertChain,
-        delete: vi.fn().mockReturnValue(mockDeleteChain),
-      };
-    });
+    mockFrom.mockImplementation((_table: string) => ({
+      select: vi.fn().mockReturnValue(mockSelectChain),
+      upsert: mockUpsertChain,
+      delete: vi.fn().mockReturnValue(mockDeleteChain),
+    }));
   });
 
   /** Unauthenticated requests must be rejected */
@@ -158,10 +154,10 @@ describe('GET /api/recents', () => {
     expect(Array.isArray(body.recents)).toBe(true);
   });
 
-  /** When tenant schema is not found, return empty array (not an error) */
-  it('returns empty recents when tenant schema is not found', async () => {
+  /** DB error → returns empty array, not a 500 */
+  it('returns empty recents on DB error', async () => {
     mockAuthResult = { tenantId: 'tenant-1', userId: 'user-1' };
-    mockTenantSelectSingle.mockResolvedValue({ data: null, error: null });
+    mockSelectChain.limit.mockResolvedValue({ data: null, error: { message: 'DB error' } });
 
     const { GET } = await import('@/app/api/recents/route');
     const req = makeRequest('GET', { type: 'property' });
@@ -176,32 +172,24 @@ describe('GET /api/recents', () => {
 describe('POST /api/recents', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    selectCallCount = 0;
 
-    mockTenantSelectSingle.mockResolvedValue({ data: { schema_name: 'tenant_test' }, error: null });
-    mockTenantEq.mockReturnValue({ single: mockTenantSelectSingle });
-    mockTenantSelect.mockReturnValue({ eq: mockTenantEq });
     mockUpsertChain.mockResolvedValue({ error: null });
-    mockSelectForPrune.mockResolvedValue({ data: [], error: null });
-
     mockDeleteChain.eq.mockReturnValue(mockDeleteChain);
     mockDeleteChain.in.mockResolvedValue({ error: null });
 
-    mockFrom.mockImplementation((table: string) => {
-      if (table === 'tenants') {
-        return { select: mockTenantSelect };
-      }
-      return {
-        select: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              order: vi.fn().mockResolvedValue({ data: [], error: null }),
-            }),
-          }),
-        }),
-        upsert: mockUpsertChain,
-        delete: vi.fn().mockReturnValue(mockDeleteChain),
-      };
-    });
+    // POST uses: upsert() + select().eq().eq().eq().order() for prune
+    const mockPruneLocal = {
+      eq: vi.fn(),
+      order: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+    mockPruneLocal.eq.mockReturnValue(mockPruneLocal);
+
+    mockFrom.mockImplementation((_table: string) => ({
+      select: vi.fn().mockReturnValue(mockPruneLocal),
+      upsert: mockUpsertChain,
+      delete: vi.fn().mockReturnValue(mockDeleteChain),
+    }));
   });
 
   /** Unauthenticated POST must be rejected */
@@ -211,11 +199,7 @@ describe('POST /api/recents', () => {
     const req = makeRequest(
       'POST',
       {},
-      {
-        entity_type: 'property',
-        entity_id: '123',
-        display_name: 'Testvej 1',
-      }
+      { entity_type: 'property', entity_id: '123', display_name: 'Testvej 1' }
     );
     const res = await POST(req);
     expect(res.status).toBe(401);
@@ -229,11 +213,7 @@ describe('POST /api/recents', () => {
     const req = makeRequest(
       'POST',
       {},
-      {
-        entity_type: 'property',
-        entity_id: 'bfe-456',
-        display_name: 'Nørrebrogade 1',
-      }
+      { entity_type: 'property', entity_id: 'bfe-456', display_name: 'Nørrebrogade 1' }
     );
     const res = await POST(req);
     expect(res.status).toBe(200);
@@ -255,21 +235,14 @@ describe('POST /api/recents', () => {
 describe('DELETE /api/recents', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    selectCallCount = 0;
 
-    mockTenantSelectSingle.mockResolvedValue({ data: { schema_name: 'tenant_test' }, error: null });
-    mockTenantEq.mockReturnValue({ single: mockTenantSelectSingle });
-    mockTenantSelect.mockReturnValue({ eq: mockTenantEq });
     mockDeleteChain.eq.mockReturnValue(mockDeleteChain);
     mockDeleteChain.in.mockResolvedValue({ error: null });
 
-    mockFrom.mockImplementation((table: string) => {
-      if (table === 'tenants') {
-        return { select: mockTenantSelect };
-      }
-      return {
-        delete: vi.fn().mockReturnValue(mockDeleteChain),
-      };
-    });
+    mockFrom.mockImplementation((_table: string) => ({
+      delete: vi.fn().mockReturnValue(mockDeleteChain),
+    }));
   });
 
   /** Unauthenticated DELETE must be rejected */

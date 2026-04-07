@@ -19,6 +19,171 @@ import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 
 // ---------------------------------------------------------------------------
+// Tenant provisioning helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Provisions a full tenant schema for a newly registered user.
+ * Creates: tenant record, membership, and all core tables including recent_entities.
+ * Called automatically from signUp after a successful user creation.
+ *
+ * @param userId    - The new user's auth.users UUID
+ * @param userEmail - Used to derive a unique schema name
+ * @returns The new tenant ID, or null on failure (non-fatal)
+ */
+async function provisionTenantForUser(userId: string, userEmail: string): Promise<string | null> {
+  try {
+    const admin = createAdminClient();
+    const tenantId = crypto.randomUUID();
+    // Schema name: "tenant_" + sanitised email (max 60 chars)
+    const schemaName =
+      'tenant_' +
+      userEmail
+        .replace(/[@.]/g, '_')
+        .replace(/[^a-z0-9_]/gi, '')
+        .toLowerCase()
+        .substring(0, 53);
+
+    // 1. Insert tenant row
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error: tenantErr } = await (admin.from('tenants') as any).insert({
+      id: tenantId,
+      name: userEmail,
+      schema_name: schemaName,
+    });
+    if (tenantErr) {
+      console.error('[provisionTenant] insert tenant:', tenantErr.message);
+      return null;
+    }
+
+    // 2. Insert membership
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error: memberErr } = await (admin.from('tenant_memberships') as any).insert({
+      tenant_id: tenantId,
+      user_id: userId,
+      role: 'tenant_admin',
+    });
+    if (memberErr) {
+      console.error('[provisionTenant] insert membership:', memberErr.message);
+      return null;
+    }
+
+    // 3. Create schema + core tables via raw SQL (no pgvector dependency)
+    // Uses the service role key which has DDL privileges.
+    const sql =
+      [
+        `CREATE SCHEMA IF NOT EXISTS ${schemaName}`,
+        `GRANT USAGE ON SCHEMA ${schemaName} TO authenticated`,
+        `GRANT USAGE ON SCHEMA ${schemaName} TO service_role`,
+
+        `CREATE TABLE IF NOT EXISTS ${schemaName}.saved_entities (
+        id           uuid        PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
+        tenant_id    uuid        NOT NULL DEFAULT '${tenantId}'::uuid,
+        entity_type  text        NOT NULL CHECK (entity_type IN ('company','property','person')),
+        entity_id    text        NOT NULL,
+        entity_data  jsonb       NOT NULL DEFAULT '{}',
+        is_monitored boolean     NOT NULL DEFAULT false,
+        label        text,
+        created_by   uuid        NOT NULL REFERENCES auth.users(id) ON DELETE SET NULL,
+        created_at   timestamptz NOT NULL DEFAULT now(),
+        updated_at   timestamptz NOT NULL DEFAULT now(),
+        UNIQUE (tenant_id, entity_type, entity_id)
+      )`,
+        `ALTER TABLE ${schemaName}.saved_entities ENABLE ROW LEVEL SECURITY`,
+        `DROP POLICY IF EXISTS "saved_entities: members read" ON ${schemaName}.saved_entities`,
+        `DROP POLICY IF EXISTS "saved_entities: members write" ON ${schemaName}.saved_entities`,
+        `CREATE POLICY "saved_entities: members read" ON ${schemaName}.saved_entities FOR SELECT USING (public.is_tenant_member(tenant_id))`,
+        `CREATE POLICY "saved_entities: members write" ON ${schemaName}.saved_entities FOR INSERT WITH CHECK (public.can_tenant_write(tenant_id))`,
+
+        `CREATE TABLE IF NOT EXISTS ${schemaName}.notifications (
+        id           uuid        PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
+        tenant_id    uuid        NOT NULL DEFAULT '${tenantId}'::uuid,
+        entity_id    text        NOT NULL,
+        entity_type  text        NOT NULL DEFAULT 'property' CHECK (entity_type IN ('company','property','person')),
+        change_type  text        NOT NULL,
+        summary      text        NOT NULL,
+        details      jsonb       NOT NULL DEFAULT '{}',
+        is_read      boolean     NOT NULL DEFAULT false,
+        created_at   timestamptz NOT NULL DEFAULT now()
+      )`,
+        `ALTER TABLE ${schemaName}.notifications ENABLE ROW LEVEL SECURITY`,
+        `DROP POLICY IF EXISTS "notifications: members read" ON ${schemaName}.notifications`,
+        `DROP POLICY IF EXISTS "notifications: service write" ON ${schemaName}.notifications`,
+        `CREATE POLICY "notifications: members read" ON ${schemaName}.notifications FOR SELECT USING (public.is_tenant_member(tenant_id))`,
+        `CREATE POLICY "notifications: service write" ON ${schemaName}.notifications FOR INSERT WITH CHECK (true)`,
+
+        `CREATE TABLE IF NOT EXISTS ${schemaName}.property_snapshots (
+        id            uuid        PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
+        tenant_id     uuid        NOT NULL DEFAULT '${tenantId}'::uuid,
+        entity_id     text        NOT NULL,
+        snapshot_hash text        NOT NULL,
+        snapshot_data jsonb       NOT NULL DEFAULT '{}',
+        created_at    timestamptz NOT NULL DEFAULT now(),
+        UNIQUE (tenant_id, entity_id)
+      )`,
+        `ALTER TABLE ${schemaName}.property_snapshots ENABLE ROW LEVEL SECURITY`,
+        `DROP POLICY IF EXISTS "property_snapshots: service read" ON ${schemaName}.property_snapshots`,
+        `DROP POLICY IF EXISTS "property_snapshots: service write" ON ${schemaName}.property_snapshots`,
+        `CREATE POLICY "property_snapshots: service read" ON ${schemaName}.property_snapshots FOR SELECT USING (true)`,
+        `CREATE POLICY "property_snapshots: service write" ON ${schemaName}.property_snapshots FOR ALL USING (true)`,
+
+        `CREATE TABLE IF NOT EXISTS ${schemaName}.recent_entities (
+        id           uuid        PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
+        tenant_id    uuid        NOT NULL DEFAULT '${tenantId}'::uuid,
+        user_id      uuid        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+        entity_type  text        NOT NULL CHECK (entity_type IN ('company','property','person','search')),
+        entity_id    text        NOT NULL,
+        display_name text        NOT NULL,
+        entity_data  jsonb       NOT NULL DEFAULT '{}',
+        visited_at   timestamptz NOT NULL DEFAULT now(),
+        UNIQUE (tenant_id, user_id, entity_type, entity_id)
+      )`,
+        `ALTER TABLE ${schemaName}.recent_entities ENABLE ROW LEVEL SECURITY`,
+        `DROP POLICY IF EXISTS "recent_entities: own read" ON ${schemaName}.recent_entities`,
+        `DROP POLICY IF EXISTS "recent_entities: own write" ON ${schemaName}.recent_entities`,
+        `DROP POLICY IF EXISTS "recent_entities: own update" ON ${schemaName}.recent_entities`,
+        `DROP POLICY IF EXISTS "recent_entities: own delete" ON ${schemaName}.recent_entities`,
+        `CREATE POLICY "recent_entities: own read" ON ${schemaName}.recent_entities FOR SELECT USING (user_id = auth.uid() AND public.is_tenant_member(tenant_id))`,
+        `CREATE POLICY "recent_entities: own write" ON ${schemaName}.recent_entities FOR INSERT WITH CHECK (user_id = auth.uid() AND public.can_tenant_write(tenant_id))`,
+        `CREATE POLICY "recent_entities: own update" ON ${schemaName}.recent_entities FOR UPDATE USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid())`,
+        `CREATE POLICY "recent_entities: own delete" ON ${schemaName}.recent_entities FOR DELETE USING (user_id = auth.uid())`,
+        `CREATE INDEX IF NOT EXISTS recent_entities_user_idx ON ${schemaName}.recent_entities (user_id, entity_type, visited_at DESC)`,
+
+        `GRANT ALL ON ALL TABLES IN SCHEMA ${schemaName} TO authenticated`,
+        `GRANT ALL ON ALL TABLES IN SCHEMA ${schemaName} TO service_role`,
+      ].join(';\n') + ';';
+
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+    const projectRef = supabaseUrl.replace('https://', '').split('.')[0];
+    const accessToken = process.env.SUPABASE_ACCESS_TOKEN;
+    if (!accessToken) {
+      console.error('[provisionTenant] SUPABASE_ACCESS_TOKEN not set — skipping DDL');
+      return tenantId;
+    }
+
+    const res = await fetch(`https://api.supabase.com/v1/projects/${projectRef}/database/query`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ query: sql }),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error('[provisionTenant] DDL failed:', errText.substring(0, 300));
+      // Non-fatal — tenant + membership exist, tables can be created later
+    }
+
+    return tenantId;
+  } catch (err) {
+    console.error('[provisionTenant] Unexpected error:', err);
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -248,6 +413,13 @@ export async function signUp(
       return { error: 'password_too_weak' };
     }
     return { error: 'unexpected_error' };
+  }
+
+  // Provision tenant schema for the new user (fire-and-forget, non-fatal)
+  if (signupData?.user?.id && signupData?.user?.email) {
+    provisionTenantForUser(signupData.user.id, signupData.user.email).catch((err) => {
+      console.error('[signUp] Tenant provisioning failed:', err);
+    });
   }
 
   // Set subscription in app_metadata via admin client (so it's in the database)

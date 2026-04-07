@@ -1385,32 +1385,29 @@ function KortInner() {
         </div>
       </div>
 
-      {/* ── Stil-toggle (venstre) ────────────────────────────────────────── */}
-      <div
-        className="absolute top-4 left-4 z-20 flex flex-wrap gap-1.5"
-        style={{ maxWidth: 'calc(100% - 5rem)' }}
-      >
-        {(['dark', 'satellite'] as KortStyle[]).map((s) => (
-          <button
-            key={s}
-            onClick={() => setKortStyle(s)}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium shadow-lg transition-all ${
-              kortStyle === s
-                ? 'bg-blue-600 text-white'
-                : 'bg-[#0f172a]/90 text-slate-300 hover:bg-slate-800 border border-white/10'
-            }`}
-          >
-            {s === 'dark' ? <MapIcon size={13} /> : <Satellite size={13} />}
-            {s === 'dark' ? mt.street : mt.aerial}
-          </button>
-        ))}
-      </div>
-
-      {/* ── Lag-knap (højre) ─────────────────────────────────────────────── */}
-      <div className="absolute top-4 right-4 z-20">
+      {/* ── Kortknapper øverst — venstre + højre i fælles row, kan aldrig overlappe */}
+      <div className="absolute top-4 left-4 right-4 z-20 flex items-center justify-between gap-2">
+        {/* Venstre: stil-toggle */}
+        <div className="flex flex-wrap gap-1.5 min-w-0">
+          {(['dark', 'satellite'] as KortStyle[]).map((s) => (
+            <button
+              key={s}
+              onClick={() => setKortStyle(s)}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium shadow-lg transition-all ${
+                kortStyle === s
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-[#0f172a]/90 text-slate-300 hover:bg-slate-800 border border-white/10'
+              }`}
+            >
+              {s === 'dark' ? <MapIcon size={13} /> : <Satellite size={13} />}
+              {s === 'dark' ? mt.street : mt.aerial}
+            </button>
+          ))}
+        </div>
+        {/* Højre: Lag-knap */}
         <button
           onClick={() => setLagPanel((p) => !p)}
-          className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium shadow-lg transition-all ${
+          className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium shadow-lg transition-all shrink-0 ${
             lagPanel
               ? 'bg-blue-600 text-white'
               : 'bg-[#0f172a]/90 text-slate-300 hover:bg-slate-800 border border-white/10'

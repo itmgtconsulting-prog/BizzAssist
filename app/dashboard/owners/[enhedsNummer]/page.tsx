@@ -44,6 +44,7 @@ import type { RelateretVirksomhed } from '@/app/api/cvr-public/related/route';
 import type { EjendomSummary } from '@/app/api/ejendomme-by-owner/route';
 import PropertyOwnerCard from '@/app/components/ejendomme/PropertyOwnerCard';
 import { saveRecentPerson } from '@/app/lib/recentPersons';
+import { recordRecentVisit } from '@/app/lib/recordRecentVisit';
 import { buildPersonDiagramGraph } from '@/app/components/diagrams/DiagramData';
 import type { DiagramPropertySummary } from '@/app/components/diagrams/DiagramData';
 import dynamic from 'next/dynamic';
@@ -895,6 +896,13 @@ export default function PersonDetailPage({
           erVirksomhed: person.erVirksomhed,
           antalVirksomheder: person.virksomheder.length,
         });
+        // Opdater recent tag-bar (virker også ved direkte URL-navigation)
+        recordRecentVisit(
+          'person',
+          String(person.enhedsNummer),
+          person.navn,
+          `/dashboard/owners/${person.enhedsNummer}`
+        );
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
@@ -1309,17 +1317,17 @@ export default function PersonDetailPage({
 
   // ─── Tab config ──────────────────────────────────────────────────────────────
   const tabDef: { id: TabId; label: string; icon: React.ReactNode }[] = [
-    { id: 'overview', label: c.tabs.overview, icon: <LayoutDashboard size={14} /> },
-    { id: 'relations', label: c.tabs.relations, icon: <Briefcase size={14} /> },
+    { id: 'overview', label: c.tabs.overview, icon: <LayoutDashboard size={12} /> },
+    { id: 'relations', label: c.tabs.relations, icon: <Briefcase size={12} /> },
     {
       id: 'diagram2',
       label: lang === 'da' ? 'Simpelt diagram' : 'Simple diagram',
-      icon: <Briefcase size={14} />,
+      icon: <Briefcase size={12} />,
     },
-    { id: 'properties', label: c.tabs.properties, icon: <Home size={14} /> },
-    { id: 'group', label: c.tabs.group, icon: <Building2 size={14} /> },
-    { id: 'chronology', label: c.tabs.chronology, icon: <Clock size={14} /> },
-    { id: 'liens', label: c.tabs.liens, icon: <Scale size={14} /> },
+    { id: 'properties', label: c.tabs.properties, icon: <Home size={12} /> },
+    { id: 'group', label: c.tabs.group, icon: <Building2 size={12} /> },
+    { id: 'chronology', label: c.tabs.chronology, icon: <Clock size={12} /> },
+    { id: 'liens', label: c.tabs.liens, icon: <Scale size={12} /> },
   ];
 
   if (loading)
@@ -1416,7 +1424,7 @@ export default function PersonDetailPage({
               <button
                 key={id}
                 onClick={() => setAktivTab(id)}
-                className={`flex items-center gap-1.5 px-3 py-2.5 text-sm font-medium border-b-2 transition-all whitespace-nowrap ${
+                className={`flex items-center gap-1 px-2 py-1.5 text-xs font-medium border-b-2 transition-all whitespace-nowrap ${
                   aktivTab === id
                     ? 'border-blue-500 text-blue-300'
                     : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600'
@@ -2028,12 +2036,6 @@ export default function PersonDetailPage({
                 <ContactList contacts={aiContacts} />
               </div>
             )}
-          </div>
-          {/* Build-nummer — diskret footer */}
-          <div className="px-4 py-2 border-t border-slate-700/30 flex-shrink-0">
-            <p className="text-slate-600 text-xs">
-              Build: {process.env.NEXT_PUBLIC_BUILD_ID ?? 'dev'}
-            </p>
           </div>
         </div>
       )}

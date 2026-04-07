@@ -26,6 +26,8 @@ import {
   Zap,
   Clock,
   AlertCircle,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';
@@ -36,6 +38,7 @@ import type { UnifiedSearchResult } from '@/app/api/search/route';
 import AIChatPanel from '@/app/components/AIChatPanel';
 import ErrorBoundary from '@/app/components/ErrorBoundary';
 import NotifikationsDropdown from '@/app/components/NotifikationsDropdown';
+import RecentEntityTagBar from '@/app/components/RecentEntityTagBar';
 import SessionTimeoutWarning from '@/app/components/SessionTimeoutWarning';
 import { useSessionTimeout } from '@/app/hooks/useSessionTimeout';
 import OnboardingModal from '@/app/components/OnboardingModal';
@@ -64,6 +67,8 @@ const SIDEBAR_DEFAULT = 256;
 const SIDEBAR_MIN = 180;
 /** Maximum sidebarbredde */
 const SIDEBAR_MAX = 480;
+/** Bredde når sidebar er foldet ind (ikoner only) */
+const SIDEBAR_COLLAPSED = 56;
 
 /**
  * Outer wrapper that provides SubscriptionContext to the entire dashboard.
@@ -85,6 +90,8 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  /** Om sidebar er foldet ind til ikoner-only (desktop) */
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const profileRef = useRef<HTMLDivElement>(null);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -437,6 +444,38 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
         resultHref: result.href,
       });
 
+      // Save company/person to type-specific recents (properties handled by gemRecentEjendom above)
+      if (result.type === 'company') {
+        fetch('/api/recents', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            entity_type: 'company',
+            entity_id: result.id,
+            display_name: result.title,
+            entity_data: {
+              industry: result.meta?.industry ?? null,
+              city: result.meta?.city ?? null,
+            },
+          }),
+        })
+          .then(() => window.dispatchEvent(new Event('ba-recents-updated')))
+          .catch(() => {});
+      } else if (result.type === 'person') {
+        fetch('/api/recents', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            entity_type: 'person',
+            entity_id: result.id,
+            display_name: result.title,
+            entity_data: { subtitle: result.subtitle ?? null },
+          }),
+        })
+          .then(() => window.dispatchEvent(new Event('ba-recents-updated')))
+          .catch(() => {});
+      }
+
       setSøgning('');
       setSøgÅben(false);
       setResultater([]);
@@ -477,33 +516,57 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
 
       {/* Sidebar + resize-bjælke */}
       <div
-        className={`fixed lg:static inset-y-0 left-0 z-30 flex flex-row transition-transform duration-300 ${
+        className={`fixed lg:static inset-y-0 left-0 z-30 flex flex-row transition-all duration-300 ${
           sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         }`}
-        style={{ width: sidebarBredde }}
+        style={{ width: sidebarCollapsed ? SIDEBAR_COLLAPSED : sidebarBredde }}
       >
         <aside className="flex-1 bg-[#0f172a] flex flex-col overflow-hidden">
-          {/* Logo */}
-          <div className="flex items-center justify-between px-6 py-5 border-b border-white/10 shrink-0">
-            <Link href="/" className="flex items-center gap-2 min-w-0">
-              <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shrink-0">
+          {/* Logo + collapse-knap */}
+          <div
+            className={`flex items-center border-b border-white/10 shrink-0 ${sidebarCollapsed ? 'justify-center px-0 py-5' : 'justify-between px-6 py-5'}`}
+          >
+            {!sidebarCollapsed && (
+              <Link href="/" className="flex items-center gap-2 min-w-0">
+                <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shrink-0">
+                  <span className="text-white font-bold text-sm">B</span>
+                </div>
+                <span className="text-white font-bold text-lg truncate">
+                  Bizz<span className="text-blue-400">Assist</span>
+                </span>
+              </Link>
+            )}
+            {sidebarCollapsed && (
+              <Link
+                href="/"
+                className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shrink-0"
+              >
                 <span className="text-white font-bold text-sm">B</span>
-              </div>
-              <span className="text-white font-bold text-lg truncate">
-                Bizz<span className="text-blue-400">Assist</span>
-              </span>
-            </Link>
-            <button
-              className="lg:hidden text-slate-400 hover:text-white shrink-0"
-              onClick={() => setSidebarOpen(false)}
-              aria-label="Luk navigationsmenu"
-            >
-              <X size={20} />
-            </button>
+              </Link>
+            )}
+            <div className="flex items-center gap-1 shrink-0">
+              {/* Collapse-toggle — kun desktop */}
+              <button
+                className="hidden lg:flex text-slate-500 hover:text-white p-1 rounded-lg hover:bg-white/5 transition-colors"
+                onClick={() => setSidebarCollapsed((c) => !c)}
+                aria-label={sidebarCollapsed ? 'Udvid sidebar' : 'Fold sidebar sammen'}
+                title={sidebarCollapsed ? 'Udvid' : 'Fold sammen'}
+              >
+                {sidebarCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+              </button>
+              {/* Luk-knap — kun mobil */}
+              <button
+                className="lg:hidden text-slate-400 hover:text-white shrink-0"
+                onClick={() => setSidebarOpen(false)}
+                aria-label="Luk navigationsmenu"
+              >
+                <X size={20} />
+              </button>
+            </div>
           </div>
 
           {/* Navigation — shrink-0 så AI-panelet nedenfor fylder resten */}
-          <nav className="shrink-0 px-4 py-6 space-y-1">
+          <nav className={`shrink-0 py-6 space-y-1 ${sidebarCollapsed ? 'px-2' : 'px-4'}`}>
             {navItems
               .filter((item) => !item.adminOnly || isAdmin)
               .map((item) => {
@@ -529,7 +592,8 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                         });
                       }
                     }}
-                    className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
+                    title={sidebarCollapsed ? label : undefined}
+                    className={`flex items-center rounded-xl text-sm font-medium transition-all ${sidebarCollapsed ? 'justify-center px-0 py-3' : 'gap-3 px-4 py-3'} ${
                       locked
                         ? 'text-slate-600 cursor-not-allowed'
                         : active
@@ -540,30 +604,34 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                     }`}
                   >
                     <Icon size={18} className={locked ? 'opacity-40' : ''} />
-                    <span className="truncate">{label}</span>
-                    {locked && <Lock size={12} className="ml-auto text-slate-600" />}
+                    {!sidebarCollapsed && <span className="truncate">{label}</span>}
+                    {!sidebarCollapsed && locked && (
+                      <Lock size={12} className="ml-auto text-slate-600" />
+                    )}
                   </Link>
                 );
               })}
           </nav>
 
-          {/* AI Chat Panel — resizable, nederst i sidebar */}
-          <ErrorBoundary
-            lang={lang}
-            fallback={
-              <div className="p-4 text-center">
-                <p className="text-sm text-slate-400 mb-3">Chat er midlertidigt utilgængelig</p>
-                <button
-                  onClick={() => window.location.reload()}
-                  className="text-xs text-blue-400 hover:text-blue-300 border border-slate-700 rounded-lg px-3 py-1.5 transition-colors"
-                >
-                  Prøv igen
-                </button>
-              </div>
-            }
-          >
-            <AIChatPanel />
-          </ErrorBoundary>
+          {/* AI Chat Panel — skjules når sidebar er foldet ind (collapsed) */}
+          {!sidebarCollapsed && (
+            <ErrorBoundary
+              lang={lang}
+              fallback={
+                <div className="p-4 text-center">
+                  <p className="text-sm text-slate-400 mb-3">Chat er midlertidigt utilgængelig</p>
+                  <button
+                    onClick={() => window.location.reload()}
+                    className="text-xs text-blue-400 hover:text-blue-300 border border-slate-700 rounded-lg px-3 py-1.5 transition-colors"
+                  >
+                    Prøv igen
+                  </button>
+                </div>
+              }
+            >
+              <AIChatPanel />
+            </ErrorBoundary>
+          )}
         </aside>
 
         {/* Resize-bjælke — kun desktop */}
@@ -579,7 +647,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
       {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         {/* Top bar */}
-        <header className="bg-[#0f172a] border-b border-white/8 px-6 py-4 flex items-center justify-between shrink-0">
+        <header className="bg-[#0f172a] border-b border-white/8 px-6 py-4 flex items-center gap-4 shrink-0">
           <div className="flex items-center gap-4">
             <button
               className="lg:hidden text-slate-400 hover:text-white"
@@ -608,7 +676,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                     setSearchRect({
                       top: rect.bottom + 6,
                       left: rect.left,
-                      width: Math.max(rect.width, 380),
+                      width: Math.max(rect.width, 520),
                     });
                 }}
                 onFocus={() => {
@@ -619,13 +687,13 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                     setSearchRect({
                       top: rect.bottom + 6,
                       left: rect.left,
-                      width: Math.max(rect.width, 380),
+                      width: Math.max(rect.width, 520),
                     });
                 }}
                 onKeyDown={(e) => {
                   if (e.key === 'ArrowDown') {
                     e.preventDefault();
-                    setMarkeret((m) => Math.min(m + 1, Math.min(resultater.length, 15) - 1)); // max 15 = 5 per category
+                    setMarkeret((m) => Math.min(m + 1, Math.min(resultater.length, 24) - 1)); // max 24 = 8 per category
                   } else if (e.key === 'ArrowUp') {
                     e.preventDefault();
                     setMarkeret((m) => Math.max(m - 1, -1));
@@ -684,15 +752,15 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                       width: searchRect.width,
                       zIndex: 9999,
                     }}
-                    className="bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl overflow-hidden max-h-[70vh] overflow-y-auto"
+                    className="bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl overflow-hidden max-h-[88vh] overflow-y-auto"
                   >
-                    {/* Group results by type — max 5 per category */}
+                    {/* Group results by type — max 8 per category */}
                     {(() => {
-                      const adresser = resultater.filter((r) => r.type === 'address').slice(0, 5);
+                      const adresser = resultater.filter((r) => r.type === 'address').slice(0, 8);
                       const virksomheder = resultater
                         .filter((r) => r.type === 'company')
-                        .slice(0, 5);
-                      const personer = resultater.filter((r) => r.type === 'person').slice(0, 5);
+                        .slice(0, 8);
+                      const personer = resultater.filter((r) => r.type === 'person').slice(0, 8);
                       /** Flat list for keyboard navigation index */
                       const flat = [...adresser, ...virksomheder, ...personer];
 
@@ -787,23 +855,23 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                                   e.preventDefault();
                                   vælgResultat(flat[idx]);
                                 }}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors group ${isActive ? activeBg : hoverBg}`}
+                                className={`w-full flex items-center gap-2 px-3 py-1.5 text-left transition-colors group ${isActive ? activeBg : hoverBg}`}
                               >
                                 <div
-                                  className={`p-1.5 rounded-lg flex-shrink-0 transition-colors ${isActive ? iconBgActive : iconBgActive.replace('/30', '/15')}`}
+                                  className={`p-1 rounded-md flex-shrink-0 transition-colors ${isActive ? iconBgActive : iconBgActive.replace('/30', '/15')}`}
                                 >
-                                  <ResultIcon size={13} className={accentColor} />
+                                  <ResultIcon size={11} className={accentColor} />
                                 </div>
                                 <div className="flex-1 min-w-0">
                                   {r.type === 'company' ? (
                                     <>
-                                      <div className="flex items-center gap-2">
-                                        <p className="text-white text-sm font-medium truncate">
+                                      <div className="flex items-center gap-1.5">
+                                        <p className="text-white text-xs font-medium truncate">
                                           {r.title}
                                         </p>
                                         {r.meta?.active && (
                                           <span
-                                            className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium flex-shrink-0 ${r.meta.active === 'true' ? 'bg-emerald-600/20 text-emerald-400' : 'bg-red-600/20 text-red-400'}`}
+                                            className={`inline-flex items-center px-1 py-0 rounded text-[8px] font-medium flex-shrink-0 ${r.meta.active === 'true' ? 'bg-emerald-600/20 text-emerald-400' : 'bg-red-600/20 text-red-400'}`}
                                           >
                                             {r.meta.active === 'true'
                                               ? lang === 'da'
@@ -815,7 +883,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                                           </span>
                                         )}
                                       </div>
-                                      <p className="text-slate-500 text-xs truncate">
+                                      <p className="text-slate-500 text-[10px] truncate">
                                         CVR {r.id}
                                         {r.meta?.industry ? ` \u00b7 ${r.meta.industry}` : ''}
                                         {r.meta?.city ? ` \u00b7 ${r.meta.city}` : ''}
@@ -823,21 +891,21 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                                     </>
                                   ) : r.type === 'person' ? (
                                     <>
-                                      <p className="text-white text-sm font-medium truncate">
+                                      <p className="text-white text-xs font-medium truncate">
                                         {r.title}
                                       </p>
                                       {r.subtitle && (
-                                        <p className="text-slate-500 text-xs truncate">
+                                        <p className="text-slate-500 text-[10px] truncate">
                                           {r.subtitle}
                                         </p>
                                       )}
                                     </>
                                   ) : (
                                     <>
-                                      <p className="text-white text-sm font-medium truncate">
+                                      <p className="text-white text-xs font-medium truncate">
                                         {r.title}
                                       </p>
-                                      <p className="text-slate-500 text-xs truncate">
+                                      <p className="text-slate-500 text-[10px] truncate">
                                         {r.meta?.dawaType === 'vejnavn'
                                           ? s.typeRoad
                                           : s.typeProperty}
@@ -847,7 +915,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                                   )}
                                 </div>
                                 <ArrowRight
-                                  size={13}
+                                  size={11}
                                   className={isActive ? accentColor : arrowIdle}
                                 />
                               </button>
@@ -910,6 +978,10 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                 )}
             </div>
           </div>
+          {/* Recent entity tags — direkte til højre for søgefeltet */}
+          <RecentEntityTagBar currentPath={pathname} variant="inline" />
+          {/* Spacer — skubber DA/EN til højre */}
+          <div className="flex-1" />
           <div className="flex items-center gap-3">
             {/* Language toggle */}
             <div className="flex items-center bg-white/10 rounded-full p-1 gap-1">

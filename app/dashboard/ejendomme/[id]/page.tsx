@@ -90,6 +90,7 @@ import type {
 } from '@/app/api/vurdering-forelobig/route';
 import type { MatrikelEjendom, MatrikelResponse } from '@/app/api/matrikel/route';
 import { gemRecentEjendom } from '@/app/lib/recentEjendomme';
+import { recordRecentVisit } from '@/app/lib/recordRecentVisit';
 import { erTracked, toggleTrackEjendom } from '@/app/lib/trackedEjendomme';
 import FoelgTooltip from '@/app/components/FoelgTooltip';
 import { useLanguage } from '@/app/context/LanguageContext';
@@ -119,17 +120,17 @@ type Tab =
 /** Bygger tab-liste med oversatte labels */
 function buildTabs(da: boolean): { id: Tab; label: string; ikon: React.ReactNode }[] {
   return [
-    { id: 'overblik', label: da ? 'Oversigt' : 'Overview', ikon: <Building2 size={14} /> },
-    { id: 'bbr', label: 'BBR', ikon: <FileText size={14} /> },
-    { id: 'ejerforhold', label: da ? 'Ejerskab' : 'Ownership', ikon: <Users size={14} /> },
-    { id: 'oekonomi', label: da ? 'Økonomi' : 'Financials', ikon: <BarChart3 size={14} /> },
-    { id: 'skatter', label: da ? 'SKAT' : 'Tax', ikon: <Landmark size={14} /> },
+    { id: 'overblik', label: da ? 'Oversigt' : 'Overview', ikon: <Building2 size={12} /> },
+    { id: 'bbr', label: 'BBR', ikon: <FileText size={12} /> },
+    { id: 'ejerforhold', label: da ? 'Ejerskab' : 'Ownership', ikon: <Users size={12} /> },
+    { id: 'oekonomi', label: da ? 'Økonomi' : 'Financials', ikon: <BarChart3 size={12} /> },
+    { id: 'skatter', label: da ? 'SKAT' : 'Tax', ikon: <Landmark size={12} /> },
     {
       id: 'tinglysning',
       label: da ? 'Tinglysning' : 'Land Registry',
-      ikon: <Landmark size={14} />,
+      ikon: <Landmark size={12} />,
     },
-    { id: 'dokumenter', label: da ? 'Dokumenter' : 'Documents', ikon: <FileText size={14} /> },
+    { id: 'dokumenter', label: da ? 'Dokumenter' : 'Documents', ikon: <FileText size={12} /> },
   ];
 }
 
@@ -854,7 +855,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
     import('@/app/api/ejerlejligheder/route').Ejerlejlighed[] | null
   >(null);
   /** True mens lejlighedsdata hentes */
-  const [lejlighederLoader, setLejlighederLoader] = useState(false);
+  const [_lejlighederLoader, setLejlighederLoader] = useState(false);
 
   /** Ejendomsvurderingsdata fra Datafordeler — null = ikke hentet endnu */
   const [vurdering, setVurdering] = useState<VurderingData | null>(null);
@@ -1013,15 +1014,21 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
         setDawaStatus('ok');
 
         // Gem besøget i "seneste sete ejendomme"-historikken
+        const adresseLabel = adr.etage
+          ? `${adr.vejnavn} ${adr.husnr}, ${adr.etage}.${adr.dør ? ` ${adr.dør}` : ''}`
+          : adr.adressebetegnelse.split(',')[0];
         gemRecentEjendom({
           id,
-          adresse: adr.etage
-            ? `${adr.vejnavn} ${adr.husnr}, ${adr.etage}.${adr.dør ? ` ${adr.dør}` : ''}`
-            : adr.adressebetegnelse.split(',')[0],
+          adresse: adresseLabel,
           postnr: adr.postnr,
           by: adr.postnrnavn,
           kommune: adr.kommunenavn,
           anvendelse: null, // opdateres nedenfor når BBR-data er klar
+        });
+        // Opdater recent tag-bar (virker også ved direkte URL-navigation)
+        recordRecentVisit('property', id, adresseLabel, `/dashboard/ejendomme/${id}`, {
+          postnr: adr.postnr,
+          by: adr.postnrnavn,
         });
       })
       .catch((err) => {
@@ -1890,7 +1897,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                 <button
                   key={tab.id}
                   onClick={() => setAktivTab(tab.id)}
-                  className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-all whitespace-nowrap ${
+                  className={`flex items-center gap-1 px-2 py-1.5 text-xs font-medium border-b-2 transition-all whitespace-nowrap ${
                     aktivTab === tab.id
                       ? 'border-blue-500 text-blue-300'
                       : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600'
@@ -2391,16 +2398,6 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                           </span>
                         </Link>
                       ))}
-                    </div>
-                  </div>
-                ) : lejlighederLoader ? (
-                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                    <p className="text-slate-400 text-xs font-medium uppercase tracking-wide mb-2">
-                      {t.apartments}
-                    </p>
-                    <div className="flex items-center gap-2 text-slate-500 text-sm">
-                      <div className="w-3.5 h-3.5 border border-slate-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
-                      {t.loadingApartments}
                     </div>
                   </div>
                 ) : (
@@ -4594,7 +4591,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
             <button
               key={tab.id}
               onClick={() => setAktivTab(tab.id)}
-              className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-all whitespace-nowrap ${
+              className={`flex items-center gap-1 px-2 py-1.5 text-xs font-medium border-b-2 transition-all whitespace-nowrap ${
                 aktivTab === tab.id
                   ? 'border-blue-500 text-blue-300'
                   : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600'

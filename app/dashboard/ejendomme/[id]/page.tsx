@@ -6210,7 +6210,11 @@ function PropertyOwnerDiagram({
     if (fetchedRef.current) return;
     fetchedRef.current = true;
 
-    fetch(`/api/ejerskab/chain?bfe=${bfe}&adresse=${encodeURIComponent(adresse)}`)
+    const controller = new AbortController();
+
+    fetch(`/api/ejerskab/chain?bfe=${bfe}&adresse=${encodeURIComponent(adresse)}`, {
+      signal: controller.signal,
+    })
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (data && data.nodes?.length > 0) {
@@ -6232,10 +6236,12 @@ function PropertyOwnerDiagram({
           setEjerDetaljer(data.ejerDetaljer ?? []);
         }
       })
-      .catch(() => {
-        /* ignore */
+      .catch((err) => {
+        if (err.name !== 'AbortError') console.error('[ejerskab/chain] fetch error:', err);
       })
       .finally(() => setLoading(false));
+
+    return () => controller.abort();
   }, [bfe, adresse]);
 
   if (loading)
@@ -6456,8 +6462,11 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
     }
     fetchedRef.current = true;
 
+    const controller = new AbortController();
+    const { signal } = controller;
+
     // Trin 1: Hent UUID via tinglysning søgning
-    fetch(`/api/tinglysning?bfe=${bfe}`)
+    fetch(`/api/tinglysning?bfe=${bfe}`, { signal })
       .then((r) => (r.ok ? r.json() : null))
       .then((tlData) => {
         if (!tlData?.uuid) {
@@ -6467,7 +6476,7 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
         }
         setTlUuid(tlData.uuid);
         // Trin 2: Hent summariske data
-        return fetch(`/api/tinglysning/summarisk?uuid=${tlData.uuid}`).then((r) =>
+        return fetch(`/api/tinglysning/summarisk?uuid=${tlData.uuid}`, { signal }).then((r) =>
           r.ok ? r.json() : null
         );
       })
@@ -6480,8 +6489,13 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
           setTingbogsattest(data.tingbogsattest ?? null);
         }
       })
-      .catch(() => setFejl(da ? 'Kunne ikke hente tingbogsdata' : 'Failed to load registry data'))
+      .catch((err) => {
+        if (err.name !== 'AbortError')
+          setFejl(da ? 'Kunne ikke hente tingbogsdata' : 'Failed to load registry data');
+      })
       .finally(() => setLoading(false));
+
+    return () => controller.abort();
   }, [bfe, da]);
 
   const formatDato = (iso: string | null) => {

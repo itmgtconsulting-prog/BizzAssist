@@ -31,6 +31,7 @@ interface TenantPurgeResult {
   schemaName: string;
   recentEntitiesDeleted: number;
   notificationsDeleted: number;
+  aiConversationsDeleted: number;
   error?: string;
 }
 
@@ -165,6 +166,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       schemaName: tenant.schema_name,
       recentEntitiesDeleted: 0,
       notificationsDeleted: 0,
+      aiConversationsDeleted: 0,
     };
 
     try {
@@ -187,10 +189,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           .delete({ count: 'exact' })
           .not('id', 'is', null);
 
-        // Also purge snapshots and saved_entities — no count needed for these
+        // Also purge snapshots, saved_entities, and ai_conversations — no count needed
         await db.from('property_snapshots').delete().not('id', 'is', null);
-
         await db.from('saved_entities').delete().not('id', 'is', null);
+        await db.from('ai_conversations').delete().not('id', 'is', null);
 
         result.recentEntitiesDeleted = recentCount ?? 0;
         result.notificationsDeleted = notifCount ?? 0;
@@ -228,12 +230,26 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
         result.notificationsDeleted = notifCount ?? 0;
 
+        // 3. ai_conversations: purge threads older than 12 months (GDPR storage limitation).
+        //    Privacy policy states 12-month retention; this enforces it in practice.
+        const { count: aiCount } = await db
+          .from('ai_conversations')
+          .delete({ count: 'exact' })
+          .lt('updated_at', twelveMonthsAgo);
+
+        result.aiConversationsDeleted = aiCount ?? 0;
+
         // Write audit log only if something was actually purged
-        if (result.recentEntitiesDeleted > 0 || result.notificationsDeleted > 0) {
+        if (
+          result.recentEntitiesDeleted > 0 ||
+          result.notificationsDeleted > 0 ||
+          result.aiConversationsDeleted > 0
+        ) {
           await writeAuditLog(admin, tenant.schema_name, tenant.id, {
             event: 'ttl_purge',
             recentEntitiesDeleted: result.recentEntitiesDeleted,
             notificationsDeleted: result.notificationsDeleted,
+            aiConversationsDeleted: result.aiConversationsDeleted,
           });
         }
       }

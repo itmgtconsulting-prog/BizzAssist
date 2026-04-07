@@ -154,3 +154,119 @@ Full process: `docs/agents/RELEASE_PROCESS.md`
 - CODE REVIEWER: quality gate before production
 - DBA: schema + migrations + RLS
 - AI/ML: intelligence layer + embeddings
+
+---
+
+## Mandatory Pre-Session Reading
+
+**Before starting any task**, read these documents to understand the full system:
+
+1. `docs/architecture/SAAS.md` — full system architecture and folder structure
+2. `docs/architecture/DATABASE.md` — database schema, tenant model, RLS setup
+3. `docs/security/ISMS.md` — ISO 27001 information security policy
+4. `docs/http_api_beskrivelse_v112.docx` — interface documentation for external APIs
+5. `docs/BACKLOG.md` — current backlog and known issues
+
+These are the authoritative sources. Never assume — read first.
+
+---
+
+## State Management Rule (Non-Negotiable)
+
+**Never use `localStorage` or `sessionStorage` for user data** unless it is a temporary offline fallback with a clearly documented justification.
+
+- User preferences, recent searches, saved entities, notifications → stored in Supabase tables
+- Users must be able to log in from any browser/device and see the same state
+- `localStorage` is acceptable **only** as a fallback when Supabase is unavailable (e.g. `NotifikationsDropdown.tsx` hybrid pattern — fallback is acceptable there, but Supabase is always the primary source)
+- Never use `localStorage` as the **primary** data store for anything that should persist across devices
+
+---
+
+## BizzAssist Solution Map
+
+### Dashboard Routes (`app/dashboard/`)
+
+| Route                              | Purpose                                                       |
+| ---------------------------------- | ------------------------------------------------------------- |
+| `/dashboard`                       | Main dashboard — search, recent entities, quick stats         |
+| `/dashboard/ejendomme/[id]`        | Property detail — BBR, ownership, tinglysning, tax, docs, map |
+| `/dashboard/companies/[cvr]`       | Company detail — CVR data, owners, subsidiaries, financials   |
+| `/dashboard/owners/[enhedsNummer]` | Owner/person detail page                                      |
+| `/dashboard/kort`                  | Full-screen map with WMS layers, property markers             |
+| `/dashboard/compare`               | Side-by-side property/company comparison                      |
+| `/dashboard/tokens`                | API token management for tenant                               |
+| `/dashboard/settings`              | User profile, GDPR export/delete, notifications               |
+| `/dashboard/settings/security`     | Password change, 2FA                                          |
+| `/dashboard/admin/*`               | Super-admin: user management, support analytics, tickets      |
+
+### Key Components (`app/components/`)
+
+| Component                   | Purpose                                                             |
+| --------------------------- | ------------------------------------------------------------------- |
+| `AIChatPanel.tsx`           | Streaming AI assistant sidebar with 12 tools                        |
+| `BugReportModal.tsx`        | In-app bug report dialog (Sentry-integrated)                        |
+| `CookieBanner.tsx`          | GDPR cookie consent banner                                          |
+| `ErrorBoundary.tsx`         | React error boundary with Sentry capture                            |
+| `FeedbackButton.tsx`        | Floating feedback button                                            |
+| `FoelgTooltip.tsx`          | "Follow property" tooltip/button                                    |
+| `Navbar.tsx`                | Public marketing navbar with DA/EN toggle                           |
+| `NotifikationsDropdown.tsx` | Bell icon with notification tabs (Supabase + localStorage fallback) |
+| `OnboardingModal.tsx`       | First-login onboarding flow                                         |
+| `SessionTimeoutWarning.tsx` | Warns user before Supabase session expires                          |
+| `SubscriptionGate.tsx`      | Blocks premium features without active subscription                 |
+| `SupportChatWidget.tsx`     | Intercom-style support chat                                         |
+| `ejendomme/PropertyMap.tsx` | BBR property map with Mapbox                                        |
+| `diagrams/`                 | Company/owner relationship diagrams (force-directed)                |
+
+### Public Pages (`app/(public)/`)
+
+| Route                      | Purpose                                 |
+| -------------------------- | --------------------------------------- |
+| `/`                        | Marketing homepage                      |
+| `/login`                   | Supabase Auth login                     |
+| `/signup`                  | Registration + tenant provisioning      |
+| `/privacy`                 | GDPR privacy policy with processor list |
+| `/virksomhed/[slug]/[cvr]` | Public company SEO page                 |
+| `/ejendom/[slug]/[bfe]`    | Public property SEO page                |
+
+---
+
+## External Services & Credentials
+
+**All secrets are in `.env.local` — never hardcode.**
+
+| Service                   | Purpose                      | How to find credentials                                                                                |
+| ------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------ |
+| **Supabase**              | PostgreSQL + Auth + pgvector | `.env.local`: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` |
+| **Vercel**                | Hosting + CI/CD              | Project: `prj_HX46RO3u4Jhbvira8ju2hsF3xtTs`, repo branch: `develop` → PR → `main`                      |
+| **GitHub**                | Source control               | Repo: `itmgtconsulting-prog/BizzAssist`                                                                |
+| **JIRA**                  | Issue tracking               | `bizzassist.atlassian.net`, see `docs/agents/TEAM.md`                                                  |
+| **Sentry**                | Error monitoring             | DSN in `.env.local`: `NEXT_PUBLIC_SENTRY_DSN`                                                          |
+| **Anthropic / Claude**    | AI chat features             | `.env.local`: `BIZZASSIST_CLAUDE_KEY`                                                                  |
+| **Stripe**                | Subscriptions (live mode)    | `.env.local`: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`                                             |
+| **Upstash Redis**         | Rate limiting                | `.env.local`: `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`                                     |
+| **Mapbox**                | Property maps                | `.env.local`: `NEXT_PUBLIC_MAPBOX_TOKEN`                                                               |
+| **Datafordeler**          | BBR, MAT, DAR, VUR data      | `.env.local`: `DATAFORDELER_USER`, `DATAFORDELER_PASS`                                                 |
+| **CVR Erhvervsstyrelsen** | System-to-system CVR access  | `.env.local`: `CVR_ES_USER`, `CVR_ES_PASS` (pending approval)                                          |
+| **Resend**                | Transactional email          | `.env.local`: `RESEND_API_KEY`                                                                         |
+| **Twilio**                | SMS notifications            | `.env.local`: `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`                                                |
+| **Brave Search**          | Web search in AI tools       | `.env.local`: `BRAVE_SEARCH_API_KEY`                                                                   |
+| **Mediastack**            | News feed                    | `.env.local`: `MEDIASTACK_API_KEY`                                                                     |
+| **Cron**                  | Vercel cron jobs             | `.env.local`: `CRON_SECRET` (bearer token for cron routes)                                             |
+
+---
+
+## Interface Documentation
+
+External API integration specs are in:
+
+- `docs/http_api_beskrivelse_v112.docx` — HTTP API description v1.12 (primary interface reference)
+- `docs/adr/` — Architecture Decision Records (ADRs) for significant decisions
+
+When integrating a new external API, check this document first to see if the interface is already specified.
+
+---
+
+## Current Backlog
+
+See `docs/BACKLOG.md` for the authoritative list of open issues, pending integrations, and known limitations. Always check this before starting new work — the task may already be scoped there.

@@ -35,7 +35,26 @@ const COLLAPSED_HEIGHT = 48;
 // ─── Token usage tracking ────────────────────────────────────────────────────
 
 /**
+ * Fetch with automatic retry on network failure.
+ *
+ * @param url - The URL to fetch
+ * @param options - Standard fetch options
+ * @param retries - Number of remaining retries (default 2)
+ * @returns The successful Response
+ */
+async function fetchWithRetry(url: string, options: RequestInit, retries = 2): Promise<Response> {
+  try {
+    return await fetch(url, options);
+  } catch (err) {
+    if (retries <= 0) throw err;
+    await new Promise((r) => setTimeout(r, 2000));
+    return fetchWithRetry(url, options, retries - 1);
+  }
+}
+
+/**
  * Sync token usage to Supabase in background (fire-and-forget).
+ * Retries up to 2 times on network failure before giving up.
  * In-memory state is updated via SubscriptionContext.addTokenUsage().
  *
  * @param tokensUsed - Number of tokens consumed in this request
@@ -43,13 +62,13 @@ const COLLAPSED_HEIGHT = 48;
 function syncTokenUsageToServer(tokensUsed: number) {
   if (tokensUsed <= 0) return;
 
-  // Sync to Supabase in background (fire-and-forget)
-  fetch('/api/subscription/track-tokens', {
+  // Sync to Supabase in background (fire-and-forget) with retry
+  fetchWithRetry('/api/subscription/track-tokens', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ tokensUsed }),
-  }).catch(() => {
-    /* silent — localStorage is the fallback */
+  }).catch((err) => {
+    console.error('[token-sync] Failed after retries:', err);
   });
 }
 
@@ -262,48 +281,53 @@ function AIChatPanel() {
       let accumulated = '';
       let buffer = '';
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        // Behold sidste ufuldstændige linje i buffer
-        buffer = lines.pop() ?? '';
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          // Behold sidste ufuldstændige linje i buffer
+          buffer = lines.pop() ?? '';
 
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed || !trimmed.startsWith('data: ')) continue;
-          const payload = trimmed.slice(6);
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || !trimmed.startsWith('data: ')) continue;
+            const payload = trimmed.slice(6);
 
-          if (payload === '[DONE]') break;
+            if (payload === '[DONE]') break;
 
-          try {
-            const parsed = JSON.parse(payload) as {
-              t?: string;
-              error?: string;
-              status?: string;
-              usage?: { inputTokens: number; outputTokens: number; totalTokens: number };
-            };
-            if (parsed.error) {
-              accumulated += `\n⚠️ ${parsed.error}`;
-              setStreamText(accumulated);
-            } else if (parsed.usage) {
-              // Update token usage in-memory + sync to server
-              addTokenUsage(parsed.usage.totalTokens);
-              syncTokenUsageToServer(parsed.usage.totalTokens);
-            } else if (parsed.status) {
-              setToolStatus(parsed.status);
-            } else if (parsed.t) {
-              // Første tekst-chunk → ryd status
-              if (!accumulated) setToolStatus('');
-              accumulated += parsed.t;
-              setStreamText(accumulated);
+            try {
+              const parsed = JSON.parse(payload) as {
+                t?: string;
+                error?: string;
+                status?: string;
+                usage?: { inputTokens: number; outputTokens: number; totalTokens: number };
+              };
+              if (parsed.error) {
+                accumulated += `\n⚠️ ${parsed.error}`;
+                setStreamText(accumulated);
+              } else if (parsed.usage) {
+                // Update token usage in-memory + sync to server
+                addTokenUsage(parsed.usage.totalTokens);
+                syncTokenUsageToServer(parsed.usage.totalTokens);
+              } else if (parsed.status) {
+                setToolStatus(parsed.status);
+              } else if (parsed.t) {
+                // Første tekst-chunk → ryd status
+                if (!accumulated) setToolStatus('');
+                accumulated += parsed.t;
+                setStreamText(accumulated);
+              }
+            } catch {
+              // Ignorer ugyldige JSON-chunks
             }
-          } catch {
-            // Ignorer ugyldige JSON-chunks
           }
         }
+      } finally {
+        // Frigør ReadableStream-ressourcen eksplicit (BIZZ-126)
+        reader.cancel().catch(() => {});
       }
 
       // Flyt streamed tekst til message-array

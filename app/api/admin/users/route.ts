@@ -17,6 +17,26 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 
+/**
+ * Inserts a row into audit_log using an untyped client cast.
+ * The audit_log table is not in the generated Supabase types.
+ * Fire-and-forget — errors are only logged.
+ *
+ * @param client - Admin Supabase client
+ * @param entry  - Audit log entry fields
+ */
+async function insertAuditLog(
+  client: ReturnType<typeof createAdminClient>,
+  entry: { action: string; resource_type: string; resource_id: string; metadata: string }
+): Promise<void> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (client as any).from('audit_log').insert(entry);
+  } catch (e: unknown) {
+    console.error('[audit] Failed to insert audit log:', e);
+  }
+}
+
 /** Shape returned per user — includes subscription from app_metadata */
 interface AdminUserRow {
   id: string;
@@ -212,7 +232,68 @@ export async function DELETE(req: NextRequest): Promise<NextResponse> {
       // Non-critical — user is being deleted anyway
     }
 
-    // Step 3: Delete from Supabase Auth (removes user, sessions, MFA factors)
+    // Step 3: Audit log BEFORE deletion — the row will be gone after
+    await insertAuditLog(admin, {
+      action: 'admin.user.delete',
+      resource_type: 'user',
+      resource_id: targetUser.id,
+      metadata: JSON.stringify({ deletedEmail: email }),
+    });
+
+    // Step 4: Cascade-delete all tenant-scoped data for this user.
+    // We look up the user's tenant membership to find the schema name,
+    // then remove all personal data from tenant tables before deleting auth.
+    // Also marks the tenant as closed so the nightly purge cron can enforce
+    // the 30-day post-closure GDPR erasure (BIZZ-131).
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: membership } = await (admin as any)
+        .from('tenant_memberships')
+        .select('tenant_id')
+        .eq('user_id', targetUser.id)
+        .limit(1)
+        .single();
+
+      if (membership?.tenant_id) {
+        const tenantId: string = membership.tenant_id;
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: tenantRow } = await (admin as any)
+          .from('tenants')
+          .select('schema_name')
+          .eq('id', tenantId)
+          .single();
+
+        const schemaName: string | null = tenantRow?.schema_name ?? null;
+
+        if (schemaName) {
+          // Delete from each tenant-schema table where user_id matches.
+          // Cast to unknown first — Supabase generated types only cover the public schema.
+          const db = (
+            admin as unknown as { schema: (s: string) => ReturnType<typeof createAdminClient> }
+          ).schema(schemaName);
+
+          await db.from('recent_entities').delete().eq('user_id', targetUser.id);
+          await db.from('saved_entities').delete().eq('user_id', targetUser.id);
+          await db.from('notifications').delete().eq('user_id', targetUser.id);
+        }
+
+        // Mark the tenant as closed for 30-day retention enforcement.
+        // The nightly purge cron (/api/cron/purge-old-data) will erase all
+        // remaining tenant schema data once closed_at is older than 30 days.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (admin as any)
+          .from('tenants')
+          .update({ closed_at: new Date().toISOString() })
+          .eq('id', tenantId);
+      }
+    } catch (cascadeErr) {
+      // Non-critical path — log but do not abort deletion.
+      // The auth record deletion below is the source of truth for GDPR erasure.
+      console.error('[admin/users] Cascade delete error (non-fatal):', cascadeErr);
+    }
+
+    // Step 5: Delete from Supabase Auth (removes user, sessions, MFA factors)
     const { error: deleteError } = await admin.auth.admin.deleteUser(targetUser.id);
     if (deleteError) {
       console.error('[admin/users] Delete error:', deleteError.code ?? '[DB error]');

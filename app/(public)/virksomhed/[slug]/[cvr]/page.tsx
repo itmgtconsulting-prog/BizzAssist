@@ -196,18 +196,30 @@ export async function generateMetadata({
     `${adresseStr}. Se bestyrelse, ejere, ejendomme og regnskaber på BizzAssist.`;
 
   const canonicalSlug = generateVirksomhedSlug(v.navn);
+  const canonicalUrl = `https://bizzassist.dk/virksomhed/${canonicalSlug}/${cvr}`;
 
   return {
     title: `${v.navn} — CVR ${cvr} — BizzAssist`,
     description,
     alternates: {
-      canonical: `/virksomhed/${canonicalSlug}/${cvr}`,
+      canonical: canonicalUrl,
+      languages: {
+        da: canonicalUrl,
+        en: canonicalUrl,
+      },
     },
     openGraph: {
       title: `${v.navn} (CVR ${cvr}) — BizzAssist`,
       description,
       type: 'website',
-      url: `/virksomhed/${canonicalSlug}/${cvr}`,
+      url: canonicalUrl,
+      images: [{ url: '/images/og-image.svg', width: 1200, height: 630, alt: 'BizzAssist' }],
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title: `${v.navn} (CVR ${cvr}) — BizzAssist`,
+      description,
+      images: ['/images/og-image.svg'],
     },
   };
 }
@@ -311,11 +323,13 @@ function LoginCTA({ navn }: { navn: string }) {
 
 /**
  * Genererer schema.org JSON-LD structured data for virksomhedssiden.
+ * Inkluderer Organization-schema og BreadcrumbList for SEO-brødkrummer.
  *
- * @param v - Virksomhedsdata
+ * @param v    - Virksomhedsdata
+ * @param slug - SEO-venlig virksomhedsnavn-slug (til kanonisk URL)
  */
-function JsonLd({ v }: { v: VirksomhedPublicData }) {
-  const schema = {
+function JsonLd({ v, slug }: { v: VirksomhedPublicData; slug: string }) {
+  const organizationSchema = {
     '@context': 'https://schema.org',
     '@type': 'Organization',
     name: v.navn,
@@ -333,11 +347,37 @@ function JsonLd({ v }: { v: VirksomhedPublicData }) {
     ...(v.stiftet ? { foundingDate: v.stiftet } : {}),
   };
 
+  const breadcrumbSchema = {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: 'Hjem', item: 'https://bizzassist.dk' },
+      {
+        '@type': 'ListItem',
+        position: 2,
+        name: 'Virksomheder',
+        item: 'https://bizzassist.dk/virksomheder',
+      },
+      {
+        '@type': 'ListItem',
+        position: 3,
+        name: v.navn,
+        item: `https://bizzassist.dk/virksomhed/${slug}/${v.cvr}`,
+      },
+    ],
+  };
+
   return (
-    <script
-      type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
-    />
+    <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(organizationSchema) }}
+      />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbSchema) }}
+      />
+    </>
   );
 }
 
@@ -378,11 +418,13 @@ export default async function VirksomhedPublicPage({
   }
 
   const adresseStr = [v.adresse, v.postnr, v.by].filter(Boolean).join(', ');
+  // Brug den kanoniske slug baseret på virksomhedsnavnet (konsistent med generateMetadata)
+  const canonicalSlug = generateVirksomhedSlug(v.navn);
 
   return (
     <>
-      {/* JSON-LD */}
-      <JsonLd v={v} />
+      {/* JSON-LD: Organization + BreadcrumbList */}
+      <JsonLd v={v} slug={canonicalSlug} />
 
       <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8 md:py-12">
         {/* Breadcrumb */}

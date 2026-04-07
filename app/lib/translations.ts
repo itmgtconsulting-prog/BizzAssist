@@ -426,6 +426,22 @@ export const translations = {
       copy: 'Kopiér',
       copied: 'Kopieret!',
     },
+
+    /* ─── GDPR / data portability ──────────────────────────────────── */
+    gdpr: {
+      sectionTitle: 'Mine data',
+      sectionDescription: 'Eksportér dine personlige data som JSON-fil (GDPR artikel 20).',
+      downloadButton: 'Download mine data (JSON)',
+      downloading: 'Henter data...',
+      downloadSuccess: 'Din datafil er klar — tjek dine downloads.',
+      downloadError: 'Kunne ikke hente data — prøv igen.',
+      /* ── Article 17 — Right to Erasure ── */
+      deleteAccount: 'Slet konto',
+      dangerZone: 'Farlig zone',
+      deleteWarning: 'Dette sletter alle dine data permanent og kan ikke fortrydes.',
+      deleteConfirmHint: 'Skriv SLET MIN KONTO for at bekræfte',
+      deleteButton: 'Slet min konto',
+    },
   },
 
   en: {
@@ -852,6 +868,22 @@ export const translations = {
       share: 'Share',
       copy: 'Copy',
       copied: 'Copied!',
+    },
+
+    /* ─── GDPR / data portability ──────────────────────────────────── */
+    gdpr: {
+      sectionTitle: 'My data',
+      sectionDescription: 'Export your personal data as a JSON file (GDPR Article 20).',
+      downloadButton: 'Download my data (JSON)',
+      downloading: 'Fetching data...',
+      downloadSuccess: 'Your data file is ready — check your downloads.',
+      downloadError: 'Could not fetch data — please try again.',
+      /* ── Article 17 — Right to Erasure ── */
+      deleteAccount: 'Delete account',
+      dangerZone: 'Danger zone',
+      deleteWarning: 'This permanently deletes all your data and cannot be undone.',
+      deleteConfirmHint: 'Type DELETE MY ACCOUNT to confirm',
+      deleteButton: 'Delete my account',
     },
   },
 };

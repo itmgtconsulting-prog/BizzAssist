@@ -191,6 +191,17 @@ export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 // ─── WFS helper (bygningspunkter til kort) ─────────────────────────────────
 
 /**
+ * Escapes a string value for use in OGC CQL filter expressions.
+ * Replaces single quotes with two single quotes per the OGC standard.
+ *
+ * @param value - Raw string to escape
+ * @returns Escaped string safe for embedding in CQL filter literals
+ */
+function escapeCqlString(value: string): string {
+  return value.replace(/'/g, "''");
+}
+
+/**
  * Henter BBR bygningspunkter (WGS84) fra Datafordeler WFS.
  * Bruger id_lokalId-filtrering — bygning-UUID'er hentes fra BBR_Enhed.bygning.
  * Returnerer null ved fejl eller manglende API-nøgle.
@@ -203,9 +214,11 @@ async function fetchBygningPunkter(bygningIds: string[]): Promise<BBRBygningPunk
   if (!DF_API_KEY || bygningIds.length === 0) return null;
 
   // Byg CQL_FILTER med IN-udtryk for flere bygninger, eller enkelt eq for én
-  const quoted = bygningIds.map((id) => `'${id}'`).join(',');
+  const quoted = bygningIds.map((id) => `'${escapeCqlString(id)}'`).join(',');
   const cqlRaw =
-    bygningIds.length === 1 ? `id_lokalId='${bygningIds[0]}'` : `id_lokalId IN (${quoted})`;
+    bygningIds.length === 1
+      ? `id_lokalId='${escapeCqlString(bygningIds[0])}'`
+      : `id_lokalId IN (${quoted})`;
   const cqlFilter = encodeURIComponent(cqlRaw);
 
   const url =

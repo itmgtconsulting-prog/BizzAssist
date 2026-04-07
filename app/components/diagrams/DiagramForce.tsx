@@ -587,10 +587,11 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
     }
     setPositions(newPositions);
     // Trigger auto-zoom/center med lille forsinkelse så viewBox-memo når at opdatere
-    setTimeout(() => setFitTrigger((t) => t + 1), 80);
+    const fitTimer = setTimeout(() => setFitTrigger((t) => t + 1), 80);
 
     return () => {
       simulation.stop();
+      clearTimeout(fitTimer);
     };
   }, [filteredGraph, depthMap, nodeYMap]);
 

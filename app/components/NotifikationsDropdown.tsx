@@ -238,8 +238,12 @@ function NotifikationsDropdown({ lang }: NotifikationsDropdownProps) {
       {open && (
         <div className="absolute right-0 top-11 w-80 bg-[#1e293b] border border-white/10 rounded-2xl shadow-2xl overflow-hidden z-50">
           {/* Tabs */}
-          <div className="flex border-b border-white/10">
+          <div role="tablist" className="flex border-b border-white/10">
             <button
+              id="tab-notif"
+              role="tab"
+              aria-selected={tab === 'notifikationer'}
+              aria-controls="panel-notif"
               onClick={() => setTab('notifikationer')}
               className={`flex-1 px-4 py-2.5 text-xs font-semibold transition-colors ${
                 tab === 'notifikationer'
@@ -255,6 +259,10 @@ function NotifikationsDropdown({ lang }: NotifikationsDropdownProps) {
               )}
             </button>
             <button
+              id="tab-fulgte"
+              role="tab"
+              aria-selected={tab === 'fulgte'}
+              aria-controls="panel-fulgte"
               onClick={() => setTab('fulgte')}
               className={`flex-1 px-4 py-2.5 text-xs font-semibold transition-colors ${
                 tab === 'fulgte'
@@ -273,12 +281,17 @@ function NotifikationsDropdown({ lang }: NotifikationsDropdownProps) {
 
           {/* Notifikationer-tab */}
           {tab === 'notifikationer' && (
-            <div className="max-h-80 overflow-y-auto">
+            <div
+              id="panel-notif"
+              role="tabpanel"
+              aria-labelledby="tab-notif"
+              className="max-h-80 overflow-y-auto"
+            >
               {notifs.length === 0 ? (
                 <div className="px-4 py-8 text-center">
                   <Bell size={28} className="mx-auto mb-3 text-slate-600" />
-                  <p className="text-slate-400 text-sm">{t.ingenNotifikationer}</p>
-                  <p className="text-slate-500 text-xs mt-2 leading-relaxed">
+                  <p className="text-slate-300 text-sm">{t.ingenNotifikationer}</p>
+                  <p className="text-slate-400 text-xs mt-2 leading-relaxed">
                     {t.notifikationerKommer}
                   </p>
                 </div>
@@ -307,7 +320,7 @@ function NotifikationsDropdown({ lang }: NotifikationsDropdownProps) {
                         )}
                         <div className="min-w-0 flex-1">
                           <p className="text-white text-sm font-medium truncate">{n.adresse}</p>
-                          <p className="text-slate-400 text-xs mt-0.5">{n.besked}</p>
+                          <p className="text-slate-300 text-xs mt-0.5">{n.besked}</p>
                           <p className="text-slate-500 text-[10px] mt-1">
                             {new Date(n.tidspunkt).toLocaleDateString(
                               lang === 'da' ? 'da-DK' : 'en-GB',
@@ -330,28 +343,33 @@ function NotifikationsDropdown({ lang }: NotifikationsDropdownProps) {
 
           {/* Fulgte ejendomme-tab */}
           {tab === 'fulgte' && (
-            <div className="max-h-80 overflow-y-auto">
+            <div
+              id="panel-fulgte"
+              role="tabpanel"
+              aria-labelledby="tab-fulgte"
+              className="max-h-80 overflow-y-auto"
+            >
               {tracked.length === 0 ? (
                 <div className="px-4 py-8 text-center">
                   <BellOff size={28} className="mx-auto mb-3 text-slate-600" />
-                  <p className="text-slate-400 text-sm">{t.ingenFulgte}</p>
-                  <p className="text-slate-500 text-xs mt-2 leading-relaxed px-2">
+                  <p className="text-slate-300 text-sm">{t.ingenFulgte}</p>
+                  <p className="text-slate-400 text-xs mt-2 leading-relaxed px-2">
                     {t.ingenFulgteHint}
                   </p>
                 </div>
               ) : (
                 tracked.map((ej) => (
-                  <div
+                  <button
                     key={ej.id}
                     onClick={() => handleEjendomClick(ej.id)}
-                    className="flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-colors cursor-pointer border-b border-white/5 last:border-0 group"
+                    className="w-full text-left flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-colors border-b border-white/5 last:border-0 group"
                   >
                     <div className="w-8 h-8 bg-blue-600/20 rounded-lg flex items-center justify-center flex-shrink-0">
                       <Building2 size={14} className="text-blue-400" />
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="text-white text-sm font-medium truncate">{ej.adresse}</p>
-                      <p className="text-slate-500 text-xs truncate">
+                      <p className="text-slate-400 text-xs truncate">
                         {ej.postnr} {ej.by}
                         {ej.kommune ? ` · ${ej.kommune}` : ''}
                       </p>
@@ -361,12 +379,13 @@ function NotifikationsDropdown({ lang }: NotifikationsDropdownProps) {
                         onClick={(e) => handleUntrack(e, ej.id)}
                         className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
                         title={t.stopFoelg}
+                        aria-label={t.stopFoelg}
                       >
                         <X size={13} />
                       </button>
                       <ChevronRight size={14} className="text-slate-600" />
                     </div>
-                  </div>
+                  </button>
                 ))
               )}
             </div>

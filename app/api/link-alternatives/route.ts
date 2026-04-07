@@ -56,25 +56,31 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({}, { status: 200 });
   }
 
-  const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+  try {
+    const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-  const { data, error } = await serviceClient
-    .from('link_alternatives')
-    .select('platform, alternatives')
-    .eq('cvr', cvr);
+    const { data, error } = await serviceClient
+      .from('link_alternatives')
+      .select('platform, alternatives')
+      .eq('cvr', cvr);
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
-  const result: Record<string, string[]> = {};
-  for (const row of (data ?? []) as AlternativeRow[]) {
-    if (Array.isArray(row.alternatives)) {
-      result[row.platform] = row.alternatives;
+    if (error) {
+      console.error('[link-alternatives GET] Supabase fejl:', error.message);
+      return NextResponse.json({ error: 'Databasefejl' }, { status: 500 });
     }
-  }
 
-  return NextResponse.json(result);
+    const result: Record<string, string[]> = {};
+    for (const row of (data ?? []) as AlternativeRow[]) {
+      if (Array.isArray(row.alternatives)) {
+        result[row.platform] = row.alternatives;
+      }
+    }
+
+    return NextResponse.json(result);
+  } catch (err) {
+    console.error('[link-alternatives GET] Uventet fejl:', err);
+    return NextResponse.json({ error: 'Intern serverfejl' }, { status: 500 });
+  }
 }
 
 // ─── PUT ────────────────────────────────────────────────────────────────────
@@ -93,48 +99,54 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: 'Supabase ikke konfigureret' }, { status: 503 });
   }
 
-  // Validér session
-  const sessionClient = await getSessionClient();
-  const {
-    data: { user },
-  } = await sessionClient.auth.getUser();
-  if (!user) {
-    return NextResponse.json({ error: 'Ikke autoriseret' }, { status: 401 });
+  try {
+    // Validér session
+    const sessionClient = await getSessionClient();
+    const {
+      data: { user },
+    } = await sessionClient.auth.getUser();
+    if (!user) {
+      return NextResponse.json({ error: 'Ikke autoriseret' }, { status: 401 });
+    }
+
+    const body = await req.json();
+    const { cvr, alternatives } = body as {
+      cvr?: string;
+      alternatives?: Record<string, string[]>;
+    };
+
+    if (!cvr || !alternatives || typeof alternatives !== 'object') {
+      return NextResponse.json({ error: 'cvr og alternatives er påkrævet' }, { status: 400 });
+    }
+
+    const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+
+    // Upsert én række per platform — UNIQUE (cvr, platform)
+    const rows = Object.entries(alternatives)
+      .filter(([, alts]) => Array.isArray(alts) && alts.length > 0)
+      .map(([platform, alts]) => ({
+        cvr,
+        platform,
+        alternatives: alts.slice(0, 5),
+        updated_at: new Date().toISOString(),
+      }));
+
+    if (rows.length === 0) {
+      return NextResponse.json({ success: true, saved: 0 });
+    }
+
+    const { error } = await serviceClient
+      .from('link_alternatives')
+      .upsert(rows, { onConflict: 'cvr,platform' });
+
+    if (error) {
+      console.error('[link-alternatives PUT] Supabase fejl:', error.message);
+      return NextResponse.json({ error: 'Databasefejl' }, { status: 500 });
+    }
+
+    return NextResponse.json({ success: true, saved: rows.length });
+  } catch (err) {
+    console.error('[link-alternatives PUT] Uventet fejl:', err);
+    return NextResponse.json({ error: 'Intern serverfejl' }, { status: 500 });
   }
-
-  const body = await req.json();
-  const { cvr, alternatives } = body as {
-    cvr?: string;
-    alternatives?: Record<string, string[]>;
-  };
-
-  if (!cvr || !alternatives || typeof alternatives !== 'object') {
-    return NextResponse.json({ error: 'cvr og alternatives er påkrævet' }, { status: 400 });
-  }
-
-  const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
-
-  // Upsert én række per platform — UNIQUE (cvr, platform)
-  const rows = Object.entries(alternatives)
-    .filter(([, alts]) => Array.isArray(alts) && alts.length > 0)
-    .map(([platform, alts]) => ({
-      cvr,
-      platform,
-      alternatives: alts.slice(0, 5),
-      updated_at: new Date().toISOString(),
-    }));
-
-  if (rows.length === 0) {
-    return NextResponse.json({ success: true, saved: 0 });
-  }
-
-  const { error } = await serviceClient
-    .from('link_alternatives')
-    .upsert(rows, { onConflict: 'cvr,platform' });
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
-  return NextResponse.json({ success: true, saved: rows.length });
 }

@@ -23,6 +23,26 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 
+/**
+ * Inserts a row into audit_log using an untyped client cast.
+ * The audit_log table is not in the generated Supabase types, so we bypass
+ * the type system here. Fire-and-forget — errors are only logged.
+ *
+ * @param client - Admin Supabase client
+ * @param entry  - Audit log entry fields
+ */
+async function insertAuditLog(
+  client: ReturnType<typeof createAdminClient>,
+  entry: { action: string; resource_type: string; resource_id: string; metadata: string }
+): Promise<void> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (client as any).from('audit_log').insert(entry);
+  } catch (e: unknown) {
+    console.error('[audit] Failed to log subscription change:', e);
+  }
+}
+
 /** Subscription shape stored in app_metadata */
 interface SubData {
   planId: string;
@@ -168,6 +188,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         if (removeErr) {
           return NextResponse.json({ error: removeErr.message }, { status: 500 });
         }
+        // Audit log — fire-and-forget, non-critical
+        await insertAuditLog(admin, {
+          action: 'admin.subscription.removePlan',
+          resource_type: 'user',
+          resource_id: targetUser.id,
+          metadata: JSON.stringify({ changedBy: user.id }),
+        });
         return NextResponse.json({ ok: true, subscription: null });
       }
 
@@ -217,6 +244,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         if (adminErr) {
           return NextResponse.json({ error: adminErr.message }, { status: 500 });
         }
+        // Audit log — fire-and-forget, non-critical
+        await insertAuditLog(admin, {
+          action: 'admin.subscription.toggleAdmin',
+          resource_type: 'user',
+          resource_id: targetUser.id,
+          metadata: JSON.stringify({ changedBy: user.id, newIsAdmin }),
+        });
         return NextResponse.json({ ok: true, isAdmin: newIsAdmin });
       }
 
@@ -240,6 +274,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       console.error('[admin/subscription]', action, 'error:', result.error);
       return NextResponse.json({ error: 'Failed to update' }, { status: 500 });
     }
+
+    // Audit log — fire-and-forget, non-critical
+    await insertAuditLog(admin, {
+      action: `admin.subscription.${action}`,
+      resource_type: 'user',
+      resource_id: targetUser.id,
+      metadata: JSON.stringify({ changedBy: user.id }),
+    });
 
     return NextResponse.json({ ok: true, subscription: result.subscription });
   } catch (err) {

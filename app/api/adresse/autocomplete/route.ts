@@ -11,8 +11,12 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { darAutocomplete } from '@/app/lib/dar';
+import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 
 export async function GET(request: NextRequest) {
+  const limited = await checkRateLimit(request, rateLimit);
+  if (limited) return limited;
+
   const q = request.nextUrl.searchParams.get('q') ?? '';
 
   if (q.trim().length < 2) {

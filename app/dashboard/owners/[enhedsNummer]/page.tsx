@@ -789,7 +789,7 @@ export default function PersonDetailPage({
   }, []);
 
   /** Styrer om nyheder/sociale medier-panelet er synligt på desktop. */
-  const [nyhedsPanelÅben, setNyhedsPanelÅben] = useState(false);
+  const [nyhedsPanelÅben, setNyhedsPanelÅben] = useState(true);
 
   /** Styrer om mobil nyheder-overlay er åbent. */
   const [mobilNyhederAaben, setMobilNyhederAaben] = useState(false);

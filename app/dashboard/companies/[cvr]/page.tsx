@@ -72,22 +72,33 @@ import { buildDiagramGraph } from '@/app/components/diagrams/DiagramData';
 import type { DiagramPropertySummary } from '@/app/components/diagrams/DiagramData';
 import dynamic from 'next/dynamic';
 import VerifiedLinks from '@/app/components/VerifiedLinks';
-import {
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-} from 'recharts';
+/** Recharts — dynamisk importeret for at undgå at inkludere i initial bundle */
+const ResponsiveContainer = dynamic(
+  () => import('recharts').then((m) => ({ default: m.ResponsiveContainer })),
+  { ssr: false }
+);
+const LineChart = dynamic(() => import('recharts').then((m) => ({ default: m.LineChart })), {
+  ssr: false,
+});
+const Line = dynamic(() => import('recharts').then((m) => ({ default: m.Line })), { ssr: false });
+const XAxis = dynamic(() => import('recharts').then((m) => ({ default: m.XAxis })), { ssr: false });
+const YAxis = dynamic(() => import('recharts').then((m) => ({ default: m.YAxis })), { ssr: false });
+const CartesianGrid = dynamic(
+  () => import('recharts').then((m) => ({ default: m.CartesianGrid })),
+  { ssr: false }
+);
+const Tooltip = dynamic(() => import('recharts').then((m) => ({ default: m.Tooltip })), {
+  ssr: false,
+});
 
 /** Lazy-loaded diagram variants */
 const DiagramForce = dynamic(() => import('@/app/components/diagrams/DiagramForce'), {
   ssr: false,
+  loading: () => <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />,
 });
 const DiagramSimple = dynamic(() => import('@/app/components/diagrams/DiagramSimple'), {
   ssr: false,
+  loading: () => <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />,
 });
 
 // ─── Tracked Companies (localStorage) ────────────────────────────────────────
@@ -350,7 +361,7 @@ export default function VirksomhedDetalje({ params }: PageProps) {
   }, []);
 
   /** Styrer om nyheder/sociale medier-panelet er synligt på desktop. */
-  const [nyhedsPanelÅben, setNyhedsPanelÅben] = useState(false);
+  const [nyhedsPanelÅben, setNyhedsPanelÅben] = useState(true);
 
   /** Styrer om mobil nyheder-overlay er åbent. */
   const [mobilNyhederAaben, setMobilNyhederAaben] = useState(false);

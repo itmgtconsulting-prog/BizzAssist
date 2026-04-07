@@ -37,6 +37,10 @@ const TO_ADDRESS = 'support@pecuniait.com';
  * @returns true hvis hemmelighed er gyldig
  */
 function verifyCronSecret(request: NextRequest): boolean {
+  // In production, require Vercel's cron header to prevent external triggering
+  if (process.env.VERCEL_ENV === 'production' && request.headers.get('x-vercel-cron') !== '1') {
+    return false;
+  }
   const secret = process.env.CRON_SECRET;
   if (!secret) return false;
   return request.headers.get('authorization') === `Bearer ${secret}`;

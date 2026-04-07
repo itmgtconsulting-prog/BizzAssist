@@ -40,7 +40,7 @@ import {
   Navigation,
   Layers,
 } from 'lucide-react';
-import 'mapbox-gl/dist/mapbox-gl.css';
+
 import { useRouter } from 'next/navigation';
 import { type DawaAutocompleteResult, type DawaAdresse } from '@/app/lib/dawa';
 import { useLanguage } from '@/app/context/LanguageContext';
@@ -658,6 +658,13 @@ function KortInner() {
   const [markeret, setMarkeret] = useState(-1);
   const [søger, setSøger] = useState(false);
   const søgeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** Ryd søge-debounce timer ved unmount for at undgå setState på afmonteret komponent. */
+  useEffect(() => {
+    return () => {
+      if (søgeTimer.current) clearTimeout(søgeTimer.current);
+    };
+  }, []);
 
   // Lag-data (React state — synkroniseres til Mapbox via useEffect)
   const [henterMatrikel, setHenterMatrikel] = useState(false);

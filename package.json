@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "predev": "node -e \"try{require('fs').rmSync('.next/dev',{recursive:true,force:true})}catch{}\"",
+    "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
@@ -33,7 +34,7 @@
     ]
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.80.0",
+    "@anthropic-ai/sdk": "^0.82.0",
     "@sentry/nextjs": "^10.45.0",
     "@stripe/stripe-js": "^9.0.0",
     "@supabase/ssr": "^0.9.0",
@@ -61,6 +62,9 @@
     "resend": "^6.9.4",
     "stripe": "^21.0.1",
     "twilio": "^5.13.1"
+  },
+  "overrides": {
+    "serialize-javascript": "^7.0.5"
   },
   "devDependencies": {
     "@commitlint/cli": "^20.5.0",

@@ -202,8 +202,8 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
       return 'ok';
     };
 
-    /** Main auth + subscription check */
-    const checkAccess = async () => {
+    /** Main auth + subscription check — retries up to 3× on transient network errors */
+    const checkAccess = async (attempt = 0) => {
       // PRIMARY: Call server-side API which uses cookies (works even when
       // client-side getUser() can't read the session).
       // The API uses the admin client to read FRESH subscription data.
@@ -279,7 +279,16 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
           return;
         }
       } catch (err) {
-        console.error('[checkAccess] /api/subscription error:', err);
+        // Transient network error (e.g. dev server restarting, stale Turbopack cache).
+        // Retry up to 3 times with increasing delay instead of redirecting to /login.
+        console.warn('[checkAccess] /api/subscription network error (attempt', attempt, '):', err);
+        if (attempt < 3) {
+          const delay = (attempt + 1) * 1500;
+          console.log('[checkAccess] Retrying in', delay, 'ms...');
+          setTimeout(() => checkAccess(attempt + 1), delay);
+          return;
+        }
+        console.error('[checkAccess] All retries exhausted:', err);
       }
 
       // FALLBACK: try client-side getUser (may work in some setups)
@@ -450,6 +459,14 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-screen bg-[#0a1020] overflow-hidden">
+      {/* Skip navigation for keyboard users */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-4 focus:left-4 focus:z-[100] focus:px-4 focus:py-2 focus:bg-blue-600 focus:text-white focus:rounded-lg focus:outline-none"
+      >
+        Spring til indhold
+      </a>
+
       {/* Mobile overlay */}
       {sidebarOpen && (
         <div
@@ -479,6 +496,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
             <button
               className="lg:hidden text-slate-400 hover:text-white shrink-0"
               onClick={() => setSidebarOpen(false)}
+              aria-label="Luk navigationsmenu"
             >
               <X size={20} />
             </button>
@@ -566,6 +584,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
             <button
               className="lg:hidden text-slate-400 hover:text-white"
               onClick={() => setSidebarOpen(true)}
+              aria-label="Åbn navigationsmenu"
             >
               <Menu size={22} />
             </button>
@@ -643,6 +662,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                       setResultater([]);
                       setSøgÅben(false);
                     }}
+                    aria-label="Ryd søgning"
                     className="text-slate-600 hover:text-slate-300"
                   >
                     <X size={14} />
@@ -895,6 +915,8 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
             <div className="flex items-center bg-white/10 rounded-full p-1 gap-1">
               <button
                 onClick={() => setLang('da')}
+                aria-label="Vælg dansk"
+                aria-pressed={lang === 'da'}
                 className={`px-2.5 py-1 rounded-full text-xs font-semibold transition-all ${
                   lang === 'da' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
                 }`}
@@ -903,6 +925,8 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
               </button>
               <button
                 onClick={() => setLang('en')}
+                aria-label="Select English"
+                aria-pressed={lang === 'en'}
                 className={`px-2.5 py-1 rounded-full text-xs font-semibold transition-all ${
                   lang === 'en' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
                 }`}
@@ -986,7 +1010,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
         )}
 
         {/* Page content — gated by subscription for non-free pages */}
-        <main className="flex-1 flex overflow-hidden">
+        <main id="main-content" className="flex-1 flex overflow-hidden">
           {pathname === '/dashboard' ||
           pathname.startsWith('/dashboard/settings') ||
           pathname.startsWith('/dashboard/admin') ||

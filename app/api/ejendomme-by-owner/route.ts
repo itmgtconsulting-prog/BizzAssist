@@ -212,13 +212,13 @@ interface DawaBfeAdresse {
 }
 
 /**
- * Henter adresse og ejendomstype for et BFE-nummer via DAWA /bfe/ endpoint.
- * Returnerer tomme felter ved fejl eller manglende data.
+ * Internal implementation — fetches address and property type for a BFE number via DAWA.
+ * Call hentDawaBfeData (the deduplicated wrapper) instead of this directly.
  *
  * @param bfe - BFE-nummer at slå op
  * @returns Adresseoplysninger og DAWA adgangsadresse-UUID
  */
-async function hentDawaBfeData(bfe: number): Promise<DawaBfeAdresse> {
+async function _hentDawaBfeDataImpl(bfe: number): Promise<DawaBfeAdresse> {
   const empty: DawaBfeAdresse = {
     adresse: null,
     postnr: null,
@@ -290,6 +290,33 @@ async function hentDawaBfeData(bfe: number): Promise<DawaBfeAdresse> {
   } catch {
     return empty;
   }
+}
+
+// ─── DAWA BFE deduplication ──────────────────────────────────────────────────
+
+/**
+ * Module-level map of in-flight DAWA BFE requests.
+ * Prevents duplicate concurrent fetches for the same BFE number within a
+ * single serverless instance — multiple concurrent route invocations requesting
+ * the same BFE will share a single fetch promise.
+ */
+const _bfeFetchInFlight = new Map<number, Promise<DawaBfeAdresse>>();
+
+/**
+ * Deduplicated wrapper around _hentDawaBfeDataImpl.
+ * If a fetch for the same BFE is already in flight, returns the existing promise
+ * rather than issuing a duplicate HTTP request.
+ *
+ * @param bfe - BFE-nummer at slå op
+ * @returns Adresseoplysninger og DAWA adgangsadresse-UUID
+ */
+async function hentDawaBfeData(bfe: number): Promise<DawaBfeAdresse> {
+  const cached = _bfeFetchInFlight.get(bfe);
+  if (cached) return cached;
+  const promise = _hentDawaBfeDataImpl(bfe);
+  _bfeFetchInFlight.set(bfe, promise);
+  void promise.finally(() => _bfeFetchInFlight.delete(bfe));
+  return promise;
 }
 
 // ─── Hjælpefunktion: kør med begrænset parallelisme ─────────────────────────
@@ -427,7 +454,22 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
 
   try {
     /* ── Trin 1: Find alle BFE-numre ejet af de angivne CVR-numre (parallelt) ── */
-    const ejerskabResults = await Promise.all(cvrNumre.map((cvr) => hentBfeByCvr(cvr, token!)));
+    // Use Promise.allSettled so a single failing CVR lookup doesn't abort the whole request.
+    // Failed lookups are logged and skipped; fulfilled results are processed normally.
+    const ejerskabSettled = await Promise.allSettled(
+      cvrNumre.map((cvr) => hentBfeByCvr(cvr, token!))
+    );
+
+    const ejerskabResults = ejerskabSettled.map((settled, i) => {
+      if (settled.status === 'rejected') {
+        console.error(
+          `[ejendomme-by-owner] EJF CVR lookup failed for CVR ${cvrNumre[i]}:`,
+          settled.reason
+        );
+        return null;
+      }
+      return settled.value;
+    });
 
     /* Tjek om nogen returnerede auth-fejl */
     const harAuthFejl = ejerskabResults.some((r) => r?.authError === true);

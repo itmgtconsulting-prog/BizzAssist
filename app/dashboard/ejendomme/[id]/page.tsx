@@ -13,7 +13,7 @@
  * - SVG-baseret ejerstrukturtræ
  */
 
-import { useState, use, useEffect, useRef, Suspense } from 'react';
+import { useState, use, useEffect, useRef, useCallback, Suspense } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -40,16 +40,34 @@ import {
   Info,
   Loader2,
 } from 'lucide-react';
-import {
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-} from 'recharts';
-import PropertyMap from '@/app/components/ejendomme/PropertyMap';
+/** Recharts — dynamisk importeret for at undgå at inkludere i initial bundle */
+const AreaChart = dynamic(() => import('recharts').then((m) => ({ default: m.AreaChart })), {
+  ssr: false,
+});
+const Area = dynamic(() => import('recharts').then((m) => ({ default: m.Area })), { ssr: false });
+const XAxis = dynamic(() => import('recharts').then((m) => ({ default: m.XAxis })), { ssr: false });
+const YAxis = dynamic(() => import('recharts').then((m) => ({ default: m.YAxis })), { ssr: false });
+const CartesianGrid = dynamic(
+  () => import('recharts').then((m) => ({ default: m.CartesianGrid })),
+  { ssr: false }
+);
+const Tooltip = dynamic(() => import('recharts').then((m) => ({ default: m.Tooltip })), {
+  ssr: false,
+});
+const ResponsiveContainer = dynamic(
+  () => import('recharts').then((m) => ({ default: m.ResponsiveContainer })),
+  { ssr: false }
+);
+
+/** PropertyMap — dynamisk importeret pga. Mapbox GL (browser-only) */
+const PropertyMap = dynamic(() => import('@/app/components/ejendomme/PropertyMap'), {
+  ssr: false,
+  loading: () => (
+    <div className="w-full h-64 bg-slate-800/50 rounded-xl animate-pulse flex items-center justify-center">
+      <span className="text-slate-500 text-sm">Indlæser kort...</span>
+    </div>
+  ),
+});
 import {
   getEjendomById,
   formatDKK,
@@ -77,9 +95,12 @@ import FoelgTooltip from '@/app/components/FoelgTooltip';
 import { useLanguage } from '@/app/context/LanguageContext';
 import dynamic from 'next/dynamic';
 import type { DiagramGraph } from '@/app/components/diagrams/DiagramData';
+import type { TooltipProps } from 'recharts';
+import type { ValueType, NameType } from 'recharts/types/component/DefaultTooltipContent';
 
 const DiagramForce = dynamic(() => import('@/app/components/diagrams/DiagramForce'), {
   ssr: false,
+  loading: () => <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />,
 });
 
 type Tab =
@@ -97,13 +118,13 @@ function buildTabs(da: boolean): { id: Tab; label: string; ikon: React.ReactNode
     { id: 'overblik', label: da ? 'Oversigt' : 'Overview', ikon: <Building2 size={14} /> },
     { id: 'bbr', label: 'BBR', ikon: <FileText size={14} /> },
     { id: 'ejerforhold', label: da ? 'Ejerskab' : 'Ownership', ikon: <Users size={14} /> },
+    { id: 'oekonomi', label: da ? 'Økonomi' : 'Financials', ikon: <BarChart3 size={14} /> },
+    { id: 'skatter', label: da ? 'SKAT' : 'Tax', ikon: <Landmark size={14} /> },
     {
       id: 'tinglysning',
       label: da ? 'Tinglysning' : 'Land Registry',
       ikon: <Landmark size={14} />,
     },
-    { id: 'oekonomi', label: da ? 'Økonomi' : 'Financials', ikon: <BarChart3 size={14} /> },
-    { id: 'skatter', label: da ? 'SKAT' : 'Tax', ikon: <Landmark size={14} /> },
     { id: 'dokumenter', label: da ? 'Dokumenter' : 'Documents', ikon: <FileText size={14} /> },
   ];
 }
@@ -933,22 +954,57 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
   // Kræver historisk grundskyld-data for korrekt beregning. Se backlog.
 
   /**
+   * Memoized callback til PropertyMap — navigerer til en anden ejendom ved klik på markør.
+   * Stabil reference forhindrer unødvendig genrendering af det memoized PropertyMap.
+   *
+   * @param newId - BFE-nummer eller DAWA UUID for den valgte ejendom
+   */
+  const handleAdresseValgt = useCallback(
+    (newId: string) => {
+      router.push(`/dashboard/ejendomme/${newId}`);
+    },
+    [router]
+  );
+
+  /**
+   * Memoized callback til PropertyMap i mobil-kortoverlay.
+   * Lukker overlayet og navigerer til den valgte ejendom.
+   *
+   * @param newId - BFE-nummer eller DAWA UUID for den valgte ejendom
+   */
+  const handleAdresseValgtMobil = useCallback(
+    (newId: string) => {
+      setMobilKortAaben(false);
+      router.push(`/dashboard/ejendomme/${newId}`);
+    },
+    [router]
+  );
+
+  /**
    * Henter DAWA-adresse og jordstykke.
    * Al setState sker i async then-callback — ikke synkront.
+   * AbortController sikrer at forældede svar fra tidligere navigation ignoreres.
    */
   useEffect(() => {
     if (!erDAWA) return;
+    const controller = new AbortController();
+    const signal = controller.signal;
     setDawaStatus('loader');
-    fetch(`/api/adresse/lookup?id=${encodeURIComponent(id)}`)
+    fetch(`/api/adresse/lookup?id=${encodeURIComponent(id)}`, { signal })
       .then((r) => (r.ok ? r.json() : null))
       .then(async (adr: DawaAdresse | null) => {
+        if (signal.aborted) return;
         if (!adr) {
           setDawaStatus('fejl');
           return;
         }
         setDawaAdresse(adr);
-        const jordRes = await fetch(`/api/adresse/jordstykke?lng=${adr.x}&lat=${adr.y}`);
+        const jordRes = await fetch(`/api/adresse/jordstykke?lng=${adr.x}&lat=${adr.y}`, {
+          signal,
+        });
+        if (signal.aborted) return;
         const jord: DawaJordstykke | null = jordRes.ok ? await jordRes.json() : null;
+        if (signal.aborted) return;
         setDawaJordstykke(jord);
         setDawaStatus('ok');
 
@@ -963,37 +1019,57 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
           kommune: adr.kommunenavn,
           anvendelse: null, // opdateres nedenfor når BBR-data er klar
         });
+      })
+      .catch((err) => {
+        if (err.name === 'AbortError') return;
+        console.error('[ejendom] DAWA fetch error:', err);
+        setDawaStatus('fejl');
       });
+    return () => controller.abort();
   }, [id, erDAWA]);
 
   /**
    * Henter BBR-data fra server-side API-route når DAWA-adressen er klar.
    * Fejler stille — bbrData.bbrFejl beskriver årsagen hvis data mangler.
+   * AbortController sikrer at forældede svar ignoreres ved hurtig navigation.
    */
   useEffect(() => {
     if (!erDAWA || dawaStatus !== 'ok') return;
+    const controller = new AbortController();
     setBbrLoader(true);
-    fetch(`/api/ejendom/${id}`)
+    fetch(`/api/ejendom/${id}`, { signal: controller.signal })
       .then((r) => (r.ok ? r.json() : null))
       .then((data: EjendomApiResponse | null) => {
+        if (controller.signal.aborted) return;
         setBbrData(data);
       })
-      .catch(() => setBbrData(null))
-      .finally(() => setBbrLoader(false));
+      .catch((err) => {
+        if (err.name === 'AbortError') return;
+        console.error('[ejendom] BBR fetch error:', err);
+        setBbrData(null);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setBbrLoader(false);
+      });
+    return () => controller.abort();
   }, [id, erDAWA, dawaStatus]);
 
   /**
    * Henter tinglysningsdata (tinglyst areal, ejerlejlighedsnr, fordelingstal) når BFE er klar.
    * Henter også summariske data (ejere/adkomster, hæftelser) til brug i Økonomi-tab.
    * Bruger ejerlejligheds-BFE hvis tilgængelig.
+   * AbortController sikrer at forældede svar ignoreres ved hurtig navigation.
    */
   useEffect(() => {
     const bfe = bbrData?.ejerlejlighedBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer;
     if (!bfe) return;
+    const controller = new AbortController();
+    const signal = controller.signal;
     setTlSumLoader(true);
-    fetch(`/api/tinglysning?bfe=${bfe}`)
+    fetch(`/api/tinglysning?bfe=${bfe}`, { signal })
       .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
+      .then(async (data) => {
+        if (signal.aborted) return;
         if (data && !data.error) {
           setTlTestFallback(!!data.testFallback);
           setTinglysningData({
@@ -1007,18 +1083,22 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
           }
           // Hent summarisk data (adkomster + hæftelser) for Økonomi-tab
           if (data.uuid) {
-            fetch(`/api/tinglysning/summarisk?uuid=${data.uuid}`)
+            fetch(`/api/tinglysning/summarisk?uuid=${data.uuid}`, { signal })
               .then((r) => (r.ok ? r.json() : null))
               .then((sum) => {
+                if (signal.aborted) return;
                 if (sum) {
                   setTlEjere(sum.ejere ?? []);
                   setTlHaeftelser(sum.haeftelser ?? []);
                 }
               })
-              .catch(() => {
+              .catch((err) => {
+                if (err.name === 'AbortError') return;
                 /* Summarisk er valgfri */
               })
-              .finally(() => setTlSumLoader(false));
+              .finally(() => {
+                if (!signal.aborted) setTlSumLoader(false);
+              });
           } else {
             setTlSumLoader(false);
           }
@@ -1026,17 +1106,22 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
           setTlSumLoader(false);
         }
       })
-      .catch(() => {
+      .catch((err) => {
+        if (err.name === 'AbortError') return;
+        console.error('[ejendom] Tinglysning fetch error:', err);
         setTlSumLoader(false);
       });
+    return () => controller.abort();
   }, [bbrData]);
 
   /**
    * Henter CVR-virksomheder på adressen via /api/cvr når DAWA-adressen er klar.
    * Fejler stille — viser tom liste hvis ingen resultater eller fejl.
+   * AbortController sikrer at forældede svar ignoreres ved hurtig navigation.
    */
   useEffect(() => {
     if (!erDAWA || dawaStatus !== 'ok' || !dawaAdresse) return;
+    const controller = new AbortController();
     const params = new URLSearchParams({
       vejnavn: dawaAdresse.vejnavn,
       husnr: dawaAdresse.husnr,
@@ -1045,13 +1130,19 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
     // For ejerlejligheder: filtrer på etage+dør for præcise resultater
     if (dawaAdresse.etage) params.set('etage', dawaAdresse.etage);
     if (dawaAdresse.dør) params.set('doer', dawaAdresse.dør);
-    fetch(`/api/cvr?${params}`)
+    fetch(`/api/cvr?${params}`, { signal: controller.signal })
       .then((r) => (r.ok ? r.json() : { virksomheder: [], tokenMangler: false }))
       .then((data: CVRResponse) => {
+        if (controller.signal.aborted) return;
         setCvrVirksomheder(data.virksomheder);
         setCvrTokenMangler(data.tokenMangler);
       })
-      .catch(() => setCvrVirksomheder([]));
+      .catch((err) => {
+        if (err.name === 'AbortError') return;
+        console.error('[ejendom] CVR fetch error:', err);
+        setCvrVirksomheder([]);
+      });
+    return () => controller.abort();
   }, [id, erDAWA, dawaStatus, dawaAdresse]);
 
   /**
@@ -1059,6 +1150,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
    * Søger via matrikel (ejerlavKode + matrikelnr) for at finde ALLE lejligheder
    * på tværs af opgange på samme matrikel.
    * Aktiveres kun for adresser UDEN etage/dør (dvs. moderejendommen).
+   * AbortController sikrer at forældede svar ignoreres ved hurtig navigation.
    */
   useEffect(() => {
     if (!erDAWA || dawaStatus !== 'ok' || !dawaAdresse) return;
@@ -1067,18 +1159,27 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
     // Kræver matrikeldata fra BBR ejendomsrelationer
     const rel = bbrData?.ejendomsrelationer?.[0];
     if (!rel?.ejerlavKode || !rel?.matrikelnr) return;
+    const controller = new AbortController();
     setLejlighederLoader(true);
     const params = new URLSearchParams({
       ejerlavKode: String(rel.ejerlavKode),
       matrikelnr: rel.matrikelnr,
     });
-    fetch(`/api/ejerlejligheder?${params}`)
+    fetch(`/api/ejerlejligheder?${params}`, { signal: controller.signal })
       .then((r) => (r.ok ? r.json() : { lejligheder: [] }))
       .then((data: { lejligheder: import('@/app/api/ejerlejligheder/route').Ejerlejlighed[] }) => {
+        if (controller.signal.aborted) return;
         setLejligheder(data.lejligheder);
       })
-      .catch(() => setLejligheder([]))
-      .finally(() => setLejlighederLoader(false));
+      .catch((err) => {
+        if (err.name === 'AbortError') return;
+        console.error('[ejendom] Ejerlejligheder fetch error:', err);
+        setLejligheder([]);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLejlighederLoader(false);
+      });
+    return () => controller.abort();
   }, [id, erDAWA, dawaStatus, dawaAdresse, bbrData]);
 
   /**
@@ -1091,6 +1192,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
    * så ejendomsrelationer[0].bfeNummer peger på en child-enhed i stedet for moderejandommen selv.
    * Rettelse: brug moderBfe (= jordBfe) når vi er på moderejandommens adresse (ingen etage/dør),
    * da moderBfe altid er den korrekte jordBFE. Venter på dawaAdresse for at afgøre dette.
+   * AbortController sikrer at forældede svar ignoreres ved hurtig navigation.
    */
   useEffect(() => {
     if (!erDAWA || !bbrData?.ejendomsrelationer?.length || !dawaAdresse) return;
@@ -1102,6 +1204,9 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
       : bbrData.ejendomsrelationer[0]?.bfeNummer;
     if (!bfeNummer) return;
 
+    const controller = new AbortController();
+    const signal = controller.signal;
+
     setVurderingLoader(true);
     setEjereLoader(true);
 
@@ -1110,51 +1215,83 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
       ? `/api/vurdering?bfeNummer=${bfeNummer}&kommunekode=${kommunekode}`
       : `/api/vurdering?bfeNummer=${bfeNummer}`;
 
-    fetch(vurderingUrl)
+    fetch(vurderingUrl, { signal })
       .then((r) => (r.ok ? r.json() : null))
       .then((data: VurderingResponse | null) => {
+        if (signal.aborted) return;
         setVurdering(data?.vurdering ?? null);
         setAlleVurderinger(data?.alle ?? []);
       })
-      .catch(() => setVurdering(null))
-      .finally(() => setVurderingLoader(false));
+      .catch((err) => {
+        if (err.name === 'AbortError') return;
+        console.error('[ejendom] Vurdering fetch error:', err);
+        setVurdering(null);
+      })
+      .finally(() => {
+        if (!signal.aborted) setVurderingLoader(false);
+      });
 
-    fetch(`/api/ejerskab?bfeNummer=${bfeNummer}`)
+    fetch(`/api/ejerskab?bfeNummer=${bfeNummer}`, { signal })
       .then((r) => (r.ok ? r.json() : null))
       .then((data: EjerskabResponse | null) => {
+        if (signal.aborted) return;
         setManglerEjereAdgang(data?.manglerAdgang ?? false);
         setEjere(data?.ejere ?? []);
       })
-      .catch(() => setEjere([]))
-      .finally(() => setEjereLoader(false));
+      .catch((err) => {
+        if (err.name === 'AbortError') return;
+        console.error('[ejendom] Ejerskab fetch error:', err);
+        setEjere([]);
+      })
+      .finally(() => {
+        if (!signal.aborted) setEjereLoader(false);
+      });
 
     setSalgshistorikLoader(true);
-    fetch(`/api/salgshistorik?bfeNummer=${bfeNummer}`)
+    fetch(`/api/salgshistorik?bfeNummer=${bfeNummer}`, { signal })
       .then((r) => (r.ok ? r.json() : null))
       .then((data: SalgshistorikResponse | null) => {
+        if (signal.aborted) return;
         setSalgshistorikManglerAdgang(data?.manglerAdgang ?? false);
         setSalgshistorik(data?.handler ?? []);
       })
-      .catch(() => setSalgshistorik([]))
-      .finally(() => setSalgshistorikLoader(false));
+      .catch((err) => {
+        if (err.name === 'AbortError') return;
+        console.error('[ejendom] Salgshistorik fetch error:', err);
+        setSalgshistorik([]);
+      })
+      .finally(() => {
+        if (!signal.aborted) setSalgshistorikLoader(false);
+      });
+
+    return () => controller.abort();
   }, [id, erDAWA, bbrData, dawaAdresse]);
 
   /**
    * Henter matrikeldata (jordstykker, landbrugsnotering m.m.) fra Datafordeler MAT-registret.
    * Kører når BFE-nummer er tilgængeligt via BBR Ejendomsrelation.
+   * AbortController sikrer at forældede svar ignoreres ved hurtig navigation.
    */
   useEffect(() => {
     if (!erDAWA || !bbrData?.ejendomsrelationer?.length) return;
     const bfeNummer = bbrData.ejendomsrelationer[0]?.bfeNummer;
     if (!bfeNummer) return;
+    const controller = new AbortController();
     setMatrikelLoader(true);
-    fetch(`/api/matrikel?bfeNummer=${bfeNummer}`)
+    fetch(`/api/matrikel?bfeNummer=${bfeNummer}`, { signal: controller.signal })
       .then((r) => r.json())
       .then((data: MatrikelResponse) => {
+        if (controller.signal.aborted) return;
         if (data.matrikel) setMatrikelData(data.matrikel);
       })
-      .catch(() => {})
-      .finally(() => setMatrikelLoader(false));
+      .catch((err) => {
+        if (err.name === 'AbortError') return;
+        console.error('[ejendom] Matrikel fetch error:', err);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setMatrikelLoader(false);
+      });
+    return () => controller.abort();
   }, [erDAWA, bbrData]);
 
   /**
@@ -1165,6 +1302,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
    * BFE-valg: for moderejendomme (ingen etage + ejerlejlighedBfe sat) bruger vi moderBfe
    * direkte fremfor adresseId, fordi adresseId-søgning returnerer child-enheder på adressen
    * og kan give forelobige vurderinger for en forkert ejerlejlighed.
+   * AbortController sikrer at forældede svar ignoreres ved hurtig navigation.
    */
   useEffect(() => {
     if (!erDAWA) return;
@@ -1187,94 +1325,128 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
       if (bfeNummer) params.set('bfeNummer', String(bfeNummer));
     }
 
+    const controller = new AbortController();
     setForelobigLoader(true);
-    fetch(`/api/vurdering-forelobig?${params}`)
+    fetch(`/api/vurdering-forelobig?${params}`, { signal: controller.signal })
       .then((r) => (r.ok ? r.json() : null))
       .then((data: ForelobigVurderingResponse | null) => {
+        if (controller.signal.aborted) return;
         setForelobige(data?.forelobige ?? []);
       })
-      .catch(() => setForelobige([]))
-      .finally(() => setForelobigLoader(false));
+      .catch((err) => {
+        if (err.name === 'AbortError') return;
+        console.error('[ejendom] Forelobig vurdering fetch error:', err);
+        setForelobige([]);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setForelobigLoader(false);
+      });
+    return () => controller.abort();
   }, [id, erDAWA, dawaAdresse, bbrData]);
 
   /**
    * Henter energimærkerapporter via /api/energimaerke når BFE-nummer er tilgængeligt.
    * Kræver EMO_USERNAME/PASSWORD i .env.local — fejler stille med manglerAdgang-flag.
+   * AbortController sikrer at forældede svar ignoreres ved hurtig navigation.
    */
   useEffect(() => {
     if (!erDAWA || !bbrData?.ejendomsrelationer?.length) return;
     const bfeNummer = bbrData.ejendomsrelationer[0]?.bfeNummer;
     if (!bfeNummer) return;
 
+    const controller = new AbortController();
     setEnergiLoader(true);
-    fetch(`/api/energimaerke?bfeNummer=${bfeNummer}`)
+    fetch(`/api/energimaerke?bfeNummer=${bfeNummer}`, { signal: controller.signal })
       .then((r) => (r.ok ? r.json() : null))
       .then((data: EnergimaerkeResponse | null) => {
+        if (controller.signal.aborted) return;
         setEnergimaerker(data?.maerker ?? null);
         setEnergiManglerAdgang(data?.manglerAdgang ?? false);
         setEnergiFejl(data?.fejl ?? null);
       })
-      .catch(() =>
+      .catch((err) => {
+        if (err.name === 'AbortError') return;
+        console.error('[ejendom] Energimaerke fetch error:', err);
         setEnergiFejl(
           da ? 'Netværksfejl ved hentning af energimærker' : 'Network error fetching energy labels'
-        )
-      )
-      .finally(() => setEnergiLoader(false));
+        );
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setEnergiLoader(false);
+      });
+    return () => controller.abort();
   }, [id, erDAWA, bbrData]);
 
   /**
    * Henter jordforureningsstatus fra DkJord API når ejerlavKode + matrikelnr er tilgængelige.
    * Åbne data — kræver ingen autentificering.
+   * AbortController sikrer at forældede svar ignoreres ved hurtig navigation.
    */
   useEffect(() => {
     if (!erDAWA || !bbrData?.ejendomsrelationer?.length) return;
     const rel = bbrData.ejendomsrelationer[0];
     if (!rel?.ejerlavKode || !rel?.matrikelnr) return;
 
+    const controller = new AbortController();
     setJordLoader(true);
     setJordData(null);
     setJordIngenData(false);
     setJordFejl(null);
 
     fetch(
-      `/api/jord?ejerlavKode=${rel.ejerlavKode}&matrikelnr=${encodeURIComponent(rel.matrikelnr)}`
+      `/api/jord?ejerlavKode=${rel.ejerlavKode}&matrikelnr=${encodeURIComponent(rel.matrikelnr)}`,
+      { signal: controller.signal }
     )
       .then((r) => (r.ok ? r.json() : null))
       .then((data: JordResponse | null) => {
+        if (controller.signal.aborted) return;
         setJordData(data?.items ?? null);
         setJordIngenData(data?.ingenData ?? false);
         setJordFejl(data?.fejl ?? null);
       })
-      .catch(() =>
+      .catch((err) => {
+        if (err.name === 'AbortError') return;
+        console.error('[ejendom] Jordforurening fetch error:', err);
         setJordFejl(
           da
             ? 'Netværksfejl ved hentning af jordforureningsdata'
             : 'Network error fetching contamination data'
-        )
-      )
-      .finally(() => setJordLoader(false));
+        );
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setJordLoader(false);
+      });
+    return () => controller.abort();
   }, [id, erDAWA, bbrData]);
 
   /**
    * Henter lokalplaner og kommuneplanrammer via /api/plandata når DAWA-adressen er klar.
    * Kræver kun adresse-UUID — koordinater hentes internt af API-routen via DAWA.
+   * AbortController sikrer at forældede svar ignoreres ved hurtig navigation.
    */
   useEffect(() => {
     if (!erDAWA || dawaStatus !== 'ok') return;
+    const controller = new AbortController();
     setPlandataLoader(true);
     setPlandataFejl(null);
-    fetch(`/api/plandata?adresseId=${id}`)
+    fetch(`/api/plandata?adresseId=${id}`, { signal: controller.signal })
       .then((r) => (r.ok ? r.json() : null))
       .then((data: PlandataResponse | null) => {
+        if (controller.signal.aborted) return;
         setPlandata(data?.planer ?? null);
         if (data?.fejl) setPlandataFejl(data.fejl);
       })
-      .catch(() =>
+      .catch((err) => {
+        if (err.name === 'AbortError') return;
+        console.error('[ejendom] Plandata fetch error:', err);
         setPlandataFejl(
           da ? 'Netværksfejl ved hentning af plandata' : 'Network error fetching plan data'
-        )
-      )
-      .finally(() => setPlandataLoader(false));
+        );
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setPlandataLoader(false);
+      });
+    return () => controller.abort();
   }, [id, erDAWA, dawaStatus]);
 
   /**
@@ -4187,7 +4359,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                   lng={dawaAdresse.x}
                   adresse={adresseStreng}
                   visMatrikel={true}
-                  onAdresseValgt={(newId) => router.push(`/dashboard/ejendomme/${newId}`)}
+                  onAdresseValgt={handleAdresseValgt}
                   fullMapHref={`/dashboard/kort?ejendom=${id}`}
                   erEjerlejlighed={!!bbrData?.ejerlejlighedBfe}
                   bygningPunkter={
@@ -4246,10 +4418,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                   lng={dawaAdresse.x}
                   adresse={adresseStreng}
                   visMatrikel={true}
-                  onAdresseValgt={(newId) => {
-                    setMobilKortAaben(false);
-                    router.push(`/dashboard/ejendomme/${newId}`);
-                  }}
+                  onAdresseValgt={handleAdresseValgtMobil}
                   erEjerlejlighed={!!bbrData?.ejerlejlighedBfe}
                   bygningPunkter={
                     bbrData?.bygningPunkter
@@ -5572,7 +5741,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                           ((value: number | string) => [
                             `${value} mio. DKK`,
                             da ? 'Pris' : 'Price',
-                          ]) as Parameters<typeof Tooltip>[0]['formatter']
+                          ]) as TooltipProps<ValueType, NameType>['formatter']
                         }
                       />
                       <Area
@@ -5944,7 +6113,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                   lng={ejendom.lng}
                   adresse={`${ejendom.adresse}, ${ejendom.postnummer} ${ejendom.by}`}
                   visMatrikel={true}
-                  onAdresseValgt={(id) => router.push(`/dashboard/ejendomme/${id}`)}
+                  onAdresseValgt={handleAdresseValgt}
                   fullMapHref={`/dashboard/kort?ejendom=${id}`}
                   erEjerlejlighed={!!bbrData?.ejerlejlighedBfe}
                   bygningPunkter={bbrData?.bygningPunkter ?? undefined}
@@ -5997,10 +6166,7 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
                 lng={ejendom.lng}
                 adresse={`${ejendom.adresse}, ${ejendom.postnummer} ${ejendom.by}`}
                 visMatrikel={true}
-                onAdresseValgt={(newId) => {
-                  setMobilKortAaben(false);
-                  router.push(`/dashboard/ejendomme/${newId}`);
-                }}
+                onAdresseValgt={handleAdresseValgtMobil}
                 erEjerlejlighed={!!bbrData?.ejerlejlighedBfe}
                 bygningPunkter={bbrData?.bygningPunkter ?? undefined}
               />

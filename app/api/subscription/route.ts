@@ -11,6 +11,7 @@
  */
 
 import { NextResponse } from 'next/server';
+import * as Sentry from '@sentry/nextjs';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { stripe } from '@/app/lib/stripe';
@@ -335,6 +336,7 @@ export async function GET(): Promise<NextResponse> {
       billing,
     });
   } catch (err) {
+    Sentry.captureException(err);
     console.error('[subscription] Unexpected error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }

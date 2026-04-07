@@ -44,7 +44,7 @@ async function getTenantSchema(tenantId: string): Promise<string | null> {
 export async function GET(request: NextRequest) {
   const auth = await resolveTenantId();
   if (!auth) {
-    return NextResponse.json({ recents: [] });
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   try {

@@ -25,6 +25,7 @@
 
 import { NextRequest } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
+import * as Sentry from '@sentry/nextjs';
 import { checkRateLimit, aiRateLimit } from '@/app/lib/rateLimit';
 import { fetchBbrForAddress } from '@/app/lib/fetchBbrData';
 import { createClient } from '@/lib/supabase/server';
@@ -534,12 +535,32 @@ export async function POST(request: NextRequest): Promise<Response> {
   // Require an active subscription — read app_metadata via admin client (not exposed to JWT)
   const adminClient = createAdminClient();
   const { data: freshUser } = await adminClient.auth.admin.getUserById(user.id);
-  const sub = freshUser?.user?.app_metadata?.subscription as { status?: string } | null | undefined;
+  const sub = freshUser?.user?.app_metadata?.subscription as
+    | { status?: string; tokensUsedThisMonth?: number; bonusTokens?: number; planId?: string }
+    | null
+    | undefined;
   if (!sub || sub.status !== 'active') {
     return Response.json(
       { error: 'Aktivt abonnement kræves for at bruge AI-assistenten' },
       { status: 403 }
     );
+  }
+
+  // Guard: reject immediately if token quota is exhausted.
+  // Fetch effective token limit from plan_configs; fall back to 0 (unlimited) if unavailable.
+  const tokensUsedThisMonth = sub.tokensUsedThisMonth ?? 0;
+  let effectiveTokenLimit = 0;
+  if (sub.planId) {
+    const { data: planRow } = await adminClient
+      .from('plan_configs')
+      .select('ai_tokens_per_month')
+      .eq('plan_id', sub.planId)
+      .single<{ ai_tokens_per_month: number }>();
+    const bonusTokens = sub.bonusTokens ?? 0;
+    effectiveTokenLimit = (planRow?.ai_tokens_per_month ?? 0) + bonusTokens;
+  }
+  if (effectiveTokenLimit > 0 && tokensUsedThisMonth >= effectiveTokenLimit) {
+    return Response.json({ error: 'Token kvote opbrugt for denne måned' }, { status: 429 });
   }
 
   const apiKey = process.env.BIZZASSIST_CLAUDE_KEY?.trim();
@@ -623,8 +644,8 @@ export async function POST(request: NextRequest): Promise<Response> {
               .map((b) => b.text)
               .join('');
 
-            // Stream in small chunks for smooth UX
-            const CHUNK = 12;
+            // Stream in chunks — 80 chars balances perceived smoothness vs. SSE overhead
+            const CHUNK = 80;
             for (let i = 0; i < text.length; i += CHUNK) {
               sse(controller, JSON.stringify({ t: text.slice(i, i + CHUNK) }));
             }
@@ -698,6 +719,10 @@ export async function POST(request: NextRequest): Promise<Response> {
         sse(controller, '[DONE]');
         controller.close();
       } catch (err) {
+        // Capture unexpected errors (not routine Claude API errors) in Sentry
+        if (!(err instanceof Anthropic.APIError)) {
+          Sentry.captureException(err);
+        }
         const msg =
           err instanceof Anthropic.APIError
             ? `API-fejl (${err.status}): ${err.message}`

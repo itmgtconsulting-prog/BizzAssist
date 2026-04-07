@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import { Geist } from 'next/font/google';
 import './globals.css';
+import 'mapbox-gl/dist/mapbox-gl.css';
 import { LanguageProvider } from '@/app/context/LanguageContext';
 import ServiceWorkerRegistration from '@/app/components/ServiceWorkerRegistration';
 import SupportChatWidget from '@/app/components/SupportChatWidget';
@@ -29,10 +30,28 @@ export const metadata: Metadata = {
     statusBarStyle: 'black-translucent',
     title: 'BizzAssist',
   },
+  // Hreflang alternates — appen er fuldt tosproget (DA/EN) på samme URL-struktur
+  alternates: {
+    canonical: 'https://bizzassist.dk',
+    languages: {
+      da: 'https://bizzassist.dk',
+      en: 'https://bizzassist.dk',
+      'x-default': 'https://bizzassist.dk',
+    },
+  },
   openGraph: {
     title: 'BizzAssist',
-    description: "Denmark's most comprehensive business intelligence platform",
+    description: 'Dansk erhvervs- og ejendomsintelligens',
     type: 'website',
+    // TODO: Erstat /images/og-image.svg med en rigtig 1200×630 PNG før launch
+    images: [{ url: '/images/og-image.svg', width: 1200, height: 630, alt: 'BizzAssist' }],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'BizzAssist',
+    description: 'Dansk erhvervs- og ejendomsintelligens',
+    // TODO: Erstat /images/og-image.svg med en rigtig 1200×630 PNG før launch
+    images: ['/images/og-image.svg'],
   },
   // Bloker alle sider fra indeksering på test/preview-miljøer
   ...(!isProduction && {

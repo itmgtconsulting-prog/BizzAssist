@@ -368,7 +368,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<MatrikelRe
       }
     );
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Ukendt fejl';
-    return NextResponse.json({ matrikel: null, fejl: `Fejl: ${msg}` }, { status: 200 });
+    console.error('[matrikel] Fejl:', err);
+    return NextResponse.json({ matrikel: null, fejl: 'Ekstern API fejl' }, { status: 200 });
   }
 }

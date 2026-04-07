@@ -10,8 +10,12 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { darHentAdresse } from '@/app/lib/dar';
+import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 
 export async function GET(request: NextRequest) {
+  const limited = await checkRateLimit(request, rateLimit);
+  if (limited) return limited;
+
   const id = request.nextUrl.searchParams.get('id') ?? '';
 
   if (!id) {

@@ -199,10 +199,11 @@ async function queryEJF(bfeNummer: number, token: string): Promise<EJFQueryResul
 
   if (!res.ok) {
     const text = await res.text().catch(() => '');
+    console.error(`[ejerskab] Datafordeler EJF HTTP ${res.status}: ${text.slice(0, 400)}`);
     return {
       ok: false,
       manglerAdgang: false,
-      fejl: `Datafordeler EJF svarede ${res.status}: ${text.slice(0, 200)}`,
+      fejl: 'Ekstern API fejl',
     };
   }
 

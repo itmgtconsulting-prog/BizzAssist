@@ -34,6 +34,19 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     }
 
     const admin = createAdminClient();
+
+    // Prevent re-bootstrapping if any admin already exists
+    const {
+      data: { users: allUsers },
+    } = await admin.auth.admin.listUsers({ perPage: 1000 });
+    const alreadyBootstrapped = (allUsers ?? []).some((u) => u.app_metadata?.isAdmin === true);
+    if (alreadyBootstrapped) {
+      return NextResponse.json(
+        { error: 'Bootstrap already completed — endpoint is disabled.' },
+        { status: 409 }
+      );
+    }
+
     const { data: listData } = await admin.auth.admin.listUsers({ perPage: 1000 });
     const targetUser = listData?.users?.find((u) => u.email === email);
 

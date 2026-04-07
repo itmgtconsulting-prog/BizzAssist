@@ -30,7 +30,7 @@ export default function PrivacyPage() {
             {lang === 'da' ? 'Privatlivspolitik' : 'Privacy Policy'}
           </h1>
           <p className="text-slate-500 text-sm mb-10">
-            {lang === 'da' ? 'Sidst opdateret: 29. marts 2026' : 'Last updated: March 29, 2026'}
+            {lang === 'da' ? 'Sidst opdateret: 7. april 2026' : 'Last updated: April 7, 2026'}
           </p>
 
           <div className="prose prose-invert prose-slate max-w-none space-y-8 text-slate-300 leading-relaxed">
@@ -114,14 +114,29 @@ function DanishPrivacy() {
         <ul className="list-disc pl-6 space-y-1">
           <li>
             <strong className="text-white">Supabase Inc.</strong> — Database og autentificering
-            (EU-region).
+            (EU-region, ingen overførsel til tredjelande).
           </li>
           <li>
-            <strong className="text-white">Vercel Inc.</strong> — Hosting og deployment.
+            <strong className="text-white">Vercel Inc.</strong> (USA) — Hosting og deployment.
+            Overførsel sker på grundlag af standardkontraktbestemmelser (SCC).
           </li>
           <li>
-            <strong className="text-white">Anthropic PBC</strong> — AI-chatfunktionalitet (ingen
-            persondata sendes til AI — kun offentlige virksomheds- og ejendomsdata).
+            <strong className="text-white">Anthropic PBC</strong> (USA) — AI-analyse af erhvervs- og
+            ejendomsdata. Ingen personhenførbare oplysninger sendes til AI. Overførsel sker på
+            grundlag af standardkontraktbestemmelser (SCC).
+          </li>
+          <li>
+            <strong className="text-white">Sentry Inc.</strong> (USA) — Fejlovervågning og
+            performancemåling. Overførsel sker på grundlag af standardkontraktbestemmelser (SCC).
+          </li>
+          <li>
+            <strong className="text-white">Resend Inc.</strong> (USA) — E-maillevering
+            (transaktionelle e-mails). Overførsel sker på grundlag af standardkontraktbestemmelser
+            (SCC).
+          </li>
+          <li>
+            <strong className="text-white">Twilio Inc.</strong> (USA) — SMS-beskeder. Overførsel
+            sker på grundlag af standardkontraktbestemmelser (SCC).
           </li>
         </ul>
         <p>
@@ -154,9 +169,19 @@ function DanishPrivacy() {
         <ul className="list-disc pl-6 space-y-1">
           <li>Ret til indsigt i dine personoplysninger</li>
           <li>Ret til berigtigelse af urigtige oplysninger</li>
-          <li>Ret til sletning (&quot;retten til at blive glemt&quot;)</li>
+          <li>
+            Ret til sletning (&quot;retten til at blive glemt&quot;) — du kan slette din konto under{' '}
+            <Link href="/dashboard/settings" className="text-blue-400 hover:underline">
+              Indstillinger → Min profil → Farlig zone
+            </Link>
+          </li>
           <li>Ret til begrænsning af behandling</li>
-          <li>Ret til dataportabilitet</li>
+          <li>
+            Ret til dataportabilitet — du kan eksportere dine data under{' '}
+            <Link href="/dashboard/settings" className="text-blue-400 hover:underline">
+              Indstillinger → Min profil → Download dine data
+            </Link>
+          </li>
           <li>Ret til indsigelse mod behandling</li>
           <li>Ret til at tilbagekalde samtykke</li>
         </ul>
@@ -278,14 +303,28 @@ function EnglishPrivacy() {
         <ul className="list-disc pl-6 space-y-1">
           <li>
             <strong className="text-white">Supabase Inc.</strong> — Database and authentication (EU
-            region).
+            region, no third-country transfer).
           </li>
           <li>
-            <strong className="text-white">Vercel Inc.</strong> — Hosting and deployment.
+            <strong className="text-white">Vercel Inc.</strong> (USA) — Hosting and deployment.
+            Transfer is based on Standard Contractual Clauses (SCC).
           </li>
           <li>
-            <strong className="text-white">Anthropic PBC</strong> — AI chat functionality (no
-            personal data is sent to AI — only public company and property data).
+            <strong className="text-white">Anthropic PBC</strong> (USA) — AI analysis of business
+            and property data. No personally identifiable information is sent to the AI. Transfer is
+            based on Standard Contractual Clauses (SCC).
+          </li>
+          <li>
+            <strong className="text-white">Sentry Inc.</strong> (USA) — Error monitoring and
+            performance measurement. Transfer is based on Standard Contractual Clauses (SCC).
+          </li>
+          <li>
+            <strong className="text-white">Resend Inc.</strong> (USA) — Email delivery
+            (transactional emails). Transfer is based on Standard Contractual Clauses (SCC).
+          </li>
+          <li>
+            <strong className="text-white">Twilio Inc.</strong> (USA) — SMS messaging. Transfer is
+            based on Standard Contractual Clauses (SCC).
           </li>
         </ul>
         <p>
@@ -318,9 +357,19 @@ function EnglishPrivacy() {
         <ul className="list-disc pl-6 space-y-1">
           <li>Right of access to your personal data</li>
           <li>Right to rectification of inaccurate data</li>
-          <li>Right to erasure (&quot;right to be forgotten&quot;)</li>
+          <li>
+            Right to erasure (&quot;right to be forgotten&quot;) — you can delete your account under{' '}
+            <Link href="/dashboard/settings" className="text-blue-400 hover:underline">
+              Settings → My profile → Danger zone
+            </Link>
+          </li>
           <li>Right to restriction of processing</li>
-          <li>Right to data portability</li>
+          <li>
+            Right to data portability — you can export your data under{' '}
+            <Link href="/dashboard/settings" className="text-blue-400 hover:underline">
+              Settings → My profile → Download your data
+            </Link>
+          </li>
           <li>Right to object to processing</li>
           <li>Right to withdraw consent</li>
         </ul>

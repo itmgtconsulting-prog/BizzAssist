@@ -32,6 +32,9 @@ export default function robots(): MetadataRoute.Robots {
     };
   }
 
+  // Brug NEXT_PUBLIC_APP_URL som base — falder tilbage til den kanoniske produktions-URL
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://bizzassist.dk';
+
   // Production: Tillad offentlige SEO-sider, bloker alt andet
   return {
     rules: [
@@ -41,6 +44,6 @@ export default function robots(): MetadataRoute.Robots {
         disallow: ['/dashboard/', '/api/', '/login/', '/auth/', '/admin/'],
       },
     ],
-    sitemap: 'https://bizzassist.dk/sitemap.xml',
+    sitemap: `${baseUrl}/sitemap.xml`,
   };
 }

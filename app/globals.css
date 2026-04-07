@@ -41,6 +41,13 @@ body {
   background: #475569;
 }
 
+/* Ensure visible focus indicators for keyboard navigation */
+:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
 /* Hide scrollbar for tab bars and horizontal scroll areas */
 .scrollbar-hide {
   -ms-overflow-style: none;

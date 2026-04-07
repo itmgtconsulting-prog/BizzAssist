@@ -380,17 +380,30 @@ export async function generateMetadata({
     adresse.postnrnavn
   );
 
+  const canonicalUrl = `https://bizzassist.dk/ejendom/${canonicalSlug}/${bfe}`;
+
   return {
     title: `${adresseStr} — BizzAssist`,
     description,
     alternates: {
-      canonical: `/ejendom/${canonicalSlug}/${bfe}`,
+      canonical: canonicalUrl,
+      languages: {
+        da: canonicalUrl,
+        en: canonicalUrl,
+      },
     },
     openGraph: {
       title: `${adresseStr} — BizzAssist`,
       description,
       type: 'website',
-      url: `/ejendom/${canonicalSlug}/${bfe}`,
+      url: canonicalUrl,
+      images: [{ url: '/images/og-image.svg', width: 1200, height: 630, alt: 'BizzAssist' }],
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title: `${adresseStr} — BizzAssist`,
+      description,
+      images: ['/images/og-image.svg'],
     },
   };
 }
@@ -485,18 +498,35 @@ function LoginCTA({ adresseStr }: { adresseStr: string }) {
 
 /**
  * Genererer schema.org JSON-LD structured data for ejendomssiden.
+ * Inkluderer RealEstateListing-schema og BreadcrumbList for SEO-brødkrummer.
  *
  * @param adresse - DAWA adresse-objekt
- * @param bbr - BBR bygning-data
+ * @param bbr     - BBR bygning-data
+ * @param slug    - SEO-venlig adresse-slug til kanonisk URL
+ * @param bfe     - BFE-nummer til kanonisk URL
  */
-function JsonLd({ adresse, bbr }: { adresse: DawaAdresse; bbr: BbrBygning | null }) {
-  const schema = {
+function JsonLd({
+  adresse,
+  bbr,
+  slug,
+  bfe,
+}: {
+  adresse: DawaAdresse;
+  bbr: BbrBygning | null;
+  slug: string;
+  bfe: string;
+}) {
+  const adresseNavn = `${adresse.vejnavn} ${adresse.husnr}, ${adresse.postnr} ${adresse.postnrnavn}`;
+  const adresseKort = `${adresse.vejnavn} ${adresse.husnr}`;
+  const canonicalUrl = `https://bizzassist.dk/ejendom/${slug}/${bfe}`;
+
+  const realEstateSchema = {
     '@context': 'https://schema.org',
     '@type': 'RealEstateListing',
-    name: `${adresse.vejnavn} ${adresse.husnr}, ${adresse.postnr} ${adresse.postnrnavn}`,
+    name: adresseNavn,
     address: {
       '@type': 'PostalAddress',
-      streetAddress: `${adresse.vejnavn} ${adresse.husnr}`,
+      streetAddress: adresseKort,
       postalCode: adresse.postnr,
       addressLocality: adresse.postnrnavn,
       addressRegion: adresse.kommunenavn,
@@ -523,11 +553,32 @@ function JsonLd({ adresse, bbr }: { adresse: DawaAdresse; bbr: BbrBygning | null
     ...(bbr?.byg026Opfoerelsesaar ? { yearBuilt: bbr.byg026Opfoerelsesaar } : {}),
   };
 
+  const breadcrumbSchema = {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: 'Hjem', item: 'https://bizzassist.dk' },
+      {
+        '@type': 'ListItem',
+        position: 2,
+        name: 'Ejendomme',
+        item: 'https://bizzassist.dk/ejendomme',
+      },
+      { '@type': 'ListItem', position: 3, name: adresseKort, item: canonicalUrl },
+    ],
+  };
+
   return (
-    <script
-      type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }}
-    />
+    <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(realEstateSchema) }}
+      />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbSchema) }}
+      />
+    </>
   );
 }
 
@@ -568,11 +619,18 @@ export default async function EjendomPublicPage({
     ? bygAnvendelseTekst(Number(bbr.byg021BygningensAnvendelse))
     : null;
   const ejerforhold = bbr?.byg066Ejerforhold ? ejerforholdTekst(bbr.byg066Ejerforhold) : null;
+  // Kanonisk slug — konsistent med generateMetadata og JSON-LD
+  const canonicalSlug = generateEjendomSlug(
+    adresse.vejnavn,
+    adresse.husnr,
+    adresse.postnr,
+    adresse.postnrnavn
+  );
 
   return (
     <>
-      {/* JSON-LD */}
-      <JsonLd adresse={adresse} bbr={bbr} />
+      {/* JSON-LD: RealEstateListing + BreadcrumbList */}
+      <JsonLd adresse={adresse} bbr={bbr} slug={canonicalSlug} bfe={bfe} />
 
       <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8 md:py-12">
         {/* Breadcrumb */}

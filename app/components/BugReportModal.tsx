@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import {
   X,
   Bug,
@@ -93,6 +93,14 @@ const text = {
   },
 };
 
+/**
+ * Bug/feedback report modal with ARIA dialog semantics and focus trap.
+ *
+ * @param open - Whether the modal is currently open
+ * @param onClose - Callback invoked when the modal is closed
+ * @param lang - UI language ('da' | 'en'), defaults to 'da'
+ * @param currentPage - Optional URL path override for the report context
+ */
 export default function BugReportModal({ open, onClose, lang = 'da', currentPage }: Props) {
   const t = text[lang];
   const [type, setType] = useState<'bug' | 'feedback' | 'feature'>('bug');
@@ -105,6 +113,39 @@ export default function BugReportModal({ open, onClose, lang = 'da', currentPage
   const [errorMsg, setErrorMsg] = useState('');
   const [issueKey, setIssueKey] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * Focus trap: while the modal is open, Tab/Shift+Tab cycles through
+   * focusable children only. Also focuses the first element on open.
+   */
+  useEffect(() => {
+    if (!open) return;
+    const modal = modalRef.current;
+    if (!modal) return;
+    const focusable = modal.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const trap = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab') return;
+      if (e.shiftKey) {
+        if (document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else {
+        if (document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    document.addEventListener('keydown', trap);
+    first?.focus();
+    return () => document.removeEventListener('keydown', trap);
+  }, [open]);
 
   if (!open) return null;
 
@@ -195,17 +236,26 @@ export default function BugReportModal({ open, onClose, lang = 'da', currentPage
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={handleClose} />
 
       {/* Modal */}
-      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+      <div
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="bug-report-modal-title"
+        className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto"
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-5 border-b border-slate-100">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 bg-red-50 rounded-lg flex items-center justify-center">
               <Bug size={16} className="text-red-500" />
             </div>
-            <h2 className="font-bold text-slate-900">{t.title}</h2>
+            <h2 id="bug-report-modal-title" className="font-bold text-slate-900">
+              {t.title}
+            </h2>
           </div>
           <button
             onClick={handleClose}
+            aria-label="Luk"
             className="text-slate-400 hover:text-slate-600 transition-colors"
           >
             <X size={20} />
@@ -268,10 +318,14 @@ export default function BugReportModal({ open, onClose, lang = 'da', currentPage
 
             {/* Title */}
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1.5">
+              <label
+                htmlFor="bug-title"
+                className="block text-sm font-medium text-slate-700 mb-1.5"
+              >
                 {t.titleLabel}
               </label>
               <input
+                id="bug-title"
                 type="text"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
@@ -283,10 +337,11 @@ export default function BugReportModal({ open, onClose, lang = 'da', currentPage
 
             {/* Description */}
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1.5">
+              <label htmlFor="bug-desc" className="block text-sm font-medium text-slate-700 mb-1.5">
                 {t.descLabel}
               </label>
               <textarea
+                id="bug-desc"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder={t.descPlaceholder}
@@ -299,11 +354,15 @@ export default function BugReportModal({ open, onClose, lang = 'da', currentPage
             {/* Severity (only for bugs) */}
             {type === 'bug' && (
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                <label
+                  htmlFor="bug-type"
+                  className="block text-sm font-medium text-slate-700 mb-1.5"
+                >
                   {t.severityLabel}
                 </label>
                 <div className="relative">
                   <select
+                    id="bug-type"
                     value={severity}
                     onChange={(e) => setSeverity(e.target.value as typeof severity)}
                     className="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm text-slate-800 focus:outline-none focus:border-blue-400 transition-colors appearance-none bg-white"

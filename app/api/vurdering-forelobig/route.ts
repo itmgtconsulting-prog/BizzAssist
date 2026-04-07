@@ -314,10 +314,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<ForelobigV
       }
     );
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Ukendt fejl';
-    return NextResponse.json(
-      { forelobige: [], fejl: `Fejl ved hentning af forelobige vurderinger: ${msg}` },
-      { status: 200 }
-    );
+    console.error('[vurdering-forelobig] Fejl:', err);
+    return NextResponse.json({ forelobige: [], fejl: 'Ekstern API fejl' }, { status: 200 });
   }
 }

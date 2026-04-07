@@ -39,7 +39,6 @@ import {
   Layers,
   X,
 } from 'lucide-react';
-import 'mapbox-gl/dist/mapbox-gl.css';
 
 /**
  * Mapbox basekort-styles.
@@ -436,11 +435,51 @@ interface PropertyMapProps {
   erEjerlejlighed?: boolean;
 }
 
-/** In-memory cache — gemmer { all, selected } per koordinat */
-const matrikelCache: Record<
-  string,
-  { all: GeoJSONSourceSpecification['data']; selected: GeoJSONSourceSpecification['data'] }
-> = {};
+/** Value shape stored per cache key in matrikelCache. */
+type MatrikelCacheEntry = {
+  all: GeoJSONSourceSpecification['data'];
+  selected: GeoJSONSourceSpecification['data'];
+};
+
+// globalThis.Map avoids collision with the Mapbox `Map` component imported above
+const NativeMap = globalThis.Map;
+
+/**
+ * Simple LRU cache with bounded size to prevent unbounded memory growth.
+ * Uses a native Map to maintain insertion order for O(1) LRU eviction.
+ * NativeMap alias is required because `Map` in this file refers to the Mapbox component.
+ */
+class LRUCache {
+  private readonly max: number;
+  private readonly store: InstanceType<typeof NativeMap>;
+  constructor(max: number) {
+    this.max = max;
+    this.store = new NativeMap();
+  }
+  /** Return cached value and promote it to MRU position, or undefined if not present. */
+  get(key: string): MatrikelCacheEntry | undefined {
+    if (!this.store.has(key)) return undefined;
+    const val = this.store.get(key) as MatrikelCacheEntry;
+    this.store.delete(key);
+    this.store.set(key, val);
+    return val;
+  }
+  /** Insert or update a value, evicting the LRU entry when at capacity. */
+  set(key: string, val: MatrikelCacheEntry): void {
+    if (this.store.has(key)) this.store.delete(key);
+    else if (this.store.size >= this.max) {
+      this.store.delete(this.store.keys().next().value as string);
+    }
+    this.store.set(key, val);
+  }
+  /** Check presence without changing LRU order. */
+  has(key: string): boolean {
+    return this.store.has(key);
+  }
+}
+
+/** In-memory LRU cache — gemmer { all, selected } per koordinat, maks 150 poster */
+const matrikelCache = new LRUCache(150);
 
 /**
  * Ray-casting point-in-polygon test.
@@ -517,7 +556,7 @@ async function hentMatrikelGeojson(
   selected: GeoJSONSourceSpecification['data'];
 } | null> {
   const cacheKey = `${lng.toFixed(5)},${lat.toFixed(5)}`;
-  if (cacheKey in matrikelCache) return matrikelCache[cacheKey];
+  if (matrikelCache.has(cacheKey)) return matrikelCache.get(cacheKey)!;
 
   try {
     const delta = 0.001;
@@ -535,7 +574,7 @@ async function hentMatrikelGeojson(
     const all = fc as GeoJSONSourceSpecification['data'];
     const selected = filtrerTilEjendom(fc, lng, lat);
     const result = { all, selected };
-    matrikelCache[cacheKey] = result;
+    matrikelCache.set(cacheKey, result);
     return result;
   } catch {
     return null;

@@ -32,6 +32,10 @@ const MAX_PER_RUN = 50;
 
 /** Vercel Cron — kræver CRON_SECRET som Bearer token i Authorization-header */
 function verifyCronSecret(request: NextRequest): boolean {
+  // In production, require Vercel's cron header to prevent external triggering
+  if (process.env.VERCEL_ENV === 'production' && request.headers.get('x-vercel-cron') !== '1') {
+    return false;
+  }
   const secret = process.env.CRON_SECRET;
   if (!secret) return false; // Kræver CRON_SECRET i .env
   return request.headers.get('authorization') === `Bearer ${secret}`;

@@ -395,7 +395,7 @@ function AIChatPanel() {
                     }
                   : {})}
               >
-                <span className="text-[10px] text-slate-600 whitespace-nowrap">
+                <span className="text-[10px] text-slate-400 whitespace-nowrap">
                   {a.tokenStatus}
                 </span>
                 {tokenInfo.limit === -1 ? (
@@ -429,7 +429,7 @@ function AIChatPanel() {
                           ? 'text-red-400'
                           : tokenInfo.used / tokenInfo.limit > 0.7
                             ? 'text-amber-400'
-                            : 'text-slate-600'
+                            : 'text-slate-400'
                       }`}
                     >
                       {Math.min(100, Math.round((tokenInfo.used / tokenInfo.limit) * 100))}%

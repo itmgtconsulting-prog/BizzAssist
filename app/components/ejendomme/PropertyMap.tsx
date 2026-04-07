@@ -1329,7 +1329,7 @@ function PropertyMap({
                   >
                     BBR Bygninger
                     {(!bygningPunkter || bygningPunkter.length === 0) && (
-                      <span className="ml-1 text-[10px] text-slate-600">— ingen data</span>
+                      <span className="ml-1 text-[10px] text-slate-400">— ingen data</span>
                     )}
                   </p>
                   {bygningPunkter && bygningPunkter.length > 0 && (

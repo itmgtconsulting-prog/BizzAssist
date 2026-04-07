@@ -13,6 +13,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import * as Sentry from '@sentry/nextjs';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -226,7 +227,8 @@ export async function GET(req: NextRequest) {
       headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
     });
   } catch (err) {
-    console.error('[tinglysning] Fejl:', err);
+    Sentry.captureException(err);
+    console.error('[tinglysning] Fejl:', err instanceof Error ? err.message : String(err));
     return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
   }
 }

@@ -6,9 +6,14 @@
  * Søger i alle ~2,8 mio. danske adresser via DAWA autocomplete (gratis).
  * Mock-ejendomme vises som "Populære ejendomme" når ingen søgning er aktiv.
  * Rigtige BBR-data hentes via Datafordeler i Fase 2.
+ *
+ * Filter-panel (BIZZ-28):
+ * - Kommunenavn (select fra unikke kommuner i recent-resultater)
+ * - Ejendomstype via BBR-anvendelse (Beboelse / Erhverv / Ubebygget)
+ * - "Nulstil filtre" knap
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -22,6 +27,7 @@ import {
   Loader2,
   Clock,
   ArrowRight,
+  Filter,
 } from 'lucide-react';
 import { erDawaId, type DawaAutocompleteResult } from '@/app/lib/dawa';
 import { hentRecentEjendomme, type RecentEjendom } from '@/app/lib/recentEjendomme';
@@ -30,6 +36,112 @@ import { translations } from '@/app/lib/translations';
 
 const RECENT_KEY = 'ba-ejendomme-recent';
 const MAX_RECENT = 5;
+
+// ─── Filter types ────────────────────────────────────────────────────────────
+
+/**
+ * Kategorier for BBR-ejendomstype-filter.
+ * Baseret på grov inddeling af anvendelsestekster fra BBR.
+ */
+type EjendomstypeFilter = 'alle' | 'beboelse' | 'erhverv' | 'ubebygget';
+
+/** Aktive filtervalg for ejendomme-listesiden */
+interface EjendomFilterState {
+  /** Valgt kommunenavn (tom streng = ingen filter) */
+  kommune: string;
+  /** Ejendomstype baseret på BBR-anvendelse */
+  ejendomstype: EjendomstypeFilter;
+}
+
+/** Standard filterstatus — ingen aktive filtre */
+const DEFAULT_FILTERS: EjendomFilterState = {
+  kommune: '',
+  ejendomstype: 'alle',
+};
+
+/**
+ * Klassificerer en BBR-anvendelsestekst til en grov ejendomstype.
+ * Returnerer 'beboelse', 'erhverv', 'ubebygget' eller null for ukendt.
+ *
+ * @param anvendelse - BBR-anvendelsestekst fra RecentEjendom
+ * @returns Kategorinavn eller null
+ */
+function klassificerAnvendelse(anvendelse: string | null): EjendomstypeFilter | null {
+  if (!anvendelse) return null;
+  const lower = anvendelse.toLowerCase();
+  if (
+    lower.includes('bolig') ||
+    lower.includes('enfamilie') ||
+    lower.includes('villa') ||
+    lower.includes('lejlighed') ||
+    lower.includes('beboelse') ||
+    lower.includes('kollegium') ||
+    lower.includes('døgninstitution') ||
+    lower.includes('fritidshus') ||
+    lower.includes('kolonihave') ||
+    lower.includes('sommerhus')
+  ) {
+    return 'beboelse';
+  }
+  if (
+    lower.includes('erhverv') ||
+    lower.includes('kontor') ||
+    lower.includes('fabrik') ||
+    lower.includes('lager') ||
+    lower.includes('værksted') ||
+    lower.includes('butik') ||
+    lower.includes('hotel') ||
+    lower.includes('institution') ||
+    lower.includes('undervisning') ||
+    lower.includes('hospital')
+  ) {
+    return 'erhverv';
+  }
+  if (
+    lower.includes('ubebygget') ||
+    lower.includes('umatrikuleret') ||
+    lower.includes('ukendt') ||
+    lower.includes('landbrugsjord') ||
+    lower.includes('skov')
+  ) {
+    return 'ubebygget';
+  }
+  return null;
+}
+
+// ─── Translations ─────────────────────────────────────────────────────────────
+
+/** Lokale oversættelses-strings til filter-UI (resten hentes fra translations.ts) */
+const filterT = {
+  da: {
+    filtre: 'Filtre',
+    nulstilFiltre: 'Nulstil filtre',
+    kommune: 'Kommune',
+    alleKommuner: 'Alle kommuner',
+    ejendomstype: 'Ejendomstype',
+    alle: 'Alle',
+    beboelse: 'Beboelse',
+    erhverv: 'Erhverv',
+    ubebygget: 'Ubebygget',
+    visResultater: (n: number) => `Viser ${n} ejendomme`,
+    ingenMatch: 'Ingen ejendomme matcher filtrene',
+  },
+  en: {
+    filtre: 'Filters',
+    nulstilFiltre: 'Reset filters',
+    kommune: 'Municipality',
+    alleKommuner: 'All municipalities',
+    ejendomstype: 'Property type',
+    alle: 'All',
+    beboelse: 'Residential',
+    erhverv: 'Commercial',
+    ubebygget: 'Undeveloped',
+    visResultater: (n: number) => `Showing ${n} properties`,
+    ingenMatch: 'No properties match the filters',
+  },
+} as const;
+
+// ─── Helper components ───────────────────────────────────────────────────────
 
 /**
  * Kort for én senest set ejendom.
@@ -280,13 +392,165 @@ function DropdownPortal({
   );
 }
 
+// ─── Filter panel ─────────────────────────────────────────────────────────────
+
+/**
+ * Vandret filterpanel for ejendomme-listesiden.
+ * Toggler ind/ud med Filter-knappen. Filtrerer på kommune og ejendomstype.
+ *
+ * @param filters - Aktive filtervalg
+ * @param onFiltersChange - Callback når filtre ændres
+ * @param uniqueKommuner - Unikke kommunenavne fra loadede resultater
+ * @param lang - Aktuelt sprog
+ */
+function EjendomFilterPanel({
+  filters,
+  onFiltersChange,
+  uniqueKommuner,
+  lang,
+}: {
+  filters: EjendomFilterState;
+  onFiltersChange: (f: EjendomFilterState) => void;
+  uniqueKommuner: string[];
+  lang: 'da' | 'en';
+}) {
+  const ft = filterT[lang];
+
+  return (
+    <div className="bg-[#0f172a] border border-slate-700/50 rounded-xl p-4 mt-3 flex flex-wrap gap-6">
+      {/* Kommune select */}
+      {uniqueKommuner.length > 0 && (
+        <div className="flex flex-col gap-1.5 min-w-[200px]">
+          <span className="text-slate-400 text-xs font-medium uppercase tracking-wide">
+            {ft.kommune}
+          </span>
+          <select
+            value={filters.kommune}
+            onChange={(e) => onFiltersChange({ ...filters, kommune: e.target.value })}
+            className="bg-slate-800 border border-slate-700/60 rounded-lg px-3 py-1.5 text-sm text-white outline-none focus:border-blue-500/60 transition-colors"
+          >
+            <option value="">{ft.alleKommuner}</option>
+            {uniqueKommuner.map((k) => (
+              <option key={k} value={k}>
+                {k}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {/* Ejendomstype radio */}
+      <div className="flex flex-col gap-1.5">
+        <span className="text-slate-400 text-xs font-medium uppercase tracking-wide">
+          {ft.ejendomstype}
+        </span>
+        <div className="flex gap-3 flex-wrap">
+          {(
+            [
+              ['alle', ft.alle],
+              ['beboelse', ft.beboelse],
+              ['erhverv', ft.erhverv],
+              ['ubebygget', ft.ubebygget],
+            ] as [EjendomstypeFilter, string][]
+          ).map(([val, label]) => (
+            <label key={val} className="flex items-center gap-1.5 cursor-pointer">
+              <input
+                type="radio"
+                name="ejendom-type"
+                value={val}
+                checked={filters.ejendomstype === val}
+                onChange={() => onFiltersChange({ ...filters, ejendomstype: val })}
+                className="accent-emerald-500"
+              />
+              <span className="text-slate-300 text-sm">{label}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Viser aktive filtre som removable chip-piller for ejendomme-listesiden.
+ *
+ * @param filters - Aktive filtervalg
+ * @param onFiltersChange - Callback til opdatering
+ * @param lang - Aktuelt sprog
+ */
+function ActiveFilterChips({
+  filters,
+  onFiltersChange,
+  lang,
+}: {
+  filters: EjendomFilterState;
+  onFiltersChange: (f: EjendomFilterState) => void;
+  lang: 'da' | 'en';
+}) {
+  const ft = filterT[lang];
+  const chips: { label: string; onRemove: () => void }[] = [];
+
+  if (filters.kommune) {
+    chips.push({
+      label: filters.kommune,
+      onRemove: () => onFiltersChange({ ...filters, kommune: '' }),
+    });
+  }
+  if (filters.ejendomstype !== 'alle') {
+    const labels: Record<EjendomstypeFilter, string> = {
+      alle: ft.alle,
+      beboelse: ft.beboelse,
+      erhverv: ft.erhverv,
+      ubebygget: ft.ubebygget,
+    };
+    chips.push({
+      label: labels[filters.ejendomstype],
+      onRemove: () => onFiltersChange({ ...filters, ejendomstype: 'alle' }),
+    });
+  }
+
+  if (chips.length === 0) return null;
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 mt-3">
+      {chips.map((chip) => (
+        <span
+          key={chip.label}
+          className="inline-flex items-center gap-1.5 bg-blue-900/40 text-blue-300 border border-blue-700/50 rounded-full px-3 py-1 text-xs"
+        >
+          {chip.label}
+          <button
+            type="button"
+            onClick={chip.onRemove}
+            aria-label={`${lang === 'da' ? 'Fjern filter' : 'Remove filter'}: ${chip.label}`}
+            className="text-blue-400 hover:text-blue-200 transition-colors"
+          >
+            <X size={11} />
+          </button>
+        </span>
+      ))}
+      <button
+        type="button"
+        onClick={() => onFiltersChange(DEFAULT_FILTERS)}
+        className="text-slate-500 hover:text-slate-300 text-xs transition-colors ml-1"
+      >
+        {ft.nulstilFiltre}
+      </button>
+    </div>
+  );
+}
+
+// ─── Main component ──────────────────────────────────────────────────────────
+
 /**
  * Ejendomme listeside.
  * Kombinerer DAWA live-søgning med mock-ejendomme som inspiration.
+ * Filtrerer de loadede recent-ejendomme lokalt via filterState (BIZZ-28).
  */
 export default function EjendommeListeside() {
   const { lang } = useLanguage();
   const p = translations[lang].properties;
+  const ft = filterT[lang];
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -303,6 +567,12 @@ export default function EjendommeListeside() {
   /** Timestamp for "tid siden" — sat ved mount for at undgå impure Date.now() i render */
   const [renderNow, setRenderNow] = useState(0);
 
+  /** Om filter-panelet er synligt */
+  const [filterOpen, setFilterOpen] = useState(false);
+
+  /** Aktive filtervalg — standard = ingen filter */
+  const [filters, setFilters] = useState<EjendomFilterState>(DEFAULT_FILTERS);
+
   useEffect(() => {
     setSenesteEjendomme(hentRecentEjendomme());
     setRenderNow(Date.now());
@@ -311,6 +581,40 @@ export default function EjendommeListeside() {
     window.addEventListener('ba-recents-updated', handler);
     return () => window.removeEventListener('ba-recents-updated', handler);
   }, []);
+
+  /**
+   * Unikke kommunenavne fra de loadede recent-ejendomme.
+   * Sorteret alfabetisk.
+   */
+  const uniqueKommuner = useMemo<string[]>(() => {
+    const set = new Set<string>();
+    for (const e of senesteEjendomme) {
+      if (e.kommune) set.add(e.kommune);
+    }
+    return Array.from(set).sort();
+  }, [senesteEjendomme]);
+
+  /**
+   * Filtreret liste af recent-ejendomme baseret på aktive filtervalg.
+   * Kører rent client-side på allerede-loadede data.
+   */
+  const filteredEjendomme = useMemo<RecentEjendom[]>(() => {
+    return senesteEjendomme.filter((e) => {
+      // Kommune-filter
+      if (filters.kommune && e.kommune !== filters.kommune) return false;
+      // Ejendomstype-filter baseret på klassificering af anvendelse
+      if (filters.ejendomstype !== 'alle') {
+        const kategori = klassificerAnvendelse(e.anvendelse);
+        if (kategori !== filters.ejendomstype) return false;
+      }
+      return true;
+    });
+  }, [senesteEjendomme, filters]);
+
+  /** Om nogen filtre er aktive */
+  const hasActiveFilters = useMemo<boolean>(() => {
+    return filters.kommune !== '' || filters.ejendomstype !== 'alle';
+  }, [filters]);
 
   /** Lazy initialisering fra localStorage — filtrerer evt. korrupt/forældet data fra */
   const [seneste, setSeneste] = useState<DawaAutocompleteResult[]>(() => {
@@ -411,61 +715,102 @@ export default function EjendommeListeside() {
         <h1 className="text-2xl font-bold text-emerald-400 mb-1">{p.title}</h1>
         <p className="text-slate-400 text-sm">{p.subtitle}</p>
 
-        {/* Søgeboks med DAWA autocomplete */}
+        {/* Søgeboks med DAWA autocomplete + Filter toggle */}
         <div className="relative mt-5">
-          <div className="relative">
-            <Search
-              size={18}
-              className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"
-            />
-            <input
-              ref={inputRef}
-              type="text"
-              value={søgning}
-              onChange={(e) => {
-                setSøgning(e.target.value);
-                setÅben(true);
-                setMarkeret(-1);
-              }}
-              onFocus={() => setÅben(true)}
-              onKeyDown={(e) => {
-                if (e.key === 'ArrowDown') {
-                  e.preventDefault();
-                  setMarkeret((m) => Math.min(m + 1, resultater.length - 1));
-                } else if (e.key === 'ArrowUp') {
-                  e.preventDefault();
-                  setMarkeret((m) => Math.max(m - 1, -1));
-                } else if (e.key === 'Enter') {
-                  const valgt = markeret >= 0 ? resultater[markeret] : resultater[0];
-                  if (valgt) vælgAdresse(valgt);
-                } else if (e.key === 'Escape') {
-                  setÅben(false);
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <Search
+                size={18}
+                className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"
+              />
+              <input
+                ref={inputRef}
+                type="text"
+                value={søgning}
+                onChange={(e) => {
+                  setSøgning(e.target.value);
+                  setÅben(true);
                   setMarkeret(-1);
-                }
-              }}
-              placeholder={p.searchPlaceholder}
-              className="w-full bg-slate-800/60 border border-slate-600/50 focus:border-blue-500/60 rounded-2xl pl-11 pr-12 py-4 text-white placeholder:text-slate-500 outline-none transition-all text-base shadow-lg"
-            />
-            {/* Loader / Ryd-knap */}
-            <div className="absolute right-4 top-1/2 -translate-y-1/2">
-              {søgerDAWA ? (
-                <Loader2 size={18} className="text-blue-400 animate-spin" />
-              ) : søgning.length > 0 ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSøgning('');
-                    setResultater([]);
+                }}
+                onFocus={() => setÅben(true)}
+                onKeyDown={(e) => {
+                  if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    setMarkeret((m) => Math.min(m + 1, resultater.length - 1));
+                  } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    setMarkeret((m) => Math.max(m - 1, -1));
+                  } else if (e.key === 'Enter') {
+                    const valgt = markeret >= 0 ? resultater[markeret] : resultater[0];
+                    if (valgt) vælgAdresse(valgt);
+                  } else if (e.key === 'Escape') {
                     setÅben(false);
-                    inputRef.current?.focus();
-                  }}
-                  className="text-slate-500 hover:text-slate-300 transition-colors"
-                >
-                  <X size={18} />
-                </button>
-              ) : null}
+                    setMarkeret(-1);
+                  }
+                }}
+                placeholder={p.searchPlaceholder}
+                className="w-full bg-slate-800/60 border border-slate-600/50 focus:border-blue-500/60 rounded-2xl pl-11 pr-12 py-4 text-white placeholder:text-slate-500 outline-none transition-all text-base shadow-lg"
+              />
+              {/* Loader / Ryd-knap */}
+              <div className="absolute right-4 top-1/2 -translate-y-1/2">
+                {søgerDAWA ? (
+                  <Loader2 size={18} className="text-blue-400 animate-spin" />
+                ) : søgning.length > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSøgning('');
+                      setResultater([]);
+                      setÅben(false);
+                      inputRef.current?.focus();
+                    }}
+                    className="text-slate-500 hover:text-slate-300 transition-colors"
+                  >
+                    <X size={18} />
+                  </button>
+                ) : null}
+              </div>
             </div>
+
+            {/* Filter toggle — kun synlig når der er recent-ejendomme at filtrere */}
+            {senesteEjendomme.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setFilterOpen((o) => !o)}
+                aria-label={ft.filtre}
+                aria-expanded={filterOpen}
+                className={`flex items-center gap-2 px-4 py-2 rounded-2xl border transition-all text-sm font-medium shadow-lg ${
+                  hasActiveFilters || filterOpen
+                    ? 'bg-emerald-600/20 border-emerald-500/50 text-emerald-300'
+                    : 'bg-slate-800/60 border-slate-600/50 text-slate-400 hover:border-slate-500/60 hover:text-slate-300'
+                }`}
+              >
+                <Filter size={16} />
+                {ft.filtre}
+                {hasActiveFilters && (
+                  <span className="bg-emerald-500 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
+                    {[filters.kommune ? 1 : 0, filters.ejendomstype !== 'alle' ? 1 : 0].reduce(
+                      (a, b) => a + b,
+                      0
+                    )}
+                  </span>
+                )}
+              </button>
+            )}
           </div>
+
+          {/* Filter panel */}
+          {filterOpen && senesteEjendomme.length > 0 && (
+            <EjendomFilterPanel
+              filters={filters}
+              onFiltersChange={setFilters}
+              uniqueKommuner={uniqueKommuner}
+              lang={lang}
+            />
+          )}
+
+          {/* Active filter chips */}
+          <ActiveFilterChips filters={filters} onFiltersChange={setFilters} lang={lang} />
 
           {/* Dropdown via Portal — undgår overflow:hidden klipning fra dashboard layout */}
           {visDropdown && typeof document !== 'undefined' && (
@@ -494,6 +839,11 @@ export default function EjendommeListeside() {
               <div className="flex items-center gap-2">
                 <Clock size={15} className="text-slate-400" />
                 <h2 className="text-white font-semibold text-base">{p.recentlyViewed}</h2>
+                {hasActiveFilters && (
+                  <span className="text-slate-500 text-xs">
+                    — {ft.visResultater(filteredEjendomme.length)}
+                  </span>
+                )}
               </div>
               <button
                 type="button"
@@ -506,11 +856,28 @@ export default function EjendommeListeside() {
                 {p.clearHistory}
               </button>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {senesteEjendomme.map((e) => (
-                <RecentEjendomCard key={e.id} ejendom={e} now={renderNow} p={p} />
-              ))}
-            </div>
+
+            {filteredEjendomme.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                {filteredEjendomme.map((e) => (
+                  <RecentEjendomCard key={e.id} ejendom={e} now={renderNow} p={p} />
+                ))}
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-12 text-center gap-3">
+                <div className="p-4 bg-slate-800/40 rounded-2xl">
+                  <Filter size={24} className="text-slate-600" />
+                </div>
+                <p className="text-slate-400 text-sm font-medium">{ft.ingenMatch}</p>
+                <button
+                  type="button"
+                  onClick={() => setFilters(DEFAULT_FILTERS)}
+                  className="text-emerald-400 hover:text-emerald-300 text-xs transition-colors"
+                >
+                  {ft.nulstilFiltre}
+                </button>
+              </div>
+            )}
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center py-16 text-center gap-3">

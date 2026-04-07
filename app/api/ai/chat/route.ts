@@ -1085,6 +1085,26 @@ export async function POST(request: NextRequest): Promise<Response> {
     return Response.json({ error: 'Ingen beskeder' }, { status: 400 });
   }
 
+  // ── Input validation — guard against oversized payloads ──────────────────
+  /** Maximum number of messages accepted per request (prevents token amplification). */
+  const MAX_MESSAGES = 50;
+  /** Maximum characters allowed per message content string. */
+  const MAX_CONTENT_CHARS = 10_000;
+
+  if (messages.length > MAX_MESSAGES) {
+    return Response.json({ error: `Maks ${MAX_MESSAGES} beskeder pr. anmodning` }, { status: 400 });
+  }
+
+  const oversizedMessage = messages.find(
+    (m) => typeof m.content === 'string' && m.content.length > MAX_CONTENT_CHARS
+  );
+  if (oversizedMessage) {
+    return Response.json(
+      { error: `Besked overstiger maks ${MAX_CONTENT_CHARS} tegn` },
+      { status: 400 }
+    );
+  }
+
   // Fire-and-forget: log this AI chat call for usage analytics.
   // promptLength is the character count of the last user message — no raw text stored.
   if (resolvedTenantId) {

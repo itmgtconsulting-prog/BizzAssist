@@ -59,6 +59,7 @@ const navItems = [
   { icon: Briefcase, key: 'companies' as const, href: '/dashboard/companies', adminOnly: false },
   { icon: Users, key: 'owners' as const, href: '/dashboard/owners', adminOnly: false },
   { icon: Map, key: 'map' as const, href: '/dashboard/kort', adminOnly: false },
+  { icon: Search, key: 'search' as const, href: '/dashboard/search', adminOnly: false },
   { icon: Shield, key: 'admin' as const, href: '/dashboard/admin/users', adminOnly: true },
 ];
 

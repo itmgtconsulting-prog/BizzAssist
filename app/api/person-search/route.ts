@@ -10,6 +10,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -156,6 +157,10 @@ function mapHit(hit: Record<string, unknown>): PersonSearchResult | null {
 // ─── Route handler ──────────────────────────────────────────────────────────
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
+  // Rate limit: protect paid CVR ES credentials from abuse
+  const limited = await checkRateLimit(req, rateLimit);
+  if (limited) return limited;
+
   const q = req.nextUrl.searchParams.get('q')?.trim() ?? '';
 
   if (q.length < 2) {

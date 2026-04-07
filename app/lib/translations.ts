@@ -173,6 +173,7 @@ export const translations = {
       companies: 'Virksomheder',
       owners: 'Personer',
       map: 'Kort',
+      search: 'Søg',
       admin: 'Admin',
       searchPlaceholder: 'Søg adresse, CVR, virksomhed…',
       settings: 'Indstillinger',
@@ -185,6 +186,23 @@ export const translations = {
       typeOwner: 'Person',
       typeRoad: 'Vej',
       typeProperty: 'Ejendom',
+    },
+
+    /* ─── Universal search page ────────────────────────────────────── */
+    searchPage: {
+      title: 'Universel søgning',
+      subtitle: 'Find ejendomme, virksomheder og personer på ét sted',
+      placeholder: 'Søg på ejendomme, virksomheder og personer...',
+      tabProperties: 'Ejendomme',
+      tabCompanies: 'Virksomheder',
+      tabPeople: 'Personer',
+      noResults: 'Ingen resultater',
+      noResultsFor: 'Ingen resultater for',
+      startTyping: 'Begynd at skrive for at søge',
+      bfe: 'BFE',
+      active: 'Aktiv',
+      inactive: 'Ophørt',
+      companies: 'virksomheder',
     },
 
     /* ─── AI Chat ──────────────────────────────────────────────────── */
@@ -616,6 +634,7 @@ export const translations = {
       companies: 'Companies',
       owners: 'Persons',
       map: 'Map',
+      search: 'Search',
       admin: 'Admin',
       searchPlaceholder: 'Search address, CVR, company…',
       settings: 'Settings',
@@ -628,6 +647,23 @@ export const translations = {
       typeOwner: 'Person',
       typeRoad: 'Road',
       typeProperty: 'Property',
+    },
+
+    /* ─── Universal search page ────────────────────────────────────── */
+    searchPage: {
+      title: 'Universal search',
+      subtitle: 'Find properties, companies and people in one place',
+      placeholder: 'Search properties, companies and people...',
+      tabProperties: 'Properties',
+      tabCompanies: 'Companies',
+      tabPeople: 'People',
+      noResults: 'No results',
+      noResultsFor: 'No results for',
+      startTyping: 'Start typing to search',
+      bfe: 'BFE',
+      active: 'Active',
+      inactive: 'Ceased',
+      companies: 'companies',
     },
 
     /* ─── AI Chat ──────────────────────────────────────────────────── */

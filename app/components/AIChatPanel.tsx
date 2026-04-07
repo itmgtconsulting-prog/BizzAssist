@@ -151,11 +151,14 @@ function AIChatPanel() {
 
   /** Fokuser input første gang panelet åbnes eller modal pop-out åbnes */
   useEffect(() => {
+    // Capture timer id so it can be cleared if the component unmounts before the delay fires
+    let timerId: ReturnType<typeof setTimeout> | undefined;
     if (isExpanded) {
-      setTimeout(() => modalInputRef.current?.focus(), 150);
+      timerId = setTimeout(() => modalInputRef.current?.focus(), 150);
     } else if (isOpen) {
-      setTimeout(() => inputRef.current?.focus(), 150);
+      timerId = setTimeout(() => inputRef.current?.focus(), 150);
     }
+    return () => clearTimeout(timerId);
   }, [isOpen, isExpanded]);
 
   /** Luk modal med Escape-tasten */

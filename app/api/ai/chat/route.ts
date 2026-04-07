@@ -1143,8 +1143,8 @@ export async function POST(request: NextRequest): Promise<Response> {
               .map((b) => b.text)
               .join('');
 
-            // Stream in chunks — 80 chars balances perceived smoothness vs. SSE overhead
-            const CHUNK = 80;
+            // Stream in chunks — 200 chars reduces SSE overhead vs. perceived smoothness
+            const CHUNK = 200;
             for (let i = 0; i < text.length; i += CHUNK) {
               sse(controller, JSON.stringify({ t: text.slice(i, i + CHUNK) }));
             }

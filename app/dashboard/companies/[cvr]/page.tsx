@@ -55,6 +55,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
+import { useSetAIPageContext } from '@/app/context/AIPageContext';
 import { translations } from '@/app/lib/translations';
 import type { CVRPublicData } from '@/app/api/cvr-public/route';
 import type { Regnskab } from '@/app/api/regnskab/route';
@@ -328,6 +329,8 @@ export default function VirksomhedDetalje({ params }: PageProps) {
   const { lang } = useLanguage();
   const t = translations[lang];
   const c = t.company;
+  /** Sæt AI-kontekst med CVR-nummer og virksomhedsnavn så AI'en kan bruge dem direkte */
+  const setAICtx = useSetAIPageContext();
 
   /** Tab-labels hentet fra centraliseret oversættelsessystem */
   const tabLabelMap: Record<TabId, string> = {
@@ -617,6 +620,18 @@ export default function VirksomhedDetalje({ params }: PageProps) {
       cancelled = true;
     };
   }, [cvr, lang]);
+
+  /**
+   * Sæt AI-kontekst når virksomhedsdata er loadet.
+   * AI-assistenten kan dermed bruge CVR-nummeret direkte i tool-kald.
+   */
+  useEffect(() => {
+    if (!data) return;
+    setAICtx({
+      cvrNummer: String(data.vat),
+      virksomhedNavn: data.name,
+    });
+  }, [data, setAICtx]);
 
   /**
    * Lazy-loader regnskabsdata når bruger klikker på Regnskab-tab.

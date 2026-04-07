@@ -204,6 +204,64 @@ const TOOLS: Anthropic.Tool[] = [
       required: ['bfeNummer'],
     },
   },
+  {
+    name: 'hent_person_virksomheder',
+    description:
+      'Henter alle virksomheder en person er tilknyttet fra CVR-registret med ejerandel (%), rolle og CVR-nummer. Brug dette som første skridt i en formueanalyse — kald derefter hent_cvr_virksomhed for hvert CVR-nummer for at estimere virksomhedsværdier. Brug enhedsNummer hvis det kendes (fra kontekst eller søg_person_cvr), ellers søg på navn.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        enhedsNummer: {
+          type: 'string',
+          description: 'CVR enhedsnummer for personen (numerisk streng) — foretrukket',
+        },
+        navn: {
+          type: 'string',
+          description: 'Personens fulde navn — bruges som fallback hvis enhedsNummer ikke kendes',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'hent_regnskab_noegletal',
+    description:
+      'Henter XBRL-regnskabsdata (balance og resultatopgørelse) for en virksomhed — egenkapital, aktiver, omsætning, årets resultat og nøgletal for de seneste 1-3 år. Brug dette til at estimere virksomhedsværdi i formueanalyse. Egenkapital er det mest direkte bud på bogført nettoværdi for holdingselskaber. Kald dette for ALLE virksomheder med ejerandel parallelt.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        cvr: { type: 'string', description: '8-cifret CVR-nummer' },
+      },
+      required: ['cvr'],
+    },
+  },
+  {
+    name: 'hent_datterselskaber',
+    description:
+      'Henter datterselskaber og kapitalandele for en virksomhed fra CVR. Brug dette når en ejet virksomhed er et holdingselskab (navn indeholder "Holding", "Invest" eller "Group") for at afdække den underliggende portefølje. Returnerer CVR-numre og ejerandele på niveau 2.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        cvr: { type: 'string', description: '8-cifret CVR-nummer for holdingselskabet' },
+      },
+      required: ['cvr'],
+    },
+  },
+  {
+    name: 'soeg_person_cvr',
+    description:
+      'Søger CVR-registret efter en person eller virksomhed på navn. Returnerer enhedsNummer, fuldt navn og registrerede adresser. Brug dette til at finde en persons CVR-enhedsnummer inden du kalder hent_person_virksomheder. Kald ALTID dette først hvis du kun kender et navn og ikke har enhedsNummer i konteksten.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        navn: {
+          type: 'string',
+          description: 'Personens fulde navn eller del af navn, f.eks. "Jakob Juul Rasmussen"',
+        },
+      },
+      required: ['navn'],
+    },
+  },
 ];
 
 // ─── Tool labels (for status messages) ──────────────────────────────────────
@@ -220,6 +278,10 @@ const TOOL_STATUS: Record<string, string> = {
   hent_plandata: 'Henter plandata…',
   hent_cvr_virksomhed: 'Henter CVR-data…',
   hent_matrikeldata: 'Henter matrikeldata…',
+  hent_person_virksomheder: 'Henter personens virksomhedstilknytninger…',
+  hent_regnskab_noegletal: 'Henter regnskabsnøgletal…',
+  hent_datterselskaber: 'Henter datterselskaber…',
+  soeg_person_cvr: 'Søger efter person i CVR…',
 };
 
 // ─── System prompt ──────────────────────────────────────────────────────────
@@ -258,7 +320,49 @@ VIGTIGT: Kald så mange tools som muligt i SAMME runde for at spare tid. Vent ik
 - Marker tydeligt hvad der er fakta (fra registre) vs. din vurdering
 - Hvis et tool returnerer fejl eller manglende data, nævn det kort og fortsæt med de øvrige data
 - Kald gerne flere tools for at give et komplet billede
-- BFE-nummer findes typisk i jordstykke-objektet fra dawa_adresse_detaljer (feltet "bfenummer" eller i ejendomsrelationer fra BBR)`;
+- BFE-nummer findes typisk i jordstykke-objektet fra dawa_adresse_detaljer (feltet "bfenummer" eller i ejendomsrelationer fra BBR)
+
+## Workflow ved formueanalyse for en person
+
+### REGEL 1 — Vælg den rigtige liste baseret på spørgsmålstype
+Konteksten indeholder to separate lister markeret med tags:
+- **[EJERSKAB]** — selskaber med registreret ejerandel
+- **[FUNKTIONSROLLER]** — selskaber hvor personen er direktør/bestyrelsesmedlem uden ejerandel
+
+**Spørgsmål om formue, værdi, aktiver, ejerandele → brug KUN [EJERSKAB]-listen.**
+Direktørroller og bestyrelsesposter uden ejerandel ignoreres fuldstændigt i formueberegning.
+
+**Spørgsmål om netværk, bestyrelser, brancheforbindelser, tilknytninger → brug BEGGE lister.**
+Her er [FUNKTIONSROLLER] relevant og skal inkluderes.
+
+### REGEL 2 — Hent regnskaber parallelt
+For ALLE virksomheder med ejerandel: kald hent_regnskab_noegletal parallelt (alle på én gang).
+Egenkapital = bogført nettoværdi. Markedsværdi-multipel: 1–3× egenkapital for holdingselskaber, 3–8× EBITDA for driftsselskaber.
+
+### REGEL 3 — Holdingkæder (effektiv ejerandel)
+Hvis et ejet selskab er holdingselskab (indikeret af navn eller ingen ansatte): kald hent_datterselskaber.
+Beregn effektiv ejerandel: personens % × holdingselskabets % = effektiv andel i datterselskab.
+Eksempel: 90% af JaJR Holding der ejer 60% af DriftsCo = 54% effektiv ejerandel i DriftsCo.
+
+### REGEL 4 — Præsentation
+Strukturér svaret: tabel med ejede selskaber (ejerandel | egenkapital | estimeret værdi), holdingkæder med effektive andele, samlet estimat (lav/høj), og eksplicit forbehold om bogførte vs. markedsværdier.
+
+### Trin-for-trin:
+1. Er "Personens EJEDE virksomheder med ejerandel" i konteksten? → Brug listen direkte
+2. Ellers: hent via enhedsNummer eller soeg_person_cvr
+3. Kald hent_regnskab_noegletal for ALLE ejede selskaber PARALLELT
+4. For holdingselskaber: kald hent_datterselskaber parallelt
+5. Præsenter struktureret resultat med tydelige forbehold
+
+## KRITISK: Brug af side-kontekst (læs dette FØR du planlægger tool-kald)
+Systemet injicerer automatisk ID'er fra den side brugeren kigger på under "Tilgængelige ID'er (brug direkte i tool-kald)".
+
+**Regler — ingen undtagelser:**
+- Er "CVR enhedsnummer (person): XXXXXXXX" listet → kald hent_person_virksomheder med dette enhedsNummer DIREKTE. Søg IKKE på navn.
+- Er "BFE-nummer: XXXXXXX" listet → kald hent_vurdering, hent_ejerskab osv. direkte. Søg IKKE adressen.
+- Er "CVR-nummer: XXXXXXXX" listet → kald hent_cvr_virksomhed direkte. Søg IKKE CVR.
+- Kald ALDRIG soeg_person_cvr hvis enhedsNummer allerede er i konteksten.
+- Kald ALDRIG dawa_adresse_soeg hvis adresseId eller bfeNummer allerede er i konteksten.`;
 
 // ─── Tool result cache ──────────────────────────────────────────────────────
 
@@ -506,6 +610,306 @@ async function executeTool(
         break;
       }
 
+      case 'hent_regnskab_noegletal': {
+        // Henter XBRL-regnskab (balance + resultat) via intern route.
+        // Returnerer de seneste 2 regnskabsår med nøgletal for formueestimering.
+        const xbrlRes = await fetch(
+          `${baseUrl}/api/regnskab/xbrl?cvr=${encodeURIComponent(input.cvr)}`,
+          { signal: AbortSignal.timeout(timeout) }
+        );
+        if (!xbrlRes.ok) {
+          result = { fejl: `Regnskabs-API svarede ${xbrlRes.status}` };
+          break;
+        }
+        const xbrlData = (await xbrlRes.json()) as {
+          years?: Array<{
+            aar: number;
+            periodeStart: string;
+            periodeSlut: string;
+            resultat: {
+              omsaetning: number | null;
+              aaretsResultat: number | null;
+              resultatFoerSkat: number | null;
+            };
+            balance: {
+              aktiverIAlt: number | null;
+              egenkapital: number | null;
+              gaeldsforpligtelserIAlt: number | null;
+              langfristetGaeld: number | null;
+            };
+            noegletal: {
+              soliditetsgrad: number | null;
+              overskudsgrad: number | null;
+              afkastningsgrad: number | null;
+            };
+          }>;
+          error?: string;
+        };
+
+        if (xbrlData.error || !xbrlData.years?.length) {
+          result = {
+            cvr: input.cvr,
+            ingenRegnskab: true,
+            besked: 'Ingen XBRL-regnskaber tilgængelige for dette CVR-nummer',
+          };
+          break;
+        }
+
+        // Returnér de seneste 2 år — nok til at vurdere trend
+        result = {
+          cvr: input.cvr,
+          antalAar: xbrlData.years.length,
+          seneste: xbrlData.years.slice(0, 2).map((y) => ({
+            aar: y.aar,
+            periode: `${y.periodeStart?.slice(0, 10)} → ${y.periodeSlut?.slice(0, 10)}`,
+            omsaetning: y.resultat.omsaetning,
+            aaretsResultat: y.resultat.aaretsResultat,
+            resultatFoerSkat: y.resultat.resultatFoerSkat,
+            egenkapital: y.balance.egenkapital,
+            aktiverIAlt: y.balance.aktiverIAlt,
+            gaeld: y.balance.gaeldsforpligtelserIAlt,
+            soliditetsgrad: y.noegletal.soliditetsgrad,
+            overskudsgrad: y.noegletal.overskudsgrad,
+          })),
+        };
+        break;
+      }
+
+      case 'hent_datterselskaber': {
+        // Henter relaterede virksomheder (datterselskaber/kapitalandele) via CVR-public/related.
+        const relRes = await fetch(
+          `${baseUrl}/api/cvr-public/related?cvr=${encodeURIComponent(input.cvr)}`,
+          { signal: AbortSignal.timeout(timeout) }
+        );
+        if (!relRes.ok) {
+          result = { fejl: `Related-API svarede ${relRes.status}` };
+          break;
+        }
+        const relData = (await relRes.json()) as Array<{
+          cvr: number;
+          navn: string;
+          ejerandel?: string | null;
+          rolle?: string;
+          aktiv?: boolean;
+        }>;
+
+        // Filtrer til aktive datterselskaber med ejerandel
+        const datterselskaber = relData
+          .filter((r) => r.aktiv !== false && r.ejerandel)
+          .map((r) => ({
+            cvr: r.cvr,
+            navn: r.navn,
+            ejerandel: r.ejerandel,
+            rolle: r.rolle,
+          }));
+
+        result = {
+          cvr: input.cvr,
+          datterselskaber,
+          antalMedEjerandel: datterselskaber.length,
+          totalRelaterede: relData.length,
+        };
+        break;
+      }
+
+      case 'soeg_person_cvr': {
+        // Søger CVR ES deltager-indeks på navn med phrase-match.
+        // Returnerer enhedsNummer + navnehistorik + aktuelle adresser.
+        const cvrUser = process.env.CVR_ES_USER;
+        const cvrPass = process.env.CVR_ES_PASS;
+        if (!cvrUser || !cvrPass) {
+          result = { fejl: 'CVR system-til-system credentials ikke konfigureret' };
+          break;
+        }
+
+        const searchBody = {
+          size: 5,
+          query: {
+            bool: {
+              should: [
+                // Exact phrase match — højest prioritet
+                { match_phrase: { 'navne.navn': { query: input.navn, boost: 3 } } },
+                // Fuzzy match for stavefejl
+                { match: { 'navne.navn': { query: input.navn, fuzziness: 'AUTO', boost: 1 } } },
+              ],
+              minimum_should_match: 1,
+            },
+          },
+          _source: ['enhedsNummer', 'navne', 'beliggenhedsadresse'],
+        };
+
+        const res = await fetch('http://distribution.virk.dk/cvr-permanent/deltager/_search', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Basic ' + Buffer.from(`${cvrUser}:${cvrPass}`).toString('base64'),
+          },
+          body: JSON.stringify(searchBody),
+          signal: AbortSignal.timeout(timeout),
+        });
+
+        if (!res.ok) {
+          result = { fejl: `CVR søge-API svarede ${res.status}` };
+          break;
+        }
+
+        const data = (await res.json()) as {
+          hits: {
+            total: { value: number };
+            hits: Array<{
+              _score: number;
+              _source: {
+                enhedsNummer: number;
+                navne?: Array<{ navn: string; periode?: { gyldigTil: string | null } }>;
+                beliggenhedsadresse?: Array<{
+                  vejnavn?: string;
+                  husnummerFra?: number;
+                  postnummer?: number;
+                  postdistrikt?: string;
+                }>;
+              };
+            }>;
+          };
+        };
+
+        const hits = data.hits?.hits ?? [];
+        result = {
+          antalFundet: data.hits?.total?.value ?? 0,
+          resultater: hits.map((h) => {
+            const src = h._source;
+            // Aktive navne (gyldigTil == null) — ellers seneste
+            const aktivtNavn =
+              src.navne?.find((n) => n.periode?.gyldigTil == null)?.navn ??
+              src.navne?.[src.navne.length - 1]?.navn ??
+              null;
+            const adresse = src.beliggenhedsadresse?.[0];
+            return {
+              enhedsNummer: String(src.enhedsNummer),
+              navn: aktivtNavn,
+              adresse: adresse
+                ? [adresse.vejnavn, adresse.husnummerFra, adresse.postnummer, adresse.postdistrikt]
+                    .filter(Boolean)
+                    .join(' ')
+                : null,
+            };
+          }),
+        };
+        break;
+      }
+
+      case 'hent_person_virksomheder': {
+        // Query CVR ES deltager index for all companies linked to a person.
+        // Uses system-to-system credentials (same as /api/cvr route).
+        const cvrUser = process.env.CVR_ES_USER;
+        const cvrPass = process.env.CVR_ES_PASS;
+        if (!cvrUser || !cvrPass) {
+          result = { fejl: 'CVR system-til-system credentials ikke konfigureret' };
+          break;
+        }
+
+        // Build ES query — prefer enhedsNummer (exact), fall back to phrase match on navn.
+        // match_phrase kræver ordene i den rigtige rækkefølge, hvilket giver færre falske matches.
+        const esQuery = input.enhedsNummer
+          ? { term: { enhedsNummer: Number(input.enhedsNummer) } }
+          : { match_phrase: { 'navne.navn': input.navn ?? '' } };
+
+        const esBody = {
+          size: 1,
+          query: esQuery,
+          _source: ['enhedsNummer', 'navne', 'deltagerRelation'],
+        };
+
+        const esRes = await fetch('http://distribution.virk.dk/cvr-permanent/deltager/_search', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Basic ' + Buffer.from(`${cvrUser}:${cvrPass}`).toString('base64'),
+          },
+          body: JSON.stringify(esBody),
+          signal: AbortSignal.timeout(timeout),
+        });
+
+        if (!esRes.ok) {
+          result = { fejl: `CVR deltager-API svarede ${esRes.status}` };
+          break;
+        }
+
+        const esData = (await esRes.json()) as {
+          hits: {
+            hits: Array<{
+              _source: {
+                enhedsNummer: number;
+                navne?: Array<{ navn: string }>;
+                deltagerRelation?: Array<{
+                  virksomhed?: { cvrNummer?: number; navn?: Array<{ navn: string }> };
+                  organisationer?: Array<{
+                    organisationsNavn?: Array<{ navn: string }>;
+                    medlemsData?: Array<{
+                      attributter?: Array<{
+                        type: string;
+                        vaerdier?: Array<{
+                          vaerdi: string;
+                          periode?: { gyldigTil: string | null };
+                        }>;
+                      }>;
+                    }>;
+                  }>;
+                  periode?: { gyldigTil: string | null };
+                }>;
+              };
+            }>;
+          };
+        };
+
+        const hit = esData.hits?.hits?.[0]?._source;
+        if (!hit) {
+          result = { fejl: 'Person ikke fundet i CVR' };
+          break;
+        }
+
+        // Extract active ownership relations (gyldigTil IS NULL means still active)
+        const relations = (hit.deltagerRelation ?? [])
+          .filter((r) => r.periode?.gyldigTil == null && r.virksomhed?.cvrNummer != null)
+          .map((r) => {
+            const cvr = String(r.virksomhed!.cvrNummer);
+            const virksomhedNavn = r.virksomhed?.navn?.[r.virksomhed.navn.length - 1]?.navn ?? null;
+
+            // Extract ejerandel (%) and rolle from organisation attributes
+            let ejerandelPct: number | null = null;
+            const roller: string[] = [];
+
+            for (const org of r.organisationer ?? []) {
+              roller.push(org.organisationsNavn?.[org.organisationsNavn.length - 1]?.navn ?? '');
+              for (const md of org.medlemsData ?? []) {
+                for (const attr of md.attributter ?? []) {
+                  if (
+                    attr.type === 'EJERANDEL_PROCENT' &&
+                    attr.vaerdier?.some((v) => v.periode?.gyldigTil == null)
+                  ) {
+                    const activeVal = attr.vaerdier.find((v) => v.periode?.gyldigTil == null);
+                    if (activeVal) ejerandelPct = parseFloat(activeVal.vaerdi);
+                  }
+                }
+              }
+            }
+
+            return {
+              cvr,
+              navn: virksomhedNavn,
+              ejerandelPct,
+              roller: roller.filter(Boolean),
+            };
+          });
+
+        result = {
+          enhedsNummer: hit.enhedsNummer,
+          navn: hit.navne?.[hit.navne.length - 1]?.navn ?? null,
+          aktiveTilknytninger: relations,
+          antalAktive: relations.length,
+        };
+        break;
+      }
+
       default:
         return { fejl: `Ukendt tool: ${name}` };
     }
@@ -571,6 +975,82 @@ export async function POST(request: NextRequest): Promise<Response> {
     );
   }
 
+  // Fetch the user's recently viewed entities from the tenant schema.
+  // These are injected into the system prompt so the AI can reference them
+  // without the user having to re-explain what they were looking at.
+  // Non-critical — failures are silently swallowed.
+  let recentEntitiesContext = '';
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: membership } = await (adminClient as any)
+      .from('tenant_memberships')
+      .select('tenant_id')
+      .eq('user_id', user.id)
+      .limit(1)
+      .single();
+
+    if (membership?.tenant_id) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: tenantRow } = await (adminClient as any)
+        .from('tenants')
+        .select('schema_name')
+        .eq('id', membership.tenant_id)
+        .single();
+
+      if (tenantRow?.schema_name) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const db = (adminClient as unknown as { schema: (s: string) => any }).schema(
+          tenantRow.schema_name
+        );
+        const { data: recents } = await db
+          .from('recent_entities')
+          .select('entity_type, entity_id, display_name, visited_at')
+          .eq('user_id', user.id)
+          .in('entity_type', ['property', 'company', 'person'])
+          .order('visited_at', { ascending: false })
+          .limit(15);
+
+        if (recents && recents.length > 0) {
+          // Group by entity_type for a readable summary
+          const grouped: Record<string, Array<{ entity_id: string; display_name: string }>> = {};
+          for (const r of recents as Array<{
+            entity_type: string;
+            entity_id: string;
+            display_name: string;
+            visited_at: string;
+          }>) {
+            if (!grouped[r.entity_type]) grouped[r.entity_type] = [];
+            grouped[r.entity_type].push({
+              entity_id: r.entity_id,
+              display_name: r.display_name,
+            });
+          }
+
+          const typeLabels: Record<string, string> = {
+            property: 'Ejendomme',
+            company: 'Virksomheder',
+            person: 'Personer',
+          };
+
+          const lines: string[] = ['## Brugerens seneste aktivitet'];
+          for (const [type, items] of Object.entries(grouped)) {
+            lines.push(`\n**${typeLabels[type] ?? type}:**`);
+            for (const item of items) {
+              lines.push(`- ${item.display_name} (id: ${item.entity_id})`);
+            }
+          }
+          lines.push(
+            '\nBrug disse entiteter som kontekst. Når brugeren refererer til "den" eller "den seneste" uden at specificere, antag de mener den øverste i listen ovenfor.'
+          );
+
+          recentEntitiesContext = lines.join('\n');
+        }
+      }
+    }
+  } catch {
+    // Non-critical — AI still works without recent entities context
+  }
+
   let body: ChatRequestBody;
   try {
     body = await request.json();
@@ -586,8 +1066,11 @@ export async function POST(request: NextRequest): Promise<Response> {
   // Resolve base URL for internal API calls
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || `http://localhost:3000`;
 
-  // Build system prompt — append page context if available
+  // Build system prompt — append recent entities and page context if available
   let systemPrompt = SYSTEM_PROMPT;
+  if (recentEntitiesContext) {
+    systemPrompt += `\n\n${recentEntitiesContext}`;
+  }
   if (context) {
     systemPrompt += `\n\n## Aktuel kontekst\nBrugeren kigger på: ${context}`;
   }

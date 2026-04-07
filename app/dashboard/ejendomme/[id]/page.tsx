@@ -94,6 +94,7 @@ import { recordRecentVisit } from '@/app/lib/recordRecentVisit';
 import { erTracked, toggleTrackEjendom } from '@/app/lib/trackedEjendomme';
 import FoelgTooltip from '@/app/components/FoelgTooltip';
 import { useLanguage } from '@/app/context/LanguageContext';
+import { useSetAIPageContext } from '@/app/context/AIPageContext';
 import dynamic from 'next/dynamic';
 import type { DiagramGraph } from '@/app/components/diagrams/DiagramData';
 import type { TooltipProps } from 'recharts';
@@ -317,6 +318,8 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
   const router = useRouter();
   const { lang } = useLanguage();
   const da = lang === 'da';
+  /** Sæt AI-kontekst når ejendomsdata er tilgængeligt — AI'en kan bruge ID'erne direkte */
+  const setAICtx = useSetAIPageContext();
   const tabs = buildTabs(da);
 
   /** Lokalt oversættelsesobjekt — alle brugervendte strenge på siden */
@@ -937,6 +940,36 @@ export default function EjendomDetalje({ params }: { params: Promise<{ id: strin
       window.removeEventListener('storage', handler);
     };
   }, [id]);
+
+  /**
+   * Sæt AI-kontekst når DAWA-adresse og BBR-data er tilgængeligt.
+   * AI-assistenten kan dermed bruge BFE-nummer, adresse-ID og matrikeldata
+   * direkte i sine tool-kald uden at søge efter dem.
+   */
+  useEffect(() => {
+    if (!bbrData) return;
+    const rel = bbrData.ejendomsrelationer?.[0];
+    const bfeNummer = rel?.bfeNummer ? String(rel.bfeNummer) : undefined;
+    const ejerlavKode = rel?.ejerlavKode ? String(rel.ejerlavKode) : undefined;
+    const matrikelnr = rel?.matrikelnr ?? undefined;
+    const adresseId = dawaAdresse?.id ?? undefined;
+    const kommunekode = dawaJordstykke?.kommune?.kode
+      ? String(dawaJordstykke.kommune.kode).padStart(4, '0')
+      : undefined;
+    const adresseStr = dawaAdresse
+      ? [dawaAdresse.vejnavn, dawaAdresse.husnr, dawaAdresse.postnr, dawaAdresse.postnrnavn]
+          .filter(Boolean)
+          .join(' ')
+      : undefined;
+    setAICtx({
+      adresse: adresseStr,
+      adresseId,
+      bfeNummer,
+      kommunekode,
+      matrikelnr,
+      ejerlavKode,
+    });
+  }, [bbrData, dawaAdresse, dawaJordstykke, setAICtx]);
 
   /**
    * Detekterer om ejendommen er en kolonihave/fritidshytte på lejet grund.

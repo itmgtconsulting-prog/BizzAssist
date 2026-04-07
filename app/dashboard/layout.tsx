@@ -46,6 +46,7 @@ import FeedbackButton from '@/app/components/FeedbackButton';
 import SubscriptionGate from '@/app/components/SubscriptionGate';
 import { cachePlans, type UserSubscription, type PlanDef } from '@/app/lib/subscriptions';
 import { SubscriptionProvider, useSubscription } from '@/app/context/SubscriptionContext';
+import { AIPageProvider } from '@/app/context/AIPageContext';
 import { createClient } from '@/lib/supabase/client';
 import { hasMigrated, migrateLocalStorageToSupabase } from '@/app/lib/migrateLocalStorage';
 
@@ -77,7 +78,9 @@ const SIDEBAR_COLLAPSED = 56;
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
     <SubscriptionProvider>
-      <DashboardLayoutInner>{children}</DashboardLayoutInner>
+      <AIPageProvider>
+        <DashboardLayoutInner>{children}</DashboardLayoutInner>
+      </AIPageProvider>
     </SubscriptionProvider>
   );
 }

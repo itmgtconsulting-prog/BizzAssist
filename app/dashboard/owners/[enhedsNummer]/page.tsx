@@ -37,6 +37,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { useLanguage } from '@/app/context/LanguageContext';
+import { useSetAIPageContext } from '@/app/context/AIPageContext';
 import { translations } from '@/app/lib/translations';
 import type { PersonPublicData, PersonCompanyRole } from '@/app/api/cvr-public/person/route';
 import type { PersonbogHaeftelse } from '@/app/api/tinglysning/personbog/route';
@@ -755,6 +756,8 @@ export default function PersonDetailPage({
   const router = useRouter();
   const { lang } = useLanguage();
   const c = translations[lang].person;
+  /** Sæt AI-kontekst med enhedsNummer og navn så AI'en kan bruge dem direkte */
+  const setAICtx = useSetAIPageContext();
 
   const [data, setData] = useState<PersonPublicData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -896,6 +899,29 @@ export default function PersonDetailPage({
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
   }, [enhedsNummer, c.notFound]);
+
+  /**
+   * Sæt AI-kontekst med enhedsNummer (straks fra URL) og virksomhedsdata
+   * (når fetch er færdig). AI'en kan dermed svare på formue-spørgsmål direkte
+   * fra den allerede loadede data — uden at lave et nyt CVR ES-opslag.
+   */
+  useEffect(() => {
+    // Byg virksomhedsliste fra allerede loadede data (aktive med ejerandel øverst)
+    const personVirksomheder = data?.virksomheder.map((v) => ({
+      cvr: v.cvr,
+      navn: v.navn,
+      branche: v.branche,
+      aktiv: v.aktiv,
+      ejerandel: v.roller.find((r) => r.ejerandel && !r.til)?.ejerandel ?? null,
+      roller: v.roller.filter((r) => !r.til).map((r) => r.rolle),
+    }));
+
+    setAICtx({
+      enhedsNummer: enhedsStr,
+      personNavn: data?.navn ?? undefined,
+      personVirksomheder: personVirksomheder ?? undefined,
+    });
+  }, [enhedsStr, data, setAICtx]);
 
   // ─── Fetch related companies ────────────────────────────────────────────────
   const fetchRelated = useCallback(async () => {

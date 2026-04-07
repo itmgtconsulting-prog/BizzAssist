@@ -39,7 +39,7 @@ export async function sendPaymentConfirmationEmail(
 ): Promise<void> {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
-    console.log('[email] RESEND_API_KEY not set, skipping payment confirmation email');
+    console.warn('[email] RESEND_API_KEY not set, skipping payment confirmation email');
     return;
   }
 
@@ -148,7 +148,7 @@ export interface RecurringPaymentParams {
 export async function sendRecurringPaymentEmail(params: RecurringPaymentParams): Promise<void> {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
-    console.log('[email] RESEND_API_KEY not set, skipping recurring payment email');
+    console.warn('[email] RESEND_API_KEY not set, skipping recurring payment email');
     return;
   }
 

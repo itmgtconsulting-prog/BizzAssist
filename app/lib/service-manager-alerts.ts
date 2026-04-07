@@ -193,7 +193,7 @@ export async function sendCriticalAlert(params: CriticalAlertParams): Promise<vo
   );
 
   if (!apiKey) {
-    console.log('[service-manager-alerts] RESEND_API_KEY ikke sat — kritisk alert springes over');
+    console.warn('[service-manager-alerts] RESEND_API_KEY ikke sat — kritisk alert springes over');
     return;
   }
 

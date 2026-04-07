@@ -662,7 +662,7 @@ async function sendDeepScanReport(
 ): Promise<void> {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
-    console.log('[deep-scan] RESEND_API_KEY ikke sat — rapport springes over');
+    console.warn('[deep-scan] RESEND_API_KEY ikke sat — rapport springes over');
     return;
   }
 

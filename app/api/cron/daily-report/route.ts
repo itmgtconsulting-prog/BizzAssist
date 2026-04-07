@@ -513,7 +513,7 @@ function buildHtml(stats: DailyStats, reportDate: Date): string {
 async function sendReport(html: string, subject: string): Promise<void> {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
-    console.log('[daily-report] RESEND_API_KEY ikke sat — emailrapport springes over');
+    console.warn('[daily-report] RESEND_API_KEY ikke sat — emailrapport springes over');
     return;
   }
 

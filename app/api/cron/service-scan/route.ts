@@ -577,7 +577,7 @@ async function sendAlertEmail(
 ): Promise<void> {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
-    console.log('[service-scan] RESEND_API_KEY ikke sat — alert-email springes over');
+    console.warn('[service-scan] RESEND_API_KEY ikke sat — alert-email springes over');
     return;
   }
 

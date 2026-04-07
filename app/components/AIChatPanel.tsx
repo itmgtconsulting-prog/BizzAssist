@@ -439,6 +439,7 @@ function AIChatPanel() {
         }
       } finally {
         // Frigør ReadableStream-ressourcen eksplicit (BIZZ-126)
+        reader.releaseLock();
         reader.cancel().catch(() => {});
       }
 
@@ -461,7 +462,18 @@ function AIChatPanel() {
       abortRef.current = null;
       refreshTokenInfo();
     }
-  }, [input, isLoading, messages, buildContext, streamText, refreshTokenInfo, a]);
+  }, [
+    input,
+    isLoading,
+    messages,
+    buildContext,
+    streamText,
+    refreshTokenInfo,
+    a,
+    addTokenUsage,
+    ctxSub,
+    lang,
+  ]);
 
   return (
     <div

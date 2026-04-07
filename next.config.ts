@@ -2,6 +2,18 @@ import type { NextConfig } from 'next';
 import { withSentryConfig } from '@sentry/nextjs';
 
 /**
+ * Bundle analyzer — enabled when ANALYZE=true is set in the environment.
+ * Used by the BIZZ-63 bundle-size GitHub Actions workflow.
+ * Requires `@next/bundle-analyzer` to be installed as a dev dependency.
+ * Install with: npm install --save-dev @next/bundle-analyzer
+ */
+const withBundleAnalyzer =
+  process.env.ANALYZE === 'true'
+    ? // eslint-disable-next-line @typescript-eslint/no-require-imports
+      require('@next/bundle-analyzer')({ enabled: true })
+    : (config: NextConfig) => config;
+
+/**
  * HTTP security headers applied to all responses.
  * Implements ISO 27001 A.13 (Communications Security) and A.14 (Secure Development).
  *
@@ -97,19 +109,21 @@ const nextConfig: NextConfig = {
  * disableLogger: strips Sentry's verbose build-time logger from the production
  * bundle to reduce bundle size.
  */
-export default withSentryConfig(nextConfig, {
-  org: 'bizzassist',
-  project: 'bizzassist',
-  // Silences the Sentry CLI output during builds — errors still surface via exit code
-  silent: !process.env.CI,
-  // Upload source maps only in CI/production — not during local dev
-  sourcemaps: {
-    disable: !process.env.CI,
-  },
-  // Route Sentry tunnel through our own domain (avoids adblocker blocking)
-  tunnelRoute: '/monitoring',
-  // Drop Sentry's verbose logger from production bundles
-  disableLogger: true,
-  // Auto-instrument API routes, server actions, and middleware
-  autoInstrumentServerFunctions: true,
-});
+export default withBundleAnalyzer(
+  withSentryConfig(nextConfig, {
+    org: 'bizzassist',
+    project: 'bizzassist',
+    // Silences the Sentry CLI output during builds — errors still surface via exit code
+    silent: !process.env.CI,
+    // Upload source maps only in CI/production — not during local dev
+    sourcemaps: {
+      disable: !process.env.CI,
+    },
+    // Route Sentry tunnel through our own domain (avoids adblocker blocking)
+    tunnelRoute: '/monitoring',
+    // Drop Sentry's verbose logger from production bundles
+    disableLogger: true,
+    // Auto-instrument API routes, server actions, and middleware
+    autoInstrumentServerFunctions: true,
+  })
+);

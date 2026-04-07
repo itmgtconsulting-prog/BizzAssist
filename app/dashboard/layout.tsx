@@ -18,6 +18,7 @@ import {
   X,
   MapPin,
   Navigation,
+  MessageSquare,
   Loader2,
   ArrowRight,
   Shield,
@@ -62,6 +63,7 @@ const navItems = [
   { icon: Map, key: 'map' as const, href: '/dashboard/kort', adminOnly: false },
   { icon: Search, key: 'search' as const, href: '/dashboard/search', adminOnly: false },
   { icon: BarChart2, key: 'analysis' as const, href: '/dashboard/analysis', adminOnly: false },
+  { icon: MessageSquare, key: 'chat' as const, href: '/dashboard/chat', adminOnly: false },
   { icon: Shield, key: 'admin' as const, href: '/dashboard/admin/users', adminOnly: true },
 ];
 
@@ -514,7 +516,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
       <div className="flex h-screen bg-[#0a1020] items-center justify-center">
         <div className="text-center">
           <Loader2 size={28} className="mx-auto mb-3 text-blue-400 animate-spin" />
-          <p className="text-slate-500 text-sm">{t.dashboard.checkingAccess}</p>
+          <p className="text-slate-400 text-sm">{t.dashboard.checkingAccess}</p>
         </div>
       </div>
     );
@@ -907,7 +909,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                                           </span>
                                         )}
                                       </div>
-                                      <p className="text-slate-500 text-[10px] truncate">
+                                      <p className="text-slate-400 text-[10px] truncate">
                                         CVR {r.id}
                                         {r.meta?.industry ? ` \u00b7 ${r.meta.industry}` : ''}
                                         {r.meta?.city ? ` \u00b7 ${r.meta.city}` : ''}
@@ -919,7 +921,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                                         {r.title}
                                       </p>
                                       {r.subtitle && (
-                                        <p className="text-slate-500 text-[10px] truncate">
+                                        <p className="text-slate-400 text-[10px] truncate">
                                           {r.subtitle}
                                         </p>
                                       )}
@@ -929,7 +931,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                                       <p className="text-white text-xs font-medium truncate">
                                         {r.title}
                                       </p>
-                                      <p className="text-slate-500 text-[10px] truncate">
+                                      <p className="text-slate-400 text-[10px] truncate">
                                         {r.meta?.dawaType === 'vejnavn'
                                           ? s.typeRoad
                                           : s.typeProperty}
@@ -970,7 +972,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                     }}
                     className="bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl overflow-hidden max-h-[50vh] overflow-y-auto"
                   >
-                    <div className="px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500 bg-slate-800/40">
+                    <div className="px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-slate-400 bg-slate-800/40">
                       {lang === 'da' ? 'Seneste søgninger' : 'Recent searches'}
                     </div>
                     {recentSearches.slice(0, 6).map((rs, i) => (
@@ -1046,7 +1048,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                 <div className="absolute right-0 top-11 w-52 bg-[#1e293b] border border-white/10 rounded-2xl shadow-2xl overflow-hidden z-50">
                   <div className="px-4 py-3 border-b border-white/10">
                     <p className="text-white text-sm font-medium">{userProfile?.name ?? ''}</p>
-                    <p className="text-slate-500 text-xs mt-0.5 truncate">
+                    <p className="text-slate-400 text-xs mt-0.5 truncate">
                       {userProfile?.email ?? ''}
                     </p>
                   </div>
@@ -1312,7 +1314,7 @@ function PlanSelectionOverlay({
               <button
                 type="button"
                 onClick={() => signOut()}
-                className="text-slate-500 hover:text-slate-300 text-xs transition-colors"
+                className="text-slate-400 hover:text-slate-200 text-xs transition-colors"
               >
                 {da ? 'Log ud' : 'Sign out'}
               </button>
@@ -1356,7 +1358,7 @@ function PlanSelectionOverlay({
 
           {/* Plan cards */}
           {plansLoading ? (
-            <div className="flex items-center justify-center gap-2 text-slate-500 py-8">
+            <div className="flex items-center justify-center gap-2 text-slate-400 py-8">
               <Loader2 size={14} className="animate-spin" />
               <span className="text-xs">{da ? 'Henter planer…' : 'Loading plans…'}</span>
             </div>
@@ -1386,7 +1388,7 @@ function PlanSelectionOverlay({
                     <p className="text-white text-base font-bold">
                       {plan.priceDkk === 0 ? (da ? 'Gratis' : 'Free') : `${plan.priceDkk} kr`}
                       {plan.priceDkk > 0 && (
-                        <span className="text-slate-500 text-xs font-normal">/md</span>
+                        <span className="text-slate-400 text-xs font-normal">/md</span>
                       )}
                     </p>
                     {plan.aiEnabled && (
@@ -1402,7 +1404,7 @@ function PlanSelectionOverlay({
                       </div>
                     )}
                     {plan.requiresApproval && (
-                      <div className="mt-1.5 inline-flex items-center gap-1 text-xs text-slate-500">
+                      <div className="mt-1.5 inline-flex items-center gap-1 text-xs text-slate-400">
                         <Clock size={10} />
                         {da ? 'Kræver godkendelse' : 'Requires approval'}
                       </div>

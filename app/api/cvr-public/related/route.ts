@@ -609,6 +609,7 @@ export async function GET(req: NextRequest) {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify(ejerQuery),
+          signal: AbortSignal.timeout(10000),
         });
         if (ejerRes.ok) {
           const ejerJson = await ejerRes.json();
@@ -644,7 +645,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ virksomheder: cleaned, parentEnhedsNummer: enhedsNr });
   } catch (err) {
-    console.error('[cvr-public/related] Fejl:', err);
+    console.error('[cvr-public/related] Fejl:', err instanceof Error ? err.message : String(err));
     return NextResponse.json(
       { virksomheder: [], error: 'Kunne ikke hente relaterede virksomheder' },
       { status: 500 }

@@ -356,6 +356,10 @@ Konkret eksempel (3-lags kæde):
 
 Kald hent_regnskab_noegletal for ALLE niveau 2 og 3 selskaber parallelt.
 
+Nævn ALTID eksplicit i svaret som en del af forbeholdene:
+"⚠️ Holding-analysen går max 3 niveauer ned i ejerskabskæden. Dybere strukturer (niveau 4+) kan forekomme og er ikke medregnet i dette estimat."
+Hvis du støder på et niveau 3-selskab der OGSÅ ser ud som et holdingselskab, nævn det specifikt: "XXXX ser ud til at være endnu et holdingselskab — dets underliggende aktiver er ikke kortlagt her."
+
 ### REGEL 4 — Præsentation
 Strukturér svaret: tabel med ejede selskaber (ejerandel | egenkapital | estimeret værdi), holdingkæder med effektive andele, samlet estimat (lav/høj), og eksplicit forbehold om bogførte vs. markedsværdier.
 

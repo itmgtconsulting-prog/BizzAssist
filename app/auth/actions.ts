@@ -17,6 +17,7 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { checkLoginThrottle, recordFailedLogin, clearLoginThrottle } from '@/app/lib/loginThrottle';
 
 // ---------------------------------------------------------------------------
 // Tenant provisioning helper
@@ -202,6 +203,18 @@ export interface AuthResult {
    * Contains the OAuth provider the user registered with (e.g. 'azure', 'google', 'linkedin_oidc').
    */
   oauthProvider?: string;
+  /**
+   * Set when error === 'account_locked'.
+   * Seconds remaining until the account auto-unlocks.
+   */
+  lockedForSeconds?: number;
+  /**
+   * Set when error === 'invalid_credentials' and only one attempt remains.
+   * True triggers a "1 forsøg tilbage" warning in the UI.
+   */
+  loginWarning?: boolean;
+  /** Remaining attempts before lockout (for UI warning display) */
+  attemptsLeft?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -223,11 +236,24 @@ export async function signIn(
   password: string,
   _redirectTo = '/dashboard'
 ): Promise<AuthResult> {
+  // ── Brute-force protection: check lockout BEFORE authenticating ──────────
+  const appBaseUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://bizzassist.dk';
+  const throttle = await checkLoginThrottle(email);
+  if (throttle.locked) {
+    return { error: 'account_locked', lockedForSeconds: throttle.lockedForSeconds };
+  }
+
   const supabase = await createClient();
 
   const { error } = await supabase.auth.signInWithPassword({ email, password });
 
   if (error) {
+    // Record failed attempt and check if lockout should be triggered
+    const afterFail = await recordFailedLogin(email, appBaseUrl);
+    if (afterFail.locked) {
+      return { error: 'account_locked', lockedForSeconds: afterFail.lockedForSeconds };
+    }
+
     console.error('[signIn] Supabase auth error:', error.message, '| status:', error.status);
     // Do not expose internal error details — map to user-safe messages
     if (error.message.toLowerCase().includes('invalid')) {
@@ -254,12 +280,20 @@ export async function signIn(
       } catch {
         // Non-fatal — fall through to generic invalid_credentials
       }
-      return { error: 'invalid_credentials' };
+      return {
+        error: 'invalid_credentials',
+        attemptsLeft: afterFail.attemptsLeft,
+        loginWarning: afterFail.warningShown,
+      };
     }
     if (error.message.toLowerCase().includes('email not confirmed')) {
       return { error: 'email_not_confirmed' };
     }
-    return { error: 'unexpected_error' };
+    return {
+      error: 'unexpected_error',
+      attemptsLeft: afterFail.attemptsLeft,
+      loginWarning: afterFail.warningShown,
+    };
   }
 
   // Check if MFA challenge is required.
@@ -352,6 +386,9 @@ export async function signIn(
       console.error('[signIn] Subscription check error:', err);
     }
   }
+
+  // Clear failed-login counter on successful authentication
+  await clearLoginThrottle(email);
 
   // Return success — let the client handle the redirect.
   // This ensures cookies are properly set before navigation.

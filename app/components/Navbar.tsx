@@ -41,6 +41,7 @@ export default function Navbar() {
             {[
               { href: '#features', label: nav.features },
               { href: '#use-cases', label: nav.useCases },
+              { href: '#pricing', label: nav.pricing },
             ].map((item) => (
               <a
                 key={item.href}
@@ -111,6 +112,7 @@ export default function Navbar() {
             {[
               { href: '#features', label: nav.features },
               { href: '#use-cases', label: nav.useCases },
+              { href: '#pricing', label: nav.pricing },
             ].map((item) => (
               <a
                 key={item.href}

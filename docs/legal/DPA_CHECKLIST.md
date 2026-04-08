@@ -27,7 +27,7 @@ separat aftale.
 
 | Leverandør   | Persondata der behandles                                                                         | Handling                                                                                                      |
 | ------------ | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
-| **Supabase** | Al brugerdata, activity logs, CVR/ejendomsdata med personnavne                                   | Sign DPA via dashboard → [supabase.com/legal/dpa](https://supabase.com/legal/dpa) (PandaDoc, ~10 min)         |
+| **Supabase** | Al brugerdata, activity logs, CVR/ejendomsdata med personnavne                                   | ✅ **UNDERSKREVET** — gemt i `docs/legal/signed/Supabase_DPA_signed_2026-03-12.pdf`                           |
 | **Sentry**   | Stack traces, request URLs, user UUIDs i fejllog                                                 | Accept DPA i dashboard under Legal & Compliance → [sentry.io/legal/dpa](https://sentry.io/legal/dpa) (~5 min) |
 | **Mapbox**   | IP-adresser ved kortflise-requests (kortkoordinater er offentlige BBR/DAR-data, ikke bruger-GPS) | ✅ **UNDERSKREVET** — gemt i `docs/legal/signed/Mapbox_DPA_signed.pdf`                                        |
 

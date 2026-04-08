@@ -21,10 +21,42 @@ export function isProxyEnabled(): boolean {
 }
 
 /**
+ * Allowlisted hostname suffixes for URLs accepted by proxyUrl().
+ *
+ * Only hosts matching one of these patterns may be passed through the proxy.
+ * Any other URL will cause proxyUrl() to throw, preventing SSRF attacks where
+ * a crafted URL could route internal traffic or scan private network ranges.
+ *
+ * Allowed:
+ *   *.datafordeler.dk         — all Datafordeler services
+ *   api-fs.vurderingsportalen.dk — Vurderingsportalen (unofficial ES endpoint)
+ *   distribution.virk.dk      — CVR OpenData ElasticSearch
+ */
+const ALLOWED_HOSTNAME_SUFFIXES: readonly string[] = [
+  '.datafordeler.dk',
+  'api-fs.vurderingsportalen.dk',
+  'distribution.virk.dk',
+];
+
+/**
+ * Returns true if the given hostname is on the proxy allowlist.
+ *
+ * @param hostname - Hostname extracted from the URL (e.g. "graphql.datafordeler.dk")
+ */
+function isAllowedHostname(hostname: string): boolean {
+  return ALLOWED_HOSTNAME_SUFFIXES.some(
+    (suffix) => hostname === suffix || hostname.endsWith(suffix)
+  );
+}
+
+/**
  * Rewrites a Datafordeler URL to go through the proxy (if configured).
+ * Only allowlisted hostnames are accepted — any other URL throws an error
+ * to prevent SSRF (Server-Side Request Forgery).
  *
  * @param url - Direct Datafordeler URL (e.g. https://graphql.datafordeler.dk/BBR/v2?apiKey=...)
  * @returns Proxied URL or original URL if proxy is not configured
+ * @throws {Error} If the URL's hostname is not on the allowlist
  *
  * @example
  * // With DF_PROXY_URL=https://df-proxy.bizzassist.dk
@@ -32,6 +64,19 @@ export function isProxyEnabled(): boolean {
  * // → 'https://df-proxy.bizzassist.dk/proxy/graphql.datafordeler.dk/BBR/v2?apiKey=xxx'
  */
 export function proxyUrl(url: string): string {
+  // Always validate hostname against the allowlist, regardless of proxy being enabled.
+  // This ensures the function can never be used to reach arbitrary hosts.
+  let hostname: string;
+  try {
+    hostname = new URL(url).hostname;
+  } catch {
+    throw new Error(`[dfProxy] Ugyldig URL: ${url}`);
+  }
+
+  if (!isAllowedHostname(hostname)) {
+    throw new Error(`[dfProxy] URL ikke tilladt (SSRF-beskyttelse): ${hostname}`);
+  }
+
   const DF_PROXY_URL = process.env.DF_PROXY_URL ?? '';
   if (!DF_PROXY_URL) return url;
   return url.replace('https://', `${DF_PROXY_URL}/proxy/`);

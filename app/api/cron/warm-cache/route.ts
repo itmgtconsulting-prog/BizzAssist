@@ -1,41 +1,62 @@
 /**
- * Cron: ISR cache warming — /api/cron/warm-cache
+ * Cron: ISR cache revalidation — /api/cron/warm-cache (BIZZ-95)
  *
- * Varmer ISR-cachen for populære ejendoms- og virksomhedssider ved at
- * fetche alle URLs fra sitemappet. Sikrer at sider altid er friske
- * når Google crawler dem, selvom ingen bruger har besøgt dem for nylig.
+ * Revalidates Next.js ISR cache for the top 50 most-viewed properties over
+ * the last 30 days, derived from tenant.activity_log. Also revalidates the
+ * main dashboard and listing pages so stale data is evicted proactively.
  *
  * Workflow:
- *   1. Henter /sitemap.xml og parser alle <loc>-URLs
- *   2. Fetcher hver URL (HEAD + GET) for at trigge ISR-rendering
- *   3. Begrænset til MAX_URLS pr. kørsel for at holde sig inden for Vercel timeout
- *   4. Fejl på enkelt-URLs afbryder ikke kørslen — logges og fortsætter
+ *   1. Authenticates via CRON_SECRET bearer token
+ *   2. Queries activity_log across all tenant schemas for the top 50 BFE
+ *      numbers (event_type = 'property_open', last 30 days)
+ *   3. Calls revalidatePath() for each `/dashboard/ejendomme/<bfe>` path
+ *   4. Also revalidates `/dashboard`, `/dashboard/companies`, `/dashboard/ejendomme`
+ *   5. Returns { revalidated, paths }
  *
- * Sikring:
- *   - Kræver CRON_SECRET header (Vercel Cron eller manuelt kald)
+ * Security:
+ *   - Requires `Authorization: Bearer <CRON_SECRET>` header
+ *   - In production also requires `x-vercel-cron: 1` header (Vercel auto-sets this)
  *
  * Trigger:
- *   - Vercel Cron: "0 *\/6 * * *" (hver 6. time)
- *   - Manuel: GET /api/cron/warm-cache?secret=<CRON_SECRET>
+ *   - Vercel Cron: "0 4 * * *" (04:00 UTC daily) — configured in vercel.json
+ *   - Manual: GET /api/cron/warm-cache with Authorization: Bearer <CRON_SECRET>
+ *
+ * GDPR / Data retention:
+ *   - Only aggregated BFE counts are processed; no PII is read or stored
+ *   - activity_log retention: 12 months (enforced by /api/cron/purge-old-data)
  *
  * @module api/cron/warm-cache
  */
+import { revalidatePath } from 'next/cache';
 import { NextRequest, NextResponse } from 'next/server';
 
-/** Max antal URLs der varmes pr. kørsel (Vercel timeout-sikring) */
-const MAX_URLS = 100;
+import { createAdminClient } from '@/lib/supabase/admin';
 
-/** Timeout pr. URL-fetch i ms */
-const FETCH_TIMEOUT_MS = 10_000;
+/** Maximum number of popular BFE numbers to revalidate per run */
+const MAX_BFE = 50;
+
+/** Look-back window in days for the popularity query */
+const LOOKBACK_DAYS = 30;
 
 /**
- * Verificerer CRON_SECRET fra Authorization-header eller query-param.
+ * Static paths that are always revalidated on every run regardless of
+ * activity data, as they aggregate data from many sub-pages.
+ */
+const STATIC_PATHS: string[] = ['/dashboard', '/dashboard/companies', '/dashboard/ejendomme'];
+
+// ---------------------------------------------------------------------------
+// Auth
+// ---------------------------------------------------------------------------
+
+/**
+ * Validates the incoming request against the configured CRON_SECRET.
+ * In production Vercel deployments, additionally requires the
+ * `x-vercel-cron: 1` header that Vercel injects automatically.
  *
- * @param request - Indkommende Next.js request
- * @returns true hvis autentificeret
+ * @param request - Incoming Next.js request
+ * @returns `true` if the request is authenticated
  */
 function verifyCronSecret(request: NextRequest): boolean {
-  // In production, require Vercel's cron header to prevent external triggering
   if (process.env.VERCEL_ENV === 'production' && request.headers.get('x-vercel-cron') !== '1') {
     return false;
   }
@@ -44,97 +65,125 @@ function verifyCronSecret(request: NextRequest): boolean {
   return request.headers.get('authorization') === `Bearer ${secret}`;
 }
 
+// ---------------------------------------------------------------------------
+// Data access
+// ---------------------------------------------------------------------------
+
 /**
- * Parser alle <loc>-URLs fra en sitemap XML-streng.
- *
- * @param xml - Sitemap XML som tekst
- * @returns Array af absolutte URLs
+ * Represents a single row returned by the popularity aggregation query.
  */
-function parseSitemapUrls(xml: string): string[] {
-  const matches = xml.matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/g);
-  return Array.from(matches, (m) => m[1]);
+interface BfeCount {
+  /** BFE number extracted from activity_log.payload->>'bfeNummer' */
+  bfe_nummer: string;
+  /** Number of 'property_open' events in the lookback window */
+  event_count: number;
 }
 
 /**
- * Henter en URL for at trigge ISR-rendering.
- * Bruger GET — ISR kræver en fuld side-request for at populere cachen.
+ * Queries all tenant schemas for the top `MAX_BFE` BFE numbers by
+ * `property_open` event count over the last `LOOKBACK_DAYS` days.
  *
- * @param url - Absolut URL der skal varmes
- * @returns true hvis HTTP-status var 2xx eller 3xx
+ * Implementation note: Because each tenant has its own Postgres schema we
+ * cannot do a cross-schema GROUP BY in a single PostgREST call. Instead we
+ * iterate tenant schemas and merge the per-tenant top lists in JS, then sort
+ * globally. This is acceptable for ≤200 tenants; revisit if tenant count grows.
+ *
+ * @returns Array of { bfe_nummer, event_count } sorted descending by count
  */
-async function warmUrl(url: string): Promise<boolean> {
-  try {
-    const res = await fetch(url, {
-      method: 'GET',
-      // Undgå at Next.js deduplikerer denne interne fetch
-      cache: 'no-store',
-      headers: { 'x-cache-warm': '1' },
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    });
-    return res.ok || (res.status >= 300 && res.status < 400);
-  } catch {
-    return false;
+async function fetchTopBfeNumbers(): Promise<BfeCount[]> {
+  const admin = createAdminClient();
+
+  // Fetch all tenant schema names
+  const { data: tenants, error: tenantErr } = (await admin
+    .from('tenants')
+    .select('schema_name')) as {
+    data: { schema_name: string }[] | null;
+    error: unknown;
+  };
+
+  if (tenantErr || !tenants) {
+    console.error('[warm-cache] Could not fetch tenants:', tenantErr);
+    return [];
   }
+
+  const cutoff = new Date(Date.now() - LOOKBACK_DAYS * 24 * 60 * 60 * 1000).toISOString();
+
+  // Accumulate BFE counts across all tenant schemas
+  const aggregated = new Map<string, number>();
+
+  for (const tenant of tenants) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const db = (admin as any).schema(tenant.schema_name);
+
+      // Fetch raw activity_log rows for this tenant (PostgREST cannot GROUP BY
+      // on a JSONB sub-key via the JS client, so we do aggregation in JS)
+      const { data: rows } = (await db
+        .from('activity_log')
+        .select('payload')
+        .eq('event_type', 'property_open')
+        .gte('created_at', cutoff)
+        .not('payload->bfeNummer', 'is', null)
+        .limit(5000)) as { data: { payload: Record<string, unknown> }[] | null };
+
+      if (!rows) continue;
+
+      for (const row of rows) {
+        const bfe = row.payload?.bfeNummer;
+        if (typeof bfe !== 'string' || !bfe) continue;
+        aggregated.set(bfe, (aggregated.get(bfe) ?? 0) + 1);
+      }
+    } catch (err) {
+      // Non-fatal: skip tenant if schema query fails (e.g. schema still provisioning)
+      console.warn(`[warm-cache] Skipped tenant ${tenant.schema_name}:`, err);
+    }
+  }
+
+  // Sort globally and take the top MAX_BFE
+  return Array.from(aggregated.entries())
+    .map(([bfe_nummer, event_count]) => ({ bfe_nummer, event_count }))
+    .sort((a, b) => b.event_count - a.event_count)
+    .slice(0, MAX_BFE);
 }
+
+// ---------------------------------------------------------------------------
+// Route handler
+// ---------------------------------------------------------------------------
 
 /**
  * GET /api/cron/warm-cache
  *
- * Henter sitemap, parser URLs og varmer cachen for op til MAX_URLS sider.
- * Returnerer JSON med statistik over kørslen.
+ * Revalidates ISR cache paths for the most-viewed properties plus static
+ * dashboard listing pages. Returns a JSON summary of what was revalidated.
+ *
+ * @param request - Incoming Next.js request (used for auth header check)
+ * @returns JSON: { revalidated: number, paths: string[] }
  */
-export async function GET(request: NextRequest) {
+export async function GET(request: NextRequest): Promise<NextResponse> {
   if (!verifyCronSecret(request)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000').replace(/\/$/, '');
+  // 1. Fetch top BFE numbers from activity_log
+  const topBfe = await fetchTopBfeNumbers();
 
-  // Hent sitemap
-  let sitemapXml: string;
-  try {
-    const res = await fetch(`${baseUrl}/sitemap.xml`, {
-      cache: 'no-store',
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!res.ok) {
-      return NextResponse.json(
-        { error: `Sitemap fetch fejlede: HTTP ${res.status}` },
-        { status: 502 }
-      );
-    }
-    sitemapXml = await res.text();
-  } catch (err) {
-    return NextResponse.json({ error: `Kunne ikke hente sitemap: ${err}` }, { status: 502 });
+  console.log(
+    `[warm-cache] Top ${topBfe.length} BFE numbers fetched (lookback: ${LOOKBACK_DAYS} days)`
+  );
+
+  // 2. Build the list of paths to revalidate
+  const bfePaths = topBfe.map(({ bfe_nummer }) => `/dashboard/ejendomme/${bfe_nummer}`);
+  const allPaths = [...STATIC_PATHS, ...bfePaths];
+
+  // 3. Revalidate each path
+  for (const path of allPaths) {
+    revalidatePath(path);
   }
 
-  const allUrls = parseSitemapUrls(sitemapXml);
-  const urls = allUrls.slice(0, MAX_URLS);
-
-  console.log(`[warm-cache] Sitemap: ${allUrls.length} URLs — varmer ${urls.length}`);
-
-  let warmed = 0;
-  let failed = 0;
-  const failedUrls: string[] = [];
-
-  for (const url of urls) {
-    const ok = await warmUrl(url);
-    if (ok) {
-      warmed++;
-    } else {
-      failed++;
-      failedUrls.push(url);
-    }
-  }
-
-  console.log(`[warm-cache] Færdig: ${warmed} ok, ${failed} fejl af ${urls.length} sider`);
+  console.log(`[warm-cache] Revalidated ${allPaths.length} paths`);
 
   return NextResponse.json({
-    ok: true,
-    sitemapTotal: allUrls.length,
-    attempted: urls.length,
-    warmed,
-    failed,
-    ...(failedUrls.length > 0 ? { failedUrls: failedUrls.slice(0, 20) } : {}),
+    revalidated: allPaths.length,
+    paths: allPaths,
   });
 }

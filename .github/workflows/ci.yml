@@ -193,3 +193,24 @@ jobs:
           SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+
+  # ── 7. Sitemap cache pre-warming ─────────────────────────────────────────
+  warm-cache:
+    name: Sitemap cache pre-warming
+    runs-on: ubuntu-latest
+    needs: [build]
+    # Only run after successful deploys to main
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+
+      - name: Warm sitemap cache
+        run: node scripts/warm-sitemap.js
+        env:
+          NEXT_PUBLIC_APP_URL: https://bizzassist.dk

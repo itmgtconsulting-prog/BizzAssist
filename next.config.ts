@@ -23,6 +23,11 @@ const withBundleAnalyzer =
  * X-Content-Type-Options: prevents MIME-type sniffing.
  * Referrer-Policy: limits referrer information sent to third parties.
  * Permissions-Policy: disables browser features not needed by BizzAssist.
+ *
+ * BIZZ-194: 'unsafe-eval' is NOT included in the global CSP.
+ * Mapbox GL JS requires eval() for shader compilation, so it is added
+ * only for the map routes (/dashboard/kort and /kort) via route-specific
+ * headers below.
  */
 const securityHeaders = [
   {
@@ -32,9 +37,8 @@ const securityHeaders = [
       // 'unsafe-inline': required by Mapbox GL JS (inlines worker bootstrapping code) and Next.js
       // inline event handlers. Nonces are not currently viable because Mapbox injects scripts
       // dynamically at runtime without nonce support.
-      // 'unsafe-eval': required by Mapbox GL JS (uses eval() internally for shader compilation).
-      // Both directives should be removed if/when Mapbox drops these requirements.
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://browser.sentry-cdn.com",
+      // NOTE: 'unsafe-eval' is intentionally omitted here — it is only added for map routes.
+      "script-src 'self' 'unsafe-inline' https://browser.sentry-cdn.com",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob: https:",
       "font-src 'self' https://fonts.gstatic.com",
@@ -90,11 +94,35 @@ const nextConfig: NextConfig = {
         process.env.NEXT_PUBLIC_APP_URL.includes('bizzassist.dk') &&
         !process.env.NEXT_PUBLIC_APP_URL.includes('test.bizzassist.dk'));
 
+    // CSP with 'unsafe-eval' added — only for map routes that load Mapbox GL JS.
+    // Mapbox GL JS uses eval() internally for WebGL shader compilation.
+    // Scoping this to /dashboard/kort and /kort limits the attack surface.
+    const mapCspValue = securityHeaders
+      .find((h) => h.key === 'Content-Security-Policy')!
+      .value.replace(
+        "script-src 'self' 'unsafe-inline' https://browser.sentry-cdn.com",
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://browser.sentry-cdn.com"
+      );
+
+    const mapHeaders = securityHeaders.map((h) =>
+      h.key === 'Content-Security-Policy' ? { key: h.key, value: mapCspValue } : h
+    );
+
     const headers: { source: string; headers: { key: string; value: string }[] }[] = [
       {
         // Apply security headers to all routes
         source: '/(.*)',
         headers: securityHeaders,
+      },
+      {
+        // Override CSP on map pages to allow 'unsafe-eval' needed by Mapbox GL JS.
+        // BIZZ-194: unsafe-eval is only allowed on these two routes, not globally.
+        source: '/dashboard/kort',
+        headers: mapHeaders,
+      },
+      {
+        source: '/kort',
+        headers: mapHeaders,
       },
     ];
 

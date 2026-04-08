@@ -448,9 +448,6 @@ export async function GET(req: NextRequest) {
     });
   } catch (err) {
     console.error('[tinglysning/personbog] Fejl:', err);
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : 'Ukendt fejl' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
   }
 }

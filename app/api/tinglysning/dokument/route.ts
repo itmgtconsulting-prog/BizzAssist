@@ -419,10 +419,8 @@ export async function GET(req: NextRequest) {
         },
       });
     } catch (err) {
-      return NextResponse.json(
-        { error: err instanceof Error ? err.message : 'Fejl' },
-        { status: 500 }
-      );
+      console.error('[tinglysning/bilag] Fejl:', err instanceof Error ? err.message : String(err));
+      return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
     }
   }
 
@@ -603,10 +601,8 @@ export async function GET(req: NextRequest) {
         },
       });
     } catch (err) {
-      return NextResponse.json(
-        { error: err instanceof Error ? err.message : 'Fejl' },
-        { status: 500 }
-      );
+      console.error('[tinglysning/attest] Fejl:', err instanceof Error ? err.message : String(err));
+      return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
     }
   }
 
@@ -707,9 +703,7 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (err) {
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : 'Fejl' },
-      { status: 500 }
-    );
+    console.error('[tinglysning/dokument] Fejl:', err instanceof Error ? err.message : String(err));
+    return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
   }
 }

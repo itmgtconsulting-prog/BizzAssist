@@ -892,11 +892,16 @@ export async function GET(req: NextRequest) {
       }
     );
   } catch (err) {
+    // Log for server-side debugging, but never expose err.message to the client.
+    console.error(
+      '[tinglysning/summarisk] Fejl:',
+      err instanceof Error ? err.message : String(err)
+    );
     return NextResponse.json({
       ejere: [],
       haeftelser: [],
       servitutter: [],
-      fejl: err instanceof Error ? err.message : 'Fejl',
+      fejl: 'Ekstern API fejl',
     });
   }
 }

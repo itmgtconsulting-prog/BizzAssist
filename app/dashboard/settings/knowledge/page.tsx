@@ -31,6 +31,7 @@ import {
   Info,
   FileText,
   Clock,
+  Upload,
 } from 'lucide-react';
 import type { KnowledgeItem } from '@/app/api/knowledge/route';
 
@@ -308,6 +309,10 @@ export default function KnowledgePage() {
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  /** Hidden file input — triggered programmatically by the "Upload fil" button. */
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   /** Fetches all knowledge items from /api/knowledge. */
   const fetchItems = useCallback(async () => {
@@ -373,6 +378,51 @@ export default function KnowledgePage() {
     }
   }, []);
 
+  /**
+   * Handles a file selected via the hidden file input.
+   * POSTs the file as multipart/form-data to /api/knowledge/upload and
+   * prepends the resulting knowledge item to the list on success.
+   *
+   * @param e - Change event from the hidden file input
+   */
+  const handleFileUpload = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      // Reset the input so the same file can be re-selected after an error
+      e.target.value = '';
+      if (!file) return;
+
+      setUploading(true);
+      setUploadError(null);
+
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const res = await fetch('/api/knowledge/upload', {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!res.ok) {
+          const json = (await res.json().catch(() => ({}))) as { error?: string };
+          setUploadError(json.error ?? 'Upload fejlede — prøv igen.');
+          return;
+        }
+
+        // Refresh the full list so the new item appears with all metadata
+        await fetchItems();
+        setSuccessMsg('Fil uploadet og gemt i videnbasen!');
+        setTimeout(() => setSuccessMsg(null), 4000);
+      } catch {
+        setUploadError('Netværksfejl — prøv igen.');
+      } finally {
+        setUploading(false);
+      }
+    },
+    [fetchItems]
+  );
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* ─── Sticky header ─── */}
@@ -397,13 +447,41 @@ export default function KnowledgePage() {
               </p>
             </div>
           </div>
-          <button
-            onClick={() => setShowAddModal(true)}
-            className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
-          >
-            <Plus size={14} />
-            Tilføj viden
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Hidden file input — accepts PDF, TXT, DOCX */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,.txt,.docx,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              className="hidden"
+              aria-label="Vælg fil til upload"
+              onChange={(e) => void handleFileUpload(e)}
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading}
+              className="flex items-center gap-2 px-4 py-2.5 bg-slate-700 hover:bg-slate-600 disabled:bg-slate-800 disabled:text-slate-500 text-white text-sm font-medium rounded-lg transition-colors"
+            >
+              {uploading ? (
+                <>
+                  <Loader2 size={14} className="animate-spin" />
+                  Uploader…
+                </>
+              ) : (
+                <>
+                  <Upload size={14} />
+                  Upload fil
+                </>
+              )}
+            </button>
+            <button
+              onClick={() => setShowAddModal(true)}
+              className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
+            >
+              <Plus size={14} />
+              Tilføj viden
+            </button>
+          </div>
         </div>
       </div>
 
@@ -432,6 +510,16 @@ export default function KnowledgePage() {
           <div className="flex items-start gap-2 p-3 bg-red-900/30 border border-red-500/40 rounded-lg text-red-300 text-sm">
             <AlertTriangle size={14} className="mt-0.5 shrink-0" />
             {deleteError}
+          </div>
+        )}
+
+        {/* Upload error */}
+        {uploadError && (
+          <div className="flex items-start gap-2 p-3 bg-red-900/30 border border-red-500/40 rounded-lg text-red-300 text-sm">
+            <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+            <span>
+              <strong>Upload fejlede:</strong> {uploadError}
+            </span>
           </div>
         )}
 

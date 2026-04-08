@@ -27,7 +27,9 @@
     "db:seed": "node scripts/seed.js",
     "docker:dev": "docker compose up",
     "docker:build": "docker compose build",
-    "docker:down": "docker compose down"
+    "docker:down": "docker compose down",
+    "storybook": "storybook dev -p 6006",
+    "build-storybook": "storybook build"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx}": [

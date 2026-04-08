@@ -77,6 +77,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="apple-touch-icon" href="/icons/icon-192.png" />
       </head>
       <body className="min-h-full flex flex-col antialiased">
+        <div className="w-full bg-amber-400 text-amber-900 text-center text-sm py-1.5 font-medium">
+          Vores løsning er ikke live endnu - forventet beta release medio april 2026
+        </div>
         <LanguageProvider>
           {children}
           <CookieBanner />

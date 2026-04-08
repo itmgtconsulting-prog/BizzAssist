@@ -36,6 +36,7 @@ interface PlanConfigRow {
   max_sales: number | null;
   sales_count: number;
   stripe_price_id: string | null;
+  sort_order: number;
 }
 
 /**
@@ -79,6 +80,8 @@ export async function GET(): Promise<NextResponse> {
         salesCount: db?.sales_count ?? 0,
         // Use env var fallback (STRIPE_PRICE_BASIS etc.) when DB has no price ID
         stripePriceId: getStripePriceId(id, db?.stripe_price_id),
+        // Default sort order mirrors VALID_PLAN_IDS position (1-based)
+        sortOrder: db?.sort_order ?? VALID_PLAN_IDS.indexOf(id) + 1,
       };
     });
 
@@ -105,9 +108,12 @@ export async function GET(): Promise<NextResponse> {
         salesCount: row.sales_count ?? 0,
         // Custom plans have no env var fallback — only DB source
         stripePriceId: row.stripe_price_id ?? null,
+        sortOrder: row.sort_order ?? 99,
       }));
 
-    const plans = [...legacyPlans, ...customPlans].filter((p) => p.isActive);
+    const plans = [...legacyPlans, ...customPlans]
+      .filter((p) => p.isActive)
+      .sort((a, b) => a.sortOrder - b.sortOrder);
 
     return NextResponse.json(plans);
   } catch (err) {

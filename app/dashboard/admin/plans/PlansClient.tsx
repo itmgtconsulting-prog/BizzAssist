@@ -67,6 +67,7 @@ interface PlanConfig {
   stripePriceId: string;
   maxSales: number | null;
   salesCount: number;
+  sortOrder: number;
   updatedAt: string | null;
 }
 
@@ -142,6 +143,7 @@ const NEW_PLAN_DEFAULTS: Omit<PlanConfig, 'id'> = {
   stripePriceId: '',
   maxSales: null,
   salesCount: 0,
+  sortOrder: 99,
   updatedAt: null,
 };
 
@@ -269,6 +271,10 @@ export default function PlansClient() {
     salesCount: da ? 'Solgt' : 'Sold',
     unlimited: da ? 'Ubegrænset' : 'Unlimited',
     maxSalesHint: da ? 'Tomt = ubegrænset' : 'Empty = unlimited',
+    sortOrder: da ? 'Sorteringsrækkefølge' : 'Sort order',
+    sortOrderHint: da
+      ? 'Lavere tal vises først på hjemmesiden'
+      : 'Lower numbers appear first on the homepage',
   };
 
   // ─── Data fetching ─────────────────────────────────────────────────────────
@@ -856,26 +862,26 @@ export default function PlansClient() {
                         <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
                           {t.descDa}
                         </label>
-                        <input
-                          type="text"
+                        <textarea
+                          rows={3}
                           value={newPlanData.descDa}
                           onChange={(e) =>
                             setNewPlanData((d) => ({ ...d, descDa: e.target.value }))
                           }
-                          className="bg-slate-900/50 border border-slate-700/40 rounded-lg px-2.5 py-1.5 text-white text-sm w-full focus:outline-none focus:border-blue-500/50 transition-colors"
+                          className="bg-slate-900/50 border border-slate-700/40 rounded-lg px-2.5 py-1.5 text-white text-sm w-full focus:outline-none focus:border-blue-500/50 transition-colors resize-y"
                         />
                       </div>
                       <div>
                         <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
                           {t.descEn}
                         </label>
-                        <input
-                          type="text"
+                        <textarea
+                          rows={3}
                           value={newPlanData.descEn}
                           onChange={(e) =>
                             setNewPlanData((d) => ({ ...d, descEn: e.target.value }))
                           }
-                          className="bg-slate-900/50 border border-slate-700/40 rounded-lg px-2.5 py-1.5 text-white text-sm w-full focus:outline-none focus:border-blue-500/50 transition-colors"
+                          className="bg-slate-900/50 border border-slate-700/40 rounded-lg px-2.5 py-1.5 text-white text-sm w-full focus:outline-none focus:border-blue-500/50 transition-colors resize-y"
                         />
                       </div>
                     </div>
@@ -1182,22 +1188,22 @@ export default function PlansClient() {
                               <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
                                 {t.descDa}
                               </label>
-                              <input
-                                type="text"
+                              <textarea
+                                rows={3}
                                 value={getPlanValue(plan, 'descDa') as string}
                                 onChange={(e) => updatePlanField(plan.id, 'descDa', e.target.value)}
-                                className="bg-slate-900/50 border border-slate-700/40 rounded-lg px-2.5 py-1.5 text-white text-sm w-full focus:outline-none focus:border-blue-500/50 transition-colors"
+                                className="bg-slate-900/50 border border-slate-700/40 rounded-lg px-2.5 py-1.5 text-white text-sm w-full focus:outline-none focus:border-blue-500/50 transition-colors resize-y"
                               />
                             </div>
                             <div>
                               <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
                                 {t.descEn}
                               </label>
-                              <input
-                                type="text"
+                              <textarea
+                                rows={3}
                                 value={getPlanValue(plan, 'descEn') as string}
                                 onChange={(e) => updatePlanField(plan.id, 'descEn', e.target.value)}
-                                className="bg-slate-900/50 border border-slate-700/40 rounded-lg px-2.5 py-1.5 text-white text-sm w-full focus:outline-none focus:border-blue-500/50 transition-colors"
+                                className="bg-slate-900/50 border border-slate-700/40 rounded-lg px-2.5 py-1.5 text-white text-sm w-full focus:outline-none focus:border-blue-500/50 transition-colors resize-y"
                               />
                             </div>
                           </div>
@@ -1296,6 +1302,24 @@ export default function PlansClient() {
                               )}
                               {t.active}
                             </label>
+                          </div>
+
+                          {/* Sort order */}
+                          <div>
+                            <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                              {t.sortOrder}
+                            </label>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              value={String(getPlanValue(plan, 'sortOrder') ?? 0)}
+                              onChange={(e) => {
+                                const v = e.target.value.replace(/[^0-9]/g, '');
+                                updatePlanField(plan.id, 'sortOrder', v === '' ? 0 : Number(v));
+                              }}
+                              className="w-24 px-2.5 py-1.5 rounded-lg bg-slate-900/50 border border-slate-700/40 text-white text-sm focus:outline-none focus:border-blue-500/50 transition-colors"
+                            />
+                            <p className="text-[10px] text-slate-600 mt-0.5">{t.sortOrderHint}</p>
                           </div>
 
                           {/* Max sales + sales count */}

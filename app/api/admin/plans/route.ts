@@ -36,6 +36,7 @@ interface PlanConfigRow {
   stripe_price_id: string | null;
   max_sales: number | null;
   sales_count: number;
+  sort_order: number;
   updated_at: string;
 }
 
@@ -73,6 +74,7 @@ function mapRow(row: PlanConfigRow, defaults?: (typeof PLANS)[PlanId]) {
     stripePriceId: row.stripe_price_id ?? '',
     maxSales: row.max_sales ?? null,
     salesCount: row.sales_count ?? 0,
+    sortOrder: row.sort_order ?? 0,
     updatedAt: row.updated_at ?? '',
   };
 }
@@ -87,7 +89,11 @@ export async function GET(): Promise<NextResponse> {
     if (!user) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
     const admin = createAdminClient();
-    const { data, error } = (await admin.from('plan_configs').select('*').order('plan_id')) as {
+    const { data, error } = (await admin
+      .from('plan_configs')
+      .select('*')
+      .order('sort_order', { ascending: true })
+      .order('plan_id')) as {
       data: PlanConfigRow[] | null;
       error: { message: string } | null;
     };
@@ -133,6 +139,7 @@ export async function GET(): Promise<NextResponse> {
           stripePriceId: '',
           maxSales: null,
           salesCount: 0,
+          sortOrder: LEGACY_PLAN_IDS.indexOf(id) + 1,
           updatedAt: '',
         });
       }
@@ -180,6 +187,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           free_trial_days: updates.freeTrialDays ?? 0,
           max_sales: updates.maxSales ?? null,
           sales_count: updates.salesCount ?? 0,
+          sort_order: updates.sortOrder ?? 99,
           updated_at: new Date().toISOString(),
           updated_by: user.id,
         };
@@ -232,6 +240,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           updateFields.stripe_price_id = updates.stripePriceId;
         if (updates.maxSales !== undefined) updateFields.max_sales = updates.maxSales;
         if (updates.salesCount !== undefined) updateFields.sales_count = updates.salesCount;
+        if (updates.sortOrder !== undefined) updateFields.sort_order = updates.sortOrder;
 
         // Use upsert to handle both existing and new-to-DB plans
         const defaults = LEGACY_PLAN_IDS.includes(planId as PlanId)
@@ -259,6 +268,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
             free_trial_days: updates.freeTrialDays ?? 0,
             max_sales: updates.maxSales ?? null,
             sales_count: updates.salesCount ?? 0,
+            sort_order: updates.sortOrder ?? LEGACY_PLAN_IDS.indexOf(planId as PlanId) + 1,
             // stripe_price_id is NOT included here — updateFields handles it conditionally
             // so editing other fields never resets a previously-saved Stripe price ID to null
             ...updateFields,

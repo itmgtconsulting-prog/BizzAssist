@@ -150,6 +150,7 @@ Audit conducted against: `app/api/**`, `app/components/**`, `app/lib/**`, `app/d
 - **File**: `app/api/cvr/route.ts` (line ~52)
 - **Risk**: `const CVR_ES_BASE = 'http://distribution.virk.dk/cvr-permanent/virksomhed/_search'` uses plain HTTP. The CVR credentials (`CVR_ES_USER` + `CVR_ES_PASS`) are sent via HTTP Basic Auth on every request, transmitting them in plaintext over the network. Any network intermediary (CDN, corporate proxy, ISP) can capture these credentials. This also violates GDPR Article 32 (appropriate technical measures) for protecting credentials used to access business registration data.
 - **Fix**: Change to `https://distribution.virk.dk/...`. Verify Erhvervsstyrelsen's endpoint supports HTTPS (it does — the HTTP endpoint redirects to HTTPS but the redirect itself exposes credentials in the `Authorization` header of the initial plaintext request).
+- **⚠️ Note (2026-04-08)**: Det er uklart om Erhvervsstyrelsens CVR ES-endpoint faktisk understøtter HTTPS i praksis — test grundigt på dev inden ændringen deployes til test/prod. Hvis HTTPS ikke virker, er en alternativ løsning at route CVR-kald gennem Hetzner-proxyen (som allerede har HTTPS) frem for at kalde `distribution.virk.dk` direkte.
 
 ---
 

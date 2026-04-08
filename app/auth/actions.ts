@@ -199,6 +199,11 @@ export interface AuthResult {
    */
   mfaEnrolled?: boolean;
   /**
+   * The verified TOTP factor ID — passed to /login/mfa via URL so the client
+   * doesn't have to call listFactors() again (avoids session-not-ready race).
+   */
+  mfaFactorId?: string;
+  /**
    * Set when error === 'oauth_user_no_password'.
    * Contains the OAuth provider the user registered with (e.g. 'azure', 'google', 'linkedin_oidc').
    */
@@ -328,7 +333,9 @@ export async function signIn(
       const { data: aalData } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
       if (aalData?.nextLevel === 'aal2' && aalData.nextLevel !== aalData.currentLevel) {
         // Session is aal1 but aal2 is required — redirect to TOTP challenge.
-        return { error: null, mfaRequired: true, mfaEnrolled: true };
+        // Pass factorId so MfaClient doesn't need to call listFactors() again
+        // (avoids a race where client-side session cookies aren't ready yet).
+        return { error: null, mfaRequired: true, mfaEnrolled: true, mfaFactorId: verifiedTotp.id };
       }
     }
     // No TOTP enrolled — MFA is optional, proceed to dashboard.

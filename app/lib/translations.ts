@@ -109,8 +109,8 @@ export const translations = {
       free: 'Gratis',
       mostPopular: 'Mest populær',
       cta: 'Kom i gang',
-      ctaDemo: 'Ansøg om demo',
-      requiresApproval: 'Kræver godkendelse',
+      ctaDemo: 'Opret konto',
+      requiresApproval: 'Kræver godkendelse af administrator',
       features: {
         demo: [
           'Fuld adgang til platformen',
@@ -612,8 +612,8 @@ export const translations = {
       free: 'Free',
       mostPopular: 'Most popular',
       cta: 'Get started',
-      ctaDemo: 'Request demo',
-      requiresApproval: 'Requires approval',
+      ctaDemo: 'Create account',
+      requiresApproval: 'Requires administrator approval',
       features: {
         demo: [
           'Full platform access',

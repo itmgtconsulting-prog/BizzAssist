@@ -283,17 +283,22 @@ export default function PricingSection() {
                   </ul>
 
                   {/* CTA */}
-                  <Link
-                    href="/login/signup"
-                    className={[
-                      'mt-auto w-full text-center rounded-xl py-3 px-4 font-semibold text-sm transition-colors',
-                      isHighlighted
-                        ? 'bg-blue-600 hover:bg-blue-500 text-white'
-                        : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700',
-                    ].join(' ')}
-                  >
-                    {plan.requiresApproval ? t.ctaDemo : t.cta}
-                  </Link>
+                  <div className="mt-auto space-y-2">
+                    <Link
+                      href="/login/signup"
+                      className={[
+                        'w-full block text-center rounded-xl py-3 px-4 font-semibold text-sm transition-colors',
+                        isHighlighted
+                          ? 'bg-blue-600 hover:bg-blue-500 text-white'
+                          : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700',
+                      ].join(' ')}
+                    >
+                      {t.cta}
+                    </Link>
+                    {plan.requiresApproval && (
+                      <p className="text-center text-[11px] text-slate-500">{t.requiresApproval}</p>
+                    )}
+                  </div>
                 </div>
               );
             })}

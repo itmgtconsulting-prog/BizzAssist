@@ -169,8 +169,12 @@ function LoginForm() {
         }
       } else if (result?.mfaRequired) {
         // MFA challenge needed — user has enrolled TOTP and must verify it.
-        // Enrollment is optional; this branch only runs for already-enrolled users.
-        window.location.href = '/login/mfa';
+        // Pass factorId via URL so MfaClient doesn't need a second listFactors() call
+        // (avoids a race where client-side session cookies aren't fully set yet).
+        const mfaUrl = result.mfaFactorId
+          ? `/login/mfa?factorId=${encodeURIComponent(result.mfaFactorId)}`
+          : '/login/mfa';
+        window.location.href = mfaUrl;
         return; // Keep loading state while redirecting
       } else {
         // Login succeeded — redirect client-side so cookies are properly set.

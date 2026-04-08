@@ -16,6 +16,7 @@
  */
 
 import { useState, FormEvent, useEffect, useRef } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { Loader2, AlertCircle, ShieldCheck } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { createClient } from '@/lib/supabase/client';
@@ -45,6 +46,7 @@ const errorMessages: Record<string, { da: string; en: string }> = {
  */
 export default function MfaClient() {
   const { lang } = useLanguage();
+  const searchParams = useSearchParams();
   const [code, setCode] = useState('');
   const [factorId, setFactorId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -52,10 +54,18 @@ export default function MfaClient() {
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Retrieve the enrolled TOTP factor ID via listFactors().
-  // AMREntry (from getAuthenticatorAssuranceLevel) does not carry factorId,
-  // so we look up the verified TOTP factor from the account's factor list instead.
+  // Prefer factorId from URL (set by signIn action) — avoids a session-not-ready
+  // race where listFactors() returns empty because cookies haven't flushed yet.
+  // Falls back to listFactors() for backwards compatibility.
   useEffect(() => {
+    const urlFactorId = searchParams.get('factorId');
+    if (urlFactorId) {
+      setFactorId(urlFactorId);
+      setInitialising(false);
+      inputRef.current?.focus();
+      return;
+    }
+    // Fallback: query Supabase directly
     (async () => {
       const supabase = createClient();
       const { data } = await supabase.auth.mfa.listFactors();
@@ -68,7 +78,7 @@ export default function MfaClient() {
       setInitialising(false);
       inputRef.current?.focus();
     })();
-  }, []);
+  }, [searchParams]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();

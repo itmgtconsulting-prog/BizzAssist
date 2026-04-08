@@ -44,14 +44,16 @@ export function logActivity(
   payload: Record<string, unknown> = {}
 ): void {
   // Fire-and-forget: intentionally not awaited.
-  // Supabase builder returns a PromiseLike (thenable) — we wrap in Promise.resolve()
-  // to get a full Promise with a .catch() method so we can suppress errors safely.
-  Promise.resolve(
-    supabase
-      .schema('tenant')
-      .from('activity_log')
-      .insert({ tenant_id: tenantId, user_id: userId, event_type: eventType, payload })
-  )
-    .then(() => {}) // intentional no-op — we don't need the result
-    .catch(() => {}); // never surface logging errors to users
+  // Supabase's .schema() builder returns a PromiseLike (not a full Promise), so we
+  // wrap in an async IIFE to safely suppress errors without blocking the caller.
+  void (async () => {
+    try {
+      await supabase
+        .schema('tenant')
+        .from('activity_log')
+        .insert({ tenant_id: tenantId, user_id: userId, event_type: eventType, payload });
+    } catch {
+      // Intentionally swallowed — logging failures must never surface to users (ISO 27001 A.12.4)
+    }
+  })();
 }

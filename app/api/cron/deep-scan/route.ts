@@ -18,7 +18,7 @@
  *
  * Env vars required:
  *   - CRON_SECRET           — shared secret for this endpoint
- *   - VERCEL_TOKEN          — Vercel API token for build log access
+ *   - VERCEL_API_TOKEN          — Vercel API token for build log access
  *   - VERCEL_PROJECT_ID     — Vercel project ID
  *   - VERCEL_TEAM_ID        — (optional) Vercel team ID
  *   - RESEND_API_KEY        — Resend API key for report emails
@@ -164,7 +164,7 @@ function verifyCronSecret(request: NextRequest): boolean {
  * @returns Headers object with Bearer auth token.
  */
 function vercelHeaders(): HeadersInit {
-  return { Authorization: `Bearer ${process.env.VERCEL_TOKEN ?? ''}` };
+  return { Authorization: `Bearer ${process.env.VERCEL_API_TOKEN ?? ''}` };
 }
 
 /**
@@ -253,8 +253,8 @@ async function checkTypeScriptErrors(): Promise<CheckResult> {
     ran: false,
   };
 
-  if (!process.env.VERCEL_TOKEN || !process.env.VERCEL_PROJECT_ID) {
-    result.checkError = 'VERCEL_TOKEN eller VERCEL_PROJECT_ID mangler';
+  if (!process.env.VERCEL_API_TOKEN || !process.env.VERCEL_PROJECT_ID) {
+    result.checkError = 'VERCEL_API_TOKEN eller VERCEL_PROJECT_ID mangler';
     return result;
   }
 
@@ -332,8 +332,8 @@ async function checkTestFailures(): Promise<CheckResult> {
     ran: false,
   };
 
-  if (!process.env.VERCEL_TOKEN || !process.env.VERCEL_PROJECT_ID) {
-    result.checkError = 'VERCEL_TOKEN eller VERCEL_PROJECT_ID mangler';
+  if (!process.env.VERCEL_API_TOKEN || !process.env.VERCEL_PROJECT_ID) {
+    result.checkError = 'VERCEL_API_TOKEN eller VERCEL_PROJECT_ID mangler';
     return result;
   }
 

@@ -16,7 +16,7 @@
  *
  *   Returns: { ok: true, scanId, issueCount }
  *
- * Requires VERCEL_TOKEN + VERCEL_PROJECT_ID for live data.
+ * Requires VERCEL_API_TOKEN + VERCEL_PROJECT_ID for live data.
  * If credentials are absent, the scan completes with a config_error issue.
  *
  * Only accessible by admin users (app_metadata.isAdmin === true).
@@ -41,7 +41,7 @@ const VERCEL_API = 'https://api.vercel.com';
  * @returns Headers object with Bearer auth token.
  */
 function vercelHeaders(): HeadersInit {
-  return { Authorization: `Bearer ${process.env.VERCEL_TOKEN ?? ''}` };
+  return { Authorization: `Bearer ${process.env.VERCEL_API_TOKEN ?? ''}` };
 }
 
 /**
@@ -150,7 +150,7 @@ async function runScan(): Promise<{ issues: ScanIssue[]; summary: string }> {
   const issues: ScanIssue[] = [];
 
   // ── 1. Check credentials ──────────────────────────────────────────────────
-  const hasVercelToken = !!process.env.VERCEL_TOKEN;
+  const hasVercelToken = !!process.env.VERCEL_API_TOKEN;
   const hasProjectId = !!process.env.VERCEL_PROJECT_ID;
 
   if (!hasVercelToken || !hasProjectId) {
@@ -160,7 +160,7 @@ async function runScan(): Promise<{ issues: ScanIssue[]; summary: string }> {
       message: 'Vercel-legitimationsoplysninger mangler',
       source: 'static',
       context: [
-        !hasVercelToken ? 'VERCEL_TOKEN ikke sat' : null,
+        !hasVercelToken ? 'VERCEL_API_TOKEN ikke sat' : null,
         !hasProjectId ? 'VERCEL_PROJECT_ID ikke sat' : null,
       ]
         .filter(Boolean)
@@ -169,7 +169,7 @@ async function runScan(): Promise<{ issues: ScanIssue[]; summary: string }> {
     return {
       issues,
       summary:
-        'Scan afbrudt: manglende Vercel-konfiguration. Tilføj VERCEL_TOKEN og VERCEL_PROJECT_ID i miljøvariabler.',
+        'Scan afbrudt: manglende Vercel-konfiguration. Tilføj VERCEL_API_TOKEN og VERCEL_PROJECT_ID i miljøvariabler.',
     };
   }
 
@@ -182,7 +182,7 @@ async function runScan(): Promise<{ issues: ScanIssue[]; summary: string }> {
       severity: 'warning',
       message: 'Kunne ikke hente Vercel-deployments',
       source: 'vercel_build',
-      context: 'Vercel API returnerede fejl. Tjek at VERCEL_TOKEN er gyldigt.',
+      context: 'Vercel API returnerede fejl. Tjek at VERCEL_API_TOKEN er gyldigt.',
     });
   } else {
     // Flag any recent failed builds

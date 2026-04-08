@@ -7,7 +7,7 @@
  *
  * GET  /api/admin/service-manager
  *   Returns:
- *     - deployments: recent Vercel deployments (requires VERCEL_TOKEN + VERCEL_PROJECT_ID)
+ *     - deployments: recent Vercel deployments (requires VERCEL_API_TOKEN + VERCEL_PROJECT_ID)
  *     - scans:       last 20 scan records from service_manager_scans
  *     - configured:  boolean — whether Vercel credentials are present
  *
@@ -95,12 +95,12 @@ const VERCEL_API = 'https://api.vercel.com';
 
 /**
  * Fetch recent deployments from the Vercel API.
- * Requires VERCEL_TOKEN and VERCEL_PROJECT_ID env vars.
+ * Requires VERCEL_API_TOKEN and VERCEL_PROJECT_ID env vars.
  *
  * @returns Array of deployments, or null if credentials are missing.
  */
 async function fetchVercelDeployments(): Promise<VercelDeployment[] | null> {
-  const token = process.env.VERCEL_TOKEN;
+  const token = process.env.VERCEL_API_TOKEN;
   const projectId = process.env.VERCEL_PROJECT_ID;
   if (!token || !projectId) return null;
 
@@ -158,7 +158,7 @@ export async function GET(): Promise<NextResponse> {
     return NextResponse.json({
       deployments: deployments ?? [],
       scans,
-      configured: !!(process.env.VERCEL_TOKEN && process.env.VERCEL_PROJECT_ID),
+      configured: !!(process.env.VERCEL_API_TOKEN && process.env.VERCEL_PROJECT_ID),
     });
   } catch (err) {
     console.error('[service-manager GET]', err);

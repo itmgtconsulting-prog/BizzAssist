@@ -194,12 +194,18 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
     }
 
     // ── 5. Auth route guard (redirect authenticated users away from /login) ──
-    // Skip this redirect if the login page has an error param (e.g. subscription_pending,
-    // subscription_cancelled) — the user was sent here deliberately by the dashboard access gate.
+    // Skip this redirect if:
+    //   - the login page has an error param (e.g. subscription_pending)
+    //   - the path is an MFA step (/login/mfa, /login/mfa/enroll) — these must
+    //     remain accessible to aal1-authenticated users completing their 2FA
+    //     challenge. Redirecting them here would cause a loop with the MFA AAL
+    //     guard above (dashboard → /login/mfa → dashboard → …).
     const hasLoginError = req.nextUrl.searchParams.has('error');
+    const isMfaStep = pathname.startsWith('/login/mfa');
     if (
       isAuthenticated &&
       !hasLoginError &&
+      !isMfaStep &&
       AUTH_ROUTES.some((route) => pathname.startsWith(route))
     ) {
       const dashboardUrl = req.nextUrl.clone();

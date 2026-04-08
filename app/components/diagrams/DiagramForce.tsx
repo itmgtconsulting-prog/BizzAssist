@@ -16,7 +16,14 @@ import {
   type SimulationNodeDatum,
   type SimulationLinkDatum,
 } from 'd3-force';
-import { Briefcase, Maximize2, Minimize2, ChevronsUpDown, ChevronsDownUp } from 'lucide-react';
+import {
+  Briefcase,
+  Maximize2,
+  Minimize2,
+  ChevronsUpDown,
+  ChevronsDownUp,
+  RotateCcw,
+} from 'lucide-react';
 import type { DiagramVariantProps, DiagramNode } from './DiagramData';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -25,6 +32,8 @@ const NODE_W = 320;
 const NODE_H = 64;
 const NODE_H_EXPAND = 78;
 const NODE_H_PERSON = 34;
+/** Property node height — 3 text lines (address + BFE + ejendomstype) */
+const NODE_H_PROPERTY = 72;
 
 /** Extra height per noeglePerson row inside a company box */
 const PERSON_ROW_H = 14;
@@ -36,6 +45,7 @@ const OVERFLOW_INITIAL_SHOW = 5;
 /** Compute node height — expandedOverflowIds makes overflow nodes taller when expanded */
 function getNodeH(node: DiagramNode, expandedOverflowIds?: Set<string>): number {
   if (node.type === 'person') return NODE_H_PERSON;
+  if (node.type === 'property') return NODE_H_PROPERTY;
   // Overflow list node
   if (node.overflowItems) {
     const isExpanded = expandedOverflowIds?.has(node.id) ?? false;
@@ -102,7 +112,7 @@ interface ForceLink extends SimulationLinkDatum<ForceNode> {
  * @param props - graph + lang
  */
 export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
-  const router = useRouter();
+  const _router = useRouter();
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [zoom, setZoom] = useState(1);
@@ -111,8 +121,11 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
   /** Set of node IDs whose co-owners are currently expanded */
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
 
-  /** Set of overflow node IDs that are fully expanded (show all items) */
-  const [expandedOverflow, setExpandedOverflow] = useState<Set<string>>(new Set());
+  /** Set of overflow node IDs that are fully expanded (show all items) — starter udfoldet */
+  const [expandedOverflow, setExpandedOverflow] = useState<Set<string>>(() => {
+    // Alle overflow-noder starter udfoldet
+    return new Set(graph.nodes.filter((n) => n.overflowItems).map((n) => n.id));
+  });
 
   /** Fullscreen overlay mode */
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -313,18 +326,45 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
       if (!byDepth.has(d)) byDepth.set(d, []);
       byDepth.get(d)!.push(node.id);
     }
-    // Re-order each depth group: persons first, then companies (so persons are on top rows)
+    // Re-order each depth group: persons first, then companies, then properties
+    // Each type group is padded to a row boundary so they never share a sub-row.
     for (const [depth, ids] of byDepth) {
       const persons = ids.filter((id) => nodeById.get(id)?.type === 'person');
-      const companies = ids.filter((id) => nodeById.get(id)?.type !== 'person');
-      // Only re-order if there's a mix — pad persons to fill a complete row to prevent mixing
-      if (persons.length > 0 && companies.length > 0) {
+      const properties = ids.filter((id) => nodeById.get(id)?.type === 'property');
+      const companies = ids.filter((id) => {
+        const t = nodeById.get(id)?.type;
+        return t !== 'person' && t !== 'property';
+      });
+
+      const hasMixedTypes =
+        (persons.length > 0 && companies.length > 0) ||
+        (properties.length > 0 && (persons.length > 0 || companies.length > 0));
+
+      if (hasMixedTypes) {
+        // Pad persons so companies start on a fresh row
         const paddedPersons = [...persons];
-        // Pad to next multiple of MAX_PER_ROW so companies start on a fresh row
-        while (paddedPersons.length % MAX_PER_ROW !== 0) {
+        while (
+          persons.length > 0 &&
+          companies.length > 0 &&
+          paddedPersons.length % MAX_PER_ROW !== 0
+        ) {
           paddedPersons.push('__pad__');
         }
-        byDepth.set(depth, [...paddedPersons, ...companies]);
+        // Pad companies so properties start on a fresh row
+        const paddedCompanies = [...companies];
+        while (
+          properties.length > 0 &&
+          companies.length > 0 &&
+          paddedCompanies.length % MAX_PER_ROW !== 0
+        ) {
+          paddedCompanies.push('__pad__');
+        }
+        byDepth.set(depth, [...paddedPersons, ...paddedCompanies, ...properties]);
+      } else if (properties.length > 0 && companies.length > 0) {
+        // Only companies + properties (no persons): pad companies, then properties
+        const paddedCompanies = [...companies];
+        while (paddedCompanies.length % MAX_PER_ROW !== 0) paddedCompanies.push('__pad__');
+        byDepth.set(depth, [...paddedCompanies, ...properties]);
       }
     }
 
@@ -546,10 +586,12 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
       newPositions.set(node.id, { x: node.x ?? 0, y: node.y ?? 0 });
     }
     setPositions(newPositions);
-    setPanOffset({ x: 0, y: 0 });
+    // Trigger auto-zoom/center med lille forsinkelse så viewBox-memo når at opdatere
+    const fitTimer = setTimeout(() => setFitTrigger((t) => t + 1), 80);
 
     return () => {
       simulation.stop();
+      clearTimeout(fitTimer);
     };
   }, [filteredGraph, depthMap, nodeYMap]);
 
@@ -578,28 +620,50 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
   }, [positions, expandedOverflow, filteredGraph.nodes]);
 
   // ── Auto-zoom to fit + center in container ──
+  const initialFitDone = useRef(false);
+  // Reset fit flag when graph changes
   useEffect(() => {
-    if (!containerRef.current || positions.size === 0) return;
-    const timer = setTimeout(() => {
+    initialFitDone.current = false;
+  }, [filteredGraph]);
+
+  // Stabilisér viewBox-værdier som primitiver for at undgå uendelig effect-loop
+  const vbKey = `${viewBox.minX.toFixed(1)}_${viewBox.minY.toFixed(1)}_${viewBox.w.toFixed(1)}_${viewBox.h.toFixed(1)}`;
+
+  useEffect(() => {
+    if (positions.size === 0 || viewBox.w <= 0 || viewBox.h <= 0) return;
+
+    const doFit = () => {
+      // Kør kun én gang — undgå at overskrive brugerens zoom/pan
+      if (initialFitDone.current) return;
       const c = containerRef.current;
       if (!c) return;
       const cW = c.clientWidth;
       const cH = c.clientHeight;
-      if (viewBox.w > 0 && viewBox.h > 0) {
-        const fit = Math.min((cW - 32) / viewBox.w, (cH - 32) / viewBox.h, 1);
-        const z = fit < 0.95 ? Math.max(fit, 0.2) : 1;
-        // Content size after zoom (including 16px padding on each side)
-        const contentW = viewBox.w * z + 32;
-        const contentH = viewBox.h * z + 32;
-        // Center: offset so content is centered in the container
-        const panX = Math.max(0, (cW - contentW) / 2);
-        const panY = Math.max(0, (cH - contentH) / 2);
-        setZoom(z);
-        setPanOffset({ x: panX, y: panY });
-      }
-    }, 100);
-    return () => clearTimeout(timer);
-  }, [positions.size, viewBox, fitTrigger]);
+      if (cW < 50 || cH < 50) return;
+
+      const fit = Math.min((cW - 40) / viewBox.w, (cH - 40) / viewBox.h, 1.5);
+      const z = Math.max(fit, 0.15);
+      const scaledW = viewBox.w * z + 32;
+      const scaledH = viewBox.h * z + 32;
+      const panX = Math.round((cW - scaledW) / 2);
+      // Placér diagrammet tæt på toppen (5% fra top)
+      const panY = Math.round(Math.max(4, (cH - scaledH) * 0.05));
+      setZoom(z);
+      setPanOffset({ x: panX, y: panY });
+      initialFitDone.current = true;
+    };
+
+    // Schedule fit — rAF + fallback timers for layout timing (kun første gang)
+    const id1 = requestAnimationFrame(doFit);
+    const id2 = setTimeout(doFit, 150);
+    const id3 = setTimeout(doFit, 400);
+    return () => {
+      cancelAnimationFrame(id1);
+      clearTimeout(id2);
+      clearTimeout(id3);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [positions.size, vbKey, fitTrigger]);
 
   // ── Node drag: start ──
   const handleNodeMouseDown = useCallback(
@@ -814,7 +878,7 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
 
   /** Toolbar with zoom controls + fullscreen toggle */
   const toolbar = (
-    <div className="flex items-center justify-between">
+    <div className="flex items-center justify-between sticky top-0 z-10 bg-[#0a1020]/95 backdrop-blur-sm py-2 -mt-2">
       <h2 className="text-white font-semibold text-base flex items-center gap-2">
         <Briefcase size={16} className="text-blue-400" />
         {graph.nodes.some((n) => n.type === 'property')
@@ -880,6 +944,21 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
         >
           100%
         </button>
+        <button
+          onClick={() => {
+            initialFitDone.current = false;
+            setFitTrigger((t) => t + 1);
+            containerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+            containerRef.current
+              ?.closest('[class*="overflow-y"]')
+              ?.scrollTo({ top: 0, behavior: 'smooth' });
+          }}
+          className="px-2 h-7 flex items-center gap-1 text-slate-400 hover:text-white bg-slate-800 border border-slate-700/50 rounded-lg text-[10px] transition"
+          title={lang === 'da' ? 'Nulstil visning' : 'Reset view'}
+        >
+          <RotateCcw size={11} />
+          {lang === 'da' ? 'Reset' : 'Reset'}
+        </button>
         {/* Expand / Collapse all co-owners */}
         <span className="w-px h-5 bg-slate-700/50 mx-1" />
         <button
@@ -917,7 +996,8 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
         <button
           onClick={() => {
             setIsFullscreen((f) => !f);
-            setPanOffset({ x: 0, y: 0 });
+            // Trigger re-fit efter fullscreen toggle (container ændrer størrelse)
+            setTimeout(() => setFitTrigger((t) => t + 1), 150);
           }}
           className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-white bg-slate-800 border border-slate-700/50 rounded-lg transition ml-1"
           title={
@@ -1062,7 +1142,13 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
 
         const rx = isPerson ? h / 2 : isProperty ? 16 : 12;
         const x = pos.x - NODE_W / 2;
-        const y = pos.y - h / 2;
+        // Overflow-noder: forankr fra toppen (brug kollapseret højde) så de udvider nedad
+        const collapsedH = node.overflowItems
+          ? 30 +
+            Math.min(node.overflowItems.length, OVERFLOW_INITIAL_SHOW) * 16 +
+            (node.overflowItems.length > OVERFLOW_INITIAL_SHOW ? 20 : 0)
+          : h;
+        const y = pos.y - collapsedH / 2;
 
         // ── Overflow list node (expandable list of companies) ──
         if (node.overflowItems) {
@@ -1109,7 +1195,7 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
                   style={{ cursor: 'pointer', pointerEvents: 'auto' }}
                   onClick={(e) => {
                     e.stopPropagation();
-                    if (item.link) router.push(item.link);
+                    if (item.link) window.location.href = item.link;
                   }}
                 >
                   {'•'} {item.label.length > 42 ? item.label.slice(0, 42) + '…' : item.label}
@@ -1158,10 +1244,12 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
         return (
           <g
             key={node.id}
-            style={{ cursor: 'grab' }}
+            style={{ cursor: node.link ? 'pointer' : 'grab' }}
             onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
             onClick={() => {
-              if (node.link && !dragRef.current.didMove) router.push(node.link);
+              if (node.link && !dragRef.current.didMove) {
+                window.location.href = node.link;
+              }
             }}
           >
             <rect
@@ -1248,7 +1336,7 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
                           {node.label.length > 44 ? node.label.slice(0, 44) + '…' : node.label}
                         </text>
                       )}
-                      {/* Person's role in this company OR CVR number */}
+                      {/* Person's role in this company OR CVR number OR BFE number for properties */}
                       {node.personRolle ? (
                         <text
                           x={x + 30}
@@ -1271,6 +1359,16 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
                           className="pointer-events-none"
                         >
                           CVR {node.cvr}
+                        </text>
+                      ) : isProperty && node.bfeNummer ? (
+                        <text
+                          x={x + 30}
+                          y={topY + 23}
+                          fill="rgba(110,231,183,0.8)"
+                          fontSize="9"
+                          className="pointer-events-none"
+                        >
+                          BFE {node.bfeNummer.toLocaleString('da-DK')}
                         </text>
                       ) : null}
                       {/* Branche */}
@@ -1336,7 +1434,7 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
                               className="pointer-events-none cursor-pointer"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                router.push(`/dashboard/owners/${p.enhedsNummer}`);
+                                window.location.href = `/dashboard/owners/${p.enhedsNummer}`;
                               }}
                               style={{ cursor: 'pointer', pointerEvents: 'auto' }}
                             >
@@ -1413,7 +1511,11 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
     <div
       ref={containerRef}
       className={`bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden select-none ${isFullscreen ? 'flex-1' : ''}`}
-      style={{ maxHeight: isFullscreen ? undefined : '70vh', cursor: 'grab' }}
+      style={{
+        minHeight: isFullscreen ? undefined : '500px',
+        maxHeight: isFullscreen ? undefined : '85vh',
+        cursor: 'grab',
+      }}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
@@ -1442,25 +1544,11 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
 
   /** Warning badge when nodes are hidden due to overflow grouping */
   const hiddenWarning = graph.hiddenCount ? (
-    <div className="absolute bottom-3 right-3 z-10 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-400 text-[10px] font-medium backdrop-blur-sm">
-      <svg
-        width="12"
-        height="12"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-        <line x1="12" y1="9" x2="12" y2="13" />
-        <line x1="12" y1="17" x2="12.01" y2="17" />
-      </svg>
-      {graph.hiddenCount}{' '}
+    <div className="absolute top-3 right-3 z-10 max-w-[200px] px-2.5 py-2 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-400 text-[10px] font-medium leading-tight backdrop-blur-sm">
+      <span className="font-bold">{graph.hiddenCount}</span>{' '}
       {lang === 'da'
-        ? `underliggende virksomhed${graph.hiddenCount > 1 ? 'er' : ''} skjult i oversigten`
-        : `subsidiary compan${graph.hiddenCount > 1 ? 'ies' : 'y'} hidden in overview`}
+        ? `virksomheder relateret til "flere virksomheder" er ikke vist`
+        : `companies related to "more companies" are not shown`}
     </div>
   ) : null;
 

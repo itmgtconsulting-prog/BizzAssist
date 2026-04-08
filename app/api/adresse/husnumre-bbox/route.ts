@@ -30,6 +30,20 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(emptyFc, { status: 400 });
   }
 
+  // Guard: reject oversized bounding boxes — husnumre are dense and large areas
+  // cause very slow DAWA responses or result sets that exceed the per_side limit
+  const lngSpan = Math.abs(e - w);
+  const latSpan = Math.abs(n - s);
+  if (lngSpan > 0.3 || latSpan > 0.3) {
+    return NextResponse.json(
+      {
+        ...emptyFc,
+        error: 'Bbox for stor — zoom ind for at se husnumre',
+      } as unknown as GeoJSON.FeatureCollection,
+      { status: 400 }
+    );
+  }
+
   // TODO: Replace with DAR GraphQL spatial query when supported (before July 2026)
   // DAWA fallback
   try {

@@ -16,9 +16,11 @@ import path from 'path';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
-const CERT_PATH = process.env.NEMLOGIN_DEVTEST4_CERT_PATH ?? '';
-const CERT_PASSWORD = process.env.NEMLOGIN_DEVTEST4_CERT_PASSWORD ?? '';
-const CERT_B64 = process.env.NEMLOGIN_DEVTEST4_CERT_B64 ?? '';
+const CERT_PATH =
+  process.env.TINGLYSNING_CERT_PATH ?? process.env.NEMLOGIN_DEVTEST4_CERT_PATH ?? '';
+const CERT_PASSWORD =
+  process.env.TINGLYSNING_CERT_PASSWORD ?? process.env.NEMLOGIN_DEVTEST4_CERT_PASSWORD ?? '';
+const CERT_B64 = process.env.TINGLYSNING_CERT_B64 ?? process.env.NEMLOGIN_DEVTEST4_CERT_B64 ?? '';
 const TL_BASE = process.env.TINGLYSNING_BASE_URL ?? 'https://test.tinglysning.dk';
 
 export interface TLEjer {
@@ -96,18 +98,42 @@ export interface TLHaeftelse {
   dato: string | null;
   kreditor: string | null;
   kreditorCvr: string | null;
-  debitor: string | null;
+  /** Alle debitorer på hæftelsen — kan være flere ved fælles lån */
+  debitorer: string[];
   beloeb: number | null;
   valuta: string;
   rente: number | null;
+  /** Rentetype: "Variabel" eller "Fast" */
+  renteType: string | null;
+  /** Foreløbig rente-indikator */
+  renteForeloebig: boolean;
+  /** Referencerente-navn, f.eks. "CITA 6", "Nationalbankens indskudsbevisrente" */
+  referenceRenteNavn: string | null;
+  /** Referencerente-sats, f.eks. -0.4099 */
+  referenceRenteSats: number | null;
+  /** Rentetillæg-sats i %, f.eks. 0.18 */
+  renteTillaeg: number | null;
+  /** Tillægstype: "Variabel" eller "Fast" */
+  renteTillaegType: string | null;
   laantype: string | null;
   laanevilkaar: string[];
   pantebrevFormular: string | null;
+  /** Kreditorbetegnelse, f.eks. "49232603 Kapitalcenter: 1" */
+  kreditorbetegnelse: string | null;
   laaneTekst: string | null;
   tinglysningsafgift: number | null;
   prioritet: number | null;
   dokumentId: string | null;
   dokumentAlias: string | null;
+  /** Underpant-information (ejerpantebreve) */
+  underpant: {
+    prioritet: number | null;
+    beloeb: number | null;
+    valuta: string;
+    havere: string[];
+  } | null;
+  /** Fuldmagtsbestemmelser — navne på fuldmagtshavere */
+  fuldmagtsbestemmelser: string[];
 }
 
 export interface TLServitut {
@@ -318,12 +344,77 @@ export async function GET(req: NextRequest) {
 
       const prioritetStr = entry.match(/PrioritetNummer[^>]*>([^<]+)/)?.[1];
       const prioritet = prioritetStr ? parseInt(prioritetStr, 10) : null;
-      // Debitor
-      const debitorNavn =
-        entry.match(/DebitorInformation[\s\S]*?PersonName[^>]*>([^<]+)/)?.[1] ?? null;
-      // Rente
+      // Debitor(er) — XML-strukturen er:
+      // <ns:DebitorInformationSamling>
+      //   <ns7:RolleInformation>
+      //     <ns7:PersonSimpelIdentifikator>
+      //       <ns14:PersonName>Navn</ns14:PersonName>
+      //     </ns7:PersonSimpelIdentifikator>
+      //   </ns7:RolleInformation>
+      //   ... (flere RolleInformation for flere debitorer)
+      // </ns:DebitorInformationSamling>
+      const debitorSamling =
+        entry.match(/DebitorInformationSamling>([\s\S]*?)<\/[^>]*DebitorInformationSamling/)?.[1] ??
+        '';
+      // Hvert RolleInformation-blok er én debitor
+      const rolleBlocks = debitorSamling
+        ? [...debitorSamling.matchAll(/RolleInformation>([\s\S]*?)<\/[^>]*RolleInformation/g)]
+        : [];
+      let debitorer: string[];
+      if (rolleBlocks.length > 0) {
+        debitorer = rolleBlocks
+          .map(([, info]) => {
+            const allNames = [...info.matchAll(/<[^\/][^>]*(?:Name|Navn)[^>]*>([^<]+)<\//g)];
+            return allNames
+              .map((m) => m[1].trim())
+              .filter((n) => n.length > 1)
+              .join(' ');
+          })
+          .filter((n) => n.length > 0);
+      } else {
+        // Fallback: prøv generel name-udtrækning fra hele debitor-blokken
+        const allDebNames = [
+          ...debitorSamling.matchAll(/<[^\/][^>]*(?:Name|Navn)[^>]*>([^<]+)<\//g),
+        ];
+        debitorer = allDebNames.map((m) => m[1].trim()).filter((n) => n.length > 1);
+      }
+      // Rente — pålydende sats + type + foreløbig + referencerente + tillæg
+      // XML-strukturen er: <HaeftelseRente> → <HaeftelseRenteFast> eller <HaeftelseRenteVariabel>
       const renteStr = entry.match(/HaeftelseRentePaalydendeSats[^>]*>([^<]+)/)?.[1];
       const rente = renteStr ? parseFloat(renteStr) : null;
+      // Bestem rentetype ud fra XML-tag: HaeftelseRenteFast = "Fast", HaeftelseRenteVariabel = "Variabel"
+      const renteType =
+        entry.match(/HaeftelseRenteType(?:Kode)?[^>]*>([^<]+)/)?.[1] ??
+        (entry.match(/HaeftelseRenteVariabel/)
+          ? 'Variabel'
+          : entry.match(/HaeftelseRenteFast/)
+            ? 'Fast'
+            : null);
+      const renteForeloebig =
+        (entry.match(/HaeftelseRenteSatsForeloebigIndikator[^>]*>([^<]+)/)?.[1] ??
+          entry.match(/HaeftelseForeloebigRenteIndikator[^>]*>([^<]+)/)?.[1]) === 'true';
+      const referenceRenteNavn =
+        entry.match(/HaeftelseReferenceRenteNavn[^>]*>([^<]+)/)?.[1] ??
+        entry.match(/ReferenceRenteNavn[^>]*>([^<]+)/)?.[1] ??
+        null;
+      const referenceRenteSatsStr =
+        entry.match(/HaeftelseReferenceRenteSats[^>]*>([^<]+)/)?.[1] ??
+        entry.match(/ReferenceRenteSats[^>]*>([^<]+)/)?.[1];
+      const referenceRenteSats = referenceRenteSatsStr ? parseFloat(referenceRenteSatsStr) : null;
+      // Tillæg — prøv mange varianter af tag-navne
+      const renteTillaegStr =
+        entry.match(/HaeftelseRenteTillaegSats[^>]*>([^<]+)/)?.[1] ??
+        entry.match(/RenteTillaegSats[^>]*>([^<]+)/)?.[1] ??
+        entry.match(/HaeftelseTillaegSats[^>]*>([^<]+)/)?.[1] ??
+        entry.match(/TillaegSats[^>]*>([^<]+)/)?.[1] ??
+        entry.match(/Tillaeg[^>]*>([0-9.,]+)/)?.[1] ??
+        entry.match(/RenteTillaeg[^>]*>([0-9.,]+)/)?.[1];
+      const renteTillaeg = renteTillaegStr ? parseFloat(renteTillaegStr) : null;
+      const renteTillaegType =
+        entry.match(/HaeftelseRenteTillaegType(?:Kode)?[^>]*>([^<]+)/)?.[1] ??
+        entry.match(/RenteTillaegType(?:Kode)?[^>]*>([^<]+)/)?.[1] ??
+        entry.match(/TillaegType(?:Kode)?[^>]*>([^<]+)/)?.[1] ??
+        null;
       // Låntype + vilkår
       const laantype = entry.match(/HaeftelseLaantypeKode[^>]*>([^<]+)/)?.[1] ?? null;
       const laanevilkaar = [
@@ -331,30 +422,277 @@ export async function GET(req: NextRequest) {
       ].map((m) => m[1]);
       const pantebrevFormular =
         entry.match(/HaeftelsePantebrevFormularLovpligtigKode[^>]*>([^<]+)/)?.[1] ?? null;
-      // Lånetekst
-      const laaneTekst = entry.match(/Afsnit[^>]*>([^<]{5,})/)?.[1]?.trim() ?? null;
+      // Kreditorbetegnelse
+      const kreditorbetegnelse =
+        entry.match(/KreditorBetegnelse[^>]*>([^<]+)/)?.[1] ??
+        entry.match(/HaeftelseKreditorBetegnelse[^>]*>([^<]+)/)?.[1] ??
+        null;
+      // Lånetekst — saml alle Afsnit-elementer (kan være flere)
+      const laaneTekstAfsnit = [...entry.matchAll(/Afsnit[^>]*>([^<]{5,})/g)]
+        .map((m) => m[1].trim())
+        .filter((v) => v.length > 0);
+      const laaneTekst = laaneTekstAfsnit.length > 0 ? laaneTekstAfsnit.join('\n') : null;
       // Tinglysningsafgift
-      const afgiftStr = entry.match(/TinglysningAfgiftBetalt[^>]*>([^<]+)/)?.[1];
+      const afgiftStr = entry.match(/(?:TinglysningAfgiftBetalt|Afgiftsbeloeb)[^>]*>([^<]+)/)?.[1];
       const tinglysningsafgift = afgiftStr ? parseInt(afgiftStr, 10) : null;
+      // Underpant (f.eks. på ejerpantebreve) — XML bruger UnderpantrettighedSamling
+      const underpantBlock =
+        entry.match(/UnderpantrettighedSamling>([\s\S]*?)<\/[^>]*UnderpantrettighedSamling/)?.[1] ??
+        entry.match(/Underpantrettighed>([\s\S]*?)<\/[^>]*Underpantrettighed/)?.[1] ??
+        entry.match(/Underpants[aæ]tning\w*>([\s\S]*?)<\/[^>]*Underpants[aæ]tning/)?.[1] ??
+        entry.match(/[A-Za-z]*[Uu]nderpant\w*>([\s\S]*?)<\/[^>]*[Uu]nderpant/)?.[1] ??
+        null;
+      let underpant: TLHaeftelse['underpant'] = null;
+      if (underpantBlock) {
+        // Prioritet: prøv UnderpantsaetningPrioritet, PrioritetNummer, eller bare Prioritet
+        const upPriStr =
+          underpantBlock.match(/(?:Underpants[aæ]tning)?Prioritet(?:Nummer)?[^>]*>([^<]+)/)?.[1] ??
+          underpantBlock.match(/PrioritetNummer[^>]*>([^<]+)/)?.[1];
+        // Beløb: prøv Underpantsaetning-wrapper + BeloebVaerdi, eller direkte
+        const upBeloebStr =
+          underpantBlock.match(/BeloebVaerdi[^>]*>(\d+)/)?.[1] ??
+          underpantBlock.match(/(?:Underpants[aæ]tning)?Beloeb[^>]*>(\d+)/)?.[1];
+        const upValuta = underpantBlock.match(/ValutaKode[^>]*>([^<]+)/)?.[1] ?? 'DKK';
+        // Havere: fra UnderpanthavereInformationSamling → RolleInformation → LegalUnitName/PersonName
+        // eller direkte navne i blokken
+        const havereSamling =
+          underpantBlock.match(/Underpanthaver\w*>([\s\S]*?)<\/[^>]*Underpanthaver/)?.[1] ??
+          underpantBlock;
+        const upHavere = [
+          ...havereSamling.matchAll(/(?:LegalUnitName|PersonName|Navn)[^>]*>([^<]+)/g),
+        ]
+          .map((m) => m[1].trim())
+          .filter((n) => n.length > 1);
+        underpant = {
+          prioritet: upPriStr ? parseInt(upPriStr, 10) : null,
+          beloeb: upBeloebStr ? parseInt(upBeloebStr, 10) : null,
+          valuta: upValuta,
+          havere: upHavere,
+        };
+      }
+      // Fuldmagtsbestemmelser — XML bruger ImplicitFuldmagtSamling → FuldmagtHaverInformation → LegalUnitName/PersonName
+      const fuldmagtSamling =
+        entry.match(/(?:Implicit)?FuldmagtSamling>([\s\S]*?)<\/[^>]*FuldmagtSamling/)?.[1] ?? '';
+      const fuldmagtHavere = fuldmagtSamling
+        ? [
+            ...fuldmagtSamling.matchAll(
+              /FuldmagtHaverInformation>([\s\S]*?)<\/[^>]*FuldmagtHaverInformation/g
+            ),
+          ]
+        : [];
+      let fuldmagtsbestemmelser: string[];
+      if (fuldmagtHavere.length > 0) {
+        fuldmagtsbestemmelser = fuldmagtHavere
+          .map(([, info]) => {
+            const names = [...info.matchAll(/(?:LegalUnitName|PersonName|Navn)[^>]*>([^<]+)/g)];
+            return names
+              .map((m) => m[1].trim())
+              .filter((n) => n.length > 1)
+              .join(' ');
+          })
+          .filter((n) => n.length > 0);
+      } else {
+        // Fallback: alle navne direkte i fuldmagt-blokken
+        fuldmagtsbestemmelser = [
+          ...fuldmagtSamling.matchAll(/(?:LegalUnitName|PersonName|Navn)[^>]*>([^<]+)/g),
+        ]
+          .map((m) => m[1].trim())
+          .filter((n) => n.length > 1);
+      }
 
       haeftelser.push({
         type,
         dato,
         kreditor,
         kreditorCvr,
-        debitor: debitorNavn,
+        debitorer,
         beloeb,
         valuta,
         rente,
+        renteType,
+        renteForeloebig,
+        referenceRenteNavn,
+        referenceRenteSats,
+        renteTillaeg,
+        renteTillaegType,
         laantype,
         laanevilkaar,
         pantebrevFormular,
+        kreditorbetegnelse,
         laaneTekst,
         tinglysningsafgift,
         prioritet,
         dokumentId,
         dokumentAlias,
+        underpant,
+        fuldmagtsbestemmelser,
       });
+    }
+
+    // ── Berig hæftelser med dokument-detaljer (rente-detaljer, underpant, fuldmagt, kreditorbetegnelse) ──
+    const enrichedHaeftelseDocs = new Set<string>();
+    for (const h of haeftelser) {
+      if (!h.dokumentId || enrichedHaeftelseDocs.has(h.dokumentId)) continue;
+      enrichedHaeftelseDocs.add(h.dokumentId);
+      try {
+        const dokRes = await tlFetch(`/dokaktuel/uuid/${h.dokumentId}`);
+        if (dokRes.status === 200) {
+          const dok = dokRes.body;
+          // Debitorer (fra dokument hvis summarisk ikke har dem)
+          if (h.debitorer.length === 0) {
+            // Samme struktur som summarisk: DebitorInformationSamling → RolleInformation → PersonName
+            const dokDebitorSamling =
+              dok.match(
+                /DebitorInformationSamling>([\s\S]*?)<\/[^>]*DebitorInformationSamling/
+              )?.[1] ?? '';
+            const dokRolleBlocks = dokDebitorSamling
+              ? [
+                  ...dokDebitorSamling.matchAll(
+                    /RolleInformation>([\s\S]*?)<\/[^>]*RolleInformation/g
+                  ),
+                ]
+              : [];
+            if (dokRolleBlocks.length > 0) {
+              h.debitorer = dokRolleBlocks
+                .map(([, info]) => {
+                  const allNames = [...info.matchAll(/<[^\/][^>]*(?:Name|Navn)[^>]*>([^<]+)<\//g)];
+                  return allNames
+                    .map((m) => m[1].trim())
+                    .filter((n) => n.length > 1)
+                    .join(' ');
+                })
+                .filter((n) => n.length > 0);
+            } else if (dokDebitorSamling) {
+              // Fallback: alle navne i debitor-blokken
+              h.debitorer = [
+                ...dokDebitorSamling.matchAll(/<[^\/][^>]*(?:Name|Navn)[^>]*>([^<]+)<\//g),
+              ]
+                .map((m) => m[1].trim())
+                .filter((n) => n.length > 1);
+            }
+          }
+          // Kreditorbetegnelse (fra dokument hvis ikke i summarisk)
+          if (!h.kreditorbetegnelse) {
+            h.kreditorbetegnelse =
+              dok.match(/KreditorBetegnelse[^>]*>([^<]+)/)?.[1] ??
+              dok.match(/HaeftelseKreditorBetegnelse[^>]*>([^<]+)/)?.[1] ??
+              null;
+          }
+          // Rente-detaljer (fra dokument hvis ikke i summarisk)
+          if (!h.renteType) {
+            h.renteType =
+              dok.match(/HaeftelseRenteType(?:Kode)?[^>]*>([^<]+)/)?.[1] ??
+              (dok.match(/HaeftelseRenteVariabel/)
+                ? 'Variabel'
+                : dok.match(/HaeftelseRenteFast/)
+                  ? 'Fast'
+                  : null);
+          }
+          if (!h.renteForeloebig) {
+            h.renteForeloebig =
+              (dok.match(/HaeftelseRenteSatsForeloebigIndikator[^>]*>([^<]+)/)?.[1] ??
+                dok.match(/HaeftelseForeloebigRenteIndikator[^>]*>([^<]+)/)?.[1]) === 'true';
+          }
+          if (!h.referenceRenteNavn) {
+            h.referenceRenteNavn =
+              dok.match(/HaeftelseReferenceRenteNavn[^>]*>([^<]+)/)?.[1] ??
+              dok.match(/ReferenceRenteNavn[^>]*>([^<]+)/)?.[1] ??
+              null;
+          }
+          if (h.referenceRenteSats == null) {
+            const refSatsStr =
+              dok.match(/HaeftelseReferenceRenteSats[^>]*>([^<]+)/)?.[1] ??
+              dok.match(/ReferenceRenteSats[^>]*>([^<]+)/)?.[1];
+            h.referenceRenteSats = refSatsStr ? parseFloat(refSatsStr) : null;
+          }
+          if (h.renteTillaeg == null) {
+            const tillaegStr =
+              dok.match(/HaeftelseRenteTillaegSats[^>]*>([^<]+)/)?.[1] ??
+              dok.match(/RenteTillaegSats[^>]*>([^<]+)/)?.[1] ??
+              dok.match(/HaeftelseTillaegSats[^>]*>([^<]+)/)?.[1] ??
+              dok.match(/TillaegSats[^>]*>([^<]+)/)?.[1] ??
+              dok.match(/Tillaeg[^>]*>([0-9.,]+)/)?.[1] ??
+              dok.match(/RenteTillaeg[^>]*>([0-9.,]+)/)?.[1];
+            h.renteTillaeg = tillaegStr ? parseFloat(tillaegStr) : null;
+          }
+          if (!h.renteTillaegType) {
+            h.renteTillaegType =
+              dok.match(/HaeftelseRenteTillaegType(?:Kode)?[^>]*>([^<]+)/)?.[1] ??
+              dok.match(/RenteTillaegType(?:Kode)?[^>]*>([^<]+)/)?.[1] ??
+              dok.match(/TillaegType(?:Kode)?[^>]*>([^<]+)/)?.[1] ??
+              null;
+          }
+          // Underpant (fra dokument hvis ikke i summarisk)
+          if (!h.underpant) {
+            // Prøv flere mulige tag-navne — Tinglysnings-XML varierer
+            const upBlock =
+              dok.match(
+                /UnderpantrettighedSamling>([\s\S]*?)<\/[^>]*UnderpantrettighedSamling/
+              )?.[1] ??
+              dok.match(/Underpantrettighed>([\s\S]*?)<\/[^>]*Underpantrettighed/)?.[1] ??
+              dok.match(/Underpants[aæ]tning\w*>([\s\S]*?)<\/[^>]*Underpants[aæ]tning/)?.[1] ??
+              dok.match(/[A-Za-z]*[Uu]nderpant\w*>([\s\S]*?)<\/[^>]*[Uu]nderpant/)?.[1] ??
+              null;
+            if (upBlock) {
+              const upPriStr =
+                upBlock.match(/(?:Underpants[aæ]tning)?Prioritet(?:Nummer)?[^>]*>([^<]+)/)?.[1] ??
+                upBlock.match(/PrioritetNummer[^>]*>([^<]+)/)?.[1];
+              const upBeloebStr =
+                upBlock.match(/BeloebVaerdi[^>]*>(\d+)/)?.[1] ??
+                upBlock.match(/(?:Underpants[aæ]tning)?Beloeb[^>]*>(\d+)/)?.[1];
+              const upValuta = upBlock.match(/ValutaKode[^>]*>([^<]+)/)?.[1] ?? 'DKK';
+              const havereSamling =
+                upBlock.match(/Underpanthavere\w*>([\s\S]*?)<\/[^>]*Underpanthavere/)?.[1] ??
+                upBlock;
+              const upHavere = [
+                ...havereSamling.matchAll(/(?:LegalUnitName|PersonName|Navn)[^>]*>([^<]+)/g),
+              ]
+                .map((m) => m[1].trim())
+                .filter((n) => n.length > 1);
+              h.underpant = {
+                prioritet: upPriStr ? parseInt(upPriStr, 10) : null,
+                beloeb: upBeloebStr ? parseInt(upBeloebStr, 10) : null,
+                valuta: upValuta,
+                havere: upHavere,
+              };
+            }
+          }
+          // Fuldmagtsbestemmelser (fra dokument hvis ikke i summarisk)
+          if (h.fuldmagtsbestemmelser.length === 0) {
+            const dokFuldmagtSamling =
+              dok.match(/(?:Implicit)?FuldmagtSamling>([\s\S]*?)<\/[^>]*FuldmagtSamling/)?.[1] ??
+              '';
+            const dokFuldmagtHavere = dokFuldmagtSamling
+              ? [
+                  ...dokFuldmagtSamling.matchAll(
+                    /FuldmagtHaverInformation>([\s\S]*?)<\/[^>]*FuldmagtHaverInformation/g
+                  ),
+                ]
+              : [];
+            if (dokFuldmagtHavere.length > 0) {
+              h.fuldmagtsbestemmelser = dokFuldmagtHavere
+                .map(([, info]) => {
+                  const names = [
+                    ...info.matchAll(/(?:LegalUnitName|PersonName|Navn)[^>]*>([^<]+)/g),
+                  ];
+                  return names
+                    .map((m) => m[1].trim())
+                    .filter((n) => n.length > 1)
+                    .join(' ');
+                })
+                .filter((n) => n.length > 0);
+            } else if (dokFuldmagtSamling) {
+              h.fuldmagtsbestemmelser = [
+                ...dokFuldmagtSamling.matchAll(/(?:LegalUnitName|PersonName|Navn)[^>]*>([^<]+)/g),
+              ]
+                .map((m) => m[1].trim())
+                .filter((n) => n.length > 1);
+            }
+          }
+        }
+      } catch {
+        /* ignore — detaljer er valgfrie */
+      }
     }
 
     // ── Parse servitutter ──
@@ -384,8 +722,11 @@ export async function GET(req: NextRequest) {
       ]
         .map((m) => (m[1] || m[2] || m[3]).trim())
         .filter((k) => k.length > 1);
-      // Tillægstekst
-      const tillaegsTekst = entry.match(/Afsnit[^>]*>([^<]{3,})/)?.[1]?.trim() ?? null;
+      // Tillægstekst — saml alle Afsnit-elementer (kan være flere linjer)
+      const tillaegsTekstAfsnit = [...entry.matchAll(/Afsnit[^>]*>([^<]{3,})/g)]
+        .map((m) => m[1].trim())
+        .filter((v) => v.length > 0);
+      const tillaegsTekst = tillaegsTekstAfsnit.length > 0 ? tillaegsTekstAfsnit.join('\n') : null;
       // Påtaleberettiget
       const paataleberettiget =
         entry.match(/PaataleberettigetSamling[\s\S]*?LegalUnitName[^>]*>([^<]+)/)?.[1] ?? null;
@@ -430,6 +771,31 @@ export async function GET(req: NextRequest) {
         bilagRefs: allBilag,
         ogsaaLystPaa,
       });
+    }
+
+    // ── Berig servitutter med tillægstekst fra dokument-detaljer ──
+    for (const s of servitutter) {
+      if (!s.dokumentId) continue;
+      // Kun berig hvis tillægstekst mangler eller er kort (summarisk giver ofte kun ét afsnit)
+      try {
+        const dokRes = await tlFetch(`/dokaktuel/uuid/${s.dokumentId}`);
+        if (dokRes.status === 200) {
+          const dok = dokRes.body;
+          // Saml alle Afsnit-elementer fra dokumentet
+          const dokAfsnit = [...dok.matchAll(/Afsnit[^>]*>([^<]{3,})/g)]
+            .map((m) => m[1].trim())
+            .filter((v) => v.length > 0 && !v.match(/^[0-9a-f-]{36}$/));
+          if (dokAfsnit.length > 0) {
+            const dokTekst = dokAfsnit.join('\n');
+            // Brug dokumentets tekst hvis den er længere end summarisk-versionen
+            if (!s.tillaegsTekst || dokTekst.length > s.tillaegsTekst.length) {
+              s.tillaegsTekst = dokTekst;
+            }
+          }
+        }
+      } catch {
+        /* ignore — detaljer er valgfrie */
+      }
     }
 
     // ── Parse tingbogsattest stamoplysninger ──

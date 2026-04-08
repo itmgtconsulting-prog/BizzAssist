@@ -14,7 +14,7 @@
  * @returns Modal component or null if already completed
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Building2,
   Search,
@@ -82,11 +82,13 @@ const STEPS: OnboardingStep[] = [
 /** Total step count including the beta disclaimer step */
 const TOTAL_STEPS = STEPS.length + 1;
 
+/** Onboarding modal component — no props, reads language from context. */
 export default function OnboardingModal() {
   const { lang } = useLanguage();
   const da = lang === 'da';
   const [show, setShow] = useState(false);
   const [step, setStep] = useState(0);
+  const modalRef = useRef<HTMLDivElement>(null);
 
   /**
    * Check if onboarding has been completed.
@@ -158,6 +160,38 @@ export default function OnboardingModal() {
     }
   };
 
+  /**
+   * Focus trap: keeps keyboard focus inside the modal while it is open.
+   * Focuses the first focusable element on mount.
+   */
+  useEffect(() => {
+    if (!show) return;
+    const modal = modalRef.current;
+    if (!modal) return;
+    const focusable = modal.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const trap = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab') return;
+      if (e.shiftKey) {
+        if (document.activeElement === first) {
+          e.preventDefault();
+          last?.focus();
+        }
+      } else {
+        if (document.activeElement === last) {
+          e.preventDefault();
+          first?.focus();
+        }
+      }
+    };
+    document.addEventListener('keydown', trap);
+    first?.focus();
+    return () => document.removeEventListener('keydown', trap);
+  }, [show]);
+
   if (!show) return null;
 
   const isLast = step === TOTAL_STEPS - 1;
@@ -172,17 +206,31 @@ export default function OnboardingModal() {
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={complete} />
 
       {/* Modal */}
-      <div className="relative bg-[#1e293b] border border-white/10 rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
+      <div
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="onboarding-modal-title"
+        className="relative bg-[#1e293b] border border-white/10 rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden"
+      >
         {/* Close button */}
         <button
           onClick={complete}
+          aria-label="Luk"
           className="absolute top-4 right-4 text-slate-500 hover:text-white transition-colors z-10"
         >
           <X size={18} />
         </button>
 
         {/* Step indicators */}
-        <div className="flex items-center gap-2 px-6 pt-6">
+        <div
+          className="flex items-center gap-2 px-6 pt-6"
+          aria-label={`${da ? 'Trin' : 'Step'} ${step + 1} ${da ? 'af' : 'of'} ${TOTAL_STEPS}`}
+          role="progressbar"
+          aria-valuenow={step + 1}
+          aria-valuemin={1}
+          aria-valuemax={TOTAL_STEPS}
+        >
           {Array.from({ length: TOTAL_STEPS }).map((_, i) => (
             <div
               key={i}
@@ -201,7 +249,12 @@ export default function OnboardingModal() {
                 <FlaskConical size={22} className="text-amber-400" />
               </div>
               <div>
-                <h2 className="text-lg font-bold text-white leading-tight">BizzAssist Beta</h2>
+                <h2
+                  id="onboarding-modal-title"
+                  className="text-lg font-bold text-white leading-tight"
+                >
+                  BizzAssist Beta
+                </h2>
                 <span className="text-xs font-medium text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full">
                   {da ? 'Beta-version' : 'Beta version'}
                 </span>
@@ -266,7 +319,7 @@ export default function OnboardingModal() {
               <Icon size={26} className={current!.iconColor} />
             </div>
 
-            <h2 className="text-xl font-bold text-white mb-3">
+            <h2 id="onboarding-modal-title" className="text-xl font-bold text-white mb-3">
               {da ? current!.titleDa : current!.titleEn}
             </h2>
 

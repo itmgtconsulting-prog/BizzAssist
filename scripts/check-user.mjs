@@ -21,7 +21,13 @@ const env = Object.fromEntries(
     .filter((l) => l.includes('=') && !l.startsWith('#'))
     .map((l) => {
       const idx = l.indexOf('=');
-      return [l.slice(0, idx).trim(), l.slice(idx + 1).trim().replace(/^["']|["']$/g, '')];
+      return [
+        l.slice(0, idx).trim(),
+        l
+          .slice(idx + 1)
+          .trim()
+          .replace(/^["']|["']$/g, ''),
+      ];
     })
 );
 

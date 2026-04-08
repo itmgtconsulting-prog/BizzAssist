@@ -12,17 +12,12 @@
  * @module app/lib/dfProxy
  */
 
-/** Proxy base URL — e.g. https://df-proxy.bizzassist.dk */
-const DF_PROXY_URL = process.env.DF_PROXY_URL ?? '';
-
-/** Shared secret for proxy authentication */
-const DF_PROXY_SECRET = process.env.DF_PROXY_SECRET ?? '';
-
 /**
  * Returns true if the Datafordeler proxy is configured.
+ * Reads process.env at call time to avoid Turbopack build-time inlining of module constants.
  */
 export function isProxyEnabled(): boolean {
-  return DF_PROXY_URL.length > 0;
+  return (process.env.DF_PROXY_URL ?? '').length > 0;
 }
 
 /**
@@ -37,6 +32,7 @@ export function isProxyEnabled(): boolean {
  * // → 'https://df-proxy.bizzassist.dk/proxy/graphql.datafordeler.dk/BBR/v2?apiKey=xxx'
  */
 export function proxyUrl(url: string): string {
+  const DF_PROXY_URL = process.env.DF_PROXY_URL ?? '';
   if (!DF_PROXY_URL) return url;
   return url.replace('https://', `${DF_PROXY_URL}/proxy/`);
 }
@@ -48,6 +44,8 @@ export function proxyUrl(url: string): string {
  * @returns Record of headers to merge into fetch calls
  */
 export function proxyHeaders(): Record<string, string> {
+  const DF_PROXY_URL = process.env.DF_PROXY_URL ?? '';
+  const DF_PROXY_SECRET = process.env.DF_PROXY_SECRET ?? '';
   if (!DF_PROXY_URL || !DF_PROXY_SECRET) return {};
   return { 'X-Proxy-Secret': DF_PROXY_SECRET };
 }
@@ -59,5 +57,5 @@ export function proxyHeaders(): Record<string, string> {
  * @returns Timeout in milliseconds
  */
 export function proxyTimeout(): number {
-  return DF_PROXY_URL ? 15000 : 8000;
+  return (process.env.DF_PROXY_URL ?? '') ? 15000 : 8000;
 }

@@ -13,7 +13,7 @@
  *   NEXT_PUBLIC_MAPBOX_TOKEN  — fra mapbox.com (pk.ey...)
  */
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, memo } from 'react';
 import Link from 'next/link';
 import Map, {
   Marker,
@@ -39,7 +39,6 @@ import {
   Layers,
   X,
 } from 'lucide-react';
-import 'mapbox-gl/dist/mapbox-gl.css';
 
 /**
  * Mapbox basekort-styles.
@@ -121,6 +120,13 @@ const EMPTY_GEOJSON: GeoJSONSourceSpecification['data'] = {
   features: [],
 };
 
+/**
+ * Stabil CSS-style til react-map-gl Map-komponenten.
+ * Defineret som modul-konstant så objektreferancen er stabil på tværs af
+ * re-renders — undgår at react-map-gl diff'er et nyt objekt hvert render.
+ */
+const MAP_STYLE: React.CSSProperties = { width: '100%', height: '100%' };
+
 /** Et enkelt BBR-bygningspunkt til kortvisning */
 export interface BBRBygningPunkt {
   id: string;
@@ -145,8 +151,32 @@ const DEFAULT_ZOOM = 17;
 
 // ─── Overlay-lag ──────────────────────────────────────────────────────────────
 
-/** Nøgler for PropertyMap's toggle-bare overlay-lag */
-type OverlayNøgle = 'matrikel' | 'lokalplaner' | 'zonekort' | 'kommuneplan' | 'jordforurening';
+/** Nøgler for PropertyMap's toggle-bare overlay-lag — spejler LagNøgle i kort/page.tsx */
+type OverlayNøgle =
+  | 'matrikel'
+  | 'lokalplaner'
+  | 'kommuneplan'
+  | 'zonekort'
+  | 'byggefelt'
+  | 'kloakopland'
+  | 'detailhandel'
+  | 'bev_landskaber'
+  | 'kulturhistorie'
+  | 'natura2000'
+  | 'skovbyggelinje'
+  | 'fredninger'
+  | 'natur_reservat'
+  | 'ramsar'
+  | 'jordforurening'
+  | 'aabeskyttelse'
+  | 'soebeskyttelse'
+  | 'kirkeomgivelser'
+  | 'jorddiger'
+  | 'bev_vandloeb'
+  | 'bnbo'
+  | 'raastof'
+  | 'indsatsplaner'
+  | 'omr_klassificering';
 
 /**
  * Bygger en WMS tile-URL via server-side proxy (/api/wms).
@@ -166,45 +196,211 @@ function buildWmsUrl(service: 'plandata' | 'miljo', layers: string): string {
   );
 }
 
-/** WMS overlay-lag tilgængelige i PropertyMap's lag-panel */
-const OVERLAY_WMS = [
+/**
+ * WMS overlay-lag tilgængelige i PropertyMap's lag-panel.
+ * Spejler WMS_LAG i kort/page.tsx — begge bruger /api/wms proxy.
+ */
+const OVERLAY_WMS: Array<{
+  id: OverlayNøgle;
+  navn: string;
+  url: string;
+  opacity: number;
+  farveClass: string;
+}> = [
+  // ── Planer & Regulering (Plandata) ──
   {
-    id: 'lokalplaner' as OverlayNøgle,
+    id: 'lokalplaner',
     navn: 'Lokalplaner',
     url: buildWmsUrl('plandata', 'pdk:theme_pdk_lokalplan_vedtaget'),
     opacity: 0.8,
-    farveClass: 'bg-violet-600 border-violet-600',
+    farveClass: 'bg-amber-500 border-amber-500',
   },
   {
-    id: 'zonekort' as OverlayNøgle,
-    navn: 'Zonekort',
-    url: buildWmsUrl('plandata', 'pdk:theme_pdk_zonekort_samlet_v'),
-    opacity: 0.7,
+    id: 'kommuneplan',
+    navn: 'Kommuneplanrammer',
+    url: buildWmsUrl('plandata', 'pdk:theme_pdk_kommuneplanramme_vedtaget_v'),
+    opacity: 0.8,
     farveClass: 'bg-amber-600 border-amber-600',
   },
   {
-    id: 'kommuneplan' as OverlayNøgle,
-    navn: 'Kommuneplan',
-    url: buildWmsUrl('plandata', 'pdk:theme_pdk_kommuneplanramme_vedtaget_v'),
-    opacity: 0.8,
+    id: 'zonekort',
+    navn: 'Zonekort',
+    url: buildWmsUrl('plandata', 'pdk:theme_pdk_zonekort_samlet_v'),
+    opacity: 0.7,
+    farveClass: 'bg-amber-700 border-amber-700',
+  },
+  {
+    id: 'byggefelt',
+    navn: 'Byggefelt',
+    url: buildWmsUrl('plandata', 'pdk:theme_pdk_byggefelt_vedtaget'),
+    opacity: 0.75,
+    farveClass: 'bg-yellow-600 border-yellow-600',
+  },
+  {
+    id: 'kloakopland',
+    navn: 'Kloakopland',
+    url: buildWmsUrl('plandata', 'pdk:theme_pdk_kloakopland_vedtaget_v'),
+    opacity: 0.65,
+    farveClass: 'bg-yellow-700 border-yellow-700',
+  },
+  {
+    id: 'detailhandel',
+    navn: 'Detailhandel',
+    url: buildWmsUrl('plandata', 'pdk:theme_pdk_detailhandel_vedtaget'),
+    opacity: 0.7,
+    farveClass: 'bg-yellow-500 border-yellow-500',
+  },
+  // ── Bevaringsværdi (Plandata) ──
+  {
+    id: 'bev_landskaber',
+    navn: 'Bevaringsværdige landskaber',
+    url: buildWmsUrl('plandata', 'pdk:theme_pdk_bevaringsvaerdigelandskaber_vedtaget'),
+    opacity: 0.7,
+    farveClass: 'bg-orange-600 border-orange-600',
+  },
+  {
+    id: 'kulturhistorie',
+    navn: 'Kulturhistorisk bevaringsværdi',
+    url: buildWmsUrl('plandata', 'pdk:theme_pdk_kulturhistoriskbevaringsvaerdi_vedtaget'),
+    opacity: 0.7,
+    farveClass: 'bg-orange-500 border-orange-500',
+  },
+  // ── Natur & Miljø (Miljøportal) ──
+  {
+    id: 'natura2000',
+    navn: 'Natura 2000 & §3 natur',
+    url: buildWmsUrl('miljo', 'dai:bes_naturtyper,dai:habitat_omr,dai:fugle_bes_omr'),
+    opacity: 0.7,
     farveClass: 'bg-emerald-600 border-emerald-600',
   },
   {
-    id: 'jordforurening' as OverlayNøgle,
+    id: 'skovbyggelinje',
+    navn: 'Skovbyggelinje',
+    url: buildWmsUrl('miljo', 'dai:skovbyggelinjer'),
+    opacity: 0.85,
+    farveClass: 'bg-emerald-700 border-emerald-700',
+  },
+  {
+    id: 'fredninger',
+    navn: 'Fredede arealer',
+    url: buildWmsUrl('miljo', 'dai:fredede_omr'),
+    opacity: 0.7,
+    farveClass: 'bg-green-600 border-green-600',
+  },
+  {
+    id: 'natur_reservat',
+    navn: 'Natur- og vildtreservat',
+    url: buildWmsUrl('miljo', 'dai:natur_vildt_reservat'),
+    opacity: 0.7,
+    farveClass: 'bg-green-700 border-green-700',
+  },
+  {
+    id: 'ramsar',
+    navn: 'Ramsar-områder',
+    url: buildWmsUrl('miljo', 'dai:ramsar_omr'),
+    opacity: 0.7,
+    farveClass: 'bg-teal-600 border-teal-600',
+  },
+  {
+    id: 'jordforurening',
     navn: 'Jordforurening',
     url: buildWmsUrl('miljo', 'dai:Jordforurening'),
     opacity: 0.7,
     farveClass: 'bg-rose-600 border-rose-600',
   },
-] as const;
+  // ── Beskyttelseslinjer (Miljøportal) ──
+  {
+    id: 'aabeskyttelse',
+    navn: 'Åbeskyttelseslinje',
+    url: buildWmsUrl('miljo', 'dai:aa_bes_linjer'),
+    opacity: 0.85,
+    farveClass: 'bg-violet-600 border-violet-600',
+  },
+  {
+    id: 'soebeskyttelse',
+    navn: 'Søbeskyttelseslinje',
+    url: buildWmsUrl('miljo', 'dai:soe_bes_linjer'),
+    opacity: 0.85,
+    farveClass: 'bg-violet-700 border-violet-700',
+  },
+  {
+    id: 'kirkeomgivelser',
+    navn: 'Kirkeomgivelser',
+    url: buildWmsUrl('miljo', 'dai:kirkebyggelinjer'),
+    opacity: 0.8,
+    farveClass: 'bg-purple-600 border-purple-600',
+  },
+  {
+    id: 'jorddiger',
+    navn: 'Sten- og jorddiger',
+    url: buildWmsUrl('miljo', 'dai:bes_sten_jorddiger_2022'),
+    opacity: 0.85,
+    farveClass: 'bg-purple-700 border-purple-700',
+  },
+  {
+    id: 'bev_vandloeb',
+    navn: 'Beskyttede vandløb',
+    url: buildWmsUrl('miljo', 'dai:bes_vandloeb'),
+    opacity: 0.8,
+    farveClass: 'bg-indigo-600 border-indigo-600',
+  },
+  // ── Grundvand & Ressourcer (Miljøportal) ──
+  {
+    id: 'bnbo',
+    navn: 'BNBO — boringsnær beskyttelse',
+    url: buildWmsUrl('miljo', 'dai:status_bnbo'),
+    opacity: 0.7,
+    farveClass: 'bg-rose-700 border-rose-700',
+  },
+  {
+    id: 'raastof',
+    navn: 'Råstofområder',
+    url: buildWmsUrl('miljo', 'dai:raastofomr'),
+    opacity: 0.65,
+    farveClass: 'bg-red-600 border-red-600',
+  },
+  {
+    id: 'indsatsplaner',
+    navn: 'Indsatsplaner',
+    url: buildWmsUrl('miljo', 'dai:indsatsplaner'),
+    opacity: 0.65,
+    farveClass: 'bg-red-700 border-red-700',
+  },
+  {
+    id: 'omr_klassificering',
+    navn: 'Områdeklassificering',
+    url: buildWmsUrl('miljo', 'dai:omr_klassificering'),
+    opacity: 0.6,
+    farveClass: 'bg-pink-600 border-pink-600',
+  },
+];
 
-/** Standard synlighedstilstand — matrikel til, WMS fra */
+/** Standard synlighedstilstand — matrikel til, alle WMS-lag fra */
 const OVERLAY_START: Record<OverlayNøgle, boolean> = {
   matrikel: true,
   lokalplaner: false,
-  zonekort: false,
   kommuneplan: false,
+  zonekort: false,
+  byggefelt: false,
+  kloakopland: false,
+  detailhandel: false,
+  bev_landskaber: false,
+  kulturhistorie: false,
+  natura2000: false,
+  skovbyggelinje: false,
+  fredninger: false,
+  natur_reservat: false,
+  ramsar: false,
   jordforurening: false,
+  aabeskyttelse: false,
+  soebeskyttelse: false,
+  kirkeomgivelser: false,
+  jorddiger: false,
+  bev_vandloeb: false,
+  bnbo: false,
+  raastof: false,
+  indsatsplaner: false,
+  omr_klassificering: false,
 };
 
 /** Læs gemt zoom fra localStorage — fallback til DEFAULT_ZOOM */
@@ -246,11 +442,51 @@ interface PropertyMapProps {
   erEjerlejlighed?: boolean;
 }
 
-/** In-memory cache — gemmer { all, selected } per koordinat */
-const matrikelCache: Record<
-  string,
-  { all: GeoJSONSourceSpecification['data']; selected: GeoJSONSourceSpecification['data'] }
-> = {};
+/** Value shape stored per cache key in matrikelCache. */
+type MatrikelCacheEntry = {
+  all: GeoJSONSourceSpecification['data'];
+  selected: GeoJSONSourceSpecification['data'];
+};
+
+// globalThis.Map avoids collision with the Mapbox `Map` component imported above
+const NativeMap = globalThis.Map;
+
+/**
+ * Simple LRU cache with bounded size to prevent unbounded memory growth.
+ * Uses a native Map to maintain insertion order for O(1) LRU eviction.
+ * NativeMap alias is required because `Map` in this file refers to the Mapbox component.
+ */
+class LRUCache {
+  private readonly max: number;
+  private readonly store: InstanceType<typeof NativeMap>;
+  constructor(max: number) {
+    this.max = max;
+    this.store = new NativeMap();
+  }
+  /** Return cached value and promote it to MRU position, or undefined if not present. */
+  get(key: string): MatrikelCacheEntry | undefined {
+    if (!this.store.has(key)) return undefined;
+    const val = this.store.get(key) as MatrikelCacheEntry;
+    this.store.delete(key);
+    this.store.set(key, val);
+    return val;
+  }
+  /** Insert or update a value, evicting the LRU entry when at capacity. */
+  set(key: string, val: MatrikelCacheEntry): void {
+    if (this.store.has(key)) this.store.delete(key);
+    else if (this.store.size >= this.max) {
+      this.store.delete(this.store.keys().next().value as string);
+    }
+    this.store.set(key, val);
+  }
+  /** Check presence without changing LRU order. */
+  has(key: string): boolean {
+    return this.store.has(key);
+  }
+}
+
+/** In-memory LRU cache — gemmer { all, selected } per koordinat, maks 150 poster */
+const matrikelCache = new LRUCache(150);
 
 /**
  * Ray-casting point-in-polygon test.
@@ -327,7 +563,7 @@ async function hentMatrikelGeojson(
   selected: GeoJSONSourceSpecification['data'];
 } | null> {
   const cacheKey = `${lng.toFixed(5)},${lat.toFixed(5)}`;
-  if (cacheKey in matrikelCache) return matrikelCache[cacheKey];
+  if (matrikelCache.has(cacheKey)) return matrikelCache.get(cacheKey)!;
 
   try {
     const delta = 0.001;
@@ -345,7 +581,7 @@ async function hentMatrikelGeojson(
     const all = fc as GeoJSONSourceSpecification['data'];
     const selected = filtrerTilEjendom(fc, lng, lat);
     const result = { all, selected };
-    matrikelCache[cacheKey] = result;
+    matrikelCache.set(cacheKey, result);
     return result;
   } catch {
     return null;
@@ -353,17 +589,28 @@ async function hentMatrikelGeojson(
 }
 
 /**
- * Interaktiv Mapbox-kort til ejendomssider.
+ * PropertyMap — Mapbox-baseret interaktivt ejendomskort.
  *
  * Viser ejendomsmarkør, luftfoto/gade toggle og officielle matrikelgrænser
  * fra DAWA (Dataforsyningen) — uden API-nøgle.
+ *
+ * Wrapped in React.memo (via `memo` from 'react') to prevent re-renders when
+ * the parent component's state changes but map props remain the same — for
+ * example when the user switches tabs on the property detail page. Callers
+ * MUST pass stable prop references: use `useMemo` for array/object props such
+ * as `bygningPunkter`, and `useCallback` for function props such as
+ * `onAdresseValgt`, so the memo bail-out actually takes effect.
  *
  * @param lat - Breddegrad
  * @param lng - Længdegrad
  * @param adresse - Adresse til markør-label
  * @param visMatrikel - Skal matrikellag vises (default: true)
+ * @param onAdresseValgt - Callback med DAWA UUID når bruger klikker på markør
+ * @param bygningPunkter - BBR-bygningspunkter — skal overføres med stabil reference (useMemo)
+ * @param fullMapHref - Href til "Åbn på fuldt kort"-knap inde i kortet
+ * @param erEjerlejlighed - True hvis ejendommen er en ejerlejlighed
  */
-export default function PropertyMap({
+function PropertyMap({
   lat,
   lng,
   adresse,
@@ -628,14 +875,23 @@ export default function PropertyMap({
     synkWmsLagSynlighed();
   }, [visOverlay, synkWmsLagSynlighed]);
 
-  /** Lukker lag-panelet ved klik udenfor */
+  /**
+   * Lukker lag-panelet ved klik eller touch udenfor.
+   * Lytter på både mousedown (desktop) og touchstart (mobil) for at
+   * sikre korrekt opførsel på touch-enheder (iOS Safari, Android Chrome).
+   */
   useEffect(() => {
-    const h = (e: MouseEvent) => {
-      if (lagPanel && lagPanelRef.current && !lagPanelRef.current.contains(e.target as Node))
+    const h = (e: Event) => {
+      const target = (e as MouseEvent).target as Node | null;
+      if (lagPanel && lagPanelRef.current && !lagPanelRef.current.contains(target))
         setLagPanel(false);
     };
     document.addEventListener('mousedown', h);
-    return () => document.removeEventListener('mousedown', h);
+    document.addEventListener('touchstart', h, { passive: true });
+    return () => {
+      document.removeEventListener('mousedown', h);
+      document.removeEventListener('touchstart', h);
+    };
   }, [lagPanel]);
 
   /**
@@ -825,6 +1081,16 @@ export default function PropertyMap({
     sætHusnumreSynlighed(visHusnumre);
   }, [visHusnumre, sætHusnumreSynlighed]);
 
+  /**
+   * Stabil zoom-end handler — gemmer brugerzoom i localStorage + intern ref.
+   * Stable reference prevents react-map-gl from considering the Map prop changed
+   * on every parent render, which would force mapbox-gl to re-evaluate events.
+   */
+  const handleZoomEnd = useCallback((e: { viewState: { zoom: number } }) => {
+    zoomRef.current = e.viewState.zoom;
+    window.localStorage.setItem(ZOOM_STORAGE_KEY, String(e.viewState.zoom));
+  }, []);
+
   /** Vis fallback UI hvis Mapbox-token mangler */
   if (!harToken) {
     return (
@@ -851,7 +1117,7 @@ export default function PropertyMap({
         ref={mapRef}
         mapboxAccessToken={mapboxToken}
         initialViewState={{ longitude: lng, latitude: lat, zoom: DEFAULT_ZOOM }}
-        style={{ width: '100%', height: '100%' }}
+        style={MAP_STYLE}
         mapStyle={STYLES[mapStyle]}
         attributionControl={false}
         onLoad={handleMapLoad}
@@ -859,10 +1125,7 @@ export default function PropertyMap({
         onMouseMove={onAdresseValgt ? handleMouseMove : undefined}
         onMouseLeave={onAdresseValgt ? handleMouseLeave : undefined}
         cursor={onAdresseValgt ? (søgerAdresse ? 'wait' : 'crosshair') : 'grab'}
-        onZoomEnd={(e) => {
-          zoomRef.current = e.viewState.zoom;
-          window.localStorage.setItem(ZOOM_STORAGE_KEY, String(e.viewState.zoom));
-        }}
+        onZoomEnd={handleZoomEnd}
       >
         <NavigationControl position="bottom-right" showCompass={false} />
 
@@ -971,347 +1234,366 @@ export default function PropertyMap({
         })}
       </Map>
 
-      {/* Luftfoto / Gade / BBR toggle — BBR yderst til venstre, Luftfoto yderst til højre */}
-      {/* z-30 sikrer at knapperne er over alle overlejringer i forælderkomponenten (z-20) */}
-      <div className="absolute top-3 left-3 flex gap-1.5 z-30">
-        {bygningPunkter && bygningPunkter.length > 0 && (
+      {/* Kortknapper øverst — venstre + højre i fælles row, kan aldrig overlappe */}
+      <div className="absolute top-3 left-3 right-3 z-30 flex items-start justify-between gap-2">
+        {/* Venstre gruppe: BBR / Gade / Luftfoto */}
+        <div className="flex flex-wrap gap-1.5">
+          {bygningPunkter && bygningPunkter.length > 0 && (
+            <button
+              onClick={() => {
+                setMapStyle('bbr');
+                setAktivBygning(null);
+              }}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-all ${
+                mapStyle === 'bbr'
+                  ? 'bg-emerald-600 text-white'
+                  : 'bg-slate-900/90 text-slate-300 hover:bg-slate-800 border border-slate-700'
+              }`}
+            >
+              <Building2 size={12} />
+              BBR
+              <span
+                className={`ml-0.5 rounded-full px-1 py-0 text-[10px] font-bold ${mapStyle === 'bbr' ? 'bg-emerald-500 text-white' : 'bg-slate-700 text-slate-300'}`}
+              >
+                {bygningPunkter.length}
+              </span>
+            </button>
+          )}
           <button
-            onClick={() => {
-              setMapStyle('bbr');
-              setAktivBygning(null);
-            }}
+            onClick={() => setMapStyle('dark')}
             className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-all ${
-              mapStyle === 'bbr'
-                ? 'bg-emerald-600 text-white'
+              mapStyle === 'dark'
+                ? 'bg-blue-600 text-white'
                 : 'bg-slate-900/90 text-slate-300 hover:bg-slate-800 border border-slate-700'
             }`}
           >
-            <Building2 size={12} />
-            BBR
-            <span
-              className={`ml-0.5 rounded-full px-1 py-0 text-[10px] font-bold ${mapStyle === 'bbr' ? 'bg-emerald-500 text-white' : 'bg-slate-700 text-slate-300'}`}
-            >
-              {bygningPunkter.length}
-            </span>
+            <MapIcon size={12} />
+            Gade
           </button>
-        )}
-        <button
-          onClick={() => setMapStyle('dark')}
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-all ${
-            mapStyle === 'dark'
-              ? 'bg-blue-600 text-white'
-              : 'bg-slate-900/90 text-slate-300 hover:bg-slate-800 border border-slate-700'
-          }`}
-        >
-          <MapIcon size={12} />
-          Gade
-        </button>
-        <button
-          onClick={() => setMapStyle('satellite')}
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-all ${
-            mapStyle === 'satellite'
-              ? 'bg-blue-600 text-white'
-              : 'bg-slate-900/90 text-slate-300 hover:bg-slate-800 border border-slate-700'
-          }`}
-        >
-          <Satellite size={12} />
-          Luftfoto
-        </button>
-      </div>
-
-      {/* Øverst til højre: Lag-knap + "Fuldt kort"-link (hvis angivet) + fullscreen toggle */}
-      {/* z-30 matcher lag-knapperne — ingen konflikt med forælderkomponentens z-indeks */}
-      <div ref={lagPanelRef} className="absolute top-3 right-3 z-30 flex items-center gap-1.5">
-        {/* Lag-knap */}
-        <button
-          onClick={() => setLagPanel((p) => !p)}
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-all ${
-            lagPanel || Object.entries(visOverlay).some(([k, v]) => k !== 'matrikel' && v)
-              ? 'bg-blue-600 text-white'
-              : 'bg-slate-900/90 text-slate-300 hover:bg-slate-800 border border-slate-700'
-          }`}
-          title="Kortlag"
-        >
-          <Layers size={12} />
-          Lag
-        </button>
-
-        {/* Lag-panel dropdown */}
-        {lagPanel && (
-          <div className="absolute top-9 right-0 w-52 max-w-[calc(100vw-1.5rem)] bg-slate-900/98 border border-white/10 rounded-xl shadow-2xl backdrop-blur-sm overflow-hidden">
-            {/* Header */}
-            <div className="flex items-center justify-between px-3 py-2 border-b border-white/5">
-              <span className="text-white text-xs font-semibold">Kortlag</span>
-              <button
-                onClick={() => setLagPanel(false)}
-                className="text-slate-500 hover:text-slate-300 transition-colors p-0.5 rounded hover:bg-white/5"
-              >
-                <X size={12} />
-              </button>
-            </div>
-            <div className="px-2 py-1.5 max-h-[60vh] overflow-y-auto touch-pan-y overscroll-contain">
-              {/* BBR Bygninger */}
-              <p className="text-[9px] font-bold uppercase tracking-widest px-1 pt-1.5 pb-1 text-emerald-400">
-                Bygninger
-              </p>
-              <button
-                onClick={() => {
-                  if (mapStyle === 'bbr') {
-                    setMapStyle('satellite');
-                    setAktivBygning(null);
-                  } else {
-                    setMapStyle('bbr');
-                    setAktivBygning(null);
-                  }
-                }}
-                disabled={!bygningPunkter || bygningPunkter.length === 0}
-                className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-px transition-colors text-left ${
-                  mapStyle === 'bbr' ? 'bg-white/5' : 'hover:bg-white/[0.03]'
-                } disabled:opacity-40 disabled:cursor-not-allowed`}
-              >
-                <div
-                  className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center shrink-0 border transition-colors ${
-                    mapStyle === 'bbr' ? 'bg-emerald-600 border-emerald-600' : 'border-white/20'
-                  }`}
-                >
-                  {mapStyle === 'bbr' && (
-                    <svg width="8" height="6" viewBox="0 0 10 8" fill="none">
-                      <path
-                        d="M1 4L3.5 6.5L9 1"
-                        stroke="white"
-                        strokeWidth="1.8"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  )}
-                </div>
-                <p
-                  className={`text-xs leading-tight truncate ${mapStyle === 'bbr' ? 'text-white' : 'text-slate-400'}`}
-                >
-                  BBR Bygninger
-                  {(!bygningPunkter || bygningPunkter.length === 0) && (
-                    <span className="ml-1 text-[10px] text-slate-600">— ingen data</span>
-                  )}
-                </p>
-                {bygningPunkter && bygningPunkter.length > 0 && (
-                  <span className="ml-auto text-[10px] bg-slate-700 text-slate-300 rounded-full px-1.5 py-0.5 font-bold shrink-0">
-                    {bygningPunkter.length}
-                  </span>
-                )}
-              </button>
-
-              {/* Ejendomstype-badges — EL / AB / AL */}
-              <button
-                onClick={() => setVisEjendomsBadges((p) => !p)}
-                disabled={(!bygningPunkter || bygningPunkter.length === 0) && !erEjerlejlighed}
-                className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-px transition-colors text-left ${
-                  visEjendomsBadges ? 'bg-white/5' : 'hover:bg-white/[0.03]'
-                } disabled:opacity-40 disabled:cursor-not-allowed`}
-              >
-                <div
-                  className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center shrink-0 border transition-colors ${
-                    visEjendomsBadges ? 'bg-blue-600 border-blue-600' : 'border-white/20'
-                  }`}
-                >
-                  {visEjendomsBadges && (
-                    <svg width="8" height="6" viewBox="0 0 10 8" fill="none">
-                      <path
-                        d="M1 4L3.5 6.5L9 1"
-                        stroke="white"
-                        strokeWidth="1.8"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  )}
-                </div>
-                <p
-                  className={`text-xs leading-tight truncate ${visEjendomsBadges ? 'text-white' : 'text-slate-400'}`}
-                >
-                  Ejerlejlighed/Andel
-                </p>
-                {/* Forhåndsvisning af badges der vil blive vist */}
-                <div className="ml-auto flex gap-0.5 shrink-0">
-                  {erEjerlejlighed && (
-                    <span className="text-[8px] bg-blue-600/30 text-blue-400 border border-blue-500/30 rounded px-1 font-bold leading-none py-0.5">
-                      EL
-                    </span>
-                  )}
-                  {!erEjerlejlighed && bygningPunkter?.some((b) => b.ejerforholdskode === '50') && (
-                    <span className="text-[8px] bg-emerald-600/30 text-emerald-400 border border-emerald-500/30 rounded px-1 font-bold leading-none py-0.5">
-                      AB
-                    </span>
-                  )}
-                  {bygningPunkter?.some((b) => b.ejerforholdskode === '60') && (
-                    <span className="text-[8px] bg-indigo-600/30 text-indigo-400 border border-indigo-500/30 rounded px-1 font-bold leading-none py-0.5">
-                      AL
-                    </span>
-                  )}
-                </div>
-              </button>
-
-              {/* Basiskort-lag */}
-              <p className="text-[9px] font-bold uppercase tracking-widest px-1 pt-2 pb-1 text-blue-400">
-                Basiskort
-              </p>
-              {/* Husnumre toggle — vises i alle tre kortstile */}
-              <button
-                onClick={() => setVisHusnumre(!visHusnumre)}
-                className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-px transition-colors text-left ${
-                  visHusnumre ? 'bg-white/5' : 'hover:bg-white/[0.03]'
-                }`}
-              >
-                <div
-                  className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center shrink-0 border transition-colors ${
-                    visHusnumre ? 'bg-blue-600 border-blue-600' : 'border-white/20'
-                  }`}
-                >
-                  {visHusnumre && (
-                    <svg width="8" height="6" viewBox="0 0 10 8" fill="none">
-                      <path
-                        d="M1 4L3.5 6.5L9 1"
-                        stroke="white"
-                        strokeWidth="1.8"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  )}
-                </div>
-                <p
-                  className={`text-xs leading-tight truncate ${visHusnumre ? 'text-white' : 'text-slate-400'}`}
-                >
-                  Husnumre
-                </p>
-              </button>
-              {visMatrikel && (
-                <button
-                  onClick={() => setVisOverlay((prev) => ({ ...prev, matrikel: !prev.matrikel }))}
-                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-px transition-colors text-left ${
-                    visOverlay.matrikel ? 'bg-white/5' : 'hover:bg-white/[0.03]'
-                  }`}
-                >
-                  <div
-                    className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center shrink-0 border transition-colors ${
-                      visOverlay.matrikel ? 'bg-blue-600 border-blue-600' : 'border-white/20'
-                    }`}
-                  >
-                    {visOverlay.matrikel && (
-                      <svg width="8" height="6" viewBox="0 0 10 8" fill="none">
-                        <path
-                          d="M1 4L3.5 6.5L9 1"
-                          stroke="white"
-                          strokeWidth="1.8"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                    )}
-                  </div>
-                  <p
-                    className={`text-xs leading-tight truncate ${visOverlay.matrikel ? 'text-white' : 'text-slate-400'}`}
-                  >
-                    Matrikel
-                  </p>
-                </button>
-              )}
-
-              {/* WMS overlay-lag */}
-              <p className="text-[9px] font-bold uppercase tracking-widest px-1 pt-2 pb-1 text-violet-400">
-                Plandata
-              </p>
-              {OVERLAY_WMS.filter((w) =>
-                ['lokalplaner', 'zonekort', 'kommuneplan'].includes(w.id)
-              ).map((wms) => (
-                <button
-                  key={wms.id}
-                  onClick={() => setVisOverlay((prev) => ({ ...prev, [wms.id]: !prev[wms.id] }))}
-                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-px transition-colors text-left ${
-                    visOverlay[wms.id] ? 'bg-white/5' : 'hover:bg-white/[0.03]'
-                  }`}
-                >
-                  <div
-                    className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center shrink-0 border transition-colors ${
-                      visOverlay[wms.id] ? wms.farveClass : 'border-white/20'
-                    }`}
-                  >
-                    {visOverlay[wms.id] && (
-                      <svg width="8" height="6" viewBox="0 0 10 8" fill="none">
-                        <path
-                          d="M1 4L3.5 6.5L9 1"
-                          stroke="white"
-                          strokeWidth="1.8"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                    )}
-                  </div>
-                  <p
-                    className={`text-xs leading-tight truncate ${visOverlay[wms.id] ? 'text-white' : 'text-slate-400'}`}
-                  >
-                    {wms.navn}
-                  </p>
-                </button>
-              ))}
-
-              <p className="text-[9px] font-bold uppercase tracking-widest px-1 pt-2 pb-1 text-rose-400">
-                Miljø
-              </p>
-              {OVERLAY_WMS.filter((w) => w.id === 'jordforurening').map((wms) => (
-                <button
-                  key={wms.id}
-                  onClick={() => setVisOverlay((prev) => ({ ...prev, [wms.id]: !prev[wms.id] }))}
-                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-px transition-colors text-left ${
-                    visOverlay[wms.id] ? 'bg-white/5' : 'hover:bg-white/[0.03]'
-                  }`}
-                >
-                  <div
-                    className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center shrink-0 border transition-colors ${
-                      visOverlay[wms.id] ? wms.farveClass : 'border-white/20'
-                    }`}
-                  >
-                    {visOverlay[wms.id] && (
-                      <svg width="8" height="6" viewBox="0 0 10 8" fill="none">
-                        <path
-                          d="M1 4L3.5 6.5L9 1"
-                          stroke="white"
-                          strokeWidth="1.8"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                    )}
-                  </div>
-                  <p
-                    className={`text-xs leading-tight truncate ${visOverlay[wms.id] ? 'text-white' : 'text-slate-400'}`}
-                  >
-                    {wms.navn}
-                  </p>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {fullMapHref && (
-          <Link
-            href={fullMapHref}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-900/90 hover:bg-slate-800 border border-slate-700 rounded-lg text-slate-300 text-xs font-medium shadow-lg transition-all"
-            title="Åbn på fuldt kort"
+          <button
+            onClick={() => setMapStyle('satellite')}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-all ${
+              mapStyle === 'satellite'
+                ? 'bg-blue-600 text-white'
+                : 'bg-slate-900/90 text-slate-300 hover:bg-slate-800 border border-slate-700'
+            }`}
           >
-            <ExternalLink size={12} />
-            <span className="hidden sm:inline">Fuldt kort</span>
-          </Link>
-        )}
-        <button
-          onClick={() => setFullscreen((f) => !f)}
-          className="p-1.5 bg-slate-900/90 hover:bg-slate-800 border border-slate-700 rounded-lg text-slate-300 shadow-lg transition-all"
-        >
-          {fullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
-        </button>
+            <Satellite size={12} />
+            Luftfoto
+          </button>
+        </div>
+
+        {/* Højre gruppe: Lag / Fuldt kort / Fullscreen */}
+        <div ref={lagPanelRef} className="flex items-center gap-1.5 shrink-0">
+          {/* Lag-knap */}
+          <button
+            onClick={() => setLagPanel((p) => !p)}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium shadow-lg transition-all ${
+              lagPanel || Object.entries(visOverlay).some(([k, v]) => k !== 'matrikel' && v)
+                ? 'bg-blue-600 text-white'
+                : 'bg-slate-900/90 text-slate-300 hover:bg-slate-800 border border-slate-700'
+            }`}
+            title="Kortlag"
+          >
+            <Layers size={12} />
+            Lag
+          </button>
+
+          {/* Lag-panel dropdown */}
+          {lagPanel && (
+            <div className="absolute top-9 right-0 w-52 max-w-[calc(100vw-1.5rem)] bg-slate-900/98 border border-white/10 rounded-xl shadow-2xl backdrop-blur-sm overflow-hidden">
+              {/* Header */}
+              <div className="flex items-center justify-between px-3 py-2 border-b border-white/5">
+                <span className="text-white text-xs font-semibold">Kortlag</span>
+                <button
+                  onClick={() => setLagPanel(false)}
+                  className="text-slate-500 hover:text-slate-300 transition-colors p-0.5 rounded hover:bg-white/5"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+              <div className="px-2 py-1.5 max-h-[60vh] overflow-y-auto touch-pan-y overscroll-contain">
+                {/* BBR Bygninger */}
+                <p className="text-[9px] font-bold uppercase tracking-widest px-1 pt-1.5 pb-1 text-emerald-400">
+                  Bygninger
+                </p>
+                <button
+                  onClick={() => {
+                    if (mapStyle === 'bbr') {
+                      setMapStyle('satellite');
+                      setAktivBygning(null);
+                    } else {
+                      setMapStyle('bbr');
+                      setAktivBygning(null);
+                    }
+                  }}
+                  disabled={!bygningPunkter || bygningPunkter.length === 0}
+                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-px transition-colors text-left touch-manipulation ${
+                    mapStyle === 'bbr' ? 'bg-white/5' : 'hover:bg-white/[0.03]'
+                  } disabled:opacity-40 disabled:cursor-not-allowed`}
+                >
+                  <div
+                    className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center shrink-0 border transition-colors ${
+                      mapStyle === 'bbr' ? 'bg-emerald-600 border-emerald-600' : 'border-white/20'
+                    }`}
+                  >
+                    {mapStyle === 'bbr' && (
+                      <svg width="8" height="6" viewBox="0 0 10 8" fill="none">
+                        <path
+                          d="M1 4L3.5 6.5L9 1"
+                          stroke="white"
+                          strokeWidth="1.8"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    )}
+                  </div>
+                  <p
+                    className={`text-xs leading-tight truncate ${mapStyle === 'bbr' ? 'text-white' : 'text-slate-400'}`}
+                  >
+                    BBR Bygninger
+                    {(!bygningPunkter || bygningPunkter.length === 0) && (
+                      <span className="ml-1 text-[10px] text-slate-400">— ingen data</span>
+                    )}
+                  </p>
+                  {bygningPunkter && bygningPunkter.length > 0 && (
+                    <span className="ml-auto text-[10px] bg-slate-700 text-slate-300 rounded-full px-1.5 py-0.5 font-bold shrink-0">
+                      {bygningPunkter.length}
+                    </span>
+                  )}
+                </button>
+
+                {/* Ejendomstype-badges — EL / AB / AL */}
+                <button
+                  onClick={() => setVisEjendomsBadges((p) => !p)}
+                  disabled={(!bygningPunkter || bygningPunkter.length === 0) && !erEjerlejlighed}
+                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-px transition-colors text-left touch-manipulation ${
+                    visEjendomsBadges ? 'bg-white/5' : 'hover:bg-white/[0.03]'
+                  } disabled:opacity-40 disabled:cursor-not-allowed`}
+                >
+                  <div
+                    className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center shrink-0 border transition-colors ${
+                      visEjendomsBadges ? 'bg-blue-600 border-blue-600' : 'border-white/20'
+                    }`}
+                  >
+                    {visEjendomsBadges && (
+                      <svg width="8" height="6" viewBox="0 0 10 8" fill="none">
+                        <path
+                          d="M1 4L3.5 6.5L9 1"
+                          stroke="white"
+                          strokeWidth="1.8"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    )}
+                  </div>
+                  <p
+                    className={`text-xs leading-tight truncate ${visEjendomsBadges ? 'text-white' : 'text-slate-400'}`}
+                  >
+                    Ejerlejlighed/Andel
+                  </p>
+                  {/* Forhåndsvisning af badges der vil blive vist */}
+                  <div className="ml-auto flex gap-0.5 shrink-0">
+                    {erEjerlejlighed && (
+                      <span className="text-[8px] bg-blue-600/30 text-blue-400 border border-blue-500/30 rounded px-1 font-bold leading-none py-0.5">
+                        EL
+                      </span>
+                    )}
+                    {!erEjerlejlighed &&
+                      bygningPunkter?.some((b) => b.ejerforholdskode === '50') && (
+                        <span className="text-[8px] bg-emerald-600/30 text-emerald-400 border border-emerald-500/30 rounded px-1 font-bold leading-none py-0.5">
+                          AB
+                        </span>
+                      )}
+                    {bygningPunkter?.some((b) => b.ejerforholdskode === '60') && (
+                      <span className="text-[8px] bg-indigo-600/30 text-indigo-400 border border-indigo-500/30 rounded px-1 font-bold leading-none py-0.5">
+                        AL
+                      </span>
+                    )}
+                  </div>
+                </button>
+
+                {/* Basiskort-lag */}
+                <p className="text-[9px] font-bold uppercase tracking-widest px-1 pt-2 pb-1 text-blue-400">
+                  Basiskort
+                </p>
+                {/* Husnumre toggle — vises i alle tre kortstile */}
+                <button
+                  onClick={() => setVisHusnumre(!visHusnumre)}
+                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-px transition-colors text-left touch-manipulation ${
+                    visHusnumre ? 'bg-white/5' : 'hover:bg-white/[0.03]'
+                  }`}
+                >
+                  <div
+                    className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center shrink-0 border transition-colors ${
+                      visHusnumre ? 'bg-blue-600 border-blue-600' : 'border-white/20'
+                    }`}
+                  >
+                    {visHusnumre && (
+                      <svg width="8" height="6" viewBox="0 0 10 8" fill="none">
+                        <path
+                          d="M1 4L3.5 6.5L9 1"
+                          stroke="white"
+                          strokeWidth="1.8"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    )}
+                  </div>
+                  <p
+                    className={`text-xs leading-tight truncate ${visHusnumre ? 'text-white' : 'text-slate-400'}`}
+                  >
+                    Husnumre
+                  </p>
+                </button>
+                {visMatrikel && (
+                  <button
+                    onClick={() => setVisOverlay((prev) => ({ ...prev, matrikel: !prev.matrikel }))}
+                    className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-px transition-colors text-left touch-manipulation ${
+                      visOverlay.matrikel ? 'bg-white/5' : 'hover:bg-white/[0.03]'
+                    }`}
+                  >
+                    <div
+                      className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center shrink-0 border transition-colors ${
+                        visOverlay.matrikel ? 'bg-blue-600 border-blue-600' : 'border-white/20'
+                      }`}
+                    >
+                      {visOverlay.matrikel && (
+                        <svg width="8" height="6" viewBox="0 0 10 8" fill="none">
+                          <path
+                            d="M1 4L3.5 6.5L9 1"
+                            stroke="white"
+                            strokeWidth="1.8"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      )}
+                    </div>
+                    <p
+                      className={`text-xs leading-tight truncate ${visOverlay.matrikel ? 'text-white' : 'text-slate-400'}`}
+                    >
+                      Matrikel
+                    </p>
+                  </button>
+                )}
+
+                {/* WMS overlay-lag — grupperet som på hovedkortet */}
+                {[
+                  {
+                    label: 'Planer & Regulering',
+                    klasse: 'text-amber-400',
+                    ids: [
+                      'lokalplaner',
+                      'kommuneplan',
+                      'zonekort',
+                      'byggefelt',
+                      'kloakopland',
+                      'detailhandel',
+                    ],
+                  },
+                  {
+                    label: 'Bevaringsværdi',
+                    klasse: 'text-orange-400',
+                    ids: ['bev_landskaber', 'kulturhistorie'],
+                  },
+                  {
+                    label: 'Natur & Miljø',
+                    klasse: 'text-emerald-400',
+                    ids: [
+                      'natura2000',
+                      'skovbyggelinje',
+                      'fredninger',
+                      'natur_reservat',
+                      'ramsar',
+                      'jordforurening',
+                    ],
+                  },
+                  {
+                    label: 'Beskyttelseslinjer',
+                    klasse: 'text-violet-400',
+                    ids: [
+                      'aabeskyttelse',
+                      'soebeskyttelse',
+                      'kirkeomgivelser',
+                      'jorddiger',
+                      'bev_vandloeb',
+                    ],
+                  },
+                  {
+                    label: 'Grundvand & Ressourcer',
+                    klasse: 'text-rose-400',
+                    ids: ['bnbo', 'raastof', 'indsatsplaner', 'omr_klassificering'],
+                  },
+                ].map((gruppe) => (
+                  <div key={gruppe.label}>
+                    <p
+                      className={`text-[9px] font-bold uppercase tracking-widest px-1 pt-2 pb-1 ${gruppe.klasse}`}
+                    >
+                      {gruppe.label}
+                    </p>
+                    {OVERLAY_WMS.filter((w) => gruppe.ids.includes(w.id)).map((wms) => (
+                      <button
+                        key={wms.id}
+                        onClick={() =>
+                          setVisOverlay((prev) => ({ ...prev, [wms.id]: !prev[wms.id] }))
+                        }
+                        className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg mb-px transition-colors text-left touch-manipulation ${
+                          visOverlay[wms.id] ? 'bg-white/5' : 'hover:bg-white/[0.03]'
+                        }`}
+                      >
+                        <div
+                          className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center shrink-0 border transition-colors ${
+                            visOverlay[wms.id] ? wms.farveClass : 'border-white/20'
+                          }`}
+                        >
+                          {visOverlay[wms.id] && (
+                            <svg width="8" height="6" viewBox="0 0 10 8" fill="none">
+                              <path
+                                d="M1 4L3.5 6.5L9 1"
+                                stroke="white"
+                                strokeWidth="1.8"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              />
+                            </svg>
+                          )}
+                        </div>
+                        <p
+                          className={`text-xs leading-tight truncate ${visOverlay[wms.id] ? 'text-white' : 'text-slate-400'}`}
+                        >
+                          {wms.navn}
+                        </p>
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {fullMapHref && (
+            <Link
+              href={fullMapHref}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-900/90 hover:bg-slate-800 border border-slate-700 rounded-lg text-slate-300 text-xs font-medium shadow-lg transition-all"
+              title="Åbn på fuldt kort"
+            >
+              <ExternalLink size={12} />
+              <span className="hidden sm:inline">Fuldt kort</span>
+            </Link>
+          )}
+          <button
+            onClick={() => setFullscreen((f) => !f)}
+            className="p-1.5 bg-slate-900/90 hover:bg-slate-800 border border-slate-700 rounded-lg text-slate-300 shadow-lg transition-all"
+          >
+            {fullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+          </button>
+        </div>
       </div>
+      {/* /Kortknapper */}
 
       {/* Loading-overlay ved korteklik */}
       {søgerAdresse && (
@@ -1378,3 +1660,11 @@ export default function PropertyMap({
     </div>
   );
 }
+
+/**
+ * Memo-wrapped export — prevents re-renders when parent state changes but
+ * PropertyMap props are unchanged (e.g. tab switches on the property detail page).
+ * Uses shallow prop comparison via Object.is, so array/function props MUST be
+ * stabilised with useMemo / useCallback in the parent.
+ */
+export default memo(PropertyMap);

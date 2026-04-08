@@ -1,0 +1,52 @@
+name: Bundle Size
+
+# BIZZ-63: Tracks Next.js bundle size on PRs and main branch pushes.
+# Warns when any JS chunk exceeds 500 KB and uploads bundle stats as artifacts.
+# Set ANALYZE=true to generate @next/bundle-analyzer report (requires the package).
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main]
+
+jobs:
+  analyze:
+    name: Bundle size check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and analyze bundle
+        run: npm run build
+        env:
+          SKIP_ENV_VALIDATION: '1'
+          NEXT_PUBLIC_SUPABASE_URL: 'https://placeholder.supabase.co'
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: 'placeholder'
+          NEXT_PUBLIC_APP_URL: 'http://localhost:3000'
+          ANALYZE: 'true'
+
+      - name: Check bundle size limits
+        run: |
+          echo "Checking .next/static sizes..."
+          # Warn if any JS chunk exceeds 500 KB
+          find .next/static -name "*.js" -size +500k -exec echo "WARNING: Large chunk: {}" \;
+          # List top 10 largest chunks
+          find .next/static -name "*.js" | xargs ls -lS 2>/dev/null | head -10
+
+      - name: Upload bundle stats
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bundle-stats
+          path: .next/analyze/
+          retention-days: 30

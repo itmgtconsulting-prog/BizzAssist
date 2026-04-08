@@ -39,11 +39,13 @@ import {
   X,
   Navigation,
   Layers,
+  Building2,
 } from 'lucide-react';
-import 'mapbox-gl/dist/mapbox-gl.css';
+
 import { useRouter } from 'next/navigation';
 import { type DawaAutocompleteResult, type DawaAdresse } from '@/app/lib/dawa';
 import { useLanguage } from '@/app/context/LanguageContext';
+import { type VirksomhedMarkør, type CVRBboxResponse } from '@/app/api/cvr/bbox/route';
 
 // ─── Konstanter ───────────────────────────────────────────────────────────────
 
@@ -102,14 +104,18 @@ async function fetchMatrikelBbox(
   w: number,
   s: number,
   e: number,
-  n: number
+  n: number,
+  abortSignal?: AbortSignal
 ): Promise<GeoJSON.FeatureCollection> {
   try {
     // polygon-parameteren accepterer WGS84 direkte — bbox+bboxsrid=4326 virker ikke
     // Server-side proxy — undgår direkte DAWA-kald (DAWA lukker 1. juli 2026)
     const url = `/api/matrikel/bbox?w=${w}&s=${s}&e=${e}&n=${n}`;
     console.log('[matrikel] henter:', url);
-    const res = await fetch(url, { signal: AbortSignal.timeout(25000) });
+    // Kombiner ekstern AbortSignal med timeout — den der affyres først vinder
+    const timeoutSignal = AbortSignal.timeout(25000);
+    const signal = abortSignal ? AbortSignal.any([abortSignal, timeoutSignal]) : timeoutSignal;
+    const res = await fetch(url, { signal });
     if (!res.ok) {
       console.warn('[matrikel] HTTP', res.status, await res.text());
       return EMPTY_FC;
@@ -150,12 +156,15 @@ async function fetchHusnumre(
   w: number,
   s: number,
   e: number,
-  n: number
+  n: number,
+  abortSignal?: AbortSignal
 ): Promise<GeoJSON.FeatureCollection> {
   try {
     // Server-side proxy — undgår direkte DAWA-kald (DAWA lukker 1. juli 2026)
+    const timeoutSignal = AbortSignal.timeout(10000);
+    const signal = abortSignal ? AbortSignal.any([abortSignal, timeoutSignal]) : timeoutSignal;
     const res = await fetch(`/api/adresse/husnumre-bbox?w=${w}&s=${s}&e=${e}&n=${n}`, {
-      signal: AbortSignal.timeout(10000),
+      signal,
     });
     if (!res.ok) return EMPTY_FC;
     const json = (await res.json()) as GeoJSON.FeatureCollection;
@@ -192,6 +201,32 @@ async function fetchBBRType(w: number, s: number, e: number, n: number): Promise
     if (!res.ok) return [];
     const json = (await res.json()) as BBRTypePunkt[];
     return Array.isArray(json) ? json : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Henter aktive virksomheder med kendte koordinater inden for `radius` km
+ * fra et centralt punkt via /api/cvr/bbox.
+ * Returnerer tomt array ved fejl eller manglende CVR-adgang.
+ *
+ * @param lat    - Breddegrad for søgecentrum (WGS84)
+ * @param lng    - Længdegrad for søgecentrum (WGS84)
+ * @param radius - Søgeradius i kilometer
+ * @returns Array af VirksomhedMarkør
+ */
+async function fetchVirksomheder(
+  lat: number,
+  lng: number,
+  radius: number
+): Promise<VirksomhedMarkør[]> {
+  try {
+    const url = `/api/cvr/bbox?lat=${lat}&lng=${lng}&radius=${radius}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    if (!res.ok) return [];
+    const data = (await res.json()) as CVRBboxResponse;
+    return data.virksomheder ?? [];
   } catch {
     return [];
   }
@@ -236,6 +271,7 @@ type LagNøgle =
   | 'matrikel'
   | 'husnumre'
   | 'bbr_type'
+  | 'virksomheder'
   | 'lokalplaner'
   | 'kommuneplan'
   | 'zonekort'
@@ -257,7 +293,8 @@ type LagNøgle =
   | 'bnbo'
   | 'raastof'
   | 'indsatsplaner'
-  | 'omr_klassificering';
+  | 'omr_klassificering'
+  | 'jordforurening';
 
 /** Synlighedstilstand for alle lag */
 type LagSynlighed = Record<LagNøgle, boolean>;
@@ -267,6 +304,7 @@ const LAG_START: LagSynlighed = {
   matrikel: true,
   husnumre: true,
   bbr_type: true,
+  virksomheder: false,
   lokalplaner: false,
   kommuneplan: false,
   zonekort: false,
@@ -289,6 +327,7 @@ const LAG_START: LagSynlighed = {
   raastof: false,
   indsatsplaner: false,
   omr_klassificering: false,
+  jordforurening: false,
 };
 
 /** WMS-lag definition — kilde, URL og standard opacity */
@@ -395,6 +434,8 @@ const WMS_LAG: WmsLagDef[] = [
   { id: 'raastof', wmsUrl: wmsUrl('miljo', 'dai:raastofomr'), opacity: 0.65 },
   { id: 'indsatsplaner', wmsUrl: wmsUrl('miljo', 'dai:indsatsplaner'), opacity: 0.65 },
   { id: 'omr_klassificering', wmsUrl: wmsUrl('miljo', 'dai:omr_klassificering'), opacity: 0.6 },
+  // ── Jordforurening (Miljøportal) ──
+  { id: 'jordforurening', wmsUrl: wmsUrl('miljo', 'dai:Jordforurening'), opacity: 0.7 },
 ];
 
 /** Farveaccenter til gruppeoverskrifter */
@@ -418,6 +459,7 @@ const LAG_GRUPPER: Array<{
       { id: 'matrikel', navn: 'Matrikelgrænser' },
       { id: 'husnumre', navn: 'Husnumre' },
       { id: 'bbr_type', navn: 'Ejendomstype (EL/AB) zoom 15+' },
+      { id: 'virksomheder', navn: 'Virksomheder (CVR)' },
     ],
   },
   {
@@ -449,6 +491,7 @@ const LAG_GRUPPER: Array<{
       { id: 'fredninger', navn: 'Fredede arealer' },
       { id: 'natur_reservat', navn: 'Natur- og vildtreservat' },
       { id: 'ramsar', navn: 'Ramsar-områder' },
+      { id: 'jordforurening', navn: 'Jordforurening' },
     ],
   },
   {
@@ -634,6 +677,10 @@ function KortInner() {
     cadastre: da ? 'Ejerlav' : 'Cadastre',
     landArea: da ? 'Grundareal' : 'Land area',
     propertyData: da ? 'Ejendomsdata' : 'Property data',
+    companies: da ? 'Virksomheder' : 'Companies',
+    openCompany: da ? 'Åbn virksomhed' : 'Open company',
+    cvr: 'CVR',
+    industry: da ? 'Branche' : 'Industry',
   };
 
   const [kortStyle, setKortStyle] = useState<KortStyle>('dark');
@@ -647,12 +694,40 @@ function KortInner() {
    */
   const [viewport, setViewport] = useState<ViewportState | null>(null);
 
+  /**
+   * Debounce-timer til viewport-opdateringer — forhindrer hurtige successive
+   * pan/zoom-events i at trigge parallelle data-fetches.
+   * 300 ms er tilstrækkelig til at samle slut-positionen efter en pan-sekvens.
+   */
+  const viewportDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /**
+   * AbortController til igangværende matrikel/husnr-fetch.
+   * Afbrydes ved ny viewport-opdatering for at frigøre netværksressourcer.
+   */
+  const fetchAbortRef = useRef<AbortController | null>(null);
+
   // Søgefelt
   const [søgeTekst, setSøgeTekst] = useState('');
   const [forslag, setForslag] = useState<DawaAutocompleteResult[]>([]);
   const [markeret, setMarkeret] = useState(-1);
   const [søger, setSøger] = useState(false);
   const søgeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** Ryd søge-debounce timer ved unmount for at undgå setState på afmonteret komponent. */
+  useEffect(() => {
+    return () => {
+      if (søgeTimer.current) clearTimeout(søgeTimer.current);
+    };
+  }, []);
+
+  /** Ryd viewport-debounce og afbryd evt. igangværende fetch ved unmount. */
+  useEffect(() => {
+    return () => {
+      if (viewportDebounceRef.current) clearTimeout(viewportDebounceRef.current);
+      if (fetchAbortRef.current) fetchAbortRef.current.abort();
+    };
+  }, []);
 
   // Lag-data (React state — synkroniseres til Mapbox via useEffect)
   const [henterMatrikel, setHenterMatrikel] = useState(false);
@@ -678,6 +753,14 @@ function KortInner() {
   const [visLag, setVisLag] = useState<LagSynlighed>(LAG_START);
   /** BBR ejendomstype-punkter (AB/AL) — hentes ved bbr_type toggle + zoom ≥ 15 */
   const [bbrTypePunkter, setBbrTypePunkter] = useState<BBRTypePunkt[]>([]);
+
+  /** CVR virksomheds-markører — hentes når virksomheder-laget er aktivt */
+  const [virksomhedsMarkører, setVirksomhedsMarkører] = useState<VirksomhedMarkør[]>([]);
+  /** Henter-tilstand for virksomhedsmarkører — vises på toggle-knappen */
+  const [henterVirksomheder, setHenterVirksomheder] = useState(false);
+  /** Valgt virksomhed-popup */
+  const [virksomhedPopup, setVirksomhedPopup] = useState<VirksomhedMarkør | null>(null);
+
   const visLagRef = useRef<LagSynlighed>(LAG_START);
   const lagPanelRef = useRef<HTMLDivElement>(null);
 
@@ -910,19 +993,39 @@ function KortInner() {
   /**
    * Læser viewport fra kortet og gemmer i state — bruges til at trigge data-fetch.
    * Kaldes fra onMoveEnd, onZoomEnd og handleMapLoad.
+   *
+   * Debounces 300 ms for at undgå at trigge et nyt fetch for hvert trin i en
+   * pan/zoom-sekvens — kun den endelige position fører til et API-kald.
+   * Afbryder desuden evt. igangværende fetch (AbortController) straks ved ny
+   * viewport-ændring, så netværksressourcer frigøres hurtigt.
    */
   const opdaterViewport = useCallback(() => {
     const map = mapRef.current?.getMap();
     if (!map) return;
     const b = map.getBounds();
     if (!b) return;
-    setViewport({
-      zoom: map.getZoom(),
-      w: b.getWest(),
-      s: b.getSouth(),
-      e: b.getEast(),
-      n: b.getNorth(),
-    });
+
+    // Afbryd igangværende fetch straks — ny position er undervejs
+    if (fetchAbortRef.current) {
+      fetchAbortRef.current.abort();
+      fetchAbortRef.current = null;
+    }
+
+    // Debounce: vent 300 ms på at pan/zoom er afsluttet
+    if (viewportDebounceRef.current) clearTimeout(viewportDebounceRef.current);
+    viewportDebounceRef.current = setTimeout(() => {
+      const innerMap = mapRef.current?.getMap();
+      if (!innerMap) return;
+      const innerB = innerMap.getBounds();
+      if (!innerB) return;
+      setViewport({
+        zoom: innerMap.getZoom(),
+        w: innerB.getWest(),
+        s: innerB.getSouth(),
+        e: innerB.getEast(),
+        n: innerB.getNorth(),
+      });
+    }, 300);
   }, []);
 
   // ── Map load ────────────────────────────────────────────────────────────────
@@ -970,6 +1073,7 @@ function KortInner() {
   /**
    * Henter matrikel- og husnr-data når viewport ændres.
    * Rydder automatisk op (cancelled) hvis viewport ændres igen under fetch.
+   * Bruger AbortController til at afbryde igangværende HTTP-kald ved ny viewport.
    */
   useEffect(() => {
     if (!viewport) return;
@@ -981,12 +1085,17 @@ function KortInner() {
       return;
     }
 
+    // Afbryd evt. forrige in-flight fetch og opret ny controller
+    if (fetchAbortRef.current) fetchAbortRef.current.abort();
+    const abortController = new AbortController();
+    fetchAbortRef.current = abortController;
+
     let cancelled = false;
     const { w, s, e, n, zoom: z } = viewport;
 
     const hent = async () => {
       setHenterMatrikel(true);
-      const matrikel = await fetchMatrikelBbox(w, s, e, n);
+      const matrikel = await fetchMatrikelBbox(w, s, e, n, abortController.signal);
       if (!cancelled) {
         matrikelDataRef.current = matrikel;
         setHenterMatrikel(false);
@@ -1005,7 +1114,7 @@ function KortInner() {
 
       if (z >= MIN_ZOOM_HUSNR) {
         if (!cancelled) setHenterHusnr(true);
-        const husnr = await fetchHusnumre(w, s, e, n);
+        const husnr = await fetchHusnumre(w, s, e, n, abortController.signal);
         if (!cancelled) {
           husnrDataRef.current = husnr;
           setHenterHusnr(false);
@@ -1029,6 +1138,8 @@ function KortInner() {
     hent();
     return () => {
       cancelled = true;
+      abortController.abort();
+      fetchAbortRef.current = null;
     };
   }, [viewport, synkLagData, setupLag]);
 
@@ -1050,6 +1161,42 @@ function KortInner() {
       cancelled = true;
     };
   }, [viewport, visLag.bbr_type]);
+
+  /**
+   * Henter CVR virksomheds-markører når virksomheder-laget er aktivt.
+   * Radius beregnes ud fra zoom-niveau — jo mere zoomet ud, jo større radius.
+   * Rydder listen når laget slås fra, og re-henter ved viewport-ændring.
+   */
+  useEffect(() => {
+    if (!viewport || !visLag.virksomheder) {
+      if (!visLag.virksomheder) {
+        setVirksomhedsMarkører([]);
+        setVirksomhedPopup(null);
+      }
+      return;
+    }
+
+    let cancelled = false;
+
+    // Beregn radius ud fra zoom: zoom 10 → ~15 km, zoom 14 → ~2 km
+    const radiusKm = Math.max(1, Math.min(15, Math.pow(2, 14 - viewport.zoom) * 2));
+    // Kortcentrum
+    const centerLat = (viewport.s + viewport.n) / 2;
+    const centerLng = (viewport.w + viewport.e) / 2;
+
+    setHenterVirksomheder(true);
+    fetchVirksomheder(centerLat, centerLng, radiusKm).then((data) => {
+      if (!cancelled) {
+        setVirksomhedsMarkører(data);
+        setHenterVirksomheder(false);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      setHenterVirksomheder(false);
+    };
+  }, [viewport, visLag.virksomheder]);
 
   // ── Hover-data → Mapbox source (direkte) ────────────────────────────────────
 
@@ -1105,23 +1252,47 @@ function KortInner() {
     }, 200);
   }, []);
 
-  const vælgForslag = useCallback((r: DawaAutocompleteResult) => {
-    if (r.type === 'vejnavn') {
+  /**
+   * Flyver kortet til det valgte søgeresultat.
+   * darAutocomplete returnerer x=0, y=0 — koordinater hentes via separat opslag
+   * mod /api/adresse/lookup når de mangler i autocomplete-svaret.
+   */
+  const vælgForslag = useCallback(
+    async (r: DawaAutocompleteResult) => {
+      if (r.type === 'vejnavn') {
+        setSøgeTekst(r.tekst);
+        setForslag([]);
+        searchRef.current?.focus();
+        return;
+      }
       setSøgeTekst(r.tekst);
       setForslag([]);
-      searchRef.current?.focus();
-      return;
-    }
-    setSøgeTekst(r.tekst);
-    setForslag([]);
-    setMarkeret(-1);
-    const { x: lng, y: lat } = r.adresse;
-    if (lng && lat) {
-      mapRef.current?.flyTo({ center: [lng, lat], zoom: 17, duration: 1000 });
-      setSøgtMarkør({ lng, lat });
-      setPopup(null);
-    }
-  }, []);
+      setMarkeret(-1);
+      let lng = r.adresse.x;
+      let lat = r.adresse.y;
+      // darAutocomplete returnerer x=0, y=0 — hent koordinater via separat opslag
+      if (!lng || !lat) {
+        try {
+          const res = await fetch(`/api/adresse/lookup?id=${encodeURIComponent(r.adresse.id)}`);
+          if (res.ok) {
+            const data: { x?: number; y?: number } | null = await res.json();
+            if (data?.x && data?.y) {
+              lng = data.x;
+              lat = data.y;
+            }
+          }
+        } catch {
+          /* ignorer netværksfejl */
+        }
+      }
+      if (lng && lat) {
+        mapRef.current?.flyTo({ center: [lng, lat], zoom: 17, duration: 1000 });
+        setSøgtMarkør({ lng, lat });
+        setPopup(null);
+      }
+    },
+    [setPopup]
+  );
 
   const handleTastatur = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -1135,7 +1306,7 @@ function KortInner() {
       } else if (e.key === 'Enter') {
         e.preventDefault();
         const i = markeret >= 0 ? markeret : 0;
-        if (forslag[i]) vælgForslag(forslag[i]);
+        if (forslag[i]) void vælgForslag(forslag[i]);
       } else if (e.key === 'Escape') {
         setForslag([]);
         setMarkeret(-1);
@@ -1171,38 +1342,42 @@ function KortInner() {
    * Viser popup med matrikel-info ved klik.
    * Reverse geocoder adressen asynkront.
    */
-  const handleKlik = useCallback(async (e: MapMouseEvent) => {
-    const map = mapRef.current?.getMap();
-    if (!map) return;
-    const features = map.queryRenderedFeatures(e.point, { layers: ['matrikel-fill'] });
-    if (features.length === 0) {
-      setPopup(null);
-      setSøgtMarkør(null);
-      return;
-    }
+  const handleKlik = useCallback(
+    async (e: MapMouseEvent) => {
+      const map = mapRef.current?.getMap();
+      if (!map) return;
+      const features = map.queryRenderedFeatures(e.point, { layers: ['matrikel-fill'] });
+      if (features.length === 0) {
+        setPopup(null);
+        setSøgtMarkør(null);
+        return;
+      }
 
-    const props = features[0].properties as Record<string, unknown>;
-    const matrikelnr = typeof props.matrikelnr === 'string' ? props.matrikelnr : '?';
-    const ejerlavNavn = typeof props.ejerlavsnavn === 'string' ? props.ejerlavsnavn : '';
-    const grundareal = typeof props.registreretareal === 'number' ? props.registreretareal : null;
-    const zone = typeof props.zone === 'string' ? props.zone : null;
-    const titel = ejerlavNavn ? `${ejerlavNavn}, ${matrikelnr}` : matrikelnr;
+      const props = features[0].properties as Record<string, unknown>;
+      const matrikelnr = typeof props.matrikelnr === 'string' ? props.matrikelnr : '?';
+      const ejerlavNavn = typeof props.ejerlavsnavn === 'string' ? props.ejerlavsnavn : '';
+      const grundareal = typeof props.registreretareal === 'number' ? props.registreretareal : null;
+      const zone = typeof props.zone === 'string' ? props.zone : null;
+      const titel = ejerlavNavn ? `${ejerlavNavn}, ${matrikelnr}` : matrikelnr;
 
-    setPopup({
-      x: e.point.x,
-      y: e.point.y,
-      titel,
-      matrikelnr,
-      grundareal,
-      zone,
-      adresse: null,
-      dawaId: null,
-    });
-    setHenterAdresse(true);
-    const geo = await reverseGeocode(e.lngLat.lng, e.lngLat.lat);
-    setHenterAdresse(false);
-    if (geo) setPopup((prev) => (prev ? { ...prev, adresse: geo.adresse, dawaId: geo.id } : null));
-  }, []);
+      setPopup({
+        x: e.point.x,
+        y: e.point.y,
+        titel,
+        matrikelnr,
+        grundareal,
+        zone,
+        adresse: null,
+        dawaId: null,
+      });
+      setHenterAdresse(true);
+      const geo = await reverseGeocode(e.lngLat.lng, e.lngLat.lat);
+      setHenterAdresse(false);
+      if (geo)
+        setPopup((prev) => (prev ? { ...prev, adresse: geo.adresse, dawaId: geo.id } : null));
+    },
+    [setPopup]
+  );
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
@@ -1268,6 +1443,28 @@ function KortInner() {
               </Marker>
             );
           })}
+
+        {/* Virksomheds-markører — blå cirkler, klik åbner popup */}
+        {visLag.virksomheder &&
+          virksomhedsMarkører.map((v) => (
+            <Marker
+              key={v.cvr}
+              longitude={v.lng}
+              latitude={v.lat}
+              anchor="center"
+              onClick={(e) => {
+                // Forhindrer map-klik-event i at propagere (lukker matrikel-popup)
+                e.originalEvent.stopPropagation();
+                setVirksomhedPopup((prev) => (prev?.cvr === v.cvr ? null : v));
+                setPopup(null);
+              }}
+            >
+              <button
+                aria-label={`Virksomhed: ${v.navn}`}
+                className="w-4 h-4 rounded-full bg-blue-600 border-2 border-white shadow-lg ring-2 ring-blue-600/40 hover:scale-125 transition-transform cursor-pointer"
+              />
+            </Marker>
+          ))}
       </Map>
 
       {/* ── Søgebar ───────────────────────────────────────────────────────── */}
@@ -1352,29 +1549,29 @@ function KortInner() {
         </div>
       </div>
 
-      {/* ── Stil-toggle (venstre) ────────────────────────────────────────── */}
-      <div className="absolute top-4 left-4 z-20 flex gap-1.5">
-        {(['dark', 'satellite'] as KortStyle[]).map((s) => (
-          <button
-            key={s}
-            onClick={() => setKortStyle(s)}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium shadow-lg transition-all ${
-              kortStyle === s
-                ? 'bg-blue-600 text-white'
-                : 'bg-[#0f172a]/90 text-slate-300 hover:bg-slate-800 border border-white/10'
-            }`}
-          >
-            {s === 'dark' ? <MapIcon size={13} /> : <Satellite size={13} />}
-            {s === 'dark' ? mt.street : mt.aerial}
-          </button>
-        ))}
-      </div>
-
-      {/* ── Lag-knap (højre) ─────────────────────────────────────────────── */}
-      <div className="absolute top-4 right-4 z-20">
+      {/* ── Kortknapper øverst — venstre + højre i fælles row, kan aldrig overlappe */}
+      <div className="absolute top-4 left-4 right-4 z-20 flex items-center justify-between gap-2">
+        {/* Venstre: stil-toggle */}
+        <div className="flex flex-wrap gap-1.5 min-w-0">
+          {(['dark', 'satellite'] as KortStyle[]).map((s) => (
+            <button
+              key={s}
+              onClick={() => setKortStyle(s)}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium shadow-lg transition-all ${
+                kortStyle === s
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-[#0f172a]/90 text-slate-300 hover:bg-slate-800 border border-white/10'
+              }`}
+            >
+              {s === 'dark' ? <MapIcon size={13} /> : <Satellite size={13} />}
+              {s === 'dark' ? mt.street : mt.aerial}
+            </button>
+          ))}
+        </div>
+        {/* Højre: Lag-knap */}
         <button
           onClick={() => setLagPanel((p) => !p)}
-          className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium shadow-lg transition-all ${
+          className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium shadow-lg transition-all shrink-0 ${
             lagPanel
               ? 'bg-blue-600 text-white'
               : 'bg-[#0f172a]/90 text-slate-300 hover:bg-slate-800 border border-white/10'
@@ -1517,6 +1714,21 @@ function KortInner() {
                 : `${mt.houseNumbersShort} zoom ${MIN_ZOOM_HUSNR}+`}
           </span>
         </div>
+        {/* Virksomheds-badge — vises kun når laget er aktivt */}
+        {visLag.virksomheder && (
+          <div className="flex items-center gap-1.5 bg-[#0f172a]/90 border border-blue-500/30 rounded-lg px-2.5 py-1.5 shadow">
+            {henterVirksomheder ? (
+              <Loader2 size={11} className="text-blue-400 animate-spin" />
+            ) : (
+              <Building2 size={11} className="text-blue-400" />
+            )}
+            <span className="text-xs text-slate-300">
+              {henterVirksomheder
+                ? mt.fetching
+                : `${virksomhedsMarkører.length} ${mt.companies.toLowerCase()}`}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* ── Ejendoms-panel (fast bund-placering) ─────────────────────────── */}
@@ -1593,6 +1805,62 @@ function KortInner() {
                 className="w-full flex items-center justify-between bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-xl px-5 py-3 transition-colors group"
               >
                 <span>{mt.propertyData}</span>
+                <ArrowRight
+                  size={16}
+                  className="group-hover:translate-x-0.5 transition-transform"
+                />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Virksomheds-popup (fast bund-placering) ─────────────────────────── */}
+      {virksomhedPopup && (
+        <div className="absolute bottom-16 left-1/2 -translate-x-1/2 z-30 w-full max-w-md px-4 pointer-events-auto">
+          <div className="bg-[#0d1625]/98 border border-blue-500/20 rounded-2xl shadow-2xl backdrop-blur-sm overflow-hidden">
+            {/* Header */}
+            <div className="flex items-start justify-between px-5 pt-4 pb-3">
+              <div className="flex items-start gap-3 flex-1 min-w-0 pr-3">
+                <div className="w-9 h-9 rounded-xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center shrink-0 mt-0.5">
+                  <Building2 size={16} className="text-blue-400" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-white text-base font-semibold leading-snug truncate">
+                    {virksomhedPopup.navn}
+                  </p>
+                  {virksomhedPopup.branche && (
+                    <p className="text-slate-400 text-xs mt-0.5 truncate">
+                      {virksomhedPopup.branche}
+                    </p>
+                  )}
+                </div>
+              </div>
+              <button
+                onClick={() => setVirksomhedPopup(null)}
+                className="text-slate-500 hover:text-slate-300 transition-colors shrink-0 mt-0.5 p-1 rounded-lg hover:bg-white/5"
+              >
+                <X size={15} />
+              </button>
+            </div>
+
+            {/* Detaljer — CVR-nummer */}
+            <div className="px-5 pb-4 border-t border-white/5 pt-3">
+              <div>
+                <p className="text-slate-500 text-[10px] uppercase tracking-wider mb-1">{mt.cvr}</p>
+                <p className="text-white text-sm font-semibold tabular-nums">
+                  {virksomhedPopup.cvr.toString().padStart(8, '0')}
+                </p>
+              </div>
+            </div>
+
+            {/* CTA — åbn virksomhedsside */}
+            <div className="px-4 pb-4">
+              <button
+                onClick={() => router.push(`/dashboard/companies/${virksomhedPopup.cvr}`)}
+                className="w-full flex items-center justify-between bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-xl px-5 py-3 transition-colors group"
+              >
+                <span>{mt.openCompany}</span>
                 <ArrowRight
                   size={16}
                   className="group-hover:translate-x-0.5 transition-transform"

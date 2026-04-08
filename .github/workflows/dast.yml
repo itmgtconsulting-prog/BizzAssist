@@ -1,0 +1,37 @@
+name: DAST Security Scan (OWASP ZAP)
+
+on:
+  schedule:
+    - cron: '0 3 * * 0' # Sundays 03:00 UTC weekly
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: 'Target URL to scan'
+        required: false
+        default: 'https://bizzassist.dk'
+
+jobs:
+  zap-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.12.0
+        with:
+          target: ${{ github.event.inputs.target_url || 'https://bizzassist.dk' }}
+          rules_file_name: '.zap/rules.tsv'
+          cmd_options: '-a -j'
+          fail_action: false # Don't fail CI — report findings only
+          allow_issue_writing: true
+
+      - name: Upload ZAP Report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zap-report
+          path: report_html.html
+          retention-days: 30

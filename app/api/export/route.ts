@@ -13,6 +13,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import ExcelJS from 'exceljs';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
+import { resolveTenantId } from '@/lib/api/auth';
 
 /** Header style for the worksheet */
 const HEADER_FILL: ExcelJS.Fill = {
@@ -246,6 +247,10 @@ function buildCompanyWorkbook(data: Record<string, unknown>): ExcelJS.Workbook {
 }
 
 export async function POST(request: NextRequest) {
+  // BIZZ-164: Require authentication before generating any export
+  const auth = await resolveTenantId();
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
   // Rate limit: 60 req/min (standard)
   const limited = await checkRateLimit(request, rateLimit);
   if (limited) return limited;

@@ -78,13 +78,13 @@ export default function Footer() {
         <div className="border-t border-white/10 pt-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div className="flex flex-col gap-1">
             <p className="text-slate-500 text-sm">{footer.copyright}</p>
-            <p className="text-slate-600 text-xs">
+            <p className="text-slate-500 text-xs">
               {footer.supplier.label}:{' '}
-              <span className="text-slate-500">{footer.supplier.name}</span>
+              <span className="text-slate-400">{footer.supplier.name}</span>
               {' · '}
-              <span className="text-slate-600">{footer.supplier.cvr}</span>
+              <span className="text-slate-500">{footer.supplier.cvr}</span>
               {' · '}
-              <span className="text-slate-600">{footer.supplier.address}</span>
+              <span className="text-slate-500">{footer.supplier.address}</span>
             </p>
           </div>
         </div>

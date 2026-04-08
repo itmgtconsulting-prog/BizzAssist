@@ -18,6 +18,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 
 const PLANDATA_WFS = 'https://geoserver.plandata.dk/geoserver/wfs';
 const DAWA_BASE = 'https://api.dataforsyningen.dk';
@@ -310,6 +311,9 @@ async function fetchLag(x: number, y: number, layer: LayerConfig): Promise<Pland
 // ─── Route handler ──────────────────────────────────────────────────────────
 
 export async function GET(request: NextRequest): Promise<NextResponse<PlandataResponse>> {
+  const limited = await checkRateLimit(request, rateLimit);
+  if (limited) return limited as NextResponse<PlandataResponse>;
+
   const { searchParams } = new URL(request.url);
   const adresseId = searchParams.get('adresseId');
 
@@ -317,57 +321,68 @@ export async function GET(request: NextRequest): Promise<NextResponse<PlandataRe
     return NextResponse.json({ planer: null, fejl: 'Mangler adresseId parameter' });
   }
 
-  // ── Hent koordinater fra DAWA ──────────────────────────────────────────
-  // ID kan være adresse-UUID eller adgangsadresse-UUID — prøv begge endpoints.
-  let x: number, y: number;
-  try {
-    const tryUrls = [
-      `${DAWA_BASE}/adresser/${adresseId}?struktur=mini`,
-      `${DAWA_BASE}/adgangsadresser/${adresseId}?struktur=mini`,
-    ];
-
-    let coords: { x?: number; y?: number } | null = null;
-    for (const url of tryUrls) {
-      const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
-      if (res.ok) {
-        const data = (await res.json()) as { x?: number; y?: number };
-        if (data.x && data.y) {
-          coords = data;
-          break;
-        }
-      }
-    }
-
-    if (!coords) {
-      return NextResponse.json({ planer: null, fejl: 'Ingen koordinater fundet på adresse' });
-    }
-    x = coords.x!;
-    y = coords.y!;
-  } catch (err) {
-    console.error('[Plandata] DAWA fejl:', err);
-    return NextResponse.json({ planer: null, fejl: 'DAWA timeout eller netværksfejl' });
+  // Validate UUID format to prevent path traversal / SSRF via DAWA URL construction
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!UUID_RE.test(adresseId)) {
+    return NextResponse.json({ planer: null, fejl: 'Ugyldigt adresseId format' }, { status: 400 });
   }
 
-  // ── Hent alle plantyper parallelt ─────────────────────────────────────
-  const resultater = await Promise.all(LAYERS.map((layer) => fetchLag(x, y, layer)));
+  try {
+    // ── Hent koordinater fra DAWA ──────────────────────────────────────────
+    // ID kan være adresse-UUID eller adgangsadresse-UUID — prøv begge endpoints.
+    let x: number, y: number;
+    try {
+      const tryUrls = [
+        `${DAWA_BASE}/adresser/${adresseId}?struktur=mini`,
+        `${DAWA_BASE}/adgangsadresser/${adresseId}?struktur=mini`,
+      ];
 
-  // Dedupliker på type+id
-  const seenIds = new Set<string>();
-  const planer = resultater
-    .flat()
-    .filter((item) => {
-      const key = `${item.type}-${item.id}`;
-      if (seenIds.has(key)) return false;
-      seenIds.add(key);
-      return true;
-    })
-    .sort((a, b) => (b.aar ?? 0) - (a.aar ?? 0));
+      let coords: { x?: number; y?: number } | null = null;
+      for (const url of tryUrls) {
+        const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+        if (res.ok) {
+          const data = (await res.json()) as { x?: number; y?: number };
+          if (data.x && data.y) {
+            coords = data;
+            break;
+          }
+        }
+      }
 
-  return NextResponse.json(
-    { planer, fejl: null },
-    {
-      status: 200,
-      headers: { 'Cache-Control': 'public, s-maxage=86400, stale-while-revalidate=3600' },
+      if (!coords) {
+        return NextResponse.json({ planer: null, fejl: 'Ingen koordinater fundet på adresse' });
+      }
+      x = coords.x!;
+      y = coords.y!;
+    } catch (err) {
+      console.error('[Plandata] DAWA fejl:', err);
+      return NextResponse.json({ planer: null, fejl: 'Ekstern API fejl' });
     }
-  );
+
+    // ── Hent alle plantyper parallelt ─────────────────────────────────────
+    const resultater = await Promise.all(LAYERS.map((layer) => fetchLag(x, y, layer)));
+
+    // Dedupliker på type+id
+    const seenIds = new Set<string>();
+    const planer = resultater
+      .flat()
+      .filter((item) => {
+        const key = `${item.type}-${item.id}`;
+        if (seenIds.has(key)) return false;
+        seenIds.add(key);
+        return true;
+      })
+      .sort((a, b) => (b.aar ?? 0) - (a.aar ?? 0));
+
+    return NextResponse.json(
+      { planer, fejl: null },
+      {
+        status: 200,
+        headers: { 'Cache-Control': 'public, s-maxage=86400, stale-while-revalidate=3600' },
+      }
+    );
+  } catch (err) {
+    console.error('[Plandata] Uventet fejl:', err);
+    return NextResponse.json({ planer: null, fejl: 'Ekstern API fejl' }, { status: 200 });
+  }
 }

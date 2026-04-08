@@ -40,6 +40,8 @@ import {
   Palette,
   Bot,
   ShieldCheck,
+  Wrench,
+  Activity,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 
@@ -713,6 +715,18 @@ export default function AdminPlansPage() {
             className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors whitespace-nowrap"
           >
             <ShieldCheck size={14} /> {da ? 'Sikkerhed' : 'Security'}
+          </Link>
+          <Link
+            href="/dashboard/admin/service-manager"
+            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors whitespace-nowrap"
+          >
+            <Wrench size={14} /> Service Manager
+          </Link>
+          <Link
+            href="/dashboard/admin/service-management"
+            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors whitespace-nowrap"
+          >
+            <Activity size={14} /> {da ? 'Infrastruktur' : 'Infrastructure'}
           </Link>
         </div>
       </div>

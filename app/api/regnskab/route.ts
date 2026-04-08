@@ -130,7 +130,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       },
     },
     sort: [{ offentliggoerelsesTidspunkt: { order: 'desc' } }],
-    size: 20,
+    size: 100,
   };
 
   try {

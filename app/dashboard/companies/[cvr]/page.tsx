@@ -1,5 +1,7 @@
 'use client';
 
+'use no memo'; // Opt-out af React Compiler — filen har render-body mutations der konflikter
+
 /**
  * Virksomhedsdetaljeside — viser fuld information om en dansk virksomhed.
  *
@@ -53,32 +55,52 @@ import {
   Zap,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
+import { useSetAIPageContext } from '@/app/context/AIPageContext';
 import { translations } from '@/app/lib/translations';
 import type { CVRPublicData } from '@/app/api/cvr-public/route';
 import type { Regnskab } from '@/app/api/regnskab/route';
 import type { RegnskabsAar } from '@/app/api/regnskab/xbrl/route';
 import type { RelateretVirksomhed } from '@/app/api/cvr-public/related/route';
 import type { CvrHandelData } from '@/app/api/salgshistorik/cvr/route';
+import type { EjendomSummary } from '@/app/api/ejendomme-by-owner/route';
+import type { PersonbogHaeftelse } from '@/app/api/tinglysning/personbog/route';
+import PropertyOwnerCard from '@/app/components/ejendomme/PropertyOwnerCard';
 import { saveRecentCompany } from '@/app/lib/recentCompanies';
+import { recordRecentVisit } from '@/app/lib/recordRecentVisit';
 import { useSubscription } from '@/app/context/SubscriptionContext';
 import { useSubscriptionAccess } from '@/app/components/SubscriptionGate';
 import { resolvePlan, formatTokens, isSubscriptionFunctional } from '@/app/lib/subscriptions';
 import { buildDiagramGraph } from '@/app/components/diagrams/DiagramData';
+import type { DiagramPropertySummary } from '@/app/components/diagrams/DiagramData';
 import dynamic from 'next/dynamic';
 import VerifiedLinks from '@/app/components/VerifiedLinks';
-import {
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-} from 'recharts';
+/** Recharts — dynamisk importeret for at undgå at inkludere i initial bundle */
+const ResponsiveContainer = dynamic(
+  () => import('recharts').then((m) => ({ default: m.ResponsiveContainer })),
+  { ssr: false }
+);
+const LineChart = dynamic(() => import('recharts').then((m) => ({ default: m.LineChart })), {
+  ssr: false,
+});
+const Line = dynamic(() => import('recharts').then((m) => ({ default: m.Line })), { ssr: false });
+const XAxis = dynamic(() => import('recharts').then((m) => ({ default: m.XAxis })), { ssr: false });
+const YAxis = dynamic(() => import('recharts').then((m) => ({ default: m.YAxis })), { ssr: false });
+const CartesianGrid = dynamic(
+  () => import('recharts').then((m) => ({ default: m.CartesianGrid })),
+  { ssr: false }
+);
+const Tooltip = dynamic(() => import('recharts').then((m) => ({ default: m.Tooltip })), {
+  ssr: false,
+});
 
-/** Lazy-loaded diagram variants (heavy dependencies) */
+/** Lazy-loaded diagram variants */
 const DiagramForce = dynamic(() => import('@/app/components/diagrams/DiagramForce'), {
   ssr: false,
+  loading: () => <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />,
+});
+const DiagramSimple = dynamic(() => import('@/app/components/diagrams/DiagramSimple'), {
+  ssr: false,
+  loading: () => <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />,
 });
 
 // ─── Tracked Companies (localStorage) ────────────────────────────────────────
@@ -171,6 +193,7 @@ function formatDatoKort(iso: string): string {
 type TabId =
   | 'overview'
   | 'diagram'
+  | 'diagram2'
   | 'tradeHistory'
   | 'properties'
   | 'companies'
@@ -182,23 +205,23 @@ type TabId =
 
 /** Tab-ikoner */
 const tabIcons: Record<TabId, React.ReactNode> = {
-  overview: <LayoutDashboard size={14} />,
-  diagram: <Briefcase size={14} />,
-  tradeHistory: <ArrowRightLeft size={14} />,
-  properties: <Home size={14} />,
-  companies: <Building2 size={14} />,
-  financials: <CreditCard size={14} />,
-  keyPersons: <Users size={14} />,
-  history: <Clock size={14} />,
-  liens: <Scale size={14} />,
-  documents: <FolderOpen size={14} />,
+  overview: <LayoutDashboard size={12} />,
+  diagram: <Briefcase size={12} />,
+  diagram2: <Briefcase size={12} />,
+  tradeHistory: <ArrowRightLeft size={12} />,
+  properties: <Home size={12} />,
+  companies: <Building2 size={12} />,
+  financials: <CreditCard size={12} />,
+  keyPersons: <Users size={12} />,
+  history: <Clock size={12} />,
+  liens: <Scale size={12} />,
+  documents: <FolderOpen size={12} />,
 };
 
 /** Rækkefølge af tabs */
 const tabOrder: TabId[] = [
   'overview',
   'diagram',
-  'tradeHistory',
   'properties',
   'companies',
   'financials',
@@ -264,7 +287,8 @@ function extractOwners(deltagere: CVRPublicData['deltagere']): {
             role.includes('LEGALE') ||
             role.includes('REEL') ||
             role.includes('INTERESSENT') ||
-            role.includes('FULDT_ANSVARLIG')) &&
+            // CVR ES uses spaces: "Fuldt ansvarlig deltager" — match both space and underscore forms
+            (role.includes('FULDT') && role.includes('ANSVARLIG'))) &&
           !r.til
         );
       })
@@ -277,7 +301,8 @@ function extractOwners(deltagere: CVRPublicData['deltagere']): {
             role.includes('LEGALE') ||
             role.includes('REEL') ||
             role.includes('INTERESSENT') ||
-            role.includes('FULDT_ANSVARLIG')) &&
+            // CVR ES uses spaces: "Fuldt ansvarlig deltager" — match both space and underscore forms
+            (role.includes('FULDT') && role.includes('ANSVARLIG'))) &&
           !r.til
         );
       });
@@ -304,11 +329,14 @@ export default function VirksomhedDetalje({ params }: PageProps) {
   const { lang } = useLanguage();
   const t = translations[lang];
   const c = t.company;
+  /** Sæt AI-kontekst med CVR-nummer og virksomhedsnavn så AI'en kan bruge dem direkte */
+  const setAICtx = useSetAIPageContext();
 
   /** Tab-labels hentet fra centraliseret oversættelsessystem */
   const tabLabelMap: Record<TabId, string> = {
     overview: c.tabs.overview,
-    diagram: lang === 'da' ? 'Relationsdiagram' : 'Relations Diagram',
+    diagram: lang === 'da' ? 'Diagram' : 'Diagram',
+    diagram2: lang === 'da' ? 'Diagram' : 'Diagram',
     tradeHistory: c.tabs.tradeHistory,
     properties: c.tabs.properties,
     companies: c.tabs.companies,
@@ -339,7 +367,7 @@ export default function VirksomhedDetalje({ params }: PageProps) {
   }, []);
 
   /** Styrer om nyheder/sociale medier-panelet er synligt på desktop. */
-  const [nyhedsPanelÅben, setNyhedsPanelÅben] = useState(false);
+  const [nyhedsPanelÅben, setNyhedsPanelÅben] = useState(true);
 
   /** Styrer om mobil nyheder-overlay er åbent. */
   const [mobilNyhederAaben, setMobilNyhederAaben] = useState(false);
@@ -363,10 +391,12 @@ export default function VirksomhedDetalje({ params }: PageProps) {
   const [_regnskabError, setRegnskabError] = useState<string | null>(null);
   const regnskabFetchedRef = useRef(false);
 
-  /** XBRL regnskabstal — lazy-loaded when financials tab is activated */
+  /** XBRL regnskabstal — progressivt loaded i batches */
   const [xbrlData, setXbrlData] = useState<RegnskabsAar[] | null>(null);
   const [xbrlLoading, setXbrlLoading] = useState(false);
+  const [xbrlLoadingMore, setXbrlLoadingMore] = useState(false);
   const xbrlFetchedRef = useRef(false);
+  const xbrlAbortRef = useRef<AbortController | null>(null);
 
   /** Relaterede virksomheder (gruppe) — lazy-loaded when companies tab is activated */
   const [relatedCompanies, setRelatedCompanies] = useState<RelateretVirksomhed[]>([]);
@@ -455,6 +485,27 @@ export default function VirksomhedDetalje({ params }: PageProps) {
   const [handlerManglerAdgang, setHandlerManglerAdgang] = useState(false);
   const handlerFetchedRef = useRef(false);
 
+  /** Ejendomme portefølje — progressivt lazy-loaded when properties tab is activated */
+  const [ejendommeData, setEjendommeData] = useState<EjendomSummary[]>([]);
+  const [ejendommeLoading, setEjendommeLoading] = useState(false);
+  const [ejendommeLoadingMore, setEjendommeLoadingMore] = useState(false);
+  const [ejendommeFetchComplete, setEjendommeFetchComplete] = useState(false);
+  const [ejendommeManglerNoegle, setEjendommeManglerNoegle] = useState(false);
+  const [ejendommeManglerAdgang, setEjendommeManglerAdgang] = useState(false);
+  const [ejendommeTotalBfe, setEjendommeTotalBfe] = useState(0);
+  /** Kommasepereret CVR-nøgle der sidst blev hentet — forhindrer duplicate-fetches */
+  const ejendomFetchKeyRef = useRef('');
+  /** AbortController for igangværende progressiv ejendomshentning */
+  const ejendomAbortRef = useRef<AbortController | null>(null);
+
+  /** Personbog (tinglysning) — lazy-loaded when liens tab is activated */
+  const [personbogData, setPersonbogData] = useState<PersonbogHaeftelse[]>([]);
+  const [personbogLoading, setPersonbogLoading] = useState(false);
+  const [personbogFejl, setPersonbogFejl] = useState<string | null>(null);
+  const [expandedPant, setExpandedPant] = useState<Set<number>>(new Set());
+  const [selectedPantDocs, setSelectedPantDocs] = useState<Set<string>>(new Set());
+  const personbogFetchedRef = useRef(false);
+
   /** Dokumenter-tab: valgte dokumenter til batch-download */
   const [valgteDoc, setValgteDoc] = useState<Set<string>>(new Set());
   /** Dokumenter-tab: vis alle regnskaber (default: kun 3) */
@@ -471,6 +522,9 @@ export default function VirksomhedDetalje({ params }: PageProps) {
 
   /** Oversigt-tab: aktivt filter — null = vis alle, ellers kun valgt sektion */
   const [oversigtFilter, setOversigtFilter] = useState<string | null>(null);
+
+  /** Ejendomme-tab: filter — null = alle, 'portefolje' = ejendomme, 'handler' = ejendomshandler */
+  const [ejendommeFilter, setEjendommeFilter] = useState<string | null>(null);
 
   /** Toggler et dokument-ID i valgteDoc-sættet */
   const toggleDoc = useCallback((id: string) => {
@@ -545,6 +599,13 @@ export default function VirksomhedDetalje({ params }: PageProps) {
           city: company.city,
           active: !company.enddate,
         });
+        // Opdater recent tag-bar (virker også ved direkte URL-navigation)
+        recordRecentVisit(
+          'company',
+          String(company.vat),
+          company.name,
+          `/dashboard/companies/${company.vat}`
+        );
       } catch {
         if (!cancelled) {
           setError(c.networkError);
@@ -559,6 +620,18 @@ export default function VirksomhedDetalje({ params }: PageProps) {
       cancelled = true;
     };
   }, [cvr, lang]);
+
+  /**
+   * Sæt AI-kontekst når virksomhedsdata er loadet.
+   * AI-assistenten kan dermed bruge CVR-nummeret direkte i tool-kald.
+   */
+  useEffect(() => {
+    if (!data) return;
+    setAICtx({
+      cvrNummer: String(data.vat),
+      virksomhedNavn: data.name,
+    });
+  }, [data, setAICtx]);
 
   /**
    * Lazy-loader regnskabsdata når bruger klikker på Regnskab-tab.
@@ -587,21 +660,103 @@ export default function VirksomhedDetalje({ params }: PageProps) {
     }
   }, [cvr]);
 
-  /** Henter XBRL-regnskabstal fra /api/regnskab/xbrl */
+  /**
+   * Henter XBRL-regnskabstal med Supabase cache-first strategi:
+   * 1. API tjekker Supabase cache — returnerer øjeblikkeligt hvis ES-tidsstempel matcher
+   * 2. Ved cache miss: progressiv batching med XBRL-parsing, gemmes i Supabase
+   */
   const fetchXbrl = useCallback(async () => {
     if (xbrlFetchedRef.current) return;
     xbrlFetchedRef.current = true;
+
+    xbrlAbortRef.current?.abort();
+    const controller = new AbortController();
+    xbrlAbortRef.current = controller;
+
+    const FIRST_BATCH = 4;
+    const REST_BATCH = 8;
+
+    /** Merger nye år ind med deduplikering */
+    const mergeYears = (prev: RegnskabsAar[], incoming: RegnskabsAar[]): RegnskabsAar[] => {
+      const map = new Map<number, RegnskabsAar>();
+      const countF = (y: RegnskabsAar) => {
+        let n = 0;
+        for (const v of Object.values(y.resultat)) if (v !== null) n++;
+        for (const v of Object.values(y.balance)) if (v !== null) n++;
+        return n;
+      };
+      const pDage = (y: RegnskabsAar) =>
+        (new Date(y.periodeSlut).getTime() - new Date(y.periodeStart).getTime()) / 86400000;
+      for (const y of [...prev, ...incoming]) {
+        const ex = map.get(y.aar);
+        if (!ex) {
+          map.set(y.aar, y);
+          continue;
+        }
+        const nf = countF(y),
+          ef = countF(ex);
+        if (nf > ef || (nf === ef && pDage(y) > pDage(ex))) map.set(y.aar, y);
+      }
+      return [...map.values()].sort((a, b) => b.aar - a.aar);
+    };
+
+    setXbrlData([]);
     setXbrlLoading(true);
+    setXbrlLoadingMore(false);
+
     try {
-      const res = await fetch(`/api/regnskab/xbrl?cvr=${cvr}`, {
-        signal: AbortSignal.timeout(30000),
+      // ── Første kald: API tjekker Supabase cache server-side ──
+      const res = await fetch(`/api/regnskab/xbrl?cvr=${cvr}&offset=0&limit=${FIRST_BATCH}`, {
+        signal: controller.signal,
       });
       const json = await res.json();
-      setXbrlData(json.years ?? []);
+      const firstYears: RegnskabsAar[] = json.years ?? [];
+      const total: number = json.total ?? 0;
+      const wasCached: boolean = json.cached === true;
+
+      setXbrlData(firstYears);
+      setXbrlLoading(false);
+
+      // Hvis server returnerede cached data → alt er allerede hentet, vi er færdige
+      if (wasCached) {
+        setXbrlLoadingMore(false);
+        return;
+      }
+
+      // ── Cache miss — hent resten progressivt ──
+      if (total > FIRST_BATCH) {
+        setXbrlLoadingMore(true);
+        let offset = FIRST_BATCH;
+        while (offset < total) {
+          if (controller.signal.aborted) break;
+          const res2 = await fetch(
+            `/api/regnskab/xbrl?cvr=${cvr}&offset=${offset}&limit=${REST_BATCH}`,
+            { signal: controller.signal }
+          );
+          const json2 = await res2.json();
+          const moreYears: RegnskabsAar[] = json2.years ?? [];
+          if (moreYears.length === 0) break;
+          setXbrlData((prev) => mergeYears(prev ?? [], moreYears));
+          offset += REST_BATCH;
+        }
+      }
+
+      // Trigger server-side cache-write: hent alle data i ét kald (baggrund)
+      // Serveren gemmer automatisk i Supabase når offset=0 og limit>=total
+      if (!controller.signal.aborted && total > FIRST_BATCH) {
+        fetch(`/api/regnskab/xbrl?cvr=${cvr}&offset=0&limit=${total}`, {
+          signal: controller.signal,
+        }).catch(() => {
+          /* Cache-write fejl — ignorer */
+        });
+      }
     } catch {
-      setXbrlData([]);
+      if (!controller.signal.aborted) {
+        setXbrlData((prev) => (prev && prev.length > 0 ? prev : []));
+      }
     } finally {
       setXbrlLoading(false);
+      setXbrlLoadingMore(false);
     }
   }, [cvr]);
 
@@ -640,21 +795,154 @@ export default function VirksomhedDetalje({ params }: PageProps) {
     }
   }, [cvr]);
 
+  // Regnskab + XBRL-fetch startes lazy fra tab-useEffect nedenfor
+
+  /**
+   * Lazy-loader personbogsdata når bruger klikker på Tinglysning-tab.
+   * Fetcher kun én gang — cacher i state.
+   */
+  const fetchPersonbog = useCallback(async () => {
+    if (personbogFetchedRef.current) return;
+    personbogFetchedRef.current = true;
+    setPersonbogLoading(true);
+    setPersonbogFejl(null);
+
+    try {
+      const res = await fetch(`/api/tinglysning/personbog?cvr=${encodeURIComponent(cvr)}`);
+      const json = await res.json();
+
+      if (!res.ok) {
+        setPersonbogFejl(json.error ?? c.personbogError);
+        return;
+      }
+
+      if (json.fejl) {
+        setPersonbogFejl(json.fejl);
+        return;
+      }
+
+      setPersonbogData(json.haeftelser ?? []);
+    } catch {
+      setPersonbogFejl(c.personbogError);
+    } finally {
+      setPersonbogLoading(false);
+    }
+  }, [cvr, c.personbogError]);
+
   /** Trigger regnskab-fetch når financials- eller documents-tab aktiveres */
   useEffect(() => {
     if (aktivTab === 'financials' || aktivTab === 'documents') {
       fetchRegnskaber();
-    }
-    if (aktivTab === 'financials') {
       fetchXbrl();
     }
     if (aktivTab === 'companies' || aktivTab === 'overview') {
       fetchRelated();
     }
-    if (aktivTab === 'tradeHistory') {
+    if (aktivTab === 'tradeHistory' || aktivTab === 'properties') {
       fetchEjendomshandler();
     }
-  }, [aktivTab, fetchRegnskaber, fetchXbrl, fetchRelated, fetchEjendomshandler]);
+    /* Ejendomme-tab: hent også relaterede virksomheder (datterselskaber) */
+    if (aktivTab === 'properties') {
+      fetchRelated();
+    }
+    if (aktivTab === 'liens') {
+      fetchPersonbog();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aktivTab]);
+
+  /**
+   * Henter ejendomsportefølje progressivt: første batch (5) vises straks,
+   * efterfølgende batches tilføjes automatisk i baggrunden.
+   * Bruger AbortController til at annullere igangværende hentning ved CVR-ændring.
+   */
+  const fetchEjendommeProgressively = useCallback(async (uniqueCvrs: string[]) => {
+    ejendomAbortRef.current?.abort();
+    const controller = new AbortController();
+    ejendomAbortRef.current = controller;
+
+    const FIRST_BATCH = 5;
+    const REST_BATCH = 10;
+
+    setEjendommeData([]);
+    setEjendommeFetchComplete(false);
+    setEjendommeLoadingMore(false);
+    setEjendommeLoading(true);
+    setEjendommeManglerNoegle(false);
+    setEjendommeManglerAdgang(false);
+
+    try {
+      const url = `/api/ejendomme-by-owner?cvr=${uniqueCvrs.join(',')}&offset=0&limit=${FIRST_BATCH}`;
+      const res = await fetch(url, { signal: controller.signal });
+      if (!res.ok) throw new Error(`${res.status}`);
+      const json = (await res.json()) as {
+        ejendomme: EjendomSummary[];
+        totalBfe: number;
+        manglerNoegle: boolean;
+        manglerAdgang: boolean;
+      };
+
+      if (controller.signal.aborted) return;
+
+      setEjendommeData(json.ejendomme ?? []);
+      setEjendommeTotalBfe(json.totalBfe ?? 0);
+      setEjendommeManglerNoegle(json.manglerNoegle === true);
+      setEjendommeManglerAdgang(json.manglerAdgang === true);
+      setEjendommeLoading(false);
+
+      let offset = FIRST_BATCH;
+      const total = json.totalBfe ?? 0;
+
+      if (offset < total) setEjendommeLoadingMore(true);
+
+      while (offset < total) {
+        if (controller.signal.aborted) return;
+
+        const res2 = await fetch(
+          `/api/ejendomme-by-owner?cvr=${uniqueCvrs.join(',')}&offset=${offset}&limit=${REST_BATCH}`,
+          { signal: controller.signal }
+        );
+        if (!res2.ok) break;
+        const json2 = (await res2.json()) as { ejendomme: EjendomSummary[] };
+
+        if (controller.signal.aborted) return;
+
+        setEjendommeData((prev) => [...prev, ...(json2.ejendomme ?? [])]);
+        offset += REST_BATCH;
+      }
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') return;
+      setEjendommeData([]);
+    } finally {
+      if (!controller.signal.aborted) {
+        setEjendommeLoading(false);
+        setEjendommeLoadingMore(false);
+        setEjendommeFetchComplete(true);
+      }
+    }
+  }, []);
+
+  /**
+   * Trigger progressiv ejendomshentning når properties-tab aktiveres eller CVR-sæt ændres.
+   * Kører igen når relatedCompanies ændres (datterselskaber loader ind).
+   */
+  useEffect(() => {
+    if (aktivTab !== 'properties' && aktivTab !== 'diagram' && aktivTab !== 'diagram2') return;
+
+    /* Saml CVR-numre: hovedvirksomhed + aktive datterselskaber */
+    const cvrList = [
+      cvr,
+      ...relatedCompanies.filter((v) => v.aktiv).map((v) => String(v.cvr).padStart(8, '0')),
+    ];
+    const uniqueCvrs = [...new Set(cvrList)].slice(0, 30);
+    const fetchKey = [...uniqueCvrs].sort().join(',');
+
+    /* Spring over hvis vi allerede henter for nøjagtigt dette sæt */
+    if (ejendomFetchKeyRef.current === fetchKey) return;
+    ejendomFetchKeyRef.current = fetchKey;
+
+    void fetchEjendommeProgressively(uniqueCvrs);
+  }, [aktivTab, cvr, relatedCompanies, fetchEjendommeProgressively]);
 
   /** Lazy-load regnskabstal for alle relaterede virksomheder (parallelt) */
   useEffect(() => {
@@ -1083,7 +1371,7 @@ export default function VirksomhedDetalje({ params }: PageProps) {
               <button
                 key={tabId}
                 onClick={() => setAktivTab(tabId)}
-                className={`flex items-center gap-1.5 px-3 py-2.5 text-sm font-medium border-b-2 transition-all ${'whitespace-nowrap'} ${
+                className={`flex items-center gap-1 px-2 py-1.5 text-xs font-medium border-b-2 transition-all whitespace-nowrap ${
                   aktivTab === tabId
                     ? 'border-blue-500 text-blue-300'
                     : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600'
@@ -1095,6 +1383,21 @@ export default function VirksomhedDetalje({ params }: PageProps) {
             ))}
           </div>
         </div>
+
+        {/* ─── Global loading-indikator ─── */}
+        {(xbrlLoading ||
+          xbrlLoadingMore ||
+          ejendommeLoading ||
+          ejendommeLoadingMore ||
+          handlerLoading ||
+          relatedLoading) && (
+          <div className="flex items-center gap-2 px-4 py-1.5 bg-blue-600/10 border-b border-blue-500/20">
+            <Loader2 size={12} className="animate-spin text-blue-400" />
+            <span className="text-blue-300 text-xs">
+              {lang === 'da' ? 'Henter data…' : 'Loading data…'}
+            </span>
+          </div>
+        )}
 
         {/* ─── Scrollable Content Area ─── */}
         <div ref={contentRef} className="flex-1 overflow-y-auto px-3 sm:px-6 py-5">
@@ -1528,189 +1831,359 @@ export default function VirksomhedDetalje({ params }: PageProps) {
             </div>
           )}
 
-          {/* ══ RELATIONSDIAGRAM (Force Graph) ══ */}
+          {/* ══ RELATIONSDIAGRAM (Force Graph — original) ══ */}
           {aktivTab === 'diagram' &&
             (() => {
+              const propertiesByCvr =
+                ejendommeData.length > 0
+                  ? ejendommeData.reduce((map, p) => {
+                      const cvrNum = parseInt(p.ownerCvr, 10);
+                      if (!map.has(cvrNum)) map.set(cvrNum, []);
+                      map.get(cvrNum)!.push(p as DiagramPropertySummary);
+                      return map;
+                    }, new Map<number, DiagramPropertySummary[]>())
+                  : undefined;
               const diagramGraph = buildDiagramGraph(
                 data.name,
                 data.vat,
                 data.companydesc ?? null,
                 ownerChainShared,
                 relatedCompanies,
-                data.industrydesc ?? null
+                data.industrydesc ?? null,
+                propertiesByCvr
               );
               return <DiagramForce graph={diagramGraph} lang={lang} />;
             })()}
 
-          {/* ══ EJENDOMSHANDLER ══ */}
-          {aktivTab === 'tradeHistory' && (
+          {/* ══ DIAGRAM (Simpelt — nyt) ══ */}
+          {aktivTab === 'diagram2' &&
+            (() => {
+              const propertiesByCvr =
+                ejendommeData.length > 0
+                  ? ejendommeData.reduce((map, p) => {
+                      const cvrNum = parseInt(p.ownerCvr, 10);
+                      if (!map.has(cvrNum)) map.set(cvrNum, []);
+                      map.get(cvrNum)!.push(p as DiagramPropertySummary);
+                      return map;
+                    }, new Map<number, DiagramPropertySummary[]>())
+                  : undefined;
+              const diagramGraph = buildDiagramGraph(
+                data.name,
+                data.vat,
+                data.companydesc ?? null,
+                ownerChainShared,
+                relatedCompanies,
+                data.industrydesc ?? null,
+                propertiesByCvr
+              );
+              return <DiagramSimple graph={diagramGraph} lang={lang} />;
+            })()}
+
+          {/* ══ EJENDOMME (inkl. ejendomshandler) ══ */}
+          {aktivTab === 'properties' && (
             <div className="space-y-4">
-              {handlerLoading ? (
-                <div className="flex items-center justify-center py-16">
-                  <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
-                  <span className="ml-2 text-slate-400 text-sm">
-                    {lang === 'da' ? 'Henter ejendomshandler…' : 'Loading property trades…'}
+              {/* ── Filter chips ── */}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => setEjendommeFilter(null)}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-all border ${
+                    ejendommeFilter === null
+                      ? 'bg-white/10 border-white/30 text-white'
+                      : 'bg-slate-800/50 border-slate-700/40 text-slate-400 hover:text-slate-200 hover:border-slate-600'
+                  }`}
+                >
+                  <LayoutDashboard size={12} />
+                  {lang === 'da' ? 'Alle' : 'All'}
+                </button>
+                <button
+                  onClick={() =>
+                    setEjendommeFilter(ejendommeFilter === 'portefolje' ? null : 'portefolje')
+                  }
+                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-all border ${
+                    ejendommeFilter === 'portefolje'
+                      ? 'bg-blue-600/30 border-blue-500/50 text-blue-300'
+                      : 'bg-slate-800/50 border-slate-700/40 text-slate-400 hover:text-slate-200 hover:border-slate-600'
+                  }`}
+                >
+                  <span className={ejendommeFilter === 'portefolje' ? '' : 'text-blue-400'}>
+                    <Home size={12} />
                   </span>
+                  {lang === 'da' ? 'Ejendomme' : 'Properties'}
+                </button>
+                <button
+                  onClick={() =>
+                    setEjendommeFilter(ejendommeFilter === 'handler' ? null : 'handler')
+                  }
+                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-all border ${
+                    ejendommeFilter === 'handler'
+                      ? 'bg-emerald-600/30 border-emerald-500/50 text-emerald-300'
+                      : 'bg-slate-800/50 border-slate-700/40 text-slate-400 hover:text-slate-200 hover:border-slate-600'
+                  }`}
+                >
+                  <span className={ejendommeFilter === 'handler' ? '' : 'text-emerald-400'}>
+                    <ArrowRightLeft size={12} />
+                  </span>
+                  {lang === 'da' ? 'Ejendomshandler' : 'Property Trades'}
+                </button>
+              </div>
+
+              {/* ── Ejendomme-portefølje sektion ── */}
+              {(ejendommeFilter === null || ejendommeFilter === 'portefolje') && (
+                <div className="space-y-4">
+                  {/* Indledende spinner */}
+                  {ejendommeLoading && ejendommeData.length === 0 && (
+                    <div className="flex items-center justify-center py-12">
+                      <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
+                      <span className="ml-2 text-slate-400 text-sm">
+                        {lang === 'da'
+                          ? 'Henter ejendomsportefølje…'
+                          : 'Loading property portfolio…'}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Mangler nøgle / adgang */}
+                  {ejendommeFetchComplete && ejendommeManglerNoegle && (
+                    <div className="flex flex-col items-center justify-center py-12 text-center">
+                      <Home size={36} className="text-slate-600 mb-3" />
+                      <p className="text-slate-400 text-sm max-w-sm">
+                        {lang === 'da'
+                          ? 'Ejendomsopslag kræver Datafordeler OAuth-nøgler (DATAFORDELER_OAUTH_CLIENT_ID / CLIENT_SECRET).'
+                          : 'Property lookup requires Datafordeler OAuth keys (DATAFORDELER_OAUTH_CLIENT_ID / CLIENT_SECRET).'}
+                      </p>
+                    </div>
+                  )}
+                  {ejendommeFetchComplete && ejendommeManglerAdgang && (
+                    <div className="flex flex-col items-center justify-center py-12 text-center">
+                      <Home size={36} className="text-slate-600 mb-3" />
+                      <p className="text-slate-400 text-sm max-w-sm">
+                        {lang === 'da'
+                          ? 'Adgang til Ejerfortegnelsen (EJF) er ikke godkendt endnu. Ansøg om Dataadgang på datafordeler.dk.'
+                          : 'Access to the Danish land registry (EJF) has not been approved yet. Apply for Dataadgang at datafordeler.dk.'}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Ejendomme grid */}
+                  {ejendommeData.length > 0 && (
+                    <>
+                      <div className="flex items-center justify-between">
+                        <p className="text-slate-400 text-sm">
+                          {ejendommeLoadingMore
+                            ? lang === 'da'
+                              ? `Indlæser… (${ejendommeData.length} af ${ejendommeTotalBfe} ejendomme)`
+                              : `Loading… (${ejendommeData.length} of ${ejendommeTotalBfe} properties)`
+                            : lang === 'da'
+                              ? `${ejendommeData.length} ejendom${ejendommeData.length !== 1 ? 'me' : ''} fundet`
+                              : `${ejendommeData.length} propert${ejendommeData.length !== 1 ? 'ies' : 'y'} found`}
+                        </p>
+                        {relatedCompanies.length > 0 && (
+                          <span className="text-slate-500 text-xs">
+                            {lang === 'da'
+                              ? `Inkl. ${relatedCompanies.filter((v) => v.aktiv).length} datterselskab${relatedCompanies.filter((v) => v.aktiv).length !== 1 ? 'er' : ''}`
+                              : `Incl. ${relatedCompanies.filter((v) => v.aktiv).length} subsidiar${relatedCompanies.filter((v) => v.aktiv).length !== 1 ? 'ies' : 'y'}`}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                        {ejendommeData.map((ej) => (
+                          <PropertyOwnerCard
+                            key={ej.bfeNummer}
+                            ejendom={ej}
+                            showOwner={relatedCompanies.length > 0}
+                            lang={lang}
+                          />
+                        ))}
+                      </div>
+
+                      {ejendommeLoadingMore && (
+                        <div className="flex items-center justify-center gap-2 py-4 text-slate-500 text-sm">
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          {lang === 'da' ? `Indlæser flere ejendomme…` : `Loading more properties…`}
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {/* Ingen ejendomme */}
+                  {ejendommeFetchComplete &&
+                    !ejendommeManglerNoegle &&
+                    !ejendommeManglerAdgang &&
+                    ejendommeData.length === 0 && (
+                      <div className="flex flex-col items-center justify-center py-12 text-center">
+                        <Home size={36} className="text-slate-600 mb-3" />
+                        <p className="text-slate-400 text-sm">
+                          {lang === 'da'
+                            ? 'Ingen registrerede ejendomme fundet for denne virksomhed eller dens koncern.'
+                            : 'No registered properties found for this company or its group.'}
+                        </p>
+                      </div>
+                    )}
                 </div>
-              ) : ejendomshandler.length > 0 ? (
-                <>
-                  {/* Summary-kort */}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                    <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4 text-center">
-                      <p className="text-xl font-bold text-white">{ejendomshandler.length}</p>
-                      <p className="text-slate-500 text-[10px] mt-0.5">
-                        {lang === 'da' ? 'Handler i alt' : 'Total trades'}
-                      </p>
-                    </div>
-                    <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4 text-center">
-                      <p className="text-xl font-bold text-emerald-400">
-                        {ejendomshandler.filter((h) => h.rolle === 'koeber').length}
-                      </p>
-                      <p className="text-slate-500 text-[10px] mt-0.5">
-                        {lang === 'da' ? 'Køb' : 'Purchases'}
-                      </p>
-                    </div>
-                    <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4 text-center">
-                      <p className="text-xl font-bold text-rose-400">
-                        {ejendomshandler.filter((h) => h.rolle === 'saelger').length}
-                      </p>
-                      <p className="text-slate-500 text-[10px] mt-0.5">
-                        {lang === 'da' ? 'Salg' : 'Sales'}
-                      </p>
-                    </div>
-                    <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4 text-center">
-                      <p className="text-xl font-bold text-white">
-                        {new Set(ejendomshandler.map((h) => h.bfeNummer)).size}
-                      </p>
-                      <p className="text-slate-500 text-[10px] mt-0.5">
-                        {lang === 'da' ? 'Ejendomme' : 'Properties'}
-                      </p>
-                    </div>
-                  </div>
+              )}
 
-                  {/* Handels-tabel */}
-                  <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden">
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="text-left text-slate-500 text-xs uppercase tracking-wide border-b border-slate-700/30">
-                            <th className="px-4 py-2.5 whitespace-nowrap">
-                              {lang === 'da' ? 'Dato' : 'Date'}
-                            </th>
-                            <th className="px-4 py-2.5 whitespace-nowrap">
-                              {lang === 'da' ? 'Type' : 'Type'}
-                            </th>
-                            <th className="px-4 py-2.5 whitespace-nowrap">
-                              {lang === 'da' ? 'Rolle' : 'Role'}
-                            </th>
-                            <th className="px-4 py-2.5 whitespace-nowrap">{c.address}</th>
-                            <th className="px-4 py-2.5 whitespace-nowrap text-right">
-                              {lang === 'da' ? 'Kontantpris' : 'Cash price'}
-                            </th>
-                            <th className="px-4 py-2.5 whitespace-nowrap text-right">
-                              {c.totalPrice}
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {ejendomshandler.map((h, i) => {
-                            const dato = h.koebsaftaleDato ?? h.overtagelsesdato ?? '—';
-                            const fmtDato = dato !== '—' ? dato.slice(0, 10) : '—';
-                            const fmtPris = (n: number | null) => {
-                              if (n == null) return '—';
-                              if (Math.abs(n) >= 1_000_000)
-                                return `${(n / 1_000_000).toFixed(1).replace('.', ',')} mio kr`;
-                              return `${n.toLocaleString('da-DK')} kr`;
-                            };
-                            const adr = h.adresse
-                              ? `${h.adresse}${h.postnr ? `, ${h.postnr}` : ''}${h.by ? ` ${h.by}` : ''}`
-                              : `BFE ${h.bfeNummer}`;
+              {/* ── Ejendomshandler sektion ── */}
+              {(ejendommeFilter === null || ejendommeFilter === 'handler') && (
+                <div className="space-y-4">
+                  {handlerLoading ? (
+                    <div className="flex items-center justify-center py-12">
+                      <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
+                      <span className="ml-2 text-slate-400 text-sm">
+                        {lang === 'da' ? 'Henter ejendomshandler…' : 'Loading property trades…'}
+                      </span>
+                    </div>
+                  ) : ejendomshandler.length > 0 ? (
+                    <>
+                      {/* Summary cards */}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4 text-center">
+                          <p className="text-xl font-bold text-white">{ejendomshandler.length}</p>
+                          <p className="text-slate-500 text-[10px] mt-0.5">
+                            {lang === 'da' ? 'Handler i alt' : 'Total trades'}
+                          </p>
+                        </div>
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4 text-center">
+                          <p className="text-xl font-bold text-emerald-400">
+                            {ejendomshandler.filter((h) => h.rolle === 'koeber').length}
+                          </p>
+                          <p className="text-slate-500 text-[10px] mt-0.5">
+                            {lang === 'da' ? 'Køb' : 'Purchases'}
+                          </p>
+                        </div>
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4 text-center">
+                          <p className="text-xl font-bold text-rose-400">
+                            {ejendomshandler.filter((h) => h.rolle === 'saelger').length}
+                          </p>
+                          <p className="text-slate-500 text-[10px] mt-0.5">
+                            {lang === 'da' ? 'Salg' : 'Sales'}
+                          </p>
+                        </div>
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4 text-center">
+                          <p className="text-xl font-bold text-white">
+                            {new Set(ejendomshandler.map((h) => h.bfeNummer)).size}
+                          </p>
+                          <p className="text-slate-500 text-[10px] mt-0.5">
+                            {lang === 'da' ? 'Ejendomme' : 'Properties'}
+                          </p>
+                        </div>
+                      </div>
 
-                            return (
-                              <tr
-                                key={i}
-                                className="border-b border-slate-700/20 hover:bg-slate-800/30 transition-colors"
-                              >
-                                <td className="px-4 py-2.5 text-white font-mono text-xs whitespace-nowrap">
-                                  {fmtDato}
-                                </td>
-                                <td className="px-4 py-2.5 text-slate-300 text-xs whitespace-nowrap">
-                                  {h.overdragelsesmaade ?? '—'}
-                                </td>
-                                <td className="px-4 py-2.5 whitespace-nowrap">
-                                  {h.rolle === 'koeber' ? (
-                                    <span className="text-[10px] font-medium bg-emerald-500/15 text-emerald-400 px-2 py-0.5 rounded-full">
-                                      {lang === 'da' ? 'Køber' : 'Buyer'}
-                                    </span>
-                                  ) : h.rolle === 'saelger' ? (
-                                    <span className="text-[10px] font-medium bg-rose-500/15 text-rose-400 px-2 py-0.5 rounded-full">
-                                      {lang === 'da' ? 'Sælger' : 'Seller'}
-                                    </span>
-                                  ) : (
-                                    <span className="text-[10px] font-medium bg-slate-500/15 text-slate-400 px-2 py-0.5 rounded-full">
-                                      —
-                                    </span>
-                                  )}
-                                </td>
-                                <td
-                                  className="px-4 py-2.5 text-white text-xs max-w-[250px] truncate"
-                                  title={adr}
-                                >
-                                  {adr}
-                                </td>
-                                <td className="px-4 py-2.5 text-right whitespace-nowrap">
-                                  <span
-                                    className={`text-sm font-medium ${h.kontantKoebesum != null ? 'text-white' : 'text-slate-600'}`}
-                                  >
-                                    {fmtPris(h.kontantKoebesum)}
-                                  </span>
-                                </td>
-                                <td className="px-4 py-2.5 text-right whitespace-nowrap">
-                                  <span
-                                    className={`text-sm font-medium ${h.samletKoebesum != null ? 'text-white' : 'text-slate-600'}`}
-                                  >
-                                    {fmtPris(h.samletKoebesum)}
-                                  </span>
-                                </td>
+                      {/* Trade table */}
+                      <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden">
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="text-left text-slate-500 text-xs uppercase tracking-wide border-b border-slate-700/30">
+                                <th className="px-4 py-2.5 whitespace-nowrap">
+                                  {lang === 'da' ? 'Dato' : 'Date'}
+                                </th>
+                                <th className="px-4 py-2.5 whitespace-nowrap">
+                                  {lang === 'da' ? 'Type' : 'Type'}
+                                </th>
+                                <th className="px-4 py-2.5 whitespace-nowrap">
+                                  {lang === 'da' ? 'Rolle' : 'Role'}
+                                </th>
+                                <th className="px-4 py-2.5 whitespace-nowrap">{c.address}</th>
+                                <th className="px-4 py-2.5 whitespace-nowrap text-right">
+                                  {lang === 'da' ? 'Kontantpris' : 'Cash price'}
+                                </th>
+                                <th className="px-4 py-2.5 whitespace-nowrap text-right">
+                                  {c.totalPrice}
+                                </th>
                               </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
+                            </thead>
+                            <tbody>
+                              {ejendomshandler.map((h, i) => {
+                                const dato = h.koebsaftaleDato ?? h.overtagelsesdato ?? '—';
+                                const fmtDato = dato !== '—' ? dato.slice(0, 10) : '—';
+                                const fmtPris = (n: number | null) => {
+                                  if (n == null) return '—';
+                                  if (Math.abs(n) >= 1_000_000)
+                                    return `${(n / 1_000_000).toFixed(1).replace('.', ',')} mio kr`;
+                                  return `${n.toLocaleString('da-DK')} kr`;
+                                };
+                                const adr = h.adresse
+                                  ? `${h.adresse}${h.postnr ? `, ${h.postnr}` : ''}${h.by ? ` ${h.by}` : ''}`
+                                  : `BFE ${h.bfeNummer}`;
+
+                                return (
+                                  <tr
+                                    key={i}
+                                    className="border-b border-slate-700/20 hover:bg-slate-800/30 transition-colors"
+                                  >
+                                    <td className="px-4 py-2.5 text-white font-mono text-xs whitespace-nowrap">
+                                      {fmtDato}
+                                    </td>
+                                    <td className="px-4 py-2.5 text-slate-300 text-xs whitespace-nowrap">
+                                      {h.overdragelsesmaade ?? '—'}
+                                    </td>
+                                    <td className="px-4 py-2.5 whitespace-nowrap">
+                                      {h.rolle === 'koeber' ? (
+                                        <span className="text-[10px] font-medium bg-emerald-500/15 text-emerald-400 px-2 py-0.5 rounded-full">
+                                          {lang === 'da' ? 'Køber' : 'Buyer'}
+                                        </span>
+                                      ) : h.rolle === 'saelger' ? (
+                                        <span className="text-[10px] font-medium bg-rose-500/15 text-rose-400 px-2 py-0.5 rounded-full">
+                                          {lang === 'da' ? 'Sælger' : 'Seller'}
+                                        </span>
+                                      ) : (
+                                        <span className="text-[10px] font-medium bg-slate-500/15 text-slate-400 px-2 py-0.5 rounded-full">
+                                          —
+                                        </span>
+                                      )}
+                                    </td>
+                                    <td
+                                      className="px-4 py-2.5 text-white text-xs max-w-[250px] truncate"
+                                      title={adr}
+                                    >
+                                      {adr}
+                                    </td>
+                                    <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                                      <span
+                                        className={`text-sm font-medium ${h.kontantKoebesum != null ? 'text-white' : 'text-slate-600'}`}
+                                      >
+                                        {fmtPris(h.kontantKoebesum)}
+                                      </span>
+                                    </td>
+                                    <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                                      <span
+                                        className={`text-sm font-medium ${h.samletKoebesum != null ? 'text-white' : 'text-slate-600'}`}
+                                      >
+                                        {fmtPris(h.samletKoebesum)}
+                                      </span>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </>
+                  ) : handlerManglerAdgang ? (
+                    <div className="flex flex-col items-center justify-center py-12 text-center">
+                      <Shield size={32} className="text-amber-500/60 mb-3" />
+                      <p className="text-slate-300 text-sm font-medium mb-1">
+                        {lang === 'da'
+                          ? 'Afventer EJF-adgang fra Datafordeler'
+                          : 'Awaiting EJF access from Datafordeler'}
+                      </p>
+                      <p className="text-slate-500 text-xs max-w-md">
+                        {lang === 'da'
+                          ? 'Ejendomshandler kræver godkendt Dataadgang til Ejerfortegnelsen (EJF) hos Geodatastyrelsen. Ansøgningen er indsendt.'
+                          : 'Property trades require approved data access to EJF from the Danish Geodata Agency. The application has been submitted.'}
+                      </p>
                     </div>
-                  </div>
-                </>
-              ) : handlerManglerAdgang ? (
-                <div className="flex flex-col items-center justify-center py-16 text-center">
-                  <Shield size={32} className="text-amber-500/60 mb-3" />
-                  <p className="text-slate-300 text-sm font-medium mb-1">
-                    {lang === 'da'
-                      ? 'Afventer EJF-adgang fra Datafordeler'
-                      : 'Awaiting EJF access from Datafordeler'}
-                  </p>
-                  <p className="text-slate-500 text-xs max-w-md">
-                    {lang === 'da'
-                      ? 'Ejendomshandler kræver godkendt Dataadgang til Ejerfortegnelsen (EJF) hos Geodatastyrelsen. Ansøgningen er indsendt.'
-                      : 'Property trades require approved data access to EJF from the Danish Geodata Agency. The application has been submitted.'}
-                  </p>
+                  ) : !handlerLoading ? (
+                    <EmptyState
+                      ikon={<ArrowRightLeft size={32} className="text-slate-600" />}
+                      tekst={c.noTradesFound}
+                    />
+                  ) : null}
                 </div>
-              ) : (
-                <EmptyState
-                  ikon={<ArrowRightLeft size={32} className="text-slate-600" />}
-                  tekst={c.noTradesFound}
-                />
               )}
             </div>
-          )}
-
-          {/* ══ EJENDOMME ══ */}
-          {aktivTab === 'properties' && (
-            <PlaceholderTab
-              ikon={<Home size={40} className="text-slate-600" />}
-              titel={c.tabs.properties}
-              beskrivelse={c.noProperties}
-              comingSoon={c.comingSoon}
-            />
           )}
 
           {/* ══ GRUPPE ══ */}
@@ -2227,7 +2700,7 @@ export default function VirksomhedDetalje({ params }: PageProps) {
           {/* ══ REGNSKAB ══ */}
           {aktivTab === 'financials' && (
             <div className="space-y-4">
-              {/* Loading */}
+              {/* Første batch loader */}
               {xbrlLoading && (
                 <div className="flex items-center justify-center py-16">
                   <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
@@ -2235,13 +2708,23 @@ export default function VirksomhedDetalje({ params }: PageProps) {
                 </div>
               )}
 
-              {/* Data */}
+              {/* Data — vises så snart første batch er klar */}
               {!xbrlLoading && xbrlData && xbrlData.length > 0 && (
-                <RegnskabstalTable years={xbrlData} lang={lang} />
+                <RegnskabstalTable years={xbrlData} lang={lang} regnskaber={regnskaber ?? []} />
               )}
 
-              {/* Empty / fallback */}
-              {!xbrlLoading && (!xbrlData || xbrlData.length === 0) && (
+              {/* Progressiv loading-indikator for efterfølgende batches */}
+              {xbrlLoadingMore && (
+                <div className="flex items-center justify-center gap-2 py-3">
+                  <Loader2 size={14} className="animate-spin text-blue-400" />
+                  <span className="text-slate-400 text-xs">
+                    {lang === 'da' ? 'Henter flere regnskaber…' : 'Loading more financials…'}
+                  </span>
+                </div>
+              )}
+
+              {/* Empty / fallback — kun når alt er hentet og der stadig ingen data er */}
+              {!xbrlLoading && !xbrlLoadingMore && (!xbrlData || xbrlData.length === 0) && (
                 <EmptyState
                   ikon={<BarChart3 size={32} className="text-slate-600" />}
                   tekst={c.noFinancials}
@@ -2553,13 +3036,18 @@ export default function VirksomhedDetalje({ params }: PageProps) {
             </div>
           )}
 
-          {/* ══ TINGLYSNING ══ */}
+          {/* ══ TINGLYSNING (PERSONBOG) ══ */}
           {aktivTab === 'liens' && (
-            <PlaceholderTab
-              ikon={<Scale size={40} className="text-slate-600" />}
-              titel={c.tabs.liens}
-              beskrivelse={c.noLiens}
-              comingSoon={c.comingSoon}
+            <PersonbogSection
+              haeftelser={personbogData}
+              loading={personbogLoading}
+              fejl={personbogFejl}
+              c={c}
+              da={lang === 'da'}
+              expandedPant={expandedPant}
+              setExpandedPant={setExpandedPant}
+              selectedPantDocs={selectedPantDocs}
+              setSelectedPantDocs={setSelectedPantDocs}
             />
           )}
 
@@ -2865,12 +3353,6 @@ export default function VirksomhedDetalje({ params }: PageProps) {
                 confidenceThreshold={confidenceThreshold}
               />
             </div>
-          </div>
-          {/* Build-nummer — diskret footer i bunden af nyheder-panelet */}
-          <div className="px-4 py-2 border-t border-slate-700/30 flex-shrink-0">
-            <p className="text-slate-600 text-xs">
-              Build: {process.env.NEXT_PUBLIC_BUILD_ID ?? 'dev'}
-            </p>
           </div>
         </div>
       )}
@@ -3224,10 +3706,10 @@ function AIArticleSearchPanel({
       <div>
         {tokenBar}
         {aiDisclaimer}
-        <p className="text-slate-500 text-xs mb-3 leading-relaxed">
+        <p className="text-slate-300 text-xs mb-3 leading-relaxed">
           {da
-            ? `Klik for at finde op til 30 seneste danske nyheder om ${companyData.name}.`
-            : `Click to find up to 30 latest Danish news articles about ${companyData.name}.`}
+            ? `Klik for at finde op til 30 seneste danske nyheder om ${companyData.name} og link til virksomhedens sider på sociale medier.`
+            : `Click to find up to 30 latest Danish news articles about ${companyData.name} and links to the company's social media pages.`}
         </p>
         <button
           onClick={handleSearch}
@@ -3422,7 +3904,7 @@ function EmptyState({ ikon, tekst }: EmptyStateProps) {
   );
 }
 
-interface PlaceholderTabProps {
+interface _PlaceholderTabProps {
   /** Ikon centreret over titel */
   ikon: React.ReactNode;
   /** Tab-overskrift */
@@ -3433,13 +3915,670 @@ interface PlaceholderTabProps {
   comingSoon: string;
 }
 
+// ─── Personbog (Tinglysning) ────────────────────────────────────────────────
+
+/** Typekonfig for farvekodede personbog-sektioner */
+const personbogSektioner: {
+  key: string;
+  color: string;
+  bgClass: string;
+  textClass: string;
+  borderClass: string;
+}[] = [
+  {
+    key: 'virksomhedspant',
+    color: 'amber',
+    bgClass: 'bg-amber-500/5',
+    textClass: 'text-amber-400',
+    borderClass: 'border-amber-500/20',
+  },
+  {
+    key: 'loesoerepant',
+    color: 'teal',
+    bgClass: 'bg-teal-500/5',
+    textClass: 'text-teal-400',
+    borderClass: 'border-teal-500/20',
+  },
+  {
+    key: 'fordringspant',
+    color: 'cyan',
+    bgClass: 'bg-cyan-500/5',
+    textClass: 'text-cyan-400',
+    borderClass: 'border-cyan-500/20',
+  },
+  {
+    key: 'ejendomsforbehold',
+    color: 'purple',
+    bgClass: 'bg-purple-500/5',
+    textClass: 'text-purple-400',
+    borderClass: 'border-purple-500/20',
+  },
+];
+
+/** Oversætter personbog-typenøgler til UI-labels */
+function personbogTypeLabel(key: string, c: (typeof translations)['da']['company']): string {
+  const map: Record<string, string> = {
+    virksomhedspant: c.personbogVirksomhedspant,
+    loesoerepant: c.personbogLoesoerepant,
+    fordringspant: c.personbogFordringspant,
+    ejendomsforbehold: c.personbogEjendomsforbehold,
+  };
+  return map[key] ?? key;
+}
+
+/** Oversætter pantomfang-nøgler til UI-labels */
+function pantOmfangLabel(key: string, c: (typeof translations)['da']['company']): string {
+  const lower = key.toLowerCase();
+  if (lower.includes('varelager')) return c.personbogVarelager;
+  if (lower.includes('driftsinventar') || lower.includes('driftsmateriel'))
+    return c.personbogDriftsinventar;
+  if (lower.includes('fordring')) return c.personbogFordringer;
+  if (lower.includes('immateriel')) return c.personbogImmaterielleRettigheder;
+  return key;
+}
+
+interface PersonbogSectionProps {
+  haeftelser: PersonbogHaeftelse[];
+  loading: boolean;
+  fejl: string | null;
+  c: (typeof translations)['da']['company'];
+  da: boolean;
+  expandedPant: Set<number>;
+  setExpandedPant: React.Dispatch<React.SetStateAction<Set<number>>>;
+  selectedPantDocs: Set<string>;
+  setSelectedPantDocs: React.Dispatch<React.SetStateAction<Set<string>>>;
+}
+
+/**
+ * PersonbogSection — Viser personbogshæftelser for en virksomhed.
+ * Farvekodede sektioner grupperet efter type: Virksomhedspant, Løsørepant,
+ * Fordringspant, Ejendomsforbehold. Matcher tinglysning-tab-designet fra ejendomssiden.
+ *
+ * @param props - Se PersonbogSectionProps
+ */
+function PersonbogSection({
+  haeftelser,
+  loading,
+  fejl,
+  c,
+  da,
+  expandedPant,
+  setExpandedPant,
+  selectedPantDocs,
+  setSelectedPantDocs,
+}: PersonbogSectionProps) {
+  /** Loading state */
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 text-center">
+        <Loader2 size={32} className="text-blue-400 animate-spin mb-3" />
+        <p className="text-slate-400 text-sm">{c.loadingPersonbog}</p>
+      </div>
+    );
+  }
+
+  /** Error state */
+  if (fejl) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 text-center">
+        <AlertTriangle size={32} className="text-amber-400 mb-3" />
+        <p className="text-slate-400 text-sm">{fejl}</p>
+      </div>
+    );
+  }
+
+  /** Empty state */
+  if (haeftelser.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 text-center">
+        <Scale size={40} className="text-slate-600 mb-4" />
+        <p className="text-slate-400 text-sm">{c.personbogEmpty}</p>
+      </div>
+    );
+  }
+
+  /** Gruppér hæftelser efter type */
+  const grouped: Record<string, PersonbogHaeftelse[]> = {};
+  for (const h of haeftelser) {
+    const key = h.type;
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(h);
+  }
+
+  /** Beregn samlet hæftelse */
+  const samletHaeftelse = haeftelser.reduce((sum, h) => sum + (h.hovedstol ?? 0), 0);
+
+  /** Selectérbare dokumenter */
+  const allDocs = haeftelser.filter((h) => h.dokumentId).map((h) => h.dokumentId!);
+
+  const toggleExpand = (idx: number) => {
+    setExpandedPant((prev) => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
+      return next;
+    });
+  };
+
+  const toggleDoc = (id: string) => {
+    setSelectedPantDocs((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const _toggleAllDocs = () => {
+    if (selectedPantDocs.size === allDocs.length) {
+      setSelectedPantDocs(new Set());
+    } else {
+      setSelectedPantDocs(new Set(allDocs));
+    }
+  };
+
+  /** Globalt indeks over hæftelser — bruges til expand-toggle */
+  let globalIdx = 0;
+
+  return (
+    <div className="space-y-2">
+      {/* ── Samlet oversigt ── */}
+      {samletHaeftelse > 0 && (
+        <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl p-4 mb-2">
+          <div className="flex items-center justify-between">
+            <span className="text-slate-400 text-sm">{c.personbogSamletHaeftelse}</span>
+            <span className="text-white font-semibold text-lg">
+              {samletHaeftelse.toLocaleString('da-DK')} DKK
+            </span>
+          </div>
+          <div className="flex gap-3 mt-2 flex-wrap">
+            {personbogSektioner.map(({ key, textClass }) => {
+              const count = grouped[key]?.length ?? 0;
+              if (count === 0) return null;
+              const sum = (grouped[key] ?? []).reduce((s, h) => s + (h.hovedstol ?? 0), 0);
+              return (
+                <span key={key} className={`text-xs ${textClass}`}>
+                  {personbogTypeLabel(key, c)}: {sum.toLocaleString('da-DK')} DKK ({count})
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ── Hovedcontainer ── */}
+      <div
+        className="bg-slate-800/20 border border-slate-700/30 rounded-2xl"
+        style={{ contain: 'layout' }}
+      >
+        {/* Header med download-knap — matcher ejendomssiden */}
+        <div className="px-4 py-2.5 border-b border-slate-700/30 flex items-center gap-2">
+          <Scale size={15} className="text-slate-400" />
+          <span className="text-sm font-semibold text-slate-200">
+            {da ? 'Tinglyste dokumenter' : 'Registered documents'}
+          </span>
+          <span className="text-slate-600 text-xs">({haeftelser.length})</span>
+          <button
+            onClick={async () => {
+              for (const docId of selectedPantDocs) {
+                const url = `/api/tinglysning/dokument?uuid=${docId}`;
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `tinglysning-${docId.slice(0, 14)}.pdf`;
+                a.click();
+                await new Promise((r) => setTimeout(r, 500));
+              }
+            }}
+            disabled={selectedPantDocs.size === 0}
+            className="ml-auto flex items-center gap-1.5 px-3 py-1 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 disabled:cursor-not-allowed border border-slate-600 rounded-lg text-slate-300 text-xs font-medium transition-all"
+          >
+            <Download size={12} />
+            {c.personbogDownloadValgte} ({selectedPantDocs.size})
+          </button>
+        </div>
+
+        {/* Kolonneoverskrifter — matcher ejendomssiden */}
+        <div className="grid grid-cols-[24px_36px_90px_1fr_100px_100px_50px_28px] gap-x-2 px-4 py-1.5 border-b border-slate-700/20">
+          <span />
+          <span className="text-[10px] font-medium text-slate-500 uppercase">Pri.</span>
+          <span className="text-[10px] font-medium text-slate-500 uppercase">
+            {da ? 'Dato' : 'Date'}
+          </span>
+          <span className="text-[10px] font-medium text-slate-500 uppercase">
+            {da ? 'Dokument' : 'Document'}
+          </span>
+          <span className="text-[10px] font-medium text-slate-500 uppercase">
+            {da ? 'Beløb' : 'Amount'}
+          </span>
+          <span className="text-[10px] font-medium text-slate-500 uppercase">Type</span>
+          <span className="text-[10px] font-medium text-slate-500 uppercase">
+            {da ? 'Dok.' : 'Doc.'}
+          </span>
+          <span />
+        </div>
+
+        {/* ── Farvekodede sektioner ── */}
+        {personbogSektioner.map(({ key, bgClass, textClass, borderClass }) => {
+          const items = grouped[key];
+          if (!items || items.length === 0) return null;
+
+          return (
+            <div key={key}>
+              {/* Sektionsheader — matcher ejendomssiden */}
+              <div className={`${bgClass} px-4 py-1.5 border-b border-slate-700/20`}>
+                <span className={`text-[10px] font-semibold ${textClass} uppercase tracking-wider`}>
+                  {personbogTypeLabel(key, c)} ({items.length})
+                </span>
+              </div>
+
+              {/* Rækker */}
+              {items.map((h) => {
+                const idx = globalIdx++;
+                const isExpanded = expandedPant.has(idx);
+                return (
+                  <div key={idx}>
+                    {/* Kollapset række — matcher ejendomssiden */}
+                    <div
+                      className="grid grid-cols-[24px_36px_90px_1fr_100px_100px_50px_28px] gap-x-2 px-4 py-2 hover:bg-slate-700/10 transition-colors items-center cursor-pointer border-b border-slate-700/15"
+                      onClick={() => toggleExpand(idx)}
+                    >
+                      {isExpanded ? (
+                        <ChevronDown size={12} className="text-slate-500" />
+                      ) : (
+                        <ChevronRight size={12} className="text-slate-500" />
+                      )}
+                      <span className="text-xs text-slate-400 tabular-nums">
+                        {String(h.prioritet ?? '')}
+                      </span>
+                      <span className="text-xs text-slate-400 tabular-nums whitespace-nowrap">
+                        {h.tinglysningsdato ? formatDatoKort(h.tinglysningsdato) : ''}
+                      </span>
+                      <div className="min-w-0">
+                        <span className="text-sm text-slate-200 truncate block">
+                          {personbogTypeLabel(h.type, c)}
+                        </span>
+                        {h.debitorer.length > 0 && (
+                          <span className="text-[10px] text-slate-500 truncate block">
+                            {h.debitorer.join(', ')}
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-xs text-slate-300 tabular-nums text-right">
+                        {h.hovedstol != null && h.hovedstol > 0
+                          ? `${h.hovedstol.toLocaleString('da-DK')} ${h.valuta}`
+                          : ''}
+                      </span>
+                      <span className="text-xs text-slate-400 truncate">
+                        {String(h.kreditor ?? '')}
+                      </span>
+                      <div
+                        className="flex items-center gap-1.5"
+                        onClick={(ev) => ev.stopPropagation()}
+                      >
+                        {h.dokumentId && (
+                          <a
+                            href={`/api/tinglysning/dokument?uuid=${h.dokumentId}`}
+                            download
+                            className="inline-flex items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
+                          >
+                            <FileText size={11} />
+                            PDF
+                          </a>
+                        )}
+                      </div>
+                      {h.dokumentId ? (
+                        <label
+                          className="flex items-center cursor-pointer flex-shrink-0"
+                          onClick={(ev) => ev.stopPropagation()}
+                        >
+                          <input
+                            type="checkbox"
+                            className="sr-only"
+                            checked={selectedPantDocs.has(h.dokumentId)}
+                            onChange={() => toggleDoc(h.dokumentId!)}
+                          />
+                          <span
+                            className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors ${selectedPantDocs.has(h.dokumentId) ? 'bg-blue-500 border-blue-500' : 'bg-[#0a1020] border-slate-400'}`}
+                          >
+                            {selectedPantDocs.has(h.dokumentId) && (
+                              <svg
+                                viewBox="0 0 10 10"
+                                className="w-2 h-2 text-white"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2.5"
+                              >
+                                <path d="M1.5 5.5l2.5 2.5 4.5-4.5" />
+                              </svg>
+                            )}
+                          </span>
+                        </label>
+                      ) : (
+                        <span />
+                      )}
+                    </div>
+
+                    {/* Expanderet detalje-panel — matcher ejendomssiden */}
+                    {isExpanded && (
+                      <div className={`px-4 pb-3 ml-10 border-l-2 ${borderClass}`}>
+                        {/* Omfang-badges (virksomhedspant) */}
+                        {h.pantTyper.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5 mb-3">
+                            {h.pantTyper.map((p, pi) => (
+                              <span
+                                key={pi}
+                                className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium ${bgClass} ${textClass}`}
+                              >
+                                {pantOmfangLabel(p, c)}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Detalje-grid */}
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-2 text-xs mt-1">
+                          {/* Kreditor */}
+                          {h.kreditor && (
+                            <div>
+                              <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                {c.personbogKreditor}
+                              </p>
+                              <p className="text-white">
+                                {h.kreditorCvr ? (
+                                  <Link
+                                    href={`/dashboard/companies/${h.kreditorCvr}`}
+                                    className="text-blue-400 hover:underline"
+                                  >
+                                    {h.kreditor}
+                                  </Link>
+                                ) : (
+                                  h.kreditor
+                                )}
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Debitor(er) */}
+                          {h.debitorer.length > 0 && (
+                            <div>
+                              <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                {c.personbogDebitor}
+                              </p>
+                              {h.debitorer.map((d, di) => (
+                                <p key={di} className="text-white">
+                                  {h.debitorCvr[di] ? (
+                                    <Link
+                                      href={`/dashboard/companies/${h.debitorCvr[di]}`}
+                                      className="text-blue-400 hover:underline"
+                                    >
+                                      {d}
+                                    </Link>
+                                  ) : (
+                                    d
+                                  )}
+                                </p>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Hovedstol */}
+                          {h.hovedstol != null && (
+                            <div>
+                              <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                {c.personbogHovedstol}
+                              </p>
+                              <p className="text-white">
+                                {h.hovedstol.toLocaleString('da-DK')} {h.valuta}
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Rente */}
+                          {h.rente != null && (
+                            <div>
+                              <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                {c.personbogRente}
+                              </p>
+                              <p className="text-white">
+                                {h.rente}% {h.renteType ? `(${h.renteType})` : ''}
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Tinglysningsdato */}
+                          {h.tinglysningsdato && (
+                            <div>
+                              <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                {c.personbogTinglysningsdato}
+                              </p>
+                              <p className="text-white">{formatDatoKort(h.tinglysningsdato)}</p>
+                            </div>
+                          )}
+
+                          {/* Registreringsdato */}
+                          {h.registreringsdato && h.registreringsdato !== h.tinglysningsdato && (
+                            <div>
+                              <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                {c.personbogRegistreringsdato}
+                              </p>
+                              <p className="text-white">{formatDatoKort(h.registreringsdato)}</p>
+                            </div>
+                          )}
+
+                          {/* Tinglysningsafgift */}
+                          {h.tinglysningsafgift != null && (
+                            <div>
+                              <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                {c.personbogTinglysningsafgift}
+                              </p>
+                              <p className="text-white">
+                                {h.tinglysningsafgift.toLocaleString('da-DK')} DKK
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Løbetid */}
+                          {h.loebetid && (
+                            <div>
+                              <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                {c.personbogLoebetid}
+                              </p>
+                              <p className="text-white">{h.loebetid}</p>
+                            </div>
+                          )}
+
+                          {/* Dokumentalias */}
+                          {h.dokumentAlias && (
+                            <div>
+                              <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                {da ? 'Dokument' : 'Document'}
+                              </p>
+                              <p className="text-white text-[11px]">{h.dokumentAlias}</p>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Vilkår */}
+                        {h.vilkaar && (
+                          <div className="mt-2 pt-2 border-t border-slate-700/20">
+                            <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                              {c.personbogVilkaar}
+                            </p>
+                            <p className="text-slate-300 text-xs mt-0.5 whitespace-pre-line">
+                              {h.vilkaar}
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Anmelder */}
+                        {h.anmelderNavn && (
+                          <div className="mt-2 pt-2 border-t border-slate-700/20">
+                            <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                              {c.personbogAnmelder}
+                            </p>
+                            <p className="text-white text-xs">
+                              {h.anmelderCvr ? (
+                                <Link
+                                  href={`/dashboard/companies/${h.anmelderCvr}`}
+                                  className="text-blue-400 hover:underline"
+                                >
+                                  {h.anmelderNavn}
+                                </Link>
+                              ) : (
+                                h.anmelderNavn
+                              )}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+
+        {/* Øvrige hæftelser (ukendte typer) */}
+        {(() => {
+          const knownKeys = personbogSektioner.map((s) => s.key);
+          const oevrige = Object.entries(grouped).filter(([key]) => !knownKeys.includes(key));
+          if (oevrige.length === 0) return null;
+
+          return oevrige.map(([key, items]) => (
+            <div key={key}>
+              <div className="bg-slate-500/5 px-4 py-1.5 border-b border-slate-700/20">
+                <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                  {c.personbogOevrige}: {key} ({items.length})
+                </span>
+              </div>
+              {items.map((h) => {
+                const idx = globalIdx++;
+                const isExpanded = expandedPant.has(idx);
+                const docId = String(h.dokumentId ?? '');
+                return (
+                  <div key={idx} className="border-b border-slate-700/15">
+                    <div
+                      className="grid grid-cols-[24px_36px_90px_1fr_100px_100px_50px_28px] gap-x-2 px-4 py-2 hover:bg-slate-700/10 transition-colors items-center cursor-pointer"
+                      onClick={() => toggleExpand(idx)}
+                    >
+                      {isExpanded ? (
+                        <ChevronDown size={12} className="text-slate-500" />
+                      ) : (
+                        <ChevronRight size={12} className="text-slate-500" />
+                      )}
+                      <span className="text-xs text-slate-400 tabular-nums">
+                        {String(h.prioritet ?? '')}
+                      </span>
+                      <span className="text-xs text-slate-400 tabular-nums whitespace-nowrap">
+                        {h.tinglysningsdato ? formatDatoKort(h.tinglysningsdato) : ''}
+                      </span>
+                      <span className="text-sm text-slate-200 truncate">{key}</span>
+                      <span className="text-xs text-slate-300 tabular-nums text-right">
+                        {h.hovedstol != null && h.hovedstol > 0
+                          ? `${h.hovedstol.toLocaleString('da-DK')} ${h.valuta}`
+                          : ''}
+                      </span>
+                      <span className="text-xs text-slate-400 truncate">
+                        {String(h.kreditor ?? '')}
+                      </span>
+                      <div
+                        className="flex items-center gap-1.5"
+                        onClick={(ev) => ev.stopPropagation()}
+                      >
+                        {docId && (
+                          <a
+                            href={`/api/tinglysning/dokument?uuid=${docId}`}
+                            download
+                            className="inline-flex items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
+                          >
+                            <FileText size={11} /> PDF
+                          </a>
+                        )}
+                      </div>
+                      {docId ? (
+                        <label
+                          className="flex items-center cursor-pointer flex-shrink-0"
+                          onClick={(ev) => ev.stopPropagation()}
+                        >
+                          <input
+                            type="checkbox"
+                            className="sr-only"
+                            checked={selectedPantDocs.has(docId)}
+                            onChange={() => toggleDoc(docId)}
+                          />
+                          <span
+                            className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors ${selectedPantDocs.has(docId) ? 'bg-blue-500 border-blue-500' : 'bg-[#0a1020] border-slate-400'}`}
+                          >
+                            {selectedPantDocs.has(docId) && (
+                              <svg
+                                viewBox="0 0 10 10"
+                                className="w-2 h-2 text-white"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2.5"
+                              >
+                                <path d="M1.5 5.5l2.5 2.5 4.5-4.5" />
+                              </svg>
+                            )}
+                          </span>
+                        </label>
+                      ) : (
+                        <span />
+                      )}
+                    </div>
+                    {isExpanded && (
+                      <div className="px-4 pb-3 ml-10 border-l-2 border-slate-500/20">
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-2 text-xs mt-1">
+                          {h.kreditor && (
+                            <div>
+                              <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                {c.personbogKreditor}
+                              </p>
+                              <p className="text-white">{h.kreditor}</p>
+                            </div>
+                          )}
+                          {h.hovedstol != null && (
+                            <div>
+                              <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                {c.personbogHovedstol}
+                              </p>
+                              <p className="text-white">
+                                {h.hovedstol.toLocaleString('da-DK')} {h.valuta}
+                              </p>
+                            </div>
+                          )}
+                          {h.tinglysningsdato && (
+                            <div>
+                              <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                {c.personbogTinglysningsdato}
+                              </p>
+                              <p className="text-white">{formatDatoKort(h.tinglysningsdato)}</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ));
+        })()}
+      </div>
+    </div>
+  );
+}
+
+// ─── PlaceholderTab ─────────────────────────────────────────────────────────
+
 /**
  * PlaceholderTab — Placeholder for tabs der endnu ikke er implementeret.
  * Viser et ikon, titel, "kommer snart"-badge og en beskrivelsestekst.
  *
  * @param props - Se PlaceholderTabProps
  */
-function PlaceholderTab({ ikon, titel, beskrivelse, comingSoon }: PlaceholderTabProps) {
+function _PlaceholderTab({ ikon, titel, beskrivelse, comingSoon }: _PlaceholderTabProps) {
   return (
     <div className="flex flex-col items-center justify-center py-16 text-center">
       <div className="mb-4">{ikon}</div>
@@ -3671,20 +4810,30 @@ function RelationsDiagram({
       : extractOwners(data.deltagere).map((o) => ({ ...o, cvr: null, parents: [] }));
 
   // ── Aktive datterselskaber sorteret efter ejerandel (højeste først) ──
-  const datterselskaber = relatedCompanies
-    .filter((v) => v.aktiv)
-    .sort((a, b) => (b.ejerandelNum ?? 0) - (a.ejerandelNum ?? 0));
+  const datterselskaber = useMemo(
+    () =>
+      relatedCompanies
+        .filter((v) => v.aktiv)
+        .sort((a, b) => (b.ejerandelNum ?? 0) - (a.ejerandelNum ?? 0)),
+    [relatedCompanies]
+  );
 
   // ── Direkte datter (ejet af denne virksomhed) vs. indirekte (ejet af et datterselskab) ──
-  const direkteDatter = datterselskaber.filter((v) => !v.ejetAfCvr || v.ejetAfCvr === data.vat);
-  const indirekteDatterMap = new Map<number, RelateretVirksomhed[]>();
-  for (const v of datterselskaber) {
-    if (v.ejetAfCvr && v.ejetAfCvr !== data.vat) {
-      const arr = indirekteDatterMap.get(v.ejetAfCvr) ?? [];
-      arr.push(v);
-      indirekteDatterMap.set(v.ejetAfCvr, arr);
+  const direkteDatter = useMemo(
+    () => datterselskaber.filter((v) => !v.ejetAfCvr || v.ejetAfCvr === data.vat),
+    [datterselskaber, data.vat]
+  );
+  const indirekteDatterMap = useMemo(() => {
+    const map = new Map<number, RelateretVirksomhed[]>();
+    for (const v of datterselskaber) {
+      if (v.ejetAfCvr && v.ejetAfCvr !== data.vat) {
+        const arr = map.get(v.ejetAfCvr) ?? [];
+        arr.push(v);
+        map.set(v.ejetAfCvr, arr);
+      }
     }
-  }
+    return map;
+  }, [datterselskaber, data.vat]);
 
   // ── Byg ejerkæder (deduplikeret) ──
 
@@ -3744,7 +4893,6 @@ function RelationsDiagram({
       ids.add(d.cvr);
     }
     return ids;
-    // eslint-disable-next-line react-hooks/preserve-manual-memoization
   }, [chains, direkteDatter, data.vat, parentEnhedsNummer]);
 
   // ── Dynamisk state: expandede ejere + on-demand loaded subsidiaries ──
@@ -3757,7 +4905,8 @@ function RelationsDiagram({
   const containerRef = useRef<HTMLDivElement>(null);
   const contentRef2 = useRef<HTMLDivElement>(null);
 
-  // Auto-zoom to fit efter render
+  // Auto-zoom to fit efter render — trigges af ændret antal noder (ikke loading-state)
+  const autoZoomKey = `${direkteDatter.length}-${expandedOwners.size}-${dynSubs.size}`;
   useEffect(() => {
     if (!containerRef.current || !contentRef2.current) return;
     const timer = setTimeout(() => {
@@ -3774,7 +4923,7 @@ function RelationsDiagram({
       }
     }, 300);
     return () => clearTimeout(timer);
-  }, [direkteDatter.length, expandedOwners.size, dynSubs.size, chainLoading, relatedLoading]);
+  }, [autoZoomKey]);
 
   // ── Ekstra ejere per datterselskab (filtreret for allerede synlige) ──
 
@@ -3802,7 +4951,6 @@ function RelationsDiagram({
       if (extras.length > 0) map.set(d.cvr, extras);
     }
     return map;
-    // eslint-disable-next-line react-hooks/preserve-manual-memoization
   }, [direkteDatter, data.vat, allVisibleIds]);
 
   const hasContent = owners.length > 0 || datterselskaber.length > 0;
@@ -4459,6 +5607,8 @@ interface RegnskabstalTableProps {
   years: RegnskabsAar[];
   /** Sprog */
   lang: 'da' | 'en';
+  /** Regnskaber med PDF-links fra ES */
+  regnskaber?: Regnskab[];
 }
 
 /** Række-definition for regnskabstabellen */
@@ -4490,7 +5640,7 @@ const CHART_COLORS = [
  *
  * @param props - Se RegnskabstalTableProps
  */
-function RegnskabstalTable({ years, lang }: RegnskabstalTableProps) {
+function RegnskabstalTable({ years, lang, regnskaber = [] }: RegnskabstalTableProps) {
   const da = lang === 'da';
   const [visAlleAar, setVisAlleAar] = useState(false);
   /** Default graf: Bruttofortjeneste, Årets resultat, Egenkapital */
@@ -4509,6 +5659,25 @@ function RegnskabstalTable({ years, lang }: RegnskabstalTableProps) {
 
   /** Viste år — 5 default, alle hvis udfoldet */
   const visteAar = visAlleAar ? years : years.slice(0, 5);
+
+  /**
+   * Map fra år → download URL for regnskabsrapporten.
+   * Prioritet: PDF > XHTML (åbnes i browser) > ZIP.
+   */
+  const pdfPerAar = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const r of regnskaber) {
+      if (!r.periodeSlut) continue;
+      const aar = new Date(r.periodeSlut).getFullYear();
+      if (map.has(aar)) continue; // Nyeste først (ES sorterer desc)
+      const dok =
+        r.dokumenter.find((d) => d.dokumentMimeType === 'application/pdf') ??
+        r.dokumenter.find((d) => d.dokumentMimeType?.includes('xhtml')) ??
+        r.dokumenter.find((d) => d.dokumentMimeType === 'application/zip');
+      if (dok?.dokumentUrl) map.set(aar, dok.dokumentUrl);
+    }
+    return map;
+  }, [regnskaber]);
 
   /** Formaterer et tal med tusindtalsseparator */
   const fmt = (val: number | null): string => {
@@ -4841,14 +6010,31 @@ function RegnskabstalTable({ years, lang }: RegnskabstalTableProps) {
               >
                 <span />
                 <span />
-                {visteAar.map((y) => (
-                  <span
-                    key={y.aar}
-                    className="text-[11px] font-semibold text-blue-400 text-right tabular-nums"
-                  >
-                    {y.aar}
-                  </span>
-                ))}
+                {visteAar.map((y) => {
+                  const pdfUrl = pdfPerAar.get(y.aar);
+                  return (
+                    <div key={y.aar} className="flex items-center justify-end gap-1">
+                      {pdfUrl && (
+                        <a
+                          href={pdfUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-slate-500 hover:text-blue-400 transition-colors"
+                          title={
+                            da
+                              ? `Download ${y.aar} regnskab (PDF)`
+                              : `Download ${y.aar} report (PDF)`
+                          }
+                        >
+                          <Download size={11} />
+                        </a>
+                      )}
+                      <span className="text-[11px] font-semibold text-blue-400 tabular-nums">
+                        {y.aar}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
 
               {/* Datarækker */}

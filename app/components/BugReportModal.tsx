@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import {
   X,
   Bug,
@@ -15,6 +15,19 @@ import {
   Trash2,
 } from 'lucide-react';
 import type { BugReportPayload } from '@/app/api/report-bug/route';
+
+/**
+ * Returns true when running on a mobile device (iOS or Android).
+ * Used to switch screenshot capture strategy: desktop browsers support
+ * `getDisplayMedia`, but iOS Safari does not implement it at all.
+ * Must only be called client-side (after mount).
+ *
+ * @returns Whether the current UA is a mobile device
+ */
+function erMobilEnhed(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+}
 
 interface Props {
   open: boolean;
@@ -48,6 +61,7 @@ const text = {
     screenshotLabel: 'Skærmbillede (valgfrit)',
     captureBtn: 'Tag skærmbillede',
     uploadBtn: 'Upload billede',
+    cameraBtn: 'Tag billede med kamera',
     removeScreenshot: 'Fjern',
     submit: 'Send rapport',
     sending: 'Sender...',
@@ -81,6 +95,7 @@ const text = {
     screenshotLabel: 'Screenshot (optional)',
     captureBtn: 'Capture screen',
     uploadBtn: 'Upload image',
+    cameraBtn: 'Take photo with camera',
     removeScreenshot: 'Remove',
     submit: 'Send report',
     sending: 'Sending...',
@@ -93,6 +108,14 @@ const text = {
   },
 };
 
+/**
+ * Bug/feedback report modal with ARIA dialog semantics and focus trap.
+ *
+ * @param open - Whether the modal is currently open
+ * @param onClose - Callback invoked when the modal is closed
+ * @param lang - UI language ('da' | 'en'), defaults to 'da'
+ * @param currentPage - Optional URL path override for the report context
+ */
 export default function BugReportModal({ open, onClose, lang = 'da', currentPage }: Props) {
   const t = text[lang];
   const [type, setType] = useState<'bug' | 'feedback' | 'feature'>('bug');
@@ -104,7 +127,57 @@ export default function BugReportModal({ open, onClose, lang = 'da', currentPage
   const [status, setStatus] = useState<'idle' | 'sending' | 'success' | 'error'>('idle');
   const [errorMsg, setErrorMsg] = useState('');
   const [issueKey, setIssueKey] = useState('');
+  /**
+   * True after mount when the UA identifies as a mobile device.
+   * iOS Safari does not support `getDisplayMedia`, so we replace the
+   * "Tag skærmbillede" button with a camera-capture file input (BIZZ-77).
+   * Initialises false (SSR-safe) and flips once on the client.
+   */
+  const [isMobile, setIsMobile] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * Focus trap: while the modal is open, Tab/Shift+Tab cycles through
+   * focusable children only. Also focuses the first element on open.
+   */
+  useEffect(() => {
+    if (!open) return;
+    const modal = modalRef.current;
+    if (!modal) return;
+    const focusable = modal.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const trap = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab') return;
+      if (e.shiftKey) {
+        if (document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else {
+        if (document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    document.addEventListener('keydown', trap);
+    first?.focus();
+    return () => document.removeEventListener('keydown', trap);
+  }, [open]);
+
+  /**
+   * Detects mobile UA once after mount.
+   * `getDisplayMedia` is unavailable on iOS Safari (BIZZ-77), so mobile devices
+   * get a camera-capture file input instead of the screen-capture button.
+   * Runs only once — UA never changes during a session.
+   */
+  useEffect(() => {
+    setIsMobile(erMobilEnhed());
+  }, []);
 
   if (!open) return null;
 
@@ -195,17 +268,26 @@ export default function BugReportModal({ open, onClose, lang = 'da', currentPage
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={handleClose} />
 
       {/* Modal */}
-      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+      <div
+        ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="bug-report-modal-title"
+        className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto"
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-5 border-b border-slate-100">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 bg-red-50 rounded-lg flex items-center justify-center">
               <Bug size={16} className="text-red-500" />
             </div>
-            <h2 className="font-bold text-slate-900">{t.title}</h2>
+            <h2 id="bug-report-modal-title" className="font-bold text-slate-900">
+              {t.title}
+            </h2>
           </div>
           <button
             onClick={handleClose}
+            aria-label="Luk"
             className="text-slate-400 hover:text-slate-600 transition-colors"
           >
             <X size={20} />
@@ -268,10 +350,14 @@ export default function BugReportModal({ open, onClose, lang = 'da', currentPage
 
             {/* Title */}
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1.5">
+              <label
+                htmlFor="bug-title"
+                className="block text-sm font-medium text-slate-700 mb-1.5"
+              >
                 {t.titleLabel}
               </label>
               <input
+                id="bug-title"
                 type="text"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
@@ -283,10 +369,11 @@ export default function BugReportModal({ open, onClose, lang = 'da', currentPage
 
             {/* Description */}
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1.5">
+              <label htmlFor="bug-desc" className="block text-sm font-medium text-slate-700 mb-1.5">
                 {t.descLabel}
               </label>
               <textarea
+                id="bug-desc"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder={t.descPlaceholder}
@@ -299,11 +386,15 @@ export default function BugReportModal({ open, onClose, lang = 'da', currentPage
             {/* Severity (only for bugs) */}
             {type === 'bug' && (
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                <label
+                  htmlFor="bug-type"
+                  className="block text-sm font-medium text-slate-700 mb-1.5"
+                >
                   {t.severityLabel}
                 </label>
                 <div className="relative">
                   <select
+                    id="bug-type"
                     value={severity}
                     onChange={(e) => setSeverity(e.target.value as typeof severity)}
                     className="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm text-slate-800 focus:outline-none focus:border-blue-400 transition-colors appearance-none bg-white"
@@ -324,10 +415,14 @@ export default function BugReportModal({ open, onClose, lang = 'da', currentPage
 
             {/* Email */}
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1.5">
+              <label
+                htmlFor="bug-email"
+                className="block text-sm font-medium text-slate-700 mb-1.5"
+              >
                 {t.emailLabel}
               </label>
               <input
+                id="bug-email"
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -341,13 +436,37 @@ export default function BugReportModal({ open, onClose, lang = 'da', currentPage
               <label className="block text-sm font-medium text-slate-700 mb-1.5">
                 {t.screenshotLabel}
               </label>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={handleFileUpload}
-              />
+              {/*
+               * BIZZ-77: iOS Safari does not implement getDisplayMedia, so the
+               * screen-capture button is replaced on mobile with a camera-capture
+               * file input (`capture="environment"`), which opens the native camera
+               * or photo-picker directly when tapped.
+               * Desktop retains both buttons: screen-capture + file upload.
+               */}
+              {isMobile ? (
+                /*
+                 * Mobile path: single hidden file input with `capture="environment"`.
+                 * `accept="image/*"` combined with `capture` makes iOS open the
+                 * camera app (or the Files picker on iPadOS) instead of the
+                 * generic file browser, giving a better UX than a plain upload.
+                 */
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  className="hidden"
+                  onChange={handleFileUpload}
+                />
+              ) : (
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleFileUpload}
+                />
+              )}
               {screenshot ? (
                 <div className="relative">
                   <img
@@ -358,12 +477,24 @@ export default function BugReportModal({ open, onClose, lang = 'da', currentPage
                   <button
                     type="button"
                     onClick={() => setScreenshot(null)}
+                    aria-label={t.removeScreenshot}
                     className="absolute top-2 right-2 bg-red-500 text-white rounded-lg p-1 hover:bg-red-600 transition-colors"
                   >
                     <Trash2 size={14} />
                   </button>
                 </div>
+              ) : isMobile ? (
+                /* Mobile: single full-width camera button */
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="w-full flex items-center justify-center gap-2 border border-slate-200 rounded-xl py-2.5 text-sm text-slate-600 hover:bg-slate-50 transition-colors"
+                >
+                  <Camera size={15} />
+                  {t.cameraBtn}
+                </button>
               ) : (
+                /* Desktop: screen-capture + file upload */
                 <div className="flex gap-2">
                   <button
                     type="button"

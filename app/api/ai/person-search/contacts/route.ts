@@ -19,6 +19,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { checkRateLimit, braveRateLimit } from '@/app/lib/rateLimit';
 import { withBraveCache } from '@/app/lib/searchCache';
+import { createClient as createServerClient } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -74,6 +75,7 @@ async function searchBrave(key: string, query: string, count = 5): Promise<Artic
   const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}&country=dk`;
   const res = await fetch(url, {
     headers: { 'X-Subscription-Token': key, Accept: 'application/json' },
+    signal: AbortSignal.timeout(10000),
   });
   if (!res.ok) return [];
   const data = await res.json();
@@ -152,9 +154,7 @@ async function searchBravePersonContacts(
     }
   }
 
-  console.log(
-    `[person-search/contacts] searchBravePersonContacts: ${all.length} resultater for "${personName}"`
-  );
+  // personName omitted from log — PII
   return all;
 }
 
@@ -312,6 +312,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const limited = await checkRateLimit(request, braveRateLimit);
   if (limited) return limited;
 
+  // Require an authenticated session
+  const supabase = await createServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const apiKey = process.env.BIZZASSIST_CLAUDE_KEY?.trim();
   if (!apiKey)
     return NextResponse.json({ error: 'BIZZASSIST_CLAUDE_KEY ikke konfigureret' }, { status: 500 });
@@ -390,9 +399,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       .join('');
 
     contacts = parseContactsResponse(finalText);
-    console.log(
-      `[person-search/contacts] "${personName}": ${contacts.length} kontakter, tokens=${totalTokens}`
-    );
+    // personName omitted from log — PII
   } catch (err) {
     console.error('[person-search/contacts] Claude fejl:', err);
     // Returner tomt resultat frem for fejl — kontakter er nice-to-have
@@ -442,10 +449,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             // Tilføj telefonnummer til første kontakt med adresse
             const idx = contacts.findIndex((c) => c.address);
             if (idx >= 0) {
+              // Phone number and personName omitted from log — PII
               contacts[idx] = { ...contacts[idx], phone: phoneJson.phone.trim() };
-              console.log(
-                `[person-search/contacts] Sekundær telefon fundet for "${personName}": ${phoneJson.phone}`
-              );
             }
           }
         }

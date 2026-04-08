@@ -7,6 +7,8 @@
  * Returns: application/pdf stream
  */
 import { NextRequest, NextResponse } from 'next/server';
+import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
+import { createClient } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -117,6 +119,19 @@ function dato(d: string | null | undefined): string {
  * @returns PDF som application/pdf stream
  */
 export async function POST(request: NextRequest) {
+  // Rate limit — prevent bulk PDF generation abuse
+  const limited = await checkRateLimit(request, rateLimit);
+  if (limited) return limited;
+
+  // Require authenticated user — PDF generation is a subscriber feature
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   try {
     const payload: RapportPayload = await request.json();
 

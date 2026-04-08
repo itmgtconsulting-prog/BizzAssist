@@ -17,6 +17,10 @@ export async function GET(request: NextRequest) {
 
   // BFE-baseret opslag — returnerer jordstykke + første adgangsadresse-UUID
   if (bfe) {
+    // Validate BFE is a positive integer to prevent SSRF via query param injection
+    if (!/^\d{1,10}$/.test(bfe)) {
+      return NextResponse.json(null, { status: 400 });
+    }
     try {
       const jsRes = await fetch(
         `https://api.dataforsyningen.dk/jordstykker?bfenummer=${encodeURIComponent(bfe)}`,

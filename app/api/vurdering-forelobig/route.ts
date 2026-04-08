@@ -18,6 +18,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { checkRateLimit, heavyRateLimit } from '@/app/lib/rateLimit';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -248,6 +249,9 @@ function buildBfeQuery(bfeNummer: string): Record<string, unknown> {
 // ─── Route handler ───────────────────────────────────────────────────────────
 
 export async function GET(request: NextRequest): Promise<NextResponse<ForelobigVurderingResponse>> {
+  const limited = await checkRateLimit(request, heavyRateLimit);
+  if (limited) return limited as NextResponse<ForelobigVurderingResponse>;
+
   const { searchParams } = request.nextUrl;
 
   const adresseId = searchParams.get('adresseId');
@@ -314,10 +318,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<ForelobigV
       }
     );
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Ukendt fejl';
-    return NextResponse.json(
-      { forelobige: [], fejl: `Fejl ved hentning af forelobige vurderinger: ${msg}` },
-      { status: 200 }
-    );
+    console.error('[vurdering-forelobig] Fejl:', err);
+    return NextResponse.json({ forelobige: [], fejl: 'Ekstern API fejl' }, { status: 200 });
   }
 }

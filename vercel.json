@@ -3,6 +3,30 @@
     {
       "path": "/api/cron/poll-properties",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/cron/pull-bbr-events",
+      "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/cron/deep-scan",
+      "schedule": "30 3 * * *"
+    },
+    {
+      "path": "/api/cron/warm-cache",
+      "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/cron/daily-report",
+      "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/cron/daily-status",
+      "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/cron/service-scan",
+      "schedule": "0 * * * *"
     }
   ]
 }

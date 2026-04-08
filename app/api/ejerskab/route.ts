@@ -19,6 +19,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import * as Sentry from '@sentry/nextjs';
+import { checkRateLimit, heavyRateLimit } from '@/app/lib/rateLimit';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { getCertOAuthToken, isCertAuthConfigured } from '@/app/lib/dfCertAuth';
 
@@ -199,10 +201,11 @@ async function queryEJF(bfeNummer: number, token: string): Promise<EJFQueryResul
 
   if (!res.ok) {
     const text = await res.text().catch(() => '');
+    console.error(`[ejerskab] Datafordeler EJF HTTP ${res.status}: ${text.slice(0, 400)}`);
     return {
       ok: false,
       manglerAdgang: false,
-      fejl: `Datafordeler EJF svarede ${res.status}: ${text.slice(0, 200)}`,
+      fejl: 'Ekstern API fejl',
     };
   }
 
@@ -222,6 +225,9 @@ async function queryEJF(bfeNummer: number, token: string): Promise<EJFQueryResul
 // ─── Route handler ───────────────────────────────────────────────────────────
 
 export async function GET(request: NextRequest): Promise<NextResponse<EjerskabResponse>> {
+  const limited = await checkRateLimit(request, heavyRateLimit);
+  if (limited) return limited as NextResponse<EjerskabResponse>;
+
   const hasSharedSecret = !!(
     process.env.DATAFORDELER_OAUTH_CLIENT_ID && process.env.DATAFORDELER_OAUTH_CLIENT_SECRET
   );
@@ -267,6 +273,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjerskabRe
         }
       } catch (err) {
         console.error('[ejerskab] Shared Secret fejl:', err instanceof Error ? err.message : err);
+        Sentry.captureException(err);
       }
     }
   }
@@ -289,6 +296,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjerskabRe
         result = certResult;
       } catch (err) {
         console.error('[ejerskab] Certifikat fejl:', err instanceof Error ? err.message : err);
+        Sentry.captureException(err);
       }
     } else {
       console.error('[ejerskab] Certifikat: Kunne ikke hente OAuth token via mTLS');

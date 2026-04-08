@@ -14,6 +14,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -96,6 +97,9 @@ const NUANCE_TEKST: Record<string, string> = {
 // ─── Route handler ────────────────────────────────────────────────────────────
 
 export async function GET(request: NextRequest): Promise<NextResponse<JordResponse>> {
+  const limited = await checkRateLimit(request, rateLimit);
+  if (limited) return limited as NextResponse<JordResponse>;
+
   const { searchParams } = request.nextUrl;
   const ejerlavKodeStr = searchParams.get('ejerlavKode');
   const matrikelnr = searchParams.get('matrikelnr');
@@ -130,10 +134,11 @@ export async function GET(request: NextRequest): Promise<NextResponse<JordRespon
 
     if (!res.ok) {
       const txt = await res.text().catch(() => '');
+      console.error(`[jord] DkJord HTTP ${res.status}: ${txt.slice(0, 400)}`);
       return NextResponse.json(
         {
           items: [],
-          fejl: `DkJord returnerede HTTP ${res.status}: ${txt.slice(0, 200)}`,
+          fejl: 'Ekstern API fejl',
           ingenData: false,
         },
         { status: 200 }
@@ -195,9 +200,9 @@ export async function GET(request: NextRequest): Promise<NextResponse<JordRespon
       }
     );
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Ukendt fejl';
+    console.error('[jord] Fejl ved DkJord-opslag:', err);
     return NextResponse.json(
-      { items: [], fejl: `Fejl ved DkJord-opslag: ${msg}`, ingenData: false },
+      { items: [], fejl: 'Ekstern API fejl', ingenData: false },
       { status: 200 }
     );
   }

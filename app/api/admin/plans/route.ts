@@ -93,7 +93,8 @@ export async function GET(): Promise<NextResponse> {
     };
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      console.error('[admin/plans GET] DB error:', error.message);
+      return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
     }
 
     const dbMap = new Map<string, PlanConfigRow>();
@@ -183,14 +184,20 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           updated_by: user.id,
         };
         const { error } = await admin.from('plan_configs').insert(row as never);
-        if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+        if (error) {
+          console.error('[admin/plans create] DB error:', error.message);
+          return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+        }
         return NextResponse.json({ ok: true });
       }
 
       case 'delete': {
         if (!planId) return NextResponse.json({ error: 'planId required' }, { status: 400 });
         const { error } = await admin.from('plan_configs').delete().eq('plan_id', planId);
-        if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+        if (error) {
+          console.error('[admin/plans delete] DB error:', error.message);
+          return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+        }
         return NextResponse.json({ ok: true });
       }
 
@@ -250,20 +257,19 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
             requires_approval: updates.requiresApproval ?? defaults?.requiresApproval ?? false,
             is_active: updates.isActive ?? true,
             free_trial_days: updates.freeTrialDays ?? 0,
-            stripe_price_id: updates.stripePriceId ?? null,
             max_sales: updates.maxSales ?? null,
             sales_count: updates.salesCount ?? 0,
+            // stripe_price_id is NOT included here — updateFields handles it conditionally
+            // so editing other fields never resets a previously-saved Stripe price ID to null
             ...updateFields,
           } as never,
           { onConflict: 'plan_id' }
         );
 
         if (error) {
-          console.error('[admin/plans] Upsert error:', error.message, error.code, error.details);
-          return NextResponse.json(
-            { error: `Failed to update: ${error.message}` },
-            { status: 500 }
-          );
+          // Omit error.message and error.details from log — may expose schema/column names
+          console.error('[admin/plans] Upsert error:', error.code ?? '[DB error]');
+          return NextResponse.json({ error: 'Failed to update plan' }, { status: 500 });
         }
 
         return NextResponse.json({ ok: true });

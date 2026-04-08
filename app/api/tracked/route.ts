@@ -9,11 +9,111 @@
  * POST   /api/tracked { entity_id, ... }  — start følgning
  * DELETE  /api/tracked?id=<entity_id>     — stop følgning
  *
+ * Side-effekter ved POST:
+ *   - Henter BBR-data for ejendommen og udfylder public.bbr_tracked_objects
+ *     med bygning-UUIDs. Gør det muligt for pull-cronen og push-webhook at
+ *     matche Datafordeler BBR-hændelser direkte mod fulgte ejendomme.
+ *
+ * Side-effekter ved DELETE:
+ *   - Fjerner alle rækker i public.bbr_tracked_objects for (tenant_id, bfe_nummer).
+ *
  * @module api/tracked
  */
 import { NextRequest, NextResponse } from 'next/server';
+import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { getTenantContext } from '@/lib/db/tenant';
 import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { fetchBbrForAddress } from '@/app/lib/fetchBbrData';
+
+/**
+ * Udfylder public.bbr_tracked_objects med BBR bygning-UUIDs for en fulgt ejendom.
+ * Kaldes asynkront (fire-and-forget) efter at ejendom er tilføjet til watched list.
+ *
+ * @param tenantId - Tenant UUID
+ * @param dawaId - DAWA adresse-UUID (entity_id i saved_entities)
+ */
+async function enrichBbrTrackedObjects(tenantId: string, dawaId: string): Promise<void> {
+  try {
+    const admin = createAdminClient();
+    const bbrData = await fetchBbrForAddress(dawaId);
+
+    const bfeNummer =
+      bbrData.ejendomsrelationer?.[0]?.bfeNummer?.toString() ??
+      bbrData.ejerlejlighedBfe?.toString() ??
+      bbrData.moderBfe?.toString() ??
+      null;
+
+    if (!bfeNummer) return; // Ingen BFE-nummer — kan ikke indeksere
+
+    const rows: {
+      tenant_id: string;
+      bfe_nummer: string;
+      bbr_object_id: string;
+      bbr_object_type: 'Bygning' | 'Grund' | 'Enhed';
+    }[] = [];
+
+    // Indeksér alle bygning-UUIDs
+    for (const bygning of bbrData.bbr ?? []) {
+      if (bygning.id) {
+        rows.push({
+          tenant_id: tenantId,
+          bfe_nummer: bfeNummer,
+          bbr_object_id: bygning.id,
+          bbr_object_type: 'Bygning',
+        });
+      }
+    }
+
+    if (rows.length === 0) return;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (admin as any)
+      .from('bbr_tracked_objects')
+      .upsert(rows, { onConflict: 'tenant_id,bfe_nummer,bbr_object_id', ignoreDuplicates: true });
+  } catch (err) {
+    // Fire-and-forget — log fejl men afbryd ikke tracking-svaret
+    console.error('[tracked] BBR-indeksering fejlede:', err);
+  }
+}
+
+/**
+ * Fjerner BBR-objekt indeks for en ejendom der holder op med at følges.
+ *
+ * @param tenantId - Tenant UUID
+ * @param bfeNummer - BFE-nummer (fra entity_data hvis tilgængeligt)
+ * @param dawaId - DAWA adresse-UUID (fallback til BFE-opslag)
+ */
+async function cleanupBbrTrackedObjects(
+  tenantId: string,
+  dawaId: string,
+  entityData: Record<string, unknown>
+): Promise<void> {
+  try {
+    const admin = createAdminClient();
+
+    // Forsøg at finde BFE-nummer fra entity_data eller via BBR-opslag
+    let bfeNummer = (entityData?.bfeNummer as string | undefined) ?? null;
+    if (!bfeNummer) {
+      const bbrData = await fetchBbrForAddress(dawaId);
+      bfeNummer =
+        bbrData.ejendomsrelationer?.[0]?.bfeNummer?.toString() ??
+        bbrData.ejerlejlighedBfe?.toString() ??
+        null;
+    }
+
+    if (!bfeNummer) return;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (admin as any)
+      .from('bbr_tracked_objects')
+      .delete()
+      .eq('tenant_id', tenantId)
+      .eq('bfe_nummer', bfeNummer);
+  } catch (err) {
+    console.error('[tracked] BBR-oprydning fejlede:', err);
+  }
+}
 
 /**
  * Resolver tenant ID fra den autentificerede brugers session.
@@ -45,7 +145,10 @@ async function resolveTenantId(): Promise<{ tenantId: string; userId: string } |
  *
  * Returnerer alle fulgte ejendomme (saved_entities med is_monitored=true).
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const limited = await checkRateLimit(request, rateLimit);
+  if (limited) return limited;
+
   const auth = await resolveTenantId();
   if (!auth) {
     return NextResponse.json({ tracked: [] });
@@ -73,6 +176,9 @@ export async function GET() {
  * Body: { entity_id, label, entity_data? }
  */
 export async function POST(request: NextRequest) {
+  const limited = await checkRateLimit(request, rateLimit);
+  if (limited) return limited;
+
   const auth = await resolveTenantId();
   if (!auth) {
     return NextResponse.json({ error: 'Ikke logget ind' }, { status: 401 });
@@ -102,6 +208,9 @@ export async function POST(request: NextRequest) {
       metadata: { entity_id: body.entity_id },
     });
 
+    // Indeksér BBR-objekt UUIDs asynkront — blokkerer ikke svaret
+    enrichBbrTrackedObjects(auth.tenantId, body.entity_id).catch(() => {});
+
     return NextResponse.json({ entity });
   } catch (err) {
     console.error('[tracked POST]', err);
@@ -115,6 +224,9 @@ export async function POST(request: NextRequest) {
  * Stop følgning — sætter is_monitored=false (beholder saved_entity).
  */
 export async function DELETE(request: NextRequest) {
+  const limited = await checkRateLimit(request, rateLimit);
+  if (limited) return limited;
+
   const auth = await resolveTenantId();
   if (!auth) {
     return NextResponse.json({ error: 'Ikke logget ind' }, { status: 401 });
@@ -151,6 +263,13 @@ export async function DELETE(request: NextRequest) {
         resource_id: match.id,
         metadata: { entity_id: entityId },
       });
+
+      // Ryd BBR-objekt indeks asynkront
+      cleanupBbrTrackedObjects(
+        auth.tenantId,
+        entityId,
+        match.entity_data as Record<string, unknown>
+      ).catch(() => {});
     }
 
     return NextResponse.json({ ok: true });

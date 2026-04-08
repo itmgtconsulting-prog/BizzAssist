@@ -35,7 +35,13 @@ export async function resolveTenantId(): Promise<AuthContext | null> {
       .single()) as { data: { tenant_id: string } | null };
     if (!data?.tenant_id) return null;
     return { tenantId: data.tenant_id, userId: user.id };
-  } catch {
+  } catch (err) {
+    // Log infra-level errors (e.g. Supabase timeout) so they appear in server logs.
+    // Never log PII — only the error message which comes from internal infra.
+    console.error(
+      '[auth] resolveTenantId failed:',
+      err instanceof Error ? err.message : String(err)
+    );
     return null;
   }
 }
@@ -53,7 +59,8 @@ export async function resolveUserId(): Promise<string | null> {
       data: { user },
     } = await supabase.auth.getUser();
     return user?.id ?? null;
-  } catch {
+  } catch (err) {
+    console.error('[auth] resolveUserId failed:', err instanceof Error ? err.message : String(err));
     return null;
   }
 }

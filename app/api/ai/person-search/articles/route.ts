@@ -25,6 +25,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 import { checkRateLimit, braveRateLimit } from '@/app/lib/rateLimit';
 import { withBraveCache } from '@/app/lib/searchCache';
+import { createClient as createServerClient } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -142,6 +143,7 @@ async function searchBrave(
   const url = `https://api.search.brave.com/res/v1/web/search?${params}`;
   const res = await fetch(url, {
     headers: { 'X-Subscription-Token': key, Accept: 'application/json' },
+    signal: AbortSignal.timeout(10000),
   });
   if (!res.ok) throw new Error(`Brave HTTP ${res.status}`);
   const data = await res.json();
@@ -395,6 +397,15 @@ function parseArticlesResponse(text: string): ArticleResult[] {
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const limited = await checkRateLimit(request, braveRateLimit);
   if (limited) return limited;
+
+  // Require an authenticated session
+  const supabase = await createServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
 
   const apiKey = process.env.BIZZASSIST_CLAUDE_KEY?.trim();
   if (!apiKey)

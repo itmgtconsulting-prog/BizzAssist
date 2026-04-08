@@ -1,10 +1,10 @@
 /**
  * Recent Entities API — /api/recents
  *
- * Stores and retrieves recently viewed entities (properties, companies).
- * Data is stored per-user in the tenant's recent_entities table.
+ * Stores and retrieves recently viewed entities (properties, companies, people, searches).
+ * Data is stored in public.recent_entities, scoped per user and tenant via RLS.
  *
- * GET    /api/recents?type=property       — list recent entities
+ * GET    /api/recents?type=property       — list recent entities for the current user
  * POST   /api/recents { entity_type, ... } — upsert a recent visit
  * DELETE /api/recents?type=property        — clear recents for a type
  *
@@ -23,18 +23,8 @@ const MAX_RECENTS: Record<string, number> = {
   search: 10,
 };
 
-/**
- * Helper to get the tenant schema name.
- */
-async function getTenantSchema(tenantId: string): Promise<string | null> {
-  const admin = createAdminClient();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data } = await (admin.from('tenants') as any)
-    .select('schema_name')
-    .eq('id', tenantId)
-    .single();
-  return ((data as Record<string, unknown>)?.schema_name as string) ?? null;
-}
+/** Table lives in public schema — accessible via Supabase REST API */
+const TABLE = 'recent_entities';
 
 /**
  * GET /api/recents?type=property
@@ -44,32 +34,31 @@ async function getTenantSchema(tenantId: string): Promise<string | null> {
 export async function GET(request: NextRequest) {
   const auth = await resolveTenantId();
   if (!auth) {
-    return NextResponse.json({ recents: [] });
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   try {
     const entityType = new URL(request.url).searchParams.get('type') ?? 'property';
-    const schema = await getTenantSchema(auth.tenantId);
-    if (!schema) return NextResponse.json({ recents: [] });
-
     const admin = createAdminClient();
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (admin.from(`${schema}.recent_entities`) as any)
+    const { data, error } = await (admin.from(TABLE) as any)
       .select('*')
+      .eq('tenant_id', auth.tenantId)
       .eq('user_id', auth.userId)
       .eq('entity_type', entityType)
       .order('visited_at', { ascending: false })
       .limit(MAX_RECENTS[entityType] ?? 6);
 
     if (error) {
-      console.error('[recents GET]', error);
-      return NextResponse.json({ recents: [] });
+      console.error('[recents GET] DB error:', error);
+      return NextResponse.json({ error: 'Databasefejl ved hentning af seneste' }, { status: 500 });
     }
 
     return NextResponse.json({ recents: data ?? [] });
   } catch (err) {
-    console.error('[recents GET]', err);
-    return NextResponse.json({ recents: [] });
+    console.error('[recents GET] Unexpected error:', err);
+    return NextResponse.json({ error: 'Serverfejl' }, { status: 500 });
   }
 }
 
@@ -93,17 +82,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Mangler påkrævede felter' }, { status: 400 });
     }
 
-    const schema = await getTenantSchema(auth.tenantId);
-    if (!schema) {
-      return NextResponse.json({ error: 'Tenant ikke fundet' }, { status: 404 });
-    }
-
     const admin = createAdminClient();
-    const table = `${schema}.recent_entities`;
 
     // Upsert: update visited_at if already exists, insert if new
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error: upsertError } = await (admin.from(table) as any).upsert(
+    const { error: upsertError } = await (admin.from(TABLE) as any).upsert(
       {
         tenant_id: auth.tenantId,
         user_id: auth.userId,
@@ -126,8 +109,9 @@ export async function POST(request: NextRequest) {
     // Prune: keep only the most recent N entries for this type
     const maxItems = MAX_RECENTS[body.entity_type] ?? 6;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: allRecents } = await (admin.from(table) as any)
+    const { data: allRecents } = await (admin.from(TABLE) as any)
       .select('id, visited_at')
+      .eq('tenant_id', auth.tenantId)
       .eq('user_id', auth.userId)
       .eq('entity_type', body.entity_type)
       .order('visited_at', { ascending: false });
@@ -136,7 +120,7 @@ export async function POST(request: NextRequest) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const idsToDelete = allRecents.slice(maxItems).map((r: any) => r.id);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (admin.from(table) as any).delete().in('id', idsToDelete);
+      await (admin.from(TABLE) as any).delete().in('id', idsToDelete);
     }
 
     return NextResponse.json({ ok: true });
@@ -163,15 +147,11 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'Mangler type parameter' }, { status: 400 });
     }
 
-    const schema = await getTenantSchema(auth.tenantId);
-    if (!schema) {
-      return NextResponse.json({ error: 'Tenant ikke fundet' }, { status: 404 });
-    }
-
     const admin = createAdminClient();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (admin.from(`${schema}.recent_entities`) as any)
+    await (admin.from(TABLE) as any)
       .delete()
+      .eq('tenant_id', auth.tenantId)
       .eq('user_id', auth.userId)
       .eq('entity_type', entityType);
 

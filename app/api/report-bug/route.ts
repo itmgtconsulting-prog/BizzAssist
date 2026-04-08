@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 
 export interface BugReportPayload {
   type: 'bug' | 'feedback' | 'feature';
@@ -112,6 +113,7 @@ async function createJiraIssue(payload: BugReportPayload) {
       Accept: 'application/json',
     },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(10000),
   });
 
   if (!res.ok) {
@@ -148,10 +150,14 @@ async function attachScreenshotToJira(issueKey: string, screenshotB64: string): 
       'X-Atlassian-Token': 'no-check',
     },
     body: formData,
+    signal: AbortSignal.timeout(15000),
   });
 }
 
 export async function POST(req: NextRequest) {
+  const limited = await checkRateLimit(req, rateLimit);
+  if (limited) return limited;
+
   try {
     const payload: BugReportPayload = await req.json();
 
@@ -179,8 +185,7 @@ export async function POST(req: NextRequest) {
       issueUrl: `https://${process.env.JIRA_HOST}/browse/${issue.key}`,
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    console.error('[report-bug]', message);
-    return NextResponse.json({ error: message }, { status: 500 });
+    console.error('[report-bug]', err instanceof Error ? err.message : err);
+    return NextResponse.json({ error: 'Intern serverfejl' }, { status: 500 });
   }
 }

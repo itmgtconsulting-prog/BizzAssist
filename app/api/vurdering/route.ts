@@ -18,6 +18,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import * as Sentry from '@sentry/nextjs';
+import { checkRateLimit, heavyRateLimit } from '@/app/lib/rateLimit';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -517,6 +519,9 @@ async function fetchUdvidedeData(
 // ─── Route handler ────────────────────────────────────────────────────────────
 
 export async function GET(request: NextRequest): Promise<NextResponse<VurderingResponse>> {
+  const limited = await checkRateLimit(request, heavyRateLimit);
+  if (limited) return limited as NextResponse<VurderingResponse>;
+
   const emptyExtended = {
     fordeling: [] as FordelingData[],
     grundvaerdispec: [] as GrundvaerdispecifikationData[],
@@ -558,12 +563,15 @@ export async function GET(request: NextRequest): Promise<NextResponse<VurderingR
 
   const token = await getOAuthToken();
   if (!token) {
+    console.error(
+      '[vurdering] OAuth token kunne ikke hentes — tjek DATAFORDELER_OAUTH_CLIENT_ID og _SECRET'
+    );
     return NextResponse.json(
       {
         vurdering: null,
         alle: [],
         ...emptyExtended,
-        fejl: 'OAuth token kunne ikke hentes — tjek DATAFORDELER_OAUTH_CLIENT_ID og _SECRET',
+        fejl: 'Ekstern API fejl',
         manglerNoegle: false,
       },
       { status: 200 }
@@ -719,9 +727,16 @@ export async function GET(request: NextRequest): Promise<NextResponse<VurderingR
       }
     );
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Ukendt fejl';
+    Sentry.captureException(err);
+    console.error('[vurdering] Fejl:', err);
     return NextResponse.json(
-      { vurdering: null, alle: [], ...emptyExtended, fejl: `Fejl: ${msg}`, manglerNoegle: false },
+      {
+        vurdering: null,
+        alle: [],
+        ...emptyExtended,
+        fejl: 'Ekstern API fejl',
+        manglerNoegle: false,
+      },
       { status: 200 }
     );
   }

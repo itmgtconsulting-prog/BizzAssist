@@ -34,6 +34,8 @@ import {
   KeyRound,
   ExternalLink,
   AlertTriangle,
+  Download,
+  BookOpen,
 } from 'lucide-react';
 import {
   hentTrackedEjendomme,
@@ -50,6 +52,131 @@ import {
   type PlanDef,
 } from '@/app/lib/subscriptions';
 import { useSubscription } from '@/app/context/SubscriptionContext';
+
+// ─── GDPR Export Section ────────────────────────────────────────────────────
+
+/**
+ * GdprExportSection — renders a card that lets the user download all their
+ * personal data as a JSON file per GDPR Article 20 (data portability).
+ *
+ * Calls GET /api/user/export-data which returns the file as an attachment.
+ * The download is triggered client-side via a temporary <a> element so the
+ * browser saves the file directly without navigating away.
+ *
+ * @param lang - Current UI language ('da' | 'en')
+ */
+function GdprExportSection({ lang }: { lang: 'da' | 'en' }) {
+  const da = lang === 'da';
+
+  /** Translation strings for this section */
+  const t = {
+    sectionTitle: da ? 'Mine data' : 'My data',
+    sectionDescription: da
+      ? 'Eksportér dine personlige data som JSON-fil (GDPR artikel 20).'
+      : 'Export your personal data as a JSON file (GDPR Article 20).',
+    downloadButton: da ? 'Download mine data (JSON)' : 'Download my data (JSON)',
+    downloading: da ? 'Henter data...' : 'Fetching data...',
+    downloadSuccess: da
+      ? 'Din datafil er klar — tjek dine downloads.'
+      : 'Your data file is ready — check your downloads.',
+    downloadError: da
+      ? 'Kunne ikke hente data — prøv igen.'
+      : 'Could not fetch data — please try again.',
+  };
+
+  const [loading, setLoading] = useState(false);
+  const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle');
+
+  /**
+   * Triggers the GDPR data export.
+   *
+   * Fetches /api/user/export-data, reads the JSON blob, then uses a temporary
+   * anchor element to prompt the browser's native file-save dialog.
+   * No page navigation occurs.
+   */
+  const handleExport = async () => {
+    setLoading(true);
+    setStatus('idle');
+
+    try {
+      const res = await fetch('/api/user/export-data');
+
+      if (!res.ok) {
+        setStatus('error');
+        return;
+      }
+
+      // Extract suggested filename from Content-Disposition if present,
+      // fall back to a dated default.
+      const disposition = res.headers.get('content-disposition') ?? '';
+      const nameMatch = disposition.match(/filename="([^"]+)"/);
+      const filename = nameMatch?.[1] ?? `mine-data-${new Date().toISOString().split('T')[0]}.json`;
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+
+      // Programmatically click a hidden anchor to save the file
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(url);
+
+      setStatus('success');
+      // Auto-clear success message after 5 seconds
+      setTimeout(() => setStatus('idle'), 5000);
+    } catch {
+      setStatus('error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="bg-white/5 border border-white/8 rounded-2xl p-6">
+      <div className="flex items-center gap-2 mb-4">
+        <Download size={16} className="text-emerald-400" />
+        <h3 className="text-white font-semibold text-sm">{t.sectionTitle}</h3>
+      </div>
+
+      <p className="text-slate-400 text-sm mb-4 leading-relaxed">{t.sectionDescription}</p>
+
+      {/* Status feedback */}
+      {status === 'success' && (
+        <p className="text-emerald-400 text-xs flex items-center gap-1.5 mb-3">
+          <CheckCircle size={12} />
+          {t.downloadSuccess}
+        </p>
+      )}
+      {status === 'error' && (
+        <p className="text-red-400 text-xs flex items-center gap-1.5 mb-3">
+          <AlertTriangle size={12} />
+          {t.downloadError}
+        </p>
+      )}
+
+      <button
+        onClick={handleExport}
+        disabled={loading}
+        className="flex items-center gap-2 px-4 py-2.5 bg-emerald-700 hover:bg-emerald-600 disabled:bg-slate-700 disabled:text-slate-500 text-white text-sm font-medium rounded-lg transition-colors"
+      >
+        {loading ? (
+          <>
+            <Loader2 size={14} className="animate-spin" />
+            {t.downloading}
+          </>
+        ) : (
+          <>
+            <Download size={14} />
+            {t.downloadButton}
+          </>
+        )}
+      </button>
+    </div>
+  );
+}
 
 // ─── Profile Tab Component ──────────────────────────────────────────────────
 
@@ -333,6 +460,9 @@ function ProfileTab({ lang }: { lang: 'da' | 'en' }) {
           </button>
         </div>
       </div>
+
+      {/* ── GDPR data export ── */}
+      <GdprExportSection lang={lang} />
     </div>
   );
 }
@@ -388,6 +518,11 @@ export default function SettingsPage() {
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
   const [cancelLoading, setCancelLoading] = useState(false);
   const [cancelSuccess, setCancelSuccess] = useState<string | null>(null);
+
+  /** GDPR Article 17 — self-service account deletion state */
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   /** Payment result from URL params (after Stripe redirect) */
   const paymentResult = searchParams.get('payment') as 'success' | 'cancelled' | null;
@@ -636,6 +771,33 @@ export default function SettingsPage() {
   };
 
   /**
+   * GDPR Article 17 — permanently delete this account and all associated data.
+   * Requires the user to have typed the exact confirmation phrase before calling.
+   * On success, redirects to /login with a query param to display a farewell message.
+   */
+  const handleDeleteAccount = async () => {
+    setDeleteLoading(true);
+    setDeleteError(null);
+    try {
+      const res = await fetch('/api/user/delete-account', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm: 'SLET MIN KONTO' }),
+      });
+      if (res.ok) {
+        // Account is gone — redirect to login page with a deleted flag
+        router.push('/login?deleted=1');
+      } else {
+        const data = await res.json();
+        setDeleteError(data.error ?? (da ? 'Sletning mislykkedes' : 'Deletion failed'));
+      }
+    } catch {
+      setDeleteError(da ? 'Netværksfejl — prøv igen' : 'Network error — please try again');
+    }
+    setDeleteLoading(false);
+  };
+
+  /**
    * Filtrerede entiteter baseret på valgt filter.
    * Pt. er alle tracked entiteter ejendomme — klar til virksomheder/personer.
    */
@@ -760,6 +922,9 @@ export default function SettingsPage() {
     { key: 'sikkerhed', label: t.sikkerhed, icon: <Shield size={14} /> },
   ];
 
+  /** Extra navigation-only tab that links to the organisation sub-route */
+  const orgTabLabel = da ? 'Organisation' : 'Organisation';
+
   const filterButtons: {
     key: EntityFilter;
     label: string;
@@ -841,13 +1006,88 @@ export default function SettingsPage() {
               {item.label}
             </button>
           ))}
+          {/* Organisation tab — navigates to sub-route */}
+          <button
+            onClick={() => router.push('/dashboard/settings/organisation')}
+            className="flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-all whitespace-nowrap"
+          >
+            <Building2 size={14} />
+            {orgTabLabel}
+          </button>
+          {/* Videnbase tab — navigates to sub-route */}
+          <button
+            onClick={() => router.push('/dashboard/settings/knowledge')}
+            className="flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-all whitespace-nowrap"
+          >
+            <BookOpen size={14} />
+            {da ? 'Videnbase' : 'Knowledge base'}
+          </button>
         </div>
       </div>
 
       {/* ─── Scrollbart indhold ─── */}
       <div className="flex-1 overflow-y-auto px-6 py-5">
         {/* ═══ Profil tab ═══ */}
-        {tab === 'profil' && <ProfileTab lang={lang} />}
+        {tab === 'profil' && (
+          <div className="space-y-6">
+            <ProfileTab lang={lang} />
+
+            {/* ─── Farlig zone / Danger zone ────────────────────────────── */}
+            <div className="border border-red-800/60 bg-red-950/30 rounded-2xl p-6 space-y-4">
+              <div className="flex items-center gap-2 mb-1">
+                <AlertTriangle size={16} className="text-red-400 shrink-0" />
+                <h3 className="text-red-400 text-sm font-semibold uppercase tracking-wider">
+                  {da ? 'Farlig zone' : 'Danger zone'}
+                </h3>
+              </div>
+
+              <p className="text-slate-400 text-sm leading-relaxed">
+                {da
+                  ? 'Dette sletter alle dine data permanent og kan ikke fortrydes.'
+                  : 'This permanently deletes all your data and cannot be undone.'}
+              </p>
+
+              <div className="space-y-3">
+                <label className="block text-slate-400 text-xs font-medium">
+                  {da
+                    ? 'Skriv SLET MIN KONTO for at bekræfte'
+                    : 'Type DELETE MY ACCOUNT to confirm'}
+                </label>
+                <input
+                  type="text"
+                  value={deleteConfirmText}
+                  onChange={(e) => {
+                    setDeleteConfirmText(e.target.value);
+                    setDeleteError(null);
+                  }}
+                  placeholder={da ? 'SLET MIN KONTO' : 'SLET MIN KONTO'}
+                  className="w-full px-3 py-2.5 bg-slate-900/60 border border-red-800/40 focus:border-red-600 rounded-lg text-white text-sm placeholder-slate-600 outline-none transition-colors"
+                  disabled={deleteLoading}
+                />
+
+                {deleteError && (
+                  <p className="text-red-400 text-xs flex items-center gap-1">
+                    <AlertTriangle size={11} />
+                    {deleteError}
+                  </p>
+                )}
+
+                <button
+                  onClick={handleDeleteAccount}
+                  disabled={deleteConfirmText !== 'SLET MIN KONTO' || deleteLoading}
+                  className="flex items-center gap-2 px-4 py-2.5 bg-red-700 hover:bg-red-600 disabled:bg-slate-800 disabled:text-slate-500 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors"
+                >
+                  {deleteLoading ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : (
+                    <Trash2 size={14} />
+                  )}
+                  {da ? 'Slet min konto' : 'Delete my account'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ═══ Følger tab ═══ */}
         {tab === 'foelger' && (

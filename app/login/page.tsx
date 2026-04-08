@@ -28,6 +28,10 @@ import { createClient } from '@/lib/supabase/client';
 
 /** Maps server-returned error codes to bilingual user-facing messages */
 const errorMessages: Record<string, { da: string; en: string }> = {
+  account_locked: {
+    da: 'Kontoen er midlertidigt låst. Vi har sendt dig et link til at nulstille din adgangskode.',
+    en: 'Account temporarily locked. We have sent you a password reset link.',
+  },
   invalid_credentials: {
     da: 'Forkert e-mail eller adgangskode.',
     en: 'Incorrect email or password.',
@@ -77,6 +81,10 @@ function LoginForm() {
   const [error, setError] = useState<string | null>(searchParams.get('error'));
   /** OAuth provider returned when error === 'oauth_user_no_password' (e.g. 'azure', 'google') */
   const [detectedProvider, setDetectedProvider] = useState<string | null>(null);
+  /** Seconds remaining until account auto-unlocks (0 = not locked) */
+  const [lockCountdown, setLockCountdown] = useState(0);
+  /** Warning: one attempt left before lockout */
+  const [loginWarning, setLoginWarning] = useState<number | null>(null);
 
   /** Clear the error query param from URL after displaying it, so refreshing doesn't show stale errors */
   useEffect(() => {
@@ -86,6 +94,24 @@ function LoginForm() {
       return () => clearTimeout(timer);
     }
   }, [searchParams]);
+
+  /**
+   * Countdown timer — ticks down lockCountdown every second.
+   * When it reaches 0 the form is re-enabled automatically.
+   */
+  useEffect(() => {
+    if (lockCountdown <= 0) return;
+    const interval = setInterval(() => {
+      setLockCountdown((prev) => {
+        if (prev <= 1) {
+          setError(null);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [lockCountdown]);
 
   /**
    * Initiates an OAuth sign-in flow via Supabase.
@@ -133,6 +159,19 @@ function LoginForm() {
         if (result.oauthProvider) {
           setDetectedProvider(result.oauthProvider);
         }
+        if (result.error === 'account_locked' && result.lockedForSeconds) {
+          setLockCountdown(result.lockedForSeconds);
+        }
+        if (result.loginWarning && result.attemptsLeft !== undefined) {
+          setLoginWarning(result.attemptsLeft);
+        } else {
+          setLoginWarning(null);
+        }
+      } else if (result?.mfaRequired) {
+        // MFA challenge needed — user has enrolled TOTP and must verify it.
+        // Enrollment is optional; this branch only runs for already-enrolled users.
+        window.location.href = '/login/mfa';
+        return; // Keep loading state while redirecting
       } else {
         // Login succeeded — redirect client-side so cookies are properly set.
         // Hard redirect (window.location) ensures proxy.ts runs and session is valid.
@@ -149,6 +188,15 @@ function LoginForm() {
   const errorMsg = error
     ? (errorMessages[error]?.[lang] ?? errorMessages.unexpected_error[lang])
     : null;
+
+  const isLocked = lockCountdown > 0;
+
+  /** Format seconds as mm:ss for countdown display */
+  const formatCountdown = (secs: number) => {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return `${m}:${String(s).padStart(2, '0')}`;
+  };
 
   /** Maps Supabase provider ID to a human-readable name */
   const providerDisplayName: Record<string, string> = {
@@ -284,12 +332,12 @@ function LoginForm() {
               <button
                 onClick={() => handleOAuth('linkedin_oidc')}
                 disabled={!!oauthLoading}
-                className="w-full flex items-center justify-center gap-3 bg-[#0A66C2] hover:bg-[#004182] disabled:opacity-50 text-white font-medium py-3 px-4 rounded-xl text-sm transition-colors"
+                className="w-full flex items-center justify-center gap-3 bg-[#0A66C2] hover:bg-[#0958a8] disabled:opacity-50 text-white font-medium py-3 px-4 rounded-xl text-sm transition-colors"
               >
                 {oauthLoading === 'linkedin_oidc' ? (
                   <Loader2 size={16} className="animate-spin" />
                 ) : (
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                  <svg viewBox="0 0 24 24" className="w-[18px] h-[18px]" fill="currentColor">
                     <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" />
                   </svg>
                 )}
@@ -353,6 +401,38 @@ function LoginForm() {
                 );
               })()}
 
+            {/* Lockout countdown banner */}
+            {isLocked && (
+              <div className="flex items-center gap-3 bg-orange-500/10 border border-orange-500/30 rounded-xl px-4 py-3 mb-4">
+                <AlertCircle size={16} className="text-orange-400 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-orange-300 text-sm font-medium">
+                    {lang === 'da' ? 'Kontoen er midlertidigt låst' : 'Account temporarily locked'}
+                  </p>
+                  <p className="text-orange-400/70 text-xs mt-0.5">
+                    {lang === 'da'
+                      ? `Prøv igen om ${formatCountdown(lockCountdown)} — tjek din mail for et reset-link.`
+                      : `Try again in ${formatCountdown(lockCountdown)} — check your email for a reset link.`}
+                  </p>
+                </div>
+                <span className="text-orange-300 font-mono text-sm font-bold shrink-0">
+                  {formatCountdown(lockCountdown)}
+                </span>
+              </div>
+            )}
+
+            {/* Warning: one attempt left */}
+            {loginWarning !== null && !isLocked && (
+              <div className="flex items-center gap-2 bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-3 mb-4">
+                <AlertCircle size={16} className="text-amber-400 shrink-0" />
+                <p className="text-amber-300 text-sm">
+                  {lang === 'da'
+                    ? `Advarsel: kun ${loginWarning} forsøg tilbage før kontoen låses midlertidigt.`
+                    : `Warning: only ${loginWarning} attempt left before the account is temporarily locked.`}
+                </p>
+              </div>
+            )}
+
             {/* Email/password form */}
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
@@ -366,7 +446,7 @@ function LoginForm() {
                   placeholder={t.emailPlaceholder}
                   autoComplete="email"
                   required
-                  disabled={loading}
+                  disabled={loading || isLocked}
                   className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-slate-600 focus:outline-none focus:border-blue-500 transition-colors text-sm disabled:opacity-50"
                 />
               </div>
@@ -389,7 +469,7 @@ function LoginForm() {
                     placeholder={t.passwordPlaceholder}
                     autoComplete="current-password"
                     required
-                    disabled={loading}
+                    disabled={loading || isLocked}
                     className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 pr-12 text-white placeholder-slate-600 focus:outline-none focus:border-blue-500 transition-colors text-sm disabled:opacity-50"
                   />
                   <button
@@ -405,11 +485,15 @@ function LoginForm() {
 
               <button
                 type="submit"
-                disabled={loading}
-                className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-blue-600/50 text-white font-semibold py-3.5 rounded-xl transition-colors mt-2 flex items-center justify-center gap-2"
+                disabled={loading || isLocked}
+                className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-blue-600/50 disabled:cursor-not-allowed text-white font-semibold py-3.5 rounded-xl transition-colors mt-2 flex items-center justify-center gap-2"
               >
                 {loading && <Loader2 size={16} className="animate-spin" />}
-                {t.loginButton}
+                {isLocked
+                  ? lang === 'da'
+                    ? `Låst (${formatCountdown(lockCountdown)})`
+                    : `Locked (${formatCountdown(lockCountdown)})`
+                  : t.loginButton}
               </button>
             </form>
 

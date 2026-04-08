@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useTransition } from 'react';
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
@@ -18,6 +18,7 @@ import {
   X,
   MapPin,
   Navigation,
+  MessageSquare,
   Loader2,
   ArrowRight,
   Shield,
@@ -26,6 +27,9 @@ import {
   Zap,
   Clock,
   AlertCircle,
+  ChevronLeft,
+  ChevronRight,
+  BarChart2,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';
@@ -34,7 +38,9 @@ import { gemRecentEjendom } from '@/app/lib/recentEjendomme';
 import { getRecentSearches, saveRecentSearch, type RecentSearch } from '@/app/lib/recentSearches';
 import type { UnifiedSearchResult } from '@/app/api/search/route';
 import AIChatPanel from '@/app/components/AIChatPanel';
+import ErrorBoundary from '@/app/components/ErrorBoundary';
 import NotifikationsDropdown from '@/app/components/NotifikationsDropdown';
+import RecentEntityTagBar from '@/app/components/RecentEntityTagBar';
 import SessionTimeoutWarning from '@/app/components/SessionTimeoutWarning';
 import { useSessionTimeout } from '@/app/hooks/useSessionTimeout';
 import OnboardingModal from '@/app/components/OnboardingModal';
@@ -42,6 +48,7 @@ import FeedbackButton from '@/app/components/FeedbackButton';
 import SubscriptionGate from '@/app/components/SubscriptionGate';
 import { cachePlans, type UserSubscription, type PlanDef } from '@/app/lib/subscriptions';
 import { SubscriptionProvider, useSubscription } from '@/app/context/SubscriptionContext';
+import { AIPageProvider } from '@/app/context/AIPageContext';
 import { createClient } from '@/lib/supabase/client';
 import { hasMigrated, migrateLocalStorageToSupabase } from '@/app/lib/migrateLocalStorage';
 
@@ -54,6 +61,9 @@ const navItems = [
   { icon: Briefcase, key: 'companies' as const, href: '/dashboard/companies', adminOnly: false },
   { icon: Users, key: 'owners' as const, href: '/dashboard/owners', adminOnly: false },
   { icon: Map, key: 'map' as const, href: '/dashboard/kort', adminOnly: false },
+  { icon: Search, key: 'search' as const, href: '/dashboard/search', adminOnly: false },
+  { icon: BarChart2, key: 'analysis' as const, href: '/dashboard/analysis', adminOnly: false },
+  { icon: MessageSquare, key: 'chat' as const, href: '/dashboard/chat', adminOnly: false },
   { icon: Shield, key: 'admin' as const, href: '/dashboard/admin/users', adminOnly: true },
 ];
 
@@ -63,6 +73,8 @@ const SIDEBAR_DEFAULT = 256;
 const SIDEBAR_MIN = 180;
 /** Maximum sidebarbredde */
 const SIDEBAR_MAX = 480;
+/** Bredde når sidebar er foldet ind (ikoner only) */
+const SIDEBAR_COLLAPSED = 56;
 
 /**
  * Outer wrapper that provides SubscriptionContext to the entire dashboard.
@@ -71,7 +83,9 @@ const SIDEBAR_MAX = 480;
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
     <SubscriptionProvider>
-      <DashboardLayoutInner>{children}</DashboardLayoutInner>
+      <AIPageProvider>
+        <DashboardLayoutInner>{children}</DashboardLayoutInner>
+      </AIPageProvider>
     </SubscriptionProvider>
   );
 }
@@ -82,7 +96,10 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
   const s = t.sidebar;
   const pathname = usePathname();
   const router = useRouter();
+  const [isPending, startTransition] = useTransition();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  /** Om sidebar er foldet ind til ikoner-only (desktop) */
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const profileRef = useRef<HTMLDivElement>(null);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -90,6 +107,8 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
   const [accessGranted, setAccessGranted] = useState(false);
   /** Whether user has an active paid subscription (gates search + AI) */
   const [_hasActiveSub, setHasActiveSub] = useState(false);
+  /** Whether to show the 2FA setup recommendation banner */
+  const [show2FaBanner, setShow2FaBanner] = useState(false);
   /** Whether the subscription is functional (paid, free, or within trial) — gates features */
   const [isFunctional, setIsFunctional] = useState(false);
   /**
@@ -152,6 +171,24 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
       sub: UserSubscription | null = null,
       admin = false
     ) => {
+      // ── Onboarding gate ──────────────────────────────────────────────────────
+      // Before granting any dashboard access, check whether the user has completed
+      // the onboarding wizard. Admins bypass this check so they can always access
+      // the dashboard (they were provisioned without going through onboarding).
+      if (!admin && status !== 'cancelled') {
+        try {
+          const {
+            data: { user: currentUser },
+          } = await supabase.auth.getUser();
+          if (currentUser && currentUser.user_metadata?.onboarding_complete !== true) {
+            window.location.href = '/onboarding';
+            return;
+          }
+        } catch {
+          // If check fails, let user through — onboarding page guards itself
+        }
+      }
+
       if (status === 'ok') {
         setAccessGranted(true);
         setHasActiveSub(true);
@@ -198,8 +235,8 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
       return 'ok';
     };
 
-    /** Main auth + subscription check */
-    const checkAccess = async () => {
+    /** Main auth + subscription check — retries up to 3× on transient network errors */
+    const checkAccess = async (attempt = 0) => {
       // PRIMARY: Call server-side API which uses cookies (works even when
       // client-side getUser() can't read the session).
       // The API uses the admin client to read FRESH subscription data.
@@ -215,6 +252,13 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
 
           if (email) {
             setProfile(email, json.fullName || '');
+
+            // Show 2FA banner for email/password users who haven't set up TOTP yet.
+            // OAuth users (Microsoft/Google) are excluded — they have 2FA at their IdP.
+            const dismissed2Fa = sessionStorage.getItem('bizzassist_2fa_banner_dismissed');
+            if (!dismissed2Fa && json.isEmailUser && !json.hasMfa) {
+              setShow2FaBanner(true);
+            }
 
             // Admin users bypass all subscription gates
             if (json.isAdmin) {
@@ -268,7 +312,16 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
           return;
         }
       } catch (err) {
-        console.error('[checkAccess] /api/subscription error:', err);
+        // Transient network error (e.g. dev server restarting, stale Turbopack cache).
+        // Retry up to 3 times with increasing delay instead of redirecting to /login.
+        console.warn('[checkAccess] /api/subscription network error (attempt', attempt, '):', err);
+        if (attempt < 3) {
+          const delay = (attempt + 1) * 1500;
+          console.log('[checkAccess] Retrying in', delay, 'ms...');
+          setTimeout(() => checkAccess(attempt + 1), delay);
+          return;
+        }
+        console.error('[checkAccess] All retries exhausted:', err);
       }
 
       // FALLBACK: try client-side getUser (may work in some setups)
@@ -417,6 +470,38 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
         resultHref: result.href,
       });
 
+      // Save company/person to type-specific recents (properties handled by gemRecentEjendom above)
+      if (result.type === 'company') {
+        fetch('/api/recents', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            entity_type: 'company',
+            entity_id: result.id,
+            display_name: result.title,
+            entity_data: {
+              industry: result.meta?.industry ?? null,
+              city: result.meta?.city ?? null,
+            },
+          }),
+        })
+          .then(() => window.dispatchEvent(new Event('ba-recents-updated')))
+          .catch(() => {});
+      } else if (result.type === 'person') {
+        fetch('/api/recents', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            entity_type: 'person',
+            entity_id: result.id,
+            display_name: result.title,
+            entity_data: { subtitle: result.subtitle ?? null },
+          }),
+        })
+          .then(() => window.dispatchEvent(new Event('ba-recents-updated')))
+          .catch(() => {});
+      }
+
       setSøgning('');
       setSøgÅben(false);
       setResultater([]);
@@ -431,7 +516,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
       <div className="flex h-screen bg-[#0a1020] items-center justify-center">
         <div className="text-center">
           <Loader2 size={28} className="mx-auto mb-3 text-blue-400 animate-spin" />
-          <p className="text-slate-500 text-sm">{t.dashboard.checkingAccess}</p>
+          <p className="text-slate-400 text-sm">{t.dashboard.checkingAccess}</p>
         </div>
       </div>
     );
@@ -439,6 +524,14 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-screen bg-[#0a1020] overflow-hidden">
+      {/* Skip navigation for keyboard users */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-4 focus:left-4 focus:z-[100] focus:px-4 focus:py-2 focus:bg-blue-600 focus:text-white focus:rounded-lg focus:outline-none"
+      >
+        Spring til indhold
+      </a>
+
       {/* Mobile overlay */}
       {sidebarOpen && (
         <div
@@ -449,32 +542,57 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
 
       {/* Sidebar + resize-bjælke */}
       <div
-        className={`fixed lg:static inset-y-0 left-0 z-30 flex flex-row transition-transform duration-300 ${
+        className={`fixed lg:static inset-y-0 left-0 z-30 flex flex-row transition-all duration-300 ${
           sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         }`}
-        style={{ width: sidebarBredde }}
+        style={{ width: sidebarCollapsed ? SIDEBAR_COLLAPSED : sidebarBredde }}
       >
         <aside className="flex-1 bg-[#0f172a] flex flex-col overflow-hidden">
-          {/* Logo */}
-          <div className="flex items-center justify-between px-6 py-5 border-b border-white/10 shrink-0">
-            <Link href="/" className="flex items-center gap-2 min-w-0">
-              <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shrink-0">
+          {/* Logo + collapse-knap */}
+          <div
+            className={`flex items-center border-b border-white/10 shrink-0 ${sidebarCollapsed ? 'justify-center px-0 py-5' : 'justify-between px-6 py-5'}`}
+          >
+            {!sidebarCollapsed && (
+              <Link href="/" className="flex items-center gap-2 min-w-0">
+                <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shrink-0">
+                  <span className="text-white font-bold text-sm">B</span>
+                </div>
+                <span className="text-white font-bold text-lg truncate">
+                  Bizz<span className="text-blue-400">Assist</span>
+                </span>
+              </Link>
+            )}
+            {sidebarCollapsed && (
+              <Link
+                href="/"
+                className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shrink-0"
+              >
                 <span className="text-white font-bold text-sm">B</span>
-              </div>
-              <span className="text-white font-bold text-lg truncate">
-                Bizz<span className="text-blue-400">Assist</span>
-              </span>
-            </Link>
-            <button
-              className="lg:hidden text-slate-400 hover:text-white shrink-0"
-              onClick={() => setSidebarOpen(false)}
-            >
-              <X size={20} />
-            </button>
+              </Link>
+            )}
+            <div className="flex items-center gap-1 shrink-0">
+              {/* Collapse-toggle — kun desktop */}
+              <button
+                className="hidden lg:flex text-slate-500 hover:text-white p-1 rounded-lg hover:bg-white/5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                onClick={() => setSidebarCollapsed((c) => !c)}
+                aria-label={sidebarCollapsed ? 'Udvid sidebar' : 'Fold sidebar sammen'}
+                title={sidebarCollapsed ? 'Udvid' : 'Fold sammen'}
+              >
+                {sidebarCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+              </button>
+              {/* Luk-knap — kun mobil */}
+              <button
+                className="lg:hidden text-slate-400 hover:text-white shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded-lg"
+                onClick={() => setSidebarOpen(false)}
+                aria-label="Luk navigationsmenu"
+              >
+                <X size={20} />
+              </button>
+            </div>
           </div>
 
           {/* Navigation — shrink-0 så AI-panelet nedenfor fylder resten */}
-          <nav className="shrink-0 px-4 py-6 space-y-1">
+          <nav className={`shrink-0 py-6 space-y-1 ${sidebarCollapsed ? 'px-2' : 'px-4'}`}>
             {navItems
               .filter((item) => !item.adminOnly || isAdmin)
               .map((item) => {
@@ -489,25 +607,57 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                   <Link
                     key={item.href}
                     href={locked ? '/dashboard/settings' : item.href}
-                    onClick={() => setSidebarOpen(false)}
-                    className={`flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
+                    prefetch={false}
+                    onClick={(e) => {
+                      setSidebarOpen(false);
+                      // Brug startTransition for at lade React afbryde tung rendering
+                      if (!locked) {
+                        e.preventDefault();
+                        startTransition(() => {
+                          router.push(locked ? '/dashboard/settings' : item.href);
+                        });
+                      }
+                    }}
+                    title={sidebarCollapsed ? label : undefined}
+                    className={`flex items-center rounded-xl text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${sidebarCollapsed ? 'justify-center px-0 py-3' : 'gap-3 px-4 py-3'} ${
                       locked
                         ? 'text-slate-600 cursor-not-allowed'
                         : active
                           ? 'bg-blue-600 text-white'
-                          : 'text-slate-400 hover:text-white hover:bg-white/5'
+                          : isPending && item.href !== pathname
+                            ? 'text-blue-300 bg-blue-600/10'
+                            : 'text-slate-400 hover:text-white hover:bg-white/5'
                     }`}
                   >
                     <Icon size={18} className={locked ? 'opacity-40' : ''} />
-                    <span className="truncate">{label}</span>
-                    {locked && <Lock size={12} className="ml-auto text-slate-600" />}
+                    {!sidebarCollapsed && <span className="truncate">{label}</span>}
+                    {!sidebarCollapsed && locked && (
+                      <Lock size={12} className="ml-auto text-slate-600" />
+                    )}
                   </Link>
                 );
               })}
           </nav>
 
-          {/* AI Chat Panel — resizable, nederst i sidebar */}
-          <AIChatPanel />
+          {/* AI Chat Panel — skjules når sidebar er foldet ind (collapsed) */}
+          {!sidebarCollapsed && (
+            <ErrorBoundary
+              lang={lang}
+              fallback={
+                <div className="p-4 text-center">
+                  <p className="text-sm text-slate-400 mb-3">Chat er midlertidigt utilgængelig</p>
+                  <button
+                    onClick={() => window.location.reload()}
+                    className="text-xs text-blue-400 hover:text-blue-300 border border-slate-700 rounded-lg px-3 py-1.5 transition-colors"
+                  >
+                    Prøv igen
+                  </button>
+                </div>
+              }
+            >
+              <AIChatPanel />
+            </ErrorBoundary>
+          )}
         </aside>
 
         {/* Resize-bjælke — kun desktop */}
@@ -523,11 +673,12 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
       {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         {/* Top bar */}
-        <header className="bg-[#0f172a] border-b border-white/8 px-6 py-4 flex items-center justify-between shrink-0">
+        <header className="bg-[#0f172a] border-b border-white/8 px-6 py-4 flex items-center gap-4 shrink-0">
           <div className="flex items-center gap-4">
             <button
-              className="lg:hidden text-slate-400 hover:text-white"
+              className="lg:hidden text-slate-400 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded-lg"
               onClick={() => setSidebarOpen(true)}
+              aria-label="Åbn navigationsmenu"
             >
               <Menu size={22} />
             </button>
@@ -551,7 +702,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                     setSearchRect({
                       top: rect.bottom + 6,
                       left: rect.left,
-                      width: Math.max(rect.width, 380),
+                      width: Math.max(rect.width, 520),
                     });
                 }}
                 onFocus={() => {
@@ -562,13 +713,13 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                     setSearchRect({
                       top: rect.bottom + 6,
                       left: rect.left,
-                      width: Math.max(rect.width, 380),
+                      width: Math.max(rect.width, 520),
                     });
                 }}
                 onKeyDown={(e) => {
                   if (e.key === 'ArrowDown') {
                     e.preventDefault();
-                    setMarkeret((m) => Math.min(m + 1, Math.min(resultater.length, 15) - 1)); // max 15 = 5 per category
+                    setMarkeret((m) => Math.min(m + 1, Math.min(resultater.length, 24) - 1)); // max 24 = 8 per category
                   } else if (e.key === 'ArrowUp') {
                     e.preventDefault();
                     setMarkeret((m) => Math.max(m - 1, -1));
@@ -605,6 +756,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                       setResultater([]);
                       setSøgÅben(false);
                     }}
+                    aria-label="Ryd søgning"
                     className="text-slate-600 hover:text-slate-300"
                   >
                     <X size={14} />
@@ -626,15 +778,15 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                       width: searchRect.width,
                       zIndex: 9999,
                     }}
-                    className="bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl overflow-hidden max-h-[70vh] overflow-y-auto"
+                    className="bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl overflow-hidden max-h-[88vh] overflow-y-auto"
                   >
-                    {/* Group results by type — max 5 per category */}
+                    {/* Group results by type — max 8 per category */}
                     {(() => {
-                      const adresser = resultater.filter((r) => r.type === 'address').slice(0, 5);
+                      const adresser = resultater.filter((r) => r.type === 'address').slice(0, 8);
                       const virksomheder = resultater
                         .filter((r) => r.type === 'company')
-                        .slice(0, 5);
-                      const personer = resultater.filter((r) => r.type === 'person').slice(0, 5);
+                        .slice(0, 8);
+                      const personer = resultater.filter((r) => r.type === 'person').slice(0, 8);
                       /** Flat list for keyboard navigation index */
                       const flat = [...adresser, ...virksomheder, ...personer];
 
@@ -729,23 +881,23 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                                   e.preventDefault();
                                   vælgResultat(flat[idx]);
                                 }}
-                                className={`w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors group ${isActive ? activeBg : hoverBg}`}
+                                className={`w-full flex items-center gap-2 px-3 py-1.5 text-left transition-colors group ${isActive ? activeBg : hoverBg}`}
                               >
                                 <div
-                                  className={`p-1.5 rounded-lg flex-shrink-0 transition-colors ${isActive ? iconBgActive : iconBgActive.replace('/30', '/15')}`}
+                                  className={`p-1 rounded-md flex-shrink-0 transition-colors ${isActive ? iconBgActive : iconBgActive.replace('/30', '/15')}`}
                                 >
-                                  <ResultIcon size={13} className={accentColor} />
+                                  <ResultIcon size={11} className={accentColor} />
                                 </div>
                                 <div className="flex-1 min-w-0">
                                   {r.type === 'company' ? (
                                     <>
-                                      <div className="flex items-center gap-2">
-                                        <p className="text-white text-sm font-medium truncate">
+                                      <div className="flex items-center gap-1.5">
+                                        <p className="text-white text-xs font-medium truncate">
                                           {r.title}
                                         </p>
                                         {r.meta?.active && (
                                           <span
-                                            className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium flex-shrink-0 ${r.meta.active === 'true' ? 'bg-emerald-600/20 text-emerald-400' : 'bg-red-600/20 text-red-400'}`}
+                                            className={`inline-flex items-center px-1 py-0 rounded text-[8px] font-medium flex-shrink-0 ${r.meta.active === 'true' ? 'bg-emerald-600/20 text-emerald-400' : 'bg-red-600/20 text-red-400'}`}
                                           >
                                             {r.meta.active === 'true'
                                               ? lang === 'da'
@@ -757,7 +909,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                                           </span>
                                         )}
                                       </div>
-                                      <p className="text-slate-500 text-xs truncate">
+                                      <p className="text-slate-400 text-[10px] truncate">
                                         CVR {r.id}
                                         {r.meta?.industry ? ` \u00b7 ${r.meta.industry}` : ''}
                                         {r.meta?.city ? ` \u00b7 ${r.meta.city}` : ''}
@@ -765,21 +917,21 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                                     </>
                                   ) : r.type === 'person' ? (
                                     <>
-                                      <p className="text-white text-sm font-medium truncate">
+                                      <p className="text-white text-xs font-medium truncate">
                                         {r.title}
                                       </p>
                                       {r.subtitle && (
-                                        <p className="text-slate-500 text-xs truncate">
+                                        <p className="text-slate-400 text-[10px] truncate">
                                           {r.subtitle}
                                         </p>
                                       )}
                                     </>
                                   ) : (
                                     <>
-                                      <p className="text-white text-sm font-medium truncate">
+                                      <p className="text-white text-xs font-medium truncate">
                                         {r.title}
                                       </p>
-                                      <p className="text-slate-500 text-xs truncate">
+                                      <p className="text-slate-400 text-[10px] truncate">
                                         {r.meta?.dawaType === 'vejnavn'
                                           ? s.typeRoad
                                           : s.typeProperty}
@@ -789,7 +941,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                                   )}
                                 </div>
                                 <ArrowRight
-                                  size={13}
+                                  size={11}
                                   className={isActive ? accentColor : arrowIdle}
                                 />
                               </button>
@@ -820,7 +972,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                     }}
                     className="bg-slate-900 border border-slate-700/60 rounded-2xl shadow-2xl overflow-hidden max-h-[50vh] overflow-y-auto"
                   >
-                    <div className="px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500 bg-slate-800/40">
+                    <div className="px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-slate-400 bg-slate-800/40">
                       {lang === 'da' ? 'Seneste søgninger' : 'Recent searches'}
                     </div>
                     {recentSearches.slice(0, 6).map((rs, i) => (
@@ -852,12 +1004,18 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                 )}
             </div>
           </div>
+          {/* Recent entity tags — direkte til højre for søgefeltet */}
+          <RecentEntityTagBar currentPath={pathname} variant="inline" />
+          {/* Spacer — skubber DA/EN til højre */}
+          <div className="flex-1" />
           <div className="flex items-center gap-3">
             {/* Language toggle */}
             <div className="flex items-center bg-white/10 rounded-full p-1 gap-1">
               <button
                 onClick={() => setLang('da')}
-                className={`px-2.5 py-1 rounded-full text-xs font-semibold transition-all ${
+                aria-label="Vælg dansk"
+                aria-pressed={lang === 'da'}
+                className={`px-2.5 py-1 rounded-full text-xs font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
                   lang === 'da' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
                 }`}
               >
@@ -865,7 +1023,9 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
               </button>
               <button
                 onClick={() => setLang('en')}
-                className={`px-2.5 py-1 rounded-full text-xs font-semibold transition-all ${
+                aria-label="Select English"
+                aria-pressed={lang === 'en'}
+                className={`px-2.5 py-1 rounded-full text-xs font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
                   lang === 'en' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
                 }`}
               >
@@ -877,7 +1037,9 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
             <div className="relative" ref={profileRef}>
               <button
                 onClick={() => setProfileOpen((o) => !o)}
-                className="w-9 h-9 bg-blue-600 hover:bg-blue-500 rounded-full flex items-center justify-center text-white text-sm font-bold transition-colors"
+                aria-label={userProfile ? `Brugermenu for ${userProfile.name}` : 'Brugermenu'}
+                aria-expanded={profileOpen}
+                className="w-9 h-9 bg-blue-600 hover:bg-blue-500 rounded-full flex items-center justify-center text-white text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0f172a]"
               >
                 {userProfile?.initials ?? '..'}
               </button>
@@ -886,7 +1048,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                 <div className="absolute right-0 top-11 w-52 bg-[#1e293b] border border-white/10 rounded-2xl shadow-2xl overflow-hidden z-50">
                   <div className="px-4 py-3 border-b border-white/10">
                     <p className="text-white text-sm font-medium">{userProfile?.name ?? ''}</p>
-                    <p className="text-slate-500 text-xs mt-0.5 truncate">
+                    <p className="text-slate-400 text-xs mt-0.5 truncate">
                       {userProfile?.email ?? ''}
                     </p>
                   </div>
@@ -917,8 +1079,38 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
+        {/* 2FA recommendation banner — only for email/password users without TOTP */}
+        {show2FaBanner && (
+          <div className="flex items-center justify-between gap-3 bg-amber-500/10 border-b border-amber-500/30 px-4 py-2.5 shrink-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <AlertCircle size={15} className="text-amber-400 shrink-0" />
+              <p className="text-amber-300 text-sm truncate">
+                {lang === 'da'
+                  ? 'Din konto er ikke beskyttet med to-faktor-godkendelse (2FA). '
+                  : 'Your account is not protected with two-factor authentication (2FA). '}
+                <a
+                  href="/login/mfa/enroll"
+                  className="underline font-medium hover:text-amber-200 transition-colors"
+                >
+                  {lang === 'da' ? 'Opsæt 2FA nu' : 'Set up 2FA now'}
+                </a>
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                sessionStorage.setItem('bizzassist_2fa_banner_dismissed', '1');
+                setShow2FaBanner(false);
+              }}
+              className="text-amber-500 hover:text-amber-300 text-lg leading-none shrink-0 transition-colors"
+              aria-label="Luk"
+            >
+              ×
+            </button>
+          </div>
+        )}
+
         {/* Page content — gated by subscription for non-free pages */}
-        <main className="flex-1 flex overflow-hidden">
+        <main id="main-content" className="flex-1 flex overflow-hidden">
           {pathname === '/dashboard' ||
           pathname.startsWith('/dashboard/settings') ||
           pathname.startsWith('/dashboard/admin') ||
@@ -1122,7 +1314,7 @@ function PlanSelectionOverlay({
               <button
                 type="button"
                 onClick={() => signOut()}
-                className="text-slate-500 hover:text-slate-300 text-xs transition-colors"
+                className="text-slate-400 hover:text-slate-200 text-xs transition-colors"
               >
                 {da ? 'Log ud' : 'Sign out'}
               </button>
@@ -1166,7 +1358,7 @@ function PlanSelectionOverlay({
 
           {/* Plan cards */}
           {plansLoading ? (
-            <div className="flex items-center justify-center gap-2 text-slate-500 py-8">
+            <div className="flex items-center justify-center gap-2 text-slate-400 py-8">
               <Loader2 size={14} className="animate-spin" />
               <span className="text-xs">{da ? 'Henter planer…' : 'Loading plans…'}</span>
             </div>
@@ -1196,7 +1388,7 @@ function PlanSelectionOverlay({
                     <p className="text-white text-base font-bold">
                       {plan.priceDkk === 0 ? (da ? 'Gratis' : 'Free') : `${plan.priceDkk} kr`}
                       {plan.priceDkk > 0 && (
-                        <span className="text-slate-500 text-xs font-normal">/md</span>
+                        <span className="text-slate-400 text-xs font-normal">/md</span>
                       )}
                     </p>
                     {plan.aiEnabled && (
@@ -1212,7 +1404,7 @@ function PlanSelectionOverlay({
                       </div>
                     )}
                     {plan.requiresApproval && (
-                      <div className="mt-1.5 inline-flex items-center gap-1 text-xs text-slate-500">
+                      <div className="mt-1.5 inline-flex items-center gap-1 text-xs text-slate-400">
                         <Clock size={10} />
                         {da ? 'Kræver godkendelse' : 'Requires approval'}
                       </div>

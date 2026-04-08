@@ -25,7 +25,12 @@
 
 import { NextRequest } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
+import * as Sentry from '@sentry/nextjs';
 import { checkRateLimit, aiRateLimit } from '@/app/lib/rateLimit';
+import { fetchBbrForAddress } from '@/app/lib/fetchBbrData';
+import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { logActivity } from '@/app/lib/activityLog';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -200,6 +205,64 @@ const TOOLS: Anthropic.Tool[] = [
       required: ['bfeNummer'],
     },
   },
+  {
+    name: 'hent_person_virksomheder',
+    description:
+      'Henter alle virksomheder en person er tilknyttet fra CVR-registret med ejerandel (%), rolle og CVR-nummer. Brug dette som første skridt i en formueanalyse — kald derefter hent_cvr_virksomhed for hvert CVR-nummer for at estimere virksomhedsværdier. Brug enhedsNummer hvis det kendes (fra kontekst eller søg_person_cvr), ellers søg på navn.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        enhedsNummer: {
+          type: 'string',
+          description: 'CVR enhedsnummer for personen (numerisk streng) — foretrukket',
+        },
+        navn: {
+          type: 'string',
+          description: 'Personens fulde navn — bruges som fallback hvis enhedsNummer ikke kendes',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'hent_regnskab_noegletal',
+    description:
+      'Henter XBRL-regnskabsdata (balance og resultatopgørelse) for en virksomhed — egenkapital, aktiver, omsætning, årets resultat og nøgletal for de seneste 1-3 år. Brug dette til at estimere virksomhedsværdi i formueanalyse. Egenkapital er det mest direkte bud på bogført nettoværdi for holdingselskaber. Kald dette for ALLE virksomheder med ejerandel parallelt.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        cvr: { type: 'string', description: '8-cifret CVR-nummer' },
+      },
+      required: ['cvr'],
+    },
+  },
+  {
+    name: 'hent_datterselskaber',
+    description:
+      'Henter datterselskaber og kapitalandele for en virksomhed fra CVR. Brug dette når en ejet virksomhed er et holdingselskab (navn indeholder "Holding", "Invest" eller "Group") for at afdække den underliggende portefølje. Returnerer CVR-numre og ejerandele på niveau 2.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        cvr: { type: 'string', description: '8-cifret CVR-nummer for holdingselskabet' },
+      },
+      required: ['cvr'],
+    },
+  },
+  {
+    name: 'soeg_person_cvr',
+    description:
+      'Søger CVR-registret efter en person eller virksomhed på navn. Returnerer enhedsNummer, fuldt navn og registrerede adresser. Brug dette til at finde en persons CVR-enhedsnummer inden du kalder hent_person_virksomheder. Kald ALTID dette først hvis du kun kender et navn og ikke har enhedsNummer i konteksten.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        navn: {
+          type: 'string',
+          description: 'Personens fulde navn eller del af navn, f.eks. "Jakob Juul Rasmussen"',
+        },
+      },
+      required: ['navn'],
+    },
+  },
 ];
 
 // ─── Tool labels (for status messages) ──────────────────────────────────────
@@ -216,6 +279,10 @@ const TOOL_STATUS: Record<string, string> = {
   hent_plandata: 'Henter plandata…',
   hent_cvr_virksomhed: 'Henter CVR-data…',
   hent_matrikeldata: 'Henter matrikeldata…',
+  hent_person_virksomheder: 'Henter personens virksomhedstilknytninger…',
+  hent_regnskab_noegletal: 'Henter regnskabsnøgletal…',
+  hent_datterselskaber: 'Henter datterselskaber…',
+  soeg_person_cvr: 'Søger efter person i CVR…',
 };
 
 // ─── System prompt ──────────────────────────────────────────────────────────
@@ -254,12 +321,101 @@ VIGTIGT: Kald så mange tools som muligt i SAMME runde for at spare tid. Vent ik
 - Marker tydeligt hvad der er fakta (fra registre) vs. din vurdering
 - Hvis et tool returnerer fejl eller manglende data, nævn det kort og fortsæt med de øvrige data
 - Kald gerne flere tools for at give et komplet billede
-- BFE-nummer findes typisk i jordstykke-objektet fra dawa_adresse_detaljer (feltet "bfenummer" eller i ejendomsrelationer fra BBR)`;
+- BFE-nummer findes typisk i jordstykke-objektet fra dawa_adresse_detaljer (feltet "bfenummer" eller i ejendomsrelationer fra BBR)
+
+## Workflow ved formueanalyse for en person
+
+### REGEL 1 — Vælg den rigtige liste baseret på spørgsmålstype
+Konteksten indeholder to separate lister markeret med tags:
+- **[EJERSKAB]** — selskaber med registreret ejerandel
+- **[FUNKTIONSROLLER]** — selskaber hvor personen er direktør/bestyrelsesmedlem uden ejerandel
+
+**Spørgsmål om formue, værdi, aktiver, ejerandele → brug KUN [EJERSKAB]-listen.**
+Direktørroller og bestyrelsesposter uden ejerandel ignoreres fuldstændigt i formueberegning.
+
+**Spørgsmål om netværk, bestyrelser, brancheforbindelser, tilknytninger → brug BEGGE lister.**
+Her er [FUNKTIONSROLLER] relevant og skal inkluderes.
+
+### REGEL 2 — Hent regnskaber parallelt
+For ALLE virksomheder med ejerandel: kald hent_regnskab_noegletal parallelt (alle på én gang).
+Egenkapital = bogført nettoværdi. Markedsværdi-multipel: 1–3× egenkapital for holdingselskaber, 3–8× EBITDA for driftsselskaber.
+
+### REGEL 3 — Holdingkæder (effektiv ejerandel, op til 3 niveauer)
+Hvis et ejet selskab er holdingselskab (navn indeholder "Holding", "Invest", "Group", "Management" eller ingen ansatte):
+- Kald hent_datterselskaber → niveau 2-selskaber med ejerandele
+- Hvis niveau 2-selskaber OGSÅ er holdingselskaber: kald hent_datterselskaber på dem → niveau 3
+- Gå max 3 niveauer ned
+
+Beregn EFFEKTIV ejerandel multiplicativt:
+- Niveau 2: personens % × niveau1's % i niveau2
+- Niveau 3: personens % × niveau1's % × niveau2's % i niveau3
+
+Konkret eksempel (3-lags kæde):
+- Jakob ejer 90% af JaJR Holding → JaJR Holding ejer 100% af JaJR Holding 2 → JaJR Holding 2 ejer 100% af JAJR Ejendomme 2
+- Jakobs effektive andel i JAJR Ejendomme 2 = 90% × 100% × 100% = **90%**
+- JAJR Ejendomme 2 skal medtages i formueestimatet med 90% effektiv ejerandel
+
+Kald hent_regnskab_noegletal for ALLE niveau 2 og 3 selskaber parallelt.
+
+Nævn ALTID eksplicit i svaret som en del af forbeholdene:
+"⚠️ Holding-analysen går max 3 niveauer ned i ejerskabskæden. Dybere strukturer (niveau 4+) kan forekomme og er ikke medregnet i dette estimat."
+Hvis du støder på et niveau 3-selskab der OGSÅ ser ud som et holdingselskab, nævn det specifikt: "XXXX ser ud til at være endnu et holdingselskab — dets underliggende aktiver er ikke kortlagt her."
+
+### REGEL 4 — Præsentation
+Strukturér svaret: tabel med ejede selskaber (ejerandel | egenkapital | estimeret værdi), holdingkæder med effektive andele, samlet estimat (lav/høj), og eksplicit forbehold om bogførte vs. markedsværdier.
+
+### Trin-for-trin:
+1. Er "Personens EJEDE virksomheder med ejerandel" i konteksten? → Brug listen direkte
+2. Ellers: hent via enhedsNummer eller soeg_person_cvr
+3. Kald hent_regnskab_noegletal for ALLE ejede selskaber PARALLELT
+4. For holdingselskaber: kald hent_datterselskaber parallelt
+5. Præsenter struktureret resultat med tydelige forbehold
+
+## KRITISK: Brug af side-kontekst (læs dette FØR du planlægger tool-kald)
+Systemet injicerer automatisk ID'er fra den side brugeren kigger på under "Tilgængelige ID'er (brug direkte i tool-kald)".
+
+**Regler — ingen undtagelser:**
+- Er "CVR enhedsnummer (person): XXXXXXXX" listet → kald hent_person_virksomheder med dette enhedsNummer DIREKTE. Søg IKKE på navn.
+- Er "BFE-nummer: XXXXXXX" listet → kald hent_vurdering, hent_ejerskab osv. direkte. Søg IKKE adressen.
+- Er "CVR-nummer: XXXXXXXX" listet → kald hent_cvr_virksomhed direkte. Søg IKKE CVR.
+- Kald ALDRIG soeg_person_cvr hvis enhedsNummer allerede er i konteksten.
+- Kald ALDRIG dawa_adresse_soeg hvis adresseId eller bfeNummer allerede er i konteksten.`;
+
+// ─── Tool result cache ──────────────────────────────────────────────────────
+
+/** TTL for cached tool results — 5 minutes */
+const TOOL_CACHE_TTL_MS = 5 * 60 * 1000;
+
+interface CacheEntry {
+  result: unknown;
+  expiresAt: number;
+}
+
+/** Module-level cache shared across requests within the same serverless instance */
+const toolCache = new Map<string, CacheEntry>();
+
+/** Returns cached result if still valid, otherwise null */
+function getCached(name: string, input: Record<string, string>): unknown | null {
+  const key = `${name}:${JSON.stringify(input)}`;
+  const entry = toolCache.get(key);
+  if (!entry || Date.now() > entry.expiresAt) {
+    toolCache.delete(key);
+    return null;
+  }
+  return entry.result;
+}
+
+/** Stores a tool result in the cache */
+function setCache(name: string, input: Record<string, string>, result: unknown): void {
+  const key = `${name}:${JSON.stringify(input)}`;
+  toolCache.set(key, { result, expiresAt: Date.now() + TOOL_CACHE_TTL_MS });
+}
 
 // ─── Tool executor ──────────────────────────────────────────────────────────
 
 /**
  * Executes a tool by calling the appropriate internal API route or external endpoint.
+ * Results are cached in-memory for 5 minutes to avoid duplicate API calls within a session.
  *
  * @param name - Tool name matching one of TOOLS[].name
  * @param input - Tool input parameters from Claude
@@ -271,20 +427,27 @@ async function executeTool(
   input: Record<string, string>,
   baseUrl: string
 ): Promise<unknown> {
+  const cached = getCached(name, input);
+  if (cached !== null) return cached;
+
   const timeout = 15_000;
 
   try {
+    let result: unknown;
     switch (name) {
-      // TODO: Migrate dawa_adresse_soeg to DAR before July 2026 — currently uses direct DAWA REST calls
+      // TODO(BIZZ-92): Migrate to DAR before 1 July 2026
       case 'dawa_adresse_soeg': {
         // Server-side proxy via DAR (DAWA lukker 1. juli 2026)
         const res = await fetch(
           `${baseUrl}/api/adresse/autocomplete?q=${encodeURIComponent(input.q)}`,
           { signal: AbortSignal.timeout(timeout) }
         );
-        if (!res.ok) return { fejl: `Adresse-autocomplete svarede ${res.status}` };
+        if (!res.ok) {
+          result = { fejl: `Adresse-autocomplete svarede ${res.status}` };
+          break;
+        }
         const data = await res.json();
-        return (
+        result = (
           data as Array<{
             tekst: string;
             adresse: {
@@ -303,18 +466,22 @@ async function executeTool(
           postnr: r.adresse.postnr,
           by: r.adresse.postnrnavn,
         }));
+        break;
       }
 
-      // TODO: Migrate dawa_adresse_detaljer to DAR before July 2026 — currently uses direct DAWA REST calls
+      // TODO(BIZZ-92): Migrate to DAR before 1 July 2026
       case 'dawa_adresse_detaljer': {
         // Server-side proxy via DAR (DAWA lukker 1. juli 2026)
         const res = await fetch(
           `${baseUrl}/api/adresse/lookup?id=${encodeURIComponent(input.dawaId)}`,
           { signal: AbortSignal.timeout(timeout) }
         );
-        if (!res.ok) return { fejl: `Adresse-opslag svarede ${res.status}` };
+        if (!res.ok) {
+          result = { fejl: `Adresse-opslag svarede ${res.status}` };
+          break;
+        }
         const d = (await res.json()) as Record<string, unknown>;
-        return {
+        result = {
           id: d.id,
           vejnavn: d.vejnavn,
           husnr: d.husnr,
@@ -327,14 +494,14 @@ async function executeTool(
           ejerlavkode: d.ejerlavskode,
           ejerlavnavn: d.ejerlavsnavn,
         };
+        break;
       }
 
       case 'hent_bbr_data': {
-        const res = await fetch(`${baseUrl}/api/ejendom/${encodeURIComponent(input.dawaId)}`, {
-          signal: AbortSignal.timeout(20_000),
-        });
-        if (!res.ok) return { fejl: `Ejendom-API svarede ${res.status}` };
-        return await res.json();
+        // Direct function call — no HTTP self-call (self-calls are unreliable on Vercel serverless)
+        const data = await fetchBbrForAddress(input.dawaId);
+        result = { dawaId: input.dawaId, ...data };
+        break;
       }
 
       case 'hent_vurdering': {
@@ -344,8 +511,12 @@ async function executeTool(
         const res = await fetch(`${baseUrl}/api/vurdering?${params}`, {
           signal: AbortSignal.timeout(timeout),
         });
-        if (!res.ok) return { fejl: `Vurderings-API svarede ${res.status}` };
-        return await res.json();
+        if (!res.ok) {
+          result = { fejl: `Vurderings-API svarede ${res.status}` };
+          break;
+        }
+        result = await res.json();
+        break;
       }
 
       case 'hent_forelobig_vurdering': {
@@ -355,19 +526,25 @@ async function executeTool(
         const res = await fetch(`${baseUrl}/api/vurdering-forelobig?${params}`, {
           signal: AbortSignal.timeout(timeout),
         });
-        if (!res.ok) return { fejl: `Foreløbig-vurdering-API svarede ${res.status}` };
-        return await res.json();
+        if (!res.ok) {
+          result = { fejl: `Foreløbig-vurdering-API svarede ${res.status}` };
+          break;
+        }
+        result = await res.json();
+        break;
       }
 
       case 'hent_ejerskab': {
         const res = await fetch(
           `${baseUrl}/api/ejerskab?bfeNummer=${encodeURIComponent(input.bfeNummer)}`,
-          {
-            signal: AbortSignal.timeout(timeout),
-          }
+          { signal: AbortSignal.timeout(timeout) }
         );
-        if (!res.ok) return { fejl: `Ejerskabs-API svarede ${res.status}` };
-        return await res.json();
+        if (!res.ok) {
+          result = { fejl: `Ejerskabs-API svarede ${res.status}` };
+          break;
+        }
+        result = await res.json();
+        break;
       }
 
       case 'hent_salgshistorik': {
@@ -375,8 +552,12 @@ async function executeTool(
           `${baseUrl}/api/salgshistorik?bfeNummer=${encodeURIComponent(input.bfeNummer)}`,
           { signal: AbortSignal.timeout(timeout) }
         );
-        if (!res.ok) return { fejl: `Salgshistorik-API svarede ${res.status}` };
-        return await res.json();
+        if (!res.ok) {
+          result = { fejl: `Salgshistorik-API svarede ${res.status}` };
+          break;
+        }
+        result = await res.json();
+        break;
       }
 
       case 'hent_energimaerke': {
@@ -384,8 +565,12 @@ async function executeTool(
           `${baseUrl}/api/energimaerke?bfeNummer=${encodeURIComponent(input.bfeNummer)}`,
           { signal: AbortSignal.timeout(timeout) }
         );
-        if (!res.ok) return { fejl: `Energimærke-API svarede ${res.status}` };
-        return await res.json();
+        if (!res.ok) {
+          result = { fejl: `Energimærke-API svarede ${res.status}` };
+          break;
+        }
+        result = await res.json();
+        break;
       }
 
       case 'hent_jordforurening': {
@@ -396,8 +581,12 @@ async function executeTool(
         const res = await fetch(`${baseUrl}/api/jord?${params}`, {
           signal: AbortSignal.timeout(timeout),
         });
-        if (!res.ok) return { fejl: `Jord-API svarede ${res.status}` };
-        return await res.json();
+        if (!res.ok) {
+          result = { fejl: `Jord-API svarede ${res.status}` };
+          break;
+        }
+        result = await res.json();
+        break;
       }
 
       case 'hent_plandata': {
@@ -405,16 +594,24 @@ async function executeTool(
           `${baseUrl}/api/plandata?adresseId=${encodeURIComponent(input.adresseId)}`,
           { signal: AbortSignal.timeout(timeout) }
         );
-        if (!res.ok) return { fejl: `Plandata-API svarede ${res.status}` };
-        return await res.json();
+        if (!res.ok) {
+          result = { fejl: `Plandata-API svarede ${res.status}` };
+          break;
+        }
+        result = await res.json();
+        break;
       }
 
       case 'hent_cvr_virksomhed': {
         const res = await fetch(`${baseUrl}/api/cvr/${encodeURIComponent(input.cvr)}`, {
           signal: AbortSignal.timeout(timeout),
         });
-        if (!res.ok) return { fejl: `CVR-API svarede ${res.status}` };
-        return await res.json();
+        if (!res.ok) {
+          result = { fejl: `CVR-API svarede ${res.status}` };
+          break;
+        }
+        result = await res.json();
+        break;
       }
 
       case 'hent_matrikeldata': {
@@ -422,16 +619,403 @@ async function executeTool(
         const matRes = await fetch(`${baseUrl}/api/matrikel?bfeNummer=${encodeURIComponent(bfe)}`, {
           signal: AbortSignal.timeout(timeout),
         });
-        if (!matRes.ok) return { matrikel: null, fejl: `HTTP ${matRes.status}` };
-        return await matRes.json();
+        if (!matRes.ok) {
+          result = { matrikel: null, fejl: `HTTP ${matRes.status}` };
+          break;
+        }
+        result = await matRes.json();
+        break;
+      }
+
+      case 'hent_regnskab_noegletal': {
+        // Henter XBRL-regnskab (balance + resultat) via intern route.
+        // Returnerer de seneste 2 regnskabsår med nøgletal for formueestimering.
+        const xbrlRes = await fetch(
+          `${baseUrl}/api/regnskab/xbrl?cvr=${encodeURIComponent(input.cvr)}`,
+          { signal: AbortSignal.timeout(timeout) }
+        );
+        if (!xbrlRes.ok) {
+          result = { fejl: `Regnskabs-API svarede ${xbrlRes.status}` };
+          break;
+        }
+        const xbrlData = (await xbrlRes.json()) as {
+          years?: Array<{
+            aar: number;
+            periodeStart: string;
+            periodeSlut: string;
+            resultat: {
+              omsaetning: number | null;
+              aaretsResultat: number | null;
+              resultatFoerSkat: number | null;
+            };
+            balance: {
+              aktiverIAlt: number | null;
+              egenkapital: number | null;
+              gaeldsforpligtelserIAlt: number | null;
+              langfristetGaeld: number | null;
+            };
+            noegletal: {
+              soliditetsgrad: number | null;
+              overskudsgrad: number | null;
+              afkastningsgrad: number | null;
+            };
+          }>;
+          error?: string;
+        };
+
+        if (xbrlData.error || !xbrlData.years?.length) {
+          result = {
+            cvr: input.cvr,
+            ingenRegnskab: true,
+            besked: 'Ingen XBRL-regnskaber tilgængelige for dette CVR-nummer',
+          };
+          break;
+        }
+
+        // Returnér de seneste 2 år — nok til at vurdere trend
+        result = {
+          cvr: input.cvr,
+          antalAar: xbrlData.years.length,
+          seneste: xbrlData.years.slice(0, 2).map((y) => ({
+            aar: y.aar,
+            periode: `${y.periodeStart?.slice(0, 10)} → ${y.periodeSlut?.slice(0, 10)}`,
+            omsaetning: y.resultat.omsaetning,
+            aaretsResultat: y.resultat.aaretsResultat,
+            resultatFoerSkat: y.resultat.resultatFoerSkat,
+            egenkapital: y.balance.egenkapital,
+            aktiverIAlt: y.balance.aktiverIAlt,
+            gaeld: y.balance.gaeldsforpligtelserIAlt,
+            soliditetsgrad: y.noegletal.soliditetsgrad,
+            overskudsgrad: y.noegletal.overskudsgrad,
+          })),
+        };
+        break;
+      }
+
+      case 'hent_datterselskaber': {
+        // Henter relaterede virksomheder (datterselskaber/kapitalandele) via CVR-public/related.
+        const relRes = await fetch(
+          `${baseUrl}/api/cvr-public/related?cvr=${encodeURIComponent(input.cvr)}`,
+          { signal: AbortSignal.timeout(timeout) }
+        );
+        if (!relRes.ok) {
+          result = { fejl: `Related-API svarede ${relRes.status}` };
+          break;
+        }
+        const relData = (await relRes.json()) as Array<{
+          cvr: number;
+          navn: string;
+          ejerandel?: string | null;
+          rolle?: string;
+          aktiv?: boolean;
+        }>;
+
+        // Filtrer til aktive datterselskaber med ejerandel
+        const datterselskaber = relData
+          .filter((r) => r.aktiv !== false && r.ejerandel)
+          .map((r) => ({
+            cvr: r.cvr,
+            navn: r.navn,
+            ejerandel: r.ejerandel,
+            rolle: r.rolle,
+          }));
+
+        result = {
+          cvr: input.cvr,
+          datterselskaber,
+          antalMedEjerandel: datterselskaber.length,
+          totalRelaterede: relData.length,
+        };
+        break;
+      }
+
+      case 'soeg_person_cvr': {
+        // Søger CVR ES deltager-indeks på navn med phrase-match.
+        // Returnerer enhedsNummer + navnehistorik + aktuelle adresser.
+        const cvrUser = process.env.CVR_ES_USER;
+        const cvrPass = process.env.CVR_ES_PASS;
+        if (!cvrUser || !cvrPass) {
+          result = { fejl: 'CVR system-til-system credentials ikke konfigureret' };
+          break;
+        }
+
+        const searchBody = {
+          size: 5,
+          query: {
+            bool: {
+              should: [
+                // Exact phrase match — højest prioritet
+                { match_phrase: { 'navne.navn': { query: input.navn, boost: 3 } } },
+                // Fuzzy match for stavefejl
+                { match: { 'navne.navn': { query: input.navn, fuzziness: 'AUTO', boost: 1 } } },
+              ],
+              minimum_should_match: 1,
+            },
+          },
+          _source: ['enhedsNummer', 'navne', 'beliggenhedsadresse'],
+        };
+
+        const res = await fetch('http://distribution.virk.dk/cvr-permanent/deltager/_search', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Basic ' + Buffer.from(`${cvrUser}:${cvrPass}`).toString('base64'),
+          },
+          body: JSON.stringify(searchBody),
+          signal: AbortSignal.timeout(timeout),
+        });
+
+        if (!res.ok) {
+          result = { fejl: `CVR søge-API svarede ${res.status}` };
+          break;
+        }
+
+        const data = (await res.json()) as {
+          hits: {
+            total: { value: number };
+            hits: Array<{
+              _score: number;
+              _source: {
+                enhedsNummer: number;
+                navne?: Array<{ navn: string; periode?: { gyldigTil: string | null } }>;
+                beliggenhedsadresse?: Array<{
+                  vejnavn?: string;
+                  husnummerFra?: number;
+                  postnummer?: number;
+                  postdistrikt?: string;
+                }>;
+              };
+            }>;
+          };
+        };
+
+        const hits = data.hits?.hits ?? [];
+        result = {
+          antalFundet: data.hits?.total?.value ?? 0,
+          resultater: hits.map((h) => {
+            const src = h._source;
+            // Aktive navne (gyldigTil == null) — ellers seneste
+            const aktivtNavn =
+              src.navne?.find((n) => n.periode?.gyldigTil == null)?.navn ??
+              src.navne?.[src.navne.length - 1]?.navn ??
+              null;
+            const adresse = src.beliggenhedsadresse?.[0];
+            return {
+              enhedsNummer: String(src.enhedsNummer),
+              navn: aktivtNavn,
+              adresse: adresse
+                ? [adresse.vejnavn, adresse.husnummerFra, adresse.postnummer, adresse.postdistrikt]
+                    .filter(Boolean)
+                    .join(' ')
+                : null,
+            };
+          }),
+        };
+        break;
+      }
+
+      case 'hent_person_virksomheder': {
+        // Query CVR ES deltager index for all companies linked to a person.
+        // Uses system-to-system credentials (same as /api/cvr route).
+        const cvrUser = process.env.CVR_ES_USER;
+        const cvrPass = process.env.CVR_ES_PASS;
+        if (!cvrUser || !cvrPass) {
+          result = { fejl: 'CVR system-til-system credentials ikke konfigureret' };
+          break;
+        }
+
+        // Build ES query — prefer enhedsNummer (exact), fall back to phrase match on navn.
+        // match_phrase kræver ordene i den rigtige rækkefølge, hvilket giver færre falske matches.
+        const esQuery = input.enhedsNummer
+          ? { term: { enhedsNummer: Number(input.enhedsNummer) } }
+          : { match_phrase: { 'navne.navn': input.navn ?? '' } };
+
+        const esBody = {
+          size: 1,
+          query: esQuery,
+          _source: ['enhedsNummer', 'navne', 'deltagerRelation'],
+        };
+
+        const esRes = await fetch('http://distribution.virk.dk/cvr-permanent/deltager/_search', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Basic ' + Buffer.from(`${cvrUser}:${cvrPass}`).toString('base64'),
+          },
+          body: JSON.stringify(esBody),
+          signal: AbortSignal.timeout(timeout),
+        });
+
+        if (!esRes.ok) {
+          result = { fejl: `CVR deltager-API svarede ${esRes.status}` };
+          break;
+        }
+
+        const esData = (await esRes.json()) as {
+          hits: {
+            hits: Array<{
+              _source: {
+                enhedsNummer: number;
+                navne?: Array<{ navn: string }>;
+                deltagerRelation?: Array<{
+                  virksomhed?: { cvrNummer?: number; navn?: Array<{ navn: string }> };
+                  organisationer?: Array<{
+                    organisationsNavn?: Array<{ navn: string }>;
+                    medlemsData?: Array<{
+                      attributter?: Array<{
+                        type: string;
+                        vaerdier?: Array<{
+                          vaerdi: string;
+                          periode?: { gyldigTil: string | null };
+                        }>;
+                      }>;
+                    }>;
+                  }>;
+                  periode?: { gyldigTil: string | null };
+                }>;
+              };
+            }>;
+          };
+        };
+
+        const hit = esData.hits?.hits?.[0]?._source;
+        if (!hit) {
+          result = { fejl: 'Person ikke fundet i CVR' };
+          break;
+        }
+
+        // Extract active ownership relations (gyldigTil IS NULL means still active)
+        const relations = (hit.deltagerRelation ?? [])
+          .filter((r) => r.periode?.gyldigTil == null && r.virksomhed?.cvrNummer != null)
+          .map((r) => {
+            const cvr = String(r.virksomhed!.cvrNummer);
+            const virksomhedNavn = r.virksomhed?.navn?.[r.virksomhed.navn.length - 1]?.navn ?? null;
+
+            // Extract ejerandel (%) and rolle from organisation attributes
+            let ejerandelPct: number | null = null;
+            const roller: string[] = [];
+
+            for (const org of r.organisationer ?? []) {
+              roller.push(org.organisationsNavn?.[org.organisationsNavn.length - 1]?.navn ?? '');
+              for (const md of org.medlemsData ?? []) {
+                for (const attr of md.attributter ?? []) {
+                  if (
+                    attr.type === 'EJERANDEL_PROCENT' &&
+                    attr.vaerdier?.some((v) => v.periode?.gyldigTil == null)
+                  ) {
+                    const activeVal = attr.vaerdier.find((v) => v.periode?.gyldigTil == null);
+                    if (activeVal) ejerandelPct = parseFloat(activeVal.vaerdi);
+                  }
+                }
+              }
+            }
+
+            return {
+              cvr,
+              navn: virksomhedNavn,
+              ejerandelPct,
+              roller: roller.filter(Boolean),
+            };
+          });
+
+        result = {
+          enhedsNummer: hit.enhedsNummer,
+          navn: hit.navne?.[hit.navne.length - 1]?.navn ?? null,
+          aktiveTilknytninger: relations,
+          antalAktive: relations.length,
+        };
+        break;
       }
 
       default:
         return { fejl: `Ukendt tool: ${name}` };
     }
+    setCache(name, input, result);
+    return result;
   } catch (err) {
     return { fejl: err instanceof Error ? err.message : 'Ukendt fejl ved tool-kald' };
   }
+}
+
+// ─── Token budget helpers ────────────────────────────────────────────────────
+
+/** Default monthly token limit per tenant when no plan-level override exists. */
+const TENANT_MONTHLY_TOKEN_LIMIT = 2_000_000; // 2 M tokens/month
+
+/**
+ * Checks whether the tenant has exceeded their monthly AI token budget
+ * by summing rows in `tenant.ai_token_usage` since the 1st of the current month.
+ * Fails-open on any DB error so transient failures never block legitimate users.
+ *
+ * @param adminClient - Supabase admin client (service-role, can access all schemas)
+ * @param tenantId    - The tenant UUID to check, or null (skips check)
+ * @returns true if the tenant has reached or exceeded TENANT_MONTHLY_TOKEN_LIMIT
+ */
+async function isTenantMonthlyBudgetExceeded(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  adminClient: any,
+  tenantId: string | null
+): Promise<boolean> {
+  if (!tenantId) return false;
+  try {
+    const monthStart = new Date();
+    monthStart.setDate(1);
+    monthStart.setHours(0, 0, 0, 0);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = (adminClient as unknown as { schema: (s: string) => any }).schema('tenant');
+    const { data: usageData } = (await db
+      .from('ai_token_usage')
+      .select('tokens_in, tokens_out')
+      .eq('tenant_id', tenantId)
+      .gte('created_at', monthStart.toISOString())) as {
+      data: Array<{ tokens_in: number; tokens_out: number }> | null;
+    };
+
+    const monthlyTokens = (usageData ?? []).reduce(
+      (sum, r) => sum + (r.tokens_in ?? 0) + (r.tokens_out ?? 0),
+      0
+    );
+    return monthlyTokens >= TENANT_MONTHLY_TOKEN_LIMIT;
+  } catch {
+    // Fail-open: do not block request on DB error
+    return false;
+  }
+}
+
+/**
+ * Inserts a token-usage record into `tenant.ai_token_usage` for billing and auditing.
+ * Fire-and-forget — failures are silently swallowed so they never affect streaming.
+ *
+ * @param adminClient - Supabase admin client (service-role)
+ * @param tenantId    - The tenant UUID
+ * @param userId      - The authenticated user UUID
+ * @param tokensIn    - Input tokens consumed in this Claude API call
+ * @param tokensOut   - Output tokens consumed in this Claude API call
+ */
+function recordTenantTokenUsage(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  adminClient: any,
+  tenantId: string,
+  userId: string,
+  tokensIn: number,
+  tokensOut: number
+): void {
+  void (async () => {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const db = (adminClient as unknown as { schema: (s: string) => any }).schema('tenant');
+      await db.from('ai_token_usage').insert({
+        tenant_id: tenantId,
+        user_id: userId,
+        tokens_in: tokensIn,
+        tokens_out: tokensOut,
+        model: 'claude-sonnet-4-6',
+      });
+    } catch {
+      // Non-critical — best-effort tracking
+    }
+  })();
 }
 
 // ─── Handler ────────────────────────────────────────────────────────────────
@@ -441,11 +1025,196 @@ export async function POST(request: NextRequest): Promise<Response> {
   const limited = await checkRateLimit(request, aiRateLimit);
   if (limited) return limited;
 
+  // Require an authenticated user — AI chat consumes paid API tokens
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // Require an active subscription — read app_metadata via admin client (not exposed to JWT)
+  const adminClient = createAdminClient();
+  const { data: freshUser } = await adminClient.auth.admin.getUserById(user.id);
+  const sub = freshUser?.user?.app_metadata?.subscription as
+    | { status?: string; tokensUsedThisMonth?: number; bonusTokens?: number; planId?: string }
+    | null
+    | undefined;
+  if (!sub || sub.status !== 'active') {
+    return Response.json(
+      { error: 'Aktivt abonnement kræves for at bruge AI-assistenten' },
+      { status: 403 }
+    );
+  }
+
+  // Guard: reject immediately if token quota is exhausted.
+  // Fetch effective token limit from plan_configs; fall back to 0 (unlimited) if unavailable.
+  const tokensUsedThisMonth = sub.tokensUsedThisMonth ?? 0;
+  let effectiveTokenLimit = 0;
+  if (sub.planId) {
+    const { data: planRow } = await adminClient
+      .from('plan_configs')
+      .select('ai_tokens_per_month')
+      .eq('plan_id', sub.planId)
+      .single<{ ai_tokens_per_month: number }>();
+    const bonusTokens = sub.bonusTokens ?? 0;
+    effectiveTokenLimit = (planRow?.ai_tokens_per_month ?? 0) + bonusTokens;
+  }
+  if (effectiveTokenLimit > 0 && tokensUsedThisMonth >= effectiveTokenLimit) {
+    return Response.json({ error: 'Token kvote opbrugt for denne måned' }, { status: 429 });
+  }
+
   const apiKey = process.env.BIZZASSIST_CLAUDE_KEY?.trim();
   if (!apiKey) {
     return Response.json(
       { error: 'BIZZASSIST_CLAUDE_KEY ikke konfigureret. Tilføj den i .env.local' },
       { status: 500 }
+    );
+  }
+
+  // Fetch the user's recently viewed entities from the tenant schema.
+  // These are injected into the system prompt so the AI can reference them
+  // without the user having to re-explain what they were looking at.
+  // Non-critical — failures are silently swallowed.
+  let recentEntitiesContext = '';
+  /** Formatted tenant knowledge base context injected into the system prompt. */
+  let knowledgeContext = '';
+  // Captured for activity logging below — avoids a second membership lookup
+  let resolvedTenantId: string | null = null;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: membership } = await (adminClient as any)
+      .from('tenant_memberships')
+      .select('tenant_id')
+      .eq('user_id', user.id)
+      .limit(1)
+      .single();
+    if (membership?.tenant_id) {
+      resolvedTenantId = membership.tenant_id as string;
+    }
+
+    if (membership?.tenant_id) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: tenantRow } = await (adminClient as any)
+        .from('tenants')
+        .select('schema_name')
+        .eq('id', membership.tenant_id)
+        .single();
+
+      if (tenantRow?.schema_name) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const db = (adminClient as unknown as { schema: (s: string) => any }).schema(
+          tenantRow.schema_name
+        );
+        const { data: recents } = await db
+          .from('recent_entities')
+          .select('entity_type, entity_id, display_name, visited_at')
+          .eq('user_id', user.id)
+          .in('entity_type', ['property', 'company', 'person'])
+          .order('visited_at', { ascending: false })
+          .limit(15);
+
+        if (recents && recents.length > 0) {
+          // Group by entity_type for a readable summary
+          const grouped: Record<string, Array<{ entity_id: string; display_name: string }>> = {};
+          for (const r of recents as Array<{
+            entity_type: string;
+            entity_id: string;
+            display_name: string;
+            visited_at: string;
+          }>) {
+            if (!grouped[r.entity_type]) grouped[r.entity_type] = [];
+            grouped[r.entity_type].push({
+              entity_id: r.entity_id,
+              display_name: r.display_name,
+            });
+          }
+
+          const typeLabels: Record<string, string> = {
+            property: 'Ejendomme',
+            company: 'Virksomheder',
+            person: 'Personer',
+          };
+
+          const lines: string[] = ['## Brugerens seneste aktivitet'];
+          for (const [type, items] of Object.entries(grouped)) {
+            lines.push(`\n**${typeLabels[type] ?? type}:**`);
+            for (const item of items) {
+              lines.push(`- ${item.display_name} (id: ${item.entity_id})`);
+            }
+          }
+          lines.push(
+            '\nBrug disse entiteter som kontekst. Når brugeren refererer til "den" eller "den seneste" uden at specificere, antag de mener den øverste i listen ovenfor.'
+          );
+
+          recentEntitiesContext = lines.join('\n');
+        }
+      }
+    }
+  } catch {
+    // Non-critical — AI still works without recent entities context
+  }
+
+  // ── Tenant knowledge base context injection ───────────────────────────────
+  // Fetches the 5 most recent knowledge items for the tenant and appends them
+  // to the system prompt so the AI can reference company-specific information
+  // without the user having to repeat it.
+  // Max 2000 chars per item to keep token usage predictable.
+  // Non-critical — failures are silently swallowed.
+  if (resolvedTenantId) {
+    try {
+      const { data: knowledgeItems } = await (
+        adminClient as unknown as {
+          schema: (s: string) => {
+            from: (t: string) => {
+              select: (cols: string) => {
+                eq: (
+                  col: string,
+                  val: string
+                ) => {
+                  order: (
+                    col: string,
+                    opts: { ascending: boolean }
+                  ) => {
+                    limit: (n: number) => Promise<{
+                      data: Array<{ title: string; content: string }> | null;
+                    }>;
+                  };
+                };
+              };
+            };
+          };
+        }
+      )
+        .schema('tenant')
+        .from('tenant_knowledge')
+        .select('title, content')
+        .eq('tenant_id', resolvedTenantId)
+        .order('created_at', { ascending: false })
+        .limit(5);
+
+      if (knowledgeItems && knowledgeItems.length > 0) {
+        const formatted = knowledgeItems
+          .map((k) => `[VIDEN: ${k.title}]\n${k.content.slice(0, 2000)}`)
+          .join('\n\n');
+        knowledgeContext = `## Organisationens videnbase\n${formatted}`;
+      }
+    } catch {
+      // Non-critical — AI still works without knowledge context
+    }
+  }
+
+  // ── Per-tenant monthly token budget check (Supabase table-based) ─────────
+  // Supplements the app_metadata check above with a durable, per-tenant record
+  // in tenant.ai_token_usage. On DB error we fail-open (let the request through)
+  // to avoid false-positives caused by transient DB issues.
+  // resolvedTenantId is populated by the membership lookup above.
+  const tenantBudgetExceeded = await isTenantMonthlyBudgetExceeded(adminClient, resolvedTenantId);
+  if (tenantBudgetExceeded) {
+    return new Response(
+      JSON.stringify({ error: 'Månedlig AI-kvote nået. Kontakt support for at opgradere.' }),
+      { status: 429, headers: { 'Content-Type': 'application/json' } }
     );
   }
 
@@ -461,11 +1230,46 @@ export async function POST(request: NextRequest): Promise<Response> {
     return Response.json({ error: 'Ingen beskeder' }, { status: 400 });
   }
 
+  // ── Input validation — guard against oversized payloads ──────────────────
+  /** Maximum number of messages accepted per request (prevents token amplification). */
+  const MAX_MESSAGES = 50;
+  /** Maximum characters allowed per message content string. */
+  const MAX_CONTENT_CHARS = 10_000;
+
+  if (messages.length > MAX_MESSAGES) {
+    return Response.json({ error: `Maks ${MAX_MESSAGES} beskeder pr. anmodning` }, { status: 400 });
+  }
+
+  const oversizedMessage = messages.find(
+    (m) => typeof m.content === 'string' && m.content.length > MAX_CONTENT_CHARS
+  );
+  if (oversizedMessage) {
+    return Response.json(
+      { error: `Besked overstiger maks ${MAX_CONTENT_CHARS} tegn` },
+      { status: 400 }
+    );
+  }
+
+  // Fire-and-forget: log this AI chat call for usage analytics.
+  // promptLength is the character count of the last user message — no raw text stored.
+  if (resolvedTenantId) {
+    const lastMessage = messages[messages.length - 1];
+    const promptLength = typeof lastMessage?.content === 'string' ? lastMessage.content.length : 0;
+    logActivity(adminClient, resolvedTenantId, user.id, 'ai_chat', { promptLength });
+  }
+
   // Resolve base URL for internal API calls
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || `http://localhost:3000`;
 
-  // Build system prompt — append page context if available
+  // Build system prompt — append knowledge base, recent entities and page context if available
   let systemPrompt = SYSTEM_PROMPT;
+  // Inject knowledge base first so it forms stable background knowledge
+  if (knowledgeContext) {
+    systemPrompt += `\n\n${knowledgeContext}`;
+  }
+  if (recentEntitiesContext) {
+    systemPrompt += `\n\n${recentEntitiesContext}`;
+  }
   if (context) {
     systemPrompt += `\n\n## Aktuel kontekst\nBrugeren kigger på: ${context}`;
   }
@@ -522,8 +1326,8 @@ export async function POST(request: NextRequest): Promise<Response> {
               .map((b) => b.text)
               .join('');
 
-            // Stream in small chunks for smooth UX
-            const CHUNK = 12;
+            // Stream in chunks — 200 chars reduces SSE overhead vs. perceived smoothness
+            const CHUNK = 200;
             for (let i = 0; i < text.length; i += CHUNK) {
               sse(controller, JSON.stringify({ t: text.slice(i, i + CHUNK) }));
             }
@@ -543,6 +1347,31 @@ export async function POST(request: NextRequest): Promise<Response> {
 
             sse(controller, '[DONE]');
             controller.close();
+
+            // Fire-and-forget: persist token usage so quota check works next request
+            adminClient.auth.admin
+              .updateUserById(user.id, {
+                app_metadata: {
+                  ...freshUser?.user?.app_metadata,
+                  subscription: {
+                    ...sub,
+                    tokensUsedThisMonth: tokensUsedThisMonth + totalTokens,
+                  },
+                },
+              })
+              .catch(() => {}); // non-critical — best-effort tracking
+
+            // Fire-and-forget: record in tenant.ai_token_usage for auditable per-tenant billing
+            if (resolvedTenantId) {
+              recordTenantTokenUsage(
+                adminClient,
+                resolvedTenantId,
+                user.id,
+                totalInputTokens,
+                totalOutputTokens
+              );
+            }
+
             return;
           }
 
@@ -596,7 +1425,35 @@ export async function POST(request: NextRequest): Promise<Response> {
         );
         sse(controller, '[DONE]');
         controller.close();
+
+        // Fire-and-forget: persist token usage so quota check works next request
+        adminClient.auth.admin
+          .updateUserById(user.id, {
+            app_metadata: {
+              ...freshUser?.user?.app_metadata,
+              subscription: {
+                ...sub,
+                tokensUsedThisMonth: tokensUsedThisMonth + totalTokens,
+              },
+            },
+          })
+          .catch(() => {}); // non-critical — best-effort tracking
+
+        // Fire-and-forget: record in tenant.ai_token_usage for auditable per-tenant billing
+        if (resolvedTenantId) {
+          recordTenantTokenUsage(
+            adminClient,
+            resolvedTenantId,
+            user.id,
+            totalInputTokens,
+            totalOutputTokens
+          );
+        }
       } catch (err) {
+        // Capture unexpected errors (not routine Claude API errors) in Sentry
+        if (!(err instanceof Anthropic.APIError)) {
+          Sentry.captureException(err);
+        }
         const msg =
           err instanceof Anthropic.APIError
             ? `API-fejl (${err.status}): ${err.message}`

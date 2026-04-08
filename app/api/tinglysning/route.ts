@@ -13,6 +13,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import * as Sentry from '@sentry/nextjs';
+import { checkRateLimit, heavyRateLimit } from '@/app/lib/rateLimit';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -53,11 +55,13 @@ export interface TinglysningData {
 
 // ─── Config ─────────────────────────────────────────────────────────────────
 
-/** Cert path + password fra env */
-const CERT_PATH = process.env.NEMLOGIN_DEVTEST4_CERT_PATH ?? '';
-const CERT_PASSWORD = process.env.NEMLOGIN_DEVTEST4_CERT_PASSWORD ?? '';
+/** Cert path + password fra env — brug TINGLYSNING_CERT_* for produktion, NEMLOGIN_DEVTEST4_CERT_* for test */
+const CERT_PATH =
+  process.env.TINGLYSNING_CERT_PATH ?? process.env.NEMLOGIN_DEVTEST4_CERT_PATH ?? '';
+const CERT_PASSWORD =
+  process.env.TINGLYSNING_CERT_PASSWORD ?? process.env.NEMLOGIN_DEVTEST4_CERT_PASSWORD ?? '';
 /** Base64-encodet certifikat — bruges i serverless (Vercel) hvor filsystemet ikke er tilgængeligt */
-const CERT_B64 = process.env.NEMLOGIN_DEVTEST4_CERT_B64 ?? '';
+const CERT_B64 = process.env.TINGLYSNING_CERT_B64 ?? process.env.NEMLOGIN_DEVTEST4_CERT_B64 ?? '';
 
 /** Base URL — test vs prod */
 const TL_BASE = process.env.TINGLYSNING_BASE_URL ?? 'https://test.tinglysning.dk';
@@ -144,6 +148,9 @@ function parseEjdsummariskXml(xml: string): Partial<TinglysningData> {
 // ─── Route Handler ──────────────────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
+  const limited = await checkRateLimit(req, heavyRateLimit);
+  if (limited) return limited;
+
   const bfe = req.nextUrl.searchParams.get('bfe');
 
   if (!bfe || !/^\d+$/.test(bfe)) {
@@ -224,10 +231,8 @@ export async function GET(req: NextRequest) {
       headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
     });
   } catch (err) {
-    console.error('[tinglysning] Fejl:', err);
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : 'Ukendt fejl' },
-      { status: 500 }
-    );
+    Sentry.captureException(err);
+    console.error('[tinglysning] Fejl:', err instanceof Error ? err.message : String(err));
+    return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
   }
 }

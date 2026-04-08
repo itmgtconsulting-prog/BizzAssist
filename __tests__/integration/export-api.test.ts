@@ -19,6 +19,11 @@ vi.mock('@/app/lib/rateLimit', () => ({
   braveRateLimit: {},
 }));
 
+// Mock auth so export tests bypass the authentication guard added in BIZZ-164
+vi.mock('@/lib/api/auth', () => ({
+  resolveTenantId: vi.fn().mockResolvedValue('test-tenant-id'),
+}));
+
 /**
  * Helper to create a mock NextRequest with JSON body.
  *

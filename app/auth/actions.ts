@@ -17,6 +17,172 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { checkLoginThrottle, recordFailedLogin, clearLoginThrottle } from '@/app/lib/loginThrottle';
+
+// ---------------------------------------------------------------------------
+// Tenant provisioning helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Provisions a full tenant schema for a newly registered user.
+ * Creates: tenant record, membership, and all core tables including recent_entities.
+ * Called automatically from signUp after a successful user creation.
+ *
+ * @param userId    - The new user's auth.users UUID
+ * @param userEmail - Used to derive a unique schema name
+ * @returns The new tenant ID, or null on failure (non-fatal)
+ */
+async function provisionTenantForUser(userId: string, userEmail: string): Promise<string | null> {
+  try {
+    const admin = createAdminClient();
+    const tenantId = crypto.randomUUID();
+    // Schema name: "tenant_" + sanitised email (max 60 chars)
+    const schemaName =
+      'tenant_' +
+      userEmail
+        .replace(/[@.]/g, '_')
+        .replace(/[^a-z0-9_]/gi, '')
+        .toLowerCase()
+        .substring(0, 53);
+
+    // 1. Insert tenant row
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error: tenantErr } = await (admin.from('tenants') as any).insert({
+      id: tenantId,
+      name: userEmail,
+      schema_name: schemaName,
+    });
+    if (tenantErr) {
+      console.error('[provisionTenant] insert tenant:', tenantErr.message);
+      return null;
+    }
+
+    // 2. Insert membership
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error: memberErr } = await (admin.from('tenant_memberships') as any).insert({
+      tenant_id: tenantId,
+      user_id: userId,
+      role: 'tenant_admin',
+    });
+    if (memberErr) {
+      console.error('[provisionTenant] insert membership:', memberErr.message);
+      return null;
+    }
+
+    // 3. Create schema + core tables via raw SQL (no pgvector dependency)
+    // Uses the service role key which has DDL privileges.
+    const sql =
+      [
+        `CREATE SCHEMA IF NOT EXISTS ${schemaName}`,
+        `GRANT USAGE ON SCHEMA ${schemaName} TO authenticated`,
+        `GRANT USAGE ON SCHEMA ${schemaName} TO service_role`,
+
+        `CREATE TABLE IF NOT EXISTS ${schemaName}.saved_entities (
+        id           uuid        PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
+        tenant_id    uuid        NOT NULL DEFAULT '${tenantId}'::uuid,
+        entity_type  text        NOT NULL CHECK (entity_type IN ('company','property','person')),
+        entity_id    text        NOT NULL,
+        entity_data  jsonb       NOT NULL DEFAULT '{}',
+        is_monitored boolean     NOT NULL DEFAULT false,
+        label        text,
+        created_by   uuid        NOT NULL REFERENCES auth.users(id) ON DELETE SET NULL,
+        created_at   timestamptz NOT NULL DEFAULT now(),
+        updated_at   timestamptz NOT NULL DEFAULT now(),
+        UNIQUE (tenant_id, entity_type, entity_id)
+      )`,
+        `ALTER TABLE ${schemaName}.saved_entities ENABLE ROW LEVEL SECURITY`,
+        `DROP POLICY IF EXISTS "saved_entities: members read" ON ${schemaName}.saved_entities`,
+        `DROP POLICY IF EXISTS "saved_entities: members write" ON ${schemaName}.saved_entities`,
+        `CREATE POLICY "saved_entities: members read" ON ${schemaName}.saved_entities FOR SELECT USING (public.is_tenant_member(tenant_id))`,
+        `CREATE POLICY "saved_entities: members write" ON ${schemaName}.saved_entities FOR INSERT WITH CHECK (public.can_tenant_write(tenant_id))`,
+
+        `CREATE TABLE IF NOT EXISTS ${schemaName}.notifications (
+        id           uuid        PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
+        tenant_id    uuid        NOT NULL DEFAULT '${tenantId}'::uuid,
+        entity_id    text        NOT NULL,
+        entity_type  text        NOT NULL DEFAULT 'property' CHECK (entity_type IN ('company','property','person')),
+        change_type  text        NOT NULL,
+        summary      text        NOT NULL,
+        details      jsonb       NOT NULL DEFAULT '{}',
+        is_read      boolean     NOT NULL DEFAULT false,
+        created_at   timestamptz NOT NULL DEFAULT now()
+      )`,
+        `ALTER TABLE ${schemaName}.notifications ENABLE ROW LEVEL SECURITY`,
+        `DROP POLICY IF EXISTS "notifications: members read" ON ${schemaName}.notifications`,
+        `DROP POLICY IF EXISTS "notifications: service write" ON ${schemaName}.notifications`,
+        `CREATE POLICY "notifications: members read" ON ${schemaName}.notifications FOR SELECT USING (public.is_tenant_member(tenant_id))`,
+        `CREATE POLICY "notifications: service write" ON ${schemaName}.notifications FOR INSERT WITH CHECK (true)`,
+
+        `CREATE TABLE IF NOT EXISTS ${schemaName}.property_snapshots (
+        id            uuid        PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
+        tenant_id     uuid        NOT NULL DEFAULT '${tenantId}'::uuid,
+        entity_id     text        NOT NULL,
+        snapshot_hash text        NOT NULL,
+        snapshot_data jsonb       NOT NULL DEFAULT '{}',
+        created_at    timestamptz NOT NULL DEFAULT now(),
+        UNIQUE (tenant_id, entity_id)
+      )`,
+        `ALTER TABLE ${schemaName}.property_snapshots ENABLE ROW LEVEL SECURITY`,
+        `DROP POLICY IF EXISTS "property_snapshots: service read" ON ${schemaName}.property_snapshots`,
+        `DROP POLICY IF EXISTS "property_snapshots: service write" ON ${schemaName}.property_snapshots`,
+        `CREATE POLICY "property_snapshots: service read" ON ${schemaName}.property_snapshots FOR SELECT USING (true)`,
+        `CREATE POLICY "property_snapshots: service write" ON ${schemaName}.property_snapshots FOR ALL USING (true)`,
+
+        `CREATE TABLE IF NOT EXISTS ${schemaName}.recent_entities (
+        id           uuid        PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
+        tenant_id    uuid        NOT NULL DEFAULT '${tenantId}'::uuid,
+        user_id      uuid        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+        entity_type  text        NOT NULL CHECK (entity_type IN ('company','property','person','search')),
+        entity_id    text        NOT NULL,
+        display_name text        NOT NULL,
+        entity_data  jsonb       NOT NULL DEFAULT '{}',
+        visited_at   timestamptz NOT NULL DEFAULT now(),
+        UNIQUE (tenant_id, user_id, entity_type, entity_id)
+      )`,
+        `ALTER TABLE ${schemaName}.recent_entities ENABLE ROW LEVEL SECURITY`,
+        `DROP POLICY IF EXISTS "recent_entities: own read" ON ${schemaName}.recent_entities`,
+        `DROP POLICY IF EXISTS "recent_entities: own write" ON ${schemaName}.recent_entities`,
+        `DROP POLICY IF EXISTS "recent_entities: own update" ON ${schemaName}.recent_entities`,
+        `DROP POLICY IF EXISTS "recent_entities: own delete" ON ${schemaName}.recent_entities`,
+        `CREATE POLICY "recent_entities: own read" ON ${schemaName}.recent_entities FOR SELECT USING (user_id = auth.uid() AND public.is_tenant_member(tenant_id))`,
+        `CREATE POLICY "recent_entities: own write" ON ${schemaName}.recent_entities FOR INSERT WITH CHECK (user_id = auth.uid() AND public.can_tenant_write(tenant_id))`,
+        `CREATE POLICY "recent_entities: own update" ON ${schemaName}.recent_entities FOR UPDATE USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid())`,
+        `CREATE POLICY "recent_entities: own delete" ON ${schemaName}.recent_entities FOR DELETE USING (user_id = auth.uid())`,
+        `CREATE INDEX IF NOT EXISTS recent_entities_user_idx ON ${schemaName}.recent_entities (user_id, entity_type, visited_at DESC)`,
+
+        `GRANT ALL ON ALL TABLES IN SCHEMA ${schemaName} TO authenticated`,
+        `GRANT ALL ON ALL TABLES IN SCHEMA ${schemaName} TO service_role`,
+      ].join(';\n') + ';';
+
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+    const projectRef = supabaseUrl.replace('https://', '').split('.')[0];
+    const accessToken = process.env.SUPABASE_ACCESS_TOKEN;
+    if (!accessToken) {
+      console.error('[provisionTenant] SUPABASE_ACCESS_TOKEN not set — skipping DDL');
+      return tenantId;
+    }
+
+    const res = await fetch(`https://api.supabase.com/v1/projects/${projectRef}/database/query`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ query: sql }),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error('[provisionTenant] DDL failed:', errText.substring(0, 300));
+      // Non-fatal — tenant + membership exist, tables can be created later
+    }
+
+    return tenantId;
+  } catch (err) {
+    console.error('[provisionTenant] Unexpected error:', err);
+    return null;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -24,13 +190,31 @@ import { createAdminClient } from '@/lib/supabase/admin';
 
 export interface AuthResult {
   error: string | null;
-  /** True if 2FA challenge is required before the session is fully elevated */
+  /** True if a 2FA step is required before the session is fully elevated */
   mfaRequired?: boolean;
+  /**
+   * Only set when mfaRequired is true.
+   * true  → TOTP is already enrolled, redirect to /login/mfa for the challenge.
+   * false → No TOTP enrolled yet, redirect to /login/mfa/enroll to set it up first.
+   */
+  mfaEnrolled?: boolean;
   /**
    * Set when error === 'oauth_user_no_password'.
    * Contains the OAuth provider the user registered with (e.g. 'azure', 'google', 'linkedin_oidc').
    */
   oauthProvider?: string;
+  /**
+   * Set when error === 'account_locked'.
+   * Seconds remaining until the account auto-unlocks.
+   */
+  lockedForSeconds?: number;
+  /**
+   * Set when error === 'invalid_credentials' and only one attempt remains.
+   * True triggers a "1 forsøg tilbage" warning in the UI.
+   */
+  loginWarning?: boolean;
+  /** Remaining attempts before lockout (for UI warning display) */
+  attemptsLeft?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -52,11 +236,24 @@ export async function signIn(
   password: string,
   _redirectTo = '/dashboard'
 ): Promise<AuthResult> {
+  // ── Brute-force protection: check lockout BEFORE authenticating ──────────
+  const appBaseUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://bizzassist.dk';
+  const throttle = await checkLoginThrottle(email);
+  if (throttle.locked) {
+    return { error: 'account_locked', lockedForSeconds: throttle.lockedForSeconds };
+  }
+
   const supabase = await createClient();
 
   const { error } = await supabase.auth.signInWithPassword({ email, password });
 
   if (error) {
+    // Record failed attempt and check if lockout should be triggered
+    const afterFail = await recordFailedLogin(email, appBaseUrl);
+    if (afterFail.locked) {
+      return { error: 'account_locked', lockedForSeconds: afterFail.lockedForSeconds };
+    }
+
     console.error('[signIn] Supabase auth error:', error.message, '| status:', error.status);
     // Do not expose internal error details — map to user-safe messages
     if (error.message.toLowerCase().includes('invalid')) {
@@ -83,18 +280,31 @@ export async function signIn(
       } catch {
         // Non-fatal — fall through to generic invalid_credentials
       }
-      return { error: 'invalid_credentials' };
+      return {
+        error: 'invalid_credentials',
+        attemptsLeft: afterFail.attemptsLeft,
+        loginWarning: afterFail.warningShown,
+      };
     }
     if (error.message.toLowerCase().includes('email not confirmed')) {
       return { error: 'email_not_confirmed' };
     }
-    return { error: 'unexpected_error' };
+    return {
+      error: 'unexpected_error',
+      attemptsLeft: afterFail.attemptsLeft,
+      loginWarning: afterFail.warningShown,
+    };
   }
 
   // Check if MFA challenge is required.
-  // OAuth users (azure, google, linkedin_oidc) already authenticate with 2FA
-  // at their identity provider — we must NOT require an additional TOTP step.
-  // Only users who signed in with the 'email' provider are subject to BizzAssist 2FA.
+  // OAuth users (azure, google, linkedin_oidc) already authenticate with 2FA at
+  // their identity provider — do NOT add a second TOTP step for them.
+  // Email/password users are RECOMMENDED to use TOTP 2FA but it is not mandatory.
+  // Users who have already enrolled TOTP MUST complete the challenge on every login.
+  //
+  // We return mfaRequired here rather than calling redirect() directly because
+  // redirect() in server actions can fail to propagate session cookies to the
+  // browser in some Next.js versions (see note near the bottom of this function).
   const {
     data: { user: userForMfa },
   } = await supabase.auth.getUser();
@@ -104,11 +314,25 @@ export async function signIn(
     !providers.includes('email') &&
     providers.some((p) => ['azure', 'google', 'linkedin_oidc'].includes(p));
 
-  if (!isOAuthOnly) {
-    const { data: aalData } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-    if (aalData?.nextLevel === 'aal2' && aalData.nextLevel !== aalData.currentLevel) {
-      redirect('/login/mfa');
+  // On localhost (development) skip MFA entirely so developers can log in without a TOTP app.
+  const isLocalDev = process.env.NODE_ENV === 'development';
+
+  if (!isOAuthOnly && !isLocalDev) {
+    // List enrolled TOTP factors — only enforce challenge for users who have enrolled.
+    // Enrollment is optional (recommended via dashboard banner); not forced at login.
+    const { data: factorsData } = await supabase.auth.mfa.listFactors();
+    const verifiedTotp = factorsData?.totp?.find((f) => f.status === 'verified');
+
+    if (verifiedTotp) {
+      // Factor is enrolled — check if the session still needs to be elevated to aal2.
+      const { data: aalData } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+      if (aalData?.nextLevel === 'aal2' && aalData.nextLevel !== aalData.currentLevel) {
+        // Session is aal1 but aal2 is required — redirect to TOTP challenge.
+        return { error: null, mfaRequired: true, mfaEnrolled: true };
+      }
     }
+    // No TOTP enrolled — MFA is optional, proceed to dashboard.
+    // The dashboard shows a recommendation banner to encourage enrollment.
   }
 
   // ── Subscription gate — check FRESH data from Supabase Auth database ────
@@ -162,6 +386,9 @@ export async function signIn(
       console.error('[signIn] Subscription check error:', err);
     }
   }
+
+  // Clear failed-login counter on successful authentication
+  await clearLoginThrottle(email);
 
   // Return success — let the client handle the redirect.
   // This ensures cookies are properly set before navigation.
@@ -223,6 +450,13 @@ export async function signUp(
       return { error: 'password_too_weak' };
     }
     return { error: 'unexpected_error' };
+  }
+
+  // Provision tenant schema for the new user (fire-and-forget, non-fatal)
+  if (signupData?.user?.id && signupData?.user?.email) {
+    provisionTenantForUser(signupData.user.id, signupData.user.email).catch((err) => {
+      console.error('[signUp] Tenant provisioning failed:', err);
+    });
   }
 
   // Set subscription in app_metadata via admin client (so it's in the database)

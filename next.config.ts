@@ -1,4 +1,17 @@
 import type { NextConfig } from 'next';
+import { withSentryConfig } from '@sentry/nextjs';
+
+/**
+ * Bundle analyzer — enabled when ANALYZE=true is set in the environment.
+ * Used by the BIZZ-63 bundle-size GitHub Actions workflow.
+ * Requires `@next/bundle-analyzer` to be installed as a dev dependency.
+ * Install with: npm install --save-dev @next/bundle-analyzer
+ */
+const withBundleAnalyzer =
+  process.env.ANALYZE === 'true'
+    ? // eslint-disable-next-line @typescript-eslint/no-require-imports
+      require('@next/bundle-analyzer')({ enabled: true })
+    : (config: NextConfig) => config;
 
 /**
  * HTTP security headers applied to all responses.
@@ -16,12 +29,17 @@ const securityHeaders = [
     key: 'Content-Security-Policy',
     value: [
       "default-src 'self'",
+      // 'unsafe-inline': required by Mapbox GL JS (inlines worker bootstrapping code) and Next.js
+      // inline event handlers. Nonces are not currently viable because Mapbox injects scripts
+      // dynamically at runtime without nonce support.
+      // 'unsafe-eval': required by Mapbox GL JS (uses eval() internally for shader compilation).
+      // Both directives should be removed if/when Mapbox drops these requirements.
       "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://browser.sentry-cdn.com",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob: https:",
       "font-src 'self' https://fonts.gstatic.com",
-      // DAWA (Danmarks Adressers Web API) + Mapbox tile servers + Sentry
-      "connect-src 'self' https://*.sentry.io https://o4511077193416704.ingest.de.sentry.io wss: https://api.dataforsyningen.dk https://*.mapbox.com https://events.mapbox.com",
+      // Supabase + DAWA (Danmarks Adressers Web API) + Mapbox tile servers + Sentry
+      "connect-src 'self' https://*.supabase.co https://*.supabase.io wss://*.supabase.co https://*.sentry.io https://o4511077193416704.ingest.de.sentry.io wss: https://api.dataforsyningen.dk https://*.mapbox.com https://events.mapbox.com",
       // Mapbox GL JS kræver blob: WebWorkers til tile-dekodning
       "worker-src blob: 'self'",
       "child-src blob: 'self'",
@@ -57,6 +75,7 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  output: 'standalone',
   devIndicators: false,
   env: {
     NEXT_PUBLIC_BUILD_ID: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? 'dev',
@@ -75,4 +94,36 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+/**
+ * Wraps the Next.js config with Sentry's build-time plugin.
+ *
+ * withSentryConfig does three things critical for BIZZ-125:
+ *  1. Auto-instruments all API routes so uncaught errors are captured in Sentry
+ *     without needing `captureException` in every route file.
+ *  2. Uploads source maps to Sentry on each build (so stack traces are readable).
+ *  3. Injects Sentry initialization into the server, edge, and client bundles.
+ *
+ * tunnelRoute: routes Sentry events through /monitoring so adblockers can't
+ * block them. Matches the CSP connect-src allow-list in securityHeaders above.
+ *
+ * disableLogger: strips Sentry's verbose build-time logger from the production
+ * bundle to reduce bundle size.
+ */
+export default withBundleAnalyzer(
+  withSentryConfig(nextConfig, {
+    org: 'bizzassist',
+    project: 'bizzassist',
+    // Silences the Sentry CLI output during builds — errors still surface via exit code
+    silent: !process.env.CI,
+    // Upload source maps only in CI/production — not during local dev
+    sourcemaps: {
+      disable: !process.env.CI,
+    },
+    // Route Sentry tunnel through our own domain (avoids adblocker blocking)
+    tunnelRoute: '/monitoring',
+    // Drop Sentry's verbose logger from production bundles
+    disableLogger: true,
+    // Auto-instrument API routes, server actions, and middleware
+    autoInstrumentServerFunctions: true,
+  })
+);

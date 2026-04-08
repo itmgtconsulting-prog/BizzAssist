@@ -44,7 +44,8 @@ export async function GET(): Promise<NextResponse> {
     };
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      console.error('[token-packs GET] DB error:', error.message);
+      return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
     }
 
     const packs = (data ?? []).map((row) => ({

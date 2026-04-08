@@ -56,7 +56,8 @@ export async function GET(): Promise<NextResponse> {
     };
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      console.error('[admin/token-packs GET] DB error:', error.message);
+      return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
     }
 
     // Map snake_case DB columns to camelCase for the frontend
@@ -105,7 +106,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           is_active: data.isActive ?? true,
           sort_order: data.sortOrder ?? 0,
         } as never);
-        if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+        if (error) {
+          console.error('[admin/token-packs create] DB error:', error.message);
+          return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+        }
         return NextResponse.json({ ok: true });
       }
 
@@ -124,14 +128,20 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           .from('token_packs')
           .update(updates as never)
           .eq('id', data.id);
-        if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+        if (error) {
+          console.error('[admin/token-packs update] DB error:', error.message);
+          return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+        }
         return NextResponse.json({ ok: true });
       }
 
       case 'delete': {
         if (!data.id) return NextResponse.json({ error: 'id required' }, { status: 400 });
         const { error } = await admin.from('token_packs').delete().eq('id', data.id);
-        if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+        if (error) {
+          console.error('[admin/token-packs delete] DB error:', error.message);
+          return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+        }
         return NextResponse.json({ ok: true });
       }
 

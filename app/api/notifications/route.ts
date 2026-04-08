@@ -13,6 +13,7 @@
  * @module api/notifications
  */
 import { NextRequest, NextResponse } from 'next/server';
+import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { getTenantContext } from '@/lib/db/tenant';
 import { createClient } from '@/lib/supabase/server';
 
@@ -50,6 +51,9 @@ async function resolveTenantId(): Promise<string | null> {
  *   - limit=N: max antal (default 50)
  */
 export async function GET(request: NextRequest) {
+  const limited = await checkRateLimit(request, rateLimit);
+  if (limited) return limited;
+
   const tenantId = await resolveTenantId();
   if (!tenantId) {
     return NextResponse.json({ notifications: [], unreadCount: 0 });
@@ -83,6 +87,9 @@ export async function GET(request: NextRequest) {
  *   { action: 'delete_read' }
  */
 export async function POST(request: NextRequest) {
+  const limited = await checkRateLimit(request, rateLimit);
+  if (limited) return limited;
+
   const tenantId = await resolveTenantId();
   if (!tenantId) {
     return NextResponse.json({ error: 'Ikke logget ind' }, { status: 401 });

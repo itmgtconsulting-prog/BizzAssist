@@ -12,6 +12,7 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { PLANS, type PlanId } from '@/app/lib/subscriptions';
+import { getStripePriceId } from '@/app/lib/stripe';
 
 const VALID_PLAN_IDS: PlanId[] = ['demo', 'basis', 'professionel', 'enterprise'];
 
@@ -76,7 +77,8 @@ export async function GET(): Promise<NextResponse> {
         freeTrialDays: db?.free_trial_days ?? 0,
         maxSales: db?.max_sales ?? null,
         salesCount: db?.sales_count ?? 0,
-        stripePriceId: db?.stripe_price_id ?? null,
+        // Use env var fallback (STRIPE_PRICE_BASIS etc.) when DB has no price ID
+        stripePriceId: getStripePriceId(id, db?.stripe_price_id),
       };
     });
 
@@ -101,6 +103,7 @@ export async function GET(): Promise<NextResponse> {
         freeTrialDays: row.free_trial_days ?? 0,
         maxSales: row.max_sales ?? null,
         salesCount: row.sales_count ?? 0,
+        // Custom plans have no env var fallback — only DB source
         stripePriceId: row.stripe_price_id ?? null,
       }));
 

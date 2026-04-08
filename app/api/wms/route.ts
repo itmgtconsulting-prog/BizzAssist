@@ -76,7 +76,7 @@ export async function GET(request: NextRequest): Promise<Response> {
       headers: {
         'Content-Type': contentType,
         'Cache-Control': 'public, max-age=86400, stale-while-revalidate=3600',
-        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Origin': process.env.NEXT_PUBLIC_APP_URL ?? 'https://bizzassist.dk',
       },
     });
   } catch (err) {

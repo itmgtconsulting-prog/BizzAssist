@@ -64,6 +64,8 @@ export default function Navbar() {
             <div className="flex items-center bg-white/10 rounded-full p-1 gap-1">
               <button
                 onClick={() => setLang('da')}
+                aria-label="Vælg dansk"
+                aria-pressed={lang === 'da'}
                 className={`px-3 py-1 rounded-full text-xs font-semibold transition-all ${
                   lang === 'da' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:text-white'
                 }`}
@@ -72,6 +74,8 @@ export default function Navbar() {
               </button>
               <button
                 onClick={() => setLang('en')}
+                aria-label="Select English"
+                aria-pressed={lang === 'en'}
                 className={`px-3 py-1 rounded-full text-xs font-semibold transition-all ${
                   lang === 'en' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:text-white'
                 }`}
@@ -89,7 +93,12 @@ export default function Navbar() {
           </div>
 
           {/* Mobile menu button */}
-          <button className="md:hidden text-white p-2" onClick={() => setMenuOpen(!menuOpen)}>
+          <button
+            className="md:hidden text-white p-2"
+            onClick={() => setMenuOpen(!menuOpen)}
+            aria-label={menuOpen ? 'Luk menu' : 'Åbn menu'}
+            aria-expanded={menuOpen}
+          >
             {menuOpen ? <X size={24} /> : <Menu size={24} />}
           </button>
         </div>

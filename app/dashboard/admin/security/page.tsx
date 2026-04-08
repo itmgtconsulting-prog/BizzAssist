@@ -26,6 +26,8 @@ import {
   Settings,
   BarChart3,
   ShieldCheck,
+  Wrench,
+  Activity,
   RefreshCw,
   Save,
   CheckCircle,
@@ -273,6 +275,18 @@ export default function AdminSecurityPage() {
           <span className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-blue-500 text-blue-300 font-medium cursor-default whitespace-nowrap">
             <ShieldCheck size={14} /> {da ? 'Sikkerhed' : 'Security'}
           </span>
+          <Link
+            href="/dashboard/admin/service-manager"
+            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors whitespace-nowrap"
+          >
+            <Wrench size={14} /> Service Manager
+          </Link>
+          <Link
+            href="/dashboard/admin/service-management"
+            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors whitespace-nowrap"
+          >
+            <Activity size={14} /> {da ? 'Infrastruktur' : 'Infrastructure'}
+          </Link>
         </div>
       </div>
 

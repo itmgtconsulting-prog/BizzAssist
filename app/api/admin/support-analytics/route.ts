@@ -55,7 +55,8 @@ export async function GET() {
     .limit(500)) as { data: SupportQuestion[] | null; error: { message: string } | null };
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error('[admin/support-analytics] DB error:', error.message);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 
   const rows = questions ?? [];

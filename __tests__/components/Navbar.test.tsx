@@ -62,7 +62,7 @@ describe('Navbar', () => {
   it('opens mobile menu when hamburger is clicked', () => {
     renderNavbar();
     // Find the mobile menu button (Menu icon button — only shown on mobile)
-    const menuButton = screen.getByRole('button', { name: '' });
+    const menuButton = screen.getByRole('button', { name: 'Åbn menu' });
     // Before click — CTA should not be duplicated in mobile menu
     // After click — mobile menu appears with links
     fireEvent.click(menuButton);

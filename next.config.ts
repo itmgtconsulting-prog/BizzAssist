@@ -84,13 +84,30 @@ const nextConfig: NextConfig = {
   // så vi loader pakken som native Node.js-modul uden transpilering.
   serverExternalPackages: ['pdfkit'],
   async headers() {
-    return [
+    const isProduction =
+      process.env.VERCEL_ENV === 'production' ||
+      (!!process.env.NEXT_PUBLIC_APP_URL &&
+        process.env.NEXT_PUBLIC_APP_URL.includes('bizzassist.dk') &&
+        !process.env.NEXT_PUBLIC_APP_URL.includes('test.bizzassist.dk'));
+
+    const headers: { source: string; headers: { key: string; value: string }[] }[] = [
       {
         // Apply security headers to all routes
         source: '/(.*)',
         headers: securityHeaders,
       },
     ];
+
+    // På non-prod (test, preview, localhost): tilføj X-Robots-Tag: noindex
+    // så søgemaskiner ikke indekserer de offentlige SEO-sider.
+    if (!isProduction) {
+      headers.push({
+        source: '/(ejendom|virksomhed)/(.*)',
+        headers: [{ key: 'X-Robots-Tag', value: 'noindex, nofollow' }],
+      });
+    }
+
+    return headers;
   },
 };
 

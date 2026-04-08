@@ -28,6 +28,7 @@ import {
 import { bygAnvendelseTekst, ejerforholdTekst } from '@/app/lib/bbrKoder';
 import { generateEjendomSlug } from '@/app/lib/slug';
 import { fetchBbrForAddress } from '@/app/lib/fetchBbrData';
+import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import PublicPricingSection from '@/app/(public)/components/PublicPricingSection';
 
 // ─── ISR cache-periode ───────────────────────────────────────────────────────
@@ -103,9 +104,17 @@ interface EjendomPublicData {
 async function hentDawaAdresse(bfe: string, slug: string): Promise<DawaAdresse | null> {
   try {
     // Trin 1: BFE → jordstykke (ejerlav + matrikelnr + kommunekode)
+    // proxyUrl() ruter gennem Hetzner-proxy på Vercel (DF_PROXY_URL sat) for at
+    // undgå blokering af Vercel's delte IP-adresser hos api.dataforsyningen.dk.
     const jsRes = await fetch(
-      `https://api.dataforsyningen.dk/jordstykker?bfenummer=${encodeURIComponent(bfe)}&per_side=1`,
-      { next: { revalidate: 3600 }, headers: { Accept: 'application/json' } }
+      proxyUrl(
+        `https://api.dataforsyningen.dk/jordstykker?bfenummer=${encodeURIComponent(bfe)}&per_side=1`
+      ),
+      {
+        next: { revalidate: 3600 },
+        headers: { Accept: 'application/json', ...proxyHeaders() },
+        signal: AbortSignal.timeout(proxyTimeout()),
+      }
     );
     if (!jsRes.ok) return null;
     const jsData: unknown[] = await jsRes.json();
@@ -134,9 +143,10 @@ async function hentDawaAdresse(bfe: string, slug: string): Promise<DawaAdresse |
       `&kommunekode=${encodeURIComponent(String(kommunekode))}` +
       `&struktur=nestet&per_side=10`;
 
-    const res = await fetch(url, {
+    const res = await fetch(proxyUrl(url), {
       next: { revalidate: 604800 },
-      headers: { Accept: 'application/json' },
+      headers: { Accept: 'application/json', ...proxyHeaders() },
+      signal: AbortSignal.timeout(proxyTimeout()),
     });
 
     if (!res.ok) return null;

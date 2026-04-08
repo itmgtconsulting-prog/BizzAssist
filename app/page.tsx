@@ -22,10 +22,6 @@ export default function HomePage() {
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(websiteJsonLd) }}
       />
-      {/* Beta-banner — kun synlig på forsiden */}
-      <div className="w-full bg-amber-400 text-amber-900 text-center text-sm py-1.5 font-medium">
-        Vores løsning er ikke live endnu - forventet beta release medio april 2026
-      </div>
       <Navbar />
       <Hero />
       <Features />

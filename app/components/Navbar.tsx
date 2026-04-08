@@ -19,89 +19,97 @@ export default function Navbar() {
   }, []);
 
   return (
-    <header
-      className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
-        scrolled ? 'bg-[#0f172a]/95 backdrop-blur-md shadow-lg' : 'bg-transparent'
-      }`}
-    >
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16 md:h-20">
-          {/* Logo */}
-          <Link href="/" className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
-              <span className="text-white font-bold text-sm">B</span>
-            </div>
-            <span className="text-white font-bold text-xl tracking-tight">
-              Bizz<span className="text-blue-400">Assist</span>
-            </span>
-          </Link>
+    <header className="fixed top-0 left-0 right-0 z-50">
+      {/* Beta-banner */}
+      <div className="w-full bg-amber-400 text-amber-900 text-center text-sm py-1.5 font-medium">
+        Vores løsning er ikke live endnu - forventet beta release medio april 2026
+      </div>
 
-          {/* Desktop Nav */}
-          <nav className="hidden md:flex items-center gap-8">
-            {[
-              { href: '#features', label: nav.features },
-              { href: '#use-cases', label: nav.useCases },
-              { href: '#pricing', label: nav.pricing },
-            ].map((item) => (
-              <a
-                key={item.href}
-                href={item.href}
+      {/* Nav bar */}
+      <div
+        className={`transition-all duration-300 ${
+          scrolled ? 'bg-[#0f172a]/95 backdrop-blur-md shadow-lg' : 'bg-transparent'
+        }`}
+      >
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-16 md:h-20">
+            {/* Logo */}
+            <Link href="/" className="flex items-center gap-2">
+              <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
+                <span className="text-white font-bold text-sm">B</span>
+              </div>
+              <span className="text-white font-bold text-xl tracking-tight">
+                Bizz<span className="text-blue-400">Assist</span>
+              </span>
+            </Link>
+
+            {/* Desktop Nav */}
+            <nav className="hidden md:flex items-center gap-8">
+              {[
+                { href: '#features', label: nav.features },
+                { href: '#use-cases', label: nav.useCases },
+                { href: '#pricing', label: nav.pricing },
+              ].map((item) => (
+                <a
+                  key={item.href}
+                  href={item.href}
+                  className="text-slate-300 hover:text-white text-sm font-medium transition-colors"
+                >
+                  {item.label}
+                </a>
+              ))}
+              <Link
+                href="/login/signup"
+                className="bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold px-5 py-2.5 rounded-lg transition-colors"
+              >
+                {nav.getStarted}
+              </Link>
+            </nav>
+
+            {/* Right side */}
+            <div className="hidden md:flex items-center gap-4">
+              {/* Language Toggle */}
+              <div className="flex items-center bg-white/10 rounded-full p-1 gap-1">
+                <button
+                  onClick={() => setLang('da')}
+                  aria-label="Vælg dansk"
+                  aria-pressed={lang === 'da'}
+                  className={`px-3 py-1 rounded-full text-xs font-semibold transition-all ${
+                    lang === 'da' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:text-white'
+                  }`}
+                >
+                  DA
+                </button>
+                <button
+                  onClick={() => setLang('en')}
+                  aria-label="Select English"
+                  aria-pressed={lang === 'en'}
+                  className={`px-3 py-1 rounded-full text-xs font-semibold transition-all ${
+                    lang === 'en' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:text-white'
+                  }`}
+                >
+                  EN
+                </button>
+              </div>
+
+              <Link
+                href="/login"
                 className="text-slate-300 hover:text-white text-sm font-medium transition-colors"
               >
-                {item.label}
-              </a>
-            ))}
-            <Link
-              href="/login/signup"
-              className="bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold px-5 py-2.5 rounded-lg transition-colors"
-            >
-              {nav.getStarted}
-            </Link>
-          </nav>
-
-          {/* Right side */}
-          <div className="hidden md:flex items-center gap-4">
-            {/* Language Toggle */}
-            <div className="flex items-center bg-white/10 rounded-full p-1 gap-1">
-              <button
-                onClick={() => setLang('da')}
-                aria-label="Vælg dansk"
-                aria-pressed={lang === 'da'}
-                className={`px-3 py-1 rounded-full text-xs font-semibold transition-all ${
-                  lang === 'da' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:text-white'
-                }`}
-              >
-                DA
-              </button>
-              <button
-                onClick={() => setLang('en')}
-                aria-label="Select English"
-                aria-pressed={lang === 'en'}
-                className={`px-3 py-1 rounded-full text-xs font-semibold transition-all ${
-                  lang === 'en' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:text-white'
-                }`}
-              >
-                EN
-              </button>
+                {nav.login}
+              </Link>
             </div>
 
-            <Link
-              href="/login"
-              className="text-slate-300 hover:text-white text-sm font-medium transition-colors"
+            {/* Mobile menu button */}
+            <button
+              className="md:hidden text-white p-2"
+              onClick={() => setMenuOpen(!menuOpen)}
+              aria-label={menuOpen ? 'Luk menu' : 'Åbn menu'}
+              aria-expanded={menuOpen}
             >
-              {nav.login}
-            </Link>
+              {menuOpen ? <X size={24} /> : <Menu size={24} />}
+            </button>
           </div>
-
-          {/* Mobile menu button */}
-          <button
-            className="md:hidden text-white p-2"
-            onClick={() => setMenuOpen(!menuOpen)}
-            aria-label={menuOpen ? 'Luk menu' : 'Åbn menu'}
-            aria-expanded={menuOpen}
-          >
-            {menuOpen ? <X size={24} /> : <Menu size={24} />}
-          </button>
         </div>
       </div>
 

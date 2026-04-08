@@ -375,6 +375,7 @@ export default function PlansClient() {
           stripePriceId: merged.stripePriceId,
           maxSales: merged.maxSales,
           salesCount: merged.salesCount,
+          sortOrder: merged.sortOrder,
         }),
       });
       if (!res.ok) {

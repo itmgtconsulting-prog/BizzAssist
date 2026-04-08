@@ -49,3 +49,4 @@ next-env.d.ts
 # Playwright auth state (contains session tokens — never commit)
 .playwright/
 playwright-report/
+docs/legal/signed/*.pdf

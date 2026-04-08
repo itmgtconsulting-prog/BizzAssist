@@ -25,11 +25,11 @@ separat aftale.
 
 ### 🔴 Skal handles på (kræver aktiv handling fra Jakob)
 
-| Leverandør   | Persondata der behandles                                       | Handling                                                                                                      |
-| ------------ | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| **Supabase** | Al brugerdata, activity logs, CVR/ejendomsdata med personnavne | Sign DPA via dashboard → [supabase.com/legal/dpa](https://supabase.com/legal/dpa) (PandaDoc, ~10 min)         |
-| **Sentry**   | Stack traces, request URLs, user UUIDs i fejllog               | Accept DPA i dashboard under Legal & Compliance → [sentry.io/legal/dpa](https://sentry.io/legal/dpa) (~5 min) |
-| **Mapbox**   | IP-adresser + koordinater ved kortvisning                      | Underskriv DPA → [mapbox.com/legal/dpa](https://www.mapbox.com/legal/dpa) (email/DocuSign)                    |
+| Leverandør   | Persondata der behandles                                                                         | Handling                                                                                                      |
+| ------------ | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| **Supabase** | Al brugerdata, activity logs, CVR/ejendomsdata med personnavne                                   | Sign DPA via dashboard → [supabase.com/legal/dpa](https://supabase.com/legal/dpa) (PandaDoc, ~10 min)         |
+| **Sentry**   | Stack traces, request URLs, user UUIDs i fejllog                                                 | Accept DPA i dashboard under Legal & Compliance → [sentry.io/legal/dpa](https://sentry.io/legal/dpa) (~5 min) |
+| **Mapbox**   | IP-adresser ved kortflise-requests (kortkoordinater er offentlige BBR/DAR-data, ikke bruger-GPS) | ✅ **UNDERSKREVET** — gemt i `docs/legal/signed/Mapbox_DPA_signed.pdf`                                        |
 
 ### 🟡 Verificer at det er på plads (ToS er sandsynligvis nok, men dobbelttjek)
 
@@ -62,7 +62,7 @@ separat aftale.
 
 - **Vercel**: Ser alle HTTP-requests inkl. IP-adresser
 - **Sentry**: Fejllog med UUIDs og request-URLs
-- **Mapbox**: Kortforspørgsler med IP og koordinater
+- **Mapbox**: IP-adresser i kortflise-requests. Kortkoordinaterne er offentlige ejendomskoordinater (BBR/DAR) — ikke brugerens GPS-position. Samme eksponering som Vercel.
 
 ### Lav risiko (offentlige søgeforespørgsler)
 

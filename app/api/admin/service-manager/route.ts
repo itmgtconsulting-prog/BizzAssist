@@ -212,12 +212,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     // Trigger the scan in the background — fire and forget.
     // The scan route updates the record when done.
-    const origin = request.headers.get('origin') ?? '';
-    void fetch(`${origin}/api/admin/service-manager/scan`, {
+    // BIZZ-174: Use a hardcoded internal base URL from env rather than the
+    // request Origin header. The Origin header is controlled by the caller and
+    // could be used to make the server fetch an arbitrary URL (SSRF).
+    const internalBase = process.env.NEXT_PUBLIC_APP_URL ?? 'https://bizzassist.dk';
+    void fetch(`${internalBase}/api/admin/service-manager/scan`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ scanId: scan.id }),
-    }).catch((e) => console.error('[service-manager] scan trigger failed:', e));
+    }).catch((err) => console.error('[service-manager] scan error:', err));
 
     return NextResponse.json({
       scanId: scan.id,

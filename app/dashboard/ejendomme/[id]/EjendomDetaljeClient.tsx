@@ -5546,15 +5546,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                           ))}
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <button className="flex items-center gap-1.5 px-3 py-1.5 border border-slate-700/60 rounded-lg text-slate-300 text-xs hover:bg-slate-700/40 transition-colors">
-                          {da ? 'Akt nr.' : 'Act no.'} {ejendom.tingbogsattest.aktNummer}
-                        </button>
-                        <button className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 rounded-lg text-white text-xs font-medium transition-colors">
-                          <Download size={12} />
-                          Tingbogsattest
-                        </button>
-                      </div>
+                      {/* TODO BIZZ-195: Akt nr. + Tingbogsattest PDF-knapper skjult indtil korrekte eTL PDF-URLer er implementeret */}
                     </div>
                   </div>
                 )}

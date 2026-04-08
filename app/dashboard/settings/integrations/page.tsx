@@ -1,14 +1,16 @@
 'use client';
 
 /**
- * Integrations Settings Page — BIZZ-47
+ * Integrations Settings Page — BIZZ-47 / BIZZ-48
  *
  * Allows users to connect/disconnect third-party integrations:
  * - Gmail (send outreach emails from BizzAssist)
- * - LinkedIn (planned — BIZZ-48)
+ * - LinkedIn (connect account; profile enrichment requires Partner Program)
  *
- * OAuth flow: clicking "Connect" redirects to /api/integrations/gmail/auth
- * which redirects to Google's consent screen.
+ * OAuth flow for each provider:
+ *   Clicking "Forbind" redirects to /api/integrations/{provider}/auth
+ *   which redirects to the provider's consent screen.
+ *   On return, ?{provider}=connected or ?{provider}=error is set in the URL.
  */
 
 import { useEffect, useState, useCallback, Suspense } from 'react';
@@ -22,21 +24,37 @@ interface GmailStatus {
   connectedAt?: string;
 }
 
+/** Connection status returned by GET /api/integrations/linkedin */
+interface LinkedInStatus {
+  connected: boolean;
+  name?: string;
+  email?: string;
+  connectedAt?: string;
+  /** ISO timestamp when the 60-day LinkedIn token expires */
+  expiresAt?: string;
+}
+
 /**
  * IntegrationsContent — inner component that reads search params and manages
- * Gmail connection state.
+ * Gmail and LinkedIn connection state.
  *
  * Separated from the outer page component so it can be wrapped in Suspense
  * (required by useSearchParams in Next.js App Router).
  */
 function IntegrationsContent() {
   const searchParams = useSearchParams();
-  const [gmailStatus, setGmailStatus] = useState<GmailStatus | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [disconnecting, setDisconnecting] = useState(false);
 
-  const toast = searchParams.get('gmail');
-  const toastEmail = searchParams.get('email');
+  const [gmailStatus, setGmailStatus] = useState<GmailStatus | null>(null);
+  const [linkedInStatus, setLinkedInStatus] = useState<LinkedInStatus | null>(null);
+  const [loadingGmail, setLoadingGmail] = useState(true);
+  const [loadingLinkedIn, setLoadingLinkedIn] = useState(true);
+  const [disconnectingGmail, setDisconnectingGmail] = useState(false);
+  const [disconnectingLinkedIn, setDisconnectingLinkedIn] = useState(false);
+
+  const gmailToast = searchParams.get('gmail');
+  const gmailToastEmail = searchParams.get('email');
+  const linkedInToast = searchParams.get('linkedin');
+  const linkedInToastName = searchParams.get('name');
 
   /**
    * Fetches Gmail connection status from the API.
@@ -49,26 +67,56 @@ function IntegrationsContent() {
     } catch {
       // ignore — show "not connected" as fallback
     } finally {
-      setLoading(false);
+      setLoadingGmail(false);
     }
   }, []);
 
-  // Fetch status on mount
+  /**
+   * Fetches LinkedIn connection status from the API.
+   * Called on mount and after connect/disconnect actions.
+   */
+  const fetchLinkedInStatus = useCallback(async () => {
+    try {
+      const res = await fetch('/api/integrations/linkedin');
+      if (res.ok) setLinkedInStatus((await res.json()) as LinkedInStatus);
+    } catch {
+      // ignore — show "not connected" as fallback
+    } finally {
+      setLoadingLinkedIn(false);
+    }
+  }, []);
+
+  // Fetch both statuses on mount
   useEffect(() => {
     void fetchGmailStatus();
-  }, [fetchGmailStatus]);
+    void fetchLinkedInStatus();
+  }, [fetchGmailStatus, fetchLinkedInStatus]);
 
   /**
    * Disconnects Gmail by calling DELETE /api/integrations/gmail.
    * Updates local state optimistically on success.
    */
   const disconnectGmail = async () => {
-    setDisconnecting(true);
+    setDisconnectingGmail(true);
     try {
       await fetch('/api/integrations/gmail', { method: 'DELETE' });
       setGmailStatus({ connected: false });
     } finally {
-      setDisconnecting(false);
+      setDisconnectingGmail(false);
+    }
+  };
+
+  /**
+   * Disconnects LinkedIn by calling DELETE /api/integrations/linkedin.
+   * Updates local state optimistically on success.
+   */
+  const disconnectLinkedIn = async () => {
+    setDisconnectingLinkedIn(true);
+    try {
+      await fetch('/api/integrations/linkedin', { method: 'DELETE' });
+      setLinkedInStatus({ connected: false });
+    } finally {
+      setDisconnectingLinkedIn(false);
     }
   };
 
@@ -79,17 +127,31 @@ function IntegrationsContent() {
         <p className="text-slate-400 text-sm">Forbind tredjeparts-tjenester til BizzAssist</p>
       </div>
 
-      {/* Toast */}
-      {toast === 'connected' && (
+      {/* Gmail toast notifications */}
+      {gmailToast === 'connected' && (
         <div className="flex items-center gap-2 p-3 bg-emerald-900/50 border border-emerald-700 rounded-lg text-emerald-300 text-sm">
           <CheckCircle className="w-4 h-4 shrink-0" />
-          Gmail forbundet ({toastEmail})
+          Gmail forbundet ({gmailToastEmail})
         </div>
       )}
-      {toast === 'error' && (
+      {gmailToast === 'error' && (
         <div className="flex items-center gap-2 p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
           <AlertCircle className="w-4 h-4 shrink-0" />
           Gmail-forbindelsen fejlede. Prøv igen.
+        </div>
+      )}
+
+      {/* LinkedIn toast notifications */}
+      {linkedInToast === 'connected' && (
+        <div className="flex items-center gap-2 p-3 bg-emerald-900/50 border border-emerald-700 rounded-lg text-emerald-300 text-sm">
+          <CheckCircle className="w-4 h-4 shrink-0" />
+          LinkedIn forbundet{linkedInToastName ? ` som ${linkedInToastName}` : ''}.
+        </div>
+      )}
+      {linkedInToast === 'error' && (
+        <div className="flex items-center gap-2 p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
+          <AlertCircle className="w-4 h-4 shrink-0" />
+          LinkedIn-forbindelsen fejlede. Prøv igen.
         </div>
       )}
 
@@ -107,7 +169,7 @@ function IntegrationsContent() {
               </p>
             </div>
           </div>
-          {loading ? (
+          {loadingGmail ? (
             <Loader2 className="w-5 h-5 text-slate-400 animate-spin mt-0.5" />
           ) : gmailStatus?.connected ? (
             <span className="flex items-center gap-1.5 text-xs text-emerald-400 bg-emerald-900/30 px-2.5 py-1 rounded-full border border-emerald-800">
@@ -143,19 +205,19 @@ function IntegrationsContent() {
             <button
               type="button"
               onClick={() => void disconnectGmail()}
-              disabled={disconnecting}
+              disabled={disconnectingGmail}
               aria-label="Afbryd Gmail-forbindelse"
               className="px-4 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-700 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
             >
-              {disconnecting ? 'Afbryder...' : 'Afbryd forbindelse'}
+              {disconnectingGmail ? 'Afbryder...' : 'Afbryd forbindelse'}
             </button>
           )}
         </div>
       </div>
 
-      {/* LinkedIn Card — Coming Soon */}
-      <div className="bg-slate-800 rounded-xl border border-slate-700 p-5 opacity-60">
-        <div className="flex items-center justify-between">
+      {/* LinkedIn Card */}
+      <div className="bg-slate-800 rounded-xl border border-slate-700 p-5">
+        <div className="flex items-start justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-lg bg-blue-600/20 flex items-center justify-center">
               <Linkedin className="w-5 h-5 text-blue-400" />
@@ -167,20 +229,77 @@ function IntegrationsContent() {
               </p>
             </div>
           </div>
-          <span className="text-xs text-slate-500 bg-slate-700 px-2.5 py-1 rounded-full">
-            Kommer snart
-          </span>
+          {loadingLinkedIn ? (
+            <Loader2 className="w-5 h-5 text-slate-400 animate-spin mt-0.5" />
+          ) : linkedInStatus?.connected ? (
+            <span className="flex items-center gap-1.5 text-xs text-emerald-400 bg-emerald-900/30 px-2.5 py-1 rounded-full border border-emerald-800">
+              <CheckCircle className="w-3 h-3" /> Forbundet
+            </span>
+          ) : (
+            <span className="text-xs text-slate-500">Ikke forbundet</span>
+          )}
         </div>
-        <div className="mt-4 flex gap-2">
+
+        {linkedInStatus?.connected && (
+          <div className="mt-4 pt-4 border-t border-slate-700">
+            {linkedInStatus.name && (
+              <p className="text-sm text-slate-300">
+                Forbundet som <span className="font-medium text-white">{linkedInStatus.name}</span>
+              </p>
+            )}
+            {linkedInStatus.email && !linkedInStatus.email.startsWith('linkedin:') && (
+              <p className="text-xs text-slate-400 mt-0.5">{linkedInStatus.email}</p>
+            )}
+            {linkedInStatus.connectedAt && (
+              <p className="text-xs text-slate-500 mt-1">
+                Tilsluttet {new Date(linkedInStatus.connectedAt).toLocaleDateString('da-DK')}
+              </p>
+            )}
+            {linkedInStatus.expiresAt && (
+              <p className="text-xs text-slate-500 mt-0.5">
+                Token udløber {new Date(linkedInStatus.expiresAt).toLocaleDateString('da-DK')}{' '}
+                (LinkedIn tokens varer 60 dage)
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* Partner Program limitation notice */}
+        <div className="mt-4 p-3 bg-amber-900/20 border border-amber-800/50 rounded-lg">
+          <p className="text-xs text-amber-300">
+            Profil-berigelse kræver LinkedIn Partner Program adgang. Forbind din konto nu — manuel
+            søgning via LinkedIn er tilgængelig med det samme.
+          </p>
           <a
-            href="https://developer.linkedin.com/product-catalog"
+            href="https://developer.linkedin.com/partner-programs/search"
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-1.5 text-sm text-slate-400 hover:text-white transition-colors"
+            className="flex items-center gap-1.5 text-xs text-amber-400 hover:text-amber-300 transition-colors mt-1.5"
           >
-            <ExternalLink className="w-3.5 h-3.5" />
-            LinkedIn Developer Portal
+            <ExternalLink className="w-3 h-3" />
+            Ansøg om LinkedIn Partner Program
           </a>
+        </div>
+
+        <div className="mt-4 flex gap-2">
+          {!linkedInStatus?.connected ? (
+            <a
+              href="/api/integrations/linkedin/auth"
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
+            >
+              Forbind LinkedIn
+            </a>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void disconnectLinkedIn()}
+              disabled={disconnectingLinkedIn}
+              aria-label="Afbryd LinkedIn-forbindelse"
+              className="px-4 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-700 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+            >
+              {disconnectingLinkedIn ? 'Afbryder...' : 'Afbryd forbindelse'}
+            </button>
+          )}
         </div>
       </div>
     </div>

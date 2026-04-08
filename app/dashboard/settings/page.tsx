@@ -35,6 +35,7 @@ import {
   ExternalLink,
   AlertTriangle,
   Download,
+  BookOpen,
 } from 'lucide-react';
 import {
   hentTrackedEjendomme,
@@ -1012,6 +1013,14 @@ export default function SettingsPage() {
           >
             <Building2 size={14} />
             {orgTabLabel}
+          </button>
+          {/* Videnbase tab — navigates to sub-route */}
+          <button
+            onClick={() => router.push('/dashboard/settings/knowledge')}
+            className="flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-all whitespace-nowrap"
+          >
+            <BookOpen size={14} />
+            {da ? 'Videnbase' : 'Knowledge base'}
           </button>
         </div>
       </div>

@@ -15,6 +15,17 @@ cp .env.local.example .env.local   # Fill in your credentials
 npm run dev                         # http://localhost:3000
 ```
 
+### Docker (local development)
+
+Requires [Docker Desktop](https://www.docker.com/products/docker-desktop/).
+
+```bash
+cp .env.local.example .env.local   # Fill in credentials (see docs/LOCAL_DEV.md)
+npm run docker:dev                  # http://localhost:3000
+```
+
+See [docs/LOCAL_DEV.md](docs/LOCAL_DEV.md) for full Docker setup instructions.
+
 ## Tech Stack
 
 | Layer            | Technology                              |
@@ -75,6 +86,7 @@ bizzassist/
 
 | Document                                                         | Purpose                                                    |
 | ---------------------------------------------------------------- | ---------------------------------------------------------- |
+| [docs/LOCAL_DEV.md](docs/LOCAL_DEV.md)                           | Docker Compose local development setup                     |
 | [CONTRIBUTING.md](CONTRIBUTING.md)                               | How to contribute, branching, commit conventions           |
 | [CHANGELOG.md](CHANGELOG.md)                                     | Release history                                            |
 | [CLAUDE.md](CLAUDE.md)                                           | Non-negotiable coding standards (read before writing code) |

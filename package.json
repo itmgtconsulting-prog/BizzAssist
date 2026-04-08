@@ -24,7 +24,10 @@
     "db:migrate": "node scripts/run-migrations.mjs",
     "db:migrate:up": "node scripts/run-migrations.mjs",
     "db:reset": "node scripts/migrate.js --reset",
-    "db:seed": "node scripts/seed.js"
+    "db:seed": "node scripts/seed.js",
+    "docker:dev": "docker compose up",
+    "docker:build": "docker compose build",
+    "docker:down": "docker compose down"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx}": [

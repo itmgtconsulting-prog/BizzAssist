@@ -1078,6 +1078,8 @@ export async function POST(request: NextRequest): Promise<Response> {
   // without the user having to re-explain what they were looking at.
   // Non-critical — failures are silently swallowed.
   let recentEntitiesContext = '';
+  /** Formatted tenant knowledge base context injected into the system prompt. */
+  let knowledgeContext = '';
   // Captured for activity logging below — avoids a second membership lookup
   let resolvedTenantId: string | null = null;
   try {
@@ -1154,6 +1156,55 @@ export async function POST(request: NextRequest): Promise<Response> {
     // Non-critical — AI still works without recent entities context
   }
 
+  // ── Tenant knowledge base context injection ───────────────────────────────
+  // Fetches the 5 most recent knowledge items for the tenant and appends them
+  // to the system prompt so the AI can reference company-specific information
+  // without the user having to repeat it.
+  // Max 2000 chars per item to keep token usage predictable.
+  // Non-critical — failures are silently swallowed.
+  if (resolvedTenantId) {
+    try {
+      const { data: knowledgeItems } = await (
+        adminClient as unknown as {
+          schema: (s: string) => {
+            from: (t: string) => {
+              select: (cols: string) => {
+                eq: (
+                  col: string,
+                  val: string
+                ) => {
+                  order: (
+                    col: string,
+                    opts: { ascending: boolean }
+                  ) => {
+                    limit: (n: number) => Promise<{
+                      data: Array<{ title: string; content: string }> | null;
+                    }>;
+                  };
+                };
+              };
+            };
+          };
+        }
+      )
+        .schema('tenant')
+        .from('tenant_knowledge')
+        .select('title, content')
+        .eq('tenant_id', resolvedTenantId)
+        .order('created_at', { ascending: false })
+        .limit(5);
+
+      if (knowledgeItems && knowledgeItems.length > 0) {
+        const formatted = knowledgeItems
+          .map((k) => `[VIDEN: ${k.title}]\n${k.content.slice(0, 2000)}`)
+          .join('\n\n');
+        knowledgeContext = `## Organisationens videnbase\n${formatted}`;
+      }
+    } catch {
+      // Non-critical — AI still works without knowledge context
+    }
+  }
+
   // ── Per-tenant monthly token budget check (Supabase table-based) ─────────
   // Supplements the app_metadata check above with a durable, per-tenant record
   // in tenant.ai_token_usage. On DB error we fail-open (let the request through)
@@ -1210,8 +1261,12 @@ export async function POST(request: NextRequest): Promise<Response> {
   // Resolve base URL for internal API calls
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || `http://localhost:3000`;
 
-  // Build system prompt — append recent entities and page context if available
+  // Build system prompt — append knowledge base, recent entities and page context if available
   let systemPrompt = SYSTEM_PROMPT;
+  // Inject knowledge base first so it forms stable background knowledge
+  if (knowledgeContext) {
+    systemPrompt += `\n\n${knowledgeContext}`;
+  }
   if (recentEntitiesContext) {
     systemPrompt += `\n\n${recentEntitiesContext}`;
   }

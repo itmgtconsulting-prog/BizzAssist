@@ -7,6 +7,7 @@ import ServiceWorkerRegistration from '@/app/components/ServiceWorkerRegistratio
 import SupportChatWidget from '@/app/components/SupportChatWidget';
 import HideNextDevIndicator from '@/app/components/HideNextDevIndicator';
 import CookieBanner from '@/app/components/CookieBanner';
+import { Analytics } from '@vercel/analytics/next';
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -82,6 +83,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <SupportChatWidget />
           <HideNextDevIndicator />
           <ServiceWorkerRegistration />
+          <Analytics />
         </LanguageProvider>
       </body>
     </html>

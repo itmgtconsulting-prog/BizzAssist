@@ -51,6 +51,7 @@
     "@types/pdfkit": "^0.17.5",
     "@upstash/ratelimit": "^2.0.8",
     "@upstash/redis": "^1.37.0",
+    "@vercel/analytics": "^2.0.1",
     "@xyflow/react": "^12.10.2",
     "d3-force": "^3.0.0",
     "dagre": "^0.8.5",

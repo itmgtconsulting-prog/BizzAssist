@@ -28,6 +28,7 @@ import {
 import { bygAnvendelseTekst, ejerforholdTekst } from '@/app/lib/bbrKoder';
 import { generateEjendomSlug } from '@/app/lib/slug';
 import { fetchBbrForAddress } from '@/app/lib/fetchBbrData';
+import PublicPricingSection from '@/app/(public)/components/PublicPricingSection';
 
 // ─── ISR cache-periode ───────────────────────────────────────────────────────
 // 3600 sekunder (1 time) — BBR-data bekræftet fungerende.
@@ -771,6 +772,9 @@ export default async function EjendomPublicPage({
 
         {/* CTA */}
         <LoginCTA adresseStr={`${adresseStr}, ${byStr}`} />
+
+        {/* Pricing */}
+        <PublicPricingSection />
 
         {/* Datakilde-note */}
         <p className="mt-8 text-xs text-slate-600 text-center">

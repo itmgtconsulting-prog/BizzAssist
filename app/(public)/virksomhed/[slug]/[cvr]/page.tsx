@@ -29,6 +29,7 @@ import {
   Globe,
 } from 'lucide-react';
 import { generateVirksomhedSlug } from '@/app/lib/slug';
+import PublicPricingSection from '@/app/(public)/components/PublicPricingSection';
 
 // ─── ISR cache-periode: 7 dage ─────────────────────────────────────────────
 export const revalidate = 604800;
@@ -567,6 +568,9 @@ export default async function VirksomhedPublicPage({
 
         {/* CTA */}
         <LoginCTA navn={v.navn} />
+
+        {/* Pricing */}
+        <PublicPricingSection />
 
         {/* Datakilde-note */}
         <p className="mt-8 text-xs text-slate-600 text-center">

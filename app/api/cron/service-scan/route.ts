@@ -20,7 +20,7 @@
  *   - Fix safety guards: same constraints as the manual auto-fix endpoint
  *     (max 50 lines changed, blocked patterns, bug-fix/config-fix only)
  *
- * Auth: CRON_SECRET Bearer token (Vercel Cron) or ?secret= query param (manual test)
+ * Auth: Authorization: Bearer <CRON_SECRET> header only — query param not accepted (BIZZ-181)
  *
  * Env vars required:
  *   - CRON_SECRET         — shared secret for this endpoint
@@ -125,8 +125,8 @@ interface ClaudeFixResponse {
 // ─── Auth ────────────────────────────────────────────────────────────────────
 
 /**
- * Verify the CRON_SECRET from the Authorization header (Vercel Cron)
- * or the ?secret= query parameter (manual test).
+ * Verify the CRON_SECRET from the Authorization header only.
+ * Query param fallback is not accepted — BIZZ-181.
  *
  * @param request - Incoming HTTP request
  * @returns true if the secret is valid
@@ -618,7 +618,7 @@ async function sendAlertEmail(
  * Hourly autonomous scan. Runs the bug scan, proposes fixes for new error-severity
  * issues, logs all activity, and sends an alert email if problems are found.
  *
- * Triggered by Vercel Cron ("0 * * * *") or manually via ?secret=<CRON_SECRET>.
+ * Triggered by Vercel Cron ("0 * * * *") or manually with Authorization: Bearer <CRON_SECRET>.
  *
  * @param request - Incoming HTTP request
  * @returns JSON summary of the scan run

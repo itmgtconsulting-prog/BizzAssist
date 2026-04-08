@@ -14,7 +14,7 @@
  *   5. Aggregates all findings into a single scan record (scan_type: 'deep')
  *   6. Sends a detailed HTML email report to support@pecuniait.com
  *
- * Auth: CRON_SECRET Bearer token (Vercel Cron) or ?secret= query param (manual test)
+ * Auth: Authorization: Bearer <CRON_SECRET> header only — query param not accepted (BIZZ-181)
  *
  * Env vars required:
  *   - CRON_SECRET           — shared secret for this endpoint
@@ -141,7 +141,8 @@ interface NpmAuditResponse {
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
 /**
- * Verify the CRON_SECRET from the Authorization header or ?secret= query param.
+ * Verify the CRON_SECRET from the Authorization header only.
+ * Query param fallback is not accepted — BIZZ-181.
  *
  * @param request - Incoming HTTP request.
  * @returns true if the provided secret matches CRON_SECRET.
@@ -734,7 +735,7 @@ async function logActivity(action: string, details: Record<string, unknown>): Pr
  * and dependency vulnerability audit. Stores results as a 'deep' scan record
  * and sends a detailed email report.
  *
- * Triggered by Vercel Cron ("30 3 * * *") or manually via ?secret=<CRON_SECRET>.
+ * Triggered by Vercel Cron ("30 3 * * *") or manually with Authorization: Bearer <CRON_SECRET>.
  *
  * @param request - Incoming HTTP request.
  * @returns JSON summary of the deep-scan run.

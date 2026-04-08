@@ -9,12 +9,12 @@
  *   - Ejendomsovervågning (fulgte ejendomme + notifikationer genereret)
  *
  * Sikring:
- *   - Kræver CRON_SECRET header (Vercel Cron) eller query-parameter (manuel test)
+ *   - Kræver Authorization: Bearer <CRON_SECRET> header — query param ikke accepteret (BIZZ-181)
  *   - Bruger admin client (service_role) — kører uden brugersession
  *
  * Trigger:
  *   - Vercel Cron: dagligt kl. 07:00 UTC (09:00 dansk sommertid)
- *   - Manuel: GET /api/cron/daily-report?secret=<CRON_SECRET>
+ *   - Manuel: GET /api/cron/daily-report med Authorization: Bearer <CRON_SECRET>
  *
  * @module api/cron/daily-report
  */
@@ -30,8 +30,8 @@ const FROM_ADDRESS = 'BizzAssist <noreply@bizzassist.dk>';
 const TO_ADDRESS = 'support@pecuniait.com';
 
 /**
- * Verificerer CRON_SECRET fra Authorization-header (Vercel Cron)
- * eller ?secret= query-parameter (manuel kald).
+ * Verificerer CRON_SECRET fra Authorization-header (Vercel Cron).
+ * Query param er ikke accepteret — BIZZ-181.
  *
  * @param request - Indkommende HTTP-request
  * @returns true hvis hemmelighed er gyldig

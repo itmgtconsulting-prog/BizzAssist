@@ -131,7 +131,7 @@ async function hentVirksomhedData(cvr: string, baseUrl: string): Promise<Virksom
       selskabsform: d['companydesc'] ? String(d['companydesc']) : null,
       stiftet: d['stiftet'] ? String(d['stiftet']) : d['startdate'] ? String(d['startdate']) : null,
       ansatte: d['employees'] ? String(d['employees']) : null,
-      status: d['statusTekst'] ? String(d['statusTekst']) : aktiv ? 'Aktiv' : 'Ophørt',
+      status: aktiv ? 'Aktiv' : d['statusTekst'] === 'OPHOERT' ? 'Ophørt' : 'Inaktiv',
       aktiv,
       kommune: d['kommune'] ? String(d['kommune']) : null,
       email: d['email'] ? String(d['email']) : null,

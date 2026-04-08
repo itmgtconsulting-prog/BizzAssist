@@ -91,15 +91,16 @@ interface EjendomPublicData {
  * Henter adresse-data fra DAWA's offentlige API baseret på BFE-nummer.
  * Inkluderer jordstykke-data for matrikelnummer og grundareal.
  *
- * DAWA's `adgangsadresser?bfenummer=` filter ignoreres af API'et (returnerer
- * altid den første adresse uanset BFE). Korrekt løsning: slå jordstykket op
- * via `jordstykker?bfenummer=` for at hente ejerlav + matrikelnr + kommunekode,
- * og brug derefter disse tre parametre til at finde den præcise adresse.
+ * Slår jordstykket op via `jordstykker?bfenummer=` for at hente ejerlav +
+ * matrikelnr + kommunekode, og bruger derefter disse tre parametre til at
+ * finde alle adresser på jordstykket. Matcher derefter mod URL-slug for at
+ * vise den korrekte adresse, når et jordstykke har flere adresser.
  *
- * @param bfe - BFE-nummer
+ * @param bfe  - BFE-nummer
+ * @param slug - URL-slug fra params (bruges til at matche den rette adresse)
  * @returns DAWA adresse-objekt eller null
  */
-async function hentDawaAdresse(bfe: string): Promise<DawaAdresse | null> {
+async function hentDawaAdresse(bfe: string, slug: string): Promise<DawaAdresse | null> {
   try {
     // Trin 1: BFE → jordstykke (ejerlav + matrikelnr + kommunekode)
     const jsRes = await fetch(
@@ -143,12 +144,26 @@ async function hentDawaAdresse(bfe: string): Promise<DawaAdresse | null> {
     const data: unknown[] = await res.json();
     if (!Array.isArray(data) || data.length === 0) return null;
 
-    // Første adresse bruges til visning; alle UUIDs sendes til BBR-opslag
+    // Alle UUID'er sendes til BBR-opslag så bygninger under alle adresser hentes.
     const alleIds = data
       .map((item) => String((item as Record<string, unknown>)['id'] ?? ''))
       .filter(Boolean);
 
-    const a = data[0] as Record<string, unknown>;
+    // Vælg den adresse hvis slug matcher URL-parameteret, så siden viser den rette
+    // adresse når et jordstykke har flere (f.eks. Rådhuspladsen 1 vs. Admiralgade 17).
+    // Fallback til første adresse, hvis ingen matcher.
+    const matchetAdresse = data.find((item) => {
+      const it = item as Record<string, unknown>;
+      const vs = it['vejstykke'] as Record<string, unknown> | undefined;
+      const pos = it['postnummer'] as Record<string, unknown> | undefined;
+      const vej = String(vs?.['navn'] ?? '');
+      const husnr = String(it['husnr'] ?? '');
+      const postnr = String(pos?.['nr'] ?? it['postnr'] ?? '');
+      const postnrnavn = String(pos?.['navn'] ?? it['postnrnavn'] ?? '');
+      const kandidatSlug = generateEjendomSlug(vej, husnr, postnr, postnrnavn);
+      return kandidatSlug === slug;
+    });
+    const a = (matchetAdresse ?? data[0]) as Record<string, unknown>;
     // DAWA nestet: vejnavn er i vejstykke.navn (ikke vejnavn.navn som i ældre format)
     const vejstykke = a['vejstykke'] as Record<string, unknown> | undefined;
     const pos = a['postnummer'] as Record<string, unknown> | undefined;
@@ -309,17 +324,18 @@ async function hentVurdering(
 /**
  * Aggregerer alle offentlige data til en ejendom.
  *
- * @param bfe - BFE-nummer fra URL
+ * @param bfe  - BFE-nummer fra URL
+ * @param slug - URL-slug fra params (bruges til adresse-matching)
  * @returns EjendomPublicData med adresse, BBR og vurdering
  */
-async function hentEjendomData(bfe: string): Promise<EjendomPublicData> {
+async function hentEjendomData(bfe: string, slug: string): Promise<EjendomPublicData> {
   // Appens base URL — nødvendig for at kalde interne API-routes server-side (vurdering)
   const baseUrl =
     process.env.NEXT_PUBLIC_BASE_URL ??
     (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
 
   // Hent adresse fra DAWA (gratis, ingen auth)
-  const adresse = await hentDawaAdresse(bfe);
+  const adresse = await hentDawaAdresse(bfe, slug);
 
   if (!adresse) {
     return { adresse: null, bbr: null, vurdering: null, fejl: 'Ejendom ikke fundet' };
@@ -348,8 +364,8 @@ export async function generateMetadata({
 }: {
   params: Promise<{ slug: string; bfe: string }>;
 }): Promise<Metadata> {
-  const { bfe } = await params;
-  const { adresse, bbr, vurdering } = await hentEjendomData(bfe);
+  const { bfe, slug } = await params;
+  const { adresse, bbr, vurdering } = await hentEjendomData(bfe, slug);
 
   if (!adresse) {
     return {
@@ -595,8 +611,8 @@ export default async function EjendomPublicPage({
 }: {
   params: Promise<{ slug: string; bfe: string }>;
 }) {
-  const { bfe } = await params;
-  const { adresse, bbr, vurdering, fejl } = await hentEjendomData(bfe);
+  const { bfe, slug } = await params;
+  const { adresse, bbr, vurdering, fejl } = await hentEjendomData(bfe, slug);
 
   // 404-tilstand
   if (fejl || !adresse) {

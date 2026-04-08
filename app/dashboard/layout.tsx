@@ -18,7 +18,7 @@ import {
   X,
   MapPin,
   Navigation,
-  MessageSquare,
+  MessageSquare as _MessageSquare,
   Loader2,
   ArrowRight,
   Shield,
@@ -29,7 +29,7 @@ import {
   AlertCircle,
   ChevronLeft,
   ChevronRight,
-  BarChart2,
+  BarChart2 as _BarChart2,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';
@@ -61,9 +61,10 @@ const navItems = [
   { icon: Briefcase, key: 'companies' as const, href: '/dashboard/companies', adminOnly: false },
   { icon: Users, key: 'owners' as const, href: '/dashboard/owners', adminOnly: false },
   { icon: Map, key: 'map' as const, href: '/dashboard/kort', adminOnly: false },
-  { icon: Search, key: 'search' as const, href: '/dashboard/search', adminOnly: false },
-  { icon: BarChart2, key: 'analysis' as const, href: '/dashboard/analysis', adminOnly: false },
-  { icon: MessageSquare, key: 'chat' as const, href: '/dashboard/chat', adminOnly: false },
+  // BIZZ-168: Hidden pending UX testing — re-enable when ready
+  // { icon: Search, key: 'search' as const, href: '/dashboard/search', adminOnly: false },
+  // { icon: BarChart2, key: 'analysis' as const, href: '/dashboard/analysis', adminOnly: false },
+  // { icon: MessageSquare, key: 'chat' as const, href: '/dashboard/chat', adminOnly: false },
   { icon: Shield, key: 'admin' as const, href: '/dashboard/admin/users', adminOnly: true },
 ];
 
@@ -1064,8 +1065,8 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                   </div>
                   <div className="py-1.5 border-t border-white/10">
                     <button
-                      onClick={() => {
-                        signOut();
+                      onClick={async () => {
+                        await signOut();
                       }}
                       className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-400 hover:text-red-300 hover:bg-red-500/5 transition-colors"
                     >
@@ -1313,7 +1314,9 @@ function PlanSelectionOverlay({
             <div className="border-t border-white/10 pt-5">
               <button
                 type="button"
-                onClick={() => signOut()}
+                onClick={async () => {
+                  await signOut();
+                }}
                 className="text-slate-400 hover:text-slate-200 text-xs transition-colors"
               >
                 {da ? 'Log ud' : 'Sign out'}

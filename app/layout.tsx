@@ -21,6 +21,7 @@ const isProduction =
     !process.env.NEXT_PUBLIC_APP_URL.includes('test.bizzassist.dk'));
 
 export const metadata: Metadata = {
+  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? 'https://app.bizzassist.dk'),
   title: 'BizzAssist — Danmarks forretningsintelligens platform',
   description:
     'Få øjeblikkelig adgang til data om virksomheder, ejendomme og personer i Danmark. Analysér med AI og tag bedre beslutninger.',

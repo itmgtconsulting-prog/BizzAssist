@@ -97,7 +97,7 @@ function tlFetch(urlPath: string): Promise<{ status: number; body: string }> {
     if (CERT_B64) {
       pfx = Buffer.from(CERT_B64, 'base64');
     } else {
-      const certAbsPath = path.resolve(CERT_PATH);
+      const certAbsPath = path.resolve(/*turbopackIgnore: true*/ CERT_PATH);
       if (!fs.existsSync(certAbsPath)) {
         reject(new Error('Certifikat ikke fundet'));
         return;
@@ -143,7 +143,7 @@ function tlFetchSsl(urlPath: string): Promise<{ status: number; body: string }> 
     if (CERT_B64) {
       pfx = Buffer.from(CERT_B64, 'base64');
     } else {
-      const certAbsPath = path.resolve(CERT_PATH);
+      const certAbsPath = path.resolve(/*turbopackIgnore: true*/ CERT_PATH);
       if (!fs.existsSync(certAbsPath)) {
         reject(new Error('Certifikat ikke fundet'));
         return;

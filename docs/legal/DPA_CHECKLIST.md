@@ -25,11 +25,11 @@ separat aftale.
 
 ### 🔴 Skal handles på (kræver aktiv handling fra Jakob)
 
-| Leverandør   | Persondata der behandles                                                                         | Handling                                                                                  |
-| ------------ | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
-| **Supabase** | Al brugerdata, activity logs, CVR/ejendomsdata med personnavne                                   | ✅ **UNDERSKREVET** — gemt i `docs/legal/signed/Supabase_DPA_signed_2026-03-12.pdf`       |
-| **Sentry**   | Stack traces, request URLs, user UUIDs i fejllog                                                 | ✅ **UNDERSKREVET** — gemt i `docs/legal/signed/Sentry_DPA_signed.pdf`                    |
-| **Mapbox**   | IP-adresser ved kortflise-requests (kortkoordinater er offentlige BBR/DAR-data, ikke bruger-GPS) | Underskriv DPA → [mapbox.com/legal/dpa](https://www.mapbox.com/legal/dpa) (lav prioritet) |
+| Leverandør   | Persondata der behandles                                                                         | Handling                                                                            |
+| ------------ | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| **Supabase** | Al brugerdata, activity logs, CVR/ejendomsdata med personnavne                                   | ✅ **UNDERSKREVET** — gemt i `docs/legal/signed/Supabase_DPA_signed_2026-03-12.pdf` |
+| **Sentry**   | Stack traces, request URLs, user UUIDs i fejllog                                                 | ✅ **UNDERSKREVET** — gemt i `docs/legal/signed/Sentry_DPA_signed.pdf`              |
+| **Mapbox**   | IP-adresser ved kortflise-requests (kortkoordinater er offentlige BBR/DAR-data, ikke bruger-GPS) | ✅ **UNDERSKREVET** — gemt i `docs/legal/signed/Mapbox_DPA_signed_2025-04-01.pdf`   |
 
 ### 🟡 Verificer at det er på plads (ToS er sandsynligvis nok, men dobbelttjek)
 

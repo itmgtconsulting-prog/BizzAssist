@@ -28,9 +28,21 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { tokensUsed } = await req.json();
-    if (!tokensUsed || tokensUsed <= 0) {
-      return NextResponse.json({ ok: true }); // Nothing to track
+    const body = await req.json();
+    const { tokensUsed } = body as { tokensUsed: unknown };
+
+    // Validate: must be a positive integer no greater than 10 000 (one API call max).
+    // This prevents a compromised browser from inflating token counts arbitrarily.
+    if (
+      typeof tokensUsed !== 'number' ||
+      !Number.isInteger(tokensUsed) ||
+      tokensUsed <= 0 ||
+      tokensUsed > 10_000
+    ) {
+      return NextResponse.json(
+        { error: 'tokensUsed skal være et positivt heltal ≤ 10000' },
+        { status: 400 }
+      );
     }
 
     // Get fresh user data to read current token count

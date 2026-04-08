@@ -18,6 +18,8 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:smoke": "playwright test __tests__/e2e/smoke.spec.ts",
+    "test:rls": "RLS_TEST=true vitest run __tests__/integration/rls-isolation.test.ts",
+    "test:rls:script": "node scripts/test-rls.mjs",
     "test:all": "npm run test && npm run test:e2e",
     "validate": "npm run type-check && npm run lint && npm run format:check && npm run test",
     "prepare": "husky",

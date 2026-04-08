@@ -49,7 +49,14 @@ export default defineConfig({
       },
     },
     include: ['__tests__/**/*.{test,spec}.{ts,tsx}'],
-    exclude: ['__tests__/e2e/**', 'node_modules/**'],
+    exclude: [
+      '__tests__/e2e/**',
+      'node_modules/**',
+      // RLS isolation tests require a live Supabase instance and real auth sessions.
+      // They are incompatible with the jsdom unit-test environment and are excluded
+      // from the default test run. Run explicitly with: npm run test:rls
+      '__tests__/integration/rls-isolation.test.ts',
+    ],
   },
   resolve: {
     alias: {

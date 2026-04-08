@@ -28,7 +28,6 @@ import {
 import { bygAnvendelseTekst, ejerforholdTekst } from '@/app/lib/bbrKoder';
 import { generateEjendomSlug } from '@/app/lib/slug';
 import { fetchBbrForAddress } from '@/app/lib/fetchBbrData';
-import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import PublicPricingSection from '@/app/(public)/components/PublicPricingSection';
 
 // ─── ISR cache-periode ───────────────────────────────────────────────────────
@@ -104,16 +103,14 @@ interface EjendomPublicData {
 async function hentDawaAdresse(bfe: string, slug: string): Promise<DawaAdresse | null> {
   try {
     // Trin 1: BFE → jordstykke (ejerlav + matrikelnr + kommunekode)
-    // proxyUrl() ruter gennem Hetzner-proxy på Vercel (DF_PROXY_URL sat) for at
-    // undgå blokering af Vercel's delte IP-adresser hos api.dataforsyningen.dk.
+    // cache: 'no-store' sikrer at fejlede DAWA-svar ikke caches af Next.js ISR
+    // og serveres i op til en time. Succesfulde renders caches af route-niveau ISR.
     const jsRes = await fetch(
-      proxyUrl(
-        `https://api.dataforsyningen.dk/jordstykker?bfenummer=${encodeURIComponent(bfe)}&per_side=1`
-      ),
+      `https://api.dataforsyningen.dk/jordstykker?bfenummer=${encodeURIComponent(bfe)}&per_side=1`,
       {
-        next: { revalidate: 3600 },
-        headers: { Accept: 'application/json', ...proxyHeaders() },
-        signal: AbortSignal.timeout(proxyTimeout()),
+        cache: 'no-store',
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(8000),
       }
     );
     if (!jsRes.ok) return null;
@@ -143,10 +140,10 @@ async function hentDawaAdresse(bfe: string, slug: string): Promise<DawaAdresse |
       `&kommunekode=${encodeURIComponent(String(kommunekode))}` +
       `&struktur=nestet&per_side=10`;
 
-    const res = await fetch(proxyUrl(url), {
-      next: { revalidate: 604800 },
-      headers: { Accept: 'application/json', ...proxyHeaders() },
-      signal: AbortSignal.timeout(proxyTimeout()),
+    const res = await fetch(url, {
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(8000),
     });
 
     if (!res.ok) return null;

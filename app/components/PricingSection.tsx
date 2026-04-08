@@ -5,6 +5,7 @@
  *
  * Fetches active plans from /api/plans on mount so each environment
  * (production vs. test) shows its own plan configuration from the DB.
+ * Description text is split by newline — each line becomes a green-check bullet.
  * Falls back to an empty grid with a spinner while loading.
  *
  * @returns A responsive pricing card grid with DA/EN language support.
@@ -69,75 +70,16 @@ const COLOR_MAP: Record<
 };
 
 /**
- * Feature bullet lists per plan ID — business-defined, bilingual.
- * Falls back to description text when plan ID is not recognised.
+ * Splits a description string into bullet lines.
+ * Each non-empty line becomes one bullet point with a green checkmark.
  */
-const PLAN_FEATURES: Record<string, { da: string[]; en: string[] }> = {
-  demo: {
-    da: [
-      'Fuld adgang til platformen',
-      'BBR · CVR · Tinglysning · VUR',
-      'AI-assistent inkluderet',
-      '10.000 AI-tokens pr. måned',
-      'Kræver admin-godkendelse',
-    ],
-    en: [
-      'Full platform access',
-      'BBR · CVR · Tinglysning · VUR',
-      'AI assistant included',
-      '10,000 AI tokens per month',
-      'Requires admin approval',
-    ],
-  },
-  basis: {
-    da: [
-      'Adgang til al basisdata',
-      'BBR · CVR · Tinglysning · VUR',
-      'Ejendoms- og virksomhedssøgning',
-      'Kortvisning med WMS-lag',
-      'Uden AI-assistent',
-    ],
-    en: [
-      'Access to all base data',
-      'BBR · CVR · Tinglysning · VUR',
-      'Property and company search',
-      'Map view with WMS layers',
-      'No AI assistant',
-    ],
-  },
-  professionel: {
-    da: [
-      'Alt i Basis',
-      'AI-assistent',
-      '50.000 tokens pr. måned',
-      'Ubegrænsede søgninger',
-      'Prioriteret support',
-    ],
-    en: [
-      'Everything in Basic',
-      'AI assistant',
-      '50,000 tokens per month',
-      'Unlimited searches',
-      'Priority support',
-    ],
-  },
-  enterprise: {
-    da: [
-      'Alt i Professionel',
-      'Ubegrænsede AI-tokens',
-      'Dataeksport',
-      'Dedikeret support',
-      'SLA-garanti',
-    ],
-    en: [
-      'Everything in Professional',
-      'Unlimited AI tokens',
-      'Data export',
-      'Dedicated support',
-      'SLA guarantee',
-    ],
-  },
-};
+function parseFeatures(desc: string): string[] {
+  const lines = desc
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+  return lines.length > 0 ? lines : [desc];
+}
 
 export default function PricingSection() {
   const { lang } = useLanguage();
@@ -183,8 +125,6 @@ export default function PricingSection() {
               >
                 <div className="h-5 bg-slate-700 rounded w-24 mb-3" />
                 <div className="h-8 bg-slate-700 rounded w-32 mb-4" />
-                <div className="h-4 bg-slate-700/60 rounded w-full mb-2" />
-                <div className="h-4 bg-slate-700/60 rounded w-3/4 mb-8" />
                 {[0, 1, 2, 3, 4].map((j) => (
                   <div key={j} className="h-3 bg-slate-700/40 rounded w-full mb-3" />
                 ))}
@@ -198,12 +138,11 @@ export default function PricingSection() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
             {plans.map((plan) => {
               const colors = COLOR_MAP[plan.color] ?? COLOR_MAP.slate;
-              const features =
-                PLAN_FEATURES[plan.id]?.[da ? 'da' : 'en'] ?? (da ? [plan.descDa] : [plan.descEn]);
+              const desc = da ? plan.descDa : plan.descEn;
+              const features = parseFeatures(desc);
               const isHighlighted = colors.highlight;
               const isFree = plan.priceDkk === 0;
               const name = da ? plan.nameDa : plan.nameEn;
-              const desc = da ? plan.descDa : plan.descEn;
 
               return (
                 <div
@@ -239,7 +178,7 @@ export default function PricingSection() {
                   </div>
 
                   {/* Price */}
-                  <div className="mb-3">
+                  <div className="mb-6">
                     {isFree ? (
                       <span className="text-4xl font-extrabold text-white">{t.free}</span>
                     ) : (
@@ -252,12 +191,9 @@ export default function PricingSection() {
                     )}
                   </div>
 
-                  {/* Description */}
-                  <p className="text-slate-400 text-sm leading-relaxed mb-6">{desc}</p>
-
                   {/* AI tokens badge */}
                   {plan.aiEnabled && plan.aiTokensPerMonth !== 0 && (
-                    <div className="mb-6 flex items-center gap-2 text-xs text-blue-300 bg-blue-600/10 border border-blue-500/20 rounded-lg px-3 py-2">
+                    <div className="mb-5 flex items-center gap-2 text-xs text-blue-300 bg-blue-600/10 border border-blue-500/20 rounded-lg px-3 py-2">
                       <span className="font-semibold">
                         {plan.aiTokensPerMonth === -1
                           ? da
@@ -268,7 +204,7 @@ export default function PricingSection() {
                     </div>
                   )}
 
-                  {/* Feature list */}
+                  {/* Feature list — parsed from description, one bullet per line */}
                   <ul className="space-y-2.5 mb-8 flex-1">
                     {features.map((feat, idx) => (
                       <li key={idx} className="flex items-start gap-2.5 text-sm text-slate-300">

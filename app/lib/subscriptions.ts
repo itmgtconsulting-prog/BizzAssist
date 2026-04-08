@@ -138,52 +138,30 @@ export const PLANS: Record<PlanId, PlanDef> = {
 /** Ordered list of hardcoded plans for display (legacy fallback only) */
 export const PLAN_LIST: PlanDef[] = [PLANS.demo, PLANS.basis, PLANS.professionel, PLANS.enterprise];
 
-// ─── Runtime plan cache (populated from DB via API) ─────────────────────────
+// ─── Runtime plan cache (in-memory only) ─────────────────────────────────────
+//
+// SECURITY NOTE (BIZZ-193): The plan cache must never be stored in localStorage.
+// An attacker with XSS or console access could overwrite 'ba-plan-cache' to
+// claim a higher-tier plan and bypass premium gating client-side.
+// Plan data comes from the server session only; this in-memory map is the
+// only client-side representation and is lost on page reload (intentional).
 
-const PLAN_CACHE_KEY = 'ba-plan-cache';
-
-/** In-memory plan cache — populated from /api/plans or /api/subscription */
+/** In-memory plan cache — populated from /api/plans or /api/subscription.
+ *  Cleared on every full page load; refilled after the first API response. */
 const _planCache = new Map<string, PlanDef>();
 
 /**
- * Populate the plan cache with plans fetched from the DB.
+ * Populate the in-memory plan cache with plans fetched from the server.
  * Called by dashboard layout on mount and after admin edits.
+ * Must NOT persist to localStorage — see BIZZ-193.
  *
  * @param plans - Array of plan definitions from the API
  */
 export function cachePlans(plans: PlanDef[]): void {
   _planCache.clear();
   for (const p of plans) _planCache.set(p.id, p);
-  // Persist to localStorage so cache survives page navigations
-  if (typeof window !== 'undefined') {
-    try {
-      localStorage.setItem(PLAN_CACHE_KEY, JSON.stringify(plans));
-    } catch {
-      /* ignore */
-    }
-  }
+  // Do NOT write to localStorage — plan data must come from the server session only.
 }
-
-/**
- * Load the plan cache from localStorage (called on module init).
- * This ensures plan data is available before the API fetch completes.
- */
-function _loadCacheFromStorage(): void {
-  if (typeof window === 'undefined') return;
-  if (_planCache.size > 0) return; // Already populated
-  try {
-    const raw = localStorage.getItem(PLAN_CACHE_KEY);
-    if (raw) {
-      const plans: PlanDef[] = JSON.parse(raw);
-      for (const p of plans) _planCache.set(p.id, p);
-    }
-  } catch {
-    /* ignore */
-  }
-}
-
-// Auto-load cache on module init (client-side only)
-_loadCacheFromStorage();
 
 /**
  * Resolve a plan definition from a planId.

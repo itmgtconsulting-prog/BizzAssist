@@ -362,7 +362,7 @@ async function createHotfix(
 
 /**
  * Trigger a Vercel preview deployment for a hotfix branch.
- * Requires VERCEL_TOKEN, VERCEL_PROJECT_ID, and VERCEL_TEAM_ID env vars.
+ * Requires VERCEL_API_TOKEN, VERCEL_PROJECT_ID, and VERCEL_TEAM_ID env vars.
  *
  * @param branch - The branch to deploy.
  * @param userId - The admin user.
@@ -372,11 +372,11 @@ async function deployToTest(
   branch: string,
   userId: string
 ): Promise<{ deploymentUrl: string | null }> {
-  const token = process.env.VERCEL_TOKEN;
+  const token = process.env.VERCEL_API_TOKEN;
   const projectId = process.env.VERCEL_PROJECT_ID;
 
   if (!token || !projectId) {
-    throw new Error('VERCEL_TOKEN og VERCEL_PROJECT_ID er påkrævet for preview-deployment');
+    throw new Error('VERCEL_API_TOKEN og VERCEL_PROJECT_ID er påkrævet for preview-deployment');
   }
 
   const teamId = process.env.VERCEL_TEAM_ID;

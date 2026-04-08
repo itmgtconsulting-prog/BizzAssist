@@ -1102,8 +1102,8 @@ export default function ServiceManagerClient() {
                   </p>
                   <p className="text-amber-400/70 text-xs mt-0.5">
                     {da
-                      ? 'Tilføj VERCEL_TOKEN og VERCEL_PROJECT_ID i .env.local for live data.'
-                      : 'Add VERCEL_TOKEN and VERCEL_PROJECT_ID to .env.local for live data.'}
+                      ? 'Tilføj VERCEL_API_TOKEN og VERCEL_PROJECT_ID i .env.local for live data.'
+                      : 'Add VERCEL_API_TOKEN and VERCEL_PROJECT_ID to .env.local for live data.'}
                   </p>
                 </div>
               </div>
@@ -1195,8 +1195,8 @@ export default function ServiceManagerClient() {
                       ? 'Ingen deployments fundet.'
                       : 'No deployments found.'
                     : da
-                      ? 'Konfigurer VERCEL_TOKEN og VERCEL_PROJECT_ID for at se deployments.'
-                      : 'Configure VERCEL_TOKEN and VERCEL_PROJECT_ID to see deployments.'}
+                      ? 'Konfigurer VERCEL_API_TOKEN og VERCEL_PROJECT_ID for at se deployments.'
+                      : 'Configure VERCEL_API_TOKEN and VERCEL_PROJECT_ID to see deployments.'}
                 </div>
               ) : (
                 <div className="overflow-x-auto">

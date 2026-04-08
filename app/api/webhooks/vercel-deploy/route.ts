@@ -25,7 +25,7 @@
  *
  * Env vars required:
  *   - VERCEL_DEPLOY_WEBHOOK_SECRET — shared secret, included in webhook URL
- *   - VERCEL_TOKEN                 — Vercel API token for fetching build logs
+ *   - VERCEL_API_TOKEN                 — Vercel API token for fetching build logs
  *   - VERCEL_PROJECT_ID            — Vercel project ID
  *   - VERCEL_TEAM_ID               — (optional) Vercel team ID
  *   - BIZZASSIST_CLAUDE_KEY        — Anthropic API key for fix proposals
@@ -166,7 +166,7 @@ function verifyWebhookAuth(request: NextRequest, rawBody: string): boolean {
  * @returns Headers object with Bearer auth token.
  */
 function vercelHeaders(): HeadersInit {
-  return { Authorization: `Bearer ${process.env.VERCEL_TOKEN ?? ''}` };
+  return { Authorization: `Bearer ${process.env.VERCEL_API_TOKEN ?? ''}` };
 }
 
 /**

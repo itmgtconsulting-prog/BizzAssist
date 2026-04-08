@@ -1,0 +1,85 @@
+name: Release Agent
+on:
+  workflow_dispatch:
+    inputs:
+      version_bump:
+        description: 'Version bump type'
+        required: true
+        default: 'patch'
+        type: choice
+        options: [patch, minor, major]
+  push:
+    branches: [main]
+
+jobs:
+  quality-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - name: TypeScript check
+        run: npx tsc --noEmit
+      - name: Lint
+        run: npm run lint
+      - name: Tests
+        run: npm test -- --reporter=verbose
+      - name: Coverage check
+        run: npm run test:coverage -- --reporter=verbose
+      - name: Build
+        run: npm run build
+
+  create-release:
+    needs: quality-gate
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Bump version
+        run: npm version ${{ github.event.inputs.version_bump }} --no-git-tag-version
+      - name: Get version
+        id: version
+        run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+      - name: Commit and tag
+        run: |
+          git config user.name "Release Agent"
+          git config user.email "noreply@bizzassist.dk"
+          git add package.json
+          git commit -m "chore: bump version to v${{ steps.version.outputs.version }}"
+          git tag "v${{ steps.version.outputs.version }}"
+          git push && git push --tags
+      - name: Generate changelog
+        id: changelog
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            CHANGES=$(git log $PREV_TAG..HEAD~1 --pretty=format:"- %s" | head -30)
+          else
+            CHANGES=$(git log --pretty=format:"- %s" | head -30)
+          fi
+          echo "changes<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: BizzAssist v${{ steps.version.outputs.version }}
+          body: |
+            ## What's Changed
+            ${{ steps.changelog.outputs.changes }}
+
+            **Full Changelog**: ${{ github.server_url }}/${{ github.repository }}/commits/v${{ steps.version.outputs.version }}
+          draft: false
+          prerelease: false

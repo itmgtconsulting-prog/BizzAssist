@@ -1,0 +1,54 @@
+name: Service Manager
+on:
+  schedule:
+    - cron: '0 6 * * *' # Daily at 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - name: TypeScript errors
+        id: tsc
+        run: npx tsc --noEmit 2>&1 | tee tsc-output.txt; echo "exit_code=$?" >> $GITHUB_OUTPUT
+        continue-on-error: true
+      - name: Lint errors
+        id: lint
+        run: npm run lint 2>&1 | tee lint-output.txt; echo "exit_code=$?" >> $GITHUB_OUTPUT
+        continue-on-error: true
+      - name: Run tests
+        id: tests
+        run: npm test 2>&1 | tee test-output.txt; echo "exit_code=$?" >> $GITHUB_OUTPUT
+        continue-on-error: true
+      - name: Audit vulnerabilities
+        id: audit
+        run: npm audit --audit-level=high 2>&1 | tee audit-output.txt; echo "exit_code=$?" >> $GITHUB_OUTPUT
+        continue-on-error: true
+      - name: Report to JIRA
+        if: steps.tsc.outputs.exit_code != '0' || steps.tests.outputs.exit_code != '0' || steps.audit.outputs.exit_code != '0'
+        env:
+          JIRA_BASE_URL: https://bizzassist.atlassian.net
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+        run: |
+          SUMMARY="[Service Manager] Automated health check failed $(date +%Y-%m-%d)"
+          DESCRIPTION=""
+          if [ "${{ steps.tsc.outputs.exit_code }}" != "0" ]; then
+            DESCRIPTION="$DESCRIPTION\n\nTypeScript errors detected:\n\`\`\`\n$(head -50 tsc-output.txt)\n\`\`\`"
+          fi
+          if [ "${{ steps.tests.outputs.exit_code }}" != "0" ]; then
+            DESCRIPTION="$DESCRIPTION\n\nTest failures:\n\`\`\`\n$(tail -50 test-output.txt)\n\`\`\`"
+          fi
+          if [ "${{ steps.audit.outputs.exit_code }}" != "0" ]; then
+            DESCRIPTION="$DESCRIPTION\n\nSecurity vulnerabilities:\n\`\`\`\n$(head -50 audit-output.txt)\n\`\`\`"
+          fi
+          curl -s -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
+            -X POST "https://bizzassist.atlassian.net/rest/api/3/issue" \
+            -H "Content-Type: application/json" \
+            -d "{\"fields\":{\"project\":{\"key\":\"BIZZ\"},\"summary\":\"$SUMMARY\",\"description\":{\"type\":\"doc\",\"version\":1,\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"Automated service manager detected issues.\"}]}]},\"issuetype\":{\"name\":\"Bug\"},\"priority\":{\"name\":\"High\"}}}"

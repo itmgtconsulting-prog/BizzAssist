@@ -1,319 +1,158 @@
 /**
- * Dynamisk XML sitemap for BizzAssist offentlige sider.
+ * Pagineret XML sitemap for BizzAssist offentlige SEO-sider.
  *
- * Genererer sitemap-entries for:
- *  1. Statiske sider (forside, login, vilkår etc.)
- *  2. Ejendomssider — de 10.000 største adresser fra DAWA, pagineret
- *  3. Virksomhedssider — de 10.000 største virksomheder fra CVR ES
+ * Læser pre-genererede slug + entity_id-par fra `public.sitemap_entries`
+ * (befolket af /api/cron/generate-sitemap) og serverer dem som Next.js
+ * App Router paginerede sitemaps (max 50.000 URLs pr. fil).
  *
- * ISR: Revalideres dagligt (86400 sekunder).
- * URL-max per fil: 50.000 (Next.js App Router håndterer automatisk splitting).
+ * generateSitemaps() returnerer én entry pr. side baseret på det totale
+ * antal rækker i sitemap_entries — Next.js genererer automatisk
+ * /sitemap/0.xml, /sitemap/1.xml, etc.
  *
- * Fuld coverage via /sitemap/ejendomme/[page] og /sitemap/virksomheder/[page]
- * tilføjes via scheduled task efterhånden som indexering vokser.
+ * Statiske sider (forside, login, privacy etc.) er hardkodet som side 0
+ * udover DB-rækkerne.
+ *
+ * ISR: Ingen revalidate her — data opdateres via cron, ikke ISR.
+ *
+ * @module app/sitemap
  */
 
 import type { MetadataRoute } from 'next';
-import { generateEjendomSlug, generateVirksomhedSlug } from '@/app/lib/slug';
+import { createAdminClient } from '@/lib/supabase/admin';
 
-// ─── Konstanter ──────────────────────────────────────────────────────────────
+// ─── Konstanter ────────────────────────────────────────────────────────────────
 
-/** Antal ejendomme der hentes til sitemap ved hver ISR-kørsel */
-const MAX_EJENDOMME = 10_000;
+/** Antal URL-entries pr. sitemap-fil (Next.js max er 50.000) */
+const PAGE_SIZE = 50_000;
 
-/** Antal virksomheder der hentes til sitemap ved hver ISR-kørsel */
-const MAX_VIRKSOMHEDER = 10_000;
-
-/** DAWA paginerings-sidestørrelse (max 1000 pr. request) */
-const DAWA_PAGE_SIZE = 1_000;
-
-/** CVR ES paginerings-sidestørrelse */
-const CVR_PAGE_SIZE = 1_000;
-
-/** Basis-URL til applikationen */
+/** Basis-URL til alle sitemap-entries */
 const BASE_URL =
-  process.env.NEXT_PUBLIC_BASE_URL ??
+  process.env.NEXT_PUBLIC_APP_URL ??
   (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://bizzassist.dk');
 
-// ─── ISR cache: daglig opdatering ────────────────────────────────────────────
-export const revalidate = 86400;
-
-// ─── Types ──────────────────────────────────────────────────────────────────
-
-/** Minimal DAWA adresse til sitemap-generering */
-interface DawaAdresseMin {
-  id: string;
-  vejnavn: string;
-  husnr: string;
-  postnr: string;
-  postnrnavn: string;
-  bfenummer: number | null;
-}
-
-/** Minimal CVR virksomhed til sitemap-generering */
-interface CvrVirksomhedMin {
-  vat: number;
-  name: string;
-}
-
-// ─── Data fetching ──────────────────────────────────────────────────────────
+// ─── Statiske sider ────────────────────────────────────────────────────────────
 
 /**
- * Henter de {MAX_EJENDOMME} mest relevante adresser fra DAWA API.
- *
- * Sorterer efter kommunestørrelse (kommunekode ASC) for at prioritere
- * de tættest befolkede kommuner (København = 0101, Aarhus = 0751, etc.).
- * Paginerer automatisk med DAWA_PAGE_SIZE pr. request.
- *
- * @returns Liste af adresser med BFE-numre
+ * Hardkodet liste over statiske sider der altid medtages i sitemap.
+ * Tilføjes på den første paginerede side (id=0) før DB-data.
  */
-async function hentDawaAdresser(): Promise<DawaAdresseMin[]> {
-  const adresser: DawaAdresseMin[] = [];
-  let side = 1;
+const STATIC_PAGES: MetadataRoute.Sitemap = [
+  {
+    url: BASE_URL,
+    lastModified: new Date(),
+    changeFrequency: 'weekly',
+    priority: 1.0,
+  },
+  {
+    url: `${BASE_URL}/login`,
+    lastModified: new Date(),
+    changeFrequency: 'monthly',
+    priority: 0.5,
+  },
+  {
+    url: `${BASE_URL}/login/signup`,
+    lastModified: new Date(),
+    changeFrequency: 'monthly',
+    priority: 0.6,
+  },
+  {
+    url: `${BASE_URL}/privacy`,
+    lastModified: new Date(),
+    changeFrequency: 'yearly',
+    priority: 0.2,
+  },
+  {
+    url: `${BASE_URL}/terms`,
+    lastModified: new Date(),
+    changeFrequency: 'yearly',
+    priority: 0.2,
+  },
+  {
+    url: `${BASE_URL}/cookies`,
+    lastModified: new Date(),
+    changeFrequency: 'yearly',
+    priority: 0.1,
+  },
+];
 
-  while (adresser.length < MAX_EJENDOMME) {
-    const hentCount = Math.min(DAWA_PAGE_SIZE, MAX_EJENDOMME - adresser.length);
+// ─── generateSitemaps ──────────────────────────────────────────────────────────
 
-    try {
-      // Brug flad struktur for at få bfenummer direkte på objektet
-      const url =
-        `https://api.dataforsyningen.dk/adgangsadresser` +
-        `?struktur=flad&per_side=${hentCount}&side=${side}` +
-        `&sortering=kommunekode`;
+/**
+ * Fortæller Next.js hvor mange paginerede sitemap-filer der skal genereres.
+ * Kalder Supabase for at tælle det totale antal sitemap_entries.
+ *
+ * Returnerer altid mindst ét element ({ id: 0 }) så der altid er et sitemap
+ * (indeholdende de statiske sider) selv når tabellen er tom.
+ *
+ * @returns Array af { id: number } objekter — ét pr. sitemap-fil
+ */
+export async function generateSitemaps(): Promise<Array<{ id: number }>> {
+  try {
+    const admin = createAdminClient();
+    const { count, error } = await admin
+      .from('sitemap_entries')
+      .select('*', { count: 'exact', head: true });
 
-      const res = await fetch(url, {
-        next: { revalidate: 86400 },
-        headers: { Accept: 'application/json' },
-      });
-
-      if (!res.ok) break;
-
-      const data: unknown[] = await res.json();
-      if (!Array.isArray(data) || data.length === 0) break;
-
-      for (const item of data) {
-        const a = item as Record<string, unknown>;
-        // BFE er ikke inkluderet i mini-struktur — vi bruger id som fallback
-        adresser.push({
-          id: String(a['id'] ?? ''),
-          vejnavn: String(a['vejnavn'] ?? ''),
-          husnr: String(a['husnr'] ?? ''),
-          postnr: String(a['postnr'] ?? ''),
-          postnrnavn: String(a['postnrnavn'] ?? ''),
-          bfenummer: a['bfenummer'] != null ? Number(a['bfenummer']) : null,
-        });
-      }
-
-      if (data.length < hentCount) break; // Sidste side
-      side++;
-    } catch {
-      break;
+    if (error) {
+      console.error('[sitemap] Kunne ikke tælle sitemap_entries:', error.message);
+      return [{ id: 0 }];
     }
-  }
 
-  return adresser;
+    const total = (count ?? 0) + STATIC_PAGES.length;
+    const pages = Math.ceil(total / PAGE_SIZE);
+    return Array.from({ length: Math.max(pages, 1) }, (_, i) => ({ id: i }));
+  } catch (err) {
+    console.error('[sitemap] generateSitemaps fejl:', err);
+    return [{ id: 0 }];
+  }
 }
 
-/**
- * Henter de {MAX_VIRKSOMHEDER} største/mest relevante aktive virksomheder
- * fra CVR ElasticSearch via den interne API-proxy.
- *
- * Sorterer efter antal ansatte DESC og filtrerer på aktive virksomheder.
- * Paginerer med CVR_PAGE_SIZE pr. request.
- *
- * @returns Liste af virksomheder med CVR-nummer og navn
- */
-async function hentCvrVirksomheder(): Promise<CvrVirksomhedMin[]> {
-  const virksomheder: CvrVirksomhedMin[] = [];
-
-  // CVR ES kræver credentials fra environment
-  const cvrUser = process.env.CVR_ES_USER ?? '';
-  const cvrPass = process.env.CVR_ES_PASS ?? '';
-  const CVR_ES_BASE = 'http://distribution.virk.dk/cvr-permanent/virksomhed/_search';
-
-  if (!cvrUser || !cvrPass) {
-    // Credentials ikke konfigureret endnu — returnér tom liste uden fejl
-    return virksomheder;
-  }
-
-  const authHeader = `Basic ${Buffer.from(`${cvrUser}:${cvrPass}`).toString('base64')}`;
-
-  for (let from = 0; virksomheder.length < MAX_VIRKSOMHEDER; from += CVR_PAGE_SIZE) {
-    const hentCount = Math.min(CVR_PAGE_SIZE, MAX_VIRKSOMHEDER - virksomheder.length);
-
-    try {
-      // Hent aktive virksomheder sorteret efter antal ansatte DESC
-      const query = {
-        from,
-        size: hentCount,
-        sort: [
-          {
-            'Vrvirksomhed.virksomhedMetadata.nyesteMaanedsbeskaeftigelse.antalAnsatte': {
-              order: 'desc',
-              missing: '_last',
-            },
-          },
-        ],
-        _source: ['Vrvirksomhed.cvrNummer', 'Vrvirksomhed.virksomhedMetadata.nyesteNavn.navn'],
-        query: {
-          bool: {
-            must_not: [{ exists: { field: 'Vrvirksomhed.livsforloeb.periode.gyldigTil' } }],
-          },
-        },
-      };
-
-      const res = await fetch(CVR_ES_BASE, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: authHeader,
-        },
-        body: JSON.stringify(query),
-        next: { revalidate: 86400 },
-      });
-
-      if (!res.ok) break;
-
-      const data = (await res.json()) as {
-        hits?: {
-          hits?: Array<{
-            _source: {
-              Vrvirksomhed?: {
-                cvrNummer?: number;
-                virksomhedMetadata?: { nyesteNavn?: { navn?: string } };
-              };
-            };
-          }>;
-        };
-      };
-
-      const hits = data.hits?.hits;
-      if (!Array.isArray(hits) || hits.length === 0) break;
-
-      for (const hit of hits) {
-        const vvs = hit._source?.Vrvirksomhed;
-        const cvr = vvs?.cvrNummer;
-        const navn = vvs?.virksomhedMetadata?.nyesteNavn?.navn;
-        if (cvr && navn) {
-          virksomheder.push({ vat: cvr, name: navn });
-        }
-      }
-
-      if (hits.length < hentCount) break;
-    } catch {
-      break;
-    }
-  }
-
-  return virksomheder;
-}
-
-// ─── Sitemap ─────────────────────────────────────────────────────────────────
+// ─── Default export ────────────────────────────────────────────────────────────
 
 /**
- * Genererer XML sitemap for BizzAssist.
+ * Genererer én pagineret sitemap-fil.
  *
- * Next.js App Router kalder denne funktion og konverterer output til
- * sitemap.xml automatisk. Filer over 50.000 URLs splittes i sub-sitemaps.
+ * Side 0 indeholder de statiske sider efterfulgt af de første DB-entries.
+ * Efterfølgende sider (id >= 1) indeholder udelukkende DB-entries.
  *
- * @returns MetadataRoute.Sitemap array med alle URL-entries
+ * @param params - { id: number } — sidenummer (0-indekseret)
+ * @returns MetadataRoute.Sitemap array med alle URL-entries for denne side
  */
-/** True kun på bizzassist.dk production */
-const isProduction =
-  process.env.VERCEL_ENV === 'production' ||
-  (!!process.env.NEXT_PUBLIC_APP_URL &&
-    process.env.NEXT_PUBLIC_APP_URL.includes('bizzassist.dk') &&
-    !process.env.NEXT_PUBLIC_APP_URL.includes('test.bizzassist.dk'));
+export default async function sitemap({ id }: { id: number }): Promise<MetadataRoute.Sitemap> {
+  // Statiske sider injiceres kun på første side
+  const staticEntries: MetadataRoute.Sitemap = id === 0 ? STATIC_PAGES : [];
+  const staticCount = staticEntries.length;
 
-export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const now = new Date().toISOString();
-
-  // ── Statiske sider ─────────────────────────────────────────────────────────
-  const statiske: MetadataRoute.Sitemap = [
-    {
-      url: BASE_URL,
-      lastModified: now,
-      changeFrequency: 'weekly',
-      priority: 1.0,
-    },
-    {
-      url: `${BASE_URL}/login`,
-      lastModified: now,
-      changeFrequency: 'monthly',
-      priority: 0.5,
-    },
-    {
-      url: `${BASE_URL}/login/signup`,
-      lastModified: now,
-      changeFrequency: 'monthly',
-      priority: 0.6,
-    },
-    {
-      url: `${BASE_URL}/privacy`,
-      lastModified: now,
-      changeFrequency: 'yearly',
-      priority: 0.2,
-    },
-    {
-      url: `${BASE_URL}/terms`,
-      lastModified: now,
-      changeFrequency: 'yearly',
-      priority: 0.2,
-    },
-    {
-      url: `${BASE_URL}/cookies`,
-      lastModified: now,
-      changeFrequency: 'yearly',
-      priority: 0.1,
-    },
-  ];
-
-  // På test/preview: returner kun statiske sider — ingen crawling af DAWA/CVR
-  if (!isProduction) {
-    return statiske;
-  }
-
-  // ── Ejendomssider ──────────────────────────────────────────────────────────
-  let ejendomEntries: MetadataRoute.Sitemap = [];
+  // DB-entries: beregn range med offset for statiske sider på side 0
+  const dbOffset = id === 0 ? 0 : id * PAGE_SIZE - staticCount;
+  const dbLimit = PAGE_SIZE - staticCount;
 
   try {
-    const adresser = await hentDawaAdresser();
+    const admin = createAdminClient();
+    const { data, error } = await admin
+      .from('sitemap_entries')
+      .select('type, slug, entity_id, updated_at')
+      .order('updated_at', { ascending: false })
+      .range(dbOffset, dbOffset + dbLimit - 1);
 
-    ejendomEntries = adresser
-      .filter((a) => a.bfenummer && a.vejnavn && a.postnr)
-      .map((a) => {
-        const slug = generateEjendomSlug(a.vejnavn, a.husnr, a.postnr, a.postnrnavn);
-        return {
-          url: `${BASE_URL}/ejendom/${slug}/${a.bfenummer}`,
-          lastModified: now,
-          changeFrequency: 'monthly' as const,
-          priority: 0.7,
-        };
-      });
-  } catch {
-    // Gå videre med tom liste — sitemap fejler ikke pga. DAWA-nedbrud
+    if (error) {
+      console.error('[sitemap] Kunne ikke hente sitemap_entries:', error.message);
+      return staticEntries;
+    }
+
+    const dbEntries: MetadataRoute.Sitemap = (data ?? []).map((entry) => ({
+      url:
+        entry.type === 'ejendom'
+          ? `${BASE_URL}/ejendom/${entry.slug}/${entry.entity_id}`
+          : `${BASE_URL}/virksomhed/${entry.slug}/${entry.entity_id}`,
+      lastModified: new Date(entry.updated_at),
+      changeFrequency: 'monthly' as const,
+      priority: entry.type === 'virksomhed' ? 0.8 : 0.7,
+    }));
+
+    return [...staticEntries, ...dbEntries];
+  } catch (err) {
+    console.error('[sitemap] sitemap() fejl:', err);
+    return staticEntries;
   }
-
-  // ── Virksomhedssider ───────────────────────────────────────────────────────
-  let virksomhedEntries: MetadataRoute.Sitemap = [];
-
-  try {
-    const virksomheder = await hentCvrVirksomheder();
-
-    virksomhedEntries = virksomheder
-      .filter((v) => v.vat && v.name)
-      .map((v) => {
-        const slug = generateVirksomhedSlug(v.name);
-        return {
-          url: `${BASE_URL}/virksomhed/${slug}/${v.vat}`,
-          lastModified: now,
-          changeFrequency: 'monthly' as const,
-          priority: 0.7,
-        };
-      });
-  } catch {
-    // Gå videre med tom liste — sitemap fejler ikke pga. CVR-nedbrud
-  }
-
-  return [...statiske, ...ejendomEntries, ...virksomhedEntries];
 }

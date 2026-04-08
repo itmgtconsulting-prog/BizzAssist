@@ -1,6 +1,14 @@
 {
   "crons": [
     {
+      "path": "/api/cron/generate-sitemap?phase=companies",
+      "schedule": "0 2 * * 0"
+    },
+    {
+      "path": "/api/cron/generate-sitemap?phase=properties",
+      "schedule": "0 3 * * 0"
+    },
+    {
       "path": "/api/cron/poll-properties",
       "schedule": "0 3 * * *"
     },

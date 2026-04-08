@@ -6283,11 +6283,11 @@ function PropertyOwnerDiagram({
   const [graph, setGraph] = useState<DiagramGraph | null>(null);
   const [ejerDetaljer, setEjerDetaljer] = useState<EjerDetalje[]>([]);
   const [loading, setLoading] = useState(true);
-  const fetchedRef = useRef(false);
 
   useEffect(() => {
-    if (fetchedRef.current) return;
-    fetchedRef.current = true;
+    setLoading(true);
+    setGraph(null);
+    setEjerDetaljer([]);
 
     const controller = new AbortController();
 
@@ -6532,14 +6532,21 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
     });
   };
   const [fejl, setFejl] = useState<string | null>(null);
-  const fetchedRef = useRef(false);
-
   useEffect(() => {
-    if (!bfe || fetchedRef.current) {
+    if (!bfe) {
       setLoading(false);
       return;
     }
-    fetchedRef.current = true;
+
+    // Nulstil state ved ny fetch (fx BFE skifter)
+    setLoading(true);
+    setFejl(null);
+    setEjere([]);
+    setHaeftelser([]);
+    setServitutter([]);
+    setBilagRefs([]);
+    setTingbogsattest(null);
+    setTlUuid(null);
 
     const controller = new AbortController();
     const { signal } = controller;

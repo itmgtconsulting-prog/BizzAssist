@@ -228,9 +228,25 @@ export async function GET(request: NextRequest) {
           { type: 'ejerskab', fetcher: () => fetchEjerskab(entity.entity_id, baseUrl) },
         ];
 
-        for (const check of checks) {
+        // BIZZ-177: Parallelize the 3 fetches per property using Promise.all.
+        // Previously each fetch was awaited serially (3 × 50 = 150 sequential network calls).
+        // Now all 3 fetches for a single property run concurrently, reducing total wall-clock
+        // time from ~150 serial calls to ~50 parallel batches of 3 — well within Vercel's 60s limit.
+        const fetchResults = await Promise.all(
+          checks.map((check) =>
+            check
+              .fetcher()
+              .then((data) => ({ check, data, error: null }))
+              .catch((err: unknown) => ({ check, data: null, error: err }))
+          )
+        );
+
+        for (const { check, data: currentData, error } of fetchResults) {
+          if (error) {
+            errors.push(`${tenant.schema_name}/${entity.entity_id}/${check.type}: ${error}`);
+            continue;
+          }
           try {
-            const currentData = await check.fetcher();
             if (!currentData) continue; // API-fejl — spring over
 
             const currentHash = await hashData(currentData);

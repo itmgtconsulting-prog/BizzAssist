@@ -28,7 +28,31 @@ import {
 import { bygAnvendelseTekst, ejerforholdTekst } from '@/app/lib/bbrKoder';
 import { generateEjendomSlug } from '@/app/lib/slug';
 import { fetchBbrForAddress } from '@/app/lib/fetchBbrData';
+import { darHentAdresse } from '@/app/lib/dar';
 import PublicPricingSection from '@/app/(public)/components/PublicPricingSection';
+
+// ─── Vurderingsportalen ES types ─────────────────────────────────────────────
+
+/** Rå _source fra Vurderingsportalens Elasticsearch */
+interface VPEsSource {
+  adgangsAdresseID?: string;
+  roadName?: string;
+  houseNumber?: string;
+  door?: string;
+  floor?: string;
+  zipcode?: string;
+  postDistrict?: string;
+  municipalityNumber?: string;
+  isParentProperty?: boolean;
+  bfeNumbers?: string;
+}
+
+/** Elasticsearch response wrapper */
+interface VPEsResponse {
+  hits?: {
+    hits?: Array<{ _source: VPEsSource }>;
+  };
+}
 
 // ─── ISR cache-periode ───────────────────────────────────────────────────────
 // 3600 sekunder (1 time) — BBR-data bekræftet fungerende.
@@ -88,122 +112,126 @@ interface EjendomPublicData {
 // ─── Data fetching ──────────────────────────────────────────────────────────
 
 /**
- * Henter adresse-data fra DAWA's offentlige API baseret på BFE-nummer.
- * Inkluderer jordstykke-data for matrikelnummer og grundareal.
+ * Henter adresse-data via Vurderingsportalens Elasticsearch-API og DAR GraphQL.
  *
- * Slår jordstykket op via `jordstykker?bfenummer=` for at hente ejerlav +
- * matrikelnr + kommunekode, og bruger derefter disse tre parametre til at
- * finde alle adresser på jordstykket. Matcher derefter mod URL-slug for at
- * vise den korrekte adresse, når et jordstykke har flere adresser.
+ * Strategi (undgår direkte DAWA-kald fra Vercel US-servere):
+ *  1. Slår BFE op i Vurderingsportalens ES (api-fs.vurderingsportalen.dk) —
+ *     returnerer adgangsAdresseID (DAWA UUID) + basale adressefelter.
+ *  2. Kalder darHentAdresse(adgangsAdresseID) via DAR GraphQL (Hetzner-proxy) —
+ *     returnerer fuld adresse inkl. koordinater.
+ *
+ * DAWA (api.dataforsyningen.dk) bruges ikke direkte da det er ustabilt fra
+ * Vercels US-servere. Vurderingsportalen ES og DAR GraphQL er begge tilgængelige.
  *
  * @param bfe  - BFE-nummer
  * @param slug - URL-slug fra params (bruges til at matche den rette adresse)
- * @returns DAWA adresse-objekt eller null
+ * @returns Adresse-objekt eller null
  */
 async function hentDawaAdresse(bfe: string, slug: string): Promise<DawaAdresse | null> {
   try {
-    // Trin 1: BFE → jordstykke (ejerlav + matrikelnr + kommunekode)
-    // cache: 'no-store' sikrer at fejlede DAWA-svar ikke caches af Next.js ISR
-    // og serveres i op til en time. Succesfulde renders caches af route-niveau ISR.
-    const jsRes = await fetch(
-      `https://api.dataforsyningen.dk/jordstykker?bfenummer=${encodeURIComponent(bfe)}&per_side=1`,
+    // Trin 1: BFE → adgangsAdresseID via Vurderingsportalens ES.
+    // Browser User-Agent krævet for at undgå CloudFront WAF 403.
+    const esRes = await fetch(
+      'https://api-fs.vurderingsportalen.dk/preliminaryproperties/_search',
       {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        },
+        body: JSON.stringify({
+          size: 10,
+          query: { bool: { filter: [{ term: { bfeNumbers: String(bfe) } }] } },
+        }),
         cache: 'no-store',
-        headers: { Accept: 'application/json' },
         signal: AbortSignal.timeout(8000),
       }
     );
-    if (!jsRes.ok) return null;
-    const jsData: unknown[] = await jsRes.json();
-    if (!Array.isArray(jsData) || jsData.length === 0) return null;
 
-    const jordstykkeRaw = jsData[0] as Record<string, unknown>;
-    const ejerlavRaw = jordstykkeRaw['ejerlav'] as Record<string, unknown> | undefined;
-    const ejerlavKode = ejerlavRaw?.['kode'];
-    const matrikelnr = jordstykkeRaw['matrikelnr'];
-    const kommuneRaw = jordstykkeRaw['kommune'] as Record<string, unknown> | undefined;
-    const kommunekode = kommuneRaw?.['kode'];
-    // DAWA jordstykker-endpoint returnerer registreretareal (lowercase) på trin 1.
-    // Det gemmes her, da det nestet adgangsadresse-svar (trin 2) ikke inkluderer arealet.
-    const registreretArealFraJs1 = Number(jordstykkeRaw['registreretareal'] ?? 0);
+    if (!esRes.ok) {
+      console.error(`[PUBLIC EJENDOM] VP ES ${esRes.status} for BFE ${bfe}`);
+      return null;
+    }
 
-    if (!ejerlavKode || !matrikelnr || !kommunekode) return null;
+    const esData = (await esRes.json()) as VPEsResponse;
+    const hits = esData.hits?.hits ?? [];
+    if (hits.length === 0) {
+      console.error(`[PUBLIC EJENDOM] Ingen VP ES hits for BFE ${bfe}`);
+      return null;
+    }
 
-    // Trin 2: ejerlav + matrikelnr + kommunekode → alle adgangsadresser på jordstykket.
-    // per_side=10 for at hente alle (de fleste ejendomme har 1, sjældent 2-3).
-    // Alle UUIDs gemmes i alleIds og sendes til BBR-opslaget for at sikre at
-    // bygninger under forskellige adgangsadresser (f.eks. hus + carport) alle hentes.
-    const url =
-      `https://api.dataforsyningen.dk/adgangsadresser` +
-      `?matrikelnr=${encodeURIComponent(String(matrikelnr))}` +
-      `&landsejerlavkode=${encodeURIComponent(String(ejerlavKode))}` +
-      `&kommunekode=${encodeURIComponent(String(kommunekode))}` +
-      `&struktur=nestet&per_side=10`;
+    // Vælg det hit hvis slug matcher URL-parameteret. Fallback til første hit.
+    const matchedHit =
+      hits.find((h) => {
+        const s = h._source;
+        const kandidatSlug = generateEjendomSlug(
+          s.roadName ?? '',
+          s.houseNumber ?? '',
+          s.zipcode ?? '',
+          s.postDistrict ?? ''
+        );
+        return kandidatSlug === slug;
+      }) ?? hits[0];
 
-    const res = await fetch(url, {
-      cache: 'no-store',
-      headers: { Accept: 'application/json' },
-      signal: AbortSignal.timeout(8000),
-    });
+    const src = matchedHit._source;
+    const adgangsAdresseId = src.adgangsAdresseID;
 
-    if (!res.ok) return null;
+    if (!adgangsAdresseId) {
+      console.error(`[PUBLIC EJENDOM] Mangler adgangsAdresseID i VP ES svar for BFE ${bfe}`);
+      return null;
+    }
 
-    const data: unknown[] = await res.json();
-    if (!Array.isArray(data) || data.length === 0) return null;
+    // Trin 2: adgangsAdresseID → fuld adresse + koordinater via DAR GraphQL (Hetzner-proxy).
+    const darAdresse = await darHentAdresse(adgangsAdresseId);
 
-    // Alle UUID'er sendes til BBR-opslag så bygninger under alle adresser hentes.
-    const alleIds = data
-      .map((item) => String((item as Record<string, unknown>)['id'] ?? ''))
-      .filter(Boolean);
+    // Kommunekode: VP returnerer f.eks. "157", DAR returnerer "0157".
+    // Brug DAR's kommunenavn; kommunekode paddes til 4 cifre.
+    const kommunekodeRaw = src.municipalityNumber ?? '';
+    const kommunekode = kommunekodeRaw.padStart(4, '0');
 
-    // Vælg den adresse hvis slug matcher URL-parameteret, så siden viser den rette
-    // adresse når et jordstykke har flere (f.eks. Rådhuspladsen 1 vs. Admiralgade 17).
-    // Fallback til første adresse, hvis ingen matcher.
-    const matchetAdresse = data.find((item) => {
-      const it = item as Record<string, unknown>;
-      const vs = it['vejstykke'] as Record<string, unknown> | undefined;
-      const pos = it['postnummer'] as Record<string, unknown> | undefined;
-      const vej = String(vs?.['navn'] ?? '');
-      const husnr = String(it['husnr'] ?? '');
-      const postnr = String(pos?.['nr'] ?? it['postnr'] ?? '');
-      const postnrnavn = String(pos?.['navn'] ?? it['postnrnavn'] ?? '');
-      const kandidatSlug = generateEjendomSlug(vej, husnr, postnr, postnrnavn);
-      return kandidatSlug === slug;
-    });
-    const a = (matchetAdresse ?? data[0]) as Record<string, unknown>;
-    // DAWA nestet: vejnavn er i vejstykke.navn (ikke vejnavn.navn som i ældre format)
-    const vejstykke = a['vejstykke'] as Record<string, unknown> | undefined;
-    const pos = a['postnummer'] as Record<string, unknown> | undefined;
-    const kom = a['kommune'] as Record<string, unknown> | undefined;
-    const adgPkt = a['adgangspunkt'] as Record<string, unknown> | undefined;
-    const koord = adgPkt?.['koordinater'] as [number, number] | undefined;
-    const js = a['jordstykke'] as Record<string, unknown> | null | undefined;
-    const ejerlav = js?.['ejerlav'] as Record<string, unknown> | undefined;
+    if (darAdresse) {
+      return {
+        id: adgangsAdresseId,
+        alleIds: [adgangsAdresseId],
+        vejnavn: darAdresse.vejnavn,
+        husnr: darAdresse.husnr,
+        etage: darAdresse.etage ?? null,
+        dør: darAdresse.dør ?? null,
+        postnr: darAdresse.postnr || src.zipcode || '',
+        postnrnavn: darAdresse.postnrnavn || src.postDistrict || '',
+        kommunenavn: darAdresse.kommunenavn,
+        kommunekode,
+        x: darAdresse.x,
+        y: darAdresse.y,
+        // Jordstykke (matrikelnr/ejerlav) hentes ikke her — vises som null
+        // hvis det ikke allerede er tilgængeligt. Kan udvides via MAT WFS.
+        jordstykke: null,
+      };
+    }
 
+    // Trin 2 fallback: DAR fejlede — brug VP-adressefelter (ingen koordinater)
+    console.warn(`[PUBLIC EJENDOM] DAR fejlede for ${adgangsAdresseId} — bruger VP fallback`);
     return {
-      id: String(a['id'] ?? ''),
-      alleIds,
-      vejnavn: String(vejstykke?.['navn'] ?? ''),
-      husnr: String(a['husnr'] ?? ''),
-      etage: a['etage'] != null ? String(a['etage']) : null,
-      dør: a['dør'] != null ? String(a['dør']) : null,
-      postnr: String(pos?.['nr'] ?? a['postnr'] ?? ''),
-      postnrnavn: String(pos?.['navn'] ?? a['postnrnavn'] ?? ''),
-      kommunenavn: String(kom?.['navn'] ?? ''),
-      kommunekode: String(kom?.['kode'] ?? ''),
-      x: koord?.[0] ?? 0,
-      y: koord?.[1] ?? 0,
-      jordstykke: js
-        ? {
-            matrikelnr: String(js['matrikelnr'] ?? ''),
-            ejerlav: { navn: String(ejerlav?.['navn'] ?? '') },
-            // Nestet adgangsadresse-svar inkluderer ikke registreretAreal —
-            // brug værdien fra trin 1 jordstykker-opslaget som fallback.
-            registreretAreal: Number(js['registreretAreal'] ?? 0) || registreretArealFraJs1,
-          }
-        : null,
+      id: adgangsAdresseId,
+      alleIds: [adgangsAdresseId],
+      vejnavn: src.roadName ?? '',
+      husnr: src.houseNumber ?? '',
+      etage: src.floor ?? null,
+      dør: src.door ?? null,
+      postnr: src.zipcode ?? '',
+      postnrnavn: src.postDistrict ?? '',
+      kommunenavn: '',
+      kommunekode,
+      x: 0,
+      y: 0,
+      jordstykke: null,
     };
-  } catch {
+  } catch (err) {
+    console.error(
+      '[PUBLIC EJENDOM] hentDawaAdresse fejl:',
+      err instanceof Error ? err.message : String(err)
+    );
     return null;
   }
 }

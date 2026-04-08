@@ -89,9 +89,12 @@ const STATIC_PAGES: MetadataRoute.Sitemap = [
 export async function generateSitemaps(): Promise<Array<{ id: number }>> {
   try {
     const admin = createAdminClient();
-    const { count, error } = await admin
-      .from('sitemap_entries')
-      .select('*', { count: 'exact', head: true });
+    // Cast needed: sitemap_entries er ikke i de genererede Supabase-typer endnu.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { count, error } = await (admin.from('sitemap_entries') as any).select('*', {
+      count: 'exact',
+      head: true,
+    });
 
     if (error) {
       console.error('[sitemap] Kunne ikke tælle sitemap_entries:', error.message);
@@ -129,8 +132,9 @@ export default async function sitemap({ id }: { id: number }): Promise<MetadataR
 
   try {
     const admin = createAdminClient();
-    const { data, error } = await admin
-      .from('sitemap_entries')
+    // Cast needed: sitemap_entries er ikke i de genererede Supabase-typer endnu.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (admin.from('sitemap_entries') as any)
       .select('type, slug, entity_id, updated_at')
       .order('updated_at', { ascending: false })
       .range(dbOffset, dbOffset + dbLimit - 1);
@@ -140,7 +144,8 @@ export default async function sitemap({ id }: { id: number }): Promise<MetadataR
       return staticEntries;
     }
 
-    const dbEntries: MetadataRoute.Sitemap = (data ?? []).map((entry) => ({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const dbEntries: MetadataRoute.Sitemap = ((data ?? []) as any[]).map((entry) => ({
       url:
         entry.type === 'ejendom'
           ? `${BASE_URL}/ejendom/${entry.slug}/${entry.entity_id}`

@@ -121,9 +121,11 @@ async function upsertBatch(
 ): Promise<number> {
   if (batch.length === 0) return 0;
 
-  const { error } = await admin
-    .from('sitemap_entries')
-    .upsert(batch, { onConflict: 'type,entity_id' });
+  // Cast needed: sitemap_entries is a new table not yet in generated Supabase types.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error } = await (admin.from('sitemap_entries') as any).upsert(batch, {
+    onConflict: 'type,entity_id',
+  });
 
   if (error) {
     console.error('[generate-sitemap] Upsert fejl:', error.message);
@@ -297,13 +299,16 @@ async function phaseProperties(
   admin: ReturnType<typeof createAdminClient>
 ): Promise<{ page: number; count: number; done: boolean }> {
   // Hent gemte fremskridt
-  const { data: progressRow } = await admin
-    .from('ai_settings')
+  // Cast needed: ai_settings er ikke i de genererede Supabase-typer endnu.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: progressRow } = await (admin.from('ai_settings') as any)
     .select('value')
     .eq('key', DAWA_PROGRESS_KEY)
     .maybeSingle();
 
-  let startPage: number = progressRow?.value != null ? Number(progressRow.value) : 1;
+  // Supabase returns unknown row shape — extract value safely via index access.
+  const progressValue = (progressRow as Record<string, unknown> | null)?.['value'];
+  let startPage: number = progressValue != null ? Number(progressValue) : 1;
   if (startPage < 1) startPage = 1;
 
   const now = new Date().toISOString();
@@ -414,9 +419,12 @@ async function saveProgress(
   admin: ReturnType<typeof createAdminClient>,
   page: number
 ): Promise<void> {
-  await admin
-    .from('ai_settings')
-    .upsert({ key: DAWA_PROGRESS_KEY, value: page }, { onConflict: 'key' });
+  // Cast needed: ai_settings er ikke i de genererede Supabase-typer endnu.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await (admin.from('ai_settings') as any).upsert(
+    { key: DAWA_PROGRESS_KEY, value: page },
+    { onConflict: 'key' }
+  );
 }
 
 // ─── Route handler ─────────────────────────────────────────────────────────────

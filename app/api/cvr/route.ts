@@ -52,7 +52,9 @@ export interface CVRVirksomhed {
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
-const CVR_ES_BASE = 'http://distribution.virk.dk/cvr-permanent/virksomhed/_search';
+// BIZZ-176: changed http → https to encrypt traffic (including Basic Auth credentials)
+// in transit. distribution.virk.dk supports HTTPS.
+const CVR_ES_BASE = 'https://distribution.virk.dk/cvr-permanent/virksomhed/_search';
 
 const CVR_ES_USER = process.env.CVR_ES_USER ?? '';
 const CVR_ES_PASS = process.env.CVR_ES_PASS ?? '';

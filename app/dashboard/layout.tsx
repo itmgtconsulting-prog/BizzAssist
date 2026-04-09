@@ -62,17 +62,10 @@ const navItems = [
   { icon: Users, key: 'owners' as const, href: '/dashboard/owners', adminOnly: false },
   { icon: Map, key: 'map' as const, href: '/dashboard/kort', adminOnly: false },
   // BIZZ-168: AI Analyse visible in development only — hidden in test/prod until UX is finalized.
-  // Next.js replaces process.env.NODE_ENV at build time, so this compiles away in production.
+  // process.env.NODE_ENV is replaced at build time by Next.js, so the item is tree-shaken in prod.
   ...(process.env.NODE_ENV === 'development'
-    ? ([
-        {
-          icon: BarChart2,
-          key: 'analysis' as const,
-          href: '/dashboard/analysis',
-          adminOnly: false,
-        },
-      ] as const)
-    : ([] as const)),
+    ? [{ icon: BarChart2, key: 'analysis' as const, href: '/dashboard/analysis', adminOnly: false }]
+    : []),
   { icon: Shield, key: 'admin' as const, href: '/dashboard/admin/users', adminOnly: true },
 ];
 

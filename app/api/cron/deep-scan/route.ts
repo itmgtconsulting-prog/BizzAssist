@@ -691,6 +691,7 @@ async function sendDeepScanReport(
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ from: FROM_ADDRESS, to: TO_ADDRESS, subject, html }),
+      signal: AbortSignal.timeout(10000),
     });
 
     if (!res.ok) {

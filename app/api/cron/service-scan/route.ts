@@ -597,6 +597,7 @@ async function sendAlertEmail(
         subject,
         html,
       }),
+      signal: AbortSignal.timeout(10000),
     });
 
     if (!res.ok) {

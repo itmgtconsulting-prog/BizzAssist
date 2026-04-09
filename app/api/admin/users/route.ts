@@ -298,6 +298,7 @@ export async function DELETE(req: NextRequest): Promise<NextResponse> {
                   'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({ query: `DROP SCHEMA IF EXISTS ${schemaName} CASCADE` }),
+                signal: AbortSignal.timeout(10000),
               });
             }
           } catch (dropErr) {

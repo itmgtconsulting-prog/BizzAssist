@@ -16,7 +16,7 @@ const PROJECTS = [
   {
     ref: 'wkzwxfhyfmvglrqtmebw',
     name: 'Dev (localhost:3000)',
-    token: 'sbp_ec4f472daad76e98a92f2225d11d377b3ea074d9',
+    token: 'sbp_1ef1f0d77dadaa2de6131716b0e5280e3ba39b9a',
     siteUrl: 'http://localhost:3000',
     redirects: [
       'http://localhost:3000/auth/callback',
@@ -26,7 +26,7 @@ const PROJECTS = [
   {
     ref: 'rlkjmqjxmkxuclehbrnl',
     name: 'Test (test.bizzassist.dk)',
-    token: 'sbp_ec4f472daad76e98a92f2225d11d377b3ea074d9',
+    token: 'sbp_1ef1f0d77dadaa2de6131716b0e5280e3ba39b9a',
     siteUrl: 'https://test.bizzassist.dk',
     redirects: [
       'https://test.bizzassist.dk/auth/callback',
@@ -36,7 +36,7 @@ const PROJECTS = [
   {
     ref: 'xsyldjqcntiygrtfcszm',
     name: 'Produktion (bizzassist.dk)',
-    token: 'sbp_ec4f472daad76e98a92f2225d11d377b3ea074d9',
+    token: 'sbp_1ef1f0d77dadaa2de6131716b0e5280e3ba39b9a',
     siteUrl: 'https://bizzassist.dk',
     redirects: [
       'https://bizzassist.dk/auth/callback',
@@ -166,6 +166,10 @@ for (const project of PROJECTS) {
     // Fix: tilføj /auth/callback til allowed redirects
     uri_allow_list: project.redirects.join(','),
     site_url: project.siteUrl,
+
+    // Kræv altid email-verifikation — aldrig auto-confirm
+    mailer_autoconfirm: false,
+    mailer_allow_unverified_email_sign_ins: false,
 
     // Custom SMTP via Resend
     smtp_host: 'smtp.resend.com',

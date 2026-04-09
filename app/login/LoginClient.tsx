@@ -23,7 +23,7 @@ import { useSearchParams } from 'next/navigation';
 import { Eye, EyeOff, ArrowLeft, Loader2, AlertCircle, Info } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';
-import { signIn } from '@/app/auth/actions';
+import { signIn, resendVerificationEmail } from '@/app/auth/actions';
 import { createClient } from '@/lib/supabase/client';
 
 /** Maps server-returned error codes to bilingual user-facing messages */
@@ -85,6 +85,10 @@ function LoginForm() {
   const [lockCountdown, setLockCountdown] = useState(0);
   /** Warning: one attempt left before lockout */
   const [loginWarning, setLoginWarning] = useState<number | null>(null);
+  /** True while resend verification email request is in-flight */
+  const [resendLoading, setResendLoading] = useState(false);
+  /** True after a successful resend — shows confirmation message */
+  const [resendSent, setResendSent] = useState(false);
 
   /** Clear the error query param from URL after displaying it, so refreshing doesn't show stale errors */
   useEffect(() => {
@@ -187,6 +191,18 @@ function LoginForm() {
       setError('unexpected_error');
     }
     setLoading(false);
+  };
+
+  /**
+   * Resends the email verification link to the address currently in the email field.
+   * Resets the resendSent state if the user changes the email field after a send.
+   */
+  const handleResendVerification = async () => {
+    if (!email || resendLoading || resendSent) return;
+    setResendLoading(true);
+    await resendVerificationEmail(email);
+    setResendLoading(false);
+    setResendSent(true);
   };
 
   const errorMsg = error
@@ -387,6 +403,29 @@ function LoginForm() {
                     <IconComponent size={16} className={`${iconColor} shrink-0 mt-0.5`} />
                     <div className={`${textColor} text-sm`}>
                       <p>{errorMsg}</p>
+                      {error === 'email_not_confirmed' && (
+                        <div className="mt-2">
+                          {resendSent ? (
+                            <p className="text-green-400 text-xs font-medium">
+                              {lang === 'da'
+                                ? '✓ Verifikations-e-mail gensendt! Tjek din indbakke.'
+                                : '✓ Verification email resent! Check your inbox.'}
+                            </p>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={handleResendVerification}
+                              disabled={resendLoading || !email}
+                              className="inline-flex items-center gap-1.5 text-xs font-medium text-red-300 hover:text-white underline underline-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {resendLoading && <Loader2 size={12} className="animate-spin" />}
+                              {lang === 'da'
+                                ? 'Gensend verifikations-e-mail'
+                                : 'Resend verification email'}
+                            </button>
+                          )}
+                        </div>
+                      )}
                       {error === 'no_subscription' && (
                         <Link
                           href="/login/select-plan"
@@ -446,7 +485,10 @@ function LoginForm() {
                 <input
                   type="email"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    setResendSent(false);
+                  }}
                   placeholder={t.emailPlaceholder}
                   autoComplete="email"
                   required

@@ -675,7 +675,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
       {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         {/* Top bar */}
-        <header className="bg-[#0f172a] border-b border-white/8 px-3 sm:px-6 py-4 flex items-center gap-4 shrink-0 overflow-hidden">
+        <header className="bg-[#0f172a] border-b border-white/8 px-3 sm:px-6 py-4 flex items-center gap-4 shrink-0 overflow-x-clip">
           <div className="flex items-center gap-4">
             <button
               className="lg:hidden text-slate-400 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded-lg"

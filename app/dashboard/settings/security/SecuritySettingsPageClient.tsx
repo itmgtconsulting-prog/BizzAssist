@@ -180,14 +180,29 @@ export default function SecuritySettingsPageClient() {
   // ── Start enrollment ────────────────────────────────────────────────────────
 
   /**
-   * Initiates TOTP enrollment — fetches QR code and secret from Supabase,
-   * then transitions to the 'enrolling' state.
+   * Initiates TOTP enrollment — cleans up any leftover unverified factors first,
+   * then fetches a fresh QR code and secret from Supabase.
+   *
+   * Cleaning up unverified factors prevents a known Supabase issue where a
+   * previously-cancelled enrollment leaves a stale unverified factor that causes
+   * challengeAndVerify() to fail with a misleading "invalid code" error.
    */
   const handleStartEnroll = async () => {
     setError(null);
     setLoading(true);
     try {
       const supabase = createClient();
+
+      // Clean up any existing unverified TOTP factors before starting fresh.
+      // This avoids Supabase returning a cached factor whose secret no longer
+      // matches the QR code the user will scan, causing verify to always fail.
+      const { data: existing } = await supabase.auth.mfa.listFactors();
+      const unverified = existing?.totp?.filter((f) => f.status !== 'verified') ?? [];
+      for (const f of unverified) {
+        // Best-effort — ignore individual unenroll errors
+        await supabase.auth.mfa.unenroll({ factorId: f.id }).catch(() => {});
+      }
+
       const { data, error: enrollError } = await supabase.auth.mfa.enroll({
         factorType: 'totp',
         issuer: 'BizzAssist',
@@ -217,6 +232,9 @@ export default function SecuritySettingsPageClient() {
    * Verifies the TOTP code to complete enrollment.
    * On success transitions to the 'enrolled' state.
    *
+   * Distinguishes between "wrong code" (mfa_code_invalid) and other errors
+   * (e.g. expired session, factor not found) so the user gets actionable feedback.
+   *
    * @param e - Form submit event
    */
   const handleVerify = async (e: FormEvent) => {
@@ -231,7 +249,13 @@ export default function SecuritySettingsPageClient() {
         code,
       });
       if (verifyError) {
-        setError('err_invalid_code');
+        // mfa_code_invalid / mfa_totp_code_invalid → wrong code entered
+        // anything else (e.g. no_session, factor_not_found) → unexpected error
+        const isWrongCode =
+          verifyError.code === 'mfa_totp_code_invalid' ||
+          verifyError.code === 'mfa_code_invalid' ||
+          verifyError.message?.toLowerCase().includes('invalid');
+        setError(isWrongCode ? 'err_invalid_code' : 'err_unexpected');
         return;
       }
       setEnrolledFactorId(enrollData.factorId);
@@ -266,6 +290,11 @@ export default function SecuritySettingsPageClient() {
 
   /**
    * Unenrolls the verified TOTP factor, disabling 2FA for the account.
+   *
+   * After unenrolling, the session is refreshed so Supabase issues a new token
+   * at AAL1. Without this refresh the old AAL2 token is cached locally, and any
+   * subsequent enroll + challengeAndVerify() call will fail with a session-state
+   * mismatch even though the code is correct.
    */
   const handleRemove = async () => {
     if (!enrolledFactorId) return;
@@ -280,6 +309,10 @@ export default function SecuritySettingsPageClient() {
         setError('err_unenroll_failed');
         return;
       }
+      // Refresh session so the client gets a new AAL1 token now that the
+      // verified TOTP factor is gone. Ignore errors — worst case the old token
+      // is still valid and the user can re-enroll on the next page load.
+      await supabase.auth.refreshSession().catch(() => {});
       setEnrolledFactorId(null);
       setConfirmRemove(false);
       setMfaState('idle');

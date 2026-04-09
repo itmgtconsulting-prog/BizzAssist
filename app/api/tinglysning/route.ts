@@ -170,10 +170,7 @@ export async function GET(req: NextRequest) {
     // Trin 1: Søg ejendom med BFE-nummer
     const searchRes = await tlFetch(`/ejendom/hovednoteringsnummer?hovednoteringsnummer=${bfe}`);
     if (searchRes.status !== 200) {
-      return NextResponse.json(
-        { error: `Tinglysning søgning fejlede: ${searchRes.status}` },
-        { status: searchRes.status }
-      );
+      return NextResponse.json({ error: 'Tinglysning API fejl' }, { status: 502 });
     }
 
     const searchData = JSON.parse(searchRes.body);

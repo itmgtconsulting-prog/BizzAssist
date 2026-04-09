@@ -29,7 +29,7 @@ import {
   AlertCircle,
   ChevronLeft,
   ChevronRight,
-  BarChart2 as _BarChart2,
+  BarChart2,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';

@@ -19,6 +19,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { checkRateLimit, heavyRateLimit } from '@/app/lib/rateLimit';
+import { resolveTenantId } from '@/lib/api/auth';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -251,6 +252,16 @@ function buildBfeQuery(bfeNummer: string): Record<string, unknown> {
 export async function GET(request: NextRequest): Promise<NextResponse<ForelobigVurderingResponse>> {
   const limited = await checkRateLimit(request, heavyRateLimit);
   if (limited) return limited as NextResponse<ForelobigVurderingResponse>;
+
+  const auth = await resolveTenantId();
+  if (!auth) {
+    return NextResponse.json(
+      { error: 'Unauthorized', forelobige: [], fejl: null },
+      {
+        status: 401,
+      }
+    );
+  }
 
   const { searchParams } = request.nextUrl;
 

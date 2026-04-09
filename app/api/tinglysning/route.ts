@@ -15,6 +15,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as Sentry from '@sentry/nextjs';
 import { checkRateLimit, heavyRateLimit } from '@/app/lib/rateLimit';
+import { resolveTenantId } from '@/lib/api/auth';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -153,6 +154,11 @@ export async function GET(req: NextRequest) {
   const limited = await checkRateLimit(req, heavyRateLimit);
   if (limited) return limited;
 
+  const auth = await resolveTenantId();
+  if (!auth) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const bfe = req.nextUrl.searchParams.get('bfe');
 
   if (!bfe || !/^\d+$/.test(bfe)) {
@@ -170,10 +176,7 @@ export async function GET(req: NextRequest) {
     // Trin 1: Søg ejendom med BFE-nummer
     const searchRes = await tlFetch(`/ejendom/hovednoteringsnummer?hovednoteringsnummer=${bfe}`);
     if (searchRes.status !== 200) {
-      return NextResponse.json(
-        { error: `Tinglysning søgning fejlede: ${searchRes.status}` },
-        { status: searchRes.status }
-      );
+      return NextResponse.json({ error: 'Tinglysning API fejl' }, { status: 502 });
     }
 
     const searchData = JSON.parse(searchRes.body);

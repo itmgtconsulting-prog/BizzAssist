@@ -15,6 +15,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
+import { resolveTenantId } from '@/lib/api/auth';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -99,6 +100,14 @@ const NUANCE_TEKST: Record<string, string> = {
 export async function GET(request: NextRequest): Promise<NextResponse<JordResponse>> {
   const limited = await checkRateLimit(request, rateLimit);
   if (limited) return limited as NextResponse<JordResponse>;
+
+  const auth = await resolveTenantId();
+  if (!auth) {
+    return NextResponse.json(
+      { items: [], fejl: 'Unauthorized', ingenData: false },
+      { status: 401 }
+    );
+  }
 
   const { searchParams } = request.nextUrl;
   const ejerlavKodeStr = searchParams.get('ejerlavKode');

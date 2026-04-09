@@ -19,6 +19,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
+import { resolveTenantId } from '@/lib/api/auth';
 
 const PLANDATA_WFS = 'https://geoserver.plandata.dk/geoserver/wfs';
 const DAWA_BASE = 'https://api.dataforsyningen.dk';
@@ -313,6 +314,11 @@ async function fetchLag(x: number, y: number, layer: LayerConfig): Promise<Pland
 export async function GET(request: NextRequest): Promise<NextResponse<PlandataResponse>> {
   const limited = await checkRateLimit(request, rateLimit);
   if (limited) return limited as NextResponse<PlandataResponse>;
+
+  const auth = await resolveTenantId();
+  if (!auth) {
+    return NextResponse.json({ planer: null, fejl: 'Unauthorized' }, { status: 401 });
+  }
 
   const { searchParams } = new URL(request.url);
   const adresseId = searchParams.get('adresseId');

@@ -9,3 +9,4 @@ test-results/
 *.min.js
 public/sw.js
 public/manifest.json
+.claude/

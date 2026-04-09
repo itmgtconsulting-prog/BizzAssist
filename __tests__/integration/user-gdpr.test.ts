@@ -79,9 +79,17 @@ const mockConvoEq = vi
   .fn()
   .mockReturnValue({ order: vi.fn().mockResolvedValue({ data: [], error: null }) });
 
+const mockDelete = vi.fn().mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) });
+
 const mockFrom = vi.fn((table: string) => {
   if (table === 'tenants' || table === 'tenant_memberships') {
-    return { select: mockSelect, from: mockSchemaChain.from, insert: mockInsert };
+    // Include delete so user-deletion cleanup can remove these rows.
+    return {
+      select: mockSelect,
+      from: mockSchemaChain.from,
+      insert: mockInsert,
+      delete: mockDelete,
+    };
   }
   if (table === 'audit_log') {
     return { select: mockSelect, from: mockSchemaChain.from, insert: mockInsert };
@@ -242,9 +250,15 @@ describe('DELETE /api/user/delete-account', () => {
       }),
       insert: vi.fn().mockResolvedValue({ error: null }),
     });
+    mockDelete.mockReturnValue({ eq: vi.fn().mockResolvedValue({ error: null }) });
     mockFrom.mockImplementation((table: string) => {
       if (table === 'tenants' || table === 'tenant_memberships') {
-        return { select: mockSelect, from: mockSchemaChain.from, insert: mockInsert };
+        return {
+          select: mockSelect,
+          from: mockSchemaChain.from,
+          insert: mockInsert,
+          delete: mockDelete,
+        };
       }
       if (table === 'audit_log') {
         return { select: mockSelect, from: mockSchemaChain.from, insert: mockInsert };

@@ -120,6 +120,31 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
         await db.from('notifications').delete().eq('user_id', user.id);
         await db.from('recent_searches').delete().eq('user_id', user.id);
         await db.from('activity_log').delete().eq('user_id', user.id);
+
+        // Drop the now-empty schema so re-registration with the same email is clean.
+        try {
+          const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+          const accessToken = process.env.SUPABASE_ACCESS_TOKEN;
+          if (supabaseUrl && accessToken) {
+            const projectRef = supabaseUrl.replace('https://', '').split('.')[0];
+            await fetch(`https://api.supabase.com/v1/projects/${projectRef}/database/query`, {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ query: `DROP SCHEMA IF EXISTS ${schemaName} CASCADE` }),
+            });
+          }
+        } catch (dropErr) {
+          console.error('[delete-account] Schema drop error (non-fatal):', dropErr);
+        }
+
+        // Remove membership and tenant record — re-registration must start clean.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (admin as any).from('tenant_memberships').delete().eq('tenant_id', tenantId);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (admin as any).from('tenants').delete().eq('id', tenantId);
       }
     }
 

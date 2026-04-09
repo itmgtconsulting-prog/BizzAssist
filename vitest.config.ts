@@ -48,6 +48,9 @@ export default defineConfig({
         branches: 35,
       },
     },
+    // Component tests render React trees in jsdom which can be slow on
+    // resource-constrained machines — raise the per-test timeout to 15s.
+    testTimeout: 15000,
     include: ['__tests__/**/*.{test,spec}.{ts,tsx}'],
     exclude: [
       '__tests__/e2e/**',

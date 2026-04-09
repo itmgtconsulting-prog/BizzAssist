@@ -280,16 +280,37 @@ export async function DELETE(req: NextRequest): Promise<NextResponse> {
           // GDPR Art. 17 requires complete erasure of all personal data on deletion.
           await db.from('recent_searches').delete().eq('user_id', targetUser.id);
           await db.from('activity_log').delete().eq('user_id', targetUser.id);
+
+          // Drop the schema entirely via raw SQL — all personal data has already
+          // been deleted above. Dropping the schema now ensures that re-registering
+          // with the same email starts from a completely clean slate.
+          // GDPR Art. 17: data is already erased above; the empty schema has no
+          // retention value so it is dropped immediately rather than after 30 days.
+          try {
+            const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+            const accessToken = process.env.SUPABASE_ACCESS_TOKEN;
+            if (supabaseUrl && accessToken) {
+              const projectRef = supabaseUrl.replace('https://', '').split('.')[0];
+              await fetch(`https://api.supabase.com/v1/projects/${projectRef}/database/query`, {
+                method: 'POST',
+                headers: {
+                  Authorization: `Bearer ${accessToken}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ query: `DROP SCHEMA IF EXISTS ${schemaName} CASCADE` }),
+              });
+            }
+          } catch (dropErr) {
+            console.error('[admin/users] Schema drop error (non-fatal):', dropErr);
+          }
         }
 
-        // Mark the tenant as closed for 30-day retention enforcement.
-        // The nightly purge cron (/api/cron/purge-old-data) will erase all
-        // remaining tenant schema data once closed_at is older than 30 days.
+        // Delete tenant membership and tenant record so re-registration with the
+        // same email starts from a clean slate (no orphaned rows).
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (admin as any)
-          .from('tenants')
-          .update({ closed_at: new Date().toISOString() })
-          .eq('id', tenantId);
+        await (admin as any).from('tenant_memberships').delete().eq('tenant_id', tenantId);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (admin as any).from('tenants').delete().eq('id', tenantId);
       }
     } catch (cascadeErr) {
       // Non-critical path — log but do not abort deletion.

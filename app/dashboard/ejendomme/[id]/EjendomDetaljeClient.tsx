@@ -7519,12 +7519,14 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
             {visServitutter.map((s, i) => {
               const docId = String(s.dokumentId ?? '');
               const isOpen = expandedServitutter.has(i);
+              const servitutBilag = Array.isArray(s.bilagRefs) ? (s.bilagRefs as string[]) : [];
               const hasDetails =
                 s.tillaegsTekst ||
                 s.paataleberettiget ||
                 (s.indholdKoder && Array.isArray(s.indholdKoder) && s.indholdKoder.length > 0) ||
                 s.tinglysningsafgift ||
-                s.harBetydningForVaerdi;
+                s.harBetydningForVaerdi ||
+                servitutBilag.length > 0;
               return (
                 <div key={`s-${i}`} className="border-b border-slate-700/15">
                   <div
@@ -7554,11 +7556,20 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
                     <span className="text-xs text-slate-400 tabular-nums whitespace-nowrap">
                       {formatDato(s.dato as string | null)}
                     </span>
-                    <span className="text-sm text-slate-300 truncate">
-                      {String(s.tekst ?? '') || (servitutTypeMap[String(s.type)] ?? String(s.type))}
-                      {s.ogsaaLystPaa != null && Number(s.ogsaaLystPaa) > 1 && (
-                        <span className="text-slate-600 text-[10px] ml-1">
-                          ({String(s.ogsaaLystPaa)} ejd.)
+                    <span className="text-sm text-slate-300 truncate flex items-center gap-1.5">
+                      <span className="truncate">
+                        {String(s.tekst ?? '') ||
+                          (servitutTypeMap[String(s.type)] ?? String(s.type))}
+                        {s.ogsaaLystPaa != null && Number(s.ogsaaLystPaa) > 1 && (
+                          <span className="text-slate-600 text-[10px] ml-1">
+                            ({String(s.ogsaaLystPaa)} ejd.)
+                          </span>
+                        )}
+                      </span>
+                      {servitutBilag.length > 0 && (
+                        <span className="flex-shrink-0 inline-flex items-center gap-0.5 text-[10px] text-teal-500/80 bg-teal-500/10 px-1 py-0.5 rounded">
+                          <FileText size={9} />
+                          {servitutBilag.length}
                         </span>
                       )}
                     </span>
@@ -7697,6 +7708,28 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
                           Dok: {String(s.dokumentAlias)}
                         </p>
                       )}
+                      {/* ── Tilknyttede bilag til denne servitut ── */}
+                      {servitutBilag.length > 0 && (
+                        <div className="mt-2 pt-2 border-t border-slate-700/20">
+                          <p className="text-slate-500 text-[10px] uppercase mb-1.5">
+                            {da ? 'Tilknyttede bilag' : 'Attachments'} ({servitutBilag.length})
+                          </p>
+                          <div className="space-y-1">
+                            {servitutBilag.map((bilagId, bi) => (
+                              <a
+                                key={bi}
+                                href={`/api/tinglysning/dokument?bilag=${bilagId}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                              >
+                                <FileText size={10} className="flex-shrink-0" />
+                                {da ? `Bilag ${bi + 1}` : `Attachment ${bi + 1}`}
+                              </a>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -7719,12 +7752,12 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
           </>
         )}
 
-        {/* ── BILAG (originale scannede PDF'er fra Tinglysningens bilagsbank) ── */}
+        {/* ── BILAG (tingbog-/adkomstniveau — bilag der ikke er knyttet til en enkelt servitut) ── */}
         {bilagRefs.length > 0 && (
           <>
             <div className="px-4 py-1.5 bg-blue-500/5 border-b border-slate-700/20">
               <span className="text-[10px] font-semibold text-blue-400 uppercase tracking-wider">
-                {da ? 'Bilag — originale dokumenter' : 'Attachments — original documents'} (
+                {da ? 'Tingbog / Adkomst — bilag' : 'Land register / Deed — attachments'} (
                 {bilagRefs.length})
               </span>
             </div>

@@ -496,7 +496,7 @@ export default function ServiceManagementClient() {
   const issueCount = allStates.filter((s) => s.status === 'degraded' || s.status === 'down').length;
 
   return (
-    <div className="h-full overflow-y-auto bg-[#0a1020] text-white">
+    <div className="min-h-full bg-[#0a1020] text-white">
       <div className="max-w-6xl mx-auto px-4 py-8">
         {/* Back link */}
         <Link

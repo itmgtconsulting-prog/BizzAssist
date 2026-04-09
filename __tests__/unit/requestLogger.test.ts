@@ -29,12 +29,12 @@ describe('logRequest — production mode (structured JSON)', () => {
   beforeEach(() => {
     vi.resetModules();
     // Force production so isDev = false → JSON output path
-    process.env.NODE_ENV = 'production';
+    (process.env as Record<string, string>).NODE_ENV = 'production';
     consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
   });
 
   afterEach(() => {
-    process.env.NODE_ENV = originalNodeEnv;
+    (process.env as Record<string, string>).NODE_ENV = originalNodeEnv;
     consoleSpy.mockRestore();
     vi.resetModules();
   });
@@ -184,12 +184,12 @@ describe('logRequest — development mode (human-readable string)', () => {
 
   beforeEach(() => {
     vi.resetModules();
-    process.env.NODE_ENV = 'development';
+    (process.env as Record<string, string>).NODE_ENV = 'development';
     consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
   });
 
   afterEach(() => {
-    process.env.NODE_ENV = originalNodeEnv;
+    (process.env as Record<string, string>).NODE_ENV = originalNodeEnv;
     consoleSpy.mockRestore();
     vi.resetModules();
   });

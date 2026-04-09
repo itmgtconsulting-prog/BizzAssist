@@ -69,7 +69,7 @@ describe('cachePlans — BIZZ-193 localStorage prohibition', () => {
   it('never writes the ba-plan-cache key to localStorage', () => {
     cachePlans([DEMO_PLAN]);
     const allCalls = localStorageMock.setItem.mock.calls;
-    const cacheKeyCalls = allCalls.filter(([key]: [string]) => key === 'ba-plan-cache');
+    const cacheKeyCalls = allCalls.filter((call) => call[0] === 'ba-plan-cache');
     expect(cacheKeyCalls).toHaveLength(0);
   });
 

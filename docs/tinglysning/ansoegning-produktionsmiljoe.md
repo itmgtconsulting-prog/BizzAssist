@@ -126,9 +126,9 @@ BizzAssist håndterer følgende fejlsituationer eksplicit:
 
 Vi er bekendt med, at adgang til produktionsmiljøet kræver registrering som **storkunde hos SKAT** i henhold til § 20, stk. 3 i bekendtgørelse nr. 1634 af 29. juni 2021 om tekniske krav og forskrifter for tinglysningssystemet.
 
-**Status:** Registrering som storkunde hos SKAT er godkendt.
+**Status:** Pecunia IT Consulting ApS er registreret til betaling af tinglysningsafgift, hvilket udgør grundlaget for storkunde-status. Der er ikke udstedt et separat certifikat i forbindelse med registreringen.
 
-Vi fremsender dokumentation for storkunde-registreringen som bilag.
+Registreringen som storkunde bekræftes ved dokumentation for registrering til betaling af tinglysningsafgift, som vedlægges som bilag.
 
 ---
 
@@ -148,8 +148,7 @@ Vi fremsender dokumentation for storkunde-registreringen som bilag.
 ## Bilag
 
 1. Dokumentation for implementerede services (kode-eksempler på request/response-håndtering)
-2. Dokumentation for storkunde-registrering hos SKAT
-3. Systemcertifikat RID: `c12026c7-9ef1-4c03-ae26-00f4cb3be7e91` (OCES3 FOCES, udstedt til Pecunia IT Consulting ApS, CVR 44718502, gyldigt 2026-04-01 → 2029-03-31)
+2. Dokumentation for registrering til betaling af tinglysningsafgift (bekræftelse af storkunde-status hos SKAT)
 
 ---
 

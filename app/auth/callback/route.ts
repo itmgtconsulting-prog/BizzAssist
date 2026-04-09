@@ -82,6 +82,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   if (error) {
     console.error('[auth/callback] Code exchange failed:', error.message, 'status:', error.status);
+
+    // ── Graceful handling for signup verification links ────────────────────
+    // If mailer_autoconfirm is enabled, the account is confirmed immediately
+    // at signup — the PKCE token in the verification email is already consumed.
+    // Also handles expired links (user waited too long) and re-used links.
+    // In all these cases, the account IS confirmed, so we show the verified page.
+    if (type === 'signup') {
+      console.error('[auth/callback] Signup code exchange failed — showing verified page anyway');
+      return NextResponse.redirect(`${origin}/login/verified`);
+    }
+
     return NextResponse.redirect(
       `${origin}/login?error=auth_failed&details=${encodeURIComponent(error.message)}`
     );

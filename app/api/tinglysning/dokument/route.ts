@@ -668,80 +668,9 @@ export async function GET(req: NextRequest) {
       xml.includes('kan ikke vises her') ||
       xml.includes('forespørgsel i tingbøgerne');
 
-    // ── Forsøg at hente scannet original-PDF via alternative endpoints ──
-    // Resights og lignende tjenester henter scannede PDF'er via endpoints
-    // der ikke er dokumenteret i HTTP API-beskrivelsen. Vi prøver kendte
-    // mønstre fra webportalens /rest/ API (tilgængeligt via /ssl/ med mTLS).
-    if (isPreDigital) {
-      const pfx = loadCert();
-      const candidateDocPaths = [
-        `/hentakt/${uuid}`,
-        `/dokument/uuid/${uuid}`,
-        `/hentdokument/${uuid}`,
-        `/akt/uuid/${uuid}`,
-        `/dokument/${uuid}`,
-      ];
-
-      for (const docPath of candidateDocPaths) {
-        const result = await new Promise<{ pdf: Buffer | null; status: number; ct: string }>(
-          (resolve) => {
-            const url = new URL(TL_BASE + '/tinglysning/ssl' + docPath);
-            const r = https.request(
-              {
-                hostname: url.hostname,
-                port: 443,
-                path: url.pathname,
-                method: 'GET',
-                pfx,
-                passphrase: CERT_PASSWORD,
-                rejectUnauthorized: false,
-                timeout: 12000,
-                headers: { Accept: 'application/pdf, application/octet-stream, */*' },
-              },
-              (res) => {
-                const chunks: Buffer[] = [];
-                res.on('data', (d) => chunks.push(d));
-                res.on('end', () => {
-                  const buf = Buffer.concat(chunks);
-                  resolve({
-                    pdf: buf,
-                    status: res.statusCode ?? 0,
-                    ct: res.headers['content-type'] ?? '',
-                  });
-                });
-              }
-            );
-            r.on('error', () => resolve({ pdf: null, status: 0, ct: '' }));
-            r.on('timeout', () => {
-              r.destroy();
-              resolve({ pdf: null, status: 0, ct: '' });
-            });
-            r.end();
-          }
-        );
-
-        console.log(
-          `[tinglysning/dokument] probe ${docPath} → HTTP ${result.status}, CT: ${result.ct}, bytes: ${result.pdf?.length ?? 0}, starts: ${result.pdf?.subarray(0, 5).toString() ?? 'null'}`
-        );
-
-        // Ægte PDF starter med %PDF
-        if (
-          result.status === 200 &&
-          result.pdf &&
-          result.pdf.length > 1000 &&
-          result.pdf.subarray(0, 4).toString() === '%PDF'
-        ) {
-          console.log(`[tinglysning/dokument] ✓ scannet PDF fundet via ${docPath}`);
-          return new NextResponse(new Uint8Array(result.pdf), {
-            status: 200,
-            headers: {
-              'Content-Type': 'application/pdf',
-              'Content-Disposition': `inline; filename="tinglysning-${uuid?.slice(0, 8)}.pdf"`,
-            },
-          });
-        }
-      }
-    }
+    // NOTE (testet 2026-04-09): /hentakt, /dokument, /akt, /bilag returnerer alle 404
+    // for pre-digitale dokumenter via mTLS HTTP API. Scannede PDFs er kun tilgængelige
+    // via webportalen (/rest/ + MitID-session). Afventer REST API fra 1. maj 2026.
 
     if (isPreDigital) {
       // Generér en informativ PDF i stedet for at vise rå XML-indhold

@@ -180,6 +180,15 @@ These are the authoritative sources. Never assume — read first.
 - `localStorage` is acceptable **only** as a fallback when Supabase is unavailable (e.g. `NotifikationsDropdown.tsx` hybrid pattern — fallback is acceptable there, but Supabase is always the primary source)
 - Never use `localStorage` as the **primary** data store for anything that should persist across devices
 
+**Approved `localStorage` exceptions** (primary store, no Supabase sync required):
+
+| Key                    | Component         | Justification                                                                                                                                             | Ticket   |
+| ---------------------- | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| `bizzassist-map-style` | `PropertyMap.tsx` | Map style (satellite/street/BBR) is a device-local UI preference with no cross-device value. Storing in Supabase would add latency for a cosmetic toggle. | BIZZ-187 |
+| `bizzassist-map-zoom`  | `PropertyMap.tsx` | Zoom level is a transient navigation preference that is meaningless on other screen sizes/devices.                                                        | BIZZ-187 |
+
+New exceptions require a JIRA ticket and an entry in this table before they may be merged.
+
 ---
 
 ## BizzAssist Solution Map

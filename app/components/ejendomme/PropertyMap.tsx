@@ -145,7 +145,25 @@ export interface BBRBygningPunkt {
 /** Statuskoder der anses som aktive bygninger */
 const AKTIV_STATUS = new Set(['1', '2', '3', '6', '7']);
 
+/**
+ * localStorage-nøgle for kortstil (gadekort / satellitfoto / BBR).
+ *
+ * Approved localStorage exception — BIZZ-187.
+ * Map style is a per-device UI preference (not user data) that intentionally
+ * does NOT need to sync across devices. Storing it in Supabase would add
+ * unnecessary latency and complexity for a cosmetic preference.
+ * See CLAUDE.md § "State Management Rule" for the full exception list.
+ */
 const STYLE_STORAGE_KEY = 'bizzassist-map-style';
+
+/**
+ * localStorage-nøgle for brugerens zoom-niveau på kortet.
+ *
+ * Approved localStorage exception — BIZZ-187.
+ * Map zoom level is a transient, device-local navigation preference that
+ * is meaningless on other screens/devices. Supabase persistence would be
+ * disproportionate. See CLAUDE.md § "State Management Rule".
+ */
 const ZOOM_STORAGE_KEY = 'bizzassist-map-zoom';
 const DEFAULT_ZOOM = 17;
 
@@ -403,7 +421,14 @@ const OVERLAY_START: Record<OverlayNøgle, boolean> = {
   omr_klassificering: false,
 };
 
-/** Læs gemt zoom fra localStorage — fallback til DEFAULT_ZOOM */
+/**
+ * Læs gemt zoom fra localStorage — fallback til DEFAULT_ZOOM.
+ *
+ * localStorage is the approved store for this value (BIZZ-187): zoom level
+ * is a device-local UI preference with no cross-device value.
+ *
+ * @returns Gemt zoom-niveau, eller DEFAULT_ZOOM hvis ingen gyldig værdi findes.
+ */
 function læsGemtZoom(): number {
   if (typeof window === 'undefined') return DEFAULT_ZOOM;
   const v = parseFloat(window.localStorage.getItem(ZOOM_STORAGE_KEY) ?? '');
@@ -624,6 +649,10 @@ function PropertyMap({
   /**
    * Korttype initialiseres fra localStorage så den bevares på tværs af navigationer.
    * Sikrer at brugeren forbliver i f.eks. BBR-tilstand når de klikker til ny ejendom.
+   *
+   * localStorage is an approved exception for this value (BIZZ-187): map style is a
+   * device-local UI preference that does not need cross-device synchronisation.
+   * See CLAUDE.md § "State Management Rule".
    */
   const [mapStyle, setMapStyleState] = useState<MapStyle>(() => {
     if (typeof window === 'undefined') return 'satellite';
@@ -1084,6 +1113,10 @@ function PropertyMap({
    * Stabil zoom-end handler — gemmer brugerzoom i localStorage + intern ref.
    * Stable reference prevents react-map-gl from considering the Map prop changed
    * on every parent render, which would force mapbox-gl to re-evaluate events.
+   *
+   * localStorage persistence is an approved exception (BIZZ-187): zoom level
+   * is a transient UI preference with no cross-device value, so Supabase is
+   * not required here. See CLAUDE.md § "State Management Rule".
    */
   const handleZoomEnd = useCallback((e: { viewState: { zoom: number } }) => {
     zoomRef.current = e.viewState.zoom;

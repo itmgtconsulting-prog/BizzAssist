@@ -19,8 +19,9 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, CheckCircle2, Loader2, AlertCircle, Zap, Clock } from 'lucide-react';
+import { ArrowLeft, Check, CheckCircle2, Loader2, AlertCircle, Zap, Clock } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
+import { translations } from '@/app/lib/translations';
 import { selectFreePlan } from '@/app/auth/actions';
 
 /** Plan data shape returned by /api/plans */
@@ -39,27 +40,34 @@ interface PlanOption {
   stripePriceId?: string | null;
 }
 
-/** Color map matching the signup page */
-const PLAN_COLORS: Record<string, { border: string; ring: string; badge: string }> = {
+/** Color tokens for each plan accent color */
+const PLAN_COLORS: Record<
+  string,
+  { border: string; ring: string; badge: string; popular: boolean }
+> = {
   amber: {
     border: 'border-amber-500/40',
-    ring: 'ring-amber-500/30',
+    ring: 'ring-amber-500/40',
     badge: 'text-amber-400 bg-amber-500/10',
+    popular: false,
   },
   slate: {
     border: 'border-slate-400/40',
-    ring: 'ring-slate-400/30',
+    ring: 'ring-slate-400/40',
     badge: 'text-slate-400 bg-slate-500/10',
+    popular: false,
   },
   blue: {
     border: 'border-blue-500/40',
-    ring: 'ring-blue-500/30',
+    ring: 'ring-blue-500/40',
     badge: 'text-blue-400 bg-blue-500/10',
+    popular: true,
   },
   purple: {
     border: 'border-purple-500/40',
-    ring: 'ring-purple-500/30',
+    ring: 'ring-purple-500/40',
     badge: 'text-purple-400 bg-purple-500/10',
+    popular: false,
   },
 };
 
@@ -255,10 +263,15 @@ export default function SelectPlanClient() {
                 <span className="text-xs">{da ? 'Henter planer…' : 'Loading plans…'}</span>
               </div>
             ) : (
-              <div className="grid grid-cols-2 gap-3 mb-6">
+              <div className="space-y-2.5 mb-6">
                 {plans.map((plan) => {
                   const isSelected = selectedPlan === plan.id;
                   const colors = PLAN_COLORS[plan.color] ?? PLAN_COLORS.slate;
+                  const featuresMap = translations[lang].pricing.features as Record<
+                    string,
+                    string[]
+                  >;
+                  const features: string[] = featuresMap[plan.id] ?? [];
 
                   return (
                     <button
@@ -266,42 +279,81 @@ export default function SelectPlanClient() {
                       type="button"
                       onClick={() => setSelectedPlan(plan.id)}
                       disabled={submitting}
-                      className={`text-left rounded-xl p-3 border-2 transition-all disabled:opacity-50 ${
+                      className={`relative w-full text-left rounded-xl p-4 border-2 transition-all disabled:opacity-50 ${
                         isSelected
                           ? `${colors.border} bg-white/5 ring-2 ${colors.ring}`
                           : 'border-white/10 hover:border-white/20 bg-white/[0.02]'
                       }`}
                     >
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-white text-sm font-semibold">
-                          {da ? plan.nameDa : plan.nameEn}
+                      {/* "Mest populær" badge */}
+                      {colors.popular && (
+                        <span className="absolute -top-2.5 left-4 bg-blue-600 text-white text-[9px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wide">
+                          {da ? 'Mest populær' : 'Most popular'}
                         </span>
-                        {isSelected && <CheckCircle2 size={14} className="text-blue-400" />}
+                      )}
+
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          {/* Name + price */}
+                          <div className="flex items-baseline gap-2 flex-wrap mb-0.5">
+                            <span className="text-white text-sm font-bold">
+                              {da ? plan.nameDa : plan.nameEn}
+                            </span>
+                            <span className="text-white text-sm font-bold">
+                              {plan.priceDkk === 0
+                                ? da
+                                  ? 'Gratis'
+                                  : 'Free'
+                                : `${plan.priceDkk} kr`}
+                              {plan.priceDkk > 0 && (
+                                <span className="text-slate-500 text-xs font-normal">/md</span>
+                              )}
+                            </span>
+                          </div>
+
+                          {/* Description */}
+                          <p className="text-xs text-slate-500 mb-2">
+                            {da ? plan.descDa : plan.descEn}
+                          </p>
+
+                          {/* Feature list */}
+                          {features.length > 0 && (
+                            <ul className="space-y-1">
+                              {features.map((feat) => (
+                                <li
+                                  key={feat}
+                                  className="flex items-center gap-1.5 text-xs text-slate-400"
+                                >
+                                  <Check size={10} className="text-blue-400 shrink-0" />
+                                  {feat}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+
+                        <div className="flex flex-col items-end gap-2 shrink-0 pt-0.5">
+                          {isSelected && <CheckCircle2 size={16} className="text-blue-400" />}
+                          {plan.aiEnabled && plan.aiTokensPerMonth !== 0 && (
+                            <div
+                              className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full ${colors.badge}`}
+                            >
+                              <Zap size={9} />
+                              {plan.aiTokensPerMonth < 0
+                                ? da
+                                  ? 'Ubegrænset AI'
+                                  : 'Unlimited AI'
+                                : `${Math.round(plan.aiTokensPerMonth / 1000)}K AI`}
+                            </div>
+                          )}
+                          {plan.requiresApproval && (
+                            <div className="inline-flex items-center gap-1 text-[10px] text-slate-500">
+                              <Clock size={9} />
+                              {da ? 'Godkendelse' : 'Approval'}
+                            </div>
+                          )}
+                        </div>
                       </div>
-                      <p className="text-white text-base font-bold">
-                        {plan.priceDkk === 0 ? (da ? 'Gratis' : 'Free') : `${plan.priceDkk} kr`}
-                        {plan.priceDkk > 0 && (
-                          <span className="text-slate-500 text-xs font-normal">/md</span>
-                        )}
-                      </p>
-                      {plan.aiEnabled && (
-                        <div
-                          className={`mt-1.5 inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full ${colors.badge}`}
-                        >
-                          <Zap size={10} />
-                          {plan.aiTokensPerMonth >= 1000000
-                            ? da
-                              ? 'Ubegrænset AI'
-                              : 'Unlimited AI'
-                            : `${Math.round(plan.aiTokensPerMonth / 1000)}K AI`}
-                        </div>
-                      )}
-                      {plan.requiresApproval && (
-                        <div className="mt-1.5 inline-flex items-center gap-1 text-xs text-slate-500">
-                          <Clock size={10} />
-                          {da ? 'Kræver godkendelse' : 'Requires approval'}
-                        </div>
-                      )}
                     </button>
                   );
                 })}

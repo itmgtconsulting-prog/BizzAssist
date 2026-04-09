@@ -26,18 +26,21 @@ import {
   Building2,
   Briefcase,
   Check,
+  CheckCircle2,
   ArrowRight,
   ArrowLeft,
   Sparkles,
   Search,
   Loader2,
   ChevronDown,
-  Star,
   Zap,
-  Shield,
+  Clock,
+  AlertCircle,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useLanguage } from '@/app/context/LanguageContext';
+import { translations } from '@/app/lib/translations';
+import { selectFreePlan } from '@/app/auth/actions';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -65,22 +68,21 @@ interface HeadcountOption {
   labelEn: string;
 }
 
-/** Pricing plan card definition */
-interface PlanCard {
-  id: 'free' | 'pro' | 'enterprise';
-  icon: typeof Star;
-  iconColor: string;
-  iconBg: string;
+/** Plan data shape returned by /api/plans */
+interface PlanOption {
+  id: string;
   nameDa: string;
   nameEn: string;
-  priceDa: string;
-  priceEn: string;
-  featuresDa: string[];
-  featuresEn: string[];
-  ctaDa: string;
-  ctaEn: string;
-  highlighted: boolean;
-  comingSoon: boolean;
+  descDa: string;
+  descEn: string;
+  priceDkk: number;
+  aiTokensPerMonth: number;
+  aiEnabled: boolean;
+  requiresApproval: boolean;
+  freeTrialDays: number;
+  color: string;
+  stripePriceId?: string | null;
+  sortOrder: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -111,91 +113,36 @@ const HEADCOUNT_OPTIONS: HeadcountOption[] = [
   { value: '50+', labelDa: '50+ medarbejdere', labelEn: '50+ employees' },
 ];
 
-/** Pricing plan definitions for step 3 */
-const PLAN_CARDS: PlanCard[] = [
-  {
-    id: 'free',
-    icon: Star,
-    iconColor: 'text-slate-300',
-    iconBg: 'bg-slate-700/60',
-    nameDa: 'Gratis',
-    nameEn: 'Free',
-    priceDa: '0 kr/md',
-    priceEn: '0 DKK/mo',
-    featuresDa: [
-      '10 søgninger/dag',
-      'Ejendomsdata (BBR, vurdering)',
-      'Virksomhedsdata (CVR)',
-      'Begrænset AI-assistent',
-    ],
-    featuresEn: [
-      '10 searches/day',
-      'Property data (BBR, valuation)',
-      'Company data (CVR)',
-      'Limited AI assistant',
-    ],
-    ctaDa: 'Fortsæt gratis',
-    ctaEn: 'Continue free',
-    highlighted: false,
-    comingSoon: false,
+/** Color tokens for each plan */
+const PLAN_COLORS: Record<
+  string,
+  { border: string; ring: string; badge: string; popular: boolean }
+> = {
+  amber: {
+    border: 'border-amber-500/40',
+    ring: 'ring-amber-500/40',
+    badge: 'text-amber-400 bg-amber-500/10',
+    popular: false,
   },
-  {
-    id: 'pro',
-    icon: Zap,
-    iconColor: 'text-blue-400',
-    iconBg: 'bg-blue-500/20',
-    nameDa: 'Pro',
-    nameEn: 'Pro',
-    priceDa: '499 kr/md',
-    priceEn: '499 DKK/mo',
-    featuresDa: [
-      'Ubegrænsede søgninger',
-      'Fuld AI-assistent (Claude)',
-      'Ejendomsrapporter (PDF)',
-      'Følg ejendomme & notifikationer',
-      'Tinglysningsdata',
-    ],
-    featuresEn: [
-      'Unlimited searches',
-      'Full AI assistant (Claude)',
-      'Property reports (PDF)',
-      'Follow properties & notifications',
-      'Mortgage & encumbrance data',
-    ],
-    ctaDa: 'Kommer snart',
-    ctaEn: 'Coming soon',
-    highlighted: true,
-    comingSoon: true,
+  slate: {
+    border: 'border-slate-400/40',
+    ring: 'ring-slate-400/40',
+    badge: 'text-slate-400 bg-slate-500/10',
+    popular: false,
   },
-  {
-    id: 'enterprise',
-    icon: Shield,
-    iconColor: 'text-purple-400',
-    iconBg: 'bg-purple-500/20',
-    nameDa: 'Enterprise',
-    nameEn: 'Enterprise',
-    priceDa: 'Kontakt os',
-    priceEn: 'Contact us',
-    featuresDa: [
-      'Alt i Pro',
-      'Systemintegration (API)',
-      'Dedikeret support',
-      'Tilpasset dataekstraktion',
-      'SLA-garanti',
-    ],
-    featuresEn: [
-      'Everything in Pro',
-      'System integration (API)',
-      'Dedicated support',
-      'Custom data extraction',
-      'SLA guarantee',
-    ],
-    ctaDa: 'Kommer snart',
-    ctaEn: 'Coming soon',
-    highlighted: false,
-    comingSoon: true,
+  blue: {
+    border: 'border-blue-500/40',
+    ring: 'ring-blue-500/40',
+    badge: 'text-blue-400 bg-blue-500/10',
+    popular: true,
   },
-];
+  purple: {
+    border: 'border-purple-500/40',
+    ring: 'ring-purple-500/40',
+    badge: 'text-purple-400 bg-purple-500/10',
+    popular: false,
+  },
+};
 
 // ---------------------------------------------------------------------------
 // Component
@@ -231,8 +178,12 @@ export default function OnboardingClient() {
   const [loadingCvr, setLoadingCvr] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
 
-  // ── Step 3: selected plan ─────────────────────────────────────────────────
-  const [selectedPlan] = useState<'free' | 'pro' | 'enterprise'>('free');
+  // ── Step 3: plan selection ────────────────────────────────────────────────
+  const [plans, setPlans] = useState<PlanOption[]>([]);
+  const [plansLoading, setPlansLoading] = useState(true);
+  const [selectedPlan, setSelectedPlan] = useState<string>('demo');
+  const [planSubmitting, setPlanSubmitting] = useState(false);
+  const [planError, setPlanError] = useState<string | null>(null);
 
   // ── Submission state ───────────────────────────────────────────────────────
   const [saving, setSaving] = useState(false);
@@ -272,6 +223,24 @@ export default function OnboardingClient() {
         }
       } catch {
         // Non-fatal — tenant name update will be skipped
+      }
+
+      // Fetch available plans for step 3
+      try {
+        const planRes = await fetch('/api/plans');
+        if (planRes.ok) {
+          const data = (await planRes.json()) as PlanOption[];
+          if (!cancelled) {
+            setPlans(data);
+            // Pre-select demo plan, or first plan as fallback
+            const demo = data.find((p) => p.id === 'demo') ?? data[0];
+            if (demo) setSelectedPlan(demo.id);
+          }
+        }
+      } catch {
+        // Non-fatal — will show empty state
+      } finally {
+        if (!cancelled) setPlansLoading(false);
       }
     })();
     return () => {
@@ -358,6 +327,59 @@ export default function OnboardingClient() {
   const goBack = useCallback(() => {
     setStep((s) => Math.max(s - 1, 0));
   }, []);
+
+  /**
+   * Handles the "Næste" button in the plan step (step 2).
+   * Free/demo plans: activate via server action and continue to step 3.
+   * Paid plans: redirect to Stripe checkout.
+   */
+  const handlePlanNext = useCallback(async () => {
+    if (planSubmitting) return;
+    const plan = plans.find((p) => p.id === selectedPlan);
+    // No plan selected or invalid — just advance
+    if (!plan) {
+      goNext();
+      return;
+    }
+
+    setPlanError(null);
+    setPlanSubmitting(true);
+
+    try {
+      if (plan.priceDkk > 0) {
+        if (!plan.stripePriceId) {
+          setPlanError(
+            da
+              ? 'Betaling er ikke konfigureret for denne plan. Kontakt administrator.'
+              : 'Payment is not configured for this plan. Contact administrator.'
+          );
+          setPlanSubmitting(false);
+          return;
+        }
+        const res = await fetch('/api/stripe/create-checkout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ planId: selectedPlan }),
+        });
+        const json = (await res.json()) as { url?: string; error?: string };
+        if (!res.ok || !json.url) {
+          setPlanError(
+            da ? 'Noget gik galt. Prøv igen.' : 'Something went wrong. Please try again.'
+          );
+          setPlanSubmitting(false);
+          return;
+        }
+        window.location.href = json.url;
+      } else {
+        // Free or demo plan — activate via server action, then advance
+        await selectFreePlan(selectedPlan);
+        goNext();
+      }
+    } catch {
+      setPlanError(da ? 'Noget gik galt. Prøv igen.' : 'Something went wrong. Please try again.');
+      setPlanSubmitting(false);
+    }
+  }, [plans, selectedPlan, planSubmitting, da, goNext]);
 
   /**
    * Complete onboarding — saves company data and marks user as onboarded.
@@ -627,89 +649,165 @@ export default function OnboardingClient() {
     </div>
   );
 
-  /** Step 2: Plan selection */
-  const renderPlan = () => (
-    <div>
-      <div className="text-center mb-6">
-        <h2 className="text-lg font-bold text-white mb-1">
-          {da ? 'Vælg en plan' : 'Choose a plan'}
-        </h2>
-        <p className="text-xs text-slate-500">
-          {da ? 'Du kan opgradere når som helst' : 'You can upgrade at any time'}
-        </p>
-      </div>
+  /** Step 2: Plan selection — fetches live plan data from /api/plans */
+  const renderPlan = () => {
+    const t = translations[lang].pricing;
+    const featuresMap = t.features as Record<string, string[]>;
+    const selectedPlanObj = plans.find((p) => p.id === selectedPlan);
+    const isPaid = (selectedPlanObj?.priceDkk ?? 0) > 0;
 
-      <div className="space-y-3">
-        {PLAN_CARDS.map((plan) => {
-          const PlanIcon = plan.icon;
-          const isSelected = selectedPlan === plan.id;
-          return (
-            <div
-              key={plan.id}
-              className={`relative rounded-xl border p-4 transition-all ${
-                plan.highlighted
-                  ? 'border-blue-500/50 bg-blue-500/5'
-                  : 'border-slate-700/60 bg-slate-800/30'
-              } ${isSelected ? 'ring-2 ring-blue-500/60' : ''}`}
-            >
-              {plan.highlighted && (
-                <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 bg-blue-600 text-white text-[10px] font-bold px-3 py-0.5 rounded-full uppercase tracking-wide">
-                  {da ? 'Mest populær' : 'Most popular'}
-                </span>
-              )}
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div
-                    className={`w-9 h-9 ${plan.iconBg} rounded-lg flex items-center justify-center shrink-0`}
-                  >
-                    <PlanIcon size={17} className={plan.iconColor} />
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold text-white">{da ? plan.nameDa : plan.nameEn}</p>
-                    <p className="text-xs text-slate-500">{da ? plan.priceDa : plan.priceEn}</p>
-                  </div>
-                </div>
-                {plan.comingSoon ? (
-                  <span className="shrink-0 text-[10px] font-semibold text-slate-500 bg-slate-700/60 px-2 py-0.5 rounded-full">
-                    {da ? 'Snart' : 'Soon'}
-                  </span>
-                ) : (
-                  <span className="shrink-0 text-[10px] font-semibold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full">
-                    {da ? 'Aktiv' : 'Active'}
-                  </span>
-                )}
-              </div>
-              <ul className="mt-3 space-y-1">
-                {(da ? plan.featuresDa : plan.featuresEn).map((feat) => (
-                  <li key={feat} className="flex items-center gap-2 text-xs text-slate-400">
-                    <Check size={11} className="text-blue-400 shrink-0" />
-                    {feat}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          );
-        })}
-      </div>
+    return (
+      <div>
+        <div className="text-center mb-5">
+          <h2 className="text-lg font-bold text-white mb-1">
+            {da ? 'Vælg en plan' : 'Choose a plan'}
+          </h2>
+          <p className="text-xs text-slate-500">
+            {da
+              ? 'Du kan opgradere eller skifte plan når som helst'
+              : 'You can upgrade or change plan at any time'}
+          </p>
+        </div>
 
-      <div className="flex items-center justify-between mt-6">
-        <button
-          onClick={goBack}
-          className="inline-flex items-center gap-1.5 text-sm text-slate-400 hover:text-white transition-colors"
-        >
-          <ArrowLeft size={15} />
-          {da ? 'Tilbage' : 'Back'}
-        </button>
-        <button
-          onClick={goNext}
-          className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm px-5 py-2.5 rounded-xl transition-colors"
-        >
-          {da ? 'Fortsæt gratis' : 'Continue free'}
-          <ArrowRight size={16} />
-        </button>
+        {/* Error banner */}
+        {planError && (
+          <div className="flex items-start gap-2 bg-red-500/10 border border-red-500/30 rounded-xl px-3 py-2.5 mb-4">
+            <AlertCircle size={14} className="text-red-400 shrink-0 mt-0.5" />
+            <p className="text-red-300 text-xs">{planError}</p>
+          </div>
+        )}
+
+        {plansLoading ? (
+          <div className="flex items-center justify-center gap-2 text-slate-500 py-10">
+            <Loader2 size={16} className="animate-spin" />
+            <span className="text-xs">{da ? 'Henter planer…' : 'Loading plans…'}</span>
+          </div>
+        ) : (
+          <div className="space-y-2.5">
+            {plans.map((plan) => {
+              const isSelected = selectedPlan === plan.id;
+              const colors = PLAN_COLORS[plan.color] ?? PLAN_COLORS.slate;
+              const features: string[] = featuresMap[plan.id] ?? [];
+
+              return (
+                <button
+                  key={plan.id}
+                  type="button"
+                  onClick={() => {
+                    setSelectedPlan(plan.id);
+                    setPlanError(null);
+                  }}
+                  disabled={planSubmitting}
+                  className={`relative w-full text-left rounded-xl border p-3.5 transition-all disabled:opacity-60 ${
+                    isSelected
+                      ? `${colors.border} bg-white/5 ring-2 ${colors.ring}`
+                      : 'border-slate-700/60 bg-slate-800/30 hover:border-slate-600/60'
+                  }`}
+                >
+                  {/* "Mest populær" badge */}
+                  {colors.popular && (
+                    <span className="absolute -top-2.5 left-4 bg-blue-600 text-white text-[9px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wide">
+                      {da ? 'Mest populær' : 'Most popular'}
+                    </span>
+                  )}
+
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      {/* Name + price row */}
+                      <div className="flex items-baseline gap-2 flex-wrap">
+                        <span className="text-sm font-bold text-white">
+                          {da ? plan.nameDa : plan.nameEn}
+                        </span>
+                        <span className="text-sm font-bold text-white">
+                          {plan.priceDkk === 0 ? (da ? 'Gratis' : 'Free') : `${plan.priceDkk} kr`}
+                          {plan.priceDkk > 0 && (
+                            <span className="text-slate-500 text-xs font-normal">/md</span>
+                          )}
+                        </span>
+                      </div>
+
+                      {/* Short description */}
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        {da ? plan.descDa : plan.descEn}
+                      </p>
+
+                      {/* Feature list */}
+                      {features.length > 0 && (
+                        <ul className="mt-2 space-y-0.5">
+                          {features.map((feat) => (
+                            <li
+                              key={feat}
+                              className="flex items-center gap-1.5 text-xs text-slate-400"
+                            >
+                              <Check size={10} className="text-blue-400 shrink-0" />
+                              {feat}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+
+                    <div className="flex flex-col items-end gap-1.5 shrink-0">
+                      {/* Selected checkmark */}
+                      {isSelected && <CheckCircle2 size={16} className="text-blue-400" />}
+
+                      {/* AI tokens badge */}
+                      {plan.aiEnabled && plan.aiTokensPerMonth !== 0 && (
+                        <span
+                          className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full ${colors.badge}`}
+                        >
+                          <Zap size={9} />
+                          {plan.aiTokensPerMonth < 0
+                            ? da
+                              ? 'Ubegrænset AI'
+                              : 'Unlimited AI'
+                            : `${Math.round(plan.aiTokensPerMonth / 1000)}K AI`}
+                        </span>
+                      )}
+
+                      {/* Requires approval badge */}
+                      {plan.requiresApproval && (
+                        <span className="inline-flex items-center gap-1 text-[10px] text-slate-500">
+                          <Clock size={9} />
+                          {da ? 'Godkendelse' : 'Approval'}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        <div className="flex items-center justify-between mt-5">
+          <button
+            onClick={goBack}
+            disabled={planSubmitting}
+            className="inline-flex items-center gap-1.5 text-sm text-slate-400 hover:text-white transition-colors disabled:opacity-50"
+          >
+            <ArrowLeft size={15} />
+            {da ? 'Tilbage' : 'Back'}
+          </button>
+          <button
+            onClick={handlePlanNext}
+            disabled={planSubmitting || plansLoading || !selectedPlan}
+            className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-sm px-5 py-2.5 rounded-xl transition-colors"
+          >
+            {planSubmitting && <Loader2 size={14} className="animate-spin" />}
+            {isPaid
+              ? da
+                ? `Gå til betaling — ${selectedPlanObj?.priceDkk} kr/md`
+                : `Go to payment — ${selectedPlanObj?.priceDkk} kr/mo`
+              : da
+                ? 'Fortsæt gratis'
+                : 'Continue free'}
+            {!planSubmitting && <ArrowRight size={16} />}
+          </button>
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   /** Step 3: Completion — "Du er klar!" with quick-start links */
   const renderDone = () => (

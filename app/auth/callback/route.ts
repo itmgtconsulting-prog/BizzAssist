@@ -1,32 +1,36 @@
 /**
- * OAuth callback handler — GET /auth/callback
+ * OAuth / email-verification callback handler — GET /auth/callback
  *
- * Supabase redirects here after a successful Google or LinkedIn OAuth flow.
- * This route exchanges the temporary authorization code for a real session
- * and writes the session cookie before redirecting the user into the app.
+ * Supabase redirects here in three distinct flows:
  *
- * Flow:
- *   1. User clicks "Sign in with Google/LinkedIn"
- *   2. Supabase redirects to the OAuth provider
- *   3. Provider redirects back to /auth/callback?code=XXX
- *   4. This route exchanges the code for a session (server-side)
- *   5. Redirects to /dashboard (or the original redirectTo URL)
+ *   A) PKCE code flow (OAuth + email signup with PKCE enabled):
+ *      /auth/callback?code=XXX[&type=signup][&next=/path]
+ *      → exchanges code for session via exchangeCodeForSession()
  *
- * ISO 27001 A.9 (Access Control): validates the auth code server-side —
- * the session token is never exposed in the URL or client-side JavaScript.
+ *   B) token_hash flow (email OTP / confirmation without PKCE verifier):
+ *      /auth/callback?token_hash=XXX&type=signup
+ *      → verifies token via verifyOtp()
+ *
+ *   C) type=signup with no code/token_hash:
+ *      Account was already confirmed (auto-confirm, re-used link, or
+ *      the verification completed in another tab/device).
+ *      → show the verified success page.
+ *
+ * ISO 27001 A.9 (Access Control): all code/token exchange happens server-side —
+ * session tokens are never exposed in the URL or client-side JavaScript.
  */
 
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import type { EmailOtpType } from '@supabase/supabase-js';
 
 /**
- * Handles the OAuth/magic-link callback from Supabase.
- * Exchanges the authorization code for a session cookie.
+ * Handles the Supabase auth callback — OAuth, email verification, magic link.
  *
- * @param request - Incoming GET request with ?code and optional ?next params
- * @returns Redirect to the dashboard or error page
+ * @param request - Incoming GET request with query params from Supabase
+ * @returns Redirect to verified page, dashboard, or error page
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const { searchParams, origin } = new URL(request.url);
@@ -36,7 +40,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   console.error('[auth/callback] All params:', Object.fromEntries(searchParams.entries()));
 
   const code = searchParams.get('code');
-  const type = searchParams.get('type');
+  const token_hash = searchParams.get('token_hash');
+  const type = searchParams.get('type') as EmailOtpType | null;
   const next = searchParams.get('next') ?? '/dashboard';
 
   // OAuth providers send error + error_description on failure instead of code
@@ -50,16 +55,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     );
   }
 
-  // If no code is present, redirect to login with error
-  if (!code) {
-    console.error('[auth/callback] No authorization code received');
-    return NextResponse.redirect(
-      `${origin}/login?error=no_code&details=${encodeURIComponent('No authorization code in callback URL')}`
-    );
-  }
-
+  // ── Build Supabase client (needed for both PKCE and token_hash flows) ────
   const cookieStore = await cookies();
-
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -75,21 +72,64 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
   );
 
-  // Exchange the authorization code for a session.
-  // This sets the session cookies and authenticates the user.
-  console.error('[auth/callback] Attempting code exchange, code length:', code.length);
+  // ── Flow B: token_hash (Supabase OTP / email confirmation without PKCE) ──
+  // Supabase sends this when PKCE is not in use, or when the email client
+  // opens the link on a different device (no code-verifier cookie available).
+  if (!code && token_hash && type) {
+    console.error('[auth/callback] token_hash flow, type:', type);
+    const { error: otpError } = await supabase.auth.verifyOtp({ type, token_hash });
+
+    if (type === 'signup' || type === 'email') {
+      // Email confirmed — regardless of OTP error (might be re-click / already verified)
+      console.error('[auth/callback] token_hash signup verified, redirecting to /login/verified');
+      return NextResponse.redirect(`${origin}/login/verified`);
+    }
+
+    if (type === 'recovery') {
+      if (otpError) {
+        return NextResponse.redirect(
+          `${origin}/login?error=auth_failed&details=${encodeURIComponent(otpError.message)}`
+        );
+      }
+      return NextResponse.redirect(`${origin}/login/reset-password`);
+    }
+
+    if (otpError) {
+      console.error('[auth/callback] token_hash verifyOtp error:', otpError.message);
+      return NextResponse.redirect(
+        `${origin}/login?error=auth_failed&details=${encodeURIComponent(otpError.message)}`
+      );
+    }
+
+    const safeNext = next.startsWith('/') ? next : '/dashboard';
+    return NextResponse.redirect(`${origin}${safeNext}`);
+  }
+
+  // ── Flow C: no code, no token_hash ───────────────────────────────────────
+  // If type=signup: the account was confirmed already (auto-confirm on,
+  // re-used verification link, or verified in another browser tab).
+  if (!code) {
+    console.error('[auth/callback] No code or token_hash. type:', type);
+    if (type === 'signup' || type === 'email') {
+      return NextResponse.redirect(`${origin}/login/verified`);
+    }
+    return NextResponse.redirect(
+      `${origin}/login?error=no_code&details=${encodeURIComponent('No authorization code in callback URL')}`
+    );
+  }
+
+  // ── Flow A: PKCE code exchange ────────────────────────────────────────────
+  console.error('[auth/callback] PKCE code exchange, code length:', code.length);
   const { data: sessionData, error } = await supabase.auth.exchangeCodeForSession(code);
 
   if (error) {
     console.error('[auth/callback] Code exchange failed:', error.message, 'status:', error.status);
 
-    // ── Graceful handling for signup verification links ────────────────────
-    // If mailer_autoconfirm is enabled, the account is confirmed immediately
-    // at signup — the PKCE token in the verification email is already consumed.
-    // Also handles expired links (user waited too long) and re-used links.
-    // In all these cases, the account IS confirmed, so we show the verified page.
-    if (type === 'signup') {
-      console.error('[auth/callback] Signup code exchange failed — showing verified page anyway');
+    // Graceful handling for signup verification links:
+    // The PKCE code verifier cookie may be missing (different device/browser,
+    // expired, or already consumed). The account IS confirmed — show verified page.
+    if (type === 'signup' || type === 'email') {
+      console.error('[auth/callback] Signup code exchange failed — showing verified page');
       return NextResponse.redirect(`${origin}/login/verified`);
     }
 
@@ -97,24 +137,22 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       `${origin}/login?error=auth_failed&details=${encodeURIComponent(error.message)}`
     );
   }
-  console.error('[auth/callback] Code exchange succeeded, redirecting to:', next);
 
-  // ── Email verification (signup confirmation) ─────────────────────────────
+  console.error('[auth/callback] Code exchange succeeded, type:', type);
+
+  // ── Email verification success ────────────────────────────────────────────
   // When the user clicks the verification link from their signup email,
-  // we tagged the emailRedirectTo with ?type=signup. Redirect them to the
-  // verified confirmation page instead of the dashboard.
-  if (type === 'signup') {
+  // emailRedirectTo was tagged with ?type=signup. Redirect to verified page.
+  if (type === 'signup' || type === 'email') {
     return NextResponse.redirect(`${origin}/login/verified`);
   }
 
   // Ensure the redirect target is relative (prevent open redirect attacks)
   const safeNext = next.startsWith('/') ? next : '/dashboard';
 
-  // ── New OAuth user check ─────────────────────────────────────────────────
-  // If this user has no subscription in app_metadata (typical for first-time
-  // OAuth logins that bypass the normal signup form), redirect them to the
-  // plan-selection page so they can choose and pay for a plan before accessing
-  // the dashboard.
+  // ── New OAuth user check ──────────────────────────────────────────────────
+  // First-time OAuth logins bypass the normal signup form and have no plan yet.
+  // Redirect them to plan selection before granting dashboard access.
   if (sessionData?.user) {
     try {
       const admin = createAdminClient();

@@ -323,20 +323,33 @@ export async function signIn(
   const isLocalDev = process.env.NODE_ENV === 'development';
 
   if (!isOAuthOnly && !isLocalDev) {
-    // List enrolled TOTP factors — only enforce challenge for users who have enrolled.
-    // Enrollment is optional (recommended via dashboard banner); not forced at login.
-    const { data: factorsData } = await supabase.auth.mfa.listFactors();
-    const verifiedTotp = factorsData?.totp?.find((f) => f.status === 'verified');
+    // Use the admin client to look up enrolled TOTP factors for this user.
+    // The user client's mfa.listFactors() relies on the fresh aal1 session —
+    // but mfa_allow_low_aal: false (enforced in prod) can cause that call to
+    // silently return empty data for MFA-enrolled users, causing the challenge
+    // to be skipped. The admin client bypasses AAL restrictions entirely.
+    let verifiedTotp: { id: string } | undefined;
+    try {
+      const adminForMfa = createAdminClient();
+      const { data: userWithFactors } = await adminForMfa.auth.admin.getUserById(userForMfa!.id);
+      const factors =
+        (
+          userWithFactors?.user as {
+            factors?: { id: string; factor_type: string; status: string }[];
+          }
+        )?.factors ?? [];
+      verifiedTotp = factors.find((f) => f.factor_type === 'totp' && f.status === 'verified');
+    } catch {
+      // Non-fatal — fall back to user-client call if admin lookup fails
+      const { data: factorsData } = await supabase.auth.mfa.listFactors();
+      verifiedTotp = factorsData?.totp?.find((f) => f.status === 'verified');
+    }
 
     if (verifiedTotp) {
-      // Factor is enrolled — check if the session still needs to be elevated to aal2.
-      const { data: aalData } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-      if (aalData?.nextLevel === 'aal2' && aalData.nextLevel !== aalData.currentLevel) {
-        // Session is aal1 but aal2 is required — redirect to TOTP challenge.
-        // Pass factorId so MfaClient doesn't need to call listFactors() again
-        // (avoids a race where client-side session cookies aren't ready yet).
-        return { error: null, mfaRequired: true, mfaEnrolled: true, mfaFactorId: verifiedTotp.id };
-      }
+      // Factor is enrolled — a fresh signInWithPassword session is always aal1,
+      // so we always require the TOTP challenge. No need to call
+      // getAuthenticatorAssuranceLevel() since the session was just created.
+      return { error: null, mfaRequired: true, mfaEnrolled: true, mfaFactorId: verifiedTotp.id };
     }
     // No TOTP enrolled — MFA is optional, proceed to dashboard.
     // The dashboard shows a recommendation banner to encourage enrollment.
@@ -377,9 +390,10 @@ export async function signIn(
           await supabase.auth.signOut();
           return { error: 'no_subscription' };
         }
-        // During beta: pending demo users are allowed in (auto-approval)
         if (sub.status === 'pending') {
-          console.log('[signIn] → ALLOWED: pending subscription (beta auto-approval)');
+          console.log('[signIn] → BLOCKED: subscription_pending');
+          await supabase.auth.signOut();
+          return { error: 'subscription_pending' };
         }
         if (sub.status === 'cancelled') {
           console.log('[signIn] → BLOCKED: subscription_cancelled');

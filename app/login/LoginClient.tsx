@@ -89,6 +89,8 @@ function LoginForm() {
   const [resendLoading, setResendLoading] = useState(false);
   /** True after a successful resend — shows confirmation message */
   const [resendSent, setResendSent] = useState(false);
+  /** Seconds remaining in resend cooldown (Supabase rate-limits to 1 email/60 s) */
+  const [resendCooldown, setResendCooldown] = useState(0);
 
   /** Clear the error query param from URL after displaying it, so refreshing doesn't show stale errors */
   useEffect(() => {
@@ -116,6 +118,18 @@ function LoginForm() {
     }, 1000);
     return () => clearInterval(interval);
   }, [lockCountdown]);
+
+  /**
+   * Countdown timer for resend email cooldown (60 s Supabase rate limit).
+   * When it reaches 0 the resend button is re-enabled.
+   */
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const interval = setInterval(() => {
+      setResendCooldown((prev) => Math.max(prev - 1, 0));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [resendCooldown]);
 
   /**
    * Initiates an OAuth sign-in flow via Supabase.
@@ -195,14 +209,16 @@ function LoginForm() {
 
   /**
    * Resends the email verification link to the address currently in the email field.
+   * Starts a 60-second cooldown after sending to match Supabase's rate limit.
    * Resets the resendSent state if the user changes the email field after a send.
    */
   const handleResendVerification = async () => {
-    if (!email || resendLoading || resendSent) return;
+    if (!email || resendLoading || resendCooldown > 0) return;
     setResendLoading(true);
     await resendVerificationEmail(email);
     setResendLoading(false);
     setResendSent(true);
+    setResendCooldown(60); // Supabase rate-limits email sends to 1 per 60 s
   };
 
   const errorMsg = error
@@ -406,16 +422,34 @@ function LoginForm() {
                       {error === 'email_not_confirmed' && (
                         <div className="mt-2">
                           {resendSent ? (
-                            <p className="text-green-400 text-xs font-medium">
-                              {lang === 'da'
-                                ? '✓ Verifikations-e-mail gensendt! Tjek din indbakke.'
-                                : '✓ Verification email resent! Check your inbox.'}
-                            </p>
+                            <div>
+                              <p className="text-green-400 text-xs font-medium mb-1">
+                                {lang === 'da'
+                                  ? '✓ E-mail sendt! Tjek din indbakke (inkl. spam).'
+                                  : '✓ Email sent! Check your inbox (incl. spam).'}
+                              </p>
+                              {resendCooldown > 0 ? (
+                                <p className="text-slate-500 text-xs">
+                                  {lang === 'da'
+                                    ? `Kan gensende om ${resendCooldown} sek.`
+                                    : `Can resend in ${resendCooldown} sec.`}
+                                </p>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={handleResendVerification}
+                                  disabled={resendLoading || !email}
+                                  className="inline-flex items-center gap-1.5 text-xs font-medium text-red-300 hover:text-white underline underline-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                  {lang === 'da' ? 'Send igen' : 'Send again'}
+                                </button>
+                              )}
+                            </div>
                           ) : (
                             <button
                               type="button"
                               onClick={handleResendVerification}
-                              disabled={resendLoading || !email}
+                              disabled={resendLoading || !email || resendCooldown > 0}
                               className="inline-flex items-center gap-1.5 text-xs font-medium text-red-300 hover:text-white underline underline-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                               {resendLoading && <Loader2 size={12} className="animate-spin" />}

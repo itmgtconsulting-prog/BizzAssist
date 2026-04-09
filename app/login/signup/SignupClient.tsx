@@ -121,9 +121,7 @@ export default function SignupClient() {
   const [selectedPlan, setSelectedPlan] = useState<string>('demo');
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [oauthLoading, setOauthLoading] = useState<'google' | 'azure' | 'linkedin_oidc' | null>(
-    null
-  );
+  const [oauthLoading, setOauthLoading] = useState<'google' | 'azure' | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   /** Available plans from API */
@@ -158,9 +156,9 @@ export default function SignupClient() {
    * Initiates an OAuth sign-up/sign-in flow via Supabase.
    * Redirects the browser to the provider's consent screen.
    *
-   * @param provider - The OAuth provider ('google', 'azure', or 'linkedin_oidc')
+   * @param provider - The OAuth provider ('google' or 'azure')
    */
-  const handleOAuth = async (provider: 'google' | 'azure' | 'linkedin_oidc') => {
+  const handleOAuth = async (provider: 'google' | 'azure') => {
     setOauthLoading(provider);
     setError(null);
     const supabase = createClient();

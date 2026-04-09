@@ -13,9 +13,6 @@ import { createClient } from '@/lib/supabase/server';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const PDFDocument = require('pdfkit');
-
 /* ─── Payload-typer (subset af client-side interfaces) ─── */
 
 interface RapportBygning {
@@ -134,6 +131,9 @@ export async function POST(request: NextRequest) {
 
   try {
     const payload: RapportPayload = await request.json();
+
+    // Lazy-load pdfkit to avoid paying the module-parse cost on cold starts (BIZZ-186)
+    const { default: PDFDocument } = await import('pdfkit');
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const doc: any = new PDFDocument({

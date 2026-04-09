@@ -26,8 +26,6 @@ import JSZip from 'jszip';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
-import type { KnowledgeItem } from '@/app/api/knowledge/route';
-
 /** Maximum allowed upload size in bytes (1 MiB). */
 const MAX_FILE_BYTES = 1_048_576;
 

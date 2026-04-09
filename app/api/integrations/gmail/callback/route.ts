@@ -11,7 +11,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
+import { tenantDb } from '@/lib/supabase/admin';
 
 /** Response shape from Google's token endpoint */
 interface GoogleTokenResponse {

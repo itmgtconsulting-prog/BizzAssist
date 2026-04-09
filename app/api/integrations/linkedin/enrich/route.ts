@@ -21,7 +21,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantId } from '@/lib/api/auth';
-import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
+import { tenantDb } from '@/lib/supabase/admin';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 
 /** Request body for the enrich endpoint */
@@ -85,8 +85,6 @@ export async function POST(
   }
 
   const { tenantId, userId } = auth;
-  const admin = createAdminClient();
-
   // Verify user has LinkedIn connected
   const { data: integration } = await tenantDb(tenantId)
     .from('email_integrations')

@@ -15,8 +15,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
-import type { KnowledgeItem } from '../route';
-
 /** Maximum characters allowed in a knowledge item's content field. */
 const MAX_CONTENT_CHARS = 50_000;
 

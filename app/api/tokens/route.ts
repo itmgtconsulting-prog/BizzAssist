@@ -247,8 +247,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const adminClient = createAdminClient();
-
     // ── Check token count limit ──
     const { data: existing } = await tenantDb(membership.tenantId)
       .from('api_tokens')

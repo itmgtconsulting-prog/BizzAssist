@@ -45,8 +45,6 @@ export async function GET(
   if (!auth) return NextResponse.json({ error: 'Unauthenticated' }, { status: 401 });
 
   const { tenantId, userId } = auth;
-  const admin = createAdminClient();
-
   const { data, error } = await tenantDb(tenantId)
     .from('email_integrations')
     .select('email_address, connected_at, scopes')

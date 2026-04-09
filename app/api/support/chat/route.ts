@@ -55,12 +55,6 @@ interface ChatRequestBody {
   messages: ChatMessage[];
 }
 
-interface AbuseRow {
-  violation_count: number;
-  locked_until: string | null;
-  permanently_locked: boolean;
-}
-
 // ─── System prompt ───────────────────────────────────────────────────────────
 
 const SUPPORT_SYSTEM_PROMPT = `Du er BizzAssist Support Assistent. Du hjælper brugere med at bruge BizzAssist platformen.

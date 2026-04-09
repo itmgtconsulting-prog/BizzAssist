@@ -15,7 +15,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
+import { tenantDb } from '@/lib/supabase/admin';
 
 /** Response shape from LinkedIn's token endpoint */
 interface LinkedInTokenResponse {

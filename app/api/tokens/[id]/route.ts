@@ -84,8 +84,6 @@ export async function DELETE(
   }
 
   try {
-    const adminClient = createAdminClient();
-
     // ── Fetch the token to verify ownership ──
     const { data: token, error: fetchError } = await tenantDb(membership.tenantId)
       .from('api_tokens')

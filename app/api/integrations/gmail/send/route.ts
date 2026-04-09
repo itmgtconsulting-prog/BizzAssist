@@ -186,6 +186,19 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       .eq('user_id', userId)
       .eq('provider', 'gmail');
 
+    // Audit log — fire-and-forget (ISO 27001 A.12.4)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (admin as any)
+      .from('audit_log')
+      .insert({
+        action: 'integration.gmail.send',
+        resource_type: 'email',
+        resource_id: result.id,
+        metadata: JSON.stringify({ tenantId, userId, subject }),
+      })
+      .then()
+      .catch(() => {});
+
     return NextResponse.json({ ok: true, messageId: result.id });
   } catch {
     return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 502 });

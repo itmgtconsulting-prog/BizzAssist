@@ -117,6 +117,22 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         );
         // Non-fatal — return success so onboarding completes
       }
+
+      // Audit log — fire-and-forget (ISO 27001 A.12.4)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (admin as any)
+        .from('audit_log')
+        .insert({
+          action: 'onboarding.save',
+          resource_type: 'tenant',
+          resource_id: tenantId,
+          metadata: JSON.stringify({
+            userId: user.id,
+            updatedFields: Object.keys(updatePayload),
+          }),
+        })
+        .then()
+        .catch(() => {});
     }
 
     return NextResponse.json({ ok: true });

@@ -136,6 +136,19 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Failed to create checkout session' }, { status: 500 });
     }
 
+    // Audit log — fire-and-forget (ISO 27001 A.12.4)
+    Promise.resolve()
+      .then(() =>
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (admin as any).from('audit_log').insert({
+          action: 'stripe.checkout.create',
+          resource_type: 'checkout_session',
+          resource_id: session.id,
+          metadata: JSON.stringify({ userId: user.id, planId }),
+        })
+      )
+      .catch(() => {});
+
     // ── 5. Return checkout URL ──
     return NextResponse.json({ url: session.url });
   } catch (err) {

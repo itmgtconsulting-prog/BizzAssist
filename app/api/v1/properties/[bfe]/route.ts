@@ -199,9 +199,7 @@ async function verifyToken(
  * @param bfeNummer - The BFE number to look up
  * @returns Partial valuation data or null
  */
-async function fetchVurderingData(
-  bfeNummer: number
-): Promise<{
+async function fetchVurderingData(bfeNummer: number): Promise<{
   ejendomsvaerdi: number | null;
   grundvaerdi: number | null;
   aar: number | null;

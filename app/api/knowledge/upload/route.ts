@@ -310,6 +310,27 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     if (error) throw error;
 
+    // Audit log — fire-and-forget (ISO 27001 A.12.4)
+    if (data) {
+      const adminClient2 = createAdminClient();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (adminClient2 as any)
+        .from('audit_log')
+        .insert({
+          action: 'knowledge.upload',
+          resource_type: 'knowledge_item',
+          resource_id: String((data as KnowledgeItem).id),
+          metadata: JSON.stringify({
+            tenantId: membership.tenantId,
+            title,
+            charCount: content.length,
+            userId: user.id,
+          }),
+        })
+        .then()
+        .catch(() => {});
+    }
+
     return NextResponse.json(
       {
         id: data?.id,

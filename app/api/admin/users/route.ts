@@ -165,6 +165,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Failed to create user' }, { status: 400 });
     }
 
+    // Audit log — fire-and-forget (ISO 27001 A.12.4)
+    await insertAuditLog(admin, {
+      action: 'admin.user.create',
+      resource_type: 'user',
+      resource_id: newUser.user.id,
+      metadata: JSON.stringify({ createdEmail: email }),
+    });
+
     return NextResponse.json({
       ok: true,
       user: {

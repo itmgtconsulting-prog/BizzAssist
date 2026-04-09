@@ -163,6 +163,24 @@ export async function DELETE(
 
     if (updateError) throw updateError;
 
+    // Audit log — fire-and-forget (ISO 27001 A.12.4 — access token lifecycle)
+    const adminClient2 = createAdminClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (adminClient2 as any)
+      .from('audit_log')
+      .insert({
+        action: 'api_token.revoke',
+        resource_type: 'api_token',
+        resource_id: String(id),
+        metadata: JSON.stringify({
+          tenantId: membership.tenantId,
+          userId: user.id,
+          revokedBy: isOwner ? 'owner' : 'admin',
+        }),
+      })
+      .then()
+      .catch(() => {});
+
     return new NextResponse(null, { status: 204 });
   } catch (err) {
     console.error('[tokens/[id]] DELETE fejlede:', err);

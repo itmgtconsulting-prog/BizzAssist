@@ -11,6 +11,28 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
+
+/**
+ * Inserts a row into audit_log using the admin client.
+ * Fire-and-forget — never throws, never blocks the main response.
+ *
+ * @param entry - Audit log entry fields
+ */
+async function insertAuditLog(entry: {
+  action: string;
+  resource_type: string;
+  resource_id: string;
+  metadata: string;
+}): Promise<void> {
+  try {
+    const admin = createAdminClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (admin as any).from('audit_log').insert(entry);
+  } catch (e: unknown) {
+    console.error('[audit] Failed to insert audit log:', e);
+  }
+}
 
 /**
  * PUT /api/profile — update display name.
@@ -42,6 +64,14 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
       console.error('[profile] Update name error:', error.message);
       return NextResponse.json({ error: 'Failed to update name' }, { status: 500 });
     }
+
+    // Audit log — fire-and-forget (ISO 27001 A.12.4)
+    insertAuditLog({
+      action: 'user.profile.update_name',
+      resource_type: 'user',
+      resource_id: user.id,
+      metadata: JSON.stringify({ updatedFields: ['full_name'] }),
+    }).catch(() => {});
 
     return NextResponse.json({ ok: true, fullName: fullName.trim() });
   } catch (err) {
@@ -101,6 +131,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       console.error('[profile] Change password error:', updateError.message);
       return NextResponse.json({ error: 'Failed to change password' }, { status: 500 });
     }
+
+    // Audit log — fire-and-forget (ISO 27001 A.12.4)
+    insertAuditLog({
+      action: 'user.profile.change_password',
+      resource_type: 'user',
+      resource_id: user.id,
+      metadata: JSON.stringify({}),
+    }).catch(() => {});
 
     return NextResponse.json({ ok: true });
   } catch (err) {

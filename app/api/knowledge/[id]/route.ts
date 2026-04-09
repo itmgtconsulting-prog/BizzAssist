@@ -266,6 +266,24 @@ export async function PATCH(request: NextRequest, { params }: RouteParams): Prom
       return NextResponse.json({ error: 'Videnbase-element ikke fundet' }, { status: 404 });
     }
 
+    // Audit log — fire-and-forget (ISO 27001 A.12.4)
+    const adminClient2 = createAdminClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (adminClient2 as any)
+      .from('audit_log')
+      .insert({
+        action: 'knowledge.update',
+        resource_type: 'knowledge_item',
+        resource_id: String(id),
+        metadata: JSON.stringify({
+          tenantId: membership.tenantId,
+          updatedFields: Object.keys(patch),
+          userId: user.id,
+        }),
+      })
+      .then()
+      .catch(() => {});
+
     return NextResponse.json(data);
   } catch (err) {
     console.error('[knowledge/[id]] PATCH fejlede:', err);

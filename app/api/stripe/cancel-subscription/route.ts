@@ -85,6 +85,23 @@ export async function POST(_req: NextRequest): Promise<NextResponse> {
       },
     });
 
+    // Audit log — fire-and-forget (ISO 27001 A.12.4)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (admin as any)
+      .from('audit_log')
+      .insert({
+        action: 'stripe.subscription.cancel',
+        resource_type: 'subscription',
+        resource_id: activeSub.id,
+        metadata: JSON.stringify({
+          userId: user.id,
+          stripeCustomerId,
+          cancelAt,
+        }),
+      })
+      .then()
+      .catch(() => {});
+
     return NextResponse.json({ ok: true, cancelAt });
   } catch (err) {
     console.error('[stripe/cancel-subscription] Error:', err);

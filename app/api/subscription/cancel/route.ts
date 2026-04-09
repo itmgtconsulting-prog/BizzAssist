@@ -45,6 +45,21 @@ export async function POST(): Promise<NextResponse> {
       },
     });
 
+    // Audit log — fire-and-forget (ISO 27001 A.12.4)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (admin as any)
+      .from('audit_log')
+      .insert({
+        action: 'subscription.cancel',
+        resource_type: 'subscription',
+        resource_id: user.id,
+        metadata: JSON.stringify({
+          planId: (subscription as Record<string, unknown>).planId ?? null,
+        }),
+      })
+      .then()
+      .catch(() => {});
+
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error('[subscription/cancel] Error:', err);

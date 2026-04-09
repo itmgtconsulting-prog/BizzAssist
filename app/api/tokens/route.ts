@@ -323,6 +323,26 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     if (error) throw error;
 
+    // Audit log — fire-and-forget (ISO 27001 A.12.4 — access token lifecycle)
+    const adminClient2 = createAdminClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (adminClient2 as any)
+      .from('audit_log')
+      .insert({
+        action: 'api_token.create',
+        resource_type: 'api_token',
+        resource_id: String((record as ApiTokenRecord).id),
+        metadata: JSON.stringify({
+          tenantId: membership.tenantId,
+          userId: user.id,
+          tokenName: name.trim(),
+          scopes,
+          prefix,
+        }),
+      })
+      .then()
+      .catch(() => {});
+
     // ── Return plaintext token ONCE — it cannot be retrieved again ──
     return NextResponse.json({ token: rawToken, record }, { status: 201 });
   } catch (err) {

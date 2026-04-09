@@ -84,5 +84,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Intern serverfejl' }, { status: 500 });
   }
 
+  // Audit log — fire-and-forget (ISO 27001 A.12.4)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (adminClient as any)
+    .from('audit_log')
+    .insert({
+      action: 'admin.support.unlock_user',
+      resource_type: 'user',
+      resource_id: userId,
+      metadata: JSON.stringify({ unlockedBy: user.id }),
+    })
+    .then()
+    .catch(() => {});
+
   return NextResponse.json({ success: true });
 }

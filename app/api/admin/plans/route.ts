@@ -40,6 +40,25 @@ interface PlanConfigRow {
   updated_at: string;
 }
 
+/**
+ * Inserts a row into audit_log using the admin client.
+ * Fire-and-forget — never throws, never blocks the main operation.
+ *
+ * @param admin  - Admin Supabase client
+ * @param entry  - Audit log entry fields
+ */
+async function insertAuditLog(
+  admin: ReturnType<typeof createAdminClient>,
+  entry: { action: string; resource_type: string; resource_id: string; metadata: string }
+): Promise<void> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (admin as any).from('audit_log').insert(entry);
+  } catch (e: unknown) {
+    console.error('[audit] Failed to insert audit log:', e);
+  }
+}
+
 /** Verify caller is admin (app_metadata.isAdmin). */
 async function verifyAdmin() {
   const supabase = await createClient();
@@ -196,6 +215,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           console.error('[admin/plans create] DB error:', error.message);
           return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
         }
+        // Audit log — fire-and-forget (ISO 27001 A.12.4)
+        insertAuditLog(admin, {
+          action: 'admin.plan.create',
+          resource_type: 'plan_config',
+          resource_id: planId,
+          metadata: JSON.stringify({ createdBy: user.id }),
+        }).catch(() => {});
         return NextResponse.json({ ok: true });
       }
 
@@ -206,6 +232,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           console.error('[admin/plans delete] DB error:', error.message);
           return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
         }
+        // Audit log — fire-and-forget (ISO 27001 A.12.4)
+        insertAuditLog(admin, {
+          action: 'admin.plan.delete',
+          resource_type: 'plan_config',
+          resource_id: planId,
+          metadata: JSON.stringify({ deletedBy: user.id }),
+        }).catch(() => {});
         return NextResponse.json({ ok: true });
       }
 
@@ -281,6 +314,17 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           console.error('[admin/plans] Upsert error:', error.code ?? '[DB error]');
           return NextResponse.json({ error: 'Failed to update plan' }, { status: 500 });
         }
+
+        // Audit log — fire-and-forget (ISO 27001 A.12.4)
+        insertAuditLog(admin, {
+          action: 'admin.plan.update',
+          resource_type: 'plan_config',
+          resource_id: planId,
+          metadata: JSON.stringify({
+            updatedBy: user.id,
+            updatedFields: Object.keys(updateFields),
+          }),
+        }).catch(() => {});
 
         return NextResponse.json({ ok: true });
       }

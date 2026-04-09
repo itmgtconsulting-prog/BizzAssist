@@ -15,6 +15,25 @@ import { resolveUserId } from '@/lib/api/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 
 /**
+ * Inserts a row into the public audit_log table (non-tenant-scoped).
+ * Fire-and-forget — never throws, never blocks the main operation.
+ *
+ * @param admin  - Admin Supabase client
+ * @param entry  - Audit log entry fields
+ */
+async function insertAuditLog(
+  admin: ReturnType<typeof createAdminClient>,
+  entry: { action: string; resource_type: string; resource_id: string; metadata: string }
+): Promise<void> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (admin as any).from('audit_log').insert(entry);
+  } catch (e: unknown) {
+    console.error('[audit] Failed to insert audit log:', e);
+  }
+}
+
+/**
  * GET /api/preferences
  *
  * Returns the authenticated user's preferences.
@@ -109,6 +128,14 @@ export async function PUT(request: NextRequest) {
       console.error('[preferences PUT] Supabase error:', error);
       return NextResponse.json({ error: 'Kunne ikke gemme' }, { status: 500 });
     }
+
+    // Audit log — fire-and-forget (ISO 27001 A.12.4)
+    insertAuditLog(admin, {
+      action: 'user.preferences.update',
+      resource_type: 'user',
+      resource_id: userId,
+      metadata: JSON.stringify({ updatedFields: Object.keys(updates) }),
+    }).catch(() => {});
 
     return NextResponse.json({ ok: true });
   } catch (err) {

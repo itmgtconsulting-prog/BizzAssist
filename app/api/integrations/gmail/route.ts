@@ -121,5 +121,18 @@ export async function DELETE(
 
   if (error) return NextResponse.json({ error: 'DB error' }, { status: 500 });
 
+  // Audit log — fire-and-forget (ISO 27001 A.12.4)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (admin as any)
+    .from('audit_log')
+    .insert({
+      action: 'integration.gmail.disconnect',
+      resource_type: 'integration',
+      resource_id: userId,
+      metadata: JSON.stringify({ tenantId, provider: 'gmail' }),
+    })
+    .then()
+    .catch(() => {});
+
   return NextResponse.json({ ok: true });
 }

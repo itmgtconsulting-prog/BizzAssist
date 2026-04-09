@@ -22,6 +22,8 @@ import { NextRequest, NextResponse } from 'next/server';
 export interface CVRResponse {
   virksomheder: CVRVirksomhed[];
   tokenMangler: boolean;
+  /** True når CVR ElasticSearch API er utilgængeligt (timeout/netværksfejl) */
+  apiDown?: boolean;
 }
 
 /** En CVR-virksomhed normaliseret fra ElasticSearch */
@@ -451,7 +453,14 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       }
     );
   } catch (err) {
-    console.error('[CVR] Fetch error:', err instanceof Error ? err.message : err);
-    return NextResponse.json({ virksomheder: [], tokenMangler: false }, { status: 200 });
+    const msg = err instanceof Error ? err.message : String(err);
+    // TimeoutError or network failure — flag apiDown so the UI can show a proper message
+    const isTimeout =
+      err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError');
+    console.error('[CVR] Fetch error:', msg);
+    return NextResponse.json(
+      { virksomheder: [], tokenMangler: false, apiDown: isTimeout || msg.includes('timeout') },
+      { status: 200 }
+    );
   }
 }

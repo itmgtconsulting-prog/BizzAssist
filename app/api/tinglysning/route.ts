@@ -94,7 +94,7 @@ function tlFetch(urlPath: string): Promise<{ status: number; body: string }> {
         pfx,
         passphrase: CERT_PASSWORD,
         rejectUnauthorized: false,
-        timeout: 15000,
+        timeout: 8000,
         headers: { Accept: 'application/json, application/xml, */*' },
       },
       (res) => {

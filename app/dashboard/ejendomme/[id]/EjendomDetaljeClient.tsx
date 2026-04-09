@@ -847,6 +847,8 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
   const [cvrVirksomheder, setCvrVirksomheder] = useState<CVRVirksomhed[] | null>(null);
   /** True hvis CVR_ES_USER/PASS mangler i .env.local */
   const [cvrTokenMangler, setCvrTokenMangler] = useState(false);
+  /** True hvis CVR ElasticSearch API er utilgængeligt (timeout/nedbrud) */
+  const [cvrApiDown, setCvrApiDown] = useState(false);
   /** Vis ophørte virksomheder i CVR-sektionen */
   const [visOphoerte, setVisOphoerte] = useState(false);
 
@@ -1193,6 +1195,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
         if (controller.signal.aborted) return;
         setCvrVirksomheder(data.virksomheder);
         setCvrTokenMangler(data.tokenMangler);
+        setCvrApiDown(data.apiDown ?? false);
       })
       .catch((err) => {
         if (err.name === 'AbortError') return;
@@ -2497,6 +2500,17 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                           CVR_ES_USER=din@email.dk{'\n'}CVR_ES_PASS=dit_password
                         </code>
                         <p className="text-slate-500 text-xs mt-2">{t.restartDevServer}</p>
+                      </div>
+                    ) : cvrApiDown ? (
+                      <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
+                        <p className="text-slate-400 text-xs font-medium uppercase tracking-wide mb-2">
+                          {t.companiesAtAddress}
+                        </p>
+                        <p className="text-slate-500 text-sm">
+                          {da
+                            ? 'CVR-data er midlertidigt utilgængeligt — prøv igen om lidt.'
+                            : 'CVR data is temporarily unavailable — please try again shortly.'}
+                        </p>
                       </div>
                     ) : cvrVirksomheder === null ? (
                       <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
@@ -6563,10 +6577,25 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
 
     // Trin 1: Hent UUID via tinglysning søgning
     fetch(`/api/tinglysning?bfe=${bfe}`, { signal })
-      .then((r) => (r.ok ? r.json() : null))
+      .then(async (r) => {
+        if (r.ok) return r.json();
+        // Parse error body even on non-ok status
+        const body = await r.json().catch(() => null);
+        return body ?? null;
+      })
       .then((tlData) => {
         if (!tlData?.uuid) {
-          setFejl(da ? 'Ejendom ikke fundet i tingbogen' : 'Property not found');
+          // Distinguish API error from "not found"
+          const erApiFejl = tlData?.error && tlData.error !== 'Ejendom ikke fundet i tingbogen';
+          setFejl(
+            erApiFejl
+              ? da
+                ? 'Tinglysning er midlertidigt utilgængeligt — prøv igen om lidt.'
+                : 'Tinglysning is temporarily unavailable — please try again shortly.'
+              : da
+                ? 'Ejendom ikke fundet i tingbogen'
+                : 'Property not found'
+          );
           setLoading(false);
           return;
         }

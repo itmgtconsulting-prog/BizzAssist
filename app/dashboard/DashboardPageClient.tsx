@@ -28,7 +28,11 @@ import { useLanguage } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';
 import { createClient } from '@/lib/supabase/client';
 import { hentRecentEjendomme, type RecentEjendom } from '@/app/lib/recentEjendomme';
-import { hentTrackedEjendomme, type TrackedEjendom } from '@/app/lib/trackedEjendomme';
+import {
+  hentTrackedEjendommeCache,
+  fetchTrackedEjendomme,
+  type TrackedEjendom,
+} from '@/app/lib/trackedEjendomme';
 import { getRecentCompanies, type RecentCompany } from '@/app/lib/recentCompanies';
 import { getRecentPersons, type RecentPerson } from '@/app/lib/recentPersons';
 
@@ -167,7 +171,11 @@ export default function DashboardPageClient() {
    * Kaldt ved mount og når tracked/storage events fyres.
    */
   const refreshData = useCallback(() => {
-    setTrackedEjendomme(hentTrackedEjendomme());
+    // Show cached data instantly, then update from Supabase
+    setTrackedEjendomme(hentTrackedEjendommeCache());
+    fetchTrackedEjendomme()
+      .then(setTrackedEjendomme)
+      .catch(() => {});
     setRecentEjendomme(hentRecentEjendomme());
     refreshTrackedCompanies();
 

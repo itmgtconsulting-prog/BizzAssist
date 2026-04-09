@@ -92,7 +92,7 @@ import type {
 import type { MatrikelEjendom, MatrikelResponse } from '@/app/api/matrikel/route';
 import { gemRecentEjendom } from '@/app/lib/recentEjendomme';
 import { recordRecentVisit } from '@/app/lib/recordRecentVisit';
-import { erTracked, toggleTrackEjendom } from '@/app/lib/trackedEjendomme';
+import { erTracked, toggleTrackEjendom, fetchErTracked } from '@/app/lib/trackedEjendomme';
 import FoelgTooltip from '@/app/components/FoelgTooltip';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { useSetAIPageContext } from '@/app/context/AIPageContext';
@@ -932,10 +932,21 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
   /** Vis Følg-tooltip med info om overvåget data */
   const [visFoelgTooltip, setVisFoelgTooltip] = useState(false);
 
-  /** Indlæs tracking-tilstand ved mount og lyt efter ændringer */
+  /** Indlaes tracking-tilstand ved mount og lyt efter aendringer.
+   *  Viser cached vaerdi med det samme, derefter opdaterer fra Supabase. */
   useEffect(() => {
+    // Instant render from cache
     setErFulgt(erTracked(id));
-    const handler = () => setErFulgt(erTracked(id));
+    // Then verify against Supabase
+    fetchErTracked(id)
+      .then(setErFulgt)
+      .catch(() => {});
+    const handler = () => {
+      setErFulgt(erTracked(id));
+      fetchErTracked(id)
+        .then(setErFulgt)
+        .catch(() => {});
+    };
     window.addEventListener('ba-tracked-changed', handler);
     window.addEventListener('storage', handler);
     return () => {
@@ -1829,7 +1840,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                       const kommune =
                         dawaAdresse?.kommunenavn ?? dawaJordstykke?.kommune.navn ?? '';
                       const anvendelse = bbrData?.bbr?.[0]?.anvendelse ?? null;
-                      const nyTilstand = toggleTrackEjendom({
+                      const nyTilstand = await toggleTrackEjendom({
                         id,
                         adresse: adresseStreng,
                         postnr,
@@ -1839,25 +1850,6 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                       });
                       setErFulgt(nyTilstand);
                       window.dispatchEvent(new Event('ba-tracked-changed'));
-                      try {
-                        if (nyTilstand) {
-                          await fetch('/api/tracked', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                              entity_id: id,
-                              label: adresseStreng,
-                              entity_data: { postnr, by, kommune, anvendelse },
-                            }),
-                          });
-                        } else {
-                          await fetch(`/api/tracked?id=${encodeURIComponent(id)}`, {
-                            method: 'DELETE',
-                          });
-                        }
-                      } catch {
-                        /* Supabase ikke tilgængelig */
-                      }
                     }}
                     className={`flex items-center gap-2 px-3 py-1.5 border rounded-lg text-sm transition-all ${
                       erFulgt
@@ -4588,7 +4580,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                   setVisFoelgTooltip(false);
                   if (!ejendom) return;
                   const adresse = `${ejendom.adresse}, ${ejendom.postnummer} ${ejendom.by}`;
-                  const nyTilstand = toggleTrackEjendom({
+                  const nyTilstand = await toggleTrackEjendom({
                     id,
                     adresse,
                     postnr: ejendom.postnummer,
@@ -4598,30 +4590,6 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                   });
                   setErFulgt(nyTilstand);
                   window.dispatchEvent(new Event('ba-tracked-changed'));
-                  try {
-                    if (nyTilstand) {
-                      await fetch('/api/tracked', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                          entity_id: id,
-                          label: adresse,
-                          entity_data: {
-                            postnr: ejendom.postnummer,
-                            by: ejendom.by,
-                            kommune: ejendom.kommune,
-                            anvendelse: null,
-                          },
-                        }),
-                      });
-                    } else {
-                      await fetch(`/api/tracked?id=${encodeURIComponent(id)}`, {
-                        method: 'DELETE',
-                      });
-                    }
-                  } catch {
-                    /* Supabase ikke tilgængelig */
-                  }
                 }}
                 className={`flex items-center gap-2 px-3 py-1.5 border rounded-lg text-sm transition-all ${
                   erFulgt

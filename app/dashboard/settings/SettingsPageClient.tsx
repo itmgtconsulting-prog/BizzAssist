@@ -38,7 +38,8 @@ import {
   BookOpen,
 } from 'lucide-react';
 import {
-  hentTrackedEjendomme,
+  hentTrackedEjendommeCache,
+  fetchTrackedEjendomme,
   untrackEjendom,
   type TrackedEjendom,
 } from '@/app/lib/trackedEjendomme';
@@ -537,32 +538,13 @@ export default function SettingsPageClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabParam]);
 
-  /** Genindlæs data fra localStorage + Supabase */
+  /** Genindlaes data — Supabase-primaer via trackedEjendomme.ts */
   const refresh = useCallback(async () => {
-    const ls = hentTrackedEjendomme();
-    setTracked(ls);
-
-    try {
-      const res = await fetch('/api/tracked');
-      const data = await res.json();
-      if (data.tracked?.length > 0) {
-        setTracked(
-          data.tracked.map((e: Record<string, unknown>) => ({
-            id: e.entity_id as string,
-            adresse: (e.label as string) || (e.entity_id as string),
-            postnr: ((e.entity_data as Record<string, unknown>)?.postnr as string) || '',
-            by: ((e.entity_data as Record<string, unknown>)?.by as string) || '',
-            kommune: ((e.entity_data as Record<string, unknown>)?.kommune as string) || '',
-            anvendelse: ((e.entity_data as Record<string, unknown>)?.anvendelse as string) || null,
-            entityType:
-              ((e.entity_data as Record<string, unknown>)?.entityType as string) || 'property',
-            trackedSiden: new Date(e.created_at as string).getTime(),
-          }))
-        );
-      }
-    } catch {
-      /* localStorage allerede sat */
-    }
+    // Show cached data instantly
+    setTracked(hentTrackedEjendommeCache());
+    // Fetch authoritative data from Supabase (updates cache internally)
+    const freshTracked = await fetchTrackedEjendomme();
+    setTracked(freshTracked);
 
     // Load subscription from server (context has initial value, refresh from API)
     try {
@@ -757,17 +739,12 @@ export default function SettingsPageClient() {
     setCancelLoading(false);
   };
 
-  /** Stop tracking */
+  /** Stop tracking — Supabase-primaer via trackedEjendomme.ts */
   const handleUntrack = async (id: string) => {
-    untrackEjendom(id);
+    await untrackEjendom(id);
     window.dispatchEvent(new Event('ba-tracked-changed'));
-    try {
-      await fetch(`/api/tracked?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
-    } catch {
-      /* ignorer */
-    }
     setConfirmDelete(null);
-    refresh();
+    await refresh();
   };
 
   /**

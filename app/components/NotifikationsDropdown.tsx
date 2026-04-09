@@ -4,25 +4,23 @@
  * Notifikations-dropdown — vises som bell-ikon i dashboard topbar.
  *
  * Viser:
- *   - Antal ulæste notifikationer som badge
- *   - Liste over fulgte ejendomme med ændringsnotifikationer
- *   - "Marker alle som læst" og link til fulgte ejendomme
+ *   - Antal ulaeste notifikationer som badge
+ *   - Liste over fulgte ejendomme med aendringsnotifikationer
+ *   - "Marker alle som laest" og link til fulgte ejendomme
  *
- * Datakilde:
- *   - Primært: Supabase via /api/notifications + /api/tracked (når auth er aktiv)
- *   - Fallback: localStorage via trackedEjendomme.ts (dev / offline)
- *
- * Hybridtilgang: prøver Supabase først, falder tilbage til localStorage
- * hvis brugeren ikke er logget ind. Supabase-data har højere prioritet.
+ * Datakilde: Supabase er primaer via trackedEjendomme.ts async-funktioner.
+ * localStorage bruges kun som hurtig cache til initial render og offline-fallback.
  */
 
 import { useState, useRef, useEffect, useCallback, memo } from 'react';
 import { useRouter } from 'next/navigation';
 import { Bell, BellOff, Building2, CheckCheck, ChevronRight, X } from 'lucide-react';
 import {
-  hentTrackedEjendomme,
-  hentNotifikationer,
-  antalUlaesteNotifikationer,
+  hentTrackedEjendommeCache,
+  hentNotifikationerCache,
+  fetchTrackedEjendomme,
+  fetchNotifikationer,
+  fetchAntalUlaeste,
   markerAlleSomLaest,
   markerSomLaest,
   untrackEjendom,
@@ -51,69 +49,25 @@ function NotifikationsDropdown({ lang }: NotifikationsDropdownProps) {
   const [ulaesteCount, setUlaesteCount] = useState(0);
   const [tab, setTab] = useState<'notifikationer' | 'fulgte'>('notifikationer');
 
-  /** Om vi har Supabase-data (logget ind) */
-  const [harSupabase, setHarSupabase] = useState(false);
-
   /**
-   * Genindlæser data — prøver Supabase først, falder tilbage til localStorage.
-   * Supabase-kald er asynkrone; localStorage er synkront og bruges som fallback.
+   * Genindlaeser data — Supabase er primaer kilde, localStorage er fallback.
+   * Viser cached data med det samme, derefter opdaterer med Supabase-data.
    */
   const refresh = useCallback(async () => {
-    // Altid indlæs localStorage som baseline
-    const lsTracked = hentTrackedEjendomme();
-    const lsNotifs = hentNotifikationer();
-    const lsUlaeste = antalUlaesteNotifikationer();
-    setTracked(lsTracked);
-    setNotifs(lsNotifs);
-    setUlaesteCount(lsUlaeste);
+    // Show cached data instantly for fast render
+    setTracked(hentTrackedEjendommeCache());
+    setNotifs(hentNotifikationerCache());
+    setUlaesteCount(hentNotifikationerCache().filter((n) => !n.laest).length);
 
-    // Forsøg Supabase for rigtige data
-    try {
-      const [trackedRes, notifsRes] = await Promise.all([
-        fetch('/api/tracked').then((r) => r.json()),
-        fetch('/api/notifications').then((r) => r.json()),
-      ]);
-
-      // Hvis vi fik Supabase-data med indhold, brug det
-      if (trackedRes.tracked?.length > 0 || notifsRes.notifications?.length > 0) {
-        setHarSupabase(true);
-
-        if (trackedRes.tracked) {
-          setTracked(
-            trackedRes.tracked.map((e: Record<string, unknown>) => ({
-              id: e.entity_id as string,
-              adresse: (e.label as string) || (e.entity_id as string),
-              postnr: ((e.entity_data as Record<string, unknown>)?.postnr as string) || '',
-              by: ((e.entity_data as Record<string, unknown>)?.by as string) || '',
-              kommune: ((e.entity_data as Record<string, unknown>)?.kommune as string) || '',
-              anvendelse:
-                ((e.entity_data as Record<string, unknown>)?.anvendelse as string) || null,
-              trackedSiden: new Date(e.created_at as string).getTime(),
-            }))
-          );
-        }
-
-        if (notifsRes.notifications) {
-          setNotifs(
-            notifsRes.notifications.map((n: Record<string, unknown>) => ({
-              id: n.id as string,
-              ejendomId: n.entity_id as string,
-              adresse: n.title as string,
-              type: (n.notification_type as string) || 'generel',
-              besked: n.message as string,
-              tidspunkt: new Date(n.created_at as string).getTime(),
-              laest: n.is_read as boolean,
-            }))
-          );
-          const unreadCount = notifsRes.notifications.filter(
-            (n: Record<string, unknown>) => !n.is_read
-          ).length;
-          setUlaesteCount(unreadCount);
-        }
-      }
-    } catch {
-      // Supabase ikke tilgængelig — localStorage-data er allerede sat
-    }
+    // Fetch authoritative data from Supabase (updates cache internally)
+    const [freshTracked, freshNotifs, freshUlaeste] = await Promise.all([
+      fetchTrackedEjendomme(),
+      fetchNotifikationer(),
+      fetchAntalUlaeste(),
+    ]);
+    setTracked(freshTracked);
+    setNotifs(freshNotifs);
+    setUlaesteCount(freshUlaeste);
   }, []);
 
   // Indlæs data ved mount og når dropdown åbnes
@@ -151,46 +105,26 @@ function NotifikationsDropdown({ lang }: NotifikationsDropdownProps) {
     router.push(`/dashboard/ejendomme/${id}`);
   };
 
-  /** Håndter klik på en notifikation */
-  const handleNotifClick = (notif: EjendomNotifikation) => {
-    markerSomLaest(notif.id);
-    // Marker også som læst i Supabase
-    if (harSupabase) {
-      fetch('/api/notifications', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'mark_read', id: notif.id }),
-      }).catch(() => {});
-    }
-    refresh();
+  /** Haandter klik paa en notifikation — markerer som laest via Supabase */
+  const handleNotifClick = async (notif: EjendomNotifikation) => {
+    await markerSomLaest(notif.id);
+    await refresh();
     setOpen(false);
     router.push(`/dashboard/ejendomme/${notif.ejendomId}`);
   };
 
-  /** Stop tracking fra dropdown */
-  const handleUntrack = (e: React.MouseEvent, id: string) => {
+  /** Stop tracking fra dropdown — fjerner fra Supabase og cache */
+  const handleUntrack = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    untrackEjendom(id);
-    // Fjern også fra Supabase
-    if (harSupabase) {
-      fetch(`/api/tracked?id=${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => {});
-    }
+    await untrackEjendom(id);
     window.dispatchEvent(new Event('ba-tracked-changed'));
-    refresh();
+    await refresh();
   };
 
-  /** Marker alle som læst */
-  const handleMarkerAlle = () => {
-    markerAlleSomLaest();
-    // Marker også i Supabase
-    if (harSupabase) {
-      fetch('/api/notifications', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'mark_all_read' }),
-      }).catch(() => {});
-    }
-    refresh();
+  /** Marker alle som laest — via Supabase med localStorage-cache opdatering */
+  const handleMarkerAlle = async () => {
+    await markerAlleSomLaest();
+    await refresh();
   };
 
   const t = {

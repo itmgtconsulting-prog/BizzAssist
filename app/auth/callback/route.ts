@@ -80,8 +80,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const { error: otpError } = await supabase.auth.verifyOtp({ type, token_hash });
 
     if (type === 'signup' || type === 'email') {
-      // Email confirmed — regardless of OTP error (might be re-click / already verified)
-      console.error('[auth/callback] token_hash signup verified, redirecting to /login/verified');
+      // Email confirmed — sign out so the user must log in manually.
+      // verifyOtp() creates a session as a side effect; we don't want that
+      // for signup verification — the user should authenticate explicitly.
+      await supabase.auth.signOut();
+      console.error(
+        '[auth/callback] token_hash signup verified, signed out, redirecting to /login/verified'
+      );
       return NextResponse.redirect(`${origin}/login/verified`);
     }
 
@@ -142,8 +147,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   // ── Email verification success ────────────────────────────────────────────
   // When the user clicks the verification link from their signup email,
-  // emailRedirectTo was tagged with ?type=signup. Redirect to verified page.
+  // emailRedirectTo was tagged with ?type=signup.
+  // exchangeCodeForSession() verifies the email but also creates a session as
+  // a side effect — sign the user out so they must log in manually afterward.
   if (type === 'signup' || type === 'email') {
+    await supabase.auth.signOut();
+    console.error(
+      '[auth/callback] signup code exchanged, signed out, redirecting to /login/verified'
+    );
     return NextResponse.redirect(`${origin}/login/verified`);
   }
 

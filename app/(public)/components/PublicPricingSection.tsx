@@ -50,7 +50,7 @@ const COLOR_MAP: Record<
     border: 'border-blue-500/50',
     badge: 'bg-blue-600/20',
     badgeText: 'text-blue-300',
-    highlight: true,
+    highlight: false,
   },
   purple: {
     border: 'border-purple-500/40',
@@ -136,15 +136,6 @@ export default function PublicPricingSection() {
                 .filter(Boolean)
                 .join(' ')}
             >
-              {/* Most popular badge */}
-              {colors.highlight && (
-                <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-                  <span className="bg-blue-600 text-white text-[10px] font-bold px-2.5 py-0.5 rounded-full">
-                    Mest populær
-                  </span>
-                </div>
-              )}
-
               {/* Plan name */}
               <div className="mb-3">
                 <span

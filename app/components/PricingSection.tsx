@@ -58,7 +58,7 @@ const COLOR_MAP: Record<
     badge: 'bg-blue-600/20',
     badgeText: 'text-blue-300',
     ring: 'ring-blue-500/40',
-    highlight: true,
+    highlight: false,
   },
   purple: {
     border: 'border-purple-500/40',
@@ -155,15 +155,6 @@ export default function PricingSection() {
                     .filter(Boolean)
                     .join(' ')}
                 >
-                  {/* Most-popular badge */}
-                  {isHighlighted && (
-                    <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-                      <span className="bg-blue-600 text-white text-xs font-bold px-3 py-1 rounded-full">
-                        {t.mostPopular}
-                      </span>
-                    </div>
-                  )}
-
                   {/* Plan name badge */}
                   <div className="mb-4">
                     <span

@@ -550,7 +550,7 @@ async function sendReport(html: string, subject: string): Promise<void> {
  * Indsamler driftsstatistikker for de seneste 24 timer og sender
  * en formateret HTML-statusrapport til support@pecuniait.com via Resend.
  *
- * @param request - Indkommende HTTP-request med CRON_SECRET i header eller query
+ * @param request - Indkommende HTTP-request med CRON_SECRET som Authorization: Bearer header
  * @returns JSON med ok-flag og de indsamlede statistikker
  */
 export async function GET(request: NextRequest) {

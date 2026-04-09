@@ -659,6 +659,105 @@ export async function GET(req: NextRequest) {
   try {
     const xml = await tlFetch(`/dokaktuel/uuid/${uuid}`);
 
+    // ── Detekter pre-digitale dokumenter (ikke tinglyst digitalt) ──
+    // Tinglysning returnerer en XML-fejlbesked for dokumenter der eksisterer
+    // i tingbogen men ikke er digitalt indleveret (typisk pre-2009 servitutter).
+    const isPreDigital =
+      xml.includes('ikke tinglyst digitalt') ||
+      xml.includes('ikke digitalt tinglyst') ||
+      xml.includes('kan ikke vises her') ||
+      xml.includes('forespørgsel i tingbøgerne');
+
+    if (isPreDigital) {
+      // Generér en informativ PDF i stedet for at vise rå XML-indhold
+      const doc = new PDFDocument({
+        size: 'A4',
+        margin: 50,
+        info: { Title: 'Tinglysningsdokument', Author: 'BizzAssist' },
+      });
+      const chunks: Buffer[] = [];
+      doc.on('data', (chunk: Buffer) => chunks.push(chunk));
+
+      doc.fontSize(8).fillColor('#94a3b8').text('BizzAssist — Tinglysningsdokument', 50, 30);
+      doc
+        .fontSize(8)
+        .text(
+          new Date().toLocaleDateString('da-DK', {
+            day: 'numeric',
+            month: 'long',
+            year: 'numeric',
+          }),
+          50,
+          30,
+          { align: 'right' }
+        );
+      doc.moveDown(1.5);
+      doc.fontSize(18).fillColor('#1e293b').text('Tinglysningsdokument', { align: 'center' });
+      doc.moveDown(0.3);
+      doc.fontSize(9).fillColor('#64748b').text(`Dokument-ID: ${uuid}`, { align: 'center' });
+      doc.moveDown(2);
+
+      // Infobesked
+      doc.fontSize(12).fillColor('#2563eb').text('Dokumentet er ikke digitalt tilgængeligt');
+      doc.moveDown(0.3);
+      doc.strokeColor('#e2e8f0').lineWidth(0.5).moveTo(50, doc.y).lineTo(545, doc.y).stroke();
+      doc.moveDown(0.6);
+      doc
+        .fontSize(10)
+        .fillColor('#1e293b')
+        .text(
+          'Dette dokument er registreret i tingbogen, men er ikke tinglyst digitalt og kan derfor ikke hentes via Tinglysnings API.',
+          { width: 495 }
+        );
+      doc.moveDown(0.6);
+      doc
+        .fontSize(10)
+        .fillColor('#475569')
+        .text(
+          'Dokumentet stammer sandsynligvis fra før den elektroniske tinglysning blev obligatorisk (ca. 2009), og er ikke blevet digitaliseret i Tinglysningens bilagsbank.',
+          { width: 495 }
+        );
+      doc.moveDown(1);
+      doc.fontSize(10).fillColor('#1e293b').text('Hvad kan du gøre?', { underline: true });
+      doc.moveDown(0.4);
+      doc
+        .fontSize(10)
+        .fillColor('#475569')
+        .list(
+          [
+            'Søg dokumentet på tinglysning.dk under "Søg i tingbogen"',
+            'Kontakt Tinglysningsretten for at få en kopi af det fysiske dokument',
+            "Fra 1. maj 2026 vil REST API'et potentielt give adgang til ældre tinglyste dokumenter",
+          ],
+          { width: 495, bulletRadius: 2, textIndent: 15 }
+        );
+      doc.moveDown(1.5);
+      doc
+        .fontSize(8)
+        .fillColor('#94a3b8')
+        .text('Dokument-UUID: ' + uuid, { width: 495 });
+
+      doc
+        .fontSize(7)
+        .fillColor('#94a3b8')
+        .text('Genereret af BizzAssist — Pecunia IT ApS — CVR 44718502', 50, 780, {
+          align: 'center',
+        });
+      doc.end();
+
+      const pdfBuffer = await new Promise<Buffer>((resolve) => {
+        doc.on('end', () => resolve(Buffer.concat(chunks)));
+      });
+
+      return new NextResponse(new Uint8Array(pdfBuffer), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/pdf',
+          'Content-Disposition': `inline; filename="tinglysning-${uuid?.slice(0, 8)}.pdf"`,
+        },
+      });
+    }
+
     // Parse XML til sektioner
     const sections = parseXmlToSections(xml);
     const docTitle = sections[0]?.title ?? 'Tinglysningsdokument';

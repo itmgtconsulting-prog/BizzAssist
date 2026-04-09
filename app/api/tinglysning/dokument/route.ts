@@ -110,16 +110,57 @@ function tlFetch(urlPath: string): Promise<string> {
 }
 
 /** Parser XML og udtrækker alle felter med læsbare labels */
+/**
+ * Generisk XML-feltudtrækker — bruges som fallback når specifikke parsers
+ * ikke genkender dokumentstrukturen (f.eks. anden hæftelse, servitut).
+ * Stripper namespace-præfikser og udtrækker alle leaf text nodes.
+ */
+function genericXmlExtract(xml: string): { label: string; value: string }[] {
+  const cleaned = xml
+    .replace(/<\/?[a-zA-Z]+:/g, '<') // strip namespace prefixes
+    .replace(/\s[a-zA-Z]+:([a-zA-Z])/g, ' $1'); // strip ns: in attributes
+  const fields: { label: string; value: string }[] = [];
+  const seen = new Set<string>();
+  const skipTags = new Set([
+    'Body',
+    'Envelope',
+    'Header',
+    'Fault',
+    'faultcode',
+    'faultstring',
+    'GetResult',
+    'HentResultat',
+    'Return',
+    'Result',
+  ]);
+  for (const m of cleaned.matchAll(/<(\w+)[^>]*>([^<]{2,500})<\/\1>/g)) {
+    const tag = m[1];
+    const val = m[2].trim();
+    if (!val || val.length < 2) continue;
+    if (skipTags.has(tag)) continue;
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-/.test(val)) continue; // skip UUIDs
+    const key = `${tag}:${val}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    // CamelCase → "Camel Case"
+    const label = tag.replace(/([A-Z])/g, ' $1').trim();
+    fields.push({ label, value: val });
+  }
+  return fields;
+}
+
 function parseXmlToSections(
   xml: string
 ): { title: string; fields: { label: string; value: string }[] }[] {
   const sections: { title: string; fields: { label: string; value: string }[] }[] = [];
 
-  // Dokument-type
+  // Dokument-type — prøv både med og uden namespace-præfiks
   const docType =
     xml.match(/HaeftelseType[^>]*>([^<]+)/)?.[1] ??
+    xml.match(/HaeftelseTypeKode[^>]*>([^<]+)/)?.[1] ??
     xml.match(/AdkomstType[^>]*>([^<]+)/)?.[1] ??
     xml.match(/ServitutType[^>]*>([^<]+)/)?.[1] ??
+    xml.match(/DokumentType[^>]*>([^<]+)/)?.[1] ??
     'Tinglysningsdokument';
 
   const docTypeMap: Record<string, string> = {
@@ -237,6 +278,14 @@ function parseXmlToSections(
     }
   }
   if (tekster.length > 0) sections.push({ title: 'Dokumenttekst', fields: tekster });
+
+  // Fallback: hvis ingen specifikke sektioner matches, brug generisk XML-udtræk
+  if (sections.length === 0) {
+    const fallbackFields = genericXmlExtract(xml);
+    if (fallbackFields.length > 0) {
+      sections.push({ title: 'Dokumentdata', fields: fallbackFields });
+    }
+  }
 
   return [{ title, fields: [] }, ...sections];
 }
@@ -651,9 +700,10 @@ export async function GET(req: NextRequest) {
 
       // Felter
       for (const field of section.fields) {
-        const y = doc.y;
+        let y = doc.y;
         if (y > 750) {
           doc.addPage();
+          y = doc.y; // reset y efter sideskift — ellers renderes content usynligt under siden
         }
 
         if (field.label === 'Tekst' && field.value.length > 80) {

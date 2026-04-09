@@ -5546,7 +5546,24 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                           ))}
                         </div>
                       </div>
-                      {/* TODO BIZZ-195: Akt nr. + Tingbogsattest PDF-knapper skjult indtil korrekte eTL PDF-URLer er implementeret */}
+                      <div className="flex items-center gap-2">
+                        <button className="flex items-center gap-1.5 px-3 py-1.5 border border-slate-700/60 rounded-lg text-slate-300 text-xs hover:bg-slate-700/40 transition-colors">
+                          {da ? 'Akt nr.' : 'Act no.'} {ejendom.tingbogsattest.aktNummer}
+                        </button>
+                        {/* TODO BIZZ-196: Knyt til REST API tingbogsattest-endpoint når tilgængeligt (1. maj 2026) */}
+                        <button
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 rounded-lg text-white text-xs font-medium transition-colors opacity-50 cursor-not-allowed"
+                          disabled
+                          title={
+                            da
+                              ? 'PDF-download kræver REST API (tilgængeligt 1. maj 2026)'
+                              : 'PDF download requires REST API (available May 1, 2026)'
+                          }
+                        >
+                          <Download size={12} />
+                          Tingbogsattest
+                        </button>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -6839,7 +6856,26 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
           <span className="text-slate-600 text-xs">
             ({adkomstGroups.length + haeftelser.length + servitutter.length})
           </span>
-          {/* TODO BIZZ-195: PDF download skjult indtil korrekte tinglysnings-PDF-links er implementeret */}
+          <button
+            onClick={async () => {
+              for (const docId of selectedDocs) {
+                const isBilag = docId.startsWith('bilag-');
+                const url = isBilag
+                  ? `/api/tinglysning/dokument?bilag=${docId.replace('bilag-', '')}`
+                  : `/api/tinglysning/dokument?uuid=${docId}`;
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `tinglysning-${docId.slice(0, 14)}.pdf`;
+                a.click();
+                await new Promise((r) => setTimeout(r, 500));
+              }
+            }}
+            disabled={selectedDocs.size === 0}
+            className="ml-auto flex items-center gap-1.5 px-3 py-1 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 disabled:cursor-not-allowed border border-slate-600 rounded-lg text-slate-300 text-xs font-medium transition-all"
+          >
+            <Download size={12} />
+            {da ? 'Download valgte' : 'Download selected'} ({selectedDocs.size})
+          </button>
         </div>
 
         {/* Kolonneheader: Expand | Pri | Dato | Dokument | Beløb | Type | PDF | Check */}
@@ -6856,8 +6892,9 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
             {da ? 'Beløb' : 'Amount'}
           </span>
           <span className="text-[10px] font-medium text-slate-500 uppercase">Type</span>
-          <span />
-          {/* TODO BIZZ-195: PDF-kolonne skjult */}
+          <span className="text-[10px] font-medium text-slate-500 uppercase">
+            {da ? 'Dok.' : 'Doc.'}
+          </span>
           <span />
         </div>
 
@@ -6873,7 +6910,7 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
               // First entry carries shared document metadata (dato, beløb, type etc.)
               const first = group[0];
               const isOpen = expandedAdkomst.has(i);
-              const _docId = String(first.dokumentId ?? ''); // TODO BIZZ-195: bruges når PDF-download genaktiveres
+              const docId = String(first.dokumentId ?? '');
               const typeMap: Record<string, string> = {
                 skoede: da ? 'Skøde' : 'Deed',
                 auktionsskoede: 'Auktionsskøde',
@@ -6915,9 +6952,51 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
                         : ''}
                     </span>
                     <span className="text-xs text-slate-400 truncate">{typeLabel}</span>
-                    {/* TODO BIZZ-195: PDF-link skjult */}
-                    <span />
-                    <span />
+                    <div
+                      className="flex items-center gap-1.5"
+                      onClick={(ev) => ev.stopPropagation()}
+                    >
+                      {docId && (
+                        <a
+                          href={`/api/tinglysning/dokument?uuid=${docId}`}
+                          download
+                          className="inline-flex items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
+                        >
+                          <FileText size={11} />
+                          PDF
+                        </a>
+                      )}
+                    </div>
+                    {docId ? (
+                      <label
+                        className="flex items-center cursor-pointer flex-shrink-0"
+                        onClick={(ev) => ev.stopPropagation()}
+                      >
+                        <input
+                          type="checkbox"
+                          className="sr-only"
+                          checked={selectedDocs.has(docId)}
+                          onChange={() => toggleDoc(docId)}
+                        />
+                        <span
+                          className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors ${selectedDocs.has(docId) ? 'bg-blue-500 border-blue-500' : 'bg-[#0a1020] border-slate-400'}`}
+                        >
+                          {selectedDocs.has(docId) && (
+                            <svg
+                              viewBox="0 0 10 10"
+                              className="w-2 h-2 text-white"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2.5"
+                            >
+                              <path d="M1.5 5.5l2.5 2.5 4.5-4.5" />
+                            </svg>
+                          )}
+                        </span>
+                      </label>
+                    ) : (
+                      <span />
+                    )}
                   </div>
                   {isOpen && (
                     <div className="px-4 pb-3 ml-10 border-l-2 border-purple-500/20">
@@ -7065,7 +7144,7 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
             </div>
             {haeftelser.map((h, i) => {
               const isOpen = expandedHaeftelser.has(i);
-              const _docId = String(h.dokumentId ?? ''); // TODO BIZZ-195: bruges når PDF-download genaktiveres
+              const docId = String(h.dokumentId ?? '');
               return (
                 <div key={`h-${i}`} className="border-b border-slate-700/15">
                   <div
@@ -7108,9 +7187,51 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
                     <span className="text-xs text-slate-400 truncate">
                       {String(h.kreditor ?? '')}
                     </span>
-                    {/* TODO BIZZ-195: PDF-link skjult */}
-                    <span />
-                    <span />
+                    <div
+                      className="flex items-center gap-1.5"
+                      onClick={(ev) => ev.stopPropagation()}
+                    >
+                      {docId && (
+                        <a
+                          href={`/api/tinglysning/dokument?uuid=${docId}`}
+                          download
+                          className="inline-flex items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
+                        >
+                          <FileText size={11} />
+                          PDF
+                        </a>
+                      )}
+                    </div>
+                    {docId ? (
+                      <label
+                        className="flex items-center cursor-pointer flex-shrink-0"
+                        onClick={(ev) => ev.stopPropagation()}
+                      >
+                        <input
+                          type="checkbox"
+                          className="sr-only"
+                          checked={selectedDocs.has(docId)}
+                          onChange={() => toggleDoc(docId)}
+                        />
+                        <span
+                          className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors ${selectedDocs.has(docId) ? 'bg-blue-500 border-blue-500' : 'bg-[#0a1020] border-slate-400'}`}
+                        >
+                          {selectedDocs.has(docId) && (
+                            <svg
+                              viewBox="0 0 10 10"
+                              className="w-2 h-2 text-white"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2.5"
+                            >
+                              <path d="M1.5 5.5l2.5 2.5 4.5-4.5" />
+                            </svg>
+                          )}
+                        </span>
+                      </label>
+                    ) : (
+                      <span />
+                    )}
                   </div>
                   {isOpen && (
                     <div className="px-4 pb-3 ml-10 border-l-2 border-amber-500/20 text-xs">
@@ -7367,7 +7488,7 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
               </span>
             </div>
             {visServitutter.map((s, i) => {
-              const _docId = String(s.dokumentId ?? ''); // TODO BIZZ-195: bruges når PDF-download genaktiveres
+              const docId = String(s.dokumentId ?? '');
               const isOpen = expandedServitutter.has(i);
               const hasDetails =
                 s.tillaegsTekst ||
@@ -7416,9 +7537,64 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
                     <span className="text-xs text-slate-500 truncate">
                       {servitutTypeMap[String(s.type)] ?? String(s.type)}
                     </span>
-                    {/* TODO BIZZ-195: PDF-link skjult */}
-                    <span />
-                    <span />
+                    <div
+                      className="flex items-center gap-1.5"
+                      onClick={(ev) => ev.stopPropagation()}
+                    >
+                      {(() => {
+                        const bilagRefs = Array.isArray(s.bilagRefs)
+                          ? (s.bilagRefs as string[])
+                          : [];
+                        const pdfUrl =
+                          bilagRefs.length > 0
+                            ? `/api/tinglysning/dokument?bilag=${bilagRefs[0]}`
+                            : docId
+                              ? `/api/tinglysning/dokument?uuid=${docId}`
+                              : null;
+                        return (
+                          pdfUrl && (
+                            <a
+                              href={pdfUrl}
+                              download
+                              className="inline-flex items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
+                            >
+                              <FileText size={11} />
+                              PDF
+                            </a>
+                          )
+                        );
+                      })()}
+                    </div>
+                    {docId ? (
+                      <label
+                        className="flex items-center cursor-pointer flex-shrink-0"
+                        onClick={(ev) => ev.stopPropagation()}
+                      >
+                        <input
+                          type="checkbox"
+                          className="sr-only"
+                          checked={selectedDocs.has(docId)}
+                          onChange={() => toggleDoc(docId)}
+                        />
+                        <span
+                          className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors ${selectedDocs.has(docId) ? 'bg-blue-500 border-blue-500' : 'bg-[#0a1020] border-slate-400'}`}
+                        >
+                          {selectedDocs.has(docId) && (
+                            <svg
+                              viewBox="0 0 10 10"
+                              className="w-2 h-2 text-white"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2.5"
+                            >
+                              <path d="M1.5 5.5l2.5 2.5 4.5-4.5" />
+                            </svg>
+                          )}
+                        </span>
+                      </label>
+                    ) : (
+                      <span />
+                    )}
                   </div>
                   {isOpen && hasDetails && (
                     <div className="px-4 pb-3 ml-10 border-l-2 border-teal-500/20 text-xs">
@@ -7513,9 +7689,8 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
           </>
         )}
 
-        {/* ── BILAG (originale PDF'er fra Tinglysningen) ── */}
-        {/* TODO BIZZ-195: Bilag-sektion skjult indtil korrekte PDF-links er implementeret */}
-        {false && bilagRefs.length > 0 && (
+        {/* ── BILAG (originale scannede PDF'er fra Tinglysningens bilagsbank) ── */}
+        {bilagRefs.length > 0 && (
           <>
             <div className="px-4 py-1.5 bg-blue-500/5 border-b border-slate-700/20">
               <span className="text-[10px] font-semibold text-blue-400 uppercase tracking-wider">

@@ -110,7 +110,14 @@ BizzAssist håndterer følgende fejlsituationer eksplicit:
 - **Hosting:** Vercel (serverless, Node.js runtime)
 - **Framework:** Next.js 16 App Router
 - **Certifikat-opbevaring:** Base64-encodet PFX i krypteret Vercel-miljøvariabel (`NEMLOGIN_CERT_B64`)
-- **IP-adresser:** Vercel anvender dynamiske egress IP-adresser. Statiske IP-adresser kan konfigureres via Vercel Enterprise eller en dedikeret proxy, hvis Tinglysningsretten kræver IP-whitelisting.
+- **IP-adresser:** Alle kald til e-TL afsendes fra en dedikeret Hetzner-proxy med statisk IP-adresse. Nedenstående IP-adresse bedes tilføjes til e-TL's IP-whitelist:
+
+  | Miljø               | IP-adresse        | Formål                                                |
+  | ------------------- | ----------------- | ----------------------------------------------------- |
+  | **Test/Produktion** | `204.168.164.252` | Hetzner VPS proxy (statisk egress for Vercel-hosting) |
+
+  Bemærk: IP-adressen `93.161.46.78` (lokal udviklingsmaskine) er allerede whitelistet til testmiljøet og benyttes under udviklingstest.
+
 - **Systemcertifikat (produktion):** OCES3 FOCES systemcertifikat udstedt til Pecunia IT Consulting ApS, CVR 44718502, via MitID Erhverv / Nets.
 
 ---

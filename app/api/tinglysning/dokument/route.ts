@@ -415,7 +415,7 @@ export async function GET(req: NextRequest) {
         status: 200,
         headers: {
           'Content-Type': 'application/pdf',
-          'Content-Disposition': `attachment; filename="tinglysning-bilag-${bilagId.slice(0, 8)}.pdf"`,
+          'Content-Disposition': `inline; filename="tinglysning-bilag-${bilagId.slice(0, 8)}.pdf"`,
         },
       });
     } catch (err) {
@@ -518,7 +518,7 @@ export async function GET(req: NextRequest) {
           status: 200,
           headers: {
             'Content-Type': 'application/pdf',
-            'Content-Disposition': `attachment; filename="tingbogsattest-${uuid.slice(0, 8)}.pdf"`,
+            'Content-Disposition': `inline; filename="tingbogsattest-${uuid.slice(0, 8)}.pdf"`,
           },
         });
       }
@@ -597,7 +597,7 @@ export async function GET(req: NextRequest) {
         status: 200,
         headers: {
           'Content-Type': 'application/pdf',
-          'Content-Disposition': `attachment; filename="tingbogsattest-${bfeNr ?? uuid}.pdf"`,
+          'Content-Disposition': `inline; filename="tingbogsattest-${bfeNr ?? uuid}.pdf"`,
         },
       });
     } catch (err) {
@@ -699,7 +699,7 @@ export async function GET(req: NextRequest) {
       status: 200,
       headers: {
         'Content-Type': 'application/pdf',
-        'Content-Disposition': `attachment; filename="${filename}"`,
+        'Content-Disposition': `inline; filename="${filename}"`,
       },
     });
   } catch (err) {

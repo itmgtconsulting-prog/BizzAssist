@@ -52,7 +52,7 @@ const qualityGates: QualityGate[] = [
     description: 'Structural changes approved by ARCHITECT agent',
   },
   {
-    name: 'Test Suite (746+ tests)',
+    name: 'Test Suite (919+ tests)',
     icon: CheckCircle,
     description: '≥60% lines, ≥50% functions, ≥35% branches',
   },
@@ -75,6 +75,13 @@ const workflows: Workflow[] = [
     file: 'service-manager.yml',
     description: 'Daily health check — TypeScript, lint, tests, audit',
     trigger: 'Daily 06:00 UTC',
+  },
+  {
+    name: 'Auto-Fix Agent',
+    file: 'auto-fix.yml',
+    description:
+      'Triggered by Service Manager on failure — proposes and applies safe fixes automatically',
+    trigger: 'On Service Manager failure',
   },
   {
     name: 'CI Pipeline',

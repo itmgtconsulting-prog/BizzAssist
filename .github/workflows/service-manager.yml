@@ -7,6 +7,15 @@ on:
 jobs:
   health-check:
     runs-on: ubuntu-latest
+    outputs:
+      tsc_failed: ${{ steps.tsc.outputs.exit_code != '0' }}
+      lint_failed: ${{ steps.lint.outputs.exit_code != '0' }}
+      tests_failed: ${{ steps.tests.outputs.exit_code != '0' }}
+      audit_failed: ${{ steps.audit.outputs.exit_code != '0' }}
+      tsc_errors: ${{ steps.capture.outputs.tsc_errors }}
+      lint_errors: ${{ steps.capture.outputs.lint_errors }}
+      test_errors: ${{ steps.capture.outputs.test_errors }}
+      audit_errors: ${{ steps.capture.outputs.audit_errors }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -52,3 +61,68 @@ jobs:
             -X POST "https://bizzassist.atlassian.net/rest/api/3/issue" \
             -H "Content-Type: application/json" \
             -d "{\"fields\":{\"project\":{\"key\":\"BIZZ\"},\"summary\":\"$SUMMARY\",\"description\":{\"type\":\"doc\",\"version\":1,\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"Automated service manager detected issues.\"}]}]},\"issuetype\":{\"name\":\"Bug\"},\"priority\":{\"name\":\"High\"}}}"
+      - name: Capture error outputs for auto-fix
+        id: capture
+        if: steps.tsc.outputs.exit_code != '0' || steps.lint.outputs.exit_code != '0' || steps.tests.outputs.exit_code != '0' || steps.audit.outputs.exit_code != '0'
+        run: |
+          # Capture first 2000 chars of each error output for the auto-fix agent
+          if [ "${{ steps.tsc.outputs.exit_code }}" != "0" ]; then
+            TSC_ERRORS=$(head -c 2000 tsc-output.txt | jq -Rs .)
+            echo "tsc_errors=$TSC_ERRORS" >> $GITHUB_OUTPUT
+          fi
+          if [ "${{ steps.lint.outputs.exit_code }}" != "0" ]; then
+            LINT_ERRORS=$(head -c 2000 lint-output.txt | jq -Rs .)
+            echo "lint_errors=$LINT_ERRORS" >> $GITHUB_OUTPUT
+          fi
+          if [ "${{ steps.tests.outputs.exit_code }}" != "0" ]; then
+            TEST_ERRORS=$(tail -c 2000 test-output.txt | jq -Rs .)
+            echo "test_errors=$TEST_ERRORS" >> $GITHUB_OUTPUT
+          fi
+          if [ "${{ steps.audit.outputs.exit_code }}" != "0" ]; then
+            AUDIT_ERRORS=$(head -c 2000 audit-output.txt | jq -Rs .)
+            echo "audit_errors=$AUDIT_ERRORS" >> $GITHUB_OUTPUT
+          fi
+
+  # Trigger Auto-Fix Agent for TypeScript errors
+  auto-fix-tsc:
+    needs: health-check
+    if: needs.health-check.outputs.tsc_failed == 'true'
+    uses: ./.github/workflows/auto-fix.yml
+    with:
+      issue_type: type_error
+      error_output: ${{ needs.health-check.outputs.tsc_errors }}
+    secrets:
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
+  # Trigger Auto-Fix Agent for lint errors
+  auto-fix-lint:
+    needs: health-check
+    if: needs.health-check.outputs.lint_failed == 'true'
+    uses: ./.github/workflows/auto-fix.yml
+    with:
+      issue_type: build_error
+      error_output: ${{ needs.health-check.outputs.lint_errors }}
+    secrets:
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
+  # Trigger Auto-Fix Agent for test failures
+  auto-fix-tests:
+    needs: health-check
+    if: needs.health-check.outputs.tests_failed == 'true'
+    uses: ./.github/workflows/auto-fix.yml
+    with:
+      issue_type: runtime_error
+      error_output: ${{ needs.health-check.outputs.test_errors }}
+    secrets:
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}
+
+  # Trigger Auto-Fix Agent for audit vulnerabilities
+  auto-fix-audit:
+    needs: health-check
+    if: needs.health-check.outputs.audit_failed == 'true'
+    uses: ./.github/workflows/auto-fix.yml
+    with:
+      issue_type: config_error
+      error_output: ${{ needs.health-check.outputs.audit_errors }}
+    secrets:
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}

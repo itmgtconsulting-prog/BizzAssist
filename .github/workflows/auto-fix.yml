@@ -1,0 +1,156 @@
+##
+# Auto-Fix Agent — proposes and applies safe fixes for issues detected by Service Manager.
+#
+# Callable from service-manager.yml via workflow_call, or manually via workflow_dispatch.
+# Only handles small, safe fixes: max 1 file, max 50 lines changed, no new features.
+#
+# Required secrets:
+#   CRON_SECRET  — bearer token for BizzAssist API cron/admin routes
+#   APP_URL      — (optional) defaults to https://bizzassist.dk
+#
+# BIZZ-86: Service Manager + Auto-Fix Agent
+##
+
+name: Auto-Fix Agent
+
+on:
+  workflow_call:
+    inputs:
+      issue_type:
+        description: 'Type of issue (build_error, type_error, runtime_error, config_error)'
+        required: true
+        type: string
+      error_output:
+        description: 'The actual error text from the failed step'
+        required: true
+        type: string
+      scan_id:
+        description: 'Service Manager scan ID (optional)'
+        required: false
+        type: string
+        default: ''
+    secrets:
+      CRON_SECRET:
+        required: true
+
+  workflow_dispatch:
+    inputs:
+      issue_type:
+        description: 'Type of issue'
+        required: true
+        type: choice
+        options:
+          - build_error
+          - type_error
+          - runtime_error
+          - config_error
+      error_output:
+        description: 'Error output text'
+        required: true
+        type: string
+      scan_id:
+        description: 'Service Manager scan ID (optional)'
+        required: false
+        type: string
+        default: ''
+
+env:
+  APP_URL: ${{ secrets.APP_URL || 'https://bizzassist.dk' }}
+
+jobs:
+  auto-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+
+      - name: Propose fix via Auto-Fix API
+        id: propose
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          # Truncate error output to 4000 chars to avoid payload limits
+          ERROR_TEXT=$(echo '${{ inputs.error_output }}' | head -c 4000)
+
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$APP_URL/api/admin/service-manager/auto-fix" \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n \
+              --arg scanId "${{ inputs.scan_id }}" \
+              --arg type "${{ inputs.issue_type }}" \
+              --arg message "$ERROR_TEXT" \
+              '{
+                scanId: $scanId,
+                issue: {
+                  type: $type,
+                  message: $message,
+                  severity: "error",
+                  source: "github_actions"
+                }
+              }')")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          echo "http_code=$HTTP_CODE" >> $GITHUB_OUTPUT
+          echo "response<<EOF" >> $GITHUB_OUTPUT
+          echo "$BODY" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          if [ "$HTTP_CODE" -ge 400 ]; then
+            echo "::warning::Auto-fix API returned HTTP $HTTP_CODE"
+            echo "auto_approved=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Extract fix ID and auto-approve status from response
+          FIX_ID=$(echo "$BODY" | jq -r '.fixId // empty')
+          AUTO_APPROVED=$(echo "$BODY" | jq -r '.autoApproved // false')
+          CLASSIFICATION=$(echo "$BODY" | jq -r '.classification // "unknown"')
+
+          echo "fix_id=$FIX_ID" >> $GITHUB_OUTPUT
+          echo "auto_approved=$AUTO_APPROVED" >> $GITHUB_OUTPUT
+          echo "classification=$CLASSIFICATION" >> $GITHUB_OUTPUT
+
+          echo "::notice::Fix proposed — ID: $FIX_ID, classification: $CLASSIFICATION, auto-approved: $AUTO_APPROVED"
+
+      - name: Apply auto-approved fix via Release Agent
+        if: steps.propose.outputs.auto_approved == 'true' && steps.propose.outputs.fix_id != ''
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          FIX_ID="${{ steps.propose.outputs.fix_id }}"
+
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$APP_URL/api/admin/release-agent" \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n \
+              --arg fixId "$FIX_ID" \
+              '{
+                action: "create-hotfix",
+                fixId: $fixId
+              }')")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" -ge 400 ]; then
+            echo "::error::Release Agent returned HTTP $HTTP_CODE — fix not applied"
+            echo "$BODY"
+            exit 1
+          fi
+
+          PR_URL=$(echo "$BODY" | jq -r '.prUrl // empty')
+          BRANCH=$(echo "$BODY" | jq -r '.branch // empty')
+
+          echo "::notice::Hotfix applied — branch: $BRANCH, PR: $PR_URL"
+
+      - name: Log skipped fix (awaiting manual approval)
+        if: steps.propose.outputs.auto_approved != 'true'
+        run: |
+          echo "::notice::Fix proposed but requires manual approval — classification: ${{ steps.propose.outputs.classification }}"
+          echo "Review pending fixes at: $APP_URL/dashboard/admin/service-manager"

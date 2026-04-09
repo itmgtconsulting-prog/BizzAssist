@@ -1,71 +1,61 @@
 'use client';
 
 /**
- * AI Analyse-side — strukturerede AI-drevne analysetyper.
+ * AI Analyse-side — ét søgefelt + fire analysetyper.
  *
- * Tilbyder fire analysetyper som brugeren kan vælge imellem:
- *  1. Due Diligence  — Grundig gennemgang af virksomhed eller ejendom
- *  2. Konkurrentanalyse — Sammenligning af virksomheder i samme branche
- *  3. Investeringsscreening — Find ejendomme/virksomheder der matcher kriterier
- *  4. Markedsanalyse — Ejendomsmarked i et geografisk område
+ * Flow:
+ *  1. Søg efter en virksomhed eller ejendom via unified search
+ *  2. Vælg analysetype (Due Diligence, Konkurrentanalyse, Investeringsscreening, Markedsanalyse)
+ *  3. Klik "Kør analyse" → streaming resultat via /api/analysis/run
  *
- * Side-flow:
- *  1. Vis 4 analysetypekort (2x2 grid)
- *  2. Bruger klikker → formular til input for den valgte type
- *  3. Bruger sender → kalder /api/analysis/run med streaming SSE
- *  4. Viser streaming markdown output i resultpanel
- *  5. "Ny analyse" knap for at starte forfra
+ * Bruger de samme AI-tools som AI Bizzness Assistent:
+ * CVR, regnskab, BBR, vurdering, ejerskab, salgshistorik, plandata m.fl.
  */
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import {
   ClipboardCheck,
   BarChart3,
   Target,
   TrendingUp,
-  ArrowLeft,
+  Search,
+  X,
+  Building2,
+  Briefcase,
+  MapPin,
+  User,
   Loader2,
   AlertCircle,
   RefreshCw,
+  ChevronDown,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
+import type { UnifiedSearchResult } from '@/app/api/search/route';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 /** Union of all supported analysis type identifiers */
 type AnalysisType = 'due_diligence' | 'konkurrent' | 'investering' | 'marked';
 
-/** Input field definition for a given analysis type */
-interface InputField {
-  /** Field key used in the input record sent to the API */
-  key: string;
-  /** Human-readable label shown above the input */
-  label: string;
-  /** Placeholder text for the input element */
-  placeholder: string;
-  /** Whether the field spans multiple lines (textarea vs. input) */
-  multiline?: boolean;
+/** A selected entity from the search results */
+interface SelectedEntity {
+  id: string;
+  title: string;
+  subtitle: string;
+  type: 'address' | 'company' | 'person';
+  meta?: Record<string, string>;
 }
 
 /** Configuration for a single analysis type card */
 interface AnalysisTypeConfig {
-  /** Unique identifier */
   id: AnalysisType;
-  /** Display title (Danish) */
   titleDa: string;
-  /** Display title (English) */
   titleEn: string;
-  /** Short description (Danish) */
   descDa: string;
-  /** Short description (English) */
   descEn: string;
-  /** Tailwind colour classes for icon background and icon text */
   iconColor: string;
   iconBg: string;
-  /** Lucide icon component */
   icon: React.ElementType;
-  /** Form fields shown when this type is selected */
-  fields: InputField[];
 }
 
 // ─── Analysis type definitions ────────────────────────────────────────────────
@@ -76,91 +66,31 @@ const ANALYSIS_TYPES: AnalysisTypeConfig[] = [
     id: 'due_diligence',
     titleDa: 'Due Diligence',
     titleEn: 'Due Diligence',
-    descDa: 'Gennemgå en virksomhed eller ejendom grundigt',
-    descEn: 'Thorough review of a company or property',
+    descDa: 'Grundig gennemgang — økonomi, ejerskab, risici',
+    descEn: 'Thorough review — financials, ownership, risks',
     icon: ClipboardCheck,
     iconColor: 'text-emerald-400',
     iconBg: 'bg-emerald-500/10',
-    fields: [
-      {
-        key: 'CVR- eller BFE-nummer',
-        label: 'CVR- eller BFE-nummer',
-        placeholder: 'F.eks. 12345678 (CVR) eller 5708897 (BFE)',
-      },
-      {
-        key: 'Virksomhed eller ejendom',
-        label: 'Virksomhed / ejendom (valgfrit)',
-        placeholder: 'F.eks. "Novo Nordisk A/S" eller "Vesterbrogade 10, København"',
-      },
-      {
-        key: 'Fokusområder',
-        label: 'Fokusområder (valgfrit)',
-        placeholder: 'F.eks. "likviditet og ejerskabsstruktur"',
-        multiline: true,
-      },
-    ],
   },
   {
     id: 'konkurrent',
     titleDa: 'Konkurrentanalyse',
     titleEn: 'Competitor Analysis',
-    descDa: 'Sammenlign virksomheder i samme branche',
+    descDa: 'Sammenlign med konkurrenter i samme branche',
     descEn: 'Compare companies in the same industry',
     icon: BarChart3,
     iconColor: 'text-blue-400',
     iconBg: 'bg-blue-500/10',
-    fields: [
-      {
-        key: 'CVR-nummer',
-        label: 'CVR-nummer på din virksomhed',
-        placeholder: 'F.eks. 12345678',
-      },
-      {
-        key: 'Branche',
-        label: 'Branche / industri',
-        placeholder: 'F.eks. "softwareudvikling", "byggeri", "detailhandel"',
-      },
-      {
-        key: 'Geografisk fokus',
-        label: 'Geografisk fokus (valgfrit)',
-        placeholder: 'F.eks. "Danmark", "Aarhus", "Skandinavien"',
-      },
-      {
-        key: 'Konkurrenter',
-        label: 'Kendte konkurrenter (valgfrit)',
-        placeholder: 'F.eks. CVR eller navne på konkurrenter',
-        multiline: true,
-      },
-    ],
   },
   {
     id: 'investering',
     titleDa: 'Investeringsscreening',
     titleEn: 'Investment Screening',
-    descDa: 'Find ejendomme eller virksomheder der matcher kriterier',
-    descEn: 'Find properties or companies matching your criteria',
+    descDa: 'Vurder investeringspotentiale og afkast',
+    descEn: 'Assess investment potential and return',
     icon: Target,
     iconColor: 'text-purple-400',
     iconBg: 'bg-purple-500/10',
-    fields: [
-      {
-        key: 'Søgekriterier',
-        label: 'Beskriv hvad du søger',
-        placeholder:
-          'F.eks. "industribygninger i Aarhus under 10 mio." eller "profitable IT-virksomheder i Jylland"',
-        multiline: true,
-      },
-      {
-        key: 'Budget',
-        label: 'Budget / prisinterval (valgfrit)',
-        placeholder: 'F.eks. "5-15 mio. DKK"',
-      },
-      {
-        key: 'Tidsperspektiv',
-        label: 'Investeringshorisont (valgfrit)',
-        placeholder: 'F.eks. "5 år", "langsigtet", "kortsigtet flip"',
-      },
-    ],
   },
   {
     id: 'marked',
@@ -171,38 +101,55 @@ const ANALYSIS_TYPES: AnalysisTypeConfig[] = [
     icon: TrendingUp,
     iconColor: 'text-amber-400',
     iconBg: 'bg-amber-500/10',
-    fields: [
-      {
-        key: 'Kommune eller postnummer',
-        label: 'Kommune eller postnummer',
-        placeholder: 'F.eks. "Aarhus Kommune" eller "8000"',
-      },
-      {
-        key: 'Ejendomstype',
-        label: 'Ejendomstype (valgfrit)',
-        placeholder: 'F.eks. "erhverv", "bolig", "industri", "alle"',
-      },
-      {
-        key: 'Specifikt fokus',
-        label: 'Specifikt fokus (valgfrit)',
-        placeholder: 'F.eks. "prisudvikling de seneste 5 år", "udlejningspotentiale"',
-        multiline: true,
-      },
-    ],
   },
 ];
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
+/**
+ * Icon component for a search result based on its type.
+ *
+ * @param type - 'address' | 'company' | 'person'
+ */
+function ResultTypeIcon({ type }: { type: 'address' | 'company' | 'person' }) {
+  if (type === 'company') return <Briefcase size={14} className="text-blue-400" />;
+  if (type === 'address') return <MapPin size={14} className="text-emerald-400" />;
+  return <User size={14} className="text-purple-400" />;
+}
+
+/**
+ * Chip showing the currently selected entity with a dismiss button.
+ *
+ * @param entity  - Selected entity to display
+ * @param onClear - Called when user clicks the dismiss button
+ */
+function EntityChip({ entity, onClear }: { entity: SelectedEntity; onClear: () => void }) {
+  return (
+    <div className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2">
+      <ResultTypeIcon type={entity.type} />
+      <div className="min-w-0">
+        <div className="text-sm font-medium text-white truncate max-w-xs">{entity.title}</div>
+        {entity.subtitle && (
+          <div className="text-xs text-slate-500 truncate max-w-xs">{entity.subtitle}</div>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={onClear}
+        aria-label="Fjern valgt entitet"
+        className="ml-1 text-slate-500 hover:text-white transition-colors"
+      >
+        <X size={14} />
+      </button>
+    </div>
+  );
+}
+
 /** Props for the AnalysisTypeCard component */
 interface AnalysisTypeCardProps {
-  /** Analysis type configuration */
   config: AnalysisTypeConfig;
-  /** Whether this card is currently selected */
   selected: boolean;
-  /** Language for bilingual display */
   lang: 'da' | 'en';
-  /** Click handler */
   onClick: () => void;
 }
 
@@ -223,201 +170,142 @@ function AnalysisTypeCard({ config, selected, lang, onClick }: AnalysisTypeCardP
       onClick={onClick}
       aria-pressed={selected}
       className={[
-        'w-full text-left rounded-2xl border p-5 transition-all duration-150',
+        'w-full text-left rounded-2xl border p-4 transition-all duration-150',
         'bg-white/5 hover:bg-white/8',
         selected
           ? 'border-blue-500 ring-1 ring-blue-500/40'
           : 'border-white/8 hover:border-blue-500/40',
       ].join(' ')}
     >
-      <div className="flex items-start gap-4">
+      <div className="flex items-start gap-3">
         <div
           className={[
-            'w-11 h-11 rounded-xl flex items-center justify-center shrink-0',
+            'w-9 h-9 rounded-xl flex items-center justify-center shrink-0',
             config.iconBg,
           ].join(' ')}
         >
-          <Icon size={20} className={config.iconColor} />
+          <Icon size={17} className={config.iconColor} />
         </div>
         <div className="min-w-0">
           <div className="font-semibold text-white text-sm">{title}</div>
-          <div className="text-slate-400 text-xs mt-1 leading-snug">{desc}</div>
+          <div className="text-slate-400 text-xs mt-0.5 leading-snug">{desc}</div>
         </div>
+        {selected && (
+          <div className="ml-auto shrink-0 w-4 h-4 rounded-full bg-blue-500 flex items-center justify-center">
+            <div className="w-2 h-2 rounded-full bg-white" />
+          </div>
+        )}
       </div>
     </button>
   );
 }
 
-/** Props for a single form field row */
-interface FormFieldProps {
-  field: InputField;
-  value: string;
-  onChange: (value: string) => void;
-}
-
-/**
- * Renders a labelled input or textarea for an analysis form field.
- *
- * @param props - FormFieldProps
- */
-function FormField({ field, value, onChange }: FormFieldProps) {
-  const id = `field-${field.key.replace(/\s+/g, '-').toLowerCase()}`;
-
-  return (
-    <div className="space-y-1.5">
-      <label htmlFor={id} className="block text-sm font-medium text-slate-300">
-        {field.label}
-      </label>
-      {field.multiline ? (
-        <textarea
-          id={id}
-          rows={3}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={field.placeholder}
-          className={[
-            'w-full rounded-xl border border-white/10 bg-white/5',
-            'px-4 py-3 text-sm text-slate-200 placeholder:text-slate-600',
-            'focus:border-blue-500/60 focus:outline-none focus:ring-1 focus:ring-blue-500/30',
-            'resize-none transition-colors',
-          ].join(' ')}
-        />
-      ) : (
-        <input
-          id={id}
-          type="text"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={field.placeholder}
-          className={[
-            'w-full rounded-xl border border-white/10 bg-white/5',
-            'px-4 py-3 text-sm text-slate-200 placeholder:text-slate-600',
-            'focus:border-blue-500/60 focus:outline-none focus:ring-1 focus:ring-blue-500/30',
-            'transition-colors',
-          ].join(' ')}
-        />
-      )}
-    </div>
-  );
-}
-
 /** Props for the MarkdownResult display panel */
 interface MarkdownResultProps {
-  /** Raw markdown text streamed from the API */
   text: string;
-  /** Whether streaming is still in progress */
   streaming: boolean;
+  statusMessages: string[];
 }
 
 /**
  * Renders streamed markdown output as structured HTML.
- * Uses simple line-by-line parsing: ## headings, ** bold, bullet lists.
- * Avoids dangerouslySetInnerHTML — all rendering is done in React.
+ * Shows live tool-status messages while streaming.
  *
  * @param props - MarkdownResultProps
  */
-function MarkdownResult({ text, streaming }: MarkdownResultProps) {
+function MarkdownResult({ text, streaming, statusMessages }: MarkdownResultProps) {
   const lines = text.split('\n');
+  const lastStatus = statusMessages[statusMessages.length - 1];
 
   return (
-    <div className="prose prose-invert prose-sm max-w-none space-y-2">
-      {lines.map((line, i) => {
-        // ## Heading 2
-        if (line.startsWith('## ')) {
-          return (
-            <h2
-              key={i}
-              className="text-base font-bold text-white mt-6 mb-2 first:mt-0 border-b border-white/10 pb-1"
-            >
-              {line.slice(3)}
-            </h2>
-          );
-        }
-        // ### Heading 3
-        if (line.startsWith('### ')) {
-          return (
-            <h3 key={i} className="text-sm font-semibold text-slate-200 mt-4 mb-1">
-              {line.slice(4)}
-            </h3>
-          );
-        }
-        // # Heading 1
-        if (line.startsWith('# ')) {
-          return (
-            <h1 key={i} className="text-lg font-bold text-white mt-4 mb-2">
-              {line.slice(2)}
-            </h1>
-          );
-        }
-        // Bullet list items
-        if (line.startsWith('- ') || line.startsWith('* ')) {
-          return (
-            <div key={i} className="flex gap-2 text-slate-300 text-sm leading-relaxed">
-              <span className="text-blue-400 mt-1 shrink-0">•</span>
-              <span>{renderInline(line.slice(2))}</span>
-            </div>
-          );
-        }
-        // Numbered list
-        if (/^\d+\.\s/.test(line)) {
-          const match = line.match(/^(\d+)\.\s(.*)$/);
-          if (match) {
+    <div className="space-y-3">
+      {/* Tool status indicator while streaming */}
+      {streaming && lastStatus && (
+        <div className="flex items-center gap-2 text-xs text-slate-400">
+          <Loader2 size={12} className="animate-spin text-blue-400 shrink-0" />
+          <span>{lastStatus}</span>
+        </div>
+      )}
+
+      {/* Rendered markdown */}
+      {text && (
+        <div className="prose prose-invert prose-sm max-w-none space-y-2">
+          {lines.map((line, i) => {
+            if (line.startsWith('## '))
+              return (
+                <h2
+                  key={i}
+                  className="text-base font-bold text-white mt-6 mb-2 first:mt-0 border-b border-white/10 pb-1"
+                >
+                  {line.slice(3)}
+                </h2>
+              );
+            if (line.startsWith('### '))
+              return (
+                <h3 key={i} className="text-sm font-semibold text-slate-200 mt-4 mb-1">
+                  {line.slice(4)}
+                </h3>
+              );
+            if (line.startsWith('# '))
+              return (
+                <h1 key={i} className="text-lg font-bold text-white mt-4 mb-2">
+                  {line.slice(2)}
+                </h1>
+              );
+            if (line.startsWith('- ') || line.startsWith('* '))
+              return (
+                <div key={i} className="flex gap-2 text-slate-300 text-sm leading-relaxed">
+                  <span className="text-blue-400 mt-1 shrink-0">•</span>
+                  <span>{renderInline(line.slice(2))}</span>
+                </div>
+              );
+            const numMatch = line.match(/^(\d+)\.\s(.*)$/);
+            if (numMatch)
+              return (
+                <div key={i} className="flex gap-2 text-slate-300 text-sm leading-relaxed">
+                  <span className="text-blue-400 shrink-0 tabular-nums">{numMatch[1]}.</span>
+                  <span>{renderInline(numMatch[2])}</span>
+                </div>
+              );
+            if (line.trim() === '---' || line.trim() === '***')
+              return <hr key={i} className="border-white/10 my-4" />;
+            if (line.trim() === '') return <div key={i} className="h-2" />;
             return (
-              <div key={i} className="flex gap-2 text-slate-300 text-sm leading-relaxed">
-                <span className="text-blue-400 shrink-0 tabular-nums">{match[1]}.</span>
-                <span>{renderInline(match[2])}</span>
-              </div>
+              <p key={i} className="text-slate-300 text-sm leading-relaxed">
+                {renderInline(line)}
+              </p>
             );
-          }
-        }
-        // Horizontal rule
-        if (line.trim() === '---' || line.trim() === '***') {
-          return <hr key={i} className="border-white/10 my-4" />;
-        }
-        // Empty line → spacer
-        if (line.trim() === '') {
-          return <div key={i} className="h-2" />;
-        }
-        // Normal paragraph
-        return (
-          <p key={i} className="text-slate-300 text-sm leading-relaxed">
-            {renderInline(line)}
-          </p>
-        );
-      })}
-      {streaming && (
-        <span className="inline-block w-1 h-4 bg-blue-400 animate-pulse ml-0.5 align-middle" />
+          })}
+          {streaming && (
+            <span className="inline-block w-1 h-4 bg-blue-400 animate-pulse ml-0.5 align-middle" />
+          )}
+        </div>
       )}
     </div>
   );
 }
 
 /**
- * Renders inline markdown formatting within a text segment.
- * Supports **bold** and *italic* syntax.
- * Returns an array of React elements interleaved with plain strings.
+ * Renders inline markdown (bold/italic) within a text segment.
  *
- * @param text - Raw text segment potentially containing inline markdown
- * @returns React node array suitable for rendering inside a paragraph
+ * @param text - Raw text with optional ** and * markers
+ * @returns React nodes
  */
 function renderInline(text: string): React.ReactNode {
-  // Split on **bold** and *italic* markers
   const parts = text.split(/(\*\*[^*]+\*\*|\*[^*]+\*)/g);
   return parts.map((part, i) => {
-    if (part.startsWith('**') && part.endsWith('**')) {
+    if (part.startsWith('**') && part.endsWith('**'))
       return (
         <strong key={i} className="text-white font-semibold">
           {part.slice(2, -2)}
         </strong>
       );
-    }
-    if (part.startsWith('*') && part.endsWith('*')) {
+    if (part.startsWith('*') && part.endsWith('*'))
       return (
         <em key={i} className="text-slate-200 italic">
           {part.slice(1, -1)}
         </em>
       );
-    }
     return part;
   });
 }
@@ -425,78 +313,143 @@ function renderInline(text: string): React.ReactNode {
 // ─── Main component ───────────────────────────────────────────────────────────
 
 /**
- * AI Analyse-side med fire strukturerede analysetyper.
+ * AI Analyse-side.
  *
  * State machine:
- *  'select'    → viser 2x2 grid af analysetypekort
- *  'form'      → viser inputformular for den valgte type
- *  'streaming' → viser streaming markdown-resultat
- *  'done'      → viser færdigt resultat med "Ny analyse" knap
+ *  'search'    → søgefelt med autocomplete
+ *  'ready'     → entitet valgt, vælg analysetype
+ *  'streaming' → analyse kører, viser tool-status + streaming tekst
+ *  'done'      → analyse færdig
  */
 export default function AnalysisPageClient() {
   const { lang } = useLanguage();
 
-  /** Currently selected analysis type (null = none selected) */
+  /** Unified search query text */
+  const [query, setQuery] = useState('');
+  /** Autocomplete dropdown results */
+  const [searchResults, setSearchResults] = useState<UnifiedSearchResult[]>([]);
+  /** True while fetching search results */
+  const [searchLoading, setSearchLoading] = useState(false);
+  /** True when dropdown should be visible */
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+
+  /** The entity the user has selected from search */
+  const [selectedEntity, setSelectedEntity] = useState<SelectedEntity | null>(null);
+  /** The analysis type the user has chosen */
   const [selectedType, setSelectedType] = useState<AnalysisType | null>(null);
-  /** Page phase — drives which UI is shown */
-  const [phase, setPhase] = useState<'select' | 'form' | 'streaming' | 'done'>('select');
-  /** Form field values indexed by field key */
-  const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
-  /** Streamed result text accumulated from SSE chunks */
+
+  /** Page phase */
+  const [phase, setPhase] = useState<'search' | 'ready' | 'streaming' | 'done'>('search');
+  /** Streamed markdown result text */
   const [resultText, setResultText] = useState('');
-  /** Error message shown in the result panel */
+  /** Tool status messages shown while streaming */
+  const [statusMessages, setStatusMessages] = useState<string[]>([]);
+  /** Error message */
   const [errorMessage, setErrorMessage] = useState('');
 
-  /** AbortController for the current fetch — allows cancellation */
   const abortRef = useRef<AbortController | null>(null);
-  /** Scroll anchor for the result panel */
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const resultBottomRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
-  /** Derive the config for the currently selected type */
-  const activeConfig = ANALYSIS_TYPES.find((t) => t.id === selectedType) ?? null;
+  // ── Search debounce ─────────────────────────────────────────────────────────
 
   /**
-   * Handle analysis type card selection.
-   * Resets field values when switching to a new type.
+   * Debounced handler for search query changes.
+   * Waits 300ms after last keystroke before fetching.
    *
-   * @param type - The analysis type that was clicked
+   * @param value - Current input value
    */
-  const handleSelectType = useCallback((type: AnalysisType) => {
-    setSelectedType(type);
-    setFieldValues({});
-    setPhase('form');
+  const handleQueryChange = useCallback((value: string) => {
+    setQuery(value);
+
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+
+    if (!value.trim()) {
+      setSearchResults([]);
+      setDropdownOpen(false);
+      setSearchLoading(false);
+      return;
+    }
+
+    setSearchLoading(true);
+    searchDebounceRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/search?q=${encodeURIComponent(value.trim())}`, {
+          signal: AbortSignal.timeout(8000),
+        });
+        if (res.ok) {
+          const data = (await res.json()) as UnifiedSearchResult[];
+          setSearchResults(data.slice(0, 6));
+          setDropdownOpen(data.length > 0);
+        }
+      } catch {
+        // Network error — fail silently
+      } finally {
+        setSearchLoading(false);
+      }
+    }, 300);
   }, []);
 
-  /** Navigate back to the type selection grid */
-  const handleBack = useCallback(() => {
-    abortRef.current?.abort();
-    setPhase('select');
-    setSelectedType(null);
-    setResultText('');
-    setErrorMessage('');
+  /** Close dropdown when clicking outside */
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(e.target as Node) &&
+        searchInputRef.current &&
+        !searchInputRef.current.contains(e.target as Node)
+      ) {
+        setDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
   }, []);
 
-  /** Reset everything and start a new analysis */
-  const handleReset = useCallback(() => {
-    abortRef.current?.abort();
-    setPhase('select');
-    setSelectedType(null);
-    setFieldValues({});
-    setResultText('');
-    setErrorMessage('');
-  }, []);
+  // ── Entity selection ────────────────────────────────────────────────────────
 
   /**
-   * Submit the analysis form and initiate streaming.
-   * Reads the SSE stream from /api/analysis/run and accumulates chunks
-   * into resultText as they arrive.
+   * Handle selection of a search result.
+   * Transitions to the 'ready' phase.
+   *
+   * @param result - Unified search result the user clicked
+   */
+  const handleSelectResult = useCallback((result: UnifiedSearchResult) => {
+    setSelectedEntity({
+      id: result.id,
+      title: result.title,
+      subtitle: result.subtitle,
+      type: result.type,
+      meta: result.meta as Record<string, string> | undefined,
+    });
+    setQuery('');
+    setSearchResults([]);
+    setDropdownOpen(false);
+    setSelectedType(null);
+    setPhase('ready');
+  }, []);
+
+  /** Clear selected entity and return to search */
+  const handleClearEntity = useCallback(() => {
+    setSelectedEntity(null);
+    setSelectedType(null);
+    setPhase('search');
+    setResultText('');
+    setErrorMessage('');
+    setStatusMessages([]);
+    setTimeout(() => searchInputRef.current?.focus(), 50);
+  }, []);
+
+  // ── Analysis submission ─────────────────────────────────────────────────────
+
+  /**
+   * Submit the analysis request.
+   * Opens an SSE stream from /api/analysis/run and accumulates chunks.
    */
   const handleSubmit = useCallback(async () => {
-    if (!selectedType || !activeConfig) return;
-
-    // Require at least one non-empty field
-    const hasInput = Object.values(fieldValues).some((v) => v.trim().length > 0);
-    if (!hasInput) return;
+    if (!selectedEntity || !selectedType) return;
 
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -504,14 +457,15 @@ export default function AnalysisPageClient() {
 
     setResultText('');
     setErrorMessage('');
+    setStatusMessages([]);
     setPhase('streaming');
 
     try {
       const res = await fetch('/api/analysis/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: selectedType, input: fieldValues }),
-        signal: AbortSignal.timeout(60000),
+        body: JSON.stringify({ type: selectedType, entity: selectedEntity }),
+        signal: AbortSignal.timeout(120_000),
       });
 
       if (!res.ok) {
@@ -544,12 +498,17 @@ export default function AnalysisPageClient() {
           if (!dataLine || dataLine === '[DONE]') continue;
 
           try {
-            const parsed = JSON.parse(dataLine) as { t?: string; error?: string };
+            const parsed = JSON.parse(dataLine) as {
+              t?: string;
+              status?: string;
+              error?: string;
+            };
             if (parsed.error) {
               setErrorMessage(parsed.error);
+            } else if (parsed.status) {
+              setStatusMessages((prev) => [...prev, parsed.status!]);
             } else if (parsed.t) {
               setResultText((prev) => prev + parsed.t);
-              // Scroll to bottom of result as new content arrives
               requestAnimationFrame(() => {
                 resultBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
               });
@@ -566,149 +525,216 @@ export default function AnalysisPageClient() {
       setErrorMessage(err instanceof Error ? err.message : 'Uventet fejl');
       setPhase('done');
     }
-  }, [selectedType, activeConfig, fieldValues]);
+  }, [selectedEntity, selectedType]);
 
-  /**
-   * Update a single form field's value.
-   *
-   * @param key   - Field key from InputField.key
-   * @param value - New string value from the input element
-   */
-  const handleFieldChange = useCallback((key: string, value: string) => {
-    setFieldValues((prev) => ({ ...prev, [key]: value }));
+  /** Reset everything and start a new analysis */
+  const handleReset = useCallback(() => {
+    abortRef.current?.abort();
+    setPhase('search');
+    setSelectedEntity(null);
+    setSelectedType(null);
+    setResultText('');
+    setErrorMessage('');
+    setStatusMessages([]);
+    setTimeout(() => searchInputRef.current?.focus(), 50);
   }, []);
 
-  const isStreaming = phase === 'streaming';
+  // ── Labels ──────────────────────────────────────────────────────────────────
 
-  // ── Page title strings ──────────────────────────────────────────────────────
   const pageTitle = lang === 'da' ? 'AI Analyse' : 'AI Analysis';
-  const pageSubtitle =
+  const searchPlaceholder =
     lang === 'da'
-      ? 'Vælg en analysetype for at komme i gang'
-      : 'Choose an analysis type to get started';
-  const backLabel = lang === 'da' ? 'Tilbage' : 'Back';
-  const submitLabel = lang === 'da' ? 'Kør analyse' : 'Run analysis';
+      ? 'Søg virksomhed, adresse eller CVR-nummer…'
+      : 'Search company, address or CVR number…';
+  const chooseTypeLabel = lang === 'da' ? 'Vælg analysetype' : 'Choose analysis type';
+  const runLabel = lang === 'da' ? 'Kør analyse' : 'Run analysis';
+  const analysisLabel = lang === 'da' ? 'Analyserer…' : 'Analysing…';
   const newAnalysisLabel = lang === 'da' ? 'Ny analyse' : 'New analysis';
-  const loadingLabel = lang === 'da' ? 'Analyserer…' : 'Analysing…';
-  const resultLabel = lang === 'da' ? 'Analyseresultat' : 'Analysis result';
   const errorLabel = lang === 'da' ? 'Der opstod en fejl' : 'An error occurred';
   const tryAgainLabel = lang === 'da' ? 'Prøv igen' : 'Try again';
-  const inputRequiredLabel =
-    lang === 'da' ? 'Udfyld mindst ét felt for at køre analysen.' : 'Fill in at least one field.';
+  const resultLabel = lang === 'da' ? 'Analyseresultat' : 'Analysis result';
 
-  const hasInput = Object.values(fieldValues).some((v) => v.trim().length > 0);
+  const activeConfig = ANALYSIS_TYPES.find((t) => t.id === selectedType) ?? null;
+  const isStreaming = phase === 'streaming';
 
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-6">
       {/* Page header */}
-      <div>
+      <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-white">{pageTitle}</h1>
-        {phase === 'select' && <p className="text-slate-400 mt-1">{pageSubtitle}</p>}
+        {(phase === 'streaming' || phase === 'done') && (
+          <button
+            type="button"
+            onClick={handleReset}
+            className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors"
+          >
+            <RefreshCw size={13} />
+            {newAnalysisLabel}
+          </button>
+        )}
       </div>
 
-      {/* ── Phase: select ── */}
-      {phase === 'select' && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl">
-          {ANALYSIS_TYPES.map((config) => (
-            <AnalysisTypeCard
-              key={config.id}
-              config={config}
-              selected={selectedType === config.id}
-              lang={lang}
-              onClick={() => handleSelectType(config.id)}
-            />
-          ))}
+      {/* ── Phase: search ── */}
+      {phase === 'search' && (
+        <div className="max-w-xl space-y-4">
+          {/* Search input + dropdown */}
+          <div className="relative">
+            <div className="relative flex items-center">
+              {searchLoading ? (
+                <Loader2
+                  size={16}
+                  className="absolute left-3.5 text-slate-400 animate-spin pointer-events-none"
+                />
+              ) : (
+                <Search
+                  size={16}
+                  className="absolute left-3.5 text-slate-500 pointer-events-none"
+                />
+              )}
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={query}
+                onChange={(e) => handleQueryChange(e.target.value)}
+                onFocus={() => searchResults.length > 0 && setDropdownOpen(true)}
+                placeholder={searchPlaceholder}
+                autoFocus
+                className={[
+                  'w-full rounded-2xl border border-white/10 bg-white/5',
+                  'pl-10 pr-4 py-3 text-sm text-slate-200 placeholder:text-slate-600',
+                  'focus:border-blue-500/60 focus:outline-none focus:ring-1 focus:ring-blue-500/30',
+                  'transition-colors',
+                ].join(' ')}
+              />
+              {query && (
+                <button
+                  type="button"
+                  onClick={() => handleQueryChange('')}
+                  aria-label="Ryd søgning"
+                  className="absolute right-3.5 text-slate-500 hover:text-white transition-colors"
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+
+            {/* Dropdown */}
+            {dropdownOpen && searchResults.length > 0 && (
+              <div
+                ref={dropdownRef}
+                className={[
+                  'absolute z-50 mt-1.5 w-full rounded-2xl border border-white/10',
+                  'bg-[#0f172a] shadow-xl overflow-hidden',
+                ].join(' ')}
+              >
+                {searchResults.map((result) => (
+                  <button
+                    key={`${result.type}-${result.id}`}
+                    type="button"
+                    onClick={() => handleSelectResult(result)}
+                    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-colors text-left"
+                  >
+                    <div className="shrink-0 w-7 h-7 rounded-lg bg-white/5 border border-white/8 flex items-center justify-center">
+                      <ResultTypeIcon type={result.type} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm text-white truncate">{result.title}</div>
+                      {result.subtitle && (
+                        <div className="text-xs text-slate-500 truncate">{result.subtitle}</div>
+                      )}
+                    </div>
+                    <ChevronDown size={13} className="text-slate-600 shrink-0 -rotate-90" />
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Helper text */}
+          <p className="text-xs text-slate-600">
+            {lang === 'da'
+              ? 'Søg efter en virksomhed ved navn eller CVR-nummer, eller en ejendom ved adresse.'
+              : 'Search for a company by name or CVR number, or a property by address.'}
+          </p>
         </div>
       )}
 
-      {/* ── Phase: form ── */}
-      {phase === 'form' && activeConfig && (
+      {/* ── Phase: ready ── */}
+      {phase === 'ready' && selectedEntity && (
         <div className="max-w-xl space-y-6">
-          {/* Back button + selected type header */}
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={handleBack}
-              aria-label={backLabel}
-              className="flex items-center gap-1.5 text-sm text-slate-400 hover:text-white transition-colors"
-            >
-              <ArrowLeft size={16} />
-              {backLabel}
-            </button>
-            <span className="text-slate-600">·</span>
-            <span className="text-sm font-semibold text-white">
-              {lang === 'da' ? activeConfig.titleDa : activeConfig.titleEn}
-            </span>
+          {/* Selected entity chip */}
+          <div className="space-y-2">
+            <p className="text-xs text-slate-500 uppercase tracking-wider font-medium">
+              {lang === 'da' ? 'Valgt entitet' : 'Selected entity'}
+            </p>
+            <EntityChip entity={selectedEntity} onClear={handleClearEntity} />
           </div>
 
-          {/* Form card */}
-          <div className="bg-white/5 border border-white/8 rounded-2xl p-6 space-y-5">
-            {activeConfig.fields.map((field) => (
-              <FormField
-                key={field.key}
-                field={field}
-                value={fieldValues[field.key] ?? ''}
-                onChange={(v) => handleFieldChange(field.key, v)}
-              />
-            ))}
-
-            {!hasInput && <p className="text-xs text-slate-500 italic">{inputRequiredLabel}</p>}
-
-            <button
-              type="button"
-              onClick={handleSubmit}
-              disabled={!hasInput}
-              className={[
-                'w-full rounded-xl py-3 px-4 text-sm font-semibold transition-all',
-                hasInput
-                  ? 'bg-blue-600 hover:bg-blue-500 text-white cursor-pointer'
-                  : 'bg-white/5 text-slate-600 cursor-not-allowed',
-              ].join(' ')}
-            >
-              {submitLabel}
-            </button>
+          {/* Analysis type selection */}
+          <div className="space-y-3">
+            <p className="text-xs text-slate-500 uppercase tracking-wider font-medium">
+              {chooseTypeLabel}
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {ANALYSIS_TYPES.map((config) => (
+                <AnalysisTypeCard
+                  key={config.id}
+                  config={config}
+                  selected={selectedType === config.id}
+                  lang={lang}
+                  onClick={() => setSelectedType(config.id)}
+                />
+              ))}
+            </div>
           </div>
+
+          {/* Run button */}
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={!selectedType}
+            className={[
+              'w-full rounded-xl py-3 px-4 text-sm font-semibold transition-all',
+              selectedType
+                ? 'bg-blue-600 hover:bg-blue-500 text-white cursor-pointer'
+                : 'bg-white/5 text-slate-600 cursor-not-allowed',
+            ].join(' ')}
+          >
+            {selectedType && activeConfig
+              ? `${runLabel} — ${lang === 'da' ? activeConfig.titleDa : activeConfig.titleEn}`
+              : runLabel}
+          </button>
         </div>
       )}
 
       {/* ── Phase: streaming / done ── */}
-      {(phase === 'streaming' || phase === 'done') && activeConfig && (
+      {(phase === 'streaming' || phase === 'done') && selectedEntity && (
         <div className="max-w-3xl space-y-4">
           {/* Header bar */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              {phase === 'streaming' ? (
-                <Loader2 size={16} className="text-blue-400 animate-spin" />
-              ) : (
-                <div
-                  className={[
-                    'w-7 h-7 rounded-lg flex items-center justify-center',
-                    activeConfig.iconBg,
-                  ].join(' ')}
-                >
-                  <activeConfig.icon size={14} className={activeConfig.iconColor} />
-                </div>
-              )}
+          <div className="flex items-center gap-3">
+            {isStreaming ? (
+              <Loader2 size={16} className="text-blue-400 animate-spin shrink-0" />
+            ) : activeConfig ? (
+              <div
+                className={[
+                  'w-7 h-7 rounded-lg flex items-center justify-center shrink-0',
+                  activeConfig.iconBg,
+                ].join(' ')}
+              >
+                <activeConfig.icon size={14} className={activeConfig.iconColor} />
+              </div>
+            ) : null}
+            <div className="min-w-0">
               <span className="text-sm font-semibold text-white">
-                {phase === 'streaming'
-                  ? loadingLabel
-                  : lang === 'da'
-                    ? activeConfig.titleDa
-                    : activeConfig.titleEn}{' '}
-                {phase !== 'streaming' && (
-                  <span className="text-slate-500 font-normal">— {resultLabel}</span>
-                )}
+                {isStreaming
+                  ? analysisLabel
+                  : `${activeConfig ? (lang === 'da' ? activeConfig.titleDa : activeConfig.titleEn) : ''}`}
               </span>
+              {!isStreaming && (
+                <span className="text-slate-500 font-normal text-sm"> — {resultLabel}</span>
+              )}
+              <div className="text-xs text-slate-500 truncate mt-0.5">{selectedEntity.title}</div>
             </div>
-
-            <button
-              type="button"
-              onClick={handleReset}
-              className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors"
-            >
-              <RefreshCw size={13} />
-              {newAnalysisLabel}
-            </button>
           </div>
 
           {/* Error panel */}
@@ -722,8 +748,10 @@ export default function AnalysisPageClient() {
                 <button
                   type="button"
                   onClick={() => {
-                    setPhase('form');
+                    setPhase('ready');
                     setErrorMessage('');
+                    setResultText('');
+                    setStatusMessages([]);
                   }}
                   className="text-xs text-red-400 hover:text-red-300 underline underline-offset-2"
                 >
@@ -733,13 +761,53 @@ export default function AnalysisPageClient() {
             </div>
           )}
 
-          {/* Result text panel */}
-          {(resultText || isStreaming) && (
+          {/* Result panel */}
+          {(resultText || isStreaming) && !errorMessage && (
             <div className="bg-white/5 border border-white/8 rounded-2xl p-6 overflow-y-auto max-h-[70vh]">
-              <MarkdownResult text={resultText} streaming={isStreaming} />
+              <MarkdownResult
+                text={resultText}
+                streaming={isStreaming}
+                statusMessages={statusMessages}
+              />
               <div ref={resultBottomRef} />
             </div>
           )}
+
+          {/* Streaming-only: collecting data placeholder */}
+          {isStreaming && !resultText && !errorMessage && (
+            <div className="bg-white/5 border border-white/8 rounded-2xl p-6">
+              <div className="flex items-center gap-2 text-sm text-slate-400">
+                <Loader2 size={14} className="animate-spin text-blue-400 shrink-0" />
+                <span>
+                  {statusMessages[statusMessages.length - 1] ??
+                    (lang === 'da' ? 'Henter data fra registre…' : 'Fetching data from registers…')}
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Building2 icon for empty entity placeholder (cosmetic) */}
+      {phase === 'search' && !query && (
+        <div className="max-w-xl">
+          <div className="rounded-2xl border border-white/5 bg-white/3 p-8 flex flex-col items-center gap-3 text-center">
+            <div className="w-12 h-12 rounded-2xl bg-blue-500/10 flex items-center justify-center">
+              <Building2 size={22} className="text-blue-400" />
+            </div>
+            <div>
+              <div className="text-sm font-medium text-slate-300">
+                {lang === 'da'
+                  ? 'AI-drevet analyse med rigtige data'
+                  : 'AI-powered analysis with real data'}
+              </div>
+              <div className="text-xs text-slate-500 mt-1 max-w-xs">
+                {lang === 'da'
+                  ? 'Henter automatisk CVR, regnskaber, BBR, vurdering, ejerskab og meget mere fra offentlige registre.'
+                  : 'Automatically fetches CVR, financials, BBR, valuations, ownership and more from public registers.'}
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

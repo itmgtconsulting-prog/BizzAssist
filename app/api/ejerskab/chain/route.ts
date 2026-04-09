@@ -13,6 +13,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { resolveTenantId } from '@/lib/api/auth';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -205,6 +206,11 @@ async function fetchCompanyOwners(cvr: number): Promise<{
 // ─── Route Handler ──────────────────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
+  const auth = await resolveTenantId();
+  if (!auth) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const bfe = req.nextUrl.searchParams.get('bfe');
   const adresse = req.nextUrl.searchParams.get('adresse') ?? 'Ejendom';
 

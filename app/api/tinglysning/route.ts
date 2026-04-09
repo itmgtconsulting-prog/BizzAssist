@@ -15,6 +15,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as Sentry from '@sentry/nextjs';
 import { checkRateLimit, heavyRateLimit } from '@/app/lib/rateLimit';
+import { resolveTenantId } from '@/lib/api/auth';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -152,6 +153,11 @@ function parseEjdsummariskXml(xml: string): Partial<TinglysningData> {
 export async function GET(req: NextRequest) {
   const limited = await checkRateLimit(req, heavyRateLimit);
   if (limited) return limited;
+
+  const auth = await resolveTenantId();
+  if (!auth) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
 
   const bfe = req.nextUrl.searchParams.get('bfe');
 

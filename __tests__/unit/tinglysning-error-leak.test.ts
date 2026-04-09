@@ -24,6 +24,13 @@ vi.mock('@/app/lib/rateLimit', () => ({
   heavyRateLimit: {},
 }));
 
+// ─── Mock auth (resolveTenantId) — simulates authenticated request ─────────────
+// Without this, the route short-circuits with 401 before reaching the cert check.
+
+vi.mock('@/lib/api/auth', () => ({
+  resolveTenantId: vi.fn().mockResolvedValue({ tenantId: 'test-tenant', userId: 'test-user' }),
+}));
+
 // ─── Mock Sentry (used in main tinglysning route) ─────────────────────────────
 
 vi.mock('@sentry/nextjs', () => ({

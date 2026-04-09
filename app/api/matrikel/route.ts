@@ -20,6 +20,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
+import { resolveTenantId } from '@/lib/api/auth';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -305,6 +306,11 @@ function mapEjendom(raw: RawSamletFastEjendom): MatrikelEjendom {
 export async function GET(request: NextRequest): Promise<NextResponse<MatrikelResponse>> {
   const limited = await checkRateLimit(request, rateLimit);
   if (limited) return limited as NextResponse<MatrikelResponse>;
+
+  const auth = await resolveTenantId();
+  if (!auth) {
+    return NextResponse.json({ matrikel: null, fejl: 'Unauthorized' }, { status: 401 });
+  }
 
   if (!DF_API_KEY) {
     return NextResponse.json(

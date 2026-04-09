@@ -229,6 +229,68 @@ export async function POST(request: NextRequest): Promise<Response> {
     // Fail-open: do not block on DB error
   }
 
+  // ── Hent brugerens abonnement og plan fra app_metadata ──────────────────────
+  // Bruges til at give support-assistenten kontekst om den specifikke bruger.
+  // Fejler stille — brugerkontekst er additivt og blokerer ikke chatten.
+  let userContextBlock = '';
+  try {
+    const { data: freshUser } = await adminClient.auth.admin.getUserById(user.id);
+    const sub = freshUser?.user?.app_metadata?.subscription as
+      | {
+          planId?: string;
+          status?: string;
+          tokensUsedThisMonth?: number;
+          bonusTokens?: number;
+          periodStart?: string;
+          approvedAt?: string | null;
+          isPaid?: boolean;
+        }
+      | null
+      | undefined;
+
+    const email = freshUser?.user?.email ?? user.email ?? '–';
+    const fullName = (freshUser?.user?.user_metadata?.full_name as string | undefined) ?? '–';
+    const planId = sub?.planId ?? 'ukendt';
+    const status = sub?.status ?? 'ukendt';
+    const tokensUsed = sub?.tokensUsedThisMonth ?? 0;
+    const bonusTokens = sub?.bonusTokens ?? 0;
+    const isPaid = sub?.isPaid ? 'ja' : 'nej';
+    const approvedAt = sub?.approvedAt ? new Date(sub.approvedAt).toLocaleDateString('da-DK') : '–';
+    const periodStart = sub?.periodStart
+      ? new Date(sub.periodStart).toLocaleDateString('da-DK')
+      : '–';
+
+    // Look up the plan's display name from plan_configs
+    const { data: planRow } = (await adminClient
+      .from('plan_configs')
+      .select('name_da, ai_tokens_per_month')
+      .eq('plan_id', planId)
+      .limit(1)
+      .maybeSingle()) as { data: { name_da?: string; ai_tokens_per_month?: number } | null };
+
+    const planNavn = planRow?.name_da ?? planId;
+    const maxTokens = (planRow?.ai_tokens_per_month ?? 0) + bonusTokens;
+    const tokenPct = maxTokens > 0 ? Math.round((tokensUsed / maxTokens) * 100) : 0;
+
+    userContextBlock = `
+
+## Bruger-kontekst (kun til brug i denne samtale — må ikke videregives til andre)
+- **Navn:** ${fullName}
+- **E-mail:** ${email}
+- **Plan:** ${planNavn} (${planId})
+- **Abonnementsstatus:** ${status}
+- **Betalt:** ${isPaid}
+- **Godkendt dato:** ${approvedAt}
+- **Periode start:** ${periodStart}
+- **AI tokens brugt denne måned:** ${tokensUsed.toLocaleString('da-DK')} / ${maxTokens.toLocaleString('da-DK')} (${tokenPct}%)
+- **Bonus-tokens:** ${bonusTokens.toLocaleString('da-DK')}
+
+Brug disse oplysninger til præcist at besvare spørgsmål om brugerens plan, forbrug og adgang.
+Afslør IKKE oplysningerne medmindre brugeren spørger direkte til dem.`;
+  } catch {
+    // Non-critical — continue without user context
+  }
+
   // ── Validate API key ──
   const apiKey = process.env.BIZZASSIST_CLAUDE_KEY?.trim();
   if (!apiKey) {
@@ -300,7 +362,7 @@ export async function POST(request: NextRequest): Promise<Response> {
           {
             model: 'claude-sonnet-4-6',
             max_tokens: 1024,
-            system: SUPPORT_SYSTEM_PROMPT,
+            system: SUPPORT_SYSTEM_PROMPT + userContextBlock,
             messages: anthropicMessages,
           },
           { signal: AbortSignal.timeout(30_000) }

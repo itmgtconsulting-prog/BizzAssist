@@ -1,16 +1,22 @@
+'use client';
+
 /**
- * PublicPricingSection — server-side pricing grid til offentlige SEO-sider.
+ * PublicPricingSection — klient-side pricing grid til offentlige SEO-sider.
  *
- * Henter aktive planer fra /api/plans og viser dem i en kompakt grid.
- * Beskrivelsen splittes ved linjeskift — hvert linje = grøn check-bullet.
- * Designet til at ligge under login-CTA på ejendoms- og virksomhedssider.
+ * Fetcher aktive planer fra /api/plans ved mount, så hver side altid viser
+ * de aktuelle planer fra databasen — ikke en ISR-baget kopi. Det sikrer at
+ * ændringer i admin-panelet slår igennem øjeblikkeligt på alle offentlige sider.
  *
- * @returns Pricing grid med aktive planer, eller null hvis ingen planer.
+ * Vises under login-CTA på ejendoms- og virksomhedssider.
+ *
+ * @returns Pricing grid med aktive planer, loading-skeleton, eller null.
  */
 
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Check } from 'lucide-react';
 
+/** Plan data returned by /api/plans */
 interface PlanOption {
   id: string;
   nameDa: string;
@@ -62,25 +68,44 @@ function parseFeatures(desc: string): string[] {
     .filter(Boolean);
 }
 
-async function fetchPlans(): Promise<PlanOption[]> {
-  try {
-    const baseUrl =
-      process.env.NEXT_PUBLIC_APP_URL ??
-      (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
+export default function PublicPricingSection() {
+  const [plans, setPlans] = useState<PlanOption[]>([]);
+  const [loading, setLoading] = useState(true);
 
-    const res = await fetch(`${baseUrl}/api/plans`, {
-      next: { revalidate: 3600 },
-    });
-    if (!res.ok) return [];
-    const data: PlanOption[] = await res.json();
-    return data.filter((p) => p.isActive);
-  } catch {
-    return [];
+  // Fetch plans dynamically on mount so each page load reflects the current
+  // plan configuration from the database — not a build-time ISR snapshot.
+  useEffect(() => {
+    fetch('/api/plans')
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data: PlanOption[]) => {
+        setPlans(data.filter((p) => p.isActive));
+      })
+      .catch(() => {
+        /* silently hide section on fetch error */
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) {
+    // Skeleton placeholder — prevents layout shift while plans load
+    return (
+      <section className="mt-16 pt-12 border-t border-white/10">
+        <div className="text-center mb-8">
+          <div className="h-7 w-72 bg-slate-800 rounded-lg mx-auto mb-2 animate-pulse" />
+          <div className="h-4 w-96 bg-slate-800 rounded-lg mx-auto animate-pulse" />
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {[...Array(4)].map((_, i) => (
+            <div
+              key={i}
+              className="rounded-xl border border-slate-700/50 bg-slate-900/60 p-5 h-64 animate-pulse"
+            />
+          ))}
+        </div>
+      </section>
+    );
   }
-}
 
-export default async function PublicPricingSection() {
-  const plans = await fetchPlans();
   if (plans.length === 0) return null;
 
   return (

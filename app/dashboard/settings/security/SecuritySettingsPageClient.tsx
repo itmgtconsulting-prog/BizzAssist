@@ -180,34 +180,33 @@ export default function SecuritySettingsPageClient() {
   // ── Start enrollment ────────────────────────────────────────────────────────
 
   /**
-   * Initiates TOTP enrollment — cleans up any leftover unverified factors first,
-   * then fetches a fresh QR code and secret from Supabase.
+   * Initiates TOTP enrollment — runs a server-side cleanup of unverified factors
+   * first, then fetches a fresh QR code and secret from Supabase.
    *
-   * Cleaning up unverified factors prevents a known Supabase issue where a
-   * previously-cancelled enrollment leaves a stale unverified factor that causes
-   * challengeAndVerify() to fail with a misleading "invalid code" error.
+   * The cleanup uses /api/auth/mfa/cleanup (service_role) instead of client-side
+   * unenroll() because Supabase JS v2.99+ will reject a new enroll() call when
+   * an unverified factor already exists, and client-side unenroll() silently
+   * fails when the session AAL level is inconsistent after a previous removal.
    */
   const handleStartEnroll = async () => {
     setError(null);
     setLoading(true);
     try {
+      // Server-side cleanup: remove any stale unverified factors via service_role.
+      // This is more reliable than client-side unenroll() which can fail silently
+      // when the session is in an inconsistent AAL state.
+      await fetch('/api/auth/mfa/cleanup', { method: 'POST' }).catch(() => {
+        // Non-fatal — proceed even if cleanup fails; enroll() may still work
+        // if there are no leftover factors.
+      });
+
       const supabase = createClient();
-
-      // Clean up any existing unverified TOTP factors before starting fresh.
-      // This avoids Supabase returning a cached factor whose secret no longer
-      // matches the QR code the user will scan, causing verify to always fail.
-      const { data: existing } = await supabase.auth.mfa.listFactors();
-      const unverified = existing?.totp?.filter((f) => f.status !== 'verified') ?? [];
-      for (const f of unverified) {
-        // Best-effort — ignore individual unenroll errors
-        await supabase.auth.mfa.unenroll({ factorId: f.id }).catch(() => {});
-      }
-
       const { data, error: enrollError } = await supabase.auth.mfa.enroll({
         factorType: 'totp',
         issuer: 'BizzAssist',
       });
       if (enrollError || !data) {
+        console.error('[mfa] enroll() failed:', enrollError?.code, enrollError?.message);
         setError('err_enroll_failed');
         return;
       }

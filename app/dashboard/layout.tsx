@@ -61,10 +61,18 @@ const navItems = [
   { icon: Briefcase, key: 'companies' as const, href: '/dashboard/companies', adminOnly: false },
   { icon: Users, key: 'owners' as const, href: '/dashboard/owners', adminOnly: false },
   { icon: Map, key: 'map' as const, href: '/dashboard/kort', adminOnly: false },
-  // BIZZ-168: Hidden pending UX testing — re-enable when ready
-  // { icon: Search, key: 'search' as const, href: '/dashboard/search', adminOnly: false },
-  // { icon: BarChart2, key: 'analysis' as const, href: '/dashboard/analysis', adminOnly: false },
-  // { icon: MessageSquare, key: 'chat' as const, href: '/dashboard/chat', adminOnly: false },
+  // BIZZ-168: AI Analyse visible in development only — hidden in test/prod until UX is finalized.
+  // Next.js replaces process.env.NODE_ENV at build time, so this compiles away in production.
+  ...(process.env.NODE_ENV === 'development'
+    ? ([
+        {
+          icon: BarChart2,
+          key: 'analysis' as const,
+          href: '/dashboard/analysis',
+          adminOnly: false,
+        },
+      ] as const)
+    : ([] as const)),
   { icon: Shield, key: 'admin' as const, href: '/dashboard/admin/users', adminOnly: true },
 ];
 

@@ -45,8 +45,8 @@ const errorMessages: Record<string, { da: string; en: string }> = {
     en: 'Please confirm your email first. Check your inbox.',
   },
   subscription_pending: {
-    da: 'Din demo-anmodning afventer godkendelse af en administrator. Du vil modtage besked, når den er behandlet.',
-    en: 'Your demo request is awaiting administrator approval. You will be notified when it has been processed.',
+    da: 'Din adgang afventer godkendelse fra en administrator. Du modtager en e-mail, når din konto er aktiveret.',
+    en: 'Your access is pending approval from an administrator. You will receive an email when your account is activated.',
   },
   subscription_cancelled: {
     da: 'Dit abonnement er blevet annulleret. Kontakt administrator for at genaktivere.',

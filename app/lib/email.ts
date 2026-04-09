@@ -123,6 +123,109 @@ export async function sendPaymentConfirmationEmail(
   }
 }
 
+// ─── Subscription approval notification ───────────────────────────────────────
+
+/** Parameters for the subscription approval email */
+export interface SubscriptionApprovalParams {
+  /** Recipient email address */
+  to: string;
+  /** Full name of the user, if available */
+  fullName?: string;
+  /** Display name of the approved plan */
+  planName: string;
+  /** Login URL to direct the user to */
+  loginUrl?: string;
+}
+
+/**
+ * Send a notification email to a user when their pending subscription/access
+ * request has been approved by an administrator.
+ * Silently skips if RESEND_API_KEY is not set (dev environments).
+ *
+ * @param params - Email parameters including recipient and plan details
+ */
+export async function sendApprovalEmail(params: SubscriptionApprovalParams): Promise<void> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    console.warn('[email] RESEND_API_KEY not set, skipping approval email');
+    return;
+  }
+
+  const {
+    to,
+    fullName,
+    planName,
+    loginUrl = process.env.NEXT_PUBLIC_APP_URL
+      ? `${process.env.NEXT_PUBLIC_APP_URL}/login`
+      : 'https://bizzassist.dk/login',
+  } = params;
+
+  const greeting = fullName ? `Hej ${fullName}` : 'Hej';
+
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; background: #0f172a; color: #e2e8f0; padding: 40px; border-radius: 12px;">
+      <h1 style="color: #ffffff; font-size: 24px; margin: 0 0 8px 0;">BizzAssist</h1>
+      <p style="color: #64748b; font-size: 12px; margin: 0 0 24px 0;">Danmarks forretningsintelligens platform</p>
+
+      <h2 style="color: #22c55e; font-size: 18px; margin: 0 0 16px 0;">&#10003; Din adgang er godkendt!</h2>
+
+      <p style="margin: 0 0 8px 0; font-size: 14px;">${greeting},</p>
+      <p style="margin: 0 0 20px 0; font-size: 14px;">
+        Din anmodning om adgang til BizzAssist er nu godkendt. Du kan logge ind og begynde at bruge platformen med det samme.
+      </p>
+      <p style="margin: 0 0 20px 0; font-size: 13px; color: #94a3b8;">
+        Your request for access to BizzAssist has been approved. You can now log in and start using the platform.
+      </p>
+
+      <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+        <tr>
+          <td style="padding: 10px 0; color: #94a3b8; font-size: 13px; border-bottom: 1px solid #1e293b;">Plan</td>
+          <td style="padding: 10px 0; text-align: right; font-size: 13px; border-bottom: 1px solid #1e293b;">${planName}</td>
+        </tr>
+        <tr>
+          <td style="padding: 10px 0; color: #94a3b8; font-size: 13px;">Status</td>
+          <td style="padding: 10px 0; text-align: right; font-size: 13px; color: #22c55e;">Aktiv / Active</td>
+        </tr>
+      </table>
+
+      <a href="${loginUrl}" style="display: inline-block; background: #2563eb; color: #ffffff; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-size: 14px; font-weight: 600; margin-top: 8px;">
+        Log ind p&aring; BizzAssist &rarr;
+      </a>
+      <p style="margin: 10px 0 0 0; font-size: 12px; color: #64748b;">
+        Log in to BizzAssist &rarr; <a href="${loginUrl}" style="color: #3b82f6;">${loginUrl}</a>
+      </p>
+
+      <hr style="border: none; border-top: 1px solid #1e293b; margin: 30px 0;" />
+      <p style="color: #475569; font-size: 11px; margin: 0;">BizzAssist &mdash; Pecunia IT ApS &mdash; S&oslash;byvej 11, 2650 Hvidovre &mdash; CVR 44718502</p>
+    </div>
+  `;
+
+  try {
+    const res = await fetch(RESEND_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: FROM_ADDRESS,
+        to,
+        subject: 'Din adgang til BizzAssist er godkendt',
+        html,
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text();
+      console.error('[email] Resend API error (approval):', res.status, body);
+    } else {
+      console.log('[email] Approval notification sent to', to);
+    }
+  } catch (err) {
+    console.error('[email] Failed to send approval email:', err);
+  }
+}
+
 // ─── Recurring payment confirmation ──────────────────────────────────────────
 
 /** Parameters for the recurring payment email */

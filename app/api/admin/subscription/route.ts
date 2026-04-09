@@ -22,6 +22,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { sendApprovalEmail } from '@/app/lib/email';
 
 /**
  * Inserts a row into audit_log using an untyped client cast.
@@ -162,6 +163,22 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           status: 'active',
           approvedAt: now,
         });
+        // Send approval notification email — fire-and-forget (non-blocking)
+        if (targetUser.email) {
+          // Look up the plan's display name from plan_configs
+          const { data: planRow } = await admin
+            .from('plan_configs')
+            .select('name_da')
+            .eq('plan_id', currentSub.planId ?? 'demo')
+            .limit(1)
+            .single();
+          const planName =
+            (planRow as { name_da?: string } | null)?.name_da ?? currentSub.planId ?? 'Demo';
+          const fullName = (targetUser.user_metadata?.full_name as string | undefined) ?? undefined;
+          sendApprovalEmail({ to: targetUser.email, fullName, planName }).catch((err) =>
+            console.error('[admin/subscription] Approval email error (non-fatal):', err)
+          );
+        }
         break;
 
       case 'reject':

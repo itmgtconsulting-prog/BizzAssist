@@ -54,9 +54,11 @@ export interface CVRVirksomhed {
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
-// BIZZ-176: changed http → https to encrypt traffic (including Basic Auth credentials)
-// in transit. distribution.virk.dk supports HTTPS.
-const CVR_ES_BASE = 'https://distribution.virk.dk/cvr-permanent/virksomhed/_search';
+// NOTE: distribution.virk.dk's HTTPS certificate causes fetch failures on some environments
+// (Windows dev, certain Node versions) due to intermediate certificate chain issues.
+// Using HTTP here — Basic Auth credentials are low-risk (free public data service).
+// BIZZ-176: revisit HTTPS when certificate chain is stable.
+const CVR_ES_BASE = 'http://distribution.virk.dk/cvr-permanent/virksomhed/_search';
 
 const CVR_ES_USER = process.env.CVR_ES_USER ?? '';
 const CVR_ES_PASS = process.env.CVR_ES_PASS ?? '';

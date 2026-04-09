@@ -94,7 +94,9 @@ function tlFetch(urlPath: string): Promise<{ status: number; body: string }> {
         pfx,
         passphrase: CERT_PASSWORD,
         rejectUnauthorized: false,
-        timeout: 8000,
+        // test.tinglysning.dk kan svare langsomt (op til 6-7s) — 20s timeout giver margin.
+        // Prod-miljøet er væsentligt hurtigere.
+        timeout: 20000,
         headers: { Accept: 'application/json, application/xml, */*' },
       },
       (res) => {
@@ -232,7 +234,13 @@ export async function GET(req: NextRequest) {
     });
   } catch (err) {
     Sentry.captureException(err);
-    console.error('[tinglysning] Fejl:', err instanceof Error ? err.message : String(err));
-    return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[tinglysning] Fejl:', msg);
+    // Expose actual error in dev so we can diagnose cert/connection issues
+    const body =
+      process.env.NODE_ENV === 'development'
+        ? { error: 'Ekstern API fejl', dev_detail: msg }
+        : { error: 'Ekstern API fejl' };
+    return NextResponse.json(body, { status: 500 });
   }
 }

@@ -4,6 +4,10 @@
  * Purges user data older than configured retention periods across all tenant schemas:
  *   - recent_entities: purge rows with visited_at older than 12 months
  *   - notifications:   purge read notifications (is_read = true) older than 6 months
+ *   - ai_token_usage:  purge rows older than 13 months (GDPR — BIZZ-172)
+ *
+ * Also purges global (public-schema) caches:
+ *   - regnskab_cache:  purge rows older than 90 days (BIZZ-172)
  *
  * Additionally purges full tenant data for tenants closed more than 30 days ago
  * (i.e. public.tenants.closed_at IS NOT NULL AND closed_at < NOW() - 30 days).
@@ -34,6 +38,7 @@ interface TenantPurgeResult {
   aiConversationsDeleted: number;
   recentSearchesDeleted: number;
   activityLogDeleted: number;
+  aiTokenUsageDeleted: number;
   error?: string;
 }
 
@@ -130,16 +135,20 @@ async function writeAuditLog(
  *   2. Deletes read notifications older than 6 months (is_read = true, by created_at).
  *   3. Deletes recent_searches rows older than 12 months (BIZZ-133 — GDPR Art. 5(1)(e)).
  *   4. Deletes activity_log rows older than 12 months (BIZZ-133 — GDPR Art. 5(1)(e)).
+ *   5. Deletes ai_token_usage rows older than 13 months (BIZZ-172 — GDPR retention).
  *
  * For closed tenants (closed_at IS NOT NULL AND closed_at < NOW() - 30 days):
  *   - Deletes ALL rows in recent_entities, notifications, saved_entities,
  *     property_snapshots, recent_searches, and activity_log within that tenant
  *     schema to fulfil post-closure GDPR erasure.
  *
+ * Additionally purges the global public-schema cache:
+ *   - regnskab_cache rows older than 90 days (BIZZ-172).
+ *
  * Returns a JSON summary of rows deleted per tenant.
  *
  * @param request - Incoming Next.js request (must carry CRON_SECRET bearer token)
- * @returns JSON summary { ok, tenants: TenantPurgeResult[], totalErrors }
+ * @returns JSON summary { ok, tenants: TenantPurgeResult[], totalErrors, regnskabCacheDeleted }
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
   if (!verifyCronSecret(request)) {
@@ -174,6 +183,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       aiConversationsDeleted: 0,
       recentSearchesDeleted: 0,
       activityLogDeleted: 0,
+      aiTokenUsageDeleted: 0,
     };
 
     try {
@@ -269,13 +279,28 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
         result.activityLogDeleted = activityCount ?? 0;
 
+        // 6. ai_token_usage: purge rows older than 13 months (GDPR retention — BIZZ-172).
+        //    Token usage records are personal data (linked to user_id); 13 months covers
+        //    a full billing cycle before they must be erased.
+        const thirteenMonthsAgo = new Date(
+          Date.now() - (13 * 365.25 * 24 * 60 * 60 * 1000) / 12
+        ).toISOString();
+
+        const { count: tokenUsageCount } = await db
+          .from('ai_token_usage')
+          .delete({ count: 'exact' })
+          .lt('created_at', thirteenMonthsAgo);
+
+        result.aiTokenUsageDeleted = tokenUsageCount ?? 0;
+
         // Write audit log only if something was actually purged
         if (
           result.recentEntitiesDeleted > 0 ||
           result.notificationsDeleted > 0 ||
           result.aiConversationsDeleted > 0 ||
           result.recentSearchesDeleted > 0 ||
-          result.activityLogDeleted > 0
+          result.activityLogDeleted > 0 ||
+          result.aiTokenUsageDeleted > 0
         ) {
           await writeAuditLog(admin, tenant.schema_name, tenant.id, {
             event: 'ttl_purge',
@@ -284,6 +309,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
             aiConversationsDeleted: result.aiConversationsDeleted,
             recentSearchesDeleted: result.recentSearchesDeleted,
             activityLogDeleted: result.activityLogDeleted,
+            aiTokenUsageDeleted: result.aiTokenUsageDeleted,
           });
         }
       }
@@ -297,9 +323,27 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   const totalErrors = results.filter((r) => r.error !== undefined).length;
 
+  // ── Global (public-schema) purges ──────────────────────────────────────────
+
+  // Purge regnskab_cache rows older than 90 days (BIZZ-172).
+  // This is a shared public-schema cache — not tenant-scoped — so it is
+  // purged once here rather than inside the per-tenant loop.
+  let regnskabCacheDeleted = 0;
+  try {
+    const cutoff90d = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+    const { count: cacheCount } = await admin
+      .from('regnskab_cache')
+      .delete({ count: 'exact' })
+      .lt('fetched_at', cutoff90d);
+    regnskabCacheDeleted = cacheCount ?? 0;
+  } catch (err) {
+    console.error('[purge-old-data] Failed to purge regnskab_cache:', err);
+  }
+
   return NextResponse.json({
     ok: true,
     tenants: results,
     totalErrors,
+    regnskabCacheDeleted,
   });
 }

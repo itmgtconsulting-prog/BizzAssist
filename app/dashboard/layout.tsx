@@ -675,7 +675,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
       {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         {/* Top bar */}
-        <header className="bg-[#0f172a] border-b border-white/8 px-6 py-4 flex items-center gap-4 shrink-0">
+        <header className="bg-[#0f172a] border-b border-white/8 px-3 sm:px-6 py-4 flex items-center gap-4 shrink-0 overflow-hidden">
           <div className="flex items-center gap-4">
             <button
               className="lg:hidden text-slate-400 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded-lg"
@@ -1006,11 +1006,13 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                 )}
             </div>
           </div>
-          {/* Recent entity tags — direkte til højre for søgefeltet */}
-          <RecentEntityTagBar currentPath={pathname} variant="inline" />
+          {/* Recent entity tags — direkte til højre for søgefeltet — hidden on mobile */}
+          <div className="hidden sm:contents">
+            <RecentEntityTagBar currentPath={pathname} variant="inline" />
+          </div>
           {/* Spacer — skubber DA/EN til højre */}
           <div className="flex-1" />
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-shrink-0">
             {/* Language toggle */}
             <div className="flex items-center bg-white/10 rounded-full p-1 gap-1">
               <button

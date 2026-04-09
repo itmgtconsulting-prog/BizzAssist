@@ -236,7 +236,6 @@ function LoginForm() {
   const providerDisplayName: Record<string, string> = {
     azure: 'Microsoft',
     google: 'Google',
-    linkedin_oidc: 'LinkedIn',
   };
   const detectedProviderName = detectedProvider
     ? (providerDisplayName[detectedProvider] ?? detectedProvider)

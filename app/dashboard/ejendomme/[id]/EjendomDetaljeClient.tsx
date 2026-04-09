@@ -6715,7 +6715,8 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
             {tlUuid && (
               <a
                 href={`/api/tinglysning/dokument?uuid=${tlUuid}&type=tingbogsattest`}
-                download={`tingbogsattest-${tingbogsattest.bfeNr ?? bfe}.pdf`}
+                target="_blank"
+                rel="noopener noreferrer"
                 className="absolute top-3 right-3 inline-flex items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
               >
                 <FileText size={11} />
@@ -6863,11 +6864,8 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
                 const url = isBilag
                   ? `/api/tinglysning/dokument?bilag=${docId.replace('bilag-', '')}`
                   : `/api/tinglysning/dokument?uuid=${docId}`;
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `tinglysning-${docId.slice(0, 14)}.pdf`;
-                a.click();
-                await new Promise((r) => setTimeout(r, 500));
+                window.open(url, '_blank', 'noopener,noreferrer');
+                await new Promise((r) => setTimeout(r, 300));
               }
             }}
             disabled={selectedDocs.size === 0}
@@ -6959,7 +6957,8 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
                       {docId && (
                         <a
                           href={`/api/tinglysning/dokument?uuid=${docId}`}
-                          download
+                          target="_blank"
+                          rel="noopener noreferrer"
                           className="inline-flex items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
                         >
                           <FileText size={11} />
@@ -7194,7 +7193,8 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
                       {docId && (
                         <a
                           href={`/api/tinglysning/dokument?uuid=${docId}`}
-                          download
+                          target="_blank"
+                          rel="noopener noreferrer"
                           className="inline-flex items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
                         >
                           <FileText size={11} />
@@ -7555,7 +7555,8 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
                           pdfUrl && (
                             <a
                               href={pdfUrl}
-                              download
+                              target="_blank"
+                              rel="noopener noreferrer"
                               className="inline-flex items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
                             >
                               <FileText size={11} />
@@ -7712,7 +7713,8 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
                 <div className="flex items-center gap-1.5">
                   <a
                     href={`/api/tinglysning/dokument?bilag=${b.id}`}
-                    download
+                    target="_blank"
+                    rel="noopener noreferrer"
                     className="inline-flex items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
                   >
                     <FileText size={11} />

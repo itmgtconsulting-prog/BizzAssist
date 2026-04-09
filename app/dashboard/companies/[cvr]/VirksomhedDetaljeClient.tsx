@@ -509,6 +509,9 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
   /** Personer-tab: hvilke historiske rollegrupper der er udfoldet */
   const [expandedHistPersoner, setExpandedHistPersoner] = useState<Set<string>>(new Set());
 
+  /** Personer-tab: hvilke kategorier der viser ALLE historiske (default: kun de første 5) */
+  const [visAlleHistPersoner, setVisAlleHistPersoner] = useState<Set<string>>(new Set());
+
   /** Historik-tab: aktivt filter (null = vis alle) */
   const [historikFilter, setHistorikFilter] = useState<string | null>(null);
 
@@ -3072,36 +3075,66 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                             </ul>
                           )}
 
-                          {/* Historiske deltagere — collapsible */}
-                          {totalHistoriske > 0 && (
-                            <div className={totalAktive > 0 ? 'mt-3' : ''}>
-                              <button
-                                onClick={() =>
-                                  setExpandedHistPersoner((prev) => {
-                                    const next = new Set(prev);
-                                    if (next.has(kat)) next.delete(kat);
-                                    else next.add(kat);
-                                    return next;
-                                  })
-                                }
-                                className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors mb-2"
-                              >
-                                {erUdfoldet ? (
-                                  <ChevronDown size={13} />
-                                ) : (
-                                  <ChevronRight size={13} />
-                                )}
-                                {lang === 'da'
-                                  ? `${totalHistoriske} historiske`
-                                  : `${totalHistoriske} historical`}
-                              </button>
-                              {erUdfoldet && (
-                                <ul className="space-y-2">
-                                  {historiske.map((entry, i) => renderPerson(entry, i, true))}
-                                </ul>
-                              )}
-                            </div>
-                          )}
+                          {/* Historiske deltagere — collapsible med "vis flere" */}
+                          {totalHistoriske > 0 &&
+                            (() => {
+                              const INITIAL_HIST = 5;
+                              const visAlle = visAlleHistPersoner.has(kat);
+                              const vistHistoriske = visAlle
+                                ? historiske
+                                : historiske.slice(0, INITIAL_HIST);
+                              const skjulteAntal = totalHistoriske - INITIAL_HIST;
+                              return (
+                                <div className={totalAktive > 0 ? 'mt-3' : ''}>
+                                  <button
+                                    onClick={() =>
+                                      setExpandedHistPersoner((prev) => {
+                                        const next = new Set(prev);
+                                        if (next.has(kat)) next.delete(kat);
+                                        else next.add(kat);
+                                        return next;
+                                      })
+                                    }
+                                    className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors mb-2"
+                                  >
+                                    {erUdfoldet ? (
+                                      <ChevronDown size={13} />
+                                    ) : (
+                                      <ChevronRight size={13} />
+                                    )}
+                                    {lang === 'da'
+                                      ? `${totalHistoriske} historiske`
+                                      : `${totalHistoriske} historical`}
+                                  </button>
+                                  {erUdfoldet && (
+                                    <>
+                                      <ul className="space-y-2">
+                                        {vistHistoriske.map((entry, i) =>
+                                          renderPerson(entry, i, true)
+                                        )}
+                                      </ul>
+                                      {!visAlle && skjulteAntal > 0 && (
+                                        <button
+                                          onClick={() =>
+                                            setVisAlleHistPersoner((prev) => {
+                                              const next = new Set(prev);
+                                              next.add(kat);
+                                              return next;
+                                            })
+                                          }
+                                          className="mt-2 flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                                        >
+                                          <ChevronDown size={12} />
+                                          {lang === 'da'
+                                            ? `Vis ${skjulteAntal} flere historiske`
+                                            : `Show ${skjulteAntal} more historical`}
+                                        </button>
+                                      )}
+                                    </>
+                                  )}
+                                </div>
+                              );
+                            })()}
 
                           {/* Ingen aktive, men har historiske */}
                           {totalAktive === 0 && !erUdfoldet && (
@@ -4004,14 +4037,9 @@ function PersonbogSection({
     );
   }
 
-  /** Empty state */
+  /** Empty state — compact single line so "Tinglyste dokumenter" section stays visible */
   if (haeftelser.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center py-16 text-center">
-        <Scale size={40} className="text-slate-600 mb-4" />
-        <p className="text-slate-400 text-sm">{c.personbogEmpty}</p>
-      </div>
-    );
+    return <p className="text-slate-500 text-xs py-2 px-1 italic">{c.personbogEmpty}</p>;
   }
 
   /** Gruppér hæftelser efter type */

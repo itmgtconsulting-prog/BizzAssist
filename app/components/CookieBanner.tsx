@@ -3,27 +3,37 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useLanguage } from '@/app/context/LanguageContext';
+import { setConsent, getConsentClient } from '@/app/lib/cookieConsent';
 
 /**
  * GDPR cookie consent banner.
- * Shows on first visit, stores consent in localStorage.
+ *
+ * Shows on first visit when no consent has been recorded. Stores the user's
+ * choice in both a cookie (`bizzassist_consent`) and localStorage (`cookie_consent`)
+ * so the server can read consent during SSR for conditional tracking scripts.
+ *
+ * Existing users who only have a localStorage value are automatically migrated:
+ * their localStorage consent is promoted to a cookie on first read.
  */
 export default function CookieBanner() {
   const { lang } = useLanguage();
   const [visible, setVisible] = useState(false);
 
+  /** Check for existing consent on mount; migrate localStorage-only users */
   useEffect(() => {
-    const consent = localStorage.getItem('cookie_consent');
+    const consent = getConsentClient();
     if (!consent) setVisible(true);
   }, []);
 
+  /** Store 'accepted' consent in cookie + localStorage and hide the banner */
   const accept = () => {
-    localStorage.setItem('cookie_consent', 'accepted');
+    setConsent('accepted');
     setVisible(false);
   };
 
+  /** Store 'declined' consent in cookie + localStorage and hide the banner */
   const decline = () => {
-    localStorage.setItem('cookie_consent', 'declined');
+    setConsent('declined');
     setVisible(false);
   };
 

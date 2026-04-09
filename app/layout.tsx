@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next';
+import { headers } from 'next/headers';
 import { Geist } from 'next/font/google';
 import './globals.css';
 import 'mapbox-gl/dist/mapbox-gl.css';
@@ -8,6 +9,7 @@ import SupportChatWidget from '@/app/components/SupportChatWidget';
 import HideNextDevIndicator from '@/app/components/HideNextDevIndicator';
 import CookieBanner from '@/app/components/CookieBanner';
 import { Analytics } from '@vercel/analytics/next';
+import { getConsentFromCookieHeader } from '@/app/lib/cookieConsent';
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -70,7 +72,19 @@ export const viewport: Viewport = {
   maximumScale: 1,
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+/**
+ * Root layout for the entire application.
+ *
+ * Reads the `bizzassist_consent` cookie during SSR to decide whether to
+ * include Vercel Analytics. Analytics are only rendered when the user has
+ * explicitly accepted cookies via the GDPR banner.
+ */
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const headerStore = await headers();
+  const cookieHeader = headerStore.get('cookie');
+  const consent = getConsentFromCookieHeader(cookieHeader);
+  const analyticsAllowed = consent === 'accepted';
+
   return (
     <html lang="da" className={`${geistSans.variable} h-full`}>
       <head>
@@ -83,7 +97,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <SupportChatWidget />
           <HideNextDevIndicator />
           <ServiceWorkerRegistration />
-          <Analytics />
+          {analyticsAllowed && <Analytics />}
         </LanguageProvider>
       </body>
     </html>

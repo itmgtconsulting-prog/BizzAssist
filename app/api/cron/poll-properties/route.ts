@@ -28,7 +28,13 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import type { SnapshotType, NotificationType } from '@/lib/db/tenant';
 
 /** Max antal ejendomme pr. cron-kørsel */
-const MAX_PER_RUN = 50;
+const MAX_PER_RUN = 150;
+
+/** Antal ejendomme der polles parallelt i hver batch */
+const BATCH_SIZE = 10;
+
+/** Pause mellem batches i millisekunder — undgår rate limiting hos eksterne API'er */
+const BATCH_DELAY_MS = 100;
 
 /** Vercel Cron — kræver CRON_SECRET som Bearer token i Authorization-header */
 function verifyCronSecret(request: NextRequest): boolean {
@@ -160,10 +166,192 @@ const CHANGE_TITLES: Record<SnapshotType, string> = {
   cvr: 'CVR-data ændret',
 };
 
+/** Resultat fra polling af en enkelt ejendom */
+interface PropertyPollResult {
+  changes: number;
+  errors: string[];
+}
+
+/**
+ * Delay-hjælper — venter det angivne antal millisekunder.
+ *
+ * @param ms - Antal millisekunder at vente
+ * @returns Promise der resolves efter `ms` millisekunder
+ */
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Poller en enkelt ejendom for ændringer i BBR, vurdering og ejerskab.
+ *
+ * Henter alle tre datatyper parallelt, sammenligner SHA-256 hashes med
+ * seneste snapshot, og opretter nye snapshots + notifikationer ved ændringer.
+ *
+ * @param entity - Den fulgte ejendom fra saved_entities
+ * @param tenant - Tenant-info med id og schema_name
+ * @param baseUrl - Base-URL for interne API-kald
+ * @param db - Supabase-klient scopet til tenant-schema
+ * @param userIds - Bruger-IDs i tenanten (til notifikationer)
+ * @returns Antal ændringer fundet og eventuelle fejl
+ */
+async function pollSingleProperty(
+  entity: { entity_id: string; label: string },
+  tenant: { id: string; schema_name: string },
+  baseUrl: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  db: any,
+  userIds: string[]
+): Promise<PropertyPollResult> {
+  let changes = 0;
+  const errors: string[] = [];
+
+  // Definer hvilke datapunkter der overvåges
+  const checks: {
+    type: SnapshotType;
+    fetcher: () => Promise<Record<string, unknown> | null>;
+  }[] = [
+    { type: 'bbr', fetcher: () => fetchBBR(entity.entity_id, baseUrl) },
+    { type: 'vurdering', fetcher: () => fetchVurdering(entity.entity_id, baseUrl) },
+    { type: 'ejerskab', fetcher: () => fetchEjerskab(entity.entity_id, baseUrl) },
+  ];
+
+  // Hent alle 3 datatyper parallelt for denne ejendom
+  const fetchResults = await Promise.allSettled(
+    checks.map((check) => check.fetcher().then((data) => ({ check, data })))
+  );
+
+  for (const result of fetchResults) {
+    if (result.status === 'rejected') {
+      errors.push(`${tenant.schema_name}/${entity.entity_id}: ${result.reason}`);
+      continue;
+    }
+
+    const { check, data: currentData } = result.value;
+
+    try {
+      if (!currentData) continue; // API-fejl — spring over
+
+      const currentHash = await hashData(currentData);
+
+      // Hent seneste snapshot
+      const { data: latest } = await db
+        .from('property_snapshots')
+        .select('snapshot_hash')
+        .eq('tenant_id', tenant.id)
+        .eq('entity_id', entity.entity_id)
+        .eq('snapshot_type', check.type)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (latest && latest.snapshot_hash === currentHash) {
+        continue; // Ingen ændring
+      }
+
+      // Opret nyt snapshot
+      await db.from('property_snapshots').insert({
+        tenant_id: tenant.id,
+        entity_id: entity.entity_id,
+        snapshot_type: check.type,
+        snapshot_hash: currentHash,
+        snapshot_data: currentData,
+      });
+
+      // Kun opret notifikation hvis der fandtes et tidligere snapshot
+      // (første gang er baseline — ingen notifikation)
+      if (latest) {
+        changes++;
+        const adresse = entity.label || entity.entity_id;
+        const title = CHANGE_TITLES[check.type];
+        const message = `${title} på ${adresse}`;
+
+        // Opret notifikation for alle brugere i tenant'en
+        for (const userId of userIds) {
+          await db.from('notifications').insert({
+            tenant_id: tenant.id,
+            user_id: userId,
+            entity_id: entity.entity_id,
+            entity_type: 'property',
+            notification_type: SNAPSHOT_TO_NOTIFICATION[check.type],
+            title,
+            message,
+            metadata: {
+              previous_hash: latest.snapshot_hash,
+              current_hash: currentHash,
+            },
+          });
+        }
+      }
+    } catch (err) {
+      errors.push(`${tenant.schema_name}/${entity.entity_id}/${check.type}: ${err}`);
+    }
+  }
+
+  return { changes, errors };
+}
+
+/**
+ * Processer et array af ejendomme i parallelle batches.
+ *
+ * Bruger Promise.allSettled() så fejl i én ejendom ikke blokerer de øvrige.
+ * Indsætter en kort pause mellem batches for at undgå rate limiting hos
+ * eksterne API'er (Datafordeler, BBR, mv.).
+ *
+ * @param entities - Array af fulgte ejendomme
+ * @param tenant - Tenant-info med id og schema_name
+ * @param baseUrl - Base-URL for interne API-kald
+ * @param db - Supabase-klient scopet til tenant-schema
+ * @param userIds - Bruger-IDs i tenanten (til notifikationer)
+ * @returns Samlet antal ændringer og fejl
+ */
+async function processEntitiesInBatches(
+  entities: { entity_id: string; label: string }[],
+  tenant: { id: string; schema_name: string },
+  baseUrl: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  db: any,
+  userIds: string[]
+): Promise<PropertyPollResult> {
+  let totalChanges = 0;
+  const allErrors: string[] = [];
+
+  for (let i = 0; i < entities.length; i += BATCH_SIZE) {
+    const batch = entities.slice(i, i + BATCH_SIZE);
+
+    // Kør hele batch'en parallelt med Promise.allSettled
+    const results = await Promise.allSettled(
+      batch.map((entity) => pollSingleProperty(entity, tenant, baseUrl, db, userIds))
+    );
+
+    for (const result of results) {
+      if (result.status === 'fulfilled') {
+        totalChanges += result.value.changes;
+        allErrors.push(...result.value.errors);
+      } else {
+        // Uventet fejl i hele property-poll — burde ikke ske da pollSingleProperty fanger fejl
+        allErrors.push(`${tenant.schema_name}/batch-error: ${result.reason}`);
+      }
+    }
+
+    // Kort pause mellem batches for at undgå rate limiting
+    if (i + BATCH_SIZE < entities.length) {
+      await delay(BATCH_DELAY_MS);
+    }
+  }
+
+  return { changes: totalChanges, errors: allErrors };
+}
+
 /**
  * GET /api/cron/poll-properties
  *
  * Hovedkørsel: poller alle fulgte ejendomme på tværs af alle tenants.
+ *
+ * BIZZ-177: Ejendomme polles nu i parallelle batches (BATCH_SIZE ad gangen)
+ * i stedet for sekventielt. Med 150 ejendomme og BATCH_SIZE=10 kører vi
+ * 15 batches i stedet for 150 serielle kald, hvilket holder os inden for
+ * Vercels 60-sekunders timeout for serverless functions.
  */
 export async function GET(request: NextRequest) {
   if (!verifyCronSecret(request)) {
@@ -215,96 +403,18 @@ export async function GET(request: NextRequest) {
         .eq('tenant_id', tenant.id);
       const userIds = (members ?? []).map((m: { user_id: string }) => m.user_id);
 
-      for (const entity of monitored) {
-        totalProcessed++;
+      // BIZZ-177: Processer ejendomme i parallelle batches
+      const result = await processEntitiesInBatches(
+        monitored as { entity_id: string; label: string }[],
+        tenant,
+        baseUrl,
+        db,
+        userIds
+      );
 
-        // Definer hvilke datapunkter der overvåges
-        const checks: {
-          type: SnapshotType;
-          fetcher: () => Promise<Record<string, unknown> | null>;
-        }[] = [
-          { type: 'bbr', fetcher: () => fetchBBR(entity.entity_id, baseUrl) },
-          { type: 'vurdering', fetcher: () => fetchVurdering(entity.entity_id, baseUrl) },
-          { type: 'ejerskab', fetcher: () => fetchEjerskab(entity.entity_id, baseUrl) },
-        ];
-
-        // BIZZ-177: Parallelize the 3 fetches per property using Promise.all.
-        // Previously each fetch was awaited serially (3 × 50 = 150 sequential network calls).
-        // Now all 3 fetches for a single property run concurrently, reducing total wall-clock
-        // time from ~150 serial calls to ~50 parallel batches of 3 — well within Vercel's 60s limit.
-        const fetchResults = await Promise.all(
-          checks.map((check) =>
-            check
-              .fetcher()
-              .then((data) => ({ check, data, error: null }))
-              .catch((err: unknown) => ({ check, data: null, error: err }))
-          )
-        );
-
-        for (const { check, data: currentData, error } of fetchResults) {
-          if (error) {
-            errors.push(`${tenant.schema_name}/${entity.entity_id}/${check.type}: ${error}`);
-            continue;
-          }
-          try {
-            if (!currentData) continue; // API-fejl — spring over
-
-            const currentHash = await hashData(currentData);
-
-            // Hent seneste snapshot
-            const { data: latest } = await db
-              .from('property_snapshots')
-              .select('snapshot_hash')
-              .eq('tenant_id', tenant.id)
-              .eq('entity_id', entity.entity_id)
-              .eq('snapshot_type', check.type)
-              .order('created_at', { ascending: false })
-              .limit(1)
-              .maybeSingle();
-
-            if (latest && latest.snapshot_hash === currentHash) {
-              continue; // Ingen ændring
-            }
-
-            // Opret nyt snapshot
-            await db.from('property_snapshots').insert({
-              tenant_id: tenant.id,
-              entity_id: entity.entity_id,
-              snapshot_type: check.type,
-              snapshot_hash: currentHash,
-              snapshot_data: currentData,
-            });
-
-            // Kun opret notifikation hvis der fandtes et tidligere snapshot
-            // (første gang er baseline — ingen notifikation)
-            if (latest) {
-              totalChanges++;
-              const adresse = entity.label || entity.entity_id;
-              const title = CHANGE_TITLES[check.type];
-              const message = `${title} på ${adresse}`;
-
-              // Opret notifikation for alle brugere i tenant'en
-              for (const userId of userIds) {
-                await db.from('notifications').insert({
-                  tenant_id: tenant.id,
-                  user_id: userId,
-                  entity_id: entity.entity_id,
-                  entity_type: 'property',
-                  notification_type: SNAPSHOT_TO_NOTIFICATION[check.type],
-                  title,
-                  message,
-                  metadata: {
-                    previous_hash: latest.snapshot_hash,
-                    current_hash: currentHash,
-                  },
-                });
-              }
-            }
-          } catch (err) {
-            errors.push(`${tenant.schema_name}/${entity.entity_id}/${check.type}: ${err}`);
-          }
-        }
-      }
+      totalProcessed += monitored.length;
+      totalChanges += result.changes;
+      errors.push(...result.errors);
     } catch (err) {
       errors.push(`tenant ${tenant.schema_name}: ${err}`);
     }

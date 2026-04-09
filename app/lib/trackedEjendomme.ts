@@ -8,12 +8,118 @@
  * localStorage-cachen. Synkrone `hent*`-funktioner læser kun cachen for
  * instant UI-render (f.eks. initial state i useState).
  *
+ * BIZZ-180: Alle localStorage-nøgler er namespaced med brugerens Supabase
+ * user ID for at forhindre data-lækage på delte enheder.
+ * Kald `initCacheUserId(id)` ved login/auth-check inden brug.
+ *
  * Kræver klient-side kald — må ikke importeres i Server Components.
  */
 
+/** Base key for tracked properties (namespaced with userId at runtime) */
+export const TRACKED_KEY_BASE = 'ba-tracked-ejendomme';
+/** Base key for notifications (namespaced with userId at runtime) */
+export const NOTIFICATIONS_KEY_BASE = 'ba-notifikationer';
+/** @deprecated Use TRACKED_KEY_BASE — kept for migration of old non-namespaced data */
 export const TRACKED_KEY = 'ba-tracked-ejendomme';
+/** @deprecated Use NOTIFICATIONS_KEY_BASE — kept for migration of old non-namespaced data */
 export const NOTIFICATIONS_KEY = 'ba-notifikationer';
 export const MAX_TRACKED = 50;
+
+// ---------------------------------------------------------------------------
+// User ID namespace for localStorage keys (BIZZ-180)
+// ---------------------------------------------------------------------------
+
+/** Module-level cached user ID — set via `initCacheUserId()` */
+let _cacheUserId: string | null = null;
+
+/**
+ * Initialises the user ID used to namespace all localStorage cache keys.
+ * Must be called once after authentication is confirmed (e.g. in dashboard layout).
+ * Also migrates any old non-namespaced keys to the new user-scoped keys.
+ *
+ * @param userId - Supabase auth user UUID
+ */
+export function initCacheUserId(userId: string): void {
+  _cacheUserId = userId;
+  _migrateOldKeys(userId);
+}
+
+/**
+ * Returns the currently set cache user ID, or null if not yet initialised.
+ *
+ * @returns The user ID or null
+ */
+export function getCacheUserId(): string | null {
+  return _cacheUserId;
+}
+
+/**
+ * Clears the cached user ID. Call on logout to prevent stale data access.
+ */
+export function clearCacheUserId(): void {
+  _cacheUserId = null;
+}
+
+/**
+ * Returns the namespaced localStorage key for tracked properties.
+ * Returns null if no user ID is set (prevents cross-user data access).
+ *
+ * @returns Namespaced key string or null
+ */
+function trackedKey(): string | null {
+  return _cacheUserId ? `${TRACKED_KEY_BASE}_${_cacheUserId}` : null;
+}
+
+/**
+ * Returns the namespaced localStorage key for notifications.
+ * Returns null if no user ID is set (prevents cross-user data access).
+ *
+ * @returns Namespaced key string or null
+ */
+function notificationsKey(): string | null {
+  return _cacheUserId ? `${NOTIFICATIONS_KEY_BASE}_${_cacheUserId}` : null;
+}
+
+/** Key used to track whether old non-namespaced data has been migrated */
+const MIGRATION_DONE_KEY = 'ba-cache-ns-migrated';
+
+/**
+ * Migrates old non-namespaced localStorage keys to user-scoped keys.
+ * Runs once per userId — subsequent calls are no-ops.
+ * After migration, the old keys are removed to prevent leaking data.
+ *
+ * @param userId - The authenticated user's ID
+ */
+function _migrateOldKeys(userId: string): void {
+  if (typeof window === 'undefined') return;
+  const migrationFlag = `${MIGRATION_DONE_KEY}_${userId}`;
+  try {
+    if (window.localStorage.getItem(migrationFlag)) return;
+
+    // Migrate tracked properties
+    const oldTracked = window.localStorage.getItem(TRACKED_KEY_BASE);
+    const newTrackedKey = `${TRACKED_KEY_BASE}_${userId}`;
+    if (oldTracked && !window.localStorage.getItem(newTrackedKey)) {
+      window.localStorage.setItem(newTrackedKey, oldTracked);
+    }
+
+    // Migrate notifications
+    const oldNotifs = window.localStorage.getItem(NOTIFICATIONS_KEY_BASE);
+    const newNotifsKey = `${NOTIFICATIONS_KEY_BASE}_${userId}`;
+    if (oldNotifs && !window.localStorage.getItem(newNotifsKey)) {
+      window.localStorage.setItem(newNotifsKey, oldNotifs);
+    }
+
+    // Remove old non-namespaced keys
+    window.localStorage.removeItem(TRACKED_KEY_BASE);
+    window.localStorage.removeItem(NOTIFICATIONS_KEY_BASE);
+
+    // Mark migration as done for this user
+    window.localStorage.setItem(migrationFlag, '1');
+  } catch {
+    /* ignore storage errors */
+  }
+}
 
 /** En fulgt ejendom */
 export interface TrackedEjendom {
@@ -60,12 +166,16 @@ export interface EjendomNotifikation {
  * Use this for synchronous initial state only; prefer `fetchTrackedEjendomme`
  * for the authoritative Supabase-backed list.
  *
+ * Returns empty if no user ID is set (BIZZ-180: prevents cross-user data access).
+ *
  * @returns Cached list of tracked properties (may be stale)
  */
 export function hentTrackedEjendommeCache(): TrackedEjendom[] {
   if (typeof window === 'undefined') return [];
+  const key = trackedKey();
+  if (!key) return [];
   try {
-    const raw = window.localStorage.getItem(TRACKED_KEY);
+    const raw = window.localStorage.getItem(key);
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -80,12 +190,16 @@ export function hentTrackedEjendommeCache(): TrackedEjendom[] {
  * Use this for synchronous initial state only; prefer `fetchNotifikationer`
  * for the authoritative Supabase-backed list.
  *
+ * Returns empty if no user ID is set (BIZZ-180: prevents cross-user data access).
+ *
  * @returns Cached list of notifications (may be stale)
  */
 export function hentNotifikationerCache(): EjendomNotifikation[] {
   if (typeof window === 'undefined') return [];
+  const key = notificationsKey();
+  if (!key) return [];
   try {
-    const raw = window.localStorage.getItem(NOTIFICATIONS_KEY);
+    const raw = window.localStorage.getItem(key);
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -97,13 +211,16 @@ export function hentNotifikationerCache(): EjendomNotifikation[] {
 
 /**
  * Writes tracked properties to the localStorage cache.
+ * No-op if no user ID is set (BIZZ-180).
  *
  * @param items - Properties to cache
  */
 function cacheTracked(items: TrackedEjendom[]): void {
   if (typeof window === 'undefined') return;
+  const key = trackedKey();
+  if (!key) return;
   try {
-    window.localStorage.setItem(TRACKED_KEY, JSON.stringify(items));
+    window.localStorage.setItem(key, JSON.stringify(items));
   } catch {
     /* ignore quota errors */
   }
@@ -111,13 +228,16 @@ function cacheTracked(items: TrackedEjendom[]): void {
 
 /**
  * Writes notifications to the localStorage cache.
+ * No-op if no user ID is set (BIZZ-180).
  *
  * @param items - Notifications to cache
  */
 function cacheNotifikationer(items: EjendomNotifikation[]): void {
   if (typeof window === 'undefined') return;
+  const key = notificationsKey();
+  if (!key) return;
   try {
-    window.localStorage.setItem(NOTIFICATIONS_KEY, JSON.stringify(items));
+    window.localStorage.setItem(key, JSON.stringify(items));
   } catch {
     /* ignore quota errors */
   }

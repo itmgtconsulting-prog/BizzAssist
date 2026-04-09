@@ -51,6 +51,7 @@ import { SubscriptionProvider, useSubscription } from '@/app/context/Subscriptio
 import { AIPageProvider } from '@/app/context/AIPageContext';
 import { createClient } from '@/lib/supabase/client';
 import { hasMigrated, migrateLocalStorageToSupabase } from '@/app/lib/migrateLocalStorage';
+import { initCacheUserId, clearCacheUserId } from '@/app/lib/trackedEjendomme';
 
 /** Navigation items — 'adminOnly' items are only shown for admin users.
  *  'key' maps to translations[lang].sidebar[key] for the label.
@@ -138,6 +139,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
     extendSession,
   } = useSessionTimeout({
     onTimeout: async () => {
+      clearCacheUserId();
       await signOut();
     },
   });
@@ -221,6 +223,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
         initSub({ subscription: sub, isAdmin: admin, isFunctional: false });
         return;
       }
+      clearCacheUserId();
       await supabase.auth.signOut();
       if (status === 'cancelled') {
         window.location.href = '/login?error=subscription_cancelled';
@@ -254,6 +257,19 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
 
           if (email) {
             setProfile(email, json.fullName || '');
+
+            // BIZZ-180: Namespace localStorage cache keys with the user's ID
+            // to prevent cross-user data leaks on shared devices.
+            try {
+              const {
+                data: { user: authUser },
+              } = await supabase.auth.getUser();
+              if (authUser?.id) {
+                initCacheUserId(authUser.id);
+              }
+            } catch {
+              // If we can't get the user ID, localStorage caching is simply skipped
+            }
 
             // Show 2FA banner for email/password users who haven't set up TOTP yet.
             // OAuth users (Microsoft/Google) are excluded — they have 2FA at their IdP.
@@ -332,6 +348,8 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
         const email = data.user?.email;
         console.log('[checkAccess] client getUser email:', email);
         if (email) {
+          // BIZZ-180: Namespace localStorage cache keys with user ID
+          if (data.user?.id) initCacheUserId(data.user.id);
           setProfile(email);
           gateAccess('no_subscription');
           return;
@@ -1069,6 +1087,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                   <div className="py-1.5 border-t border-white/10">
                     <button
                       onClick={async () => {
+                        clearCacheUserId();
                         await signOut();
                       }}
                       className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-400 hover:text-red-300 hover:bg-red-500/5 transition-colors"
@@ -1138,6 +1157,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
         secondsLeft={secondsLeft}
         onExtend={extendSession}
         onTimeout={async () => {
+          clearCacheUserId();
           await signOut();
         }}
       />
@@ -1318,6 +1338,7 @@ function PlanSelectionOverlay({
               <button
                 type="button"
                 onClick={async () => {
+                  clearCacheUserId();
                   await signOut();
                 }}
                 className="text-slate-400 hover:text-slate-200 text-xs transition-colors"

@@ -5,8 +5,10 @@
  * sequentially for each property (150 serial calls for 50 properties). This
  * easily exceeds Vercel's 60-second function timeout.
  *
- * The fix uses Promise.all() so all 3 fetches per property run concurrently,
- * reducing total wall-clock time to roughly 50 parallel batches of 3 calls.
+ * The fix uses parallel batching: properties are processed in batches of
+ * BATCH_SIZE using Promise.allSettled(), and the 3 fetches per property also
+ * run concurrently via Promise.allSettled(). This reduces wall-clock time from
+ * ~150 serial calls to ~15 batches of 10 parallel properties.
  *
  * This test verifies the concurrency by checking that all 3 fetch functions
  * are called before any of them resolves (i.e. they are started in parallel).
@@ -15,22 +17,25 @@
 import { describe, it, expect } from 'vitest';
 
 describe('poll-properties route source — BIZZ-177 concurrency', () => {
-  it('uses Promise.all to parallelize the 3 fetches per property', async () => {
-    // Read source to verify Promise.all pattern is present
+  it('uses Promise.allSettled for parallel batching of properties and fetches', async () => {
+    // Read source to verify parallel patterns are present
     const { readFileSync } = await import('fs');
     const { resolve } = await import('path');
     const source = readFileSync(
       resolve(__dirname, '../../app/api/cron/poll-properties/route.ts'),
       'utf-8'
     );
-    expect(source).toContain('Promise.all(');
-    // The old serial pattern used "for (const check of checks)" with "await check.fetcher()"
-    // directly inside. Now fetchers are mapped to promises first.
-    expect(source).toContain('checks.map(');
+    // Properties are batched with Promise.allSettled for fault isolation
+    expect(source).toContain('Promise.allSettled(');
+    // Batch processing constants
+    expect(source).toContain('BATCH_SIZE');
+    expect(source).toContain('BATCH_DELAY_MS');
+    // processEntitiesInBatches function exists
+    expect(source).toContain('processEntitiesInBatches');
   });
 
   it('all 3 fetchers are started before any resolves (concurrency simulation)', async () => {
-    // Simulate what the route does: create 3 async tasks and run them with Promise.all
+    // Simulate what the route does: create 3 async tasks and run them with Promise.allSettled
     const order: string[] = [];
     const resolvers: (() => void)[] = [];
 
@@ -49,8 +54,8 @@ describe('poll-properties route source — BIZZ-177 concurrency', () => {
       { type: 'ejerskab', fetcher: makeDelayedFetcher('ejerskab') },
     ];
 
-    // Start all fetches concurrently (mirrors the Promise.all pattern in the route)
-    const allStarted = Promise.all(
+    // Start all fetches concurrently (mirrors the Promise.allSettled pattern in the route)
+    const allStarted = Promise.allSettled(
       checks.map((check) => check.fetcher().then((data) => ({ check, data })))
     );
 

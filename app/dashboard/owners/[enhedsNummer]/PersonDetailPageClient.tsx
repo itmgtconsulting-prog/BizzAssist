@@ -221,37 +221,8 @@ function PersonTinglysningTab({
   selectedPantDocs,
   setSelectedPantDocs,
 }: PersonTinglysningTabProps) {
-  if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center py-16 text-center">
-        <Loader2 size={32} className="text-blue-400 animate-spin mb-3" />
-        <p className="text-slate-400 text-sm">{c.loadingTinglysning}</p>
-      </div>
-    );
-  }
-
-  if (fejl) {
-    return (
-      <div className="flex flex-col items-center justify-center py-16 text-center">
-        <AlertTriangle size={32} className="text-amber-400 mb-3" />
-        <p className="text-slate-400 text-sm">{fejl}</p>
-      </div>
-    );
-  }
-
   const cvrEntries = Object.entries(personbogMap);
   const allHaeftelser = cvrEntries.flatMap(([, v]) => v.haeftelser);
-
-  if (allHaeftelser.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center py-16 text-center">
-        <Scale size={40} className="text-slate-600 mb-4" />
-        <p className="text-slate-400 text-sm">{c.tinglysningEmpty}</p>
-      </div>
-    );
-  }
-
-  const samletHaeftelse = allHaeftelser.reduce((sum, h) => sum + (h.hovedstol ?? 0), 0);
 
   const toggleExpand = (key: string) => {
     setExpandedPant((prev) => {
@@ -273,391 +244,386 @@ function PersonTinglysningTab({
 
   return (
     <div className="space-y-2">
-      {/* ── Samlet oversigt ── */}
-      {samletHaeftelse > 0 && (
-        <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl p-4 mb-2">
-          <div className="flex items-center justify-between">
-            <span className="text-slate-400 text-sm">
-              {da ? 'Samlet hæftelse' : 'Total charges'}
-            </span>
-            <span className="text-white font-semibold text-lg">
-              {samletHaeftelse.toLocaleString('da-DK')} DKK
-            </span>
-          </div>
-          <div className="flex gap-3 mt-2 flex-wrap">
-            {personbogSektioner.map(({ key, textClass }) => {
-              const count = allHaeftelser.filter((h) => h.type === key).length;
-              if (count === 0) return null;
-              const sum = allHaeftelser
-                .filter((h) => h.type === key)
-                .reduce((s, h) => s + (h.hovedstol ?? 0), 0);
-              return (
-                <span key={key} className={`text-xs ${textClass}`}>
-                  {pbTypeLabel(key, da)}: {sum.toLocaleString('da-DK')} DKK ({count})
-                </span>
-              );
-            })}
-          </div>
+      {/* ── Loading / fejl / tom tilstand — kompakt inline ── */}
+      {loading && (
+        <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl flex items-center gap-2 px-4 py-3">
+          <Loader2 size={14} className="text-blue-400 animate-spin flex-shrink-0" />
+          <p className="text-slate-400 text-xs">{c.loadingTinglysning}</p>
+        </div>
+      )}
+      {!loading && fejl && (
+        <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl flex items-center gap-2 px-4 py-3">
+          <AlertTriangle size={14} className="text-amber-400 flex-shrink-0" />
+          <p className="text-slate-400 text-xs">{fejl}</p>
+        </div>
+      )}
+      {!loading && !fejl && allHaeftelser.length === 0 && (
+        <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl px-4 py-3">
+          <p className="text-slate-500 text-xs italic">{c.tinglysningEmpty}</p>
         </div>
       )}
 
-      {/* ── Per virksomhed ── */}
-      {cvrEntries.map(([cvr, { navn, haeftelser }]) => {
-        const grouped: Record<string, PersonbogHaeftelse[]> = {};
-        for (const h of haeftelser) {
-          if (!grouped[h.type]) grouped[h.type] = [];
-          grouped[h.type].push(h);
-        }
+      {/* ── Per virksomhed — én kort per CVR med hæftelsestabel ── */}
+      {!loading &&
+        !fejl &&
+        cvrEntries.map(([cvr, { navn, haeftelser }]) => {
+          const grouped: Record<string, PersonbogHaeftelse[]> = {};
+          for (const h of haeftelser) {
+            if (!grouped[h.type]) grouped[h.type] = [];
+            grouped[h.type].push(h);
+          }
 
-        return (
-          <div
-            key={cvr}
-            className="bg-slate-800/20 border border-slate-700/30 rounded-2xl"
-            style={{ contain: 'layout' }}
-          >
-            {/* Header — virksomhedsnavn + download */}
-            <div className="px-4 py-2.5 border-b border-slate-700/30 flex items-center gap-2">
-              <Scale size={15} className="text-slate-400" />
-              <Link
-                href={`/dashboard/companies/${cvr}`}
-                className="text-sm font-semibold text-blue-400 hover:underline"
-              >
-                {navn}
-              </Link>
-              <span className="text-slate-600 text-xs">CVR {cvr}</span>
-              <span className="text-slate-600 text-xs">({haeftelser.length})</span>
-              <button
-                onClick={async () => {
-                  const docs = haeftelser.filter(
-                    (h) => h.dokumentId && selectedPantDocs.has(h.dokumentId)
-                  );
-                  for (const h of docs) {
-                    const a = document.createElement('a');
-                    a.href = `/api/tinglysning/dokument?uuid=${h.dokumentId}`;
-                    a.download = `tinglysning-${h.dokumentId!.slice(0, 14)}.pdf`;
-                    a.click();
-                    await new Promise((r) => setTimeout(r, 500));
-                  }
-                }}
-                disabled={selectedPantDocs.size === 0}
-                className="ml-auto flex items-center gap-1.5 px-3 py-1 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 disabled:cursor-not-allowed border border-slate-600 rounded-lg text-slate-300 text-xs font-medium transition-all"
-              >
-                <Download size={12} />
-                {da ? 'Download valgte' : 'Download selected'} ({selectedPantDocs.size})
-              </button>
-            </div>
+          return (
+            <div
+              key={cvr}
+              className="bg-slate-800/20 border border-slate-700/30 rounded-2xl"
+              style={{ contain: 'layout' }}
+            >
+              {/* Header — virksomhedsnavn + download */}
+              <div className="px-4 py-2.5 border-b border-slate-700/30 flex items-center gap-2">
+                <Scale size={15} className="text-slate-400" />
+                <Link
+                  href={`/dashboard/companies/${cvr}`}
+                  className="text-sm font-semibold text-blue-400 hover:underline"
+                >
+                  {navn}
+                </Link>
+                <span className="text-slate-600 text-xs">CVR {cvr}</span>
+                <span className="text-slate-600 text-xs">({haeftelser.length})</span>
+                <button
+                  onClick={async () => {
+                    const docs = haeftelser.filter(
+                      (h) => h.dokumentId && selectedPantDocs.has(h.dokumentId)
+                    );
+                    for (const h of docs) {
+                      const a = document.createElement('a');
+                      a.href = `/api/tinglysning/dokument?uuid=${h.dokumentId}`;
+                      a.download = `tinglysning-${h.dokumentId!.slice(0, 14)}.pdf`;
+                      a.click();
+                      await new Promise((r) => setTimeout(r, 500));
+                    }
+                  }}
+                  disabled={selectedPantDocs.size === 0}
+                  className="ml-auto flex items-center gap-1.5 px-3 py-1 bg-slate-700 hover:bg-slate-600 disabled:opacity-40 disabled:cursor-not-allowed border border-slate-600 rounded-lg text-slate-300 text-xs font-medium transition-all"
+                >
+                  <Download size={12} />
+                  {da ? 'Download valgte' : 'Download selected'} ({selectedPantDocs.size})
+                </button>
+              </div>
 
-            {/* Kolonneoverskrifter */}
-            <div className="grid grid-cols-[24px_36px_90px_1fr_100px_100px_50px_28px] gap-x-2 px-4 py-1.5 border-b border-slate-700/20">
-              <span />
-              <span className="text-[10px] font-medium text-slate-500 uppercase">Pri.</span>
-              <span className="text-[10px] font-medium text-slate-500 uppercase">
-                {da ? 'Dato' : 'Date'}
-              </span>
-              <span className="text-[10px] font-medium text-slate-500 uppercase">
-                {da ? 'Dokument' : 'Document'}
-              </span>
-              <span className="text-[10px] font-medium text-slate-500 uppercase">
-                {da ? 'Beløb' : 'Amount'}
-              </span>
-              <span className="text-[10px] font-medium text-slate-500 uppercase">Type</span>
-              <span className="text-[10px] font-medium text-slate-500 uppercase">
-                {da ? 'Dok.' : 'Doc.'}
-              </span>
-              <span />
-            </div>
+              {/* Kolonneoverskrifter */}
+              <div className="grid grid-cols-[24px_36px_90px_1fr_100px_100px_50px_28px] gap-x-2 px-4 py-1.5 border-b border-slate-700/20">
+                <span />
+                <span className="text-[10px] font-medium text-slate-500 uppercase">Pri.</span>
+                <span className="text-[10px] font-medium text-slate-500 uppercase">
+                  {da ? 'Dato' : 'Date'}
+                </span>
+                <span className="text-[10px] font-medium text-slate-500 uppercase">
+                  {da ? 'Dokument' : 'Document'}
+                </span>
+                <span className="text-[10px] font-medium text-slate-500 uppercase">
+                  {da ? 'Beløb' : 'Amount'}
+                </span>
+                <span className="text-[10px] font-medium text-slate-500 uppercase">Type</span>
+                <span className="text-[10px] font-medium text-slate-500 uppercase">
+                  {da ? 'Dok.' : 'Doc.'}
+                </span>
+                <span />
+              </div>
 
-            {/* Farvekodede sektioner */}
-            {personbogSektioner.map(({ key, bgClass, textClass, borderClass }) => {
-              const items = grouped[key];
-              if (!items || items.length === 0) return null;
+              {/* Farvekodede sektioner */}
+              {personbogSektioner.map(({ key, bgClass, textClass, borderClass }) => {
+                const items = grouped[key];
+                if (!items || items.length === 0) return null;
 
-              return (
-                <div key={key}>
-                  <div className={`${bgClass} px-4 py-1.5 border-b border-slate-700/20`}>
-                    <span
-                      className={`text-[10px] font-semibold ${textClass} uppercase tracking-wider`}
-                    >
-                      {pbTypeLabel(key, da)} ({items.length})
-                    </span>
-                  </div>
-                  {items.map((h, i) => {
-                    const rowKey = `${cvr}-${key}-${i}`;
-                    const isExpanded = expandedPant.has(rowKey);
-                    const docId = String(h.dokumentId ?? '');
-                    return (
-                      <div key={rowKey} className="border-b border-slate-700/15">
-                        <div
-                          className="grid grid-cols-[24px_36px_90px_1fr_100px_100px_50px_28px] gap-x-2 px-4 py-2 hover:bg-slate-700/10 transition-colors items-center cursor-pointer"
-                          onClick={() => toggleExpand(rowKey)}
-                        >
-                          {isExpanded ? (
-                            <ChevronDown size={12} className="text-slate-500" />
-                          ) : (
-                            <ChevronRight size={12} className="text-slate-500" />
-                          )}
-                          <span className="text-xs text-slate-400 tabular-nums">
-                            {String(h.prioritet ?? '')}
-                          </span>
-                          <span className="text-xs text-slate-400 tabular-nums whitespace-nowrap">
-                            {h.tinglysningsdato ? formatDatoKort(h.tinglysningsdato) : ''}
-                          </span>
-                          <div className="min-w-0">
-                            <span className="text-sm text-slate-200 truncate block">
-                              {pbTypeLabel(h.type, da)}
-                            </span>
-                            {h.debitorer.length > 0 && (
-                              <span className="text-[10px] text-slate-500 truncate block">
-                                {h.debitorer.join(', ')}
-                              </span>
-                            )}
-                          </div>
-                          <span className="text-xs text-slate-300 tabular-nums text-right">
-                            {h.hovedstol != null && h.hovedstol > 0
-                              ? `${h.hovedstol.toLocaleString('da-DK')} ${h.valuta}`
-                              : ''}
-                          </span>
-                          <span className="text-xs text-slate-400 truncate">
-                            {String(h.kreditor ?? '')}
-                          </span>
+                return (
+                  <div key={key}>
+                    <div className={`${bgClass} px-4 py-1.5 border-b border-slate-700/20`}>
+                      <span
+                        className={`text-[10px] font-semibold ${textClass} uppercase tracking-wider`}
+                      >
+                        {pbTypeLabel(key, da)} ({items.length})
+                      </span>
+                    </div>
+                    {items.map((h, i) => {
+                      const rowKey = `${cvr}-${key}-${i}`;
+                      const isExpanded = expandedPant.has(rowKey);
+                      const docId = String(h.dokumentId ?? '');
+                      return (
+                        <div key={rowKey} className="border-b border-slate-700/15">
                           <div
-                            className="flex items-center gap-1.5"
-                            onClick={(ev) => ev.stopPropagation()}
+                            className="grid grid-cols-[24px_36px_90px_1fr_100px_100px_50px_28px] gap-x-2 px-4 py-2 hover:bg-slate-700/10 transition-colors items-center cursor-pointer"
+                            onClick={() => toggleExpand(rowKey)}
                           >
-                            {docId && (
-                              <a
-                                href={`/api/tinglysning/dokument?uuid=${docId}`}
-                                download
-                                className="inline-flex items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
-                              >
-                                <FileText size={11} /> PDF
-                              </a>
+                            {isExpanded ? (
+                              <ChevronDown size={12} className="text-slate-500" />
+                            ) : (
+                              <ChevronRight size={12} className="text-slate-500" />
                             )}
-                          </div>
-                          {docId ? (
-                            <label
-                              className="flex items-center cursor-pointer flex-shrink-0"
+                            <span className="text-xs text-slate-400 tabular-nums">
+                              {String(h.prioritet ?? '')}
+                            </span>
+                            <span className="text-xs text-slate-400 tabular-nums whitespace-nowrap">
+                              {h.tinglysningsdato ? formatDatoKort(h.tinglysningsdato) : ''}
+                            </span>
+                            <div className="min-w-0">
+                              <span className="text-sm text-slate-200 truncate block">
+                                {pbTypeLabel(h.type, da)}
+                              </span>
+                              {h.debitorer.length > 0 && (
+                                <span className="text-[10px] text-slate-500 truncate block">
+                                  {h.debitorer.join(', ')}
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-xs text-slate-300 tabular-nums text-right">
+                              {h.hovedstol != null && h.hovedstol > 0
+                                ? `${h.hovedstol.toLocaleString('da-DK')} ${h.valuta}`
+                                : ''}
+                            </span>
+                            <span className="text-xs text-slate-400 truncate">
+                              {String(h.kreditor ?? '')}
+                            </span>
+                            <div
+                              className="flex items-center gap-1.5"
                               onClick={(ev) => ev.stopPropagation()}
                             >
-                              <input
-                                type="checkbox"
-                                className="sr-only"
-                                checked={selectedPantDocs.has(docId)}
-                                onChange={() => toggleDoc(docId)}
-                              />
-                              <span
-                                className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors ${selectedPantDocs.has(docId) ? 'bg-blue-500 border-blue-500' : 'bg-[#0a1020] border-slate-400'}`}
+                              {docId && (
+                                <a
+                                  href={`/api/tinglysning/dokument?uuid=${docId}`}
+                                  download
+                                  className="inline-flex items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
+                                >
+                                  <FileText size={11} /> PDF
+                                </a>
+                              )}
+                            </div>
+                            {docId ? (
+                              <label
+                                className="flex items-center cursor-pointer flex-shrink-0"
+                                onClick={(ev) => ev.stopPropagation()}
                               >
-                                {selectedPantDocs.has(docId) && (
-                                  <svg
-                                    viewBox="0 0 10 10"
-                                    className="w-2 h-2 text-white"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="2.5"
-                                  >
-                                    <path d="M1.5 5.5l2.5 2.5 4.5-4.5" />
-                                  </svg>
-                                )}
-                              </span>
-                            </label>
-                          ) : (
-                            <span />
-                          )}
-                        </div>
-                        {isExpanded && (
-                          <div className={`px-4 pb-3 ml-10 border-l-2 ${borderClass}`}>
-                            {h.pantTyper.length > 0 && (
-                              <div className="flex flex-wrap gap-1.5 mb-3 mt-1">
-                                {h.pantTyper.map((p, pi) => (
-                                  <span
-                                    key={pi}
-                                    className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium ${bgClass} ${textClass}`}
-                                  >
-                                    {pbOmfangLabel(p, da)}
-                                  </span>
-                                ))}
-                              </div>
+                                <input
+                                  type="checkbox"
+                                  className="sr-only"
+                                  checked={selectedPantDocs.has(docId)}
+                                  onChange={() => toggleDoc(docId)}
+                                />
+                                <span
+                                  className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors ${selectedPantDocs.has(docId) ? 'bg-blue-500 border-blue-500' : 'bg-[#0a1020] border-slate-400'}`}
+                                >
+                                  {selectedPantDocs.has(docId) && (
+                                    <svg
+                                      viewBox="0 0 10 10"
+                                      className="w-2 h-2 text-white"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      strokeWidth="2.5"
+                                    >
+                                      <path d="M1.5 5.5l2.5 2.5 4.5-4.5" />
+                                    </svg>
+                                  )}
+                                </span>
+                              </label>
+                            ) : (
+                              <span />
                             )}
-                            <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-2 text-xs mt-1">
-                              {h.kreditor && (
-                                <div>
+                          </div>
+                          {isExpanded && (
+                            <div className={`px-4 pb-3 ml-10 border-l-2 ${borderClass}`}>
+                              {h.pantTyper.length > 0 && (
+                                <div className="flex flex-wrap gap-1.5 mb-3 mt-1">
+                                  {h.pantTyper.map((p, pi) => (
+                                    <span
+                                      key={pi}
+                                      className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium ${bgClass} ${textClass}`}
+                                    >
+                                      {pbOmfangLabel(p, da)}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                              <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-2 text-xs mt-1">
+                                {h.kreditor && (
+                                  <div>
+                                    <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                      {da ? 'Kreditor' : 'Creditor'}
+                                    </p>
+                                    <p className="text-white">
+                                      {h.kreditorCvr ? (
+                                        <Link
+                                          href={`/dashboard/companies/${h.kreditorCvr}`}
+                                          className="text-blue-400 hover:underline"
+                                        >
+                                          {h.kreditor}
+                                        </Link>
+                                      ) : (
+                                        h.kreditor
+                                      )}
+                                    </p>
+                                  </div>
+                                )}
+                                {h.debitorer.length > 0 && (
+                                  <div>
+                                    <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                      {da ? 'Debitor' : 'Debtor'}
+                                    </p>
+                                    {h.debitorer.map((d, di) => (
+                                      <p key={di} className="text-white">
+                                        {h.debitorCvr[di] ? (
+                                          <Link
+                                            href={`/dashboard/companies/${h.debitorCvr[di]}`}
+                                            className="text-blue-400 hover:underline"
+                                          >
+                                            {d}
+                                          </Link>
+                                        ) : (
+                                          d
+                                        )}
+                                      </p>
+                                    ))}
+                                  </div>
+                                )}
+                                {h.hovedstol != null && (
+                                  <div>
+                                    <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                      {da ? 'Hovedstol' : 'Principal'}
+                                    </p>
+                                    <p className="text-white">
+                                      {h.hovedstol.toLocaleString('da-DK')} {h.valuta}
+                                    </p>
+                                  </div>
+                                )}
+                                {h.rente != null && (
+                                  <div>
+                                    <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                      {da ? 'Rente' : 'Interest rate'}
+                                    </p>
+                                    <p className="text-white">
+                                      {h.rente}% {h.renteType ? `(${h.renteType})` : ''}
+                                    </p>
+                                  </div>
+                                )}
+                                {h.tinglysningsdato && (
+                                  <div>
+                                    <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                      {da ? 'Tinglysningsdato' : 'Registration date'}
+                                    </p>
+                                    <p className="text-white">
+                                      {formatDatoKort(h.tinglysningsdato)}
+                                    </p>
+                                  </div>
+                                )}
+                                {h.tinglysningsafgift != null && (
+                                  <div>
+                                    <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                      {da ? 'Tinglysningsafgift' : 'Registration fee'}
+                                    </p>
+                                    <p className="text-white">
+                                      {h.tinglysningsafgift.toLocaleString('da-DK')} DKK
+                                    </p>
+                                  </div>
+                                )}
+                                {h.dokumentAlias && (
+                                  <div>
+                                    <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                      {da ? 'Dokument' : 'Document'}
+                                    </p>
+                                    <p className="text-white text-[11px]">{h.dokumentAlias}</p>
+                                  </div>
+                                )}
+                              </div>
+                              {h.vilkaar && (
+                                <div className="mt-2 pt-2 border-t border-slate-700/20">
                                   <p className="text-slate-500 text-[10px] uppercase mb-0.5">
-                                    {da ? 'Kreditor' : 'Creditor'}
+                                    {da ? 'Vilkår' : 'Terms'}
                                   </p>
-                                  <p className="text-white">
-                                    {h.kreditorCvr ? (
+                                  <p className="text-slate-300 text-xs whitespace-pre-line">
+                                    {h.vilkaar}
+                                  </p>
+                                </div>
+                              )}
+                              {h.anmelderNavn && (
+                                <div className="mt-2 pt-2 border-t border-slate-700/20">
+                                  <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                                    {da ? 'Anmelder' : 'Notifier'}
+                                  </p>
+                                  <p className="text-white text-xs">
+                                    {h.anmelderCvr ? (
                                       <Link
-                                        href={`/dashboard/companies/${h.kreditorCvr}`}
+                                        href={`/dashboard/companies/${h.anmelderCvr}`}
                                         className="text-blue-400 hover:underline"
                                       >
-                                        {h.kreditor}
+                                        {h.anmelderNavn}
                                       </Link>
                                     ) : (
-                                      h.kreditor
+                                      h.anmelderNavn
                                     )}
                                   </p>
                                 </div>
                               )}
-                              {h.debitorer.length > 0 && (
-                                <div>
-                                  <p className="text-slate-500 text-[10px] uppercase mb-0.5">
-                                    {da ? 'Debitor' : 'Debtor'}
-                                  </p>
-                                  {h.debitorer.map((d, di) => (
-                                    <p key={di} className="text-white">
-                                      {h.debitorCvr[di] ? (
-                                        <Link
-                                          href={`/dashboard/companies/${h.debitorCvr[di]}`}
-                                          className="text-blue-400 hover:underline"
-                                        >
-                                          {d}
-                                        </Link>
-                                      ) : (
-                                        d
-                                      )}
-                                    </p>
-                                  ))}
-                                </div>
-                              )}
-                              {h.hovedstol != null && (
-                                <div>
-                                  <p className="text-slate-500 text-[10px] uppercase mb-0.5">
-                                    {da ? 'Hovedstol' : 'Principal'}
-                                  </p>
-                                  <p className="text-white">
-                                    {h.hovedstol.toLocaleString('da-DK')} {h.valuta}
-                                  </p>
-                                </div>
-                              )}
-                              {h.rente != null && (
-                                <div>
-                                  <p className="text-slate-500 text-[10px] uppercase mb-0.5">
-                                    {da ? 'Rente' : 'Interest rate'}
-                                  </p>
-                                  <p className="text-white">
-                                    {h.rente}% {h.renteType ? `(${h.renteType})` : ''}
-                                  </p>
-                                </div>
-                              )}
-                              {h.tinglysningsdato && (
-                                <div>
-                                  <p className="text-slate-500 text-[10px] uppercase mb-0.5">
-                                    {da ? 'Tinglysningsdato' : 'Registration date'}
-                                  </p>
-                                  <p className="text-white">{formatDatoKort(h.tinglysningsdato)}</p>
-                                </div>
-                              )}
-                              {h.tinglysningsafgift != null && (
-                                <div>
-                                  <p className="text-slate-500 text-[10px] uppercase mb-0.5">
-                                    {da ? 'Tinglysningsafgift' : 'Registration fee'}
-                                  </p>
-                                  <p className="text-white">
-                                    {h.tinglysningsafgift.toLocaleString('da-DK')} DKK
-                                  </p>
-                                </div>
-                              )}
-                              {h.dokumentAlias && (
-                                <div>
-                                  <p className="text-slate-500 text-[10px] uppercase mb-0.5">
-                                    {da ? 'Dokument' : 'Document'}
-                                  </p>
-                                  <p className="text-white text-[11px]">{h.dokumentAlias}</p>
-                                </div>
-                              )}
                             </div>
-                            {h.vilkaar && (
-                              <div className="mt-2 pt-2 border-t border-slate-700/20">
-                                <p className="text-slate-500 text-[10px] uppercase mb-0.5">
-                                  {da ? 'Vilkår' : 'Terms'}
-                                </p>
-                                <p className="text-slate-300 text-xs whitespace-pre-line">
-                                  {h.vilkaar}
-                                </p>
-                              </div>
-                            )}
-                            {h.anmelderNavn && (
-                              <div className="mt-2 pt-2 border-t border-slate-700/20">
-                                <p className="text-slate-500 text-[10px] uppercase mb-0.5">
-                                  {da ? 'Anmelder' : 'Notifier'}
-                                </p>
-                                <p className="text-white text-xs">
-                                  {h.anmelderCvr ? (
-                                    <Link
-                                      href={`/dashboard/companies/${h.anmelderCvr}`}
-                                      className="text-blue-400 hover:underline"
-                                    >
-                                      {h.anmelderNavn}
-                                    </Link>
-                                  ) : (
-                                    h.anmelderNavn
-                                  )}
-                                </p>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              );
-            })}
-
-            {/* Øvrige hæftelser */}
-            {(() => {
-              const knownKeys = personbogSektioner.map((s) => s.key);
-              const oevrige = Object.entries(grouped).filter(([key]) => !knownKeys.includes(key));
-              if (oevrige.length === 0) return null;
-              return oevrige.map(([key, items]) => (
-                <div key={key}>
-                  <div className="bg-slate-500/5 px-4 py-1.5 border-b border-slate-700/20">
-                    <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                      {da ? 'Øvrige' : 'Other'}: {key} ({items.length})
-                    </span>
-                  </div>
-                  {items.map((h, i) => {
-                    const rowKey = `${cvr}-other-${i}`;
-                    const isExpanded = expandedPant.has(rowKey);
-                    return (
-                      <div key={rowKey} className="border-b border-slate-700/15">
-                        <div
-                          className="grid grid-cols-[24px_36px_90px_1fr_100px_100px_50px_28px] gap-x-2 px-4 py-2 hover:bg-slate-700/10 transition-colors items-center cursor-pointer"
-                          onClick={() => toggleExpand(rowKey)}
-                        >
-                          {isExpanded ? (
-                            <ChevronDown size={12} className="text-slate-500" />
-                          ) : (
-                            <ChevronRight size={12} className="text-slate-500" />
                           )}
-                          <span className="text-xs text-slate-400 tabular-nums">
-                            {String(h.prioritet ?? '')}
-                          </span>
-                          <span className="text-xs text-slate-400 tabular-nums whitespace-nowrap">
-                            {h.tinglysningsdato ? formatDatoKort(h.tinglysningsdato) : ''}
-                          </span>
-                          <span className="text-sm text-slate-200 truncate">{key}</span>
-                          <span className="text-xs text-slate-300 tabular-nums text-right">
-                            {h.hovedstol != null && h.hovedstol > 0
-                              ? `${h.hovedstol.toLocaleString('da-DK')} ${h.valuta}`
-                              : ''}
-                          </span>
-                          <span className="text-xs text-slate-400 truncate">
-                            {String(h.kreditor ?? '')}
-                          </span>
-                          <span />
-                          <span />
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ));
-            })()}
-          </div>
-        );
-      })}
+                      );
+                    })}
+                  </div>
+                );
+              })}
+
+              {/* Øvrige hæftelser */}
+              {(() => {
+                const knownKeys = personbogSektioner.map((s) => s.key);
+                const oevrige = Object.entries(grouped).filter(([key]) => !knownKeys.includes(key));
+                if (oevrige.length === 0) return null;
+                return oevrige.map(([key, items]) => (
+                  <div key={key}>
+                    <div className="bg-slate-500/5 px-4 py-1.5 border-b border-slate-700/20">
+                      <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                        {da ? 'Øvrige' : 'Other'}: {key} ({items.length})
+                      </span>
+                    </div>
+                    {items.map((h, i) => {
+                      const rowKey = `${cvr}-other-${i}`;
+                      const isExpanded = expandedPant.has(rowKey);
+                      return (
+                        <div key={rowKey} className="border-b border-slate-700/15">
+                          <div
+                            className="grid grid-cols-[24px_36px_90px_1fr_100px_100px_50px_28px] gap-x-2 px-4 py-2 hover:bg-slate-700/10 transition-colors items-center cursor-pointer"
+                            onClick={() => toggleExpand(rowKey)}
+                          >
+                            {isExpanded ? (
+                              <ChevronDown size={12} className="text-slate-500" />
+                            ) : (
+                              <ChevronRight size={12} className="text-slate-500" />
+                            )}
+                            <span className="text-xs text-slate-400 tabular-nums">
+                              {String(h.prioritet ?? '')}
+                            </span>
+                            <span className="text-xs text-slate-400 tabular-nums whitespace-nowrap">
+                              {h.tinglysningsdato ? formatDatoKort(h.tinglysningsdato) : ''}
+                            </span>
+                            <span className="text-sm text-slate-200 truncate">{key}</span>
+                            <span className="text-xs text-slate-300 tabular-nums text-right">
+                              {h.hovedstol != null && h.hovedstol > 0
+                                ? `${h.hovedstol.toLocaleString('da-DK')} ${h.valuta}`
+                                : ''}
+                            </span>
+                            <span className="text-xs text-slate-400 truncate">
+                              {String(h.kreditor ?? '')}
+                            </span>
+                            <span />
+                            <span />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ));
+              })()}
+            </div>
+          );
+        })}
     </div>
   );
 }

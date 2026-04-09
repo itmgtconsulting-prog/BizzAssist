@@ -10,6 +10,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -445,20 +446,17 @@ function parseXbrl(xml: string, periodeStart: string, periodeSlut: string): Regn
 
 // ─── Supabase cache helpers ─────────────────────────────────────────────────
 
-let _adminClient: ReturnType<typeof import('@supabase/supabase-js').createClient> | null = null;
-
-/** Lazy-init Supabase admin client (service role) for cache read/write */
+/**
+ * Returns the typed Supabase admin client for cache read/write operations.
+ * Returns null if required environment variables are not set.
+ *
+ * @returns Typed admin client or null when credentials are unavailable
+ */
 function getSupabase() {
-  if (_adminClient) return _adminClient;
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return null;
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { createClient } = require('@supabase/supabase-js');
-  _adminClient = createClient(url, key, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
-  return _adminClient;
+  return createAdminClient();
 }
 
 // ─── Deduplication helpers ──────────────────────────────────────────────────
@@ -560,12 +558,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     if (supabase && latestTimestamp) {
       try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: cached } = (await (supabase as any)
+        const { data: cached } = await supabase
           .from('regnskab_cache')
           .select('years, es_timestamp')
           .eq('cvr', cvr)
-          .single()) as { data: { years: unknown; es_timestamp: string } | null; error: unknown };
+          .single();
 
         if (cached?.es_timestamp === latestTimestamp && cached?.years) {
           // Fuld cache hit — ES-tidsstempel matcher, data er uændret
@@ -648,8 +645,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // ── 4. Gem opdateret cache i Supabase (kun ved komplet fetch) ──
     if (supabase && latestTimestamp && offset === 0 && limit >= total && uniqueYears.length > 0) {
       try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (supabase as any).from('regnskab_cache').upsert(
+        await supabase.from('regnskab_cache').upsert(
           {
             cvr,
             years: uniqueYears,

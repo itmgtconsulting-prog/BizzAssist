@@ -26,8 +26,7 @@ async function insertAuditLog(
   entry: { action: string; resource_type: string; resource_id: string; metadata: string }
 ): Promise<void> {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (admin as any).from('audit_log').insert(entry);
+    await admin.from('audit_log').insert(entry);
   } catch (e: unknown) {
     console.error('[audit] Failed to insert audit log:', e);
   }
@@ -46,8 +45,8 @@ export async function GET() {
 
   try {
     const admin = createAdminClient();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (admin.from('users') as any)
+    const { data, error } = await admin
+      .from('users')
       .select('preferred_language, preferences')
       .eq('id', userId)
       .single();
@@ -97,8 +96,8 @@ export async function PUT(request: NextRequest) {
     // Everything else merges into the preferences JSONB
     if (body.mapStyle || body.preferences) {
       // Fetch current preferences to merge
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: current } = await (admin.from('users') as any)
+      const { data: current } = await admin
+        .from('users')
         .select('preferences')
         .eq('id', userId)
         .single();
@@ -121,8 +120,7 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Ingen ændringer' }, { status: 400 });
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await (admin.from('users') as any).update(updates).eq('id', userId);
+    const { error } = await admin.from('users').update(updates).eq('id', userId);
 
     if (error) {
       console.error('[preferences PUT] Supabase error:', error);

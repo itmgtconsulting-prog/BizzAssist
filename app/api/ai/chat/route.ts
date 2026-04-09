@@ -29,7 +29,9 @@ import * as Sentry from '@sentry/nextjs';
 import { checkRateLimit, aiRateLimit } from '@/app/lib/rateLimit';
 import { fetchBbrForAddress } from '@/app/lib/fetchBbrData';
 import { createClient } from '@/lib/supabase/server';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient, tenantDb, type TenantDb } from '@/lib/supabase/admin';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import type { Database } from '@/lib/supabase/types';
 import { logActivity } from '@/app/lib/activityLog';
 
 export const runtime = 'nodejs';
@@ -952,8 +954,7 @@ const TENANT_MONTHLY_TOKEN_LIMIT = 2_000_000; // 2 M tokens/month
  * @returns true if the tenant has reached or exceeded TENANT_MONTHLY_TOKEN_LIMIT
  */
 async function isTenantMonthlyBudgetExceeded(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  adminClient: any,
+  adminClient: SupabaseClient<Database>,
   tenantId: string | null
 ): Promise<boolean> {
   if (!tenantId) return false;
@@ -962,15 +963,12 @@ async function isTenantMonthlyBudgetExceeded(
     monthStart.setDate(1);
     monthStart.setHours(0, 0, 0, 0);
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const db = (adminClient as unknown as { schema: (s: string) => any }).schema('tenant');
-    const { data: usageData } = (await db
+    const db: TenantDb = adminClient.schema('tenant');
+    const { data: usageData } = await db
       .from('ai_token_usage')
       .select('tokens_in, tokens_out')
       .eq('tenant_id', tenantId)
-      .gte('created_at', monthStart.toISOString())) as {
-      data: Array<{ tokens_in: number; tokens_out: number }> | null;
-    };
+      .gte('created_at', monthStart.toISOString());
 
     const monthlyTokens = (usageData ?? []).reduce(
       (sum, r) => sum + (r.tokens_in ?? 0) + (r.tokens_out ?? 0),
@@ -994,8 +992,7 @@ async function isTenantMonthlyBudgetExceeded(
  * @param tokensOut   - Output tokens consumed in this Claude API call
  */
 function recordTenantTokenUsage(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  adminClient: any,
+  adminClient: SupabaseClient<Database>,
   tenantId: string,
   userId: string,
   tokensIn: number,
@@ -1003,8 +1000,7 @@ function recordTenantTokenUsage(
 ): void {
   void (async () => {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const db = (adminClient as unknown as { schema: (s: string) => any }).schema('tenant');
+      const db: TenantDb = adminClient.schema('tenant');
       await db.from('ai_token_usage').insert({
         tenant_id: tenantId,
         user_id: userId,
@@ -1084,7 +1080,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   let resolvedTenantId: string | null = null;
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: membership } = await (adminClient as any)
+    const { data: membership } = await adminClient
       .from('tenant_memberships')
       .select('tenant_id')
       .eq('user_id', user.id)
@@ -1095,18 +1091,14 @@ export async function POST(request: NextRequest): Promise<Response> {
     }
 
     if (membership?.tenant_id) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: tenantRow } = await (adminClient as any)
+      const { data: tenantRow } = await adminClient
         .from('tenants')
         .select('schema_name')
         .eq('id', membership.tenant_id)
         .single();
 
       if (tenantRow?.schema_name) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const db = (adminClient as unknown as { schema: (s: string) => any }).schema(
-          tenantRow.schema_name
-        );
+        const db = tenantDb(tenantRow.schema_name);
         const { data: recents } = await db
           .from('recent_entities')
           .select('entity_type, entity_id, display_name, visited_at')

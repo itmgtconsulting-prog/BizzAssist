@@ -102,18 +102,20 @@ async function fetchFromServer(): Promise<RecentCompany[]> {
     const res = await fetch('/api/recents?type=company');
     if (!res.ok) return [];
     const json = await res.json();
-    const recents = json.recents ?? [];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return recents.map((r: any) => ({
-      cvr: Number(r.entity_id),
-      name: r.display_name ?? '',
-      industry: r.entity_data?.industry ?? null,
-      address: r.entity_data?.address ?? null,
-      zipcode: r.entity_data?.zipcode ?? null,
-      city: r.entity_data?.city ?? null,
-      active: r.entity_data?.active ?? true,
-      visitedAt: r.visited_at ? new Date(r.visited_at).getTime() : Date.now(),
-    }));
+    const recents: Array<Record<string, unknown>> = json.recents ?? [];
+    return recents.map((r) => {
+      const ed = r.entity_data as Record<string, unknown> | undefined;
+      return {
+        cvr: Number(r.entity_id),
+        name: (r.display_name as string) ?? '',
+        industry: (ed?.industry as string | null) ?? null,
+        address: (ed?.address as string | null) ?? null,
+        zipcode: (ed?.zipcode as string | null) ?? null,
+        city: (ed?.city as string | null) ?? null,
+        active: (ed?.active as boolean) ?? true,
+        visitedAt: r.visited_at ? new Date(r.visited_at as string).getTime() : Date.now(),
+      };
+    });
   } catch {
     return [];
   }

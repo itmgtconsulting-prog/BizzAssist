@@ -18,7 +18,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantId } from '@/lib/api/auth';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 
 /** Shape of the Gmail connection status response */
@@ -47,9 +47,7 @@ export async function GET(
   const { tenantId, userId } = auth;
   const admin = createAdminClient();
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data, error } = await (admin as any)
-    .schema(tenantId)
+  const { data, error } = await tenantDb(tenantId)
     .from('email_integrations')
     .select('email_address, connected_at, scopes')
     .eq('user_id', userId)
@@ -87,9 +85,7 @@ export async function DELETE(
   const admin = createAdminClient();
 
   // Fetch token for revocation
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data } = await (admin as any)
-    .schema(tenantId)
+  const { data } = await tenantDb(tenantId)
     .from('email_integrations')
     .select('access_token')
     .eq('user_id', userId)
@@ -111,9 +107,7 @@ export async function DELETE(
     }
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { error } = await (admin as any)
-    .schema(tenantId)
+  const { error } = await tenantDb(tenantId)
     .from('email_integrations')
     .delete()
     .eq('user_id', userId)
@@ -122,8 +116,7 @@ export async function DELETE(
   if (error) return NextResponse.json({ error: 'DB error' }, { status: 500 });
 
   // Audit log — fire-and-forget (ISO 27001 A.12.4)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (admin as any)
+  admin
     .from('audit_log')
     .insert({
       action: 'integration.gmail.disconnect',

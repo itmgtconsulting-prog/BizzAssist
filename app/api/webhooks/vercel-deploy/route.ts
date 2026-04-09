@@ -337,8 +337,7 @@ Classification rules:
  */
 async function logActivity(action: string, details: Record<string, unknown>): Promise<void> {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (createAdminClient() as any).from('service_manager_activity').insert({
+    await createAdminClient().from('service_manager_activity').insert({
       action,
       details,
       created_by: null, // System action — no user session
@@ -418,8 +417,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   const now = new Date();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const admin = createAdminClient() as any;
+  const admin = createAdminClient();
 
   // Normalise deployment info from either root or nested payload
   const depl = body.payload?.deployment ?? body.deployment ?? {};

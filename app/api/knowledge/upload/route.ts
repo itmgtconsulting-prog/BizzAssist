@@ -24,7 +24,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import JSZip from 'jszip';
 import { createClient } from '@/lib/supabase/server';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import type { KnowledgeItem } from '@/app/api/knowledge/route';
 
@@ -46,8 +46,7 @@ async function resolveTenantMembership(
   userId: string
 ): Promise<{ tenantId: string; role: string } | null> {
   const adminClient = createAdminClient();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data } = await (adminClient as any)
+  const { data } = await adminClient
     .from('tenant_memberships')
     .select('tenant_id, role')
     .eq('user_id', userId)
@@ -281,22 +280,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   // ── Persist ──────────────────────────────────────────────────────────────────
   try {
-    const adminClient = createAdminClient();
-
-    const { data, error } = await (
-      adminClient as unknown as {
-        schema: (s: string) => {
-          from: (t: string) => {
-            insert: (row: Record<string, unknown>) => {
-              select: (cols: string) => {
-                single: () => Promise<{ data: KnowledgeItem | null; error: unknown }>;
-              };
-            };
-          };
-        };
-      }
-    )
-      .schema('tenant')
+    const { data, error } = await tenantDb(membership.tenantId)
       .from('tenant_knowledge')
       .insert({
         tenant_id: membership.tenantId,
@@ -312,14 +296,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     // Audit log — fire-and-forget (ISO 27001 A.12.4)
     if (data) {
-      const adminClient2 = createAdminClient();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (adminClient2 as any)
+      createAdminClient()
         .from('audit_log')
         .insert({
           action: 'knowledge.upload',
           resource_type: 'knowledge_item',
-          resource_id: String((data as KnowledgeItem).id),
+          resource_id: String(data.id),
           metadata: JSON.stringify({
             tenantId: membership.tenantId,
             title,

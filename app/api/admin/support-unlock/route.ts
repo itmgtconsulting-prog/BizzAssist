@@ -85,8 +85,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   // Audit log — fire-and-forget (ISO 27001 A.12.4)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (adminClient as any)
+  adminClient
     .from('audit_log')
     .insert({
       action: 'admin.support.unlock_user',

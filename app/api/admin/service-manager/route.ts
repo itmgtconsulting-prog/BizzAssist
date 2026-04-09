@@ -140,10 +140,7 @@ export async function GET(): Promise<NextResponse> {
     }
 
     // Fetch deployments and scan history in parallel.
-    // Cast admin to any: service_manager_scans is not yet in the generated
-    // Database type — remove cast once `supabase gen types` is re-run.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const adminAny = createAdminClient() as any;
+    const adminAny = createAdminClient();
     const [deployments, scansResult] = await Promise.all([
       fetchVercelDeployments(),
       adminAny
@@ -188,10 +185,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     // Create the scan record in state 'running'.
-    // Cast admin to any: service_manager_scans is not yet in the generated
-    // Database type — remove cast once `supabase gen types` is re-run.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const admin = createAdminClient() as any;
+    const admin = createAdminClient();
     const { data: scanData, error: insertErr } = await admin
       .from('service_manager_scans')
       .insert({

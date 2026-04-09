@@ -20,7 +20,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 
 /** Max Vercel Hobby plan funktionsvarighed i sekunder */
 export const maxDuration = 30;
@@ -254,8 +254,7 @@ async function collectStats(since: Date): Promise<DailyStats> {
     if (tenants) {
       for (const tenant of tenants) {
         try {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const db = (admin as any).schema(tenant.schema_name);
+          const db = tenantDb(tenant.schema_name);
 
           // AI-beskeder sendt i perioden
           const { count: msgCount } = await db

@@ -41,8 +41,8 @@ export async function GET(request: NextRequest) {
     const entityType = new URL(request.url).searchParams.get('type') ?? 'property';
     const admin = createAdminClient();
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (admin.from(TABLE) as any)
+    const { data, error } = await admin
+      .from(TABLE)
       .select('*')
       .eq('tenant_id', auth.tenantId)
       .eq('user_id', auth.userId)
@@ -85,8 +85,7 @@ export async function POST(request: NextRequest) {
     const admin = createAdminClient();
 
     // Upsert: update visited_at if already exists, insert if new
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error: upsertError } = await (admin.from(TABLE) as any).upsert(
+    const { error: upsertError } = await admin.from(TABLE).upsert(
       {
         tenant_id: auth.tenantId,
         user_id: auth.userId,
@@ -108,8 +107,8 @@ export async function POST(request: NextRequest) {
 
     // Prune: keep only the most recent N entries for this type
     const maxItems = MAX_RECENTS[body.entity_type] ?? 6;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: allRecents } = await (admin.from(TABLE) as any)
+    const { data: allRecents } = await admin
+      .from(TABLE)
       .select('id, visited_at')
       .eq('tenant_id', auth.tenantId)
       .eq('user_id', auth.userId)
@@ -117,10 +116,8 @@ export async function POST(request: NextRequest) {
       .order('visited_at', { ascending: false });
 
     if (allRecents && allRecents.length > maxItems) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const idsToDelete = allRecents.slice(maxItems).map((r: any) => r.id);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (admin.from(TABLE) as any).delete().in('id', idsToDelete);
+      const idsToDelete = allRecents.slice(maxItems).map((r) => r.id);
+      await admin.from(TABLE).delete().in('id', idsToDelete);
     }
 
     return NextResponse.json({ ok: true });
@@ -148,8 +145,8 @@ export async function DELETE(request: NextRequest) {
     }
 
     const admin = createAdminClient();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (admin.from(TABLE) as any)
+    await admin
+      .from(TABLE)
       .delete()
       .eq('tenant_id', auth.tenantId)
       .eq('user_id', auth.userId)

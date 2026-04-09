@@ -24,7 +24,7 @@
  * @module api/cron/poll-properties
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient, tenantDb, type TenantDb } from '@/lib/supabase/admin';
 import type { SnapshotType, NotificationType } from '@/lib/db/tenant';
 
 /** Max antal ejendomme pr. cron-kørsel */
@@ -199,8 +199,7 @@ async function pollSingleProperty(
   entity: { entity_id: string; label: string },
   tenant: { id: string; schema_name: string },
   baseUrl: string,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  db: any,
+  db: TenantDb,
   userIds: string[]
 ): Promise<PropertyPollResult> {
   let changes = 0;
@@ -309,8 +308,7 @@ async function processEntitiesInBatches(
   entities: { entity_id: string; label: string }[],
   tenant: { id: string; schema_name: string },
   baseUrl: string,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  db: any,
+  db: TenantDb,
   userIds: string[]
 ): Promise<PropertyPollResult> {
   let totalChanges = 0;
@@ -382,8 +380,7 @@ export async function GET(request: NextRequest) {
     if (totalProcessed >= MAX_PER_RUN) break;
 
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const db = (admin as any).schema(tenant.schema_name);
+      const db = tenantDb(tenant.schema_name);
 
       // Hent alle fulgte ejendomme for denne tenant
       const { data: monitored } = await db

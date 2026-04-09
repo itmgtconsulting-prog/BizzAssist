@@ -15,7 +15,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 
 /** Response shape from LinkedIn's token endpoint */
 interface LinkedInTokenResponse {
@@ -168,10 +168,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // ── Step 4: Upsert into email_integrations ────────────────────────────────
     // refresh_token is not issued by LinkedIn standard OAuth — store empty string.
     // Name is preserved in the scopes array as "name:<fullName>" for retrieval.
-    const admin = createAdminClient();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error: dbError } = await (admin as any)
-      .schema(tenantId)
+    const { error: dbError } = await tenantDb(tenantId)
       .from('email_integrations')
       .upsert(
         {

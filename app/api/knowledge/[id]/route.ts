@@ -13,7 +13,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import type { KnowledgeItem } from '../route';
 
@@ -36,8 +36,7 @@ async function resolveTenantMembership(
 ): Promise<{ tenantId: string; role: string } | null> {
   const adminClient = createAdminClient();
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data } = await (adminClient as any)
+  const { data } = await adminClient
     .from('tenant_memberships')
     .select('tenant_id, role')
     .eq('user_id', userId)
@@ -88,30 +87,7 @@ export async function GET(request: NextRequest, { params }: RouteParams): Promis
   }
 
   try {
-    const adminClient = createAdminClient();
-
-    const { data, error } = await (
-      adminClient as unknown as {
-        schema: (s: string) => {
-          from: (t: string) => {
-            select: (cols: string) => {
-              eq: (
-                col: string,
-                val: string | number
-              ) => {
-                eq: (
-                  col: string,
-                  val: string | number
-                ) => {
-                  single: () => Promise<{ data: KnowledgeItem | null; error: unknown }>;
-                };
-              };
-            };
-          };
-        };
-      }
-    )
-      .schema('tenant')
+    const { data, error } = await tenantDb(membership.tenantId)
       .from('tenant_knowledge')
       .select('id, tenant_id, title, content, source_type, created_by, created_at, updated_at')
       .eq('tenant_id', membership.tenantId)
@@ -229,32 +205,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams): Prom
   }
 
   try {
-    const adminClient = createAdminClient();
-
-    const { data, error } = await (
-      adminClient as unknown as {
-        schema: (s: string) => {
-          from: (t: string) => {
-            update: (patch: Record<string, string>) => {
-              eq: (
-                col: string,
-                val: string | number
-              ) => {
-                eq: (
-                  col: string,
-                  val: string | number
-                ) => {
-                  select: (cols: string) => {
-                    single: () => Promise<{ data: KnowledgeItem | null; error: unknown }>;
-                  };
-                };
-              };
-            };
-          };
-        };
-      }
-    )
-      .schema('tenant')
+    const { data, error } = await tenantDb(membership.tenantId)
       .from('tenant_knowledge')
       .update(patch)
       .eq('tenant_id', membership.tenantId)
@@ -267,9 +218,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams): Prom
     }
 
     // Audit log — fire-and-forget (ISO 27001 A.12.4)
-    const adminClient2 = createAdminClient();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (adminClient2 as any)
+    createAdminClient()
       .from('audit_log')
       .insert({
         action: 'knowledge.update',

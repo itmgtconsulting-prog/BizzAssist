@@ -22,7 +22,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 
 /** The exact phrase the user must type to confirm account deletion. */
 const CONFIRM_PHRASE = 'SLET MIN KONTO';
@@ -40,8 +40,7 @@ async function insertAuditLog(
   entry: { action: string; resource_type: string; resource_id: string; metadata: string }
 ): Promise<void> {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (admin as any).from('audit_log').insert(entry);
+    await admin.from('audit_log').insert(entry);
   } catch (e: unknown) {
     console.error('[audit] Failed to insert audit log:', e);
   }
@@ -86,8 +85,7 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
 
   try {
     // ── Step 3: Resolve tenant membership and schema ──────────────────────
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: membership } = await (admin as any)
+    const { data: membership } = await admin
       .from('tenant_memberships')
       .select('tenant_id')
       .eq('user_id', user.id)
@@ -98,8 +96,7 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
 
     // ── Step 4: Cascade-delete tenant-scoped personal data ────────────────
     if (tenantId) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: tenantRow } = await (admin as any)
+      const { data: tenantRow } = await admin
         .from('tenants')
         .select('schema_name')
         .eq('id', tenantId)
@@ -108,9 +105,7 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
       const schemaName: string | null = tenantRow?.schema_name ?? null;
 
       if (schemaName) {
-        // Cast to any — Supabase generated types only cover the public schema.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const db = (admin as unknown as { schema: (s: string) => any }).schema(schemaName);
+        const db = tenantDb(schemaName);
 
         // Delete personal data from all tenant-schema tables.
         // Errors are non-fatal: the auth deletion below is the definitive erasure.
@@ -142,10 +137,8 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
         }
 
         // Remove membership and tenant record — re-registration must start clean.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (admin as any).from('tenant_memberships').delete().eq('tenant_id', tenantId);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (admin as any).from('tenants').delete().eq('id', tenantId);
+        await admin.from('tenant_memberships').delete().eq('tenant_id', tenantId);
+        await admin.from('tenants').delete().eq('id', tenantId);
       }
     }
 

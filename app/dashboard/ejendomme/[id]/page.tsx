@@ -5,7 +5,12 @@ import EjendomDetaljeClient from './EjendomDetaljeClient';
 
 export const dynamic = 'force-dynamic';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export default function EjendommeDetailPage(props: any) {
+/** Next.js App Router page props for dynamic route /dashboard/ejendomme/[id] */
+interface EjendommeDetailPageProps {
+  params: Promise<{ id: string }>;
+  searchParams?: Promise<Record<string, string | string[]>>;
+}
+
+export default function EjendommeDetailPage(props: EjendommeDetailPageProps) {
   return <EjendomDetaljeClient {...props} />;
 }

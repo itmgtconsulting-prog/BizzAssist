@@ -33,7 +33,7 @@
  */
 
 import { createClient as createServerClient } from '@/lib/supabase/server';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient, type TenantDb } from '@/lib/supabase/admin';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -280,9 +280,11 @@ interface NotificationsApi {
  *
  * @internal
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function tenantDb(admin: ReturnType<typeof createAdminClient>, schemaName: string): any {
-  return (admin as unknown as { schema: (s: string) => unknown }).schema(schemaName);
+function tenantDb(admin: ReturnType<typeof createAdminClient>, schemaName: string): TenantDb {
+  // Cast the dynamic schema name to 'tenant' — the representative key in Database type.
+  // At runtime the actual schema name (e.g. 'tenant_abc123') is used; the cast only
+  // satisfies TypeScript so callers receive a typed PostgREST client.
+  return admin.schema(schemaName as 'tenant');
 }
 
 // ---------------------------------------------------------------------------
@@ -802,8 +804,7 @@ export async function provisionTenantSchema(schemaName: string, tenantId: string
 
   const admin = createAdminClient();
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { error } = await (admin as any).rpc('provision_tenant_schema', {
+  const { error } = await admin.rpc('provision_tenant_schema', {
     p_schema_name: schemaName,
     p_tenant_id: tenantId,
   });

@@ -37,8 +37,7 @@ async function insertAuditLog(
   entry: { action: string; resource_type: string; resource_id: string; metadata: string }
 ): Promise<void> {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (client as any).from('audit_log').insert(entry);
+    await client.from('audit_log').insert(entry);
   } catch (e: unknown) {
     console.error('[audit] Failed to log subscription change:', e);
   }

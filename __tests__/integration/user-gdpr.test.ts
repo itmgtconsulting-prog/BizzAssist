@@ -119,6 +119,8 @@ vi.mock('@/lib/supabase/admin', () => ({
     from: mockFrom,
     schema: mockSchema,
   })),
+  // tenantDb is used by delete-account route — return the schema chain stub
+  tenantDb: vi.fn(() => mockSchemaChain),
 }));
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

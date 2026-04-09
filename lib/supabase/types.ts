@@ -222,13 +222,381 @@ export interface ServiceManagerActivity {
 }
 
 // ---------------------------------------------------------------------------
+// Additional public-schema table row types
+// ---------------------------------------------------------------------------
+
+/** A recently viewed entity, stored per user/tenant (migration 013) */
+export interface RecentEntity {
+  id: string;
+  tenant_id: string;
+  user_id: string;
+  entity_type: 'company' | 'property' | 'person' | 'search';
+  entity_id: string;
+  display_name: string;
+  entity_data: Record<string, unknown>;
+  visited_at: string;
+}
+
+/** Sitemap entry used by /api/cron/generate-sitemap (migration 019) */
+export interface SitemapEntry {
+  id: string;
+  /** 'ejendom' or 'virksomhed' */
+  type: 'ejendom' | 'virksomhed';
+  slug: string;
+  entity_id: string;
+  updated_at: string;
+}
+
+/** Cached XBRL financial report (migration 022) */
+export interface RegnskabCache {
+  id: string;
+  cvr: string;
+  year: number;
+  data: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Immutable audit log entry (ISO 27001 A.12) — lives in public schema */
+export interface AuditLogRow {
+  id: string;
+  tenant_id: string;
+  user_id: string | null;
+  action: string;
+  resource_type: string;
+  resource_id: string | null;
+  metadata: Record<string, unknown> | null;
+  ip_address: string | null;
+  created_at: string;
+}
+
+/** Key-value settings store used by cron and AI features */
+export interface AiSettings {
+  key: string;
+  value: string;
+  updated_at: string;
+}
+
+/** Gmail integration credentials per tenant (migration 030) */
+export interface IntegrationGmail {
+  id: string;
+  tenant_id: string;
+  user_id: string;
+  access_token: string;
+  refresh_token: string;
+  expires_at: string;
+  scope: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** LinkedIn integration credentials per tenant */
+export interface IntegrationLinkedIn {
+  id: string;
+  tenant_id: string;
+  user_id: string;
+  access_token: string;
+  expires_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Knowledge base document stored per tenant (migration 031) */
+export interface KnowledgeDocument {
+  id: string;
+  tenant_id: string;
+  title: string;
+  content: string;
+  metadata: Record<string, unknown>;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** tenant_knowledge row — text items uploaded to the per-tenant knowledge base */
+export interface TenantKnowledgeRow {
+  id: number;
+  tenant_id: string;
+  title: string;
+  content: string;
+  source_type: 'manual' | 'upload' | 'url';
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** API token issued to a tenant */
+export interface ApiToken {
+  id: string;
+  tenant_id: string;
+  name: string;
+  token_hash: string;
+  last_used_at: string | null;
+  expires_at: string | null;
+  created_by: string;
+  created_at: string;
+}
+
+/** api_tokens row in tenant schema — enterprise API tokens */
+export interface ApiTokenRow {
+  id: number;
+  tenant_id: string;
+  user_id: string;
+  name: string;
+  token_hash: string;
+  prefix: string;
+  scopes: string[];
+  last_used: string | null;
+  expires_at: string | null;
+  revoked: boolean;
+  created_at: string;
+}
+
+/** support_chat_abuse row — abuse detection for the support chat feature */
+export interface SupportChatAbuseRow {
+  user_id: string;
+  violation_count: number;
+  locked_until: string | null;
+  permanently_locked: boolean;
+  last_violation: string | null;
+  updated_at: string;
+}
+
+/** plan_configs row — configurable plan definitions managed by admins */
+export interface PlanConfigRow {
+  plan_id: string;
+  name_da: string;
+  name_en: string;
+  desc_da: string;
+  desc_en: string;
+  color: string;
+  price_dkk: number;
+  ai_tokens_per_month: number;
+  duration_months: number;
+  duration_days: number;
+  token_accumulation_cap_multiplier: number;
+  ai_enabled: boolean;
+  requires_approval: boolean;
+  is_active: boolean;
+  free_trial_days: number;
+  max_sales: number | null;
+  sales_count: number;
+  stripe_price_id: string | null;
+}
+
+/** BBR event polling cursor (migration 034) — tracks last-pulled event timestamp */
+export interface BbrEventCursor {
+  id: number;
+  last_event_at: string;
+  last_pulled_at: string | null;
+}
+
+/** BBR object tracked per tenant — maps BBR UUID to BFE number (migration 034) */
+export interface BbrTrackedObject {
+  id: string;
+  tenant_id: string;
+  bfe_nummer: string;
+  bbr_object_id: string;
+  created_at: string;
+}
+
+// ---------------------------------------------------------------------------
+// Tenant schema row types (shared across all tenant_[uuid] schemas)
+// ---------------------------------------------------------------------------
+
+/** property_snapshots row (migration 006) */
+export interface PropertySnapshotRow {
+  id: string;
+  tenant_id: string;
+  entity_id: string;
+  snapshot_type: string;
+  snapshot_hash: string;
+  snapshot_data: Record<string, unknown>;
+  created_at: string;
+}
+
+/** notifications row (migration 006) */
+export interface NotificationRow {
+  id: string;
+  tenant_id: string;
+  user_id: string;
+  entity_id: string;
+  entity_type: string;
+  notification_type: string;
+  title: string;
+  message: string;
+  metadata: Record<string, unknown> | null;
+  is_read: boolean;
+  created_at: string;
+}
+
+/** saved_entities row in tenant schema */
+export interface SavedEntityRow {
+  id: string;
+  tenant_id: string;
+  entity_type: string;
+  entity_id: string;
+  entity_data: Record<string, unknown>;
+  is_monitored: boolean;
+  label: string | null;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** activity_log row in tenant schema */
+export interface ActivityLogRow {
+  id: string;
+  tenant_id: string;
+  user_id: string | null;
+  event_type: string;
+  payload: Record<string, unknown>;
+  created_at: string;
+}
+
+/** ai_conversations row in tenant schema */
+export interface AiConversationRow {
+  id: string;
+  tenant_id: string;
+  title: string | null;
+  is_shared: boolean;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** ai_messages row in tenant schema */
+export interface AiMessageRow {
+  id: string;
+  tenant_id: string;
+  conversation_id: string;
+  role: string;
+  content: string;
+  tokens_used: number | null;
+  created_at: string;
+}
+
+/** ai_token_usage row in tenant schema — billing and budget tracking */
+export interface AiTokenUsageRow {
+  id: string;
+  tenant_id: string;
+  user_id: string;
+  tokens_in: number;
+  tokens_out: number;
+  model: string;
+  created_at: string;
+}
+
+/** email_integrations row in tenant schema — stores OAuth tokens for Gmail/LinkedIn */
+export interface EmailIntegrationRow {
+  id: string;
+  user_id: string;
+  provider: 'gmail' | 'linkedin';
+  email_address: string | null;
+  access_token: string;
+  refresh_token: string | null;
+  expires_at: string | null;
+  scopes: string | null;
+  connected_at: string;
+  profile_data: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// ---------------------------------------------------------------------------
 // Full Database type used by Supabase client generics
 // ---------------------------------------------------------------------------
+
+/**
+ * Tables shape shared by every per-tenant PostgreSQL schema (tenant_[uuid]).
+ * Used as the value type for the `tenant` key in the Database type so that
+ * `.schema(schemaName)` returns a typed PostgREST client.
+ */
+type TenantSchemaShape = {
+  Tables: {
+    saved_entities: {
+      Row: SavedEntityRow;
+      Insert: Omit<SavedEntityRow, 'id' | 'created_at' | 'updated_at'>;
+      Update: Partial<SavedEntityRow>;
+    };
+    property_snapshots: {
+      Row: PropertySnapshotRow;
+      Insert: Omit<PropertySnapshotRow, 'id' | 'created_at'>;
+      Update: Partial<PropertySnapshotRow>;
+    };
+    notifications: {
+      Row: NotificationRow;
+      Insert: Omit<NotificationRow, 'id' | 'created_at'>;
+      Update: Partial<NotificationRow>;
+    };
+    activity_log: {
+      Row: ActivityLogRow;
+      Insert: Omit<ActivityLogRow, 'id' | 'created_at'>;
+      Update: Partial<ActivityLogRow>;
+    };
+    ai_conversations: {
+      Row: AiConversationRow;
+      Insert: Omit<AiConversationRow, 'id' | 'created_at' | 'updated_at'>;
+      Update: Partial<AiConversationRow>;
+    };
+    ai_messages: {
+      Row: AiMessageRow;
+      Insert: Omit<AiMessageRow, 'id' | 'created_at'>;
+      Update: Partial<AiMessageRow>;
+    };
+    ai_token_usage: {
+      Row: AiTokenUsageRow;
+      Insert: Omit<AiTokenUsageRow, 'id' | 'created_at'>;
+      Update: Partial<AiTokenUsageRow>;
+    };
+    email_integrations: {
+      Row: EmailIntegrationRow;
+      Insert: Omit<EmailIntegrationRow, 'id' | 'created_at' | 'updated_at'>;
+      Update: Partial<EmailIntegrationRow>;
+    };
+    tenant_knowledge: {
+      Row: TenantKnowledgeRow;
+      Insert: Omit<TenantKnowledgeRow, 'id' | 'created_at' | 'updated_at'>;
+      Update: Partial<TenantKnowledgeRow>;
+    };
+    api_tokens: {
+      Row: ApiTokenRow;
+      Insert: Omit<ApiTokenRow, 'id' | 'created_at'>;
+      Update: Partial<ApiTokenRow>;
+    };
+    support_chat_sessions: {
+      Row: {
+        id: string;
+        tenant_id: string;
+        user_id: string;
+        tokens_used: number;
+        created_at: string;
+      };
+      Insert: {
+        tenant_id: string;
+        user_id: string;
+        tokens_used: number;
+      };
+      Update: Partial<{
+        tenant_id: string;
+        user_id: string;
+        tokens_used: number;
+      }>;
+    };
+  };
+  Views: Record<string, never>;
+  Functions: Record<string, never>;
+  Enums: Record<string, never>;
+};
 
 /**
  * Database type passed to Supabase client generics.
  * Will be replaced by auto-generated types from `supabase gen types` once
  * the project is created and migrations are applied.
+ *
+ * The `tenant` key represents the shape of every per-tenant schema
+ * (named `tenant_[uuid]` in production). It allows `.schema(name)` calls
+ * to return a typed PostgREST client without casting to `any`.
  */
 export type Database = {
   public: {
@@ -250,13 +618,96 @@ export type Database = {
         Insert: Omit<Subscription, 'created_at'>;
         Update: Partial<Subscription>;
       };
-      // service_manager_scans, service_manager_fixes, service_manager_activity
-      // are intentionally omitted here — they are accessed via (admin as any) casts
-      // in their respective route files to avoid strict overload conflicts until
-      // types are regenerated with `supabase gen types` after migrations are applied.
+      audit_log: {
+        Row: AuditLogRow;
+        Insert: Omit<AuditLogRow, 'id' | 'created_at'>;
+        Update: never;
+      };
+      recent_entities: {
+        Row: RecentEntity;
+        Insert: Omit<RecentEntity, 'id'>;
+        Update: Partial<RecentEntity>;
+      };
+      sitemap_entries: {
+        Row: SitemapEntry;
+        Insert: Omit<SitemapEntry, 'id'>;
+        Update: Partial<SitemapEntry>;
+      };
+      regnskab_cache: {
+        Row: RegnskabCache;
+        Insert: Omit<RegnskabCache, 'id' | 'created_at' | 'updated_at'>;
+        Update: Partial<RegnskabCache>;
+      };
+      ai_settings: {
+        Row: AiSettings;
+        Insert: AiSettings;
+        Update: Partial<AiSettings>;
+      };
+      service_manager_scans: {
+        Row: ServiceManagerScan;
+        Insert: Omit<ServiceManagerScan, 'id' | 'created_at'>;
+        Update: Partial<ServiceManagerScan>;
+      };
+      service_manager_fixes: {
+        Row: ServiceManagerFix;
+        Insert: Omit<ServiceManagerFix, 'id' | 'created_at'>;
+        Update: Partial<ServiceManagerFix>;
+      };
+      service_manager_activity: {
+        Row: ServiceManagerActivity;
+        Insert: Omit<ServiceManagerActivity, 'id' | 'created_at'>;
+        Update: Partial<ServiceManagerActivity>;
+      };
+      integrations_gmail: {
+        Row: IntegrationGmail;
+        Insert: Omit<IntegrationGmail, 'id' | 'created_at' | 'updated_at'>;
+        Update: Partial<IntegrationGmail>;
+      };
+      integrations_linkedin: {
+        Row: IntegrationLinkedIn;
+        Insert: Omit<IntegrationLinkedIn, 'id' | 'created_at' | 'updated_at'>;
+        Update: Partial<IntegrationLinkedIn>;
+      };
+      knowledge_documents: {
+        Row: KnowledgeDocument;
+        Insert: Omit<KnowledgeDocument, 'id' | 'created_at' | 'updated_at'>;
+        Update: Partial<KnowledgeDocument>;
+      };
+      api_tokens: {
+        Row: ApiToken;
+        Insert: Omit<ApiToken, 'id' | 'created_at'>;
+        Update: Partial<ApiToken>;
+      };
+      bbr_event_cursor: {
+        Row: BbrEventCursor;
+        Insert: Omit<BbrEventCursor, 'id'>;
+        Update: Partial<BbrEventCursor>;
+      };
+      bbr_tracked_objects: {
+        Row: BbrTrackedObject;
+        Insert: Omit<BbrTrackedObject, 'id' | 'created_at'>;
+        Update: Partial<BbrTrackedObject>;
+      };
+      support_chat_abuse: {
+        Row: SupportChatAbuseRow;
+        Insert: SupportChatAbuseRow;
+        Update: Partial<SupportChatAbuseRow>;
+      };
+      plan_configs: {
+        Row: PlanConfigRow;
+        Insert: PlanConfigRow;
+        Update: Partial<PlanConfigRow>;
+      };
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;
     Enums: Record<string, never>;
   };
+  /**
+   * Representative key for per-tenant schemas (named `tenant_[uuid]` at runtime).
+   * TypeScript cannot express dynamic schema names, so we use a fixed `tenant`
+   * key here. The `tenantDb()` helper in `lib/supabase/admin.ts` uses this type
+   * via an explicit cast so all callers get a fully typed PostgREST client.
+   */
+  tenant: TenantSchemaShape;
 };

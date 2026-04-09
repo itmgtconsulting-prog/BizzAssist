@@ -571,14 +571,13 @@ async function hentMatrikelGeojson(
     const res = await fetch(url);
     if (!res.ok) return null;
     const json = await res.json();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const fc: any =
+    const fc: GeoJSONSourceSpecification['data'] =
       json?.type === 'FeatureCollection'
-        ? json
+        ? (json as GeoJSONSourceSpecification['data'])
         : Array.isArray(json)
-          ? { type: 'FeatureCollection', features: json }
-          : json;
-    const all = fc as GeoJSONSourceSpecification['data'];
+          ? { type: 'FeatureCollection' as const, features: json as GeoJSON.Feature[] }
+          : (json as GeoJSONSourceSpecification['data']);
+    const all = fc;
     const selected = filtrerTilEjendom(fc, lng, lat);
     const result = { all, selected };
     matrikelCache.set(cacheKey, result);

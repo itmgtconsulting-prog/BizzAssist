@@ -5,7 +5,12 @@ import PersonDetailPageClient from './PersonDetailPageClient';
 
 export const dynamic = 'force-dynamic';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export default function OwnersDetailPage(props: any) {
+/** Next.js App Router page props for dynamic route /dashboard/owners/[enhedsNummer] */
+interface OwnersDetailPageProps {
+  params: Promise<{ enhedsNummer: string }>;
+  searchParams?: Promise<Record<string, string | string[]>>;
+}
+
+export default function OwnersDetailPage(props: OwnersDetailPageProps) {
   return <PersonDetailPageClient {...props} />;
 }

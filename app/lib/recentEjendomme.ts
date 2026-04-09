@@ -100,17 +100,19 @@ async function fetchFromServer(): Promise<RecentEjendom[]> {
     const res = await fetch('/api/recents?type=property');
     if (!res.ok) return [];
     const json = await res.json();
-    const recents = json.recents ?? [];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return recents.map((r: any) => ({
-      id: r.entity_id,
-      adresse: r.display_name ?? '',
-      postnr: r.entity_data?.postnr ?? '',
-      by: r.entity_data?.by ?? '',
-      kommune: r.entity_data?.kommune ?? '',
-      anvendelse: r.entity_data?.anvendelse ?? null,
-      senestiSet: r.visited_at ? new Date(r.visited_at).getTime() : Date.now(),
-    }));
+    const recents: Array<Record<string, unknown>> = json.recents ?? [];
+    return recents.map((r) => {
+      const ed = r.entity_data as Record<string, unknown> | undefined;
+      return {
+        id: r.entity_id as string,
+        adresse: (r.display_name as string) ?? '',
+        postnr: (ed?.postnr as string) ?? '',
+        by: (ed?.by as string) ?? '',
+        kommune: (ed?.kommune as string) ?? '',
+        anvendelse: (ed?.anvendelse as string | null) ?? null,
+        senestiSet: r.visited_at ? new Date(r.visited_at as string).getTime() : Date.now(),
+      };
+    });
   } catch {
     return [];
   }

@@ -187,9 +187,18 @@ export async function GET(): Promise<NextResponse> {
       hasMfa = Array.isArray(factorsData) && factorsData.length > 0;
       if (!hasMfa) {
         // Fallback: use admin MFA API
+        // mfa.listFactors is not typed in all SDK versions — use unknown cast
         try {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { data: mfaData } = await (admin.auth.admin as any).mfa.listFactors({
+          const adminWithMfa = admin.auth.admin as unknown as {
+            mfa: {
+              listFactors: (params: {
+                userId: string;
+              }) => Promise<{
+                data: { factors: Array<{ status: string; factor_type: string }> } | null;
+              }>;
+            };
+          };
+          const { data: mfaData } = await adminWithMfa.mfa.listFactors({
             userId: user.id,
           });
           hasMfa = (mfaData?.factors ?? []).some(

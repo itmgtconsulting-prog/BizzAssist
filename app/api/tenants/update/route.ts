@@ -43,8 +43,7 @@ async function resolveAuth(): Promise<{ userId: string; tenantId: string; role: 
 
     // Use admin client to bypass RLS for the membership lookup
     const admin = createAdminClient();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data } = await (admin as any)
+    const { data } = await admin
       .from('tenant_memberships')
       .select('tenant_id, role')
       .eq('user_id', user.id)
@@ -52,8 +51,7 @@ async function resolveAuth(): Promise<{ userId: string; tenantId: string; role: 
       .single();
 
     if (!data) return null;
-    const row = data as { tenant_id: string; role: string };
-    return { userId: user.id, tenantId: row.tenant_id, role: row.role };
+    return { userId: user.id, tenantId: data.tenant_id, role: data.role };
   } catch {
     return null;
   }
@@ -104,9 +102,8 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
   try {
     const admin = createAdminClient();
 
-    // Update tenant name — use any cast because tenants is not in generated types
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await (admin as any)
+    // Update tenant name
+    const { error } = await admin
       .from('tenants')
       .update({ name, updated_at: new Date().toISOString() })
       .eq('id', auth.tenantId);
@@ -117,8 +114,7 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
     }
 
     // Audit log — fire-and-forget (same pattern as other routes)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (admin as any)
+    admin
       .from('audit_log')
       .insert({
         action: 'tenant.update',

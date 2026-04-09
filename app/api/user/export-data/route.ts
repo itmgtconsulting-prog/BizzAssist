@@ -23,7 +23,7 @@
 
 import { NextResponse } from 'next/server';
 import { resolveTenantId } from '@/lib/api/auth';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { createClient } from '@/lib/supabase/server';
 
 export const runtime = 'nodejs';
@@ -69,12 +69,12 @@ interface AiConversationExport {
  */
 async function getTenantSchema(tenantId: string): Promise<string | null> {
   const admin = createAdminClient();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data } = await (admin.from('tenants') as any)
+  const { data } = await admin
+    .from('tenants')
     .select('schema_name')
     .eq('id', tenantId)
     .single();
-  return ((data as Record<string, unknown>)?.schema_name as string) ?? null;
+  return data?.schema_name ?? null;
 }
 
 /**
@@ -93,16 +93,20 @@ async function fetchUserRows(
   userId: string
 ): Promise<unknown[]> {
   try {
-    const admin = createAdminClient();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (admin.from(`${schemaName}.${tableName}`) as any)
+    // Use the typed tenantDb helper — runtime schema name is cast via the helper
+    // tableName is a runtime string; cast to a known table name to satisfy TypeScript.
+    // The value is always one of: 'recent_entities', 'saved_entities', 'notifications'.
+    type ExportTable = 'saved_entities' | 'notifications';
+    const db = tenantDb(schemaName);
+    const { data, error } = await db
+      .from(tableName as ExportTable)
       .select('*')
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
 
     if (error) {
       // Table may not exist on older tenants — treat as empty rather than failing
-      console.warn(`[export-data] ${tableName} fetch skipped:`, error.message);
+      console.warn(`[export-data] ${tableName} fetch skipped:`, (error as { message: string }).message);
       return [];
     }
     return (data as unknown[]) ?? [];
@@ -124,16 +128,13 @@ async function fetchAiConversations(
   userId: string
 ): Promise<AiConversationExport[]> {
   try {
-    const admin = createAdminClient();
-
     // Fetch conversations created by this user
-    const { data: convos, error: convoErr } =
-      await // Dynamic schema access requires type cast — schema name is validated server-side
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (admin.from(`${schemaName}.ai_conversations`) as any)
-        .select('id, title, created_at, updated_at')
-        .eq('created_by', userId)
-        .order('created_at', { ascending: false });
+    const db = tenantDb(schemaName);
+    const { data: convos, error: convoErr } = await db
+      .from('ai_conversations')
+      .select('id, title, created_at, updated_at')
+      .eq('created_by', userId)
+      .order('created_at', { ascending: false });
 
     if (convoErr || !convos) {
       console.warn('[export-data] ai_conversations fetch skipped:', convoErr?.message);
@@ -149,8 +150,8 @@ async function fetchAiConversations(
       updated_at: string;
     }>) {
       // Fetch messages for this conversation
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: msgs } = await (admin.from(`${schemaName}.ai_messages`) as any)
+      const { data: msgs } = await db
+        .from('ai_messages')
         .select('role, content, tokens_used, created_at')
         .eq('conversation_id', convo.id)
         .order('created_at', { ascending: true });

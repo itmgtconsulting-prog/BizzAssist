@@ -67,8 +67,7 @@ async function enrichBbrTrackedObjects(tenantId: string, dawaId: string): Promis
 
     if (rows.length === 0) return;
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (admin as any)
+    await admin
       .from('bbr_tracked_objects')
       .upsert(rows, { onConflict: 'tenant_id,bfe_nummer,bbr_object_id', ignoreDuplicates: true });
   } catch (err) {
@@ -104,8 +103,7 @@ async function cleanupBbrTrackedObjects(
 
     if (!bfeNummer) return;
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (admin as any)
+    await admin
       .from('bbr_tracked_objects')
       .delete()
       .eq('tenant_id', tenantId)

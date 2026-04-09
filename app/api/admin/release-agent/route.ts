@@ -55,12 +55,12 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import type { ServiceManagerFix, ServiceManagerActivity } from '@/lib/supabase/types';
 
 /**
- * Returns the admin client cast to `any` for tables not yet in the generated
- * Database type (service_manager_fixes, service_manager_activity).
- * Remove once `supabase gen types` is re-run after migration 021 is applied.
+ * Returns the admin client for operations on service_manager tables
+ * (service_manager_fixes, service_manager_activity).
+ *
+ * @returns Typed Supabase admin client
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function adminDb(): any {
+function adminDb(): ReturnType<typeof createAdminClient> {
   return createAdminClient();
 }
 

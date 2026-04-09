@@ -22,7 +22,7 @@
  * @module api/cron/pull-bbr-events
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 
 /** Datafordeler Hændelsesbesked base URL */
 const HHAENDELSE_BASE = 'https://hændelsesbesked.datafordeler.dk/api/v1/hændelse';
@@ -125,15 +125,12 @@ export async function GET(request: NextRequest) {
 
   const admin = createAdminClient();
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const adminAny = admin as any;
-
   // ── 1. Hent cursor ────────────────────────────────────────────────────────
-  const { data: cursorRow, error: cursorErr } = (await adminAny
+  const { data: cursorRow, error: cursorErr } = await admin
     .from('bbr_event_cursor')
     .select('last_event_at')
     .eq('id', 1)
-    .single()) as { data: { last_event_at: string } | null; error: unknown };
+    .single();
 
   if (cursorErr || !cursorRow) {
     console.error('[pull-bbr-events] Kunne ikke hente cursor:', cursorErr);
@@ -162,7 +159,7 @@ export async function GET(request: NextRequest) {
 
   if (allEvents.length === 0) {
     // Opdater pulled_at selvom der ingen events var
-    await adminAny
+    await admin
       .from('bbr_event_cursor')
       .update({ last_pulled_at: new Date().toISOString() })
       .eq('id', 1);
@@ -172,12 +169,10 @@ export async function GET(request: NextRequest) {
   // ── 3. Match events mod tracked objects ───────────────────────────────────
   const eventObjektIds = [...new Set(allEvents.map((e) => e.entitetUUID))];
 
-  const { data: matches } = (await adminAny
+  const { data: matches } = await admin
     .from('bbr_tracked_objects')
     .select('tenant_id, bfe_nummer, bbr_object_id')
-    .in('bbr_object_id', eventObjektIds)) as {
-    data: { tenant_id: string; bfe_nummer: string; bbr_object_id: string }[] | null;
-  };
+    .in('bbr_object_id', eventObjektIds);
 
   const latestAt = allEvents.reduce((latest, e) =>
     e.registreringstidspunkt > latest.registreringstidspunkt ? e : latest
@@ -185,7 +180,7 @@ export async function GET(request: NextRequest) {
 
   if (!matches || matches.length === 0) {
     // Opdater cursor til seneste event
-    await adminAny
+    await admin
       .from('bbr_event_cursor')
       .update({ last_event_at: latestAt, last_pulled_at: new Date().toISOString() })
       .eq('id', 1);
@@ -243,8 +238,7 @@ export async function GET(request: NextRequest) {
       const userIds = (members ?? []).map((m: { user_id: string }) => m.user_id);
       if (userIds.length === 0) continue;
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const db = (admin as any).schema(schemaName);
+      const db = tenantDb(schemaName);
 
       for (const userId of userIds) {
         await db.from('notifications').insert({
@@ -268,7 +262,7 @@ export async function GET(request: NextRequest) {
   }
 
   // ── 5. Opdater cursor til seneste event-tidsstempel ────────────────────────
-  await adminAny
+  await admin
     .from('bbr_event_cursor')
     .update({
       last_event_at: latestAt,

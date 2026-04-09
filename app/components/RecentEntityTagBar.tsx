@@ -63,8 +63,7 @@ async function loadAllTags(): Promise<RecentTag[]> {
 
   if (propRes?.ok) {
     const json = await propRes.json().catch(() => ({}));
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const latest = (json.recents ?? [])[0] as any;
+    const latest = ((json.recents ?? []) as Array<Record<string, unknown>>)[0];
     if (latest?.entity_id && latest?.display_name) {
       tags.set('property', {
         type: 'property',
@@ -76,12 +75,12 @@ async function loadAllTags(): Promise<RecentTag[]> {
 
   if (searchRes?.ok) {
     const json = await searchRes.json().catch(() => ({}));
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const recents: any[] = json.recents ?? [];
+    const recents: Array<Record<string, unknown>> = (json.recents ?? []) as Array<Record<string, unknown>>;
     for (const r of recents) {
-      const rt = r.entity_data?.resultType as string | undefined;
-      const href = r.entity_data?.resultHref as string | undefined;
-      const label = r.entity_data?.resultTitle ?? r.display_name;
+      const ed = r.entity_data as Record<string, unknown> | undefined;
+      const rt = ed?.resultType as string | undefined;
+      const href = ed?.resultHref as string | undefined;
+      const label = (ed?.resultTitle ?? r.display_name) as string | undefined;
       if (!href || !label) continue;
       if (rt === 'address' && !tags.has('property'))
         tags.set('property', { type: 'property', href, label });

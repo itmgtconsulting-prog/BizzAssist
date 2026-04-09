@@ -23,7 +23,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -63,33 +63,6 @@ interface CreateTokenBody {
   expiresInDays?: number;
 }
 
-// ─── Supabase schema type helpers ────────────────────────────────────────────
-
-type AdminSchema = {
-  schema: (s: string) => SchemaBuilder;
-};
-
-type SchemaBuilder = {
-  from: (table: string) => TableBuilder;
-};
-
-type TableBuilder = {
-  select: (cols: string) => SelectBuilder;
-  insert: (row: Record<string, unknown>) => InsertBuilder;
-};
-
-type SelectBuilder = {
-  eq: (col: string, val: string | boolean) => SelectBuilder;
-  order: (col: string, opts: { ascending: boolean }) => SelectBuilder;
-  limit: (n: number) => Promise<{ data: ApiTokenRecord[] | null; error: unknown }>;
-};
-
-type InsertBuilder = {
-  select: (cols: string) => {
-    single: () => Promise<{ data: ApiTokenRecord | null; error: unknown }>;
-  };
-};
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /**
@@ -104,14 +77,14 @@ async function resolveTenantId(userId: string): Promise<{ tenantId: string } | n
 
   // The admin client uses the public schema by default — no .schema() call needed
   const { data: membership } = await adminClient
-    .from('tenant_memberships' as never)
+    .from('tenant_memberships')
     .select('tenant_id')
-    .eq('user_id' as never, userId)
+    .eq('user_id', userId)
     .limit(1)
     .single();
 
-  if (!membership || !(membership as Record<string, unknown>)['tenant_id']) return null;
-  return { tenantId: (membership as Record<string, unknown>)['tenant_id'] as string };
+  if (!membership?.tenant_id) return null;
+  return { tenantId: membership.tenant_id };
 }
 
 /**
@@ -171,10 +144,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const adminClient = createAdminClient();
-
-    const { data, error } = await (adminClient as unknown as AdminSchema)
-      .schema('tenant')
+    const { data, error } = await tenantDb(membership.tenantId)
       .from('api_tokens')
       .select(
         'id, tenant_id, user_id, name, prefix, scopes, last_used, expires_at, revoked, created_at'
@@ -280,8 +250,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const adminClient = createAdminClient();
 
     // ── Check token count limit ──
-    const { data: existing } = await (adminClient as unknown as AdminSchema)
-      .schema('tenant')
+    const { data: existing } = await tenantDb(membership.tenantId)
       .from('api_tokens')
       .select('id')
       .eq('tenant_id', membership.tenantId)
@@ -303,8 +272,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const prefix = rawToken.slice(0, 12);
 
     // ── Insert into DB ──
-    const { data: record, error } = await (adminClient as unknown as AdminSchema)
-      .schema('tenant')
+    const { data: record, error } = await tenantDb(membership.tenantId)
       .from('api_tokens')
       .insert({
         tenant_id: membership.tenantId,
@@ -324,14 +292,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (error) throw error;
 
     // Audit log — fire-and-forget (ISO 27001 A.12.4 — access token lifecycle)
-    const adminClient2 = createAdminClient();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (adminClient2 as any)
+    createAdminClient()
       .from('audit_log')
       .insert({
         action: 'api_token.create',
         resource_type: 'api_token',
-        resource_id: String((record as ApiTokenRecord).id),
+        resource_id: record ? String(record.id) : '',
         metadata: JSON.stringify({
           tenantId: membership.tenantId,
           userId: user.id,

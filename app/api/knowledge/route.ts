@@ -18,7 +18,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 
 /** Maximum characters allowed in a knowledge item's content field. */
@@ -65,8 +65,7 @@ async function resolveTenantMembership(
 ): Promise<{ tenantId: string; role: string } | null> {
   const adminClient = createAdminClient();
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data } = await (adminClient as any)
+  const { data } = await adminClient
     .from('tenant_memberships')
     .select('tenant_id, role')
     .eq('user_id', userId)
@@ -105,30 +104,7 @@ export async function GET(_request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const adminClient = createAdminClient();
-
-    const { data, error } = await (
-      adminClient as unknown as {
-        schema: (s: string) => {
-          from: (t: string) => {
-            select: (cols: string) => {
-              eq: (
-                col: string,
-                val: string
-              ) => {
-                order: (
-                  col: string,
-                  opts: { ascending: boolean }
-                ) => {
-                  limit: (n: number) => Promise<{ data: KnowledgeItem[] | null; error: unknown }>;
-                };
-              };
-            };
-          };
-        };
-      }
-    )
-      .schema('tenant')
+    const { data, error } = await tenantDb(membership.tenantId)
       .from('tenant_knowledge')
       .select('id, tenant_id, title, content, source_type, created_by, created_at, updated_at')
       .eq('tenant_id', membership.tenantId)
@@ -221,22 +197,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const adminClient = createAdminClient();
-
-    const { data, error } = await (
-      adminClient as unknown as {
-        schema: (s: string) => {
-          from: (t: string) => {
-            insert: (row: Record<string, unknown>) => {
-              select: (cols: string) => {
-                single: () => Promise<{ data: KnowledgeItem | null; error: unknown }>;
-              };
-            };
-          };
-        };
-      }
-    )
-      .schema('tenant')
+    const { data, error } = await tenantDb(membership.tenantId)
       .from('tenant_knowledge')
       .insert({
         tenant_id: membership.tenantId,
@@ -252,14 +213,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     // Audit log — fire-and-forget (ISO 27001 A.12.4)
     if (data) {
-      const adminClient2 = createAdminClient();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (adminClient2 as any)
+      createAdminClient()
         .from('audit_log')
         .insert({
           action: 'knowledge.create',
           resource_type: 'knowledge_item',
-          resource_id: String((data as KnowledgeItem).id),
+          resource_id: String(data.id),
           metadata: JSON.stringify({
             tenantId: membership.tenantId,
             title: title.trim(),
@@ -320,25 +279,7 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const adminClient = createAdminClient();
-
-    const { error } = await (
-      adminClient as unknown as {
-        schema: (s: string) => {
-          from: (t: string) => {
-            delete: () => {
-              eq: (
-                col: string,
-                val: string
-              ) => {
-                eq: (col: string, val: number) => Promise<{ error: unknown }>;
-              };
-            };
-          };
-        };
-      }
-    )
-      .schema('tenant')
+    const { error } = await tenantDb(membership.tenantId)
       .from('tenant_knowledge')
       .delete()
       .eq('tenant_id', membership.tenantId)
@@ -347,9 +288,7 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
     if (error) throw error;
 
     // Audit log — fire-and-forget (ISO 27001 A.12.4)
-    const adminClient2 = createAdminClient();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (adminClient2 as any)
+    createAdminClient()
       .from('audit_log')
       .insert({
         action: 'knowledge.delete',

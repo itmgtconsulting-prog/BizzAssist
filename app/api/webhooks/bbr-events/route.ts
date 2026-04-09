@@ -24,7 +24,7 @@
  * @module api/webhooks/bbr-events
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 
 /** BBR objekt-typer der overvåges */
 const BBR_TYPER = new Set(['Bygning', 'Grund', 'Enhed']);
@@ -93,15 +93,10 @@ export async function POST(request: NextRequest) {
     // ── 3. Match mod tracked objects ─────────────────────────────────────────
     const objektIds = [...new Set(relevantEvents.map((e) => e.entitetUUID))];
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const adminAny = admin as any;
-
-    const { data: matches } = (await adminAny
+    const { data: matches } = await admin
       .from('bbr_tracked_objects')
       .select('tenant_id, bfe_nummer, bbr_object_id')
-      .in('bbr_object_id', objektIds)) as {
-      data: { tenant_id: string; bfe_nummer: string; bbr_object_id: string }[] | null;
-    };
+      .in('bbr_object_id', objektIds);
 
     if (!matches || matches.length === 0) {
       return NextResponse.json({ ok: true, matched: 0 });
@@ -158,8 +153,7 @@ export async function POST(request: NextRequest) {
         const userIds = (members ?? []).map((m: { user_id: string }) => m.user_id);
         if (userIds.length === 0) continue;
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const db = (admin as any).schema(schemaName);
+        const db = tenantDb(schemaName);
 
         for (const userId of userIds) {
           await db.from('notifications').insert({

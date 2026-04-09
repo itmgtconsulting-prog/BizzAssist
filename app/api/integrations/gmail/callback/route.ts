@@ -11,7 +11,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 
 /** Response shape from Google's token endpoint */
 interface GoogleTokenResponse {
@@ -111,10 +111,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const userInfo = (await userRes.json()) as GoogleUserInfo;
 
     // Store in DB
-    const admin = createAdminClient();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error: dbError } = await (admin as any)
-      .schema(tenantId)
+    const { error: dbError } = await tenantDb(tenantId)
       .from('email_integrations')
       .upsert(
         {

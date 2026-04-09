@@ -46,8 +46,7 @@ async function provisionTenantForUser(userId: string, userEmail: string): Promis
         .substring(0, 53);
 
     // 1. Insert tenant row
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error: tenantErr } = await (admin.from('tenants') as any).insert({
+    const { error: tenantErr } = await admin.from('tenants').insert({
       id: tenantId,
       name: userEmail,
       schema_name: schemaName,
@@ -58,8 +57,7 @@ async function provisionTenantForUser(userId: string, userEmail: string): Promis
     }
 
     // 2. Insert membership
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error: memberErr } = await (admin.from('tenant_memberships') as any).insert({
+    const { error: memberErr } = await admin.from('tenant_memberships').insert({
       tenant_id: tenantId,
       user_id: userId,
       role: 'tenant_admin',

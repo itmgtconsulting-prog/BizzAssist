@@ -136,8 +136,7 @@ export async function POST(request: NextRequest) {
     // Lazy-load pdfkit to avoid paying the module-parse cost on cold starts (BIZZ-186)
     const { default: PDFDocument } = await import('pdfkit');
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const doc: any = new PDFDocument({
+    const doc: PDFKit.PDFDocument = new PDFDocument({
       size: 'A4',
       margins: { top: 50, bottom: 50, left: 50, right: 50 },
       info: {

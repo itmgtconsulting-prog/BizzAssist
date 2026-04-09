@@ -70,16 +70,18 @@ async function fetchFromServer(): Promise<RecentSearch[]> {
     const res = await fetch('/api/recents?type=search');
     if (!res.ok) return [];
     const json = await res.json();
-    const recents = json.recents ?? [];
+    const recents: Array<Record<string, unknown>> = json.recents ?? [];
     // Map Supabase rows to RecentSearch
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return recents.map((r: any) => ({
-      query: r.display_name ?? '',
-      ts: r.visited_at ? new Date(r.visited_at).getTime() : Date.now(),
-      resultType: r.entity_data?.resultType ?? undefined,
-      resultTitle: r.entity_data?.resultTitle ?? undefined,
-      resultHref: r.entity_data?.resultHref ?? undefined,
-    }));
+    return recents.map((r) => {
+      const ed = r.entity_data as Record<string, unknown> | undefined;
+      return {
+        query: (r.display_name as string) ?? '',
+        ts: r.visited_at ? new Date(r.visited_at as string).getTime() : Date.now(),
+        resultType: (ed?.resultType as string | undefined) ?? undefined,
+        resultTitle: (ed?.resultTitle as string | undefined) ?? undefined,
+        resultHref: (ed?.resultHref as string | undefined) ?? undefined,
+      };
+    });
   } catch {
     return [];
   }

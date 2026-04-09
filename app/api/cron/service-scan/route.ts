@@ -439,8 +439,7 @@ If you cannot produce a safe, minimal fix → classify as 'rejected' and explain
  */
 async function logActivity(action: string, details: Record<string, unknown>): Promise<void> {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (createAdminClient() as any).from('service_manager_activity').insert({
+    await createAdminClient().from('service_manager_activity').insert({
       action,
       details,
       created_by: null, // Cron runs without a user session
@@ -630,8 +629,7 @@ export async function GET(request: NextRequest) {
   }
 
   const now = new Date();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const admin = createAdminClient() as any;
+  const admin = createAdminClient();
 
   // ── 1. Run the bug scan ───────────────────────────────────────────────────
   let issues: ScanIssue[];

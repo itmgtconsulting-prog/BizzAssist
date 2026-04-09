@@ -12,7 +12,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantId } from '@/lib/api/auth';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 
 /** Request body for sending a Gmail message */
@@ -120,9 +120,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const admin = createAdminClient();
 
   // Fetch stored tokens
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: integration, error: fetchError } = await (admin as any)
-    .schema(tenantId)
+  const { data: integration, error: fetchError } = await tenantDb(tenantId)
     .from('email_integrations')
     .select('access_token, refresh_token, token_expires_at')
     .eq('user_id', userId)
@@ -147,9 +145,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
     accessToken = refreshed.access_token;
     // Update stored token
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (admin as any)
-      .schema(tenantId)
+    await tenantDb(tenantId)
       .from('email_integrations')
       .update({
         access_token: accessToken,
@@ -178,17 +174,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const result = (await gmailRes.json()) as GmailSendResponse;
 
     // Update last_used_at
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (admin as any)
-      .schema(tenantId)
+    await tenantDb(tenantId)
       .from('email_integrations')
       .update({ last_used_at: new Date().toISOString() })
       .eq('user_id', userId)
       .eq('provider', 'gmail');
 
     // Audit log — fire-and-forget (ISO 27001 A.12.4)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (admin as any)
+    admin
       .from('audit_log')
       .insert({
         action: 'integration.gmail.send',

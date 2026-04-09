@@ -50,8 +50,12 @@ import { evaluateAutoApproval, logAutoApproval } from '@/lib/service-manager-rul
  * service_manager_scans). Remove once `supabase gen types` is re-run after
  * migration 021 is applied.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function adminDb(): any {
+/**
+ * Returns the typed admin client for service_manager table operations.
+ *
+ * @returns Typed Supabase admin client
+ */
+function adminDb(): ReturnType<typeof createAdminClient> {
   return createAdminClient();
 }
 

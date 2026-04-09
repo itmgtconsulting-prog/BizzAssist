@@ -121,9 +121,7 @@ async function upsertBatch(
 ): Promise<number> {
   if (batch.length === 0) return 0;
 
-  // Cast needed: sitemap_entries is a new table not yet in generated Supabase types.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { error } = await (admin.from('sitemap_entries') as any).upsert(batch, {
+  const { error } = await admin.from('sitemap_entries').upsert(batch, {
     onConflict: 'type,entity_id',
   });
 
@@ -299,9 +297,8 @@ async function phaseProperties(
   admin: ReturnType<typeof createAdminClient>
 ): Promise<{ page: number; count: number; done: boolean }> {
   // Hent gemte fremskridt
-  // Cast needed: ai_settings er ikke i de genererede Supabase-typer endnu.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: progressRow } = await (admin.from('ai_settings') as any)
+  const { data: progressRow } = await admin
+    .from('ai_settings')
     .select('value')
     .eq('key', DAWA_PROGRESS_KEY)
     .maybeSingle();
@@ -419,9 +416,7 @@ async function saveProgress(
   admin: ReturnType<typeof createAdminClient>,
   page: number
 ): Promise<void> {
-  // Cast needed: ai_settings er ikke i de genererede Supabase-typer endnu.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await (admin.from('ai_settings') as any).upsert(
+  await admin.from('ai_settings').upsert(
     { key: DAWA_PROGRESS_KEY, value: page },
     { onConflict: 'key' }
   );

@@ -5,7 +5,12 @@ import VirksomhedDetaljeClient from './VirksomhedDetaljeClient';
 
 export const dynamic = 'force-dynamic';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export default function CompaniesDetailPage(props: any) {
+/** Next.js App Router page props for dynamic route /dashboard/companies/[cvr] */
+interface CompaniesDetailPageProps {
+  params: Promise<{ cvr: string }>;
+  searchParams?: Promise<Record<string, string | string[]>>;
+}
+
+export default function CompaniesDetailPage(props: CompaniesDetailPageProps) {
   return <VirksomhedDetaljeClient {...props} />;
 }

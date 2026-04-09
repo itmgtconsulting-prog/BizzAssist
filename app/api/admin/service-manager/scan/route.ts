@@ -264,10 +264,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'scanId påkrævet' }, { status: 400 });
     }
 
-    // Cast admin to any: service_manager_scans is not yet in the generated
-    // Database type — remove cast once `supabase gen types` is re-run.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const admin = createAdminClient() as any;
+    const admin = createAdminClient();
 
     // Mark scan as running (idempotent — may already be 'running' from insert)
     await admin.from('service_manager_scans').update({ status: 'running' }).eq('id', scanId);

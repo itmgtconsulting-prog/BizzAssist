@@ -96,15 +96,17 @@ async function fetchFromServer(): Promise<RecentPerson[]> {
     const res = await fetch('/api/recents?type=person');
     if (!res.ok) return [];
     const json = await res.json();
-    const recents = json.recents ?? [];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return recents.map((r: any) => ({
-      enhedsNummer: Number(r.entity_id),
-      name: r.display_name ?? '',
-      erVirksomhed: r.entity_data?.erVirksomhed ?? false,
-      antalVirksomheder: r.entity_data?.antalVirksomheder ?? 0,
-      visitedAt: r.visited_at ? new Date(r.visited_at).getTime() : Date.now(),
-    }));
+    const recents: Array<Record<string, unknown>> = json.recents ?? [];
+    return recents.map((r) => {
+      const ed = r.entity_data as Record<string, unknown> | undefined;
+      return {
+        enhedsNummer: Number(r.entity_id),
+        name: (r.display_name as string) ?? '',
+        erVirksomhed: (ed?.erVirksomhed as boolean) ?? false,
+        antalVirksomheder: (ed?.antalVirksomheder as number) ?? 0,
+        visitedAt: r.visited_at ? new Date(r.visited_at as string).getTime() : Date.now(),
+      };
+    });
   } catch {
     return [];
   }

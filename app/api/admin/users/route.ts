@@ -15,7 +15,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 
 /**
  * Inserts a row into audit_log using an untyped client cast.
@@ -30,8 +30,7 @@ async function insertAuditLog(
   entry: { action: string; resource_type: string; resource_id: string; metadata: string }
 ): Promise<void> {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (client as any).from('audit_log').insert(entry);
+    await client.from('audit_log').insert(entry);
   } catch (e: unknown) {
     console.error('[audit] Failed to insert audit log:', e);
   }
@@ -254,8 +253,7 @@ export async function DELETE(req: NextRequest): Promise<NextResponse> {
     // Also marks the tenant as closed so the nightly purge cron can enforce
     // the 30-day post-closure GDPR erasure (BIZZ-131).
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: membership } = await (admin as any)
+      const { data: membership } = await admin
         .from('tenant_memberships')
         .select('tenant_id')
         .eq('user_id', targetUser.id)
@@ -265,8 +263,7 @@ export async function DELETE(req: NextRequest): Promise<NextResponse> {
       if (membership?.tenant_id) {
         const tenantId: string = membership.tenant_id;
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: tenantRow } = await (admin as any)
+        const { data: tenantRow } = await admin
           .from('tenants')
           .select('schema_name')
           .eq('id', tenantId)
@@ -276,10 +273,7 @@ export async function DELETE(req: NextRequest): Promise<NextResponse> {
 
         if (schemaName) {
           // Delete from each tenant-schema table where user_id matches.
-          // Cast to unknown first — Supabase generated types only cover the public schema.
-          const db = (
-            admin as unknown as { schema: (s: string) => ReturnType<typeof createAdminClient> }
-          ).schema(schemaName);
+          const db = tenantDb(schemaName);
 
           await db.from('recent_entities').delete().eq('user_id', targetUser.id);
           await db.from('saved_entities').delete().eq('user_id', targetUser.id);
@@ -316,10 +310,8 @@ export async function DELETE(req: NextRequest): Promise<NextResponse> {
 
         // Delete tenant membership and tenant record so re-registration with the
         // same email starts from a clean slate (no orphaned rows).
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (admin as any).from('tenant_memberships').delete().eq('tenant_id', tenantId);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (admin as any).from('tenants').delete().eq('id', tenantId);
+        await admin.from('tenant_memberships').delete().eq('tenant_id', tenantId);
+        await admin.from('tenants').delete().eq('id', tenantId);
       }
     } catch (cascadeErr) {
       // Non-critical path — log but do not abort deletion.

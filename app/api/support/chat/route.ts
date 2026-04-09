@@ -26,7 +26,7 @@ import { NextRequest } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import * as Sentry from '@sentry/nextjs';
 import { createClient } from '@/lib/supabase/server';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { checkRateLimit, aiRateLimit } from '@/app/lib/rateLimit';
 
 export const runtime = 'nodejs';
@@ -102,8 +102,7 @@ function minutesUntil(until: string): number {
  * @param currentCount - Current violation_count (0 if first offence)
  */
 async function applyAbuseLockout(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  adminClient: any,
+  adminClient: ReturnType<typeof createAdminClient>,
   userId: string,
   currentCount: number
 ): Promise<void> {
@@ -114,7 +113,7 @@ async function applyAbuseLockout(
     ? null
     : new Date(Date.now() + minutesToLock! * 60_000).toISOString();
 
-  await adminClient.schema('public').from('support_chat_abuse').upsert(
+  await adminClient.from('support_chat_abuse').upsert(
     {
       user_id: userId,
       violation_count: newCount,
@@ -146,13 +145,11 @@ export async function POST(request: NextRequest): Promise<Response> {
   const adminClient = createAdminClient();
 
   // ── Abuse check — runs BEFORE calling Claude to avoid wasting tokens ──
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const publicDb = (adminClient as unknown as { schema: (s: string) => any }).schema('public');
-  const { data: abuseRow } = (await publicDb
+  const { data: abuseRow } = await adminClient
     .from('support_chat_abuse')
     .select('violation_count, locked_until, permanently_locked')
     .eq('user_id', user.id)
-    .maybeSingle()) as { data: AbuseRow | null };
+    .maybeSingle();
 
   if (abuseRow?.permanently_locked) {
     return Response.json(
@@ -200,17 +197,12 @@ export async function POST(request: NextRequest): Promise<Response> {
     monthStart.setDate(1);
     monthStart.setHours(0, 0, 0, 0);
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const db = (adminClient as unknown as { schema: (s: string) => any }).schema(
-      schemaName ?? 'tenant'
-    );
-    const { data: usageRows } = (await db
+    const db = tenantDb(schemaName ?? 'tenant');
+    const { data: usageRows } = await db
       .from('support_chat_sessions')
       .select('tokens_used')
       .eq('user_id', user.id)
-      .gte('created_at', monthStart.toISOString())) as {
-      data: Array<{ tokens_used: number }> | null;
-    };
+      .gte('created_at', monthStart.toISOString());
 
     const monthlyUsed = (usageRows ?? []).reduce(
       (sum: number, r: { tokens_used: number }) => sum + (r.tokens_used ?? 0),

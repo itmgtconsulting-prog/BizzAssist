@@ -30,7 +30,7 @@
 import { revalidatePath } from 'next/cache';
 import { NextRequest, NextResponse } from 'next/server';
 
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 
 /** Maximum number of popular BFE numbers to revalidate per run */
 const MAX_BFE = 50;
@@ -113,8 +113,7 @@ async function fetchTopBfeNumbers(): Promise<BfeCount[]> {
 
   for (const tenant of tenants) {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const db = (admin as any).schema(tenant.schema_name);
+      const db = tenantDb(tenant.schema_name);
 
       // Fetch raw activity_log rows for this tenant (PostgREST cannot GROUP BY
       // on a JSONB sub-key via the JS client, so we do aggregation in JS)

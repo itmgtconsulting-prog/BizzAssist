@@ -98,3 +98,38 @@ export function createAdminClient(): SupabaseClient<Database> {
 
   return _adminClient;
 }
+
+// ---------------------------------------------------------------------------
+// Typed helpers for cross-schema (tenant-scoped) queries
+// ---------------------------------------------------------------------------
+
+/**
+ * The return type of `.schema()` on the admin client when targeting a
+ * per-tenant schema. TypeScript cannot express dynamic schema names (e.g.
+ * `tenant_abc123`), so we use the `tenant` key defined in the `Database` type
+ * as a representative shape, then cast the actual runtime string at call time.
+ *
+ * This type alias lets callers annotate `db` parameters without `any`.
+ */
+export type TenantDb = ReturnType<SupabaseClient<Database, 'tenant'>['schema']>;
+
+/**
+ * Returns a PostgREST client scoped to a specific tenant's PostgreSQL schema.
+ *
+ * Under the hood this calls `.schema(schemaName)` on the admin client, which
+ * returns a typed PostgREST client. Because the Database type uses `tenant`
+ * as a representative key for all per-tenant schemas, we cast the schema name
+ * to `'tenant'` — the runtime value is the real schema name (e.g.
+ * `tenant_abc123`), which Supabase/PostgREST forwards as the
+ * `Accept-Profile` header.
+ *
+ * @param schemaName - The actual PostgreSQL schema name (e.g. `tenant_abc123`)
+ * @returns Typed PostgREST client scoped to the given schema
+ */
+export function tenantDb(schemaName: string): TenantDb {
+  const admin = createAdminClient();
+  // We cast the schema name to 'tenant' so the compiler treats the result
+  // as typed against our TenantSchemaShape rather than falling back to `any`.
+  // The runtime value is the real dynamic schema name.
+  return admin.schema(schemaName as 'tenant');
+}

@@ -105,8 +105,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         updatePayload['cvr_number'] = companyCvr.trim();
       }
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { error: updateErr } = await (admin.from('tenants') as any)
+      const { error: updateErr } = await admin
+        .from('tenants')
         .update(updatePayload)
         .eq('id', tenantId);
 
@@ -119,8 +119,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
 
       // Audit log — fire-and-forget (ISO 27001 A.12.4)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (admin as any)
+      admin
         .from('audit_log')
         .insert({
           action: 'onboarding.save',

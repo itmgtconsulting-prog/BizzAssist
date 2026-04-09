@@ -16,6 +16,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import type Stripe from 'stripe';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { stripe, getStripePriceId } from '@/app/lib/stripe';
@@ -96,7 +97,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 
     // ── 4. Create Checkout session ──
-    const sessionConfig: Record<string, unknown> = {
+    const sessionConfig: Stripe.Checkout.SessionCreateParams = {
       mode: 'subscription',
       payment_method_types: ['card'],
       currency: 'dkk',
@@ -126,11 +127,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     if (existingCustomerId) {
       sessionConfig.customer = existingCustomerId;
     } else {
-      sessionConfig.customer_email = user.email;
+      sessionConfig.customer_email = user.email ?? undefined;
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const session = await stripe.checkout.sessions.create(sessionConfig as any);
+    const session = await stripe.checkout.sessions.create(sessionConfig);
 
     if (!session.url) {
       return NextResponse.json({ error: 'Failed to create checkout session' }, { status: 500 });
@@ -139,8 +139,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     // Audit log — fire-and-forget (ISO 27001 A.12.4)
     Promise.resolve()
       .then(() =>
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (admin as any).from('audit_log').insert({
+        admin.from('audit_log').insert({
           action: 'stripe.checkout.create',
           resource_type: 'checkout_session',
           resource_id: session.id,

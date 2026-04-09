@@ -14,43 +14,8 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
-
-// ─── Supabase schema type helpers ────────────────────────────────────────────
-
-type AdminSchema = {
-  schema: (s: string) => SchemaBuilder;
-};
-
-type SchemaBuilder = {
-  from: (table: string) => TableBuilder;
-};
-
-type TableBuilder = {
-  select: (cols: string) => SelectBuilder;
-  update: (patch: Record<string, unknown>) => UpdateBuilder;
-};
-
-type SelectBuilder = {
-  eq: (col: string, val: string | number | boolean) => SelectBuilder;
-  single: () => Promise<{ data: TokenRow | null; error: unknown }>;
-};
-
-type UpdateBuilder = {
-  eq: (col: string, val: string | number | boolean) => UpdateBuilder;
-  select: (cols: string) => {
-    single: () => Promise<{ data: TokenRow | null; error: unknown }>;
-  };
-};
-
-/** Minimal token row shape needed for ownership checks. */
-interface TokenRow {
-  id: number;
-  tenant_id: string;
-  user_id: string;
-  revoked: boolean;
-}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -66,18 +31,16 @@ async function resolveTenantMembership(
 ): Promise<{ tenantId: string; role: string } | null> {
   const adminClient = createAdminClient();
   const { data } = await adminClient
-    .from('tenant_memberships' as never)
+    .from('tenant_memberships')
     .select('tenant_id, role')
-    .eq('user_id' as never, userId)
+    .eq('user_id', userId)
     .limit(1)
     .single();
 
-  if (!data) return null;
-  const row = data as Record<string, unknown>;
-  if (!row['tenant_id']) return null;
+  if (!data?.tenant_id) return null;
   return {
-    tenantId: row['tenant_id'] as string,
-    role: row['role'] as string,
+    tenantId: data.tenant_id,
+    role: data.role,
   };
 }
 
@@ -124,8 +87,7 @@ export async function DELETE(
     const adminClient = createAdminClient();
 
     // ── Fetch the token to verify ownership ──
-    const { data: token, error: fetchError } = await (adminClient as unknown as AdminSchema)
-      .schema('tenant')
+    const { data: token, error: fetchError } = await tenantDb(membership.tenantId)
       .from('api_tokens')
       .select('id, tenant_id, user_id, revoked')
       .eq('id', id)
@@ -152,8 +114,7 @@ export async function DELETE(
     }
 
     // ── Soft-revoke ──
-    const { error: updateError } = await (adminClient as unknown as AdminSchema)
-      .schema('tenant')
+    const { error: updateError } = await tenantDb(membership.tenantId)
       .from('api_tokens')
       .update({ revoked: true })
       .eq('id', id)
@@ -164,9 +125,7 @@ export async function DELETE(
     if (updateError) throw updateError;
 
     // Audit log — fire-and-forget (ISO 27001 A.12.4 — access token lifecycle)
-    const adminClient2 = createAdminClient();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (adminClient2 as any)
+    createAdminClient()
       .from('audit_log')
       .insert({
         action: 'api_token.revoke',

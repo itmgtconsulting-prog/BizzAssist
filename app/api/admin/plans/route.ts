@@ -52,8 +52,7 @@ async function insertAuditLog(
   entry: { action: string; resource_type: string; resource_id: string; metadata: string }
 ): Promise<void> {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (admin as any).from('audit_log').insert(entry);
+    await admin.from('audit_log').insert(entry);
   } catch (e: unknown) {
     console.error('[audit] Failed to insert audit log:', e);
   }

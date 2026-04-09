@@ -283,8 +283,7 @@ export async function logAutoApproval(
   extraDetails: Record<string, unknown> = {}
 ): Promise<void> {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (createAdminClient() as any).from('service_manager_activity').insert({
+    await createAdminClient().from('service_manager_activity').insert({
       action: 'auto_approved',
       details: {
         fix_id: fixId,

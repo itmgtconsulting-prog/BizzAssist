@@ -18,7 +18,7 @@ import {
   X,
   MapPin,
   Navigation,
-  MessageSquare as _MessageSquare,
+  MessageSquare,
   Loader2,
   ArrowRight,
   Shield,
@@ -58,15 +58,13 @@ import { initCacheUserId, clearCacheUserId } from '@/app/lib/trackedEjendomme';
  */
 const navItems = [
   { icon: LayoutDashboard, key: 'overview' as const, href: '/dashboard', adminOnly: false },
+  { icon: Search, key: 'search' as const, href: '/dashboard/search', adminOnly: false },
   { icon: Building2, key: 'properties' as const, href: '/dashboard/ejendomme', adminOnly: false },
   { icon: Briefcase, key: 'companies' as const, href: '/dashboard/companies', adminOnly: false },
   { icon: Users, key: 'owners' as const, href: '/dashboard/owners', adminOnly: false },
   { icon: Map, key: 'map' as const, href: '/dashboard/kort', adminOnly: false },
-  // BIZZ-168: AI Analyse visible in development only — hidden in test/prod until UX is finalized.
-  // process.env.NODE_ENV is replaced at build time by Next.js, so the item is tree-shaken in prod.
-  ...(process.env.NODE_ENV === 'development'
-    ? [{ icon: BarChart2, key: 'analysis' as const, href: '/dashboard/analysis', adminOnly: false }]
-    : []),
+  { icon: BarChart2, key: 'analysis' as const, href: '/dashboard/analysis', adminOnly: false },
+  { icon: MessageSquare, key: 'chat' as const, href: '/dashboard/chat', adminOnly: false },
   { icon: Shield, key: 'admin' as const, href: '/dashboard/admin/users', adminOnly: true },
 ];
 

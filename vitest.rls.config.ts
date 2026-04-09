@@ -28,7 +28,8 @@ export default defineConfig({
     hookTimeout: 30000,
     // Run serially — these tests depend on shared auth state set up in beforeAll
     pool: 'forks',
-    singleFork: true,
+    sequence: { concurrent: false },
+    fileParallelism: false,
   },
   resolve: {
     alias: {

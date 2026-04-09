@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { createClient } from '@/lib/supabase/server';
+import { sanitise } from '@/app/lib/pdfSanitise';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -140,7 +141,7 @@ export async function POST(request: NextRequest) {
       size: 'A4',
       margins: { top: 50, bottom: 50, left: 50, right: 50 },
       info: {
-        Title: `Ejendomsrapport — ${payload.adresse}`,
+        Title: `Ejendomsrapport — ${sanitise(payload.adresse)}`,
         Author: 'BizzAssist',
         Subject: 'Ejendomsrapport',
       },
@@ -235,12 +236,16 @@ export async function POST(request: NextRequest) {
     doc.y = 105;
 
     // ── Adresse ──
-    doc.fontSize(16).font('Helvetica-Bold').fillColor('#0f172a').text(payload.adresse, 50);
+    doc
+      .fontSize(16)
+      .font('Helvetica-Bold')
+      .fillColor('#0f172a')
+      .text(sanitise(payload.adresse), 50);
     doc.moveDown(0.2);
     const subParts: string[] = [];
-    if (payload.kommune) subParts.push(payload.kommune + ' Kommune');
+    if (payload.kommune) subParts.push(sanitise(payload.kommune) + ' Kommune');
     if (payload.bfeNummer) subParts.push('BFE ' + payload.bfeNummer);
-    if (payload.matrikelnr) subParts.push('Matr. ' + payload.matrikelnr);
+    if (payload.matrikelnr) subParts.push('Matr. ' + sanitise(payload.matrikelnr));
     if (subParts.length > 0) {
       doc.fontSize(9).font('Helvetica').fillColor('#64748b').text(subParts.join('  ·  '));
     }
@@ -276,21 +281,24 @@ export async function POST(request: NextRequest) {
           .fontSize(10)
           .font('Helvetica-Bold')
           .fillColor('#1e3a5f')
-          .text(`Bygning ${idx + 1}${byg.anvendelsestekst ? ' — ' + byg.anvendelsestekst : ''}`);
+          .text(
+            `Bygning ${idx + 1}${byg.anvendelsestekst ? ' — ' + sanitise(byg.anvendelsestekst) : ''}`
+          );
         doc.moveDown(0.15);
         doc.font('Helvetica').fillColor('#1e293b');
         if (byg.opfoerelsesaar) kvLine('Opførelsesår', String(byg.opfoerelsesaar));
         if (byg.bygningsareal) kvLine('Bygningsareal', byg.bygningsareal + ' m²');
         if (byg.boligareal) kvLine('Boligareal', byg.boligareal + ' m²');
         if (byg.etager) kvLine('Etager', String(byg.etager));
-        if (byg.tagmateriale) kvLine('Tagmateriale', byg.tagmateriale);
-        if (byg.ydervaeggene) kvLine('Ydervægge', byg.ydervaeggene);
-        if (byg.varmeinstallation) kvLine('Varmeinstallation', byg.varmeinstallation);
-        if (byg.opvarmningsform) kvLine('Opvarmningsform', byg.opvarmningsform);
-        if (byg.supplerendeVarme) kvLine('Supplerende varme', byg.supplerendeVarme);
-        if (byg.vandforsyning) kvLine('Vandforsyning', byg.vandforsyning);
-        if (byg.bevaringsvaerdighed) kvLine('Bevaringsværdighed', byg.bevaringsvaerdighed);
-        if (byg.energimaerke) kvLine('Energimærke', byg.energimaerke);
+        if (byg.tagmateriale) kvLine('Tagmateriale', sanitise(byg.tagmateriale));
+        if (byg.ydervaeggene) kvLine('Ydervægge', sanitise(byg.ydervaeggene));
+        if (byg.varmeinstallation) kvLine('Varmeinstallation', sanitise(byg.varmeinstallation));
+        if (byg.opvarmningsform) kvLine('Opvarmningsform', sanitise(byg.opvarmningsform));
+        if (byg.supplerendeVarme) kvLine('Supplerende varme', sanitise(byg.supplerendeVarme));
+        if (byg.vandforsyning) kvLine('Vandforsyning', sanitise(byg.vandforsyning));
+        if (byg.bevaringsvaerdighed)
+          kvLine('Bevaringsværdighed', sanitise(byg.bevaringsvaerdighed));
+        if (byg.energimaerke) kvLine('Energimærke', sanitise(byg.energimaerke));
       });
     }
 
@@ -298,9 +306,9 @@ export async function POST(request: NextRequest) {
     if (payload.ejere && payload.ejere.length > 0) {
       sectionTitle('Ejerskab');
       const rows = payload.ejere.map((e) => [
-        e.navn ?? '–',
+        sanitise(e.navn),
         e.ejertype === 'selskab' ? 'Selskab' : e.ejertype === 'person' ? 'Person' : '–',
-        e.cvr ?? '–',
+        sanitise(e.cvr),
         e.ejerandel ? `${e.ejerandel.taeller}/${e.ejerandel.naevner}` : '–',
       ]);
       simpleTable(['Navn', 'Type', 'CVR', 'Andel'], rows, [180, 80, 80, 80]);
@@ -311,7 +319,11 @@ export async function POST(request: NextRequest) {
       sectionTitle('Salgshistorik');
       const rows = payload.salgshistorik
         .sort((a, b) => (b.koebsaftaleDato ?? '').localeCompare(a.koebsaftaleDato ?? ''))
-        .map((h) => [dato(h.koebsaftaleDato), dkk(h.kontantKoebesum), h.overdragelsesmaade ?? '–']);
+        .map((h) => [
+          dato(h.koebsaftaleDato),
+          dkk(h.kontantKoebesum),
+          sanitise(h.overdragelsesmaade),
+        ]);
       simpleTable(['Dato', 'Kontant købesum', 'Overdragelsesmåde'], rows, [100, 180, 180]);
     }
 
@@ -319,7 +331,7 @@ export async function POST(request: NextRequest) {
     if (payload.matrikel && payload.matrikel.length > 0) {
       sectionTitle('Matrikeldata');
       for (const js of payload.matrikel) {
-        kvLine('Matrikelnr.', js.matrikelnummer ?? '–');
+        kvLine('Matrikelnr.', sanitise(js.matrikelnummer));
         if (js.registreretAreal) kvLine('Registreret areal', js.registreretAreal + ' m²');
         if (js.vejareal) kvLine('Vejareal', js.vejareal + ' m²');
         if (js.fredskov) kvLine('Fredskov', 'Ja');
@@ -331,10 +343,10 @@ export async function POST(request: NextRequest) {
     if (payload.plandata && payload.plandata.length > 0) {
       sectionTitle('Plandata');
       const rows = payload.plandata.map((p) => [
-        p.type ?? '–',
-        p.navn ?? '–',
-        p.nummer ?? '–',
-        p.status ?? '–',
+        sanitise(p.type),
+        sanitise(p.navn),
+        sanitise(p.nummer),
+        sanitise(p.status),
       ]);
       simpleTable(['Type', 'Navn', 'Nr.', 'Status'], rows, [90, 220, 80, 80]);
     }
@@ -345,9 +357,9 @@ export async function POST(request: NextRequest) {
       doc.fontSize(9).fillColor('#16a34a').text('Ingen forureningsregistreringer fundet.');
     } else if (payload.jordforurening && payload.jordforurening.length > 0) {
       for (const j of payload.jordforurening) {
-        kvLine('Status', j.pollutionStatusCodeText ?? '–');
+        kvLine('Status', sanitise(j.pollutionStatusCodeText));
         if (j.locationNames && j.locationNames.length > 0) {
-          kvLine('Lokalitet', j.locationNames.join(', '));
+          kvLine('Lokalitet', sanitise(j.locationNames.map((n) => sanitise(n)).join(', ')));
         }
         doc.moveDown(0.2);
       }
@@ -379,7 +391,8 @@ export async function POST(request: NextRequest) {
 
     const pdfBuffer = await pdfReady;
 
-    const filename = `BizzAssist_${payload.adresse.replace(/[^a-zA-Z0-9æøåÆØÅ ]/g, '').replace(/\s+/g, '_')}.pdf`;
+    const safeAdresse = sanitise(payload.adresse, 200);
+    const filename = `BizzAssist_${safeAdresse.replace(/[^a-zA-Z0-9æøåÆØÅ ]/g, '').replace(/\s+/g, '_')}.pdf`;
 
     return new NextResponse(new Uint8Array(pdfBuffer), {
       status: 200,

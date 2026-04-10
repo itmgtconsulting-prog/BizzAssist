@@ -249,6 +249,23 @@ export default function OnboardingClient() {
   }, [router]);
 
   /**
+   * Eagerly mark onboarding as complete the moment the user reaches the final
+   * step (renderDone). This prevents a redirect loop on mobile where a user can
+   * tap one of the quick-start <Link> elements before clicking "Gå til dashboard",
+   * which navigates away without ever calling handleComplete(). Without this flag
+   * being set, the dashboard gate redirects them back to /onboarding indefinitely.
+   *
+   * handleComplete() sets the same flag again when the form is submitted — no regression.
+   */
+  useEffect(() => {
+    if (step !== TOTAL_STEPS - 1) return;
+    const supabase = createClient();
+    supabase.auth.updateUser({ data: { onboarding_complete: true } }).catch(() => {
+      // Non-fatal — handleComplete will set the flag again on explicit submit
+    });
+  }, [step]);
+
+  /**
    * Fetch CVR company suggestions from the internal CVR autocomplete endpoint.
    * Debounced via useEffect in the input handler.
    *
@@ -898,12 +915,12 @@ export default function OnboardingClient() {
 
       {saveError && <p className="text-xs text-red-400 text-center mb-4">{saveError}</p>}
 
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-3">
         <button
           type="button"
           onClick={goBack}
           disabled={saving}
-          className="inline-flex items-center gap-1.5 text-sm text-slate-400 hover:text-white transition-colors disabled:opacity-50"
+          className="inline-flex items-center justify-center gap-1.5 text-sm text-slate-400 hover:text-white transition-colors disabled:opacity-50"
         >
           <ArrowLeft size={15} />
           {da ? 'Tilbage' : 'Back'}
@@ -911,7 +928,7 @@ export default function OnboardingClient() {
         <button
           type="submit"
           disabled={saving}
-          className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-sm px-6 py-2.5 rounded-xl transition-colors disabled:opacity-60"
+          className="inline-flex items-center justify-center gap-2 w-full sm:w-auto bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-sm px-6 py-3 sm:py-2.5 rounded-xl transition-colors disabled:opacity-60"
         >
           {saving ? (
             <>

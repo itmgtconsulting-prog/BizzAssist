@@ -145,21 +145,27 @@ export async function checkRateLimit(
   limiter: Ratelimit
 ): Promise<NextResponse | null> {
   const identifier = getClientKey(req);
-  const { success, limit, remaining, reset } = await limiter.limit(identifier);
+  try {
+    const { success, limit, remaining, reset } = await limiter.limit(identifier);
 
-  if (!success) {
-    return NextResponse.json(
-      { error: 'Too many requests — try again later', code: 'RATE_LIMIT_EXCEEDED' },
-      {
-        status: 429,
-        headers: {
-          'X-RateLimit-Limit': limit.toString(),
-          'X-RateLimit-Remaining': remaining.toString(),
-          'X-RateLimit-Reset': reset.toString(),
-          'Retry-After': Math.ceil((reset - Date.now()) / 1000).toString(),
-        },
-      }
-    );
+    if (!success) {
+      return NextResponse.json(
+        { error: 'Too many requests — try again later', code: 'RATE_LIMIT_EXCEEDED' },
+        {
+          status: 429,
+          headers: {
+            'X-RateLimit-Limit': limit.toString(),
+            'X-RateLimit-Remaining': remaining.toString(),
+            'X-RateLimit-Reset': reset.toString(),
+            'Retry-After': Math.ceil((reset - Date.now()) / 1000).toString(),
+          },
+        }
+      );
+    }
+  } catch {
+    // Fail open: Redis errors (malformed URL, network timeout) must never
+    // block legitimate requests. Log only — no PII.
+    console.error('[rateLimit] Redis error — skipping rate limit (fail open)');
   }
 
   return null;

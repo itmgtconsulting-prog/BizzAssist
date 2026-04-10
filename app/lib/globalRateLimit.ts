@@ -197,6 +197,8 @@ export function buildRateLimitResponse(
  * - If `userId` is provided, uses the higher authenticated-user limit keyed
  *   by user ID so tokens are not shared across users.
  * - Otherwise falls back to the anonymous IP-keyed limit.
+ * - On any Redis error (e.g. malformed URL, network failure), fails open
+ *   (returns `null`) so a broken Redis instance never takes down the app.
  *
  * Returns `null` when the request is allowed, or a 429 `NextResponse` when
  * the limit is exceeded.
@@ -228,10 +230,17 @@ export async function applyGlobalRateLimit(
     limiter = getAnonLimiter();
   }
 
-  const { success, limit, remaining, reset } = await limiter.limit(identifier);
+  try {
+    const { success, limit, remaining, reset } = await limiter.limit(identifier);
 
-  if (!success) {
-    return buildRateLimitResponse(limit, remaining, reset);
+    if (!success) {
+      return buildRateLimitResponse(limit, remaining, reset);
+    }
+  } catch {
+    // Fail open: a Redis error (e.g. malformed UPSTASH_REDIS_REST_URL with trailing
+    // newline, network timeout, or cold-start race) must never crash the middleware
+    // and return 500 to every user. Log only — no PII.
+    console.error('[globalRateLimit] Redis error — skipping rate limit (fail open)');
   }
 
   return null;

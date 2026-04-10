@@ -232,9 +232,13 @@ export async function GET(req: NextRequest) {
   const ejerDetaljer: ChainEjerDetalje[] = [];
   let ejereFound = false;
 
+  // Forward the caller's session cookie so internal API routes can authenticate.
+  const cookieHeader = req.headers.get('cookie') ?? '';
+
   // Trin 1: Prøv Tinglysning API — har navne, adkomsttype, evt. CVR
   try {
     const tlRes = await fetch(`${req.nextUrl.origin}/api/tinglysning?bfe=${bfe}`, {
+      headers: { cookie: cookieHeader },
       signal: AbortSignal.timeout(12000),
     });
     if (tlRes.ok) {
@@ -244,6 +248,7 @@ export async function GET(req: NextRequest) {
         const tlSumRes = await fetch(
           `${req.nextUrl.origin}/api/tinglysning/summarisk?uuid=${tlData.uuid}`,
           {
+            headers: { cookie: cookieHeader },
             signal: AbortSignal.timeout(12000),
           }
         );
@@ -367,6 +372,7 @@ export async function GET(req: NextRequest) {
   if (!ejereFound) {
     try {
       const ejRes = await fetch(`${req.nextUrl.origin}/api/ejerskab?bfeNummer=${bfe}`, {
+        headers: { cookie: cookieHeader },
         signal: AbortSignal.timeout(10000),
       });
       if (ejRes.ok) {

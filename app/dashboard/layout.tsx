@@ -344,7 +344,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
       try {
         const { data } = await supabase.auth.getUser();
         const email = data.user?.email;
-        console.log('[checkAccess] client getUser email:', email);
+        console.log('[checkAccess] client getUser email: [redacted]');
         if (email) {
           // BIZZ-180: Namespace localStorage cache keys with user ID
           if (data.user?.id) initCacheUserId(data.user.id);

@@ -11,7 +11,20 @@ import path from 'path';
  *  - They use real credentials that must only run in trusted CI environments
  *
  * Run: npm run test:rls
- * Requires: RLS_TEST=true environment variable
+ * Requires the following environment variables (never hardcode credentials):
+ *   RLS_TEST=true                              — enables the test suite
+ *   RLS_TEST_EMAIL_1=<tenant-a-email>          — tenant A login email
+ *   RLS_TEST_PASSWORD_1=<tenant-a-password>    — tenant A login password
+ *   RLS_TEST_EMAIL_2=<tenant-b-email>          — tenant B login email
+ *   RLS_TEST_PASSWORD_2=<tenant-b-password>    — tenant B login password
+ *
+ * Example:
+ *   RLS_TEST=true \
+ *   RLS_TEST_EMAIL_1=jjrchefen@hotmail.com \
+ *   RLS_TEST_PASSWORD_1=<password> \
+ *   RLS_TEST_EMAIL_2=rls-test-tenant-b@bizzassist-test.internal \
+ *   RLS_TEST_PASSWORD_2=<password> \
+ *   npm run test:rls
  *
  * ISO 27001 A.9 (Access Control) — verifies RLS tenant isolation enforcement.
  * BIZZ-141 / BIZZ-142 / BIZZ-143 / BIZZ-144 — regression guard.

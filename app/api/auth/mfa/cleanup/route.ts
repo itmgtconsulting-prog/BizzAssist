@@ -51,7 +51,7 @@ export async function POST(): Promise<NextResponse> {
       });
       if (deleteError) {
         // Log but continue — delete remaining factors even if one fails
-        console.error('[mfa/cleanup] deleteFactor error:', factor.id, deleteError.message);
+        console.error('[mfa/cleanup] deleteFactor error:', deleteError.message);
       } else {
         deleted++;
       }

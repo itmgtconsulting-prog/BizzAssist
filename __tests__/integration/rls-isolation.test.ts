@@ -54,14 +54,18 @@ const ANON_KEY =
 const SERVICE_ROLE_KEY =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Indrend4Zmh5Zm12Z2xycXRtZWJ3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NTY2NjU3NSwiZXhwIjoyMDkxMjQyNTc1fQ.j9McWuGVDL9gDN9ZebjOqQOd89E7m4CA1AMqnmy5Je0';
 
-/** Tenant A — the existing dev tenant (jjrchefen@hotmail.com / Kongen72) */
+/**
+ * Tenant A — the existing dev tenant.
+ * Credentials are read from environment variables — never hardcode passwords.
+ * Required env vars: RLS_TEST_EMAIL_1, RLS_TEST_PASSWORD_1
+ */
 const TENANT_A = {
-  email: 'jjrchefen@hotmail.com',
-  password: 'Kongen72',
+  email: process.env['RLS_TEST_EMAIL_1'] || '',
+  password: process.env['RLS_TEST_PASSWORD_1'] || '',
   tenantId: 'de24c450-9181-43f5-b93b-69eee7519988',
   userId: 'ce8cb5f8-32ed-475d-a742-f9f26c898218',
   schemaName: 'tenant_jakob_dev',
-} as const;
+};
 
 /**
  * Tenant B — isolated test tenant provisioned for RLS tests.
@@ -69,14 +73,16 @@ const TENANT_A = {
  *   Tenant ID: fef40549-ce5c-4d3f-baeb-3207ae140504
  *   Schema:    tenant_rls_test_b
  *   Role:      tenant_member (not admin)
+ * Credentials are read from environment variables — never hardcode passwords.
+ * Required env vars: RLS_TEST_EMAIL_2, RLS_TEST_PASSWORD_2
  */
 const TENANT_B = {
-  email: 'rls-test-tenant-b@bizzassist-test.internal',
-  password: 'RlsTest2026!',
+  email: process.env['RLS_TEST_EMAIL_2'] || '',
+  password: process.env['RLS_TEST_PASSWORD_2'] || '',
   tenantId: 'fef40549-ce5c-4d3f-baeb-3207ae140504',
   userId: 'f9bfebf3-1dcb-4b58-9134-ccf345b7fdc4',
   schemaName: 'tenant_rls_test_b',
-} as const;
+};
 
 /**
  * Entity ID seeded into public.recent_entities for tenant B.
@@ -157,6 +163,19 @@ let adminClient: SupabaseClient;
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
 beforeAll(async () => {
+  if (
+    !process.env['RLS_TEST'] ||
+    !process.env['RLS_TEST_PASSWORD_1'] ||
+    !process.env['RLS_TEST_PASSWORD_2'] ||
+    !process.env['RLS_TEST_EMAIL_1'] ||
+    !process.env['RLS_TEST_EMAIL_2']
+  ) {
+    console.log(
+      'Skipping RLS tests — required env vars not set. ' +
+        'Required: RLS_TEST, RLS_TEST_EMAIL_1, RLS_TEST_PASSWORD_1, RLS_TEST_EMAIL_2, RLS_TEST_PASSWORD_2',
+    );
+    return;
+  }
   anonClient = makeAnonClient();
   adminClient = makeAdminClient();
   clientA = await makeAuthenticatedClient(TENANT_A.email, TENANT_A.password);

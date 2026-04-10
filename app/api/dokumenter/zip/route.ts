@@ -62,6 +62,152 @@ const DOC_TIMEOUT_TUNG_MS = 90000;
 const PDF_MAGIC = [0x25, 0x50, 0x44, 0x46] as const;
 
 /**
+ * Tilladte eksterne hostnames som ZIP-ruten må hente dokumenter fra.
+ *
+ * Alle andre eksterne hosts afvises for at forhindre SSRF-angreb.
+ * Interne ruter (/api/...) løses til NEXT_PUBLIC_APP_URL og er gyldige
+ * når den resolvede host matcher et af disse eller er "localhost" i
+ * udviklingsmiljøet.
+ */
+const TILLADTE_HOSTS = new Set([
+  'bizzassist.dk',
+  'www.bizzassist.dk',
+  'bizzassist-test.bizzassist.dk',
+  'test.bizzassist.dk',
+  'api-fs.vurderingsportalen.dk',
+  'tinglysning.dk',
+  'www.tinglysning.dk',
+  'api.dataforsyningen.dk',
+  'services.datafordeler.dk',
+  'wfs.datafordeler.dk',
+  'wms.datafordeler.dk',
+  'miljoeportal.dk',
+  'arealinfo.miljoeportal.dk',
+  'plandata.dk',
+  'www.plandata.dk',
+]);
+
+/**
+ * IPv4-subnets der anses som private/link-local/loopback og aldrig må
+ * nås fra en server-side fetch (SSRF-beskyttelse).
+ *
+ * Format: [network_as_32bit_int, prefix_length]
+ */
+const PRIVATE_IPV4_RANGES: [number, number][] = [
+  [0x7f000000, 8], // 127.0.0.0/8   loopback
+  [0x0a000000, 8], // 10.0.0.0/8    RFC-1918
+  [0xac100000, 12], // 172.16.0.0/12 RFC-1918
+  [0xc0a80000, 16], // 192.168.0.0/16 RFC-1918
+  [0xa9fe0000, 16], // 169.254.0.0/16 link-local (IMDS)
+  [0x00000000, 8], // 0.0.0.0/8     "this" network
+  [0xe0000000, 4], // 224.0.0.0/4   multicast
+  [0xf0000000, 4], // 240.0.0.0/4   reserved
+];
+
+/**
+ * Konverterer en IPv4-adresse i punkt-notation til et 32-bit heltal.
+ *
+ * @param ip - IPv4-adresse, f.eks. "192.168.1.1"
+ * @returns 32-bit unsigned integer eller null hvis formatet er ugyldigt
+ */
+function ipv4TilInt(ip: string): number | null {
+  const dele = ip.split('.');
+  if (dele.length !== 4) return null;
+  let resultat = 0;
+  for (const del of dele) {
+    const oktet = parseInt(del, 10);
+    if (isNaN(oktet) || oktet < 0 || oktet > 255 || del.trim() !== String(oktet)) return null;
+    resultat = (resultat << 8) | oktet;
+  }
+  // >>> 0 konverterer til unsigned 32-bit
+  return resultat >>> 0;
+}
+
+/**
+ * Returnerer true hvis `ip` falder inden for et privat/link-local/loopback-subnet.
+ *
+ * @param ip - IPv4-adresse som streng
+ */
+function erPrivatIpv4(ip: string): boolean {
+  const val = ipv4TilInt(ip);
+  if (val === null) return false;
+  return PRIVATE_IPV4_RANGES.some(([net, prefix]) => {
+    const maske = prefix === 0 ? 0 : (~0 << (32 - prefix)) >>> 0;
+    return (val & maske) === (net & maske);
+  });
+}
+
+/**
+ * Validerer en absolut URL mod SSRF-angrebsmønstre.
+ *
+ * Regler (alle skal overholdes):
+ * 1. URL skal bruge HTTPS-skema (HTTP er kun tilladt for localhost i development).
+ * 2. Hosten må ikke være en privat IPv4-adresse (RFC-1918, IMDS, loopback).
+ * 3. IPv6-loopback (::1) er ikke tilladt.
+ * 4. "localhost" og "0.0.0.0" er kun tilladt i development (NODE_ENV=development).
+ * 5. Hosten skal enten matche TILLADTE_HOSTS ELLER, i development, være "localhost".
+ * 6. Hosten skal indeholde mindst ét punktum (FQDN) med mindre det er localhost i dev.
+ *
+ * @param absoluttUrl - Den fulde absolutte URL der skal valideres
+ * @returns `{ ok: true }` hvis URL er tilladt, eller `{ ok: false; fejl: string }` med beskrivelse
+ */
+export function validerUrl(absoluttUrl: string): { ok: true } | { ok: false; fejl: string } {
+  let parsed: URL;
+  try {
+    parsed = new URL(absoluttUrl);
+  } catch {
+    return { ok: false, fejl: 'Ugyldig URL-syntaks' };
+  }
+
+  const host = parsed.hostname.toLowerCase();
+  const erDev = process.env.NODE_ENV === 'development';
+
+  // 1. Kun HTTPS (undtagen localhost i dev)
+  if (parsed.protocol !== 'https:') {
+    if (!(erDev && parsed.protocol === 'http:' && host === 'localhost')) {
+      return { ok: false, fejl: `Kun HTTPS er tilladt (fik: ${parsed.protocol})` };
+    }
+  }
+
+  // 2. Afvis IPv6-loopback
+  if (host === '[::1]' || host === '::1') {
+    return { ok: false, fejl: 'IPv6-loopback (::1) er ikke tilladt' };
+  }
+
+  // 3. Afvis private IPv4-ranges
+  if (erPrivatIpv4(host)) {
+    return { ok: false, fejl: `Privat/intern IP-adresse er ikke tilladt: ${host}` };
+  }
+
+  // 4. Afvis 0.0.0.0 og localhost i produktion
+  if (host === '0.0.0.0') {
+    return { ok: false, fejl: '0.0.0.0 er ikke tilladt' };
+  }
+  if (host === 'localhost' && !erDev) {
+    return { ok: false, fejl: 'localhost er ikke tilladt i produktion' };
+  }
+
+  // 5. Kræv at hosten er i TILLADTE_HOSTS (eller localhost i dev)
+  if (host === 'localhost' && erDev) {
+    return { ok: true };
+  }
+
+  if (!TILLADTE_HOSTS.has(host)) {
+    return {
+      ok: false,
+      fejl: `Ekstern host er ikke på tilladelseslisten: ${host}`,
+    };
+  }
+
+  // 6. FQDN-krav: hosten skal indeholde mindst ét punktum
+  if (!host.includes('.')) {
+    return { ok: false, fejl: `Hosten er ikke et FQDN (mangler punktum): ${host}` };
+  }
+
+  return { ok: true };
+}
+
+/**
  * Løser en URL til en absolut URL.
  * Relative URL (starter med '/') præfikses med app-baseurl.
  *
@@ -100,6 +246,13 @@ function erGyldigPdf(buf: ArrayBuffer): boolean {
  */
 async function hentDokument(doc: ZipDocInput): Promise<DokumentResultat> {
   const absolutUrl = løsUrl(doc.url);
+
+  // SSRF-beskyttelse: valider host og skema inden fetch
+  const urlValidering = validerUrl(absolutUrl);
+  if (!urlValidering.ok) {
+    console.warn(`[zip] SSRF-forsøg afvist for ${doc.filename}: ${urlValidering.fejl} (${absolutUrl})`);
+    return { buf: null, fejlÅrsag: `URL ikke tilladt: ${urlValidering.fejl}` };
+  }
 
   // Tunge interne ruter der fetcher eksternt eller genererer PDF server-side
   const erTungRute = doc.url.startsWith('/api/jord/pdf') || doc.url.startsWith('/api/matrikelkort');
@@ -166,6 +319,20 @@ export async function POST(request: NextRequest): Promise<Response> {
         { fejl: 'Hvert dokument skal have filename og url' },
         { status: 400 }
       );
+    }
+  }
+
+  // SSRF-præ-validering: afvis absolutte URLs der ikke overholder tilladelseslisten.
+  // Relative URLs (/api/...) valideres mod den resolvede base-URL inde i hentDokument.
+  for (const doc of body.docs) {
+    if (!doc.url.startsWith('/')) {
+      const validering = validerUrl(doc.url);
+      if (!validering.ok) {
+        return NextResponse.json(
+          { fejl: `Ugyldig URL for "${doc.filename}": ${validering.fejl}` },
+          { status: 400 }
+        );
+      }
     }
   }
 

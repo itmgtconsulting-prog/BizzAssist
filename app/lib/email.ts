@@ -116,7 +116,7 @@ export async function sendPaymentConfirmationEmail(
       const body = await res.text();
       console.error('[email] Resend API error:', res.status, body);
     } else {
-      console.log('[email] Payment confirmation sent to', to);
+      console.log('[email] Payment confirmation sent');
     }
   } catch (err) {
     console.error('[email] Failed to send payment confirmation:', err);
@@ -219,7 +219,7 @@ export async function sendApprovalEmail(params: SubscriptionApprovalParams): Pro
       const body = await res.text();
       console.error('[email] Resend API error (approval):', res.status, body);
     } else {
-      console.log('[email] Approval notification sent to', to);
+      console.log('[email] Approval notification sent');
     }
   } catch (err) {
     console.error('[email] Failed to send approval email:', err);
@@ -337,7 +337,7 @@ export async function sendRecurringPaymentEmail(params: RecurringPaymentParams):
       const body = await res.text();
       console.error('[email] Resend API error (recurring):', res.status, body);
     } else {
-      console.log('[email] Recurring payment confirmation sent to', to);
+      console.log('[email] Recurring payment confirmation sent');
     }
   } catch (err) {
     console.error('[email] Failed to send recurring payment email:', err);

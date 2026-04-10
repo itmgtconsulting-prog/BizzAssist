@@ -359,7 +359,7 @@ export async function signIn(
   const {
     data: { user: authedUser },
   } = await supabase.auth.getUser();
-  console.log('[signIn] authedUser:', authedUser?.email, 'id:', authedUser?.id);
+  console.log('[signIn] authedUser resolved:', authedUser ? 'yes' : 'no');
 
   if (authedUser) {
     try {
@@ -681,7 +681,7 @@ export async function selectFreePlan(planId: string): Promise<AuthResult> {
       },
     });
 
-    console.log('[selectFreePlan] Set plan', planId, 'status', status, 'for user', user.id);
+    console.log('[selectFreePlan] Set plan', planId, 'status', status, 'for user', '[user]');
     return { error: null };
   } catch (err) {
     console.error('[selectFreePlan] Error:', err);

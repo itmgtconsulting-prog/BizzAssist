@@ -35,9 +35,8 @@ import type { EmailOtpType } from '@supabase/supabase-js';
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const { searchParams, origin } = new URL(request.url);
 
-  // DEBUG: log full callback URL (no PII in query params at this stage)
-  console.error('[auth/callback] Full URL:', request.url);
-  console.error('[auth/callback] All params:', Object.fromEntries(searchParams.entries()));
+  // DEBUG: log param keys only (values omitted to avoid leaking tokens)
+  console.error('[auth/callback] Params received:', [...searchParams.keys()].join(', '));
 
   const code = searchParams.get('code');
   const token_hash = searchParams.get('token_hash');

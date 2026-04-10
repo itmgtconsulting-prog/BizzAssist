@@ -389,7 +389,6 @@ export function classifyEmail(email: GraphEmail): ClassifiedEmail {
   const senderDomain = senderAddress.split('@').pop() ?? '';
   const subjectLower = subject.toLowerCase();
   const bodyText = stripHtml(email.body?.content ?? '').slice(0, 3000);
-  const bodyLower = bodyText.toLowerCase();
 
   // ── 1. Security alerts (highest priority — never auto-fix) ────────────────
   // GitHub security advisories come from security@github.com or have specific subjects

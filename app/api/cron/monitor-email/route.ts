@@ -6,7 +6,7 @@
  * auto-fix workflows or JIRA tickets based on the email category.
  *
  * Flow:
- *   1. Vercel Cron fires every 5 minutes (*/5 * * * *)
+ *   1. Vercel Cron fires every 5 minutes (every-5-min cron schedule)
  *   2. Fetch unread emails from the shared mailbox via Microsoft Graph API
  *   3. Classify each email (github_ci_failure, vercel_deploy_failure,
  *      security_alert, uptime_alert, unknown)

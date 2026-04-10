@@ -342,10 +342,9 @@ async function processEmail(
 
   // ── GitHub CI failure ─────────────────────────────────────────────────────
   if (category === 'github_ci_failure') {
-    const issueMessage =
-      metadata.workflowName
-        ? `GitHub CI fejlede: "${metadata.workflowName}"${metadata.repo ? ` (${metadata.repo})` : ''}`
-        : `GitHub CI fejlede: ${email.subject}`;
+    const issueMessage = metadata.workflowName
+      ? `GitHub CI fejlede: "${metadata.workflowName}"${metadata.repo ? ` (${metadata.repo})` : ''}`
+      : `GitHub CI fejlede: ${email.subject}`;
 
     const scanId = await createEmailScanRecord(
       category,
@@ -390,10 +389,9 @@ async function processEmail(
 
   // ── Vercel deploy failure ─────────────────────────────────────────────────
   if (category === 'vercel_deploy_failure') {
-    const issueMessage =
-      metadata.vercelProject
-        ? `Vercel deployment fejlede: "${metadata.vercelProject}" (${metadata.errorType ?? 'deploy_failure'})`
-        : `Vercel deployment fejlede: ${email.subject}`;
+    const issueMessage = metadata.vercelProject
+      ? `Vercel deployment fejlede: "${metadata.vercelProject}" (${metadata.errorType ?? 'deploy_failure'})`
+      : `Vercel deployment fejlede: ${email.subject}`;
 
     const scanId = await createEmailScanRecord(
       category,
@@ -485,7 +483,7 @@ async function processEmail(
  * Reads unread emails from the monitor@pecuniait.com shared mailbox,
  * classifies them, triggers appropriate workflows, and marks them as read.
  *
- * Triggered by Vercel Cron ("*/5 * * * *") or manually with
+ * Triggered by Vercel Cron (every 5 minutes) or manually with
  * Authorization: Bearer <CRON_SECRET>.
  *
  * Returns a JSON summary of processed emails and actions taken.
@@ -524,10 +522,13 @@ export async function GET(request: NextRequest) {
     emails = await fetchUnreadEmails(20);
   } catch (err) {
     console.error('[monitor-email] fetchUnreadEmails kastede en fejl:', err);
-    return NextResponse.json({
-      ok: false,
-      error: 'Kunne ikke hente emails fra mailboxen',
-    }, { status: 500 });
+    return NextResponse.json(
+      {
+        ok: false,
+        error: 'Kunne ikke hente emails fra mailboxen',
+      },
+      { status: 500 }
+    );
   }
 
   if (emails.length === 0) {
@@ -570,10 +571,7 @@ export async function GET(request: NextRequest) {
       // Mark as read regardless of whether action succeeded — prevents infinite retries
       toMarkAsRead.push(c.email.id);
     } catch (err) {
-      console.error(
-        `[monitor-email] processEmail fejlede for "${c.email.subject}":`,
-        err
-      );
+      console.error(`[monitor-email] processEmail fejlede for "${c.email.subject}":`, err);
       // Still mark as read to avoid re-processing a broken email on every tick
       toMarkAsRead.push(c.email.id);
       results.push({
@@ -586,9 +584,7 @@ export async function GET(request: NextRequest) {
   }
 
   // ── 4. Mark processed emails as read ─────────────────────────────────────
-  const markResults = await Promise.allSettled(
-    toMarkAsRead.map((id) => markEmailAsRead(id))
-  );
+  const markResults = await Promise.allSettled(toMarkAsRead.map((id) => markEmailAsRead(id)));
   const markedCount = markResults.filter(
     (r) => r.status === 'fulfilled' && r.value === true
   ).length;

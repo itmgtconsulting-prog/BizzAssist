@@ -84,11 +84,26 @@ const GITHUB_TIMEOUT_MS = 15_000;
 // ─── Admin verification ───────────────────────────────────────────────────────
 
 /**
- * Verify the caller is a BizzAssist admin.
+ * Verify the caller is a BizzAssist admin OR an internal cron/service caller.
  *
- * @returns The authenticated user if admin, null otherwise.
+ * Admin path: Supabase session cookie → user.app_metadata.isAdmin.
+ * Cron path: Authorization: Bearer CRON_SECRET + x-internal-cron: 1 header.
+ *
+ * @param request - Incoming Next.js request.
+ * @returns Caller info with source and optional user, or null if unauthorised.
  */
-async function verifyAdmin() {
+async function verifyAdminOrCron(
+  request: NextRequest
+): Promise<{ source: 'admin' | 'cron'; user?: { id: string } } | null> {
+  // ── Internal cron/service path ─────────────────────────────────────────────
+  const cronSecret = process.env.CRON_SECRET;
+  const authHeader = request.headers.get('authorization');
+
+  if (cronSecret && authHeader === `Bearer ${cronSecret}`) {
+    return { source: 'cron' };
+  }
+
+  // ── Admin user path ───────────────────────────────────────────────────────
   const supabase = await createClient();
   const {
     data: { user },
@@ -96,7 +111,7 @@ async function verifyAdmin() {
   if (!user) return null;
   const admin = createAdminClient();
   const { data: freshUser } = await admin.auth.admin.getUserById(user.id);
-  if (freshUser?.user?.app_metadata?.isAdmin) return user;
+  if (freshUser?.user?.app_metadata?.isAdmin) return { source: 'admin', user };
   return null;
 }
 
@@ -245,11 +260,7 @@ async function createBlob(content: string): Promise<string> {
  * @param blobSha - SHA of the new file blob.
  * @returns New tree SHA.
  */
-async function createTree(
-  baseTreeSha: string,
-  filePath: string,
-  blobSha: string
-): Promise<string> {
+async function createTree(baseTreeSha: string, filePath: string, blobSha: string): Promise<string> {
   const res = await githubFetch('/git/trees', {
     method: 'POST',
     body: JSON.stringify({
@@ -270,11 +281,7 @@ async function createTree(
  * @param parentSha - Parent commit SHA.
  * @returns New commit SHA.
  */
-async function createCommit(
-  message: string,
-  treeSha: string,
-  parentSha: string
-): Promise<string> {
+async function createCommit(message: string, treeSha: string, parentSha: string): Promise<string> {
   const res = await githubFetch('/git/commits', {
     method: 'POST',
     body: JSON.stringify({ message, tree: treeSha, parents: [parentSha] }),
@@ -312,11 +319,7 @@ async function createBranchRef(branch: string, sha: string): Promise<void> {
  * @param body - PR body (Markdown).
  * @returns The PR HTML URL, or null if the API call fails non-fatally.
  */
-async function createGitHubPR(
-  branch: string,
-  title: string,
-  body: string
-): Promise<string | null> {
+async function createGitHubPR(branch: string, title: string, body: string): Promise<string | null> {
   try {
     const res = await githubFetch('/pulls', {
       method: 'POST',
@@ -437,7 +440,7 @@ function applyUnifiedDiff(original: string, diff: string): string {
  */
 async function createHotfix(
   fixId: string,
-  userId: string
+  userId: string | null
 ): Promise<{ branch: string; prUrl: string | null; sha: string }> {
   const db = adminDb();
 
@@ -500,8 +503,7 @@ async function createHotfix(
 
   // ── Step 7: Build commit message ───────────────────────────────────────
   const scan = fix.service_manager_scans;
-  const issueMsg =
-    scan?.issues_found?.[fix.issue_index]?.message ?? scan?.summary ?? 'auto-fix';
+  const issueMsg = scan?.issues_found?.[fix.issue_index]?.message ?? scan?.summary ?? 'auto-fix';
   const commitMsg = `hotfix: ${issueMsg.slice(0, 72)}`;
 
   // ── Step 8: Create the commit ──────────────────────────────────────────
@@ -570,7 +572,7 @@ async function createHotfix(
  */
 async function deployToTest(
   branch: string,
-  userId: string
+  userId: string | null
 ): Promise<{ deploymentUrl: string | null }> {
   const token = process.env.VERCEL_API_TOKEN;
   const projectId = process.env.VERCEL_PROJECT_ID;
@@ -627,7 +629,7 @@ async function deployToTest(
  */
 async function promoteToProd(
   confirmationToken: string,
-  userId: string
+  userId: string | null
 ): Promise<{ merged: boolean; sha: string }> {
   // Token guard — prevents accidental production promotions
   const expectedToken = process.env.RELEASE_CONFIRMATION_TOKEN;
@@ -664,11 +666,7 @@ async function promoteToProd(
   const data = (await res.json()) as { sha?: string };
   const sha = data.sha ?? '';
 
-  await logActivity(
-    'promote_prod',
-    { sha, from_branch: BASE_BRANCH, to_branch: 'main' },
-    userId
-  );
+  await logActivity('promote_prod', { sha, from_branch: BASE_BRANCH, to_branch: 'main' }, userId);
 
   return { merged: true, sha };
 }
@@ -682,10 +680,13 @@ async function promoteToProd(
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
-    const user = await verifyAdmin();
-    if (!user) {
+    const caller = await verifyAdminOrCron(request);
+    if (!caller) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
+
+    // Resolve user ID — null for cron/internal calls, user UUID for admin calls
+    const userId = caller.user?.id ?? null;
 
     const body = await request.json();
     const action = body?.action as string | undefined;
@@ -704,11 +705,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
         let result: Awaited<ReturnType<typeof createHotfix>>;
         try {
-          result = await createHotfix(fixId, user.id);
+          result = await createHotfix(fixId, userId);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           console.error('[release-agent] create-hotfix error:', msg);
-          await logActivity('hotfix_error', { fix_id: fixId, error: msg }, user.id);
+          await logActivity('hotfix_error', { fix_id: fixId, error: msg }, userId);
           return NextResponse.json({ error: msg }, { status: 422 });
         }
 
@@ -729,11 +730,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
         let result: Awaited<ReturnType<typeof deployToTest>>;
         try {
-          result = await deployToTest(branch, user.id);
+          result = await deployToTest(branch, userId);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           console.error('[release-agent] deploy-to-test error:', msg);
-          await logActivity('deploy_test_error', { branch, error: msg }, user.id);
+          await logActivity('deploy_test_error', { branch, error: msg }, userId);
           return NextResponse.json({ error: msg }, { status: 422 });
         }
 
@@ -752,11 +753,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
         let result: Awaited<ReturnType<typeof promoteToProd>>;
         try {
-          result = await promoteToProd(confirmationToken, user.id);
+          result = await promoteToProd(confirmationToken, userId);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           console.error('[release-agent] promote-to-prod error:', msg);
-          await logActivity('promote_prod_error', { error: msg }, user.id);
+          await logActivity('promote_prod_error', { error: msg }, userId);
           return NextResponse.json({ error: msg }, { status: 422 });
         }
 
@@ -784,8 +785,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
-    const user = await verifyAdmin();
-    if (!user) {
+    const caller = await verifyAdminOrCron(request);
+    if (!caller) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 

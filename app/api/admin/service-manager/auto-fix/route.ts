@@ -61,7 +61,7 @@ function adminDb(): ReturnType<typeof createAdminClient> {
 }
 
 export const runtime = 'nodejs';
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -393,6 +393,73 @@ async function logActivity(
   }
 }
 
+// ─── Release Agent trigger ────────────────────────────────────────────────────
+
+/**
+ * Trigger the Release Agent to create a hotfix branch and PR for an approved fix.
+ *
+ * Called automatically whenever a fix reaches 'approved' status — either via
+ * auto-approval rules or manual admin review. Uses the CRON_SECRET bearer token
+ * for the internal server-to-server call so no user session is required.
+ *
+ * Errors are logged to activity but never thrown — a hotfix trigger failure must
+ * not roll back the approval that was already persisted.
+ *
+ * @param fixId - UUID of the approved fix to deploy.
+ * @param requestUrl - URL of the current request, used to derive the app origin.
+ */
+async function triggerHotfixCreation(fixId: string, requestUrl: string): Promise<void> {
+  const cronSecret = process.env.CRON_SECRET;
+
+  /** Non-throwing helper to log a trigger failure to the activity table */
+  async function logTriggerError(details: Record<string, unknown>): Promise<void> {
+    try {
+      await adminDb().from('service_manager_activity').insert({
+        action: 'hotfix_trigger_error',
+        details,
+        created_by: null,
+      });
+    } catch {
+      // Swallow — activity log failures are non-fatal
+    }
+  }
+
+  if (!cronSecret) {
+    console.error('[auto-fix] CRON_SECRET mangler — kan ikke trigge Release Agent');
+    await logTriggerError({ fix_id: fixId, error: 'CRON_SECRET env var mangler' });
+    return;
+  }
+
+  try {
+    const origin = new URL(requestUrl).origin;
+    const res = await fetch(`${origin}/api/admin/release-agent`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${cronSecret}`,
+        'x-internal-cron': '1',
+      },
+      body: JSON.stringify({ action: 'create-hotfix', fixId }),
+      signal: AbortSignal.timeout(90_000),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '(ingen body)');
+      console.error(`[auto-fix] Release Agent returnerede ${res.status}:`, errText.slice(0, 200));
+      await logTriggerError({ fix_id: fixId, status: res.status, error: errText.slice(0, 500) });
+    } else {
+      const data = (await res.json()) as { branch?: string; prUrl?: string | null };
+      console.log(
+        `[auto-fix] Hotfix oprettet: branch=${data.branch ?? '?'}, PR=${data.prUrl ?? 'ingen'}`
+      );
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[auto-fix] triggerHotfixCreation fejlede:', msg);
+    await logTriggerError({ fix_id: fixId, error: msg });
+  }
+}
+
 // ─── Route handler ────────────────────────────────────────────────────────────
 
 /**
@@ -584,6 +651,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
+    // ── Trigger Release Agent for auto-approved fixes ──────────────────────
+    // Fire immediately after approval — no need to wait for admin to click "Apply".
+    // Errors are logged but do not fail this response (fix is already persisted).
+    if (initialStatus === 'approved') {
+      await triggerHotfixCreation(fix.id, request.url);
+    }
+
     return NextResponse.json({
       fixId: fix.id,
       classification: fix.classification,
@@ -671,6 +745,12 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
       { fix_id: fixId, reason: reason ?? null },
       caller.user?.id ?? null
     );
+
+    // ── Trigger Release Agent for manually approved fixes ──────────────────
+    // Immediately deploy the fix after admin approves it — no separate "Apply" step needed.
+    if (newStatus === 'approved') {
+      await triggerHotfixCreation(fixId, request.url);
+    }
 
     return NextResponse.json({ fixId, status: newStatus });
   } catch (err) {

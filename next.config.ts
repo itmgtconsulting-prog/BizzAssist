@@ -166,9 +166,7 @@ export default withBundleAnalyzer(
     },
     // Route Sentry tunnel through our own domain (avoids adblocker blocking)
     tunnelRoute: '/monitoring',
-    // Drop Sentry's verbose logger from production bundles
-    disableLogger: true,
-    // Auto-instrument API routes, server actions, and middleware
-    autoInstrumentServerFunctions: true,
+    // Turbopack-compatible settings (deprecated webpack-only options removed)
+    telemetry: false,
   })
 );

@@ -492,134 +492,148 @@ async function processEmail(
  * @returns JSON summary of the email monitoring run.
  */
 export async function GET(request: NextRequest) {
-  if (!verifyCronSecret(request)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  try {
+    if (!verifyCronSecret(request)) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
 
-  const now = new Date();
-  console.log(`[monitor-email] Cron startet kl. ${now.toISOString()}`);
+    const now = new Date();
+    console.log(`[monitor-email] Cron startet kl. ${now.toISOString()}`);
 
-  // ── Early exit if Graph API credentials are missing ───────────────────────
-  const missingVars = (
-    ['MONITOR_EMAIL_TENANT_ID', 'MONITOR_EMAIL_CLIENT_ID', 'MONITOR_EMAIL_CLIENT_SECRET'] as const
-  ).filter((key) => !process.env[key]);
+    // ── Early exit if Graph API credentials are missing ───────────────────────
+    const missingVars = (
+      ['MONITOR_EMAIL_TENANT_ID', 'MONITOR_EMAIL_CLIENT_ID', 'MONITOR_EMAIL_CLIENT_SECRET'] as const
+    ).filter((key) => !process.env[key]);
 
-  if (missingVars.length > 0) {
-    console.warn(
-      `[monitor-email] Manglende env vars: ${missingVars.join(', ')} — cron afslutter tidligt.`
+    if (missingVars.length > 0) {
+      console.warn(
+        `[monitor-email] Manglende env vars: ${missingVars.join(', ')} — cron afslutter tidligt.`
+      );
+      return NextResponse.json({
+        ok: true,
+        skipped: true,
+        reason: `Manglende env vars: ${missingVars.join(', ')}`,
+        processed: 0,
+      });
+    }
+
+    // ── 1. Fetch unread emails ────────────────────────────────────────────────
+    let emails: GraphEmail[];
+    try {
+      emails = await fetchUnreadEmails(20);
+    } catch (err) {
+      console.error('[monitor-email] fetchUnreadEmails kastede en fejl:', err);
+      return NextResponse.json(
+        {
+          ok: false,
+          error: 'Kunne ikke hente emails fra mailboxen',
+        },
+        { status: 500 }
+      );
+    }
+
+    if (emails.length === 0) {
+      console.log('[monitor-email] Ingen ulæste emails fundet — cron afsluttes.');
+      return NextResponse.json({ ok: true, processed: 0, emails: [] });
+    }
+
+    console.log(
+      `[monitor-email] ${emails.length} ulæst(e) email(s) fundet — starter klassificering`
     );
+
+    // ── 2. Classify all emails ────────────────────────────────────────────────
+    const classified = emails.map((email) => classifyEmail(email));
+
+    // Log classification summary
+    const categoryCounts = classified.reduce<Record<string, number>>((acc, c) => {
+      acc[c.category] = (acc[c.category] ?? 0) + 1;
+      return acc;
+    }, {});
+    console.log('[monitor-email] Klassificering:', categoryCounts);
+
+    // ── 3. Process each actionable email ─────────────────────────────────────
+    const autoFixCounter = { count: 0 };
+    const results: ProcessedEmailSummary[] = [];
+    const toMarkAsRead: string[] = [];
+
+    for (const c of classified) {
+      // Skip unknown emails — do not mark as read so they can be reviewed manually
+      if (c.category === 'unknown') {
+        results.push({
+          messageId: c.email.id,
+          subject: c.email.subject,
+          category: 'unknown',
+          action: 'skipped',
+        });
+        continue;
+      }
+
+      try {
+        const summary = await processEmail(c, autoFixCounter);
+        results.push(summary);
+        // Mark as read regardless of whether action succeeded — prevents infinite retries
+        toMarkAsRead.push(c.email.id);
+      } catch (err) {
+        console.error(`[monitor-email] processEmail fejlede for "${c.email.subject}":`, err);
+        // Still mark as read to avoid re-processing a broken email on every tick
+        toMarkAsRead.push(c.email.id);
+        results.push({
+          messageId: c.email.id,
+          subject: c.email.subject,
+          category: c.category,
+          action: 'skipped',
+        });
+      }
+    }
+
+    // ── 4. Mark processed emails as read ─────────────────────────────────────
+    const markResults = await Promise.allSettled(toMarkAsRead.map((id) => markEmailAsRead(id)));
+    const markedCount = markResults.filter(
+      (r) => r.status === 'fulfilled' && r.value === true
+    ).length;
+
+    console.log(`[monitor-email] Markerede ${markedCount}/${toMarkAsRead.length} emails som læst`);
+
+    // ── 5. Log overall run summary ────────────────────────────────────────────
+    const actionCounts = results.reduce<Record<string, number>>((acc, r) => {
+      acc[r.action] = (acc[r.action] ?? 0) + 1;
+      return acc;
+    }, {});
+
+    await logActivity('monitor_email_cron_completed', {
+      emails_fetched: emails.length,
+      emails_classified: classified.length,
+      emails_marked_read: markedCount,
+      auto_fix_triggers: autoFixCounter.count,
+      category_counts: categoryCounts,
+      action_counts: actionCounts,
+      run_at: now.toISOString(),
+    });
+
+    console.log(
+      `[monitor-email] Done: ${emails.length} emails, ` +
+        `${autoFixCounter.count} auto-fix triggers, ` +
+        `${markedCount} markeret læst`
+    );
+
     return NextResponse.json({
       ok: true,
-      skipped: true,
-      reason: `Manglende env vars: ${missingVars.join(', ')}`,
-      processed: 0,
+      processed: classified.length,
+      markedAsRead: markedCount,
+      autoFixTriggered: autoFixCounter.count,
+      categoryCounts,
+      actionCounts,
+      emails: results,
     });
-  }
-
-  // ── 1. Fetch unread emails ────────────────────────────────────────────────
-  let emails: GraphEmail[];
-  try {
-    emails = await fetchUnreadEmails(20);
   } catch (err) {
-    console.error('[monitor-email] fetchUnreadEmails kastede en fejl:', err);
+    console.error('[monitor-email] Uventet fejl i cron-handler:', err);
     return NextResponse.json(
       {
         ok: false,
-        error: 'Kunne ikke hente emails fra mailboxen',
+        error: 'Internal server error',
+        message: err instanceof Error ? err.message : String(err),
       },
       { status: 500 }
     );
   }
-
-  if (emails.length === 0) {
-    console.log('[monitor-email] Ingen ulæste emails fundet — cron afsluttes.');
-    return NextResponse.json({ ok: true, processed: 0, emails: [] });
-  }
-
-  console.log(`[monitor-email] ${emails.length} ulæst(e) email(s) fundet — starter klassificering`);
-
-  // ── 2. Classify all emails ────────────────────────────────────────────────
-  const classified = emails.map((email) => classifyEmail(email));
-
-  // Log classification summary
-  const categoryCounts = classified.reduce<Record<string, number>>((acc, c) => {
-    acc[c.category] = (acc[c.category] ?? 0) + 1;
-    return acc;
-  }, {});
-  console.log('[monitor-email] Klassificering:', categoryCounts);
-
-  // ── 3. Process each actionable email ─────────────────────────────────────
-  const autoFixCounter = { count: 0 };
-  const results: ProcessedEmailSummary[] = [];
-  const toMarkAsRead: string[] = [];
-
-  for (const c of classified) {
-    // Skip unknown emails — do not mark as read so they can be reviewed manually
-    if (c.category === 'unknown') {
-      results.push({
-        messageId: c.email.id,
-        subject: c.email.subject,
-        category: 'unknown',
-        action: 'skipped',
-      });
-      continue;
-    }
-
-    try {
-      const summary = await processEmail(c, autoFixCounter);
-      results.push(summary);
-      // Mark as read regardless of whether action succeeded — prevents infinite retries
-      toMarkAsRead.push(c.email.id);
-    } catch (err) {
-      console.error(`[monitor-email] processEmail fejlede for "${c.email.subject}":`, err);
-      // Still mark as read to avoid re-processing a broken email on every tick
-      toMarkAsRead.push(c.email.id);
-      results.push({
-        messageId: c.email.id,
-        subject: c.email.subject,
-        category: c.category,
-        action: 'skipped',
-      });
-    }
-  }
-
-  // ── 4. Mark processed emails as read ─────────────────────────────────────
-  const markResults = await Promise.allSettled(toMarkAsRead.map((id) => markEmailAsRead(id)));
-  const markedCount = markResults.filter(
-    (r) => r.status === 'fulfilled' && r.value === true
-  ).length;
-
-  console.log(`[monitor-email] Markerede ${markedCount}/${toMarkAsRead.length} emails som læst`);
-
-  // ── 5. Log overall run summary ────────────────────────────────────────────
-  const actionCounts = results.reduce<Record<string, number>>((acc, r) => {
-    acc[r.action] = (acc[r.action] ?? 0) + 1;
-    return acc;
-  }, {});
-
-  await logActivity('monitor_email_cron_completed', {
-    emails_fetched: emails.length,
-    emails_classified: classified.length,
-    emails_marked_read: markedCount,
-    auto_fix_triggers: autoFixCounter.count,
-    category_counts: categoryCounts,
-    action_counts: actionCounts,
-    run_at: now.toISOString(),
-  });
-
-  console.log(
-    `[monitor-email] Done: ${emails.length} emails, ` +
-      `${autoFixCounter.count} auto-fix triggers, ` +
-      `${markedCount} markeret læst`
-  );
-
-  return NextResponse.json({
-    ok: true,
-    processed: classified.length,
-    markedAsRead: markedCount,
-    autoFixTriggered: autoFixCounter.count,
-    categoryCounts,
-    actionCounts,
-    emails: results,
-  });
 }

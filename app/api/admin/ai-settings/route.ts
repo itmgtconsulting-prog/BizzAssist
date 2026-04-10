@@ -161,16 +161,12 @@ export async function PUT(req: NextRequest) {
   }
 
   // Audit log — fire-and-forget (ISO 27001 A.12.4)
-  serviceClient
-    .from('audit_log' as never)
-    .insert({
-      action: 'admin.ai_settings.update',
-      resource_type: 'ai_settings',
-      resource_id: key,
-      metadata: JSON.stringify({ updatedBy: admin.id, key }),
-    } as never)
-    .then()
-    .catch(() => {});
+  void serviceClient.from('audit_log' as never).insert({
+    action: 'admin.ai_settings.update',
+    resource_type: 'ai_settings',
+    resource_id: key,
+    metadata: JSON.stringify({ updatedBy: admin.id, key }),
+  } as never);
 
   return NextResponse.json({ success: true });
 }

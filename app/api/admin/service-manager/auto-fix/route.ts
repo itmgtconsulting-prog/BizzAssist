@@ -27,7 +27,8 @@
  *   - Claude must classify fix as 'bug-fix' or 'config-fix' — anything else → rejected
  *   - All fixes are stored as 'proposed'; admin approval required before applying
  *
- * Only accessible by admin users (app_metadata.isAdmin === true).
+ * Only accessible by admin users (app_metadata.isAdmin === true) or
+ * internal cron callers (Authorization: Bearer CRON_SECRET + x-internal-cron: 1).
  *
  * @see app/api/admin/service-manager/route.ts — scan record format
  * @see app/api/admin/release-agent/route.ts — applies approved fixes
@@ -106,11 +107,26 @@ const BLOCKED_CLASSIFICATION_KEYWORDS = [
 // ─── Admin verification ───────────────────────────────────────────────────────
 
 /**
- * Verify the caller is a BizzAssist admin.
+ * Verify the caller is a BizzAssist admin OR an internal cron service.
  *
- * @returns The authenticated user if admin, null otherwise.
+ * Admin path: Supabase session cookie → user.app_metadata.isAdmin.
+ * Cron path: Authorization: Bearer CRON_SECRET + x-internal-cron: 1 header.
+ *
+ * @returns An object with `source` ('admin' | 'cron') and optional `user`, or null.
  */
-async function verifyAdmin() {
+async function verifyAdminOrCron(
+  request: NextRequest
+): Promise<{ source: 'admin' | 'cron'; user?: { id: string } } | null> {
+  // ── Internal cron path ────────────────────────────────────────────────────
+  const cronSecret = process.env.CRON_SECRET;
+  const authHeader = request.headers.get('authorization');
+  const isInternalCron = request.headers.get('x-internal-cron') === '1';
+
+  if (cronSecret && isInternalCron && authHeader === `Bearer ${cronSecret}`) {
+    return { source: 'cron' };
+  }
+
+  // ── Admin user path ───────────────────────────────────────────────────────
   const supabase = await createClient();
   const {
     data: { user },
@@ -118,7 +134,7 @@ async function verifyAdmin() {
   if (!user) return null;
   const admin = createAdminClient();
   const { data: freshUser } = await admin.auth.admin.getUserById(user.id);
-  if (freshUser?.user?.app_metadata?.isAdmin) return user;
+  if (freshUser?.user?.app_metadata?.isAdmin) return { source: 'admin', user };
   return null;
 }
 
@@ -386,8 +402,8 @@ async function logActivity(
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
-    const user = await verifyAdmin();
-    if (!user) {
+    const caller = await verifyAdminOrCron(request);
+    if (!caller) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -549,7 +565,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           : 0,
         auto_approved: initialStatus === 'approved',
       },
-      user.id
+      caller.user?.id ?? null
     );
 
     // Log the auto-approval separately so it appears as its own audit entry
@@ -559,7 +575,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         scanId,
         autoApprovalRuleName,
         autoApprovalRuleDescription ?? autoApprovalRuleName,
-        { issue_type: issue.type, file_path: claudeResult.file_path, triggered_by: user.id }
+        {
+          issue_type: issue.type,
+          file_path: claudeResult.file_path,
+          triggered_by: caller.user?.id ?? 'cron',
+        }
       );
     }
 
@@ -590,8 +610,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
  */
 export async function PATCH(request: NextRequest): Promise<NextResponse> {
   try {
-    const user = await verifyAdmin();
-    if (!user) {
+    const caller = await verifyAdminOrCron(request);
+    if (!caller) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -634,7 +654,7 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
       .from('service_manager_fixes')
       .update({
         status: newStatus,
-        reviewed_by: user.id,
+        reviewed_by: caller.user?.id ?? null,
         reviewed_at: new Date().toISOString(),
         rejection_reason: action === 'reject' ? (reason ?? 'Afvist af admin') : null,
       })
@@ -648,7 +668,7 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
     await logActivity(
       action === 'approve' ? 'fix_approved' : 'fix_rejected',
       { fix_id: fixId, reason: reason ?? null },
-      user.id
+      caller.user?.id ?? null
     );
 
     return NextResponse.json({ fixId, status: newStatus });
@@ -670,8 +690,8 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
-    const user = await verifyAdmin();
-    if (!user) {
+    const caller = await verifyAdminOrCron(request);
+    if (!caller) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 

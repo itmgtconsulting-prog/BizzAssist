@@ -26,6 +26,7 @@ interface GoogleTokenResponse {
 interface GoogleUserInfo {
   email: string;
   name?: string;
+  picture?: string;
 }
 
 /** Decoded state parameter containing userId and tenantId */
@@ -123,6 +124,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           token_expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
           scopes: tokens.scope.split(' '),
           connected_at: new Date().toISOString(),
+          profile_data: { name: userInfo.name, picture: userInfo.picture },
         },
         { onConflict: 'user_id,provider' }
       );

@@ -24,7 +24,7 @@ import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 /** Shape of the Gmail connection status response */
 interface GmailStatus {
   connected: boolean;
-  email?: string;
+  email?: string | null;
   connectedAt?: string;
   scopes?: string[];
 }

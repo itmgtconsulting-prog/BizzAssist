@@ -77,7 +77,7 @@ async function fetchFromServer(): Promise<RecentSearch[]> {
       return {
         query: (r.display_name as string) ?? '',
         ts: r.visited_at ? new Date(r.visited_at as string).getTime() : Date.now(),
-        resultType: (ed?.resultType as string | undefined) ?? undefined,
+        resultType: (ed?.resultType as RecentSearch['resultType']) ?? undefined,
         resultTitle: (ed?.resultTitle as string | undefined) ?? undefined,
         resultHref: (ed?.resultHref as string | undefined) ?? undefined,
       };

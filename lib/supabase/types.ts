@@ -502,6 +502,7 @@ export type EmailIntegrationRow = {
   scopes: string[];
   connected_at: string;
   profile_data: Record<string, unknown> | null;
+  last_used_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -561,7 +562,9 @@ type TenantSchemaShape = {
     };
     email_integrations: {
       Row: EmailIntegrationRow;
-      Insert: Omit<EmailIntegrationRow, 'id' | 'created_at' | 'updated_at'>;
+      Insert: Omit<EmailIntegrationRow, 'id' | 'created_at' | 'updated_at' | 'last_used_at'> & {
+        last_used_at?: string | null;
+      };
       Update: Partial<EmailIntegrationRow>;
       Relationships: [];
     };

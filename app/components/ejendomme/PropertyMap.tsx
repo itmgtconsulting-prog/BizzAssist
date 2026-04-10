@@ -603,7 +603,7 @@ async function hentMatrikelGeojson(
           ? { type: 'FeatureCollection' as const, features: json as GeoJSON.Feature[] }
           : (json as GeoJSONSourceSpecification['data']);
     const all = fc;
-    const selected = filtrerTilEjendom(fc, lng, lat);
+    const selected = filtrerTilEjendom(fc as Parameters<typeof filtrerTilEjendom>[0], lng, lat);
     const result = { all, selected };
     matrikelCache.set(cacheKey, result);
     return result;

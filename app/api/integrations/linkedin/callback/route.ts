@@ -180,6 +180,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           token_expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
           scopes: [`name:${fullName}`, ...tokens.scope.split(',').map((s) => s.trim())],
           connected_at: new Date().toISOString(),
+          profile_data: { name: fullName },
         },
         { onConflict: 'user_id,provider' }
       );

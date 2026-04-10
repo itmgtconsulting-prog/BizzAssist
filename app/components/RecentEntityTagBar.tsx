@@ -68,14 +68,16 @@ async function loadAllTags(): Promise<RecentTag[]> {
       tags.set('property', {
         type: 'property',
         href: `/dashboard/ejendomme/${latest.entity_id}`,
-        label: latest.display_name,
+        label: latest.display_name as string,
       });
     }
   }
 
   if (searchRes?.ok) {
     const json = await searchRes.json().catch(() => ({}));
-    const recents: Array<Record<string, unknown>> = (json.recents ?? []) as Array<Record<string, unknown>>;
+    const recents: Array<Record<string, unknown>> = (json.recents ?? []) as Array<
+      Record<string, unknown>
+    >;
     for (const r of recents) {
       const ed = r.entity_data as Record<string, unknown> | undefined;
       const rt = ed?.resultType as string | undefined;

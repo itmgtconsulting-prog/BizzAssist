@@ -31,6 +31,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { safeCompare } from '@/lib/safeCompare';
 
 /** Vercel Pro function timeout (seconds) — uses full near-limit duration */
 export const maxDuration = 55;
@@ -154,7 +155,8 @@ function verifyCronSecret(request: NextRequest): boolean {
   }
   const secret = process.env.CRON_SECRET;
   if (!secret) return false;
-  return request.headers.get('authorization') === `Bearer ${secret}`;
+  const auth = request.headers.get('authorization') ?? '';
+  return safeCompare(auth, `Bearer ${secret}`);
 }
 
 // ─── Vercel API helpers ───────────────────────────────────────────────────────

@@ -21,6 +21,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
+import { safeCompare } from '@/lib/safeCompare';
 
 /** Max Vercel Hobby plan funktionsvarighed i sekunder */
 export const maxDuration = 30;
@@ -43,7 +44,8 @@ function verifyCronSecret(request: NextRequest): boolean {
   }
   const secret = process.env.CRON_SECRET;
   if (!secret) return false;
-  return request.headers.get('authorization') === `Bearer ${secret}`;
+  const auth = request.headers.get('authorization') ?? '';
+  return safeCompare(auth, `Bearer ${secret}`);
 }
 
 /** Statistik indsamlet for rapportperioden */
@@ -107,12 +109,12 @@ async function collectAgentStats(sinceIso: string): Promise<AgentStats> {
     // Issues fordelt på type — hent rows og aggreger client-side
     const { data: scanRows } = await admin
       .from('service_manager_scans')
-      .select('issue_type')
+      .select('scan_type')
       .gte('created_at', sinceIso);
 
     if (scanRows) {
       for (const row of scanRows) {
-        const t = (row as Record<string, unknown>).issue_type as string;
+        const t = (row as unknown as Record<string, unknown>).scan_type as string;
         if (t === 'build_error') stats.issuesByType.build_error++;
         else if (t === 'runtime_error') stats.issuesByType.runtime_error++;
         else if (t === 'config_error') stats.issuesByType.config_error++;
@@ -151,12 +153,12 @@ async function collectAgentStats(sinceIso: string): Promise<AgentStats> {
   try {
     const { data: actRows } = await admin
       .from('service_manager_activity')
-      .select('activity_type')
+      .select('action')
       .gte('created_at', sinceIso);
 
     if (actRows) {
       for (const row of actRows) {
-        const t = (row as Record<string, unknown>).activity_type as string;
+        const t = (row as unknown as Record<string, unknown>).action as string;
         if (t === 'hotfix_branch_created') stats.hotfixBranchesCreated++;
         else if (t === 'pr_created') stats.prsCreated++;
         else if (t === 'deploy_triggered') stats.deploysTriggered++;

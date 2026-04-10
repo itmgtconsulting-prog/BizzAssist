@@ -23,6 +23,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
+import { safeCompare } from '@/lib/safeCompare';
 
 /** Datafordeler Hændelsesbesked base URL */
 const HHAENDELSE_BASE = 'https://hændelsesbesked.datafordeler.dk/api/v1/hændelse';
@@ -63,7 +64,8 @@ function verifyCronSecret(request: NextRequest): boolean {
   }
   const secret = process.env.CRON_SECRET;
   if (!secret) return false;
-  return request.headers.get('authorization') === `Bearer ${secret}`;
+  const auth = request.headers.get('authorization') ?? '';
+  return safeCompare(auth, `Bearer ${secret}`);
 }
 
 /**

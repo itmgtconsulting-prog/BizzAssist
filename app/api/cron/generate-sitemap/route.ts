@@ -31,6 +31,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { generateEjendomSlug, generateVirksomhedSlug } from '@/app/lib/slug';
+import { safeCompare } from '@/lib/safeCompare';
 
 // ─── Konstanter ────────────────────────────────────────────────────────────────
 
@@ -67,7 +68,8 @@ function verifyCronSecret(request: NextRequest): boolean {
   }
   const secret = process.env.CRON_SECRET;
   if (!secret) return false;
-  return request.headers.get('authorization') === `Bearer ${secret}`;
+  const auth = request.headers.get('authorization') ?? '';
+  return safeCompare(auth, `Bearer ${secret}`);
 }
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -416,10 +418,9 @@ async function saveProgress(
   admin: ReturnType<typeof createAdminClient>,
   page: number
 ): Promise<void> {
-  await admin.from('ai_settings').upsert(
-    { key: DAWA_PROGRESS_KEY, value: page },
-    { onConflict: 'key' }
-  );
+  await admin
+    .from('ai_settings')
+    .upsert({ key: DAWA_PROGRESS_KEY, value: page }, { onConflict: 'key' });
 }
 
 // ─── Route handler ─────────────────────────────────────────────────────────────

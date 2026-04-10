@@ -27,6 +27,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { safeCompare } from '@/lib/safeCompare';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -78,7 +79,8 @@ function verifyCronSecret(request: NextRequest): boolean {
   }
   const secret = process.env.CRON_SECRET;
   if (!secret) return false;
-  return request.headers.get('authorization') === `Bearer ${secret}`;
+  const auth = request.headers.get('authorization') ?? '';
+  return safeCompare(auth, `Bearer ${secret}`);
 }
 
 // ── Data collection ───────────────────────────────────────────────────────────

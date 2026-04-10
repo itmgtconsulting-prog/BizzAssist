@@ -14,6 +14,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { safeCompare } from '@/lib/safeCompare';
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
@@ -25,7 +26,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     if (!bootstrapSecret) {
       return NextResponse.json({ error: 'Bootstrap not configured' }, { status: 503 });
     }
-    if (secret !== bootstrapSecret) {
+    if (!safeCompare(secret ?? '', bootstrapSecret)) {
       return NextResponse.json({ error: 'Invalid secret' }, { status: 403 });
     }
 

@@ -25,6 +25,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
+import { safeCompare } from '@/lib/safeCompare';
 
 /** BBR objekt-typer der overvåges */
 const BBR_TYPER = new Set(['Bygning', 'Grund', 'Enhed']);
@@ -52,7 +53,7 @@ function verifyWebhookSecret(request: NextRequest): boolean {
     return false;
   }
   const auth = request.headers.get('authorization') ?? '';
-  return auth === `Bearer ${secret}`;
+  return safeCompare(auth, `Bearer ${secret}`);
 }
 
 /**

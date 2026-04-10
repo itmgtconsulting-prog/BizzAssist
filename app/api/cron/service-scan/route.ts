@@ -38,6 +38,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { sendCriticalAlert, isCriticalIssue } from '@/lib/service-manager-alerts';
+import { safeCompare } from '@/lib/safeCompare';
 
 /** Vercel Cron max duration (seconds) — Hobby plan limit */
 export const maxDuration = 30;
@@ -138,7 +139,8 @@ function verifyCronSecret(request: NextRequest): boolean {
   }
   const secret = process.env.CRON_SECRET;
   if (!secret) return false;
-  return request.headers.get('authorization') === `Bearer ${secret}`;
+  const auth = request.headers.get('authorization') ?? '';
+  return safeCompare(auth, `Bearer ${secret}`);
 }
 
 // ─── Vercel API helpers ───────────────────────────────────────────────────────

@@ -26,6 +26,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient, tenantDb, type TenantDb } from '@/lib/supabase/admin';
 import type { SnapshotType, NotificationType } from '@/lib/db/tenant';
+import { safeCompare } from '@/lib/safeCompare';
 
 /** Max antal ejendomme pr. cron-kørsel */
 const MAX_PER_RUN = 150;
@@ -44,7 +45,8 @@ function verifyCronSecret(request: NextRequest): boolean {
   }
   const secret = process.env.CRON_SECRET;
   if (!secret) return false; // Kræver CRON_SECRET i .env
-  return request.headers.get('authorization') === `Bearer ${secret}`;
+  const auth = request.headers.get('authorization') ?? '';
+  return safeCompare(auth, `Bearer ${secret}`);
 }
 
 /**

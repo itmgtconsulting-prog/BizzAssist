@@ -903,6 +903,14 @@ ${outputInstructions[type]}
  * @returns SSE stream or error NextResponse
  */
 export async function POST(request: NextRequest): Promise<Response> {
+  // Feature gate: AI analysis is only available when explicitly enabled via env var
+  if (process.env.NEXT_PUBLIC_AI_ENABLED !== 'true') {
+    return NextResponse.json(
+      { error: 'AI-analyse er ikke aktiveret i dette miljø' },
+      { status: 403 }
+    );
+  }
+
   // ── Auth ────────────────────────────────────────────────────────────────────
   const auth = await resolveTenantId();
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

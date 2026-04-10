@@ -137,20 +137,23 @@ const TEMPLATES = {
 function patchSupabase(projectRef, token, body) {
   return new Promise((resolve, reject) => {
     const payload = JSON.stringify(body);
-    const req = https.request({
-      hostname: 'api.supabase.com',
-      path: `/v1/projects/${projectRef}/config/auth`,
-      method: 'PATCH',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(payload),
+    const req = https.request(
+      {
+        hostname: 'api.supabase.com',
+        path: `/v1/projects/${projectRef}/config/auth`,
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(payload),
+        },
       },
-    }, res => {
-      let d = '';
-      res.on('data', c => d += c);
-      res.on('end', () => resolve({ status: res.statusCode, body: d }));
-    });
+      (res) => {
+        let d = '';
+        res.on('data', (c) => (d += c));
+        res.on('end', () => resolve({ status: res.statusCode, body: d }));
+      }
+    );
     req.on('error', reject);
     req.write(payload);
     req.end();

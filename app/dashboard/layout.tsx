@@ -53,8 +53,16 @@ import { createClient } from '@/lib/supabase/client';
 import { hasMigrated, migrateLocalStorageToSupabase } from '@/app/lib/migrateLocalStorage';
 import { initCacheUserId, clearCacheUserId } from '@/app/lib/trackedEjendomme';
 
+/**
+ * Whether AI features (chat + analysis) are enabled in this environment.
+ * Controlled by NEXT_PUBLIC_AI_ENABLED — only set to 'true' in dev (.env.local).
+ * Test and production do NOT have this flag → AI features are hidden.
+ */
+const AI_ENABLED = process.env.NEXT_PUBLIC_AI_ENABLED === 'true';
+
 /** Navigation items — 'adminOnly' items are only shown for admin users.
  *  'key' maps to translations[lang].sidebar[key] for the label.
+ *  'aiOnly' items are hidden unless AI_ENABLED is true.
  */
 const navItems = [
   { icon: LayoutDashboard, key: 'overview' as const, href: '/dashboard', adminOnly: false },
@@ -63,8 +71,20 @@ const navItems = [
   { icon: Briefcase, key: 'companies' as const, href: '/dashboard/companies', adminOnly: false },
   { icon: Users, key: 'owners' as const, href: '/dashboard/owners', adminOnly: false },
   { icon: Map, key: 'map' as const, href: '/dashboard/kort', adminOnly: false },
-  { icon: BarChart2, key: 'analysis' as const, href: '/dashboard/analysis', adminOnly: false },
-  { icon: MessageSquare, key: 'chat' as const, href: '/dashboard/chat', adminOnly: false },
+  {
+    icon: BarChart2,
+    key: 'analysis' as const,
+    href: '/dashboard/analysis',
+    adminOnly: false,
+    aiOnly: true,
+  },
+  {
+    icon: MessageSquare,
+    key: 'chat' as const,
+    href: '/dashboard/chat',
+    adminOnly: false,
+    aiOnly: true,
+  },
   { icon: Shield, key: 'admin' as const, href: '/dashboard/admin/users', adminOnly: true },
 ];
 
@@ -612,7 +632,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
           {/* Navigation — shrink-0 så AI-panelet nedenfor fylder resten */}
           <nav className={`shrink-0 py-6 space-y-1 ${sidebarCollapsed ? 'px-2' : 'px-4'}`}>
             {navItems
-              .filter((item) => !item.adminOnly || isAdmin)
+              .filter((item) => (!item.adminOnly || isAdmin) && (!item.aiOnly || AI_ENABLED))
               .map((item) => {
                 const Icon = item.icon;
                 const label = s[item.key];
@@ -657,8 +677,8 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
               })}
           </nav>
 
-          {/* AI Chat Panel — skjules når sidebar er foldet ind (collapsed) */}
-          {!sidebarCollapsed && (
+          {/* AI Chat Panel — skjules når sidebar er foldet ind, eller AI er deaktiveret */}
+          {AI_ENABLED && !sidebarCollapsed && (
             <ErrorBoundary
               lang={lang}
               fallback={

@@ -1017,6 +1017,11 @@ function recordTenantTokenUsage(
 // ─── Handler ────────────────────────────────────────────────────────────────
 
 export async function POST(request: NextRequest): Promise<Response> {
+  // Feature gate: AI chat is only available when explicitly enabled via env var
+  if (process.env.NEXT_PUBLIC_AI_ENABLED !== 'true') {
+    return Response.json({ error: 'AI-chat er ikke aktiveret i dette miljø' }, { status: 403 });
+  }
+
   // Rate limit: 10 req/min for AI chat
   const limited = await checkRateLimit(request, aiRateLimit);
   if (limited) return limited;
@@ -1079,7 +1084,6 @@ export async function POST(request: NextRequest): Promise<Response> {
   // Captured for activity logging below — avoids a second membership lookup
   let resolvedTenantId: string | null = null;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: membership } = await adminClient
       .from('tenant_memberships')
       .select('tenant_id')

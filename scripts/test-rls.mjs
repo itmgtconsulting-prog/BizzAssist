@@ -160,7 +160,9 @@ function makeAdminClient() {
 
 console.log(`\n${BOLD}BizzAssist RLS Isolation Tests${RESET}`);
 console.log(`${DIM}Dev Supabase: ${SUPABASE_URL}${RESET}`);
-console.log(`${DIM}Only the public schema is tested (per-tenant schemas are structurally hidden from PostgREST)${RESET}\n`);
+console.log(
+  `${DIM}Only the public schema is tested (per-tenant schemas are structurally hidden from PostgREST)${RESET}\n`
+);
 
 const anonClient = makeAnonClient();
 const adminClient = makeAdminClient();
@@ -173,7 +175,9 @@ try {
   clientA = await makeAuthenticatedClient(TENANT_A.email, TENANT_A.password);
   console.log(`  ${GREEN}OK${RESET} Signed in as Tenant A (${TENANT_A.email})`);
 } catch (err) {
-  console.error(`  ${RED}FAIL${RESET} Cannot sign in as Tenant A: ${err instanceof Error ? err.message : String(err)}`);
+  console.error(
+    `  ${RED}FAIL${RESET} Cannot sign in as Tenant A: ${err instanceof Error ? err.message : String(err)}`
+  );
   process.exit(1);
 }
 
@@ -181,7 +185,9 @@ try {
   clientB = await makeAuthenticatedClient(TENANT_B.email, TENANT_B.password);
   console.log(`  ${GREEN}OK${RESET} Signed in as Tenant B (${TENANT_B.email})\n`);
 } catch (err) {
-  console.error(`  ${RED}FAIL${RESET} Cannot sign in as Tenant B: ${err instanceof Error ? err.message : String(err)}`);
+  console.error(
+    `  ${RED}FAIL${RESET} Cannot sign in as Tenant B: ${err instanceof Error ? err.message : String(err)}`
+  );
   process.exit(1);
 }
 
@@ -227,7 +233,10 @@ await test('anon cannot INSERT into public.tenant_memberships', async () => {
     user_id: TENANT_B.userId,
     role: 'tenant_admin',
   });
-  assert(error !== null, 'Expected RLS to block anon INSERT into tenant_memberships but no error returned');
+  assert(
+    error !== null,
+    'Expected RLS to block anon INSERT into tenant_memberships but no error returned'
+  );
 });
 
 // ── Section 2: Intentionally public tables ────────────────────────────────────
@@ -303,7 +312,10 @@ await test('tenant A membership query only returns own memberships (never tenant
   assert(error === null, `Unexpected error: ${error?.message}`);
   const rows = data ?? [];
   for (const row of rows) {
-    assert(row.user_id === TENANT_A.userId, `Got foreign user_id ${row.user_id} — isolation breach!`);
+    assert(
+      row.user_id === TENANT_A.userId,
+      `Got foreign user_id ${row.user_id} — isolation breach!`
+    );
   }
   const hasTenantB = rows.some((r) => r.tenant_id === TENANT_B.tenantId);
   assert(!hasTenantB, 'Tenant A can see tenant B membership row — isolation breach!');
@@ -314,7 +326,10 @@ await test('tenant B membership query only returns own memberships (never tenant
   assert(error === null, `Unexpected error: ${error?.message}`);
   const rows = data ?? [];
   for (const row of rows) {
-    assert(row.user_id === TENANT_B.userId, `Got foreign user_id ${row.user_id} — isolation breach!`);
+    assert(
+      row.user_id === TENANT_B.userId,
+      `Got foreign user_id ${row.user_id} — isolation breach!`
+    );
   }
   const hasTenantA = rows.some((r) => r.tenant_id === TENANT_A.tenantId);
   assert(!hasTenantA, 'Tenant B can see tenant A membership row — isolation breach!');
@@ -322,22 +337,40 @@ await test('tenant B membership query only returns own memberships (never tenant
 
 await test('tenant A cannot SELECT tenant B tenant record by ID', async () => {
   const { data } = await clientA.from('tenants').select('id').eq('id', TENANT_B.tenantId);
-  assert((data ?? []).length === 0, `Expected 0 rows but got ${(data ?? []).length} — isolation breach!`);
+  assert(
+    (data ?? []).length === 0,
+    `Expected 0 rows but got ${(data ?? []).length} — isolation breach!`
+  );
 });
 
 await test('tenant B cannot SELECT tenant A tenant record by ID', async () => {
   const { data } = await clientB.from('tenants').select('id').eq('id', TENANT_A.tenantId);
-  assert((data ?? []).length === 0, `Expected 0 rows but got ${(data ?? []).length} — isolation breach!`);
+  assert(
+    (data ?? []).length === 0,
+    `Expected 0 rows but got ${(data ?? []).length} — isolation breach!`
+  );
 });
 
 await test('tenant A cannot SELECT tenant B subscription', async () => {
-  const { data } = await clientA.from('subscriptions').select('id').eq('tenant_id', TENANT_B.tenantId);
-  assert((data ?? []).length === 0, `Expected 0 rows but got ${(data ?? []).length} — isolation breach!`);
+  const { data } = await clientA
+    .from('subscriptions')
+    .select('id')
+    .eq('tenant_id', TENANT_B.tenantId);
+  assert(
+    (data ?? []).length === 0,
+    `Expected 0 rows but got ${(data ?? []).length} — isolation breach!`
+  );
 });
 
 await test('tenant B cannot SELECT tenant A subscription', async () => {
-  const { data } = await clientB.from('subscriptions').select('id').eq('tenant_id', TENANT_A.tenantId);
-  assert((data ?? []).length === 0, `Expected 0 rows but got ${(data ?? []).length} — isolation breach!`);
+  const { data } = await clientB
+    .from('subscriptions')
+    .select('id')
+    .eq('tenant_id', TENANT_A.tenantId);
+  assert(
+    (data ?? []).length === 0,
+    `Expected 0 rows but got ${(data ?? []).length} — isolation breach!`
+  );
 });
 
 // ── Section 5: User isolation in public.recent_entities ──────────────────────
@@ -408,14 +441,16 @@ await test('authenticated user cannot SELECT public.search_cache (deny-all polic
 
 // ── Section 7: Structural schema isolation ────────────────────────────────────
 
-console.log(`\n${BOLD}7. Structural isolation: per-tenant schemas not exposed via PostgREST${RESET}`);
+console.log(
+  `\n${BOLD}7. Structural isolation: per-tenant schemas not exposed via PostgREST${RESET}`
+);
 
 await test('JS client cannot access tenant_rls_test_b schema (PostgREST schema not exposed)', async () => {
-  const { error } = await clientA
-    .schema(TENANT_B.schemaName)
-    .from('saved_entities')
-    .select('id');
-  assert(error !== null, 'SECURITY: tenant_rls_test_b schema is exposed via PostgREST — fix immediately!');
+  const { error } = await clientA.schema(TENANT_B.schemaName).from('saved_entities').select('id');
+  assert(
+    error !== null,
+    'SECURITY: tenant_rls_test_b schema is exposed via PostgREST — fix immediately!'
+  );
   assert(
     error?.code === 'PGRST106',
     `Expected PGRST106 "Invalid schema" error, got: ${error?.code} — ${error?.message}`
@@ -423,11 +458,11 @@ await test('JS client cannot access tenant_rls_test_b schema (PostgREST schema n
 });
 
 await test('JS client cannot access tenant_jakob_dev schema (PostgREST schema not exposed)', async () => {
-  const { error } = await clientB
-    .schema(TENANT_A.schemaName)
-    .from('saved_entities')
-    .select('id');
-  assert(error !== null, 'SECURITY: tenant_jakob_dev schema is exposed via PostgREST — fix immediately!');
+  const { error } = await clientB.schema(TENANT_A.schemaName).from('saved_entities').select('id');
+  assert(
+    error !== null,
+    'SECURITY: tenant_jakob_dev schema is exposed via PostgREST — fix immediately!'
+  );
   assert(
     error?.code === 'PGRST106',
     `Expected PGRST106 "Invalid schema" error, got: ${error?.code} — ${error?.message}`
@@ -459,8 +494,14 @@ await test('service role CAN read all memberships (RLS bypass — expected)', as
   const { data, error } = await adminClient.from('tenant_memberships').select('tenant_id, user_id');
   assert(error === null, `Unexpected error: ${error?.message}`);
   const tenantIds = (data ?? []).map((r) => r.tenant_id);
-  assert(tenantIds.includes(TENANT_A.tenantId), 'Service role cannot see tenant A memberships — unexpected');
-  assert(tenantIds.includes(TENANT_B.tenantId), 'Service role cannot see tenant B memberships — unexpected');
+  assert(
+    tenantIds.includes(TENANT_A.tenantId),
+    'Service role cannot see tenant A memberships — unexpected'
+  );
+  assert(
+    tenantIds.includes(TENANT_B.tenantId),
+    'Service role cannot see tenant B memberships — unexpected'
+  );
 });
 
 // ── Sign out ──────────────────────────────────────────────────────────────────
@@ -492,6 +533,8 @@ if (failed > 0) {
   process.exit(1);
 } else {
   console.log(`\n${GREEN}${BOLD}All ${total} RLS isolation tests passed.${RESET}`);
-  console.log(`${GREEN}Tenant data isolation is correctly enforced in the dev Supabase instance.${RESET}\n`);
+  console.log(
+    `${GREEN}Tenant data isolation is correctly enforced in the dev Supabase instance.${RESET}\n`
+  );
   process.exit(0);
 }

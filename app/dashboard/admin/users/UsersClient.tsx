@@ -198,11 +198,11 @@ function UserDetailPanel({
   const [showTokenInput, setShowTokenInput] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
 
-  /** Execute an admin action and refresh */
+  /** Execute an admin action and refresh — awaits refresh so loading state stays active until data is fresh */
   const doAction = async (action: string, data?: Record<string, unknown>) => {
     setActionLoading(true);
     await adminAction(user.email, action, data);
-    onRefresh();
+    await onRefresh();
     setActionLoading(false);
   };
 
@@ -751,6 +751,8 @@ export default function UsersClient() {
   const [loading, setLoading] = useState(true);
   const [selectedEmail, setSelectedEmail] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
+  /** Tracks which pending-row action is in flight (email + action, e.g. "foo@bar.com-approve") */
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
 
   /** Add user form state */
   const [showAddUser, setShowAddUser] = useState(false);
@@ -1191,23 +1193,39 @@ export default function UsersClient() {
                       <button
                         onClick={async (e) => {
                           e.stopPropagation();
+                          const key = `${u.email}-approve`;
+                          setPendingAction(key);
                           await adminAction(u.email, 'approve');
-                          refresh();
+                          await refresh();
+                          setPendingAction(null);
                         }}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium rounded-lg transition-colors"
+                        disabled={pendingAction !== null}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium rounded-lg transition-colors"
                       >
-                        <CheckCircle size={13} />
+                        {pendingAction === `${u.email}-approve` ? (
+                          <RotateCcw size={13} className="animate-spin" />
+                        ) : (
+                          <CheckCircle size={13} />
+                        )}
                         {da ? 'Godkend' : 'Approve'}
                       </button>
                       <button
                         onClick={async (e) => {
                           e.stopPropagation();
+                          const key = `${u.email}-reject`;
+                          setPendingAction(key);
                           await adminAction(u.email, 'reject');
-                          refresh();
+                          await refresh();
+                          setPendingAction(null);
                         }}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600/20 hover:bg-red-600/40 text-red-400 text-xs font-medium rounded-lg transition-colors border border-red-500/30"
+                        disabled={pendingAction !== null}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600/20 hover:bg-red-600/40 disabled:opacity-50 disabled:cursor-not-allowed text-red-400 text-xs font-medium rounded-lg transition-colors border border-red-500/30"
                       >
-                        <XCircle size={13} />
+                        {pendingAction === `${u.email}-reject` ? (
+                          <RotateCcw size={13} className="animate-spin" />
+                        ) : (
+                          <XCircle size={13} />
+                        )}
                         {da ? 'Afvis' : 'Reject'}
                       </button>
                     </div>

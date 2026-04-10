@@ -33,8 +33,7 @@ const DEFAULT_MONITOR_ADDRESS = 'monitor@pecuniait.com';
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 
 /** OAuth2 token endpoint template */
-const TOKEN_ENDPOINT_TEMPLATE =
-  'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token';
+const TOKEN_ENDPOINT_TEMPLATE = 'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token';
 
 /** Microsoft Graph permission scope for app-only access */
 const GRAPH_SCOPE = 'https://graph.microsoft.com/.default';
@@ -364,7 +363,10 @@ export async function markEmailAsRead(messageId: string): Promise<boolean> {
  * @returns Plain text without tags.
  */
 function stripHtml(html: string): string {
-  return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  return html
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 /**
@@ -384,7 +386,9 @@ function stripHtml(html: string): string {
  * @returns A ClassifiedEmail with category and extracted metadata.
  */
 export function classifyEmail(email: GraphEmail): ClassifiedEmail {
-  const subject = email.subject ?? '';
+  const rawSubject = email.subject ?? '';
+  // Strip FW:/Fwd: prefixes for forwarded emails (monitor mailbox receives forwards)
+  const subject = rawSubject.replace(/^(?:FW|Fwd)\s*:\s*/i, '').trim();
   const senderAddress = email.from?.emailAddress?.address?.toLowerCase() ?? '';
   const senderDomain = senderAddress.split('@').pop() ?? '';
   const subjectLower = subject.toLowerCase();
@@ -397,8 +401,7 @@ export function classifyEmail(email: GraphEmail): ClassifiedEmail {
     (senderAddress.includes('security') ||
       senderAddress.includes('noreply') ||
       senderAddress.includes('dependabot'));
-  const isSecuritySubject =
-    /dependabot|security advisory|vulnerability|cve-\d{4}/i.test(subject);
+  const isSecuritySubject = /dependabot|security advisory|vulnerability|cve-\d{4}/i.test(subject);
 
   if (isSecuritySender && isSecuritySubject) {
     return {
@@ -415,12 +418,13 @@ export function classifyEmail(email: GraphEmail): ClassifiedEmail {
 
   // ── 2. GitHub CI failures ─────────────────────────────────────────────────
   // GitHub sends from noreply@github.com; subject matches "[owner/repo] Run failed: ..."
+  // For forwarded emails, the sender may not be github.com — match on subject pattern alone
   const isGithubSender = senderDomain === 'github.com';
   const isGithubCiSubject =
-    /\brun\s+failed\b/i.test(subject) ||
-    (subjectLower.includes('failed') && subjectLower.includes('github'));
+    /\[[\w.-]+\/[\w.-]+\]\s+Run\s+failed\b/i.test(subject) ||
+    (subjectLower.includes('run failed') && /\[[\w.-]+\/[\w.-]+\]/.test(subject));
 
-  if (isGithubSender && isGithubCiSubject) {
+  if (isGithubSender || isGithubCiSubject) {
     const repo = extractGithubRepo(subject);
     const workflowName = extractWorkflowName(subject);
     const runUrl = extractUrl(bodyText, /github\.com\/[^/]+\/[^/]+\/actions\/runs\/\d+/);
@@ -467,10 +471,12 @@ export function classifyEmail(email: GraphEmail): ClassifiedEmail {
   // ── 4. Uptime alerts (generic) ────────────────────────────────────────────
   // Matches common uptime monitor patterns from services like UptimeRobot,
   // Better Uptime, Freshping, etc.
-  const isUptimeSubject =
-    /\b(down|outage|unreachable|alert|incident|monitor(ing)?)\b/i.test(subject);
-  const isUptimeSender =
-    /uptimerobot|betteruptime|freshping|statuspage|pagerduty|opsgenie/i.test(senderDomain);
+  const isUptimeSubject = /\b(down|outage|unreachable|alert|incident|monitor(ing)?)\b/i.test(
+    subject
+  );
+  const isUptimeSender = /uptimerobot|betteruptime|freshping|statuspage|pagerduty|opsgenie/i.test(
+    senderDomain
+  );
 
   if (isUptimeSubject || isUptimeSender) {
     return {

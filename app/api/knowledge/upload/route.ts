@@ -294,7 +294,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     // Audit log — fire-and-forget (ISO 27001 A.12.4)
     if (data) {
-      createAdminClient()
+      void createAdminClient()
         .from('audit_log')
         .insert({
           action: 'knowledge.upload',
@@ -306,9 +306,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             charCount: content.length,
             userId: user.id,
           }),
-        })
-        .then()
-        .catch(() => {});
+        });
     }
 
     return NextResponse.json(

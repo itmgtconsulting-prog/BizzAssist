@@ -114,16 +114,12 @@ export async function DELETE(
   if (error) return NextResponse.json({ error: 'DB error' }, { status: 500 });
 
   // Audit log — fire-and-forget (ISO 27001 A.12.4)
-  admin
-    .from('audit_log')
-    .insert({
-      action: 'integration.gmail.disconnect',
-      resource_type: 'integration',
-      resource_id: userId,
-      metadata: JSON.stringify({ tenantId, provider: 'gmail' }),
-    })
-    .then()
-    .catch(() => {});
+  void admin.from('audit_log').insert({
+    action: 'integration.gmail.disconnect',
+    resource_type: 'integration',
+    resource_id: userId,
+    metadata: JSON.stringify({ tenantId, provider: 'gmail' }),
+  });
 
   return NextResponse.json({ ok: true });
 }

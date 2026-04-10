@@ -114,16 +114,12 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
     }
 
     // Audit log — fire-and-forget (same pattern as other routes)
-    admin
-      .from('audit_log')
-      .insert({
-        action: 'tenant.update',
-        resource_type: 'tenant',
-        resource_id: auth.tenantId,
-        metadata: JSON.stringify({ updatedFields: ['name'], userId: auth.userId }),
-      })
-      .then()
-      .catch(() => {});
+    void admin.from('audit_log').insert({
+      action: 'tenant.update',
+      resource_type: 'tenant',
+      resource_id: auth.tenantId,
+      metadata: JSON.stringify({ updatedFields: ['name'], userId: auth.userId }),
+    });
 
     return NextResponse.json({ success: true });
   } catch {

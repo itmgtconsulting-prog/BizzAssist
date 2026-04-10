@@ -181,16 +181,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       .eq('provider', 'gmail');
 
     // Audit log — fire-and-forget (ISO 27001 A.12.4)
-    admin
-      .from('audit_log')
-      .insert({
-        action: 'integration.gmail.send',
-        resource_type: 'email',
-        resource_id: result.id,
-        metadata: JSON.stringify({ tenantId, userId, subject }),
-      })
-      .then()
-      .catch(() => {});
+    void admin.from('audit_log').insert({
+      action: 'integration.gmail.send',
+      resource_type: 'email',
+      resource_id: result.id,
+      metadata: JSON.stringify({ tenantId, userId, subject }),
+    });
 
     return NextResponse.json({ ok: true, messageId: result.id });
   } catch {

@@ -123,7 +123,7 @@ export async function DELETE(
     if (updateError) throw updateError;
 
     // Audit log — fire-and-forget (ISO 27001 A.12.4 — access token lifecycle)
-    createAdminClient()
+    void createAdminClient()
       .from('audit_log')
       .insert({
         action: 'api_token.revoke',
@@ -134,9 +134,7 @@ export async function DELETE(
           userId: user.id,
           revokedBy: isOwner ? 'owner' : 'admin',
         }),
-      })
-      .then()
-      .catch(() => {});
+      });
 
     return new NextResponse(null, { status: 204 });
   } catch (err) {

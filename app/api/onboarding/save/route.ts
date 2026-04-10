@@ -119,19 +119,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
 
       // Audit log — fire-and-forget (ISO 27001 A.12.4)
-      admin
-        .from('audit_log')
-        .insert({
-          action: 'onboarding.save',
-          resource_type: 'tenant',
-          resource_id: tenantId,
-          metadata: JSON.stringify({
-            userId: user.id,
-            updatedFields: Object.keys(updatePayload),
-          }),
-        })
-        .then()
-        .catch(() => {});
+      void admin.from('audit_log').insert({
+        action: 'onboarding.save',
+        resource_type: 'tenant',
+        resource_id: tenantId,
+        metadata: JSON.stringify({
+          userId: user.id,
+          updatedFields: Object.keys(updatePayload),
+        }),
+      });
     }
 
     return NextResponse.json({ ok: true });

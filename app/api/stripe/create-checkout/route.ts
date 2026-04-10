@@ -137,16 +137,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     }
 
     // Audit log — fire-and-forget (ISO 27001 A.12.4)
-    Promise.resolve()
-      .then(() =>
-        admin.from('audit_log').insert({
-          action: 'stripe.checkout.create',
-          resource_type: 'checkout_session',
-          resource_id: session.id,
-          metadata: JSON.stringify({ userId: user.id, planId }),
-        })
-      )
-      .catch(() => {});
+    void admin.from('audit_log').insert({
+      action: 'stripe.checkout.create',
+      resource_type: 'checkout_session',
+      resource_id: session.id,
+      metadata: JSON.stringify({ userId: user.id, planId }),
+    });
 
     // ── 5. Return checkout URL ──
     return NextResponse.json({ url: session.url });

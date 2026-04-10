@@ -216,7 +216,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams): Prom
     }
 
     // Audit log — fire-and-forget (ISO 27001 A.12.4)
-    createAdminClient()
+    void createAdminClient()
       .from('audit_log')
       .insert({
         action: 'knowledge.update',
@@ -227,9 +227,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams): Prom
           updatedFields: Object.keys(patch),
           userId: user.id,
         }),
-      })
-      .then()
-      .catch(() => {});
+      });
 
     return NextResponse.json(data);
   } catch (err) {

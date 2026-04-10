@@ -213,7 +213,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     // Audit log — fire-and-forget (ISO 27001 A.12.4)
     if (data) {
-      createAdminClient()
+      void createAdminClient()
         .from('audit_log')
         .insert({
           action: 'knowledge.create',
@@ -225,9 +225,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             source_type,
             userId: user.id,
           }),
-        })
-        .then()
-        .catch(() => {});
+        });
     }
 
     return NextResponse.json(data, { status: 201 });
@@ -288,16 +286,14 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
     if (error) throw error;
 
     // Audit log — fire-and-forget (ISO 27001 A.12.4)
-    createAdminClient()
+    void createAdminClient()
       .from('audit_log')
       .insert({
         action: 'knowledge.delete',
         resource_type: 'knowledge_item',
         resource_id: String(id),
         metadata: JSON.stringify({ tenantId: membership.tenantId, userId: user.id }),
-      })
-      .then()
-      .catch(() => {});
+      });
 
     return new NextResponse(null, { status: 204 });
   } catch (err) {

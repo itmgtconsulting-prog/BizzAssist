@@ -112,12 +112,13 @@ beforeEach(() => {
   mockGetUserById.mockResolvedValue({ data: { user: mockUserObj() } });
   mockUpdateUserById.mockResolvedValue({ data: {}, error: null });
 
-  // Default from() chain (plan_configs lookup)
+  // Default from() chain (plan_configs lookup + audit_log insert)
   const mockChain = {
     select: vi.fn().mockReturnThis(),
     eq: vi.fn().mockReturnThis(),
     single: vi.fn().mockResolvedValue({ data: null, error: null }),
     update: vi.fn().mockReturnThis(),
+    insert: vi.fn().mockResolvedValue({ error: null }),
   };
   mockFrom.mockReturnValue(mockChain);
 });
@@ -180,6 +181,7 @@ describe('POST /api/stripe/create-checkout', () => {
         },
         error: null,
       }),
+      insert: vi.fn().mockResolvedValue({ error: null }),
     };
     mockFrom.mockReturnValue(mockChain);
 
@@ -207,6 +209,7 @@ describe('POST /api/stripe/create-checkout', () => {
         },
         error: null,
       }),
+      insert: vi.fn().mockResolvedValue({ error: null }),
     };
     mockFrom.mockReturnValue(mockChain);
 
@@ -236,6 +239,7 @@ describe('POST /api/stripe/create-checkout', () => {
         data: { price_dkk: 799, stripe_price_id: 'price_test', max_sales: null, sales_count: 0 },
         error: null,
       }),
+      insert: vi.fn().mockResolvedValue({ error: null }),
     };
     mockFrom.mockReturnValue(mockChain);
 
@@ -257,6 +261,7 @@ describe('POST /api/stripe/create-checkout', () => {
         data: { price_dkk: 799, stripe_price_id: 'price_test', max_sales: null, sales_count: 0 },
         error: null,
       }),
+      insert: vi.fn().mockResolvedValue({ error: null }),
     };
     mockFrom.mockReturnValue(mockChain);
 
@@ -357,6 +362,7 @@ describe('POST /api/stripe/verify-session', () => {
       eq: vi.fn().mockReturnThis(),
       single: vi.fn().mockResolvedValue({ data: null, error: null }),
       update: vi.fn().mockReturnThis(),
+      insert: vi.fn().mockResolvedValue({ error: null }),
     };
     mockFrom.mockReturnValue(mockChain);
 

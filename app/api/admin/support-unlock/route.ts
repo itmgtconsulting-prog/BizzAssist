@@ -85,16 +85,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   // Audit log — fire-and-forget (ISO 27001 A.12.4)
-  adminClient
-    .from('audit_log')
-    .insert({
-      action: 'admin.support.unlock_user',
-      resource_type: 'user',
-      resource_id: userId,
-      metadata: JSON.stringify({ unlockedBy: user.id }),
-    })
-    .then()
-    .catch(() => {});
+  void adminClient.from('audit_log').insert({
+    action: 'admin.support.unlock_user',
+    resource_type: 'user',
+    resource_id: userId,
+    metadata: JSON.stringify({ unlockedBy: user.id }),
+  });
 
   return NextResponse.json({ success: true });
 }

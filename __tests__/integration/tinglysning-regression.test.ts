@@ -261,8 +261,7 @@ describe('GET /api/tinglysning — error handling', () => {
   it('never leaks raw error messages in production', async () => {
     // Return invalid JSON so JSON.parse throws inside the try block
     httpsResponses = [{ status: 200, body: 'not valid json {{{' }];
-    const origNodeEnv = process.env.NODE_ENV;
-    process.env.NODE_ENV = 'production';
+    vi.stubEnv('NODE_ENV', 'production');
 
     vi.resetModules();
     const { GET } = await import('@/app/api/tinglysning/route');
@@ -277,7 +276,7 @@ describe('GET /api/tinglysning — error handling', () => {
     // Must NOT leak raw JSON parse error
     expect(JSON.stringify(body)).not.toMatch(/Unexpected token|JSON\.parse|SyntaxError/i);
 
-    process.env.NODE_ENV = origNodeEnv;
+    vi.unstubAllEnvs();
   });
 });
 

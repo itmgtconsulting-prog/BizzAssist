@@ -1,5 +1,5 @@
 import type { NextConfig } from 'next';
-import { withSentryConfig } from '@sentry/nextjs';
+// import { withSentryConfig } from '@sentry/nextjs';
 
 /**
  * Bundle analyzer — enabled when ANALYZE=true is set in the environment.
@@ -153,19 +153,5 @@ const nextConfig: NextConfig = {
  * disableLogger: strips Sentry's verbose build-time logger from the production
  * bundle to reduce bundle size.
  */
-export default withBundleAnalyzer(
-  withSentryConfig(nextConfig, {
-    org: 'bizzassist',
-    project: 'bizzassist',
-    // Silences the Sentry CLI output during builds — errors still surface via exit code
-    silent: !process.env.CI,
-    // Upload source maps only in CI/production — not during local dev
-    sourcemaps: {
-      disable: !process.env.CI,
-    },
-    // Route Sentry tunnel through our own domain (avoids adblocker blocking)
-    tunnelRoute: '/monitoring',
-    // Turbopack-compatible settings (deprecated webpack-only options removed)
-    telemetry: false,
-  })
-);
+// Sentry disabled temporarily to diagnose production 500 errors
+export default withBundleAnalyzer(nextConfig);

@@ -28,6 +28,7 @@
  */
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import type { PostgrestClient } from '@supabase/postgrest-js';
 
 import type { Database } from '@/lib/supabase/types';
 
@@ -109,9 +110,18 @@ export function createAdminClient(): SupabaseClient<Database> {
  * `tenant_abc123`), so we use the `tenant` key defined in the `Database` type
  * as a representative shape, then cast the actual runtime string at call time.
  *
+ * We use PostgrestClient directly with explicit schema generics to ensure
+ * the type system resolves table types from TenantSchemaShape correctly,
+ * rather than using ReturnType which loses the generic parameter binding.
+ *
  * This type alias lets callers annotate `db` parameters without `any`.
  */
-export type TenantDb = ReturnType<SupabaseClient<Database, 'tenant'>['schema']>;
+export type TenantDb = PostgrestClient<
+  Database,
+  { PostgrestVersion: '12' },
+  'tenant',
+  Database['tenant']
+>;
 
 /**
  * Returns a PostgREST client scoped to a specific tenant's PostgreSQL schema.

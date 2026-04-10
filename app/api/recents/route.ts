@@ -38,7 +38,11 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const entityType = new URL(request.url).searchParams.get('type') ?? 'property';
+    const entityType = (new URL(request.url).searchParams.get('type') ?? 'property') as
+      | 'company'
+      | 'property'
+      | 'person'
+      | 'search';
     const admin = createAdminClient();
 
     const { data, error } = await admin
@@ -139,10 +143,11 @@ export async function DELETE(request: NextRequest) {
   }
 
   try {
-    const entityType = new URL(request.url).searchParams.get('type');
-    if (!entityType) {
+    const entityTypeRaw = new URL(request.url).searchParams.get('type');
+    if (!entityTypeRaw) {
       return NextResponse.json({ error: 'Mangler type parameter' }, { status: 400 });
     }
+    const entityType = entityTypeRaw as 'company' | 'property' | 'person' | 'search';
 
     const admin = createAdminClient();
     await admin

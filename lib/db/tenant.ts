@@ -43,7 +43,7 @@ import { createAdminClient, type TenantDb } from '@/lib/supabase/admin';
 export type TenantRole = 'tenant_admin' | 'tenant_member' | 'tenant_viewer';
 
 /** Resolved tenant context — returned by getTenantContext() */
-export interface TenantContext {
+export type TenantContext = {
   tenantId: string;
   schemaName: string;
   role: TenantRole;
@@ -61,7 +61,7 @@ export interface TenantContext {
   notifications: NotificationsApi;
   /** Audit log (write-only from application code) */
   auditLog: AuditLogApi;
-}
+};
 
 // Row types matching migration 004 tables
 
@@ -75,7 +75,7 @@ export type ReportType =
   | 'custom';
 export type AiRole = 'user' | 'assistant' | 'system';
 
-export interface SavedEntity {
+export type SavedEntity = {
   id: string;
   tenant_id: string;
   entity_type: EntityType;
@@ -86,9 +86,9 @@ export interface SavedEntity {
   created_by: string;
   created_at: string;
   updated_at: string;
-}
+};
 
-export interface SavedSearch {
+export type SavedSearch = {
   id: string;
   tenant_id: string;
   query: string;
@@ -97,9 +97,9 @@ export interface SavedSearch {
   result_count: number | null;
   created_by: string;
   created_at: string;
-}
+};
 
-export interface Report {
+export type Report = {
   id: string;
   tenant_id: string;
   title: string;
@@ -111,9 +111,9 @@ export interface Report {
   created_by: string;
   created_at: string;
   updated_at: string;
-}
+};
 
-export interface AiConversation {
+export type AiConversation = {
   id: string;
   tenant_id: string;
   title: string | null;
@@ -121,9 +121,9 @@ export interface AiConversation {
   created_by: string;
   created_at: string;
   updated_at: string;
-}
+};
 
-export interface AiMessage {
+export type AiMessage = {
   id: string;
   tenant_id: string;
   conversation_id: string;
@@ -131,9 +131,9 @@ export interface AiMessage {
   content: string;
   tokens_used: number | null;
   created_at: string;
-}
+};
 
-export interface AuditLogEntry {
+export type AuditLogEntry = {
   id: string;
   tenant_id: string;
   user_id: string | null;
@@ -143,15 +143,15 @@ export interface AuditLogEntry {
   metadata: Record<string, unknown> | null;
   ip_address: string | null;
   created_at: string;
-}
+};
 
-export interface WriteAuditEntry {
+export type WriteAuditEntry = {
   action: string;
   resource_type: string;
   resource_id?: string;
   metadata?: Record<string, unknown>;
   ip_address?: string;
-}
+};
 
 /** Snapshot type for property change detection */
 export type SnapshotType = 'bbr' | 'vurdering' | 'ejerskab' | 'energi' | 'plan' | 'cvr';
@@ -166,7 +166,7 @@ export type NotificationType =
   | 'cvr_change'
   | 'generel';
 
-export interface PropertySnapshot {
+export type PropertySnapshot = {
   id: string;
   tenant_id: string;
   entity_id: string;
@@ -174,9 +174,9 @@ export interface PropertySnapshot {
   snapshot_hash: string;
   snapshot_data: Record<string, unknown>;
   created_at: string;
-}
+};
 
-export interface Notification {
+export type Notification = {
   id: string;
   tenant_id: string;
   user_id: string;
@@ -188,7 +188,7 @@ export interface Notification {
   metadata: Record<string, unknown> | null;
   is_read: boolean;
   created_at: string;
-}
+};
 
 // ---------------------------------------------------------------------------
 // Tenant API interfaces

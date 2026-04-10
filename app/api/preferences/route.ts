@@ -47,7 +47,7 @@ export async function GET() {
     const admin = createAdminClient();
     const { data, error } = await admin
       .from('users')
-      .select('preferred_language, preferences')
+      .select('preferred_language')
       .eq('id', userId)
       .single();
 

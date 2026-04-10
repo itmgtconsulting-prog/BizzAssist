@@ -94,6 +94,7 @@ import { gemRecentEjendom } from '@/app/lib/recentEjendomme';
 import { recordRecentVisit } from '@/app/lib/recordRecentVisit';
 import { erTracked, toggleTrackEjendom, fetchErTracked } from '@/app/lib/trackedEjendomme';
 import FoelgTooltip from '@/app/components/FoelgTooltip';
+import SektionLoader from '@/app/components/SektionLoader';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { useSetAIPageContext } from '@/app/context/AIPageContext';
 import dynamic from 'next/dynamic';
@@ -3085,10 +3086,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                 <div className="mt-5">
                   <SectionTitle title={t.cadastreInfo} />
                   {matrikelLoader ? (
-                    <div className="flex items-center gap-2 text-slate-500 text-sm py-4">
-                      <div className="w-4 h-4 border-2 border-slate-600 border-t-blue-500 rounded-full animate-spin" />
-                      {t.loadingCadastre}
-                    </div>
+                    <SektionLoader label={t.loadingCadastre} rows={3} />
                   ) : matrikelData ? (
                     <div className="space-y-3">
                       {/* Ejendomsinfo */}
@@ -3397,11 +3395,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                     )}
                   </div>
                   {salgshistorikLoader || tlSumLoader ? (
-                    <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl p-5 text-center">
-                      <p className="text-slate-500 text-xs animate-pulse">
-                        {t.loadingSalesHistory}
-                      </p>
-                    </div>
+                    <SektionLoader label={t.loadingSalesHistory} rows={4} />
                   ) : mergedSalgshistorik.length > 0 ? (
                     <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl overflow-hidden overflow-x-auto">
                       <table className="w-full text-sm min-w-[700px]">
@@ -5193,10 +5187,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                 <div className="mt-5">
                   <SectionTitle title={t.cadastreInfo} />
                   {matrikelLoader ? (
-                    <div className="flex items-center gap-2 text-slate-500 text-sm py-4">
-                      <div className="w-4 h-4 border-2 border-slate-600 border-t-blue-500 rounded-full animate-spin" />
-                      {t.loadingCadastre}
-                    </div>
+                    <SektionLoader label={t.loadingCadastre} rows={3} />
                   ) : matrikelData ? (
                     <div className="space-y-3">
                       {/* Ejendomsinfo */}

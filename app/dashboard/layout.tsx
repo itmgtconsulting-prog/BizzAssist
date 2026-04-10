@@ -52,6 +52,7 @@ import { AIPageProvider } from '@/app/context/AIPageContext';
 import { createClient } from '@/lib/supabase/client';
 import { hasMigrated, migrateLocalStorageToSupabase } from '@/app/lib/migrateLocalStorage';
 import { initCacheUserId, clearCacheUserId } from '@/app/lib/trackedEjendomme';
+import TopProgressBar from '@/app/components/TopProgressBar';
 
 /**
  * Whether AI features (chat + analysis) are enabled in this environment.
@@ -562,6 +563,9 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-screen bg-[#0a1020] overflow-hidden">
+      {/* Top progress bar — shown during route transitions */}
+      <TopProgressBar />
+
       {/* Skip navigation for keyboard users */}
       <a
         href="#main-content"

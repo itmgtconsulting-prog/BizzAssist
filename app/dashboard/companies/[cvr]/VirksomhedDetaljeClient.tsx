@@ -1135,13 +1135,44 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
     });
   }, [aktivTab, ownerChainShared, cvr]);
 
-  // ── Loading state ──
+  // ── Loading state — matches loading.tsx skeleton for seamless transition ──
   if (loading) {
     return (
-      <div className="flex-1 flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
-          <p className="text-slate-400 text-sm">{c.loading}</p>
+      <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 animate-pulse">
+        {/* Back link */}
+        <div className="h-4 w-24 bg-slate-700/20 rounded" />
+        {/* Company header */}
+        <div>
+          <div className="h-8 w-72 bg-slate-700/40 rounded-lg" />
+          <div className="flex gap-2 mt-3">
+            <div className="h-6 w-24 bg-blue-700/20 rounded-full" />
+            <div className="h-6 w-16 bg-green-700/20 rounded-full" />
+            <div className="h-6 w-28 bg-slate-700/20 rounded-full" />
+          </div>
+        </div>
+        {/* Loading indicator */}
+        <div className="flex items-center gap-2 py-1">
+          <Loader2 size={14} className="text-blue-400 flex-shrink-0" style={{ animation: 'spin 0.8s linear infinite' }} />
+          <span className="text-slate-400 text-sm" style={{ animation: 'none' }}>{c.loading}</span>
+        </div>
+        {/* Tabs skeleton */}
+        <div className="flex gap-4 border-b border-slate-700/30 pb-2">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="h-4 w-20 bg-slate-700/20 rounded" />
+          ))}
+        </div>
+        {/* Content cards */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="bg-white/5 border border-white/8 rounded-2xl p-6 space-y-4">
+              <div className="h-5 w-32 bg-slate-700/30 rounded" />
+              <div className="space-y-2">
+                <div className="h-3 w-full bg-slate-700/15 rounded" />
+                <div className="h-3 w-3/4 bg-slate-700/10 rounded" />
+                <div className="h-3 w-1/2 bg-slate-700/10 rounded" />
+              </div>
+            </div>
+          ))}
         </div>
       </div>
     );

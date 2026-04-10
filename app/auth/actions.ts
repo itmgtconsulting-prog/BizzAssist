@@ -653,6 +653,21 @@ export async function selectFreePlan(planId: string): Promise<AuthResult> {
   try {
     const admin = createAdminClient();
 
+    // Read fresh app_metadata via admin client — client-side getUser() does not
+    // expose app_metadata, so we must go through the admin API to check whether
+    // the user was already approved before reaching this step (e.g. admin
+    // pre-approved the account before onboarding completed).
+    const { data: freshUserData } = await admin.auth.admin.getUserById(user.id);
+    const existingSub =
+      (freshUserData?.user?.app_metadata?.subscription as {
+        status?: string;
+        approvedAt?: string | null;
+        createdAt?: string;
+        tokensUsedThisMonth?: number;
+        periodStart?: string;
+        bonusTokens?: number;
+      }) ?? {};
+
     // Look up requires_approval from DB for all plans (including demo)
     let requiresApproval = false;
     const { data: planRow } = (await admin
@@ -665,23 +680,43 @@ export async function selectFreePlan(planId: string): Promise<AuthResult> {
       requiresApproval = planRow.requires_approval;
     }
 
-    const status = requiresApproval ? 'pending' : 'active';
+    // If the user was already approved by an admin (status === 'active'), preserve
+    // that approval — do NOT reset to 'pending'. This prevents the double-approval
+    // loop where an admin pre-approves before onboarding and selectFreePlan then
+    // overwrites the active subscription with a fresh pending one.
+    const alreadyApproved = existingSub.status === 'active';
+    const status = alreadyApproved ? 'active' : requiresApproval ? 'pending' : 'active';
+    const approvedAt = alreadyApproved
+      ? (existingSub.approvedAt ?? now)
+      : requiresApproval
+        ? null
+        : now;
 
     await admin.auth.admin.updateUserById(user.id, {
       app_metadata: {
         subscription: {
           planId,
           status,
-          createdAt: now,
-          approvedAt: requiresApproval ? null : now,
-          tokensUsedThisMonth: 0,
-          periodStart: now,
-          bonusTokens: 0,
+          // Preserve createdAt from the original subscription if it exists
+          createdAt: existingSub.createdAt ?? now,
+          approvedAt,
+          tokensUsedThisMonth: existingSub.tokensUsedThisMonth ?? 0,
+          periodStart: existingSub.periodStart ?? now,
+          bonusTokens: existingSub.bonusTokens ?? 0,
         },
       },
     });
 
-    console.log('[selectFreePlan] Set plan', planId, 'status', status, 'for user', '[user]');
+    console.log(
+      '[selectFreePlan] Set plan',
+      planId,
+      'status',
+      status,
+      'alreadyApproved',
+      alreadyApproved,
+      'for user',
+      '[user]'
+    );
     return { error: null };
   } catch (err) {
     console.error('[selectFreePlan] Error:', err);

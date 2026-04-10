@@ -24,7 +24,7 @@ import {
 } from './dawa';
 export { rensAdresseStreng } from './dawa';
 import { KOMMUNE_NAVN, kommunenavnFraKode } from './kommuner';
-import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
+import { proxyUrl, proxyHeaders, proxyTimeout, isProxyEnabled } from '@/app/lib/dfProxy';
 
 // Re-export existing interfaces so consuming code doesn't need changes
 export type { DawaAutocompleteResult, DawaAdresse, DawaJordstykke } from './dawa';
@@ -73,27 +73,54 @@ async function darQuery<T = Record<string, unknown>>(query: string): Promise<T |
     return null;
   }
 
-  try {
-    const res = await fetch(proxyUrl(url), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...proxyHeaders() },
-      body: JSON.stringify({ query }),
-      signal: AbortSignal.timeout(proxyTimeout()),
-    });
-    if (!res.ok) {
-      console.error(`DAR GraphQL error: ${res.status} ${res.statusText}`);
+  // Helper — tries one URL (proxied or direct) and returns parsed data or null.
+  async function tryFetch(fetchUrl: string, isProxy: boolean): Promise<T | null> {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (isProxy) Object.assign(headers, proxyHeaders());
+    try {
+      const res = await fetch(fetchUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ query }),
+        signal: AbortSignal.timeout(isProxy ? proxyTimeout() : 8000),
+      });
+      if (!res.ok) {
+        console.error(
+          `DAR GraphQL ${isProxy ? 'proxy' : 'direct'} error: ${res.status} ${res.statusText}`
+        );
+        return null;
+      }
+      const json = (await res.json()) as { data?: T; errors?: unknown[] };
+      if (json.errors?.length) {
+        console.error(
+          `DAR GraphQL ${isProxy ? 'proxy' : 'direct'} errors:`,
+          JSON.stringify(json.errors).slice(0, 600)
+        );
+        return null;
+      }
+      return json.data ?? null;
+    } catch (err) {
+      console.error(
+        `DAR GraphQL ${isProxy ? 'proxy' : 'direct'} fetch failed:`,
+        err instanceof Error ? err.message : err
+      );
       return null;
     }
-    const json = (await res.json()) as { data?: T; errors?: unknown[] };
-    if (json.errors?.length) {
-      console.error('DAR GraphQL errors:', JSON.stringify(json.errors).slice(0, 600));
-      return null;
-    }
-    return json.data ?? null;
-  } catch (err) {
-    console.error('DAR GraphQL fetch failed:', err);
-    return null;
   }
+
+  // Attempt 1: via Hetzner proxy (when DF_PROXY_URL is set)
+  const proxyResult = await tryFetch(proxyUrl(url), isProxyEnabled());
+  if (proxyResult !== null) return proxyResult;
+
+  // Attempt 2: direct to Datafordeler (API-key auth does not require IP whitelisting)
+  // This handles the case where the proxy is down or misconfigured for POST/GraphQL.
+  if (isProxyEnabled()) {
+    console.warn('DAR GraphQL: proxy failed, retrying direct');
+    const directResult = await tryFetch(url, false);
+    if (directResult !== null) return directResult;
+  }
+
+  return null;
 }
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

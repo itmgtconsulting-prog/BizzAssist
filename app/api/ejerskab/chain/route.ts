@@ -369,6 +369,7 @@ export async function GET(req: NextRequest) {
   }
 
   // Trin 2: Fallback til EJF hvis Tinglysning ikke gav ejere
+  let ejfManglerAdgang = false;
   if (!ejereFound) {
     try {
       const ejRes = await fetch(`${req.nextUrl.origin}/api/ejerskab?bfeNummer=${bfe}`, {
@@ -377,6 +378,8 @@ export async function GET(req: NextRequest) {
       });
       if (ejRes.ok) {
         const ejData = await ejRes.json();
+        // Registrér om EJF mangler godkendelse — bruges til fejlbesked i UI.
+        if (ejData.manglerAdgang) ejfManglerAdgang = true;
         for (const ejer of ejData.ejere ?? []) {
           const ejerandel =
             ejer.ejerandel_taeller != null &&
@@ -405,8 +408,8 @@ export async function GET(req: NextRequest) {
           }
         }
       }
-    } catch {
-      /* ignore */
+    } catch (err) {
+      console.error('[ejerskab/chain] EJF fetch failed:', err instanceof Error ? err.message : err);
     }
   }
 
@@ -455,13 +458,17 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // Sæt fejl-besked hvis ingen ejere fundet og vi ved hvorfor
+  const ingenEjere = nodes.length <= 1;
+  const fejl = ingenEjere && ejfManglerAdgang ? 'ejf_mangler_adgang' : null;
+
   return NextResponse.json(
     {
       nodes,
       edges,
       mainId,
       ejerDetaljer,
-      fejl: null,
+      fejl,
     } as OwnershipChainResponse,
     {
       headers: { 'Cache-Control': 'public, s-maxage=1800, stale-while-revalidate=600' },

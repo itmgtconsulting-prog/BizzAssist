@@ -6275,11 +6275,13 @@ function PropertyOwnerDiagram({
   const [graph, setGraph] = useState<DiagramGraph | null>(null);
   const [ejerDetaljer, setEjerDetaljer] = useState<EjerDetalje[]>([]);
   const [loading, setLoading] = useState(true);
+  const [chainFejl, setChainFejl] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
     setGraph(null);
     setEjerDetaljer([]);
+    setChainFejl(null);
 
     const controller = new AbortController();
 
@@ -6288,7 +6290,9 @@ function PropertyOwnerDiagram({
     })
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
-        if (data && data.nodes?.length > 0) {
+        if (!data) return;
+        setChainFejl((data.fejl as string | null) ?? null);
+        if (data.nodes?.length > 0) {
           setGraph({
             nodes: data.nodes.map((n: Record<string, unknown>) => ({
               id: n.id as string,
@@ -6325,14 +6329,21 @@ function PropertyOwnerDiagram({
       </div>
     );
 
-  if (!graph || graph.nodes.length <= 1)
+  if (!graph || graph.nodes.length <= 1) {
+    const besked =
+      chainFejl === 'ejf_mangler_adgang'
+        ? da
+          ? 'Ejerdata afventer adgang til Ejerfortegnelsen (EJF). Tinglyste ejere vises når Datafordeler-adgang er godkendt.'
+          : 'Owner data pending EJF access approval from Datafordeler.'
+        : da
+          ? 'Ingen ejerstruktur tilgængelig'
+          : 'No ownership structure available';
     return (
       <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-6 text-center">
-        <p className="text-slate-500 text-sm">
-          {da ? 'Ingen ejerstruktur tilgængelig' : 'No ownership structure available'}
-        </p>
+        <p className="text-slate-500 text-sm">{besked}</p>
       </div>
     );
+  }
 
   const adkomstTypeMap: Record<string, string> = {
     skoede: da ? 'Skøde' : 'Deed',

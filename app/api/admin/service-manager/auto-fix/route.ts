@@ -118,11 +118,12 @@ async function verifyAdminOrCron(
   request: NextRequest
 ): Promise<{ source: 'admin' | 'cron'; user?: { id: string } } | null> {
   // ── Internal cron path ────────────────────────────────────────────────────
+  // Accept CRON_SECRET as bearer token for server-to-server calls from other
+  // cron/webhook routes (e.g. monitor-email, service-scan).
   const cronSecret = process.env.CRON_SECRET;
   const authHeader = request.headers.get('authorization');
-  const isInternalCron = request.headers.get('x-internal-cron') === '1';
 
-  if (cronSecret && isInternalCron && authHeader === `Bearer ${cronSecret}`) {
+  if (cronSecret && authHeader === `Bearer ${cronSecret}`) {
     return { source: 'cron' };
   }
 

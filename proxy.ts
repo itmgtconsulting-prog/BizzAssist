@@ -19,6 +19,7 @@
 
 import { createServerClient } from '@supabase/ssr';
 import { NextRequest, NextResponse } from 'next/server';
+import { applyGlobalRateLimit } from '@/app/lib/globalRateLimit';
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -107,6 +108,12 @@ function isWithinRateLimit(ip: string): boolean {
 export async function proxy(req: NextRequest): Promise<NextResponse> {
   const { pathname, protocol } = req.nextUrl;
   const ip = getClientIp(req);
+
+  // ── 0. Global rate limit (Upstash sliding window — BIZZ-178) ─────────────
+  // Runs before auth to shed abusive traffic without spending Supabase quota.
+  // userId is null here — authenticated tier is applied per-route instead.
+  const rateLimitResponse = await applyGlobalRateLimit(req, null);
+  if (rateLimitResponse) return rateLimitResponse;
 
   // ── 1. Enforce HTTPS in production ────────────────────────────────────────
   if (process.env.NODE_ENV === 'production' && protocol === 'http:') {

@@ -1,7 +1,7 @@
 /**
  * Global Rate Limiting — Middleware-level Upstash Sliding Window
  *
- * Provides a coarse-grained request budget applied in `middleware.ts` before
+ * Provides a coarse-grained request budget applied in `proxy.ts` before
  * any auth check or route handler runs.  Because middleware executes on the
  * Vercel Edge Runtime this module must be import-safe from both Node.js and
  * the Edge runtime (no Node-only APIs).
@@ -13,7 +13,7 @@
  * If the Upstash env vars are absent the helpers return `null` (pass-through)
  * so local development and cold-start static rendering are never blocked.
  *
- * Usage (in middleware.ts):
+ * Usage (in proxy.ts):
  * ```ts
  * const limited = await applyGlobalRateLimit(request, userId);
  * if (limited) return limited; // 429 response

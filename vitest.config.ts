@@ -51,6 +51,10 @@ export default defineConfig({
     // Component tests render React trees in jsdom which can be slow on
     // resource-constrained machines — raise the per-test timeout to 15s.
     testTimeout: 15000,
+    // Cap concurrent workers to prevent "Timeout waiting for worker to respond" errors.
+    // Without this limit vitest spawns one fork per CPU core, which overwhelms the OS
+    // scheduler on loaded machines and causes spurious worker-spawn timeouts.
+    maxWorkers: 4,
     include: ['__tests__/**/*.{test,spec}.{ts,tsx}'],
     exclude: [
       '__tests__/e2e/**',

@@ -2,9 +2,12 @@
  * GET /api/ejerskab/chain?bfe=100165718&adresse=Thorvald+Bindesbølls+Plads+18
  *
  * Resolver ejerskabskæden for en ejendom:
- *   1. Henter ejere fra /api/ejerskab (EJF Datafordeler)
- *   2. For virksomhedsejere → henter ejere fra CVR ES (rekursivt op til 3 niveauer)
+ *   1. Henter adkomst-ejere fra Tinglysning (summarisk XML) — primær kilde med navn, adkomsttype, CVR m.m.
+ *   2. For virksomhedsejere med CVR → henter ejere fra CVR ES (rekursivt op til 3 niveauer)
  *   3. Returnerer en flad graf (nodes + edges) klar til DiagramForce
+ *
+ * EJF (Datafordeler Ejerfortegnelse) bruges IKKE — vi afventer godkendelse.
+ * Tinglysning adkomst + CVR API er tilstrækkeligt til fuld ejerskabskæde.
  *
  * Node-typer: property (grøn), company (blå), person (lilla)
  *
@@ -227,10 +230,9 @@ export async function GET(req: NextRequest) {
   nodes.push({ id: mainId, label: adresse, type: 'property' });
   seenIds.add(mainId);
 
-  // Hent ejere fra Tinglysning (primær) og EJF (fallback)
+  // Hent ejere fra Tinglysning adkomst (primær kilde) og beriget via CVR API
   const companyOwnersToResolve: { nodeId: string; cvr: number; depth: number }[] = [];
   const ejerDetaljer: ChainEjerDetalje[] = [];
-  let ejereFound = false;
 
   // Forward the caller's session cookie so internal API routes can authenticate.
   const cookieHeader = req.headers.get('cookie') ?? '';
@@ -281,7 +283,6 @@ export async function GET(req: NextRequest) {
                 adkomstType: ejer.adkomstType ?? null,
                 koebesum: ejer.koebesum ?? null,
               });
-              ejereFound = true;
             } else {
               // Tjek om "ejeren" egentlig er en status-tekst (fx "Opdelt i ejerlejligheder")
               const erStatus = STATUS_TEKSTER.some((s) =>
@@ -303,7 +304,6 @@ export async function GET(req: NextRequest) {
                   adkomstType: null,
                   koebesum: null,
                 });
-                ejereFound = true;
               } else {
                 const id = `person-${nodes.length}`;
                 // Søg efter personens enhedsNummer i CVR ES via navn
@@ -357,7 +357,6 @@ export async function GET(req: NextRequest) {
                   koebesum: ejer.koebesum ?? null,
                   enhedsNummer: personEnhedsNummer ?? null,
                 });
-                ejereFound = true;
               }
             }
           }
@@ -366,51 +365,6 @@ export async function GET(req: NextRequest) {
     }
   } catch {
     /* Tinglysning valgfri */
-  }
-
-  // Trin 2: Fallback til EJF hvis Tinglysning ikke gav ejere
-  let ejfManglerAdgang = false;
-  if (!ejereFound) {
-    try {
-      const ejRes = await fetch(`${req.nextUrl.origin}/api/ejerskab?bfeNummer=${bfe}`, {
-        headers: { cookie: cookieHeader },
-        signal: AbortSignal.timeout(10000),
-      });
-      if (ejRes.ok) {
-        const ejData = await ejRes.json();
-        // Registrér om EJF mangler godkendelse — bruges til fejlbesked i UI.
-        if (ejData.manglerAdgang) ejfManglerAdgang = true;
-        for (const ejer of ejData.ejere ?? []) {
-          const ejerandel =
-            ejer.ejerandel_taeller != null &&
-            ejer.ejerandel_naevner != null &&
-            ejer.ejerandel_naevner > 0
-              ? `${Math.round((ejer.ejerandel_taeller / ejer.ejerandel_naevner) * 100)}%`
-              : undefined;
-          if (ejer.cvr && ejer.ejertype === 'selskab') {
-            const id = `cvr-${ejer.cvr}`;
-            if (!seenIds.has(id)) {
-              seenIds.add(id);
-              nodes.push({
-                id,
-                label: `CVR ${ejer.cvr}`,
-                type: 'company',
-                cvr: parseInt(ejer.cvr, 10),
-                link: `/dashboard/companies/${ejer.cvr}`,
-              });
-              companyOwnersToResolve.push({ nodeId: id, cvr: parseInt(ejer.cvr, 10), depth: 0 });
-            }
-            edges.push({ from: id, to: mainId, ejerandel });
-          } else {
-            const id = `person-${nodes.length}`;
-            nodes.push({ id, label: 'Person', type: 'person' });
-            edges.push({ from: id, to: mainId, ejerandel });
-          }
-        }
-      }
-    } catch (err) {
-      console.error('[ejerskab/chain] EJF fetch failed:', err instanceof Error ? err.message : err);
-    }
   }
 
   // Resolver virksomhedsejere rekursivt (BFS)
@@ -458,9 +412,7 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // Sæt fejl-besked hvis ingen ejere fundet og vi ved hvorfor
-  const ingenEjere = nodes.length <= 1;
-  const fejl = ingenEjere && ejfManglerAdgang ? 'ejf_mangler_adgang' : null;
+  const fejl: string | null = null;
 
   return NextResponse.json(
     {

@@ -6330,14 +6330,7 @@ function PropertyOwnerDiagram({
     );
 
   if (!graph || graph.nodes.length <= 1) {
-    const besked =
-      chainFejl === 'ejf_mangler_adgang'
-        ? da
-          ? 'Ejerdata afventer adgang til Ejerfortegnelsen (EJF). Tinglyste ejere vises når Datafordeler-adgang er godkendt.'
-          : 'Owner data pending EJF access approval from Datafordeler.'
-        : da
-          ? 'Ingen ejerstruktur tilgængelig'
-          : 'No ownership structure available';
+    const besked = da ? 'Ingen ejerstruktur tilgængelig' : 'No ownership structure available';
     return (
       <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-6 text-center">
         <p className="text-slate-500 text-sm">{besked}</p>

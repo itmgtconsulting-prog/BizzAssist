@@ -196,7 +196,7 @@ export type ServiceManagerScan = {
   triggered_by: string | null;
 };
 
-/** An AI-proposed fix from migration 021 */
+/** An AI-proposed fix from migration 021, extended by migration 037 */
 export type ServiceManagerFix = {
   id: string;
   scan_id: string;
@@ -209,6 +209,10 @@ export type ServiceManagerFix = {
   rejection_reason: string | null;
   reviewed_by: string | null;
   reviewed_at: string | null;
+  /** Set by the Release Agent when the hotfix commit is created (migration 037) */
+  applied_at: string | null;
+  /** Full Git commit SHA produced via GitHub API (migration 037) */
+  commit_sha: string | null;
   created_at: string;
 };
 
@@ -837,6 +841,8 @@ export type Database = {
           rejection_reason?: string | null;
           reviewed_by?: string | null;
           reviewed_at?: string | null;
+          applied_at?: string | null;
+          commit_sha?: string | null;
         };
         Update: Partial<ServiceManagerFix>;
         Relationships: [];

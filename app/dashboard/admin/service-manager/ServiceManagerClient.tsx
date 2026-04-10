@@ -85,6 +85,10 @@ interface FixRecord {
   rejection_reason: string | null;
   reviewed_by: string | null;
   reviewed_at: string | null;
+  /** Timestamp when the Release Agent committed this fix (migration 037) */
+  applied_at: string | null;
+  /** Git commit SHA produced by the Release Agent (migration 037) */
+  commit_sha: string | null;
   created_at: string;
 }
 
@@ -504,11 +508,28 @@ function FixCard({
         </div>
       )}
 
-      {/* Applied state */}
+      {/* Applied state — show commit SHA and applied timestamp */}
       {fix.status === 'applied' && (
-        <div className="border-t border-slate-700/30 px-4 py-3 flex items-center gap-2 text-blue-400 text-xs">
-          <GitBranch size={13} />
-          {da ? 'Hotfix er oprettet og pushet til remote.' : 'Hotfix created and pushed to remote.'}
+        <div className="border-t border-slate-700/30 px-4 py-3 flex flex-col gap-1">
+          <div className="flex items-center gap-2 text-blue-400 text-xs">
+            <GitBranch size={13} />
+            {da ? 'Hotfix er oprettet og pushet til remote.' : 'Hotfix created and pushed to remote.'}
+          </div>
+          {fix.commit_sha && (
+            <span className="text-slate-400 text-xs font-mono pl-5">
+              commit: {fix.commit_sha.slice(0, 12)}
+            </span>
+          )}
+          {fix.applied_at && (
+            <span className="text-slate-500 text-xs pl-5">
+              {new Date(fix.applied_at).toLocaleString(da ? 'da-DK' : 'en-GB', {
+                day: '2-digit',
+                month: 'short',
+                hour: '2-digit',
+                minute: '2-digit',
+              })}
+            </span>
+          )}
         </div>
       )}
     </div>

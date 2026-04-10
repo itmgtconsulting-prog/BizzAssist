@@ -3,7 +3,7 @@
  *
  * Handles the deployment workflow for Service Manager v2 (BIZZ-86).
  * Orchestrates hotfix branches, Vercel preview deployments, and
- * production promotions.
+ * production promotions — all via GitHub REST API (no local git).
  *
  * POST /api/admin/release-agent
  *   Body: { action: string, ...params }
@@ -13,50 +13,53 @@
  *   "create-hotfix"
  *     Body: { action: "create-hotfix", fixId: string }
  *     1. Loads the approved fix from service_manager_fixes
- *     2. Creates branch `hotfix/<scanId>-<fixId-prefix>` from develop
- *     3. Applies the unified diff to the target file
- *     4. Commits with message "hotfix: <issue message>"
- *     5. Pushes branch to remote
+ *     2. Fetches the target file content from GitHub (develop branch)
+ *     3. Applies the unified diff in memory
+ *     4. Creates a blob → tree → commit via GitHub API
+ *     5. Creates branch `hotfix/<scanId-prefix>-<fixId-prefix>` from that commit
  *     6. Creates a PR to develop via GitHub API
- *     Returns: { branch: string, prUrl: string }
+ *     7. Updates fix record: status='applied', applied_at, commit_sha
+ *     Returns: { branch: string, prUrl: string | null, sha: string }
  *
  *   "deploy-to-test"
  *     Body: { action: "deploy-to-test", branch: string }
  *     Triggers a Vercel preview deployment for the given branch.
- *     Returns: { deploymentUrl: string }
+ *     Returns: { deploymentUrl: string | null }
  *
  *   "promote-to-prod"
  *     Body: { action: "promote-to-prod", confirmationToken: string }
- *     Merges develop into main (requires admin confirmation token).
+ *     Merges develop into main via GitHub merge API.
  *     Returns: { merged: boolean, sha: string }
  *
- *   All actions are logged to service_manager_activity.
+ * Required env vars:
+ *   GITHUB_TOKEN  — Personal access token with repo scope
+ *   GITHUB_REPO   — "owner/repo" (e.g. "itmgtconsulting-prog/BizzAssist")
+ *
+ * Optional env vars:
+ *   VERCEL_API_TOKEN, VERCEL_PROJECT_ID, VERCEL_TEAM_ID — for deploy-to-test
+ *   RELEASE_CONFIRMATION_TOKEN — for promote-to-prod guard
  *
  * Safety rules:
  *   - Only 'approved' fixes can have hotfixes created
  *   - A fix can only be applied once (status → 'applied' after success)
  *   - promote-to-prod requires a fresh RELEASE_CONFIRMATION_TOKEN env var match
- *   - Git operations run with a 30-second timeout
+ *   - All GitHub API calls have 15-second timeouts
  *   - All errors are logged before returning 5xx
  *
  * Only accessible by admin users (app_metadata.isAdmin === true).
  *
  * @see app/api/admin/service-manager/auto-fix/route.ts — produces approved fixes
- * @see supabase/migrations/021_service_manager_v2.sql — activity table schema
+ * @see supabase/migrations/021_service_manager_v2.sql — base table schema
+ * @see supabase/migrations/037_service_manager_applied_at.sql — applied_at + commit_sha
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { exec } from 'child_process';
-import { promisify } from 'util';
-import { writeFileSync, existsSync } from 'fs';
-import { join } from 'path';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import type { ServiceManagerFix, ServiceManagerActivity } from '@/lib/supabase/types';
 
 /**
- * Returns the admin client for operations on service_manager tables
- * (service_manager_fixes, service_manager_activity).
+ * Returns the admin client for operations on service_manager tables.
  *
  * @returns Typed Supabase admin client
  */
@@ -69,16 +72,14 @@ export const maxDuration = 90;
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-/** Absolute path to the git repository root (where .git lives) */
-const REPO_ROOT = process.cwd();
-
 /** Default branch that hotfixes target */
 const BASE_BRANCH = 'develop';
 
-/** Git exec timeout in milliseconds */
-const GIT_TIMEOUT_MS = 30_000;
+/** GitHub REST API base URL */
+const GITHUB_API = 'https://api.github.com';
 
-const execAsync = promisify(exec);
+/** Timeout for individual GitHub API calls */
+const GITHUB_TIMEOUT_MS = 15_000;
 
 // ─── Admin verification ───────────────────────────────────────────────────────
 
@@ -124,86 +125,201 @@ async function logActivity(
   }
 }
 
-// ─── Git helpers ──────────────────────────────────────────────────────────────
-
-/**
- * Run a git command in the repository root with a timeout.
- *
- * @param cmd - Git command arguments (after "git ").
- * @returns stdout string.
- * @throws If the command exits non-zero or times out.
- */
-async function git(cmd: string): Promise<string> {
-  const { stdout } = await execAsync(`git ${cmd}`, {
-    cwd: REPO_ROOT,
-    timeout: GIT_TIMEOUT_MS,
-    env: {
-      ...process.env,
-      // Ensure non-interactive mode for git
-      GIT_TERMINAL_PROMPT: '0',
-    },
-  });
-  return stdout.trim();
-}
-
-/**
- * Apply a unified diff string to a file on disk.
- * Uses `git apply` to validate and apply the patch safely.
- *
- * @param diff - Unified diff in patch format.
- * @param filePath - Relative path to the target file.
- * @throws If the diff cannot be applied cleanly.
- */
-async function applyDiff(diff: string, _filePath: string): Promise<void> {
-  const patchFile = join(REPO_ROOT, '.service-manager-patch.diff');
-  try {
-    writeFileSync(patchFile, diff, 'utf-8');
-    // --check first to validate without applying
-    await execAsync(`git apply --check "${patchFile}"`, {
-      cwd: REPO_ROOT,
-      timeout: GIT_TIMEOUT_MS,
-    });
-    // Apply for real
-    await execAsync(`git apply "${patchFile}"`, {
-      cwd: REPO_ROOT,
-      timeout: GIT_TIMEOUT_MS,
-    });
-  } finally {
-    // Always clean up the temp patch file
-    try {
-      const { unlinkSync } = await import('fs');
-      if (existsSync(patchFile)) unlinkSync(patchFile);
-    } catch {
-      // Non-fatal cleanup failure
-    }
-  }
-}
-
 // ─── GitHub API helpers ───────────────────────────────────────────────────────
 
 /**
- * Create a pull request on GitHub from a hotfix branch to the base branch.
- * Requires GITHUB_TOKEN and GITHUB_REPO (owner/repo) env vars.
+ * Returns GitHub credentials from env vars, or throws if not configured.
  *
- * @param branch - The hotfix branch name.
- * @param title - PR title.
- * @param body - PR description.
- * @returns The PR URL, or null if GitHub credentials are not configured.
+ * @returns { token, repo } where repo is "owner/repo"
+ * @throws If GITHUB_TOKEN or GITHUB_REPO are missing
  */
-async function createGitHubPR(branch: string, title: string, body: string): Promise<string | null> {
+function requireGitHubConfig(): { token: string; repo: string } {
   const token = process.env.GITHUB_TOKEN;
-  const repo = process.env.GITHUB_REPO; // e.g. "JakobJuul/bizzassist"
+  const repo = process.env.GITHUB_REPO;
+  if (!token || !repo) {
+    throw new Error(
+      'GITHUB_TOKEN og GITHUB_REPO env vars er påkrævet men mangler. ' +
+        'Tilføj dem til .env.local og Vercel project settings.'
+    );
+  }
+  return { token, repo };
+}
 
-  if (!token || !repo) return null;
+/**
+ * Perform an authenticated GitHub REST API request.
+ *
+ * @param path - Path relative to `/repos/{owner}/{repo}` (e.g. "/git/refs/heads/develop").
+ * @param options - fetch options (method, body, etc.).
+ * @returns Raw Response.
+ * @throws On network error or timeout.
+ */
+async function githubFetch(path: string, options: RequestInit = {}): Promise<Response> {
+  const { token, repo } = requireGitHubConfig();
+  return fetch(`${GITHUB_API}/repos/${repo}${path}`, {
+    ...options,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      'User-Agent': 'BizzAssist-ReleaseAgent/2.0',
+      ...(options.headers ?? {}),
+    },
+    signal: AbortSignal.timeout(GITHUB_TIMEOUT_MS),
+  });
+}
 
+/**
+ * Get the commit SHA at the tip of a branch.
+ *
+ * @param branch - Branch name (e.g. "develop").
+ * @returns Commit SHA string.
+ * @throws If the branch does not exist on GitHub or the API call fails.
+ */
+async function getBranchSha(branch: string): Promise<string> {
+  const res = await githubFetch(`/git/refs/heads/${branch}`);
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(
+      `Kunne ikke hente branch '${branch}' fra GitHub (${res.status}): ${body.slice(0, 200)}`
+    );
+  }
+  const data = (await res.json()) as { object: { sha: string } };
+  return data.object.sha;
+}
+
+/**
+ * Get the tree SHA for a commit.
+ *
+ * @param commitSha - Commit SHA.
+ * @returns Tree SHA.
+ */
+async function getCommitTreeSha(commitSha: string): Promise<string> {
+  const res = await githubFetch(`/git/commits/${commitSha}`);
+  if (!res.ok) throw new Error(`Kunne ikke hente commit ${commitSha} fra GitHub`);
+  const data = (await res.json()) as { tree: { sha: string } };
+  return data.tree.sha;
+}
+
+/**
+ * Fetch the raw UTF-8 content of a file from GitHub.
+ *
+ * @param filePath - Repo-relative path (e.g. "app/api/foo/route.ts").
+ * @param ref - Branch name or commit SHA.
+ * @returns File content as a string.
+ * @throws If the file does not exist or the API call fails.
+ */
+async function getFileContent(filePath: string, ref: string): Promise<string> {
+  const res = await githubFetch(`/contents/${encodeURIComponent(filePath)}?ref=${ref}`);
+  if (!res.ok) {
+    if (res.status === 404) throw new Error(`Fil ikke fundet på GitHub: ${filePath}`);
+    throw new Error(`Kunne ikke hente fil '${filePath}' fra GitHub (${res.status})`);
+  }
+  const data = (await res.json()) as { content: string; encoding: string };
+  // GitHub always returns base64-encoded content with embedded newlines
+  const raw = data.content.replace(/\n/g, '');
+  return Buffer.from(raw, 'base64').toString('utf-8');
+}
+
+/**
+ * Create a git blob from UTF-8 content and return its SHA.
+ *
+ * @param content - UTF-8 file content.
+ * @returns Blob SHA.
+ */
+async function createBlob(content: string): Promise<string> {
+  const res = await githubFetch('/git/blobs', {
+    method: 'POST',
+    body: JSON.stringify({ content, encoding: 'utf-8' }),
+  });
+  if (!res.ok) throw new Error(`Kunne ikke oprette blob på GitHub (${res.status})`);
+  const data = (await res.json()) as { sha: string };
+  return data.sha;
+}
+
+/**
+ * Create a new git tree by replacing one file in an existing tree.
+ *
+ * @param baseTreeSha - The SHA of the base tree to extend.
+ * @param filePath - Repo-relative path of the file to update.
+ * @param blobSha - SHA of the new file blob.
+ * @returns New tree SHA.
+ */
+async function createTree(
+  baseTreeSha: string,
+  filePath: string,
+  blobSha: string
+): Promise<string> {
+  const res = await githubFetch('/git/trees', {
+    method: 'POST',
+    body: JSON.stringify({
+      base_tree: baseTreeSha,
+      tree: [{ path: filePath, mode: '100644', type: 'blob', sha: blobSha }],
+    }),
+  });
+  if (!res.ok) throw new Error(`Kunne ikke oprette tree på GitHub (${res.status})`);
+  const data = (await res.json()) as { sha: string };
+  return data.sha;
+}
+
+/**
+ * Create a git commit object and return its SHA.
+ *
+ * @param message - Commit message.
+ * @param treeSha - Tree SHA for this commit.
+ * @param parentSha - Parent commit SHA.
+ * @returns New commit SHA.
+ */
+async function createCommit(
+  message: string,
+  treeSha: string,
+  parentSha: string
+): Promise<string> {
+  const res = await githubFetch('/git/commits', {
+    method: 'POST',
+    body: JSON.stringify({ message, tree: treeSha, parents: [parentSha] }),
+  });
+  if (!res.ok) throw new Error(`Kunne ikke oprette commit på GitHub (${res.status})`);
+  const data = (await res.json()) as { sha: string };
+  return data.sha;
+}
+
+/**
+ * Create a new branch reference pointing to a commit.
+ *
+ * @param branch - New branch name (e.g. "hotfix/abc123").
+ * @param sha - Commit SHA the branch should point to.
+ * @throws If the branch already exists or the API call fails.
+ */
+async function createBranchRef(branch: string, sha: string): Promise<void> {
+  const res = await githubFetch('/git/refs', {
+    method: 'POST',
+    body: JSON.stringify({ ref: `refs/heads/${branch}`, sha }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(
+      `Kunne ikke oprette branch '${branch}' på GitHub (${res.status}): ${body.slice(0, 200)}`
+    );
+  }
+}
+
+/**
+ * Create a pull request from a hotfix branch to the base branch.
+ *
+ * @param branch - The source (head) branch name.
+ * @param title - PR title.
+ * @param body - PR body (Markdown).
+ * @returns The PR HTML URL, or null if the API call fails non-fatally.
+ */
+async function createGitHubPR(
+  branch: string,
+  title: string,
+  body: string
+): Promise<string | null> {
   try {
-    const res = await fetch(`https://api.github.com/repos/${repo}/pulls`, {
+    const res = await githubFetch('/pulls', {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-        'User-Agent': 'BizzAssist-ReleaseAgent/2.0',
-      },
       body: JSON.stringify({
         title,
         body,
@@ -211,27 +327,109 @@ async function createGitHubPR(branch: string, title: string, body: string): Prom
         base: BASE_BRANCH,
         draft: false,
       }),
-      signal: AbortSignal.timeout(15000),
     });
-
     if (!res.ok) {
       const err = await res.text();
       console.warn('[release-agent] GitHub PR creation failed:', err);
       return null;
     }
-
     const data = (await res.json()) as { html_url?: string };
     return data.html_url ?? null;
   } catch (err) {
-    console.warn('[release-agent] GitHub API error:', err);
+    console.warn('[release-agent] GitHub PR API error:', err);
     return null;
   }
+}
+
+// ─── Diff application ─────────────────────────────────────────────────────────
+
+/**
+ * Parse and apply a unified diff to a string in memory.
+ *
+ * Supports standard unified diff format (--- / +++ / @@ headers).
+ * Hunks are applied in reverse order so earlier hunks do not shift
+ * the line offsets of later hunks.
+ *
+ * @param original - The original file content as a string.
+ * @param diff - Unified diff string (Claude-generated patch format).
+ * @returns The patched file content.
+ * @throws If no hunks are found in the diff or the diff is malformed.
+ */
+function applyUnifiedDiff(original: string, diff: string): string {
+  interface Hunk {
+    /** 1-indexed start line in the original file */
+    oldStart: number;
+    /** Number of lines consumed from the original file (context + deleted) */
+    oldCount: number;
+    /** Lines to emit in the result (context + added, no deletions) */
+    replacement: string[];
+  }
+
+  const originalLines = original.split('\n');
+  const diffLines = diff.split('\n');
+  const hunks: Hunk[] = [];
+
+  let i = 0;
+
+  // Skip file-level headers (diff --git, ---, +++)
+  while (i < diffLines.length && !diffLines[i].startsWith('@@')) {
+    i++;
+  }
+
+  // Parse each hunk
+  while (i < diffLines.length) {
+    const headerMatch = diffLines[i].match(/^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@/);
+    if (!headerMatch) {
+      i++;
+      continue;
+    }
+
+    const oldStart = parseInt(headerMatch[1], 10);
+    const oldCount = parseInt(headerMatch[2] ?? '1', 10);
+    i++;
+
+    const replacement: string[] = [];
+
+    while (i < diffLines.length && !diffLines[i].startsWith('@@')) {
+      const dl = diffLines[i];
+      if (dl.startsWith('+')) {
+        // Added line — goes into result only
+        replacement.push(dl.slice(1));
+      } else if (dl.startsWith('-')) {
+        // Deleted line — consumed from original, not in result
+      } else if (dl.startsWith(' ') || dl === '') {
+        // Context line — consumed from original, echoed in result
+        replacement.push(dl.startsWith(' ') ? dl.slice(1) : '');
+      }
+      // Skip "\ No newline at end of file" and other \ markers
+      i++;
+    }
+
+    hunks.push({ oldStart, oldCount, replacement });
+  }
+
+  if (hunks.length === 0) {
+    throw new Error('Ingen hunks fundet i diff — er diff-formatet korrekt?');
+  }
+
+  // Apply hunks in reverse order to preserve line offsets
+  const resultLines = [...originalLines];
+  for (const hunk of [...hunks].reverse()) {
+    const start = hunk.oldStart - 1; // convert to 0-indexed
+    resultLines.splice(start, hunk.oldCount, ...hunk.replacement);
+  }
+
+  return resultLines.join('\n');
 }
 
 // ─── Action: create-hotfix ────────────────────────────────────────────────────
 
 /**
- * Create a hotfix branch, apply the approved diff, commit, push, and open a PR.
+ * Create a hotfix branch via GitHub API, apply the approved diff,
+ * commit, push, open a PR, and mark the fix as 'applied'.
+ *
+ * Uses the GitHub Git Data API exclusively — no local git commands.
+ * This works correctly on Vercel's serverless runtime.
  *
  * @param fixId - The service_manager_fixes record UUID.
  * @param userId - The admin user performing the action.
@@ -249,6 +447,7 @@ async function createHotfix(
     .select('*, service_manager_scans(summary, issues_found)')
     .eq('id', fixId)
     .single();
+
   const fix = fixData as
     | (ServiceManagerFix & {
         service_manager_scans: {
@@ -266,60 +465,54 @@ async function createHotfix(
     throw new Error(`Fix har status '${fix.status}' — kun 'approved' fixes kan anvendes`);
   }
 
+  if (!fix.proposed_diff?.trim()) {
+    throw new Error('Fix har et tomt diff — kan ikke oprette hotfix');
+  }
+
   // ── Build branch name ──────────────────────────────────────────────────
   const shortFixId = fixId.replace(/-/g, '').slice(0, 8);
   const branch = `hotfix/${fix.scan_id.slice(0, 8)}-${shortFixId}`;
 
-  // ── Ensure working tree is clean ───────────────────────────────────────
-  const statusOutput = await git('status --porcelain');
-  if (statusOutput.length > 0) {
-    throw new Error(
-      'Git working tree er ikke ren — stash eller commit eksisterende ændringer først'
-    );
-  }
+  // ── Step 1: Get the base branch commit SHA ─────────────────────────────
+  const baseSha = await getBranchSha(BASE_BRANCH);
 
-  // ── Checkout develop and pull latest ──────────────────────────────────
-  await git(`checkout ${BASE_BRANCH}`);
-  await git('pull --ff-only').catch(() => {
-    // Pull may fail if remote is not reachable — continue with local state
-    console.warn('[release-agent] pull failed — proceeding with local develop');
-  });
+  // ── Step 2: Get the base commit's tree SHA ─────────────────────────────
+  const baseTreeSha = await getCommitTreeSha(baseSha);
 
-  // ── Create the hotfix branch ───────────────────────────────────────────
-  await git(`checkout -b ${branch}`);
+  // ── Step 3: Fetch the current file content from GitHub ─────────────────
+  const originalContent = await getFileContent(fix.file_path as string, BASE_BRANCH);
 
-  // ── Apply the diff ─────────────────────────────────────────────────────
+  // ── Step 4: Apply the unified diff in memory ───────────────────────────
+  let newContent: string;
   try {
-    await applyDiff(fix.proposed_diff as string, fix.file_path as string);
-  } catch (patchErr) {
-    // Abort: return to develop and delete the branch
-    await git(`checkout ${BASE_BRANCH}`).catch(() => {});
-    await git(`branch -D ${branch}`).catch(() => {});
+    newContent = applyUnifiedDiff(originalContent, fix.proposed_diff as string);
+  } catch (diffErr) {
     throw new Error(
-      `Diff kunne ikke anvendes: ${patchErr instanceof Error ? patchErr.message : String(patchErr)}`
+      `Diff kunne ikke anvendes: ${diffErr instanceof Error ? diffErr.message : String(diffErr)}`
     );
   }
 
-  // ── Stage the changed file ─────────────────────────────────────────────
-  await git(`add -- "${fix.file_path}"`);
+  // ── Step 5: Create a blob with the patched content ─────────────────────
+  const blobSha = await createBlob(newContent);
 
-  // ── Build commit message ───────────────────────────────────────────────
+  // ── Step 6: Create a new tree replacing the changed file ───────────────
+  const treeSha = await createTree(baseTreeSha, fix.file_path as string, blobSha);
+
+  // ── Step 7: Build commit message ───────────────────────────────────────
   const scan = fix.service_manager_scans;
-  const issueMsg = scan?.issues_found?.[fix.issue_index]?.message ?? scan?.summary ?? 'auto-fix';
-  // Truncate to keep commit message clean
+  const issueMsg =
+    scan?.issues_found?.[fix.issue_index]?.message ?? scan?.summary ?? 'auto-fix';
   const commitMsg = `hotfix: ${issueMsg.slice(0, 72)}`;
 
-  await git(`commit -m "${commitMsg.replace(/"/g, '\\"')}"`);
+  // ── Step 8: Create the commit ──────────────────────────────────────────
+  const commitSha = await createCommit(commitMsg, treeSha, baseSha);
 
-  // ── Get the commit SHA ─────────────────────────────────────────────────
-  const sha = await git('rev-parse HEAD');
+  // ── Step 9: Create the hotfix branch ──────────────────────────────────
+  await createBranchRef(branch, commitSha);
 
-  // ── Push to remote ─────────────────────────────────────────────────────
-  await git(`push origin ${branch}`);
+  await logActivity('hotfix_pushed', { fix_id: fixId, branch, sha: commitSha }, userId);
 
-  await logActivity('hotfix_pushed', { fix_id: fixId, branch, sha }, userId);
-
-  // ── Create GitHub PR ───────────────────────────────────────────────────
+  // ── Step 10: Create GitHub PR ──────────────────────────────────────────
   const prBody = [
     `## Automatisk hotfix`,
     ``,
@@ -346,23 +539,30 @@ async function createHotfix(
     await logActivity('pr_created', { fix_id: fixId, branch, pr_url: prUrl }, userId);
   }
 
-  // ── Mark fix as applied ────────────────────────────────────────────────
-  await db.from('service_manager_fixes').update({ status: 'applied' }).eq('id', fixId);
+  // ── Step 11: Mark fix as applied with commit metadata ─────────────────
+  await db
+    .from('service_manager_fixes')
+    .update({
+      status: 'applied',
+      applied_at: new Date().toISOString(),
+      commit_sha: commitSha,
+    })
+    .eq('id', fixId);
 
   await logActivity(
     'hotfix_created',
-    { fix_id: fixId, branch, sha, pr_url: prUrl ?? null },
+    { fix_id: fixId, branch, sha: commitSha, pr_url: prUrl ?? null },
     userId
   );
 
-  return { branch, prUrl, sha };
+  return { branch, prUrl, sha: commitSha };
 }
 
 // ─── Action: deploy-to-test ───────────────────────────────────────────────────
 
 /**
  * Trigger a Vercel preview deployment for a hotfix branch.
- * Requires VERCEL_API_TOKEN, VERCEL_PROJECT_ID, and VERCEL_TEAM_ID env vars.
+ * Requires VERCEL_API_TOKEN, VERCEL_PROJECT_ID, and optionally VERCEL_TEAM_ID.
  *
  * @param branch - The branch to deploy.
  * @param userId - The admin user.
@@ -398,7 +598,7 @@ async function deployToTest(
           ref: branch,
         },
       }),
-      signal: AbortSignal.timeout(30000),
+      signal: AbortSignal.timeout(30_000),
     }
   );
 
@@ -418,7 +618,7 @@ async function deployToTest(
 // ─── Action: promote-to-prod ──────────────────────────────────────────────────
 
 /**
- * Merge develop into main to promote changes to production.
+ * Merge develop into main via GitHub merge API to promote to production.
  * Requires a confirmation token to prevent accidental promotions.
  *
  * @param confirmationToken - Must match RELEASE_CONFIRMATION_TOKEN env var.
@@ -435,31 +635,40 @@ async function promoteToProd(
     throw new Error('Ugyldigt bekræftelsestoken — production-promotion afvist');
   }
 
-  // Ensure clean working tree
-  const statusOutput = await git('status --porcelain');
-  if (statusOutput.length > 0) {
-    throw new Error('Git working tree er ikke ren — ryd op før promotion');
+  // Use GitHub merge API (works on Vercel, no local git needed)
+  const res = await githubFetch('/merges', {
+    method: 'POST',
+    body: JSON.stringify({
+      base: 'main',
+      head: BASE_BRANCH,
+      commit_message: `chore(release): promote ${BASE_BRANCH} to production`,
+    }),
+  });
+
+  if (res.status === 204) {
+    // Already up to date — get current main SHA
+    const mainSha = await getBranchSha('main');
+    await logActivity(
+      'promote_prod',
+      { sha: mainSha, note: 'already up-to-date', from_branch: BASE_BRANCH, to_branch: 'main' },
+      userId
+    );
+    return { merged: true, sha: mainSha };
   }
 
-  // Fetch latest
-  await git('fetch origin');
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`GitHub merge fejlede (${res.status}): ${err.slice(0, 200)}`);
+  }
 
-  // Checkout main and merge develop
-  await git('checkout main');
-  await git('pull --ff-only origin main').catch(() => {});
-  await git(
-    `merge --no-ff origin/${BASE_BRANCH} -m "chore(release): promote develop to production"`
+  const data = (await res.json()) as { sha?: string };
+  const sha = data.sha ?? '';
+
+  await logActivity(
+    'promote_prod',
+    { sha, from_branch: BASE_BRANCH, to_branch: 'main' },
+    userId
   );
-
-  const sha = await git('rev-parse HEAD');
-
-  // Push to remote
-  await git('push origin main');
-
-  // Return to develop
-  await git(`checkout ${BASE_BRANCH}`).catch(() => {});
-
-  await logActivity('promote_prod', { sha, from_branch: BASE_BRANCH, to_branch: 'main' }, userId);
 
   return { merged: true, sha };
 }

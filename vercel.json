@@ -35,6 +35,10 @@
     {
       "path": "/api/cron/service-scan",
       "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/monitor-email",
+      "schedule": "*/5 * * * *"
     }
   ]
 }

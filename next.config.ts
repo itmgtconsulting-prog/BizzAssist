@@ -1,5 +1,5 @@
 import type { NextConfig } from 'next';
-// import { withSentryConfig } from '@sentry/nextjs';
+import { withSentryConfig } from '@sentry/nextjs';
 
 /**
  * Bundle analyzer — enabled when ANALYZE=true is set in the environment.
@@ -79,6 +79,7 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  output: 'standalone',
   devIndicators: false,
   env: {
     NEXT_PUBLIC_BUILD_ID: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? 'dev',
@@ -153,5 +154,15 @@ const nextConfig: NextConfig = {
  * disableLogger: strips Sentry's verbose build-time logger from the production
  * bundle to reduce bundle size.
  */
-// Sentry disabled temporarily to diagnose production 500 errors
-export default withBundleAnalyzer(nextConfig);
+export default withBundleAnalyzer(
+  withSentryConfig(nextConfig, {
+    org: 'bizzassist',
+    project: 'bizzassist',
+    silent: !process.env.CI,
+    sourcemaps: {
+      disable: !process.env.CI,
+    },
+    tunnelRoute: '/monitoring',
+    telemetry: false,
+  })
+);

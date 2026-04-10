@@ -13,11 +13,11 @@
  * @see https://docs.sentry.io/platforms/javascript/guides/nextjs/manual-setup/
  */
 export async function register() {
-  // Sentry disabled temporarily to diagnose production 500 errors
-  // if (process.env.NEXT_RUNTIME === 'nodejs') {
-  //   await import('./sentry.server.config');
-  // }
-  // if (process.env.NEXT_RUNTIME === 'edge') {
-  //   await import('./sentry.edge.config');
-  // }
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    await import('./sentry.server.config');
+  }
+
+  if (process.env.NEXT_RUNTIME === 'edge') {
+    await import('./sentry.edge.config');
+  }
 }

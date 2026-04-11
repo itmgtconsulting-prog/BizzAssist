@@ -351,7 +351,7 @@ Returner KUN validt JSON uden tekst før/efter:
   ]
 }
 
-- Brug KUN de givne URLs fra Brave — opfind IKKE nye URLs
+- Brug KUN de givne URLs fra søgeresultaterne — opfind IKKE nye URLs
 - Returner op til 15 artikler, sorteret nyeste FØRST`;
 }
 
@@ -551,11 +551,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     });
   }
 
-  const braveResults = rawResults; // alias for nedenstående brug i Claude-besked
-
   logger.log(
     `[article-search/articles] "${companyName}": ${rawResults.length} samlede resultater efter merge+dedup`
   );
+
+  // Ingen resultater fra hverken Brave eller Serper — spring Claude over og returnér tomt
+  if (rawResults.length === 0) {
+    const searchSource = [braveKey ? 'brave' : null, serperApiKey ? 'serper' : null]
+      .filter(Boolean)
+      .join('+');
+    return NextResponse.json({ articles: [], tokensUsed: 0, source: `${searchSource}+no-results` });
+  }
 
   // ── Byg Claude-besked ──
   const companyContext = [
@@ -569,17 +575,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     .filter(Boolean)
     .join('\n');
 
-  const braveSummary =
-    braveResults.length > 0
-      ? braveResults
-          .map(
-            (r, i) =>
-              `${i + 1}. ${r.title}\n   URL: ${r.url}\n   Kilde: ${r.source}${r.date ? `\n   Dato: ${r.date}` : ''}${r.description ? `\n   Snippet: ${r.description}` : ''}`
-          )
-          .join('\n\n')
-      : '(Ingen Brave-resultater for denne søgning)';
+  const resultSummary = rawResults
+    .map(
+      (r, i) =>
+        `${i + 1}. ${r.title}\n   URL: ${r.url}\n   Kilde: ${r.source}${r.date ? `\n   Dato: ${r.date}` : ''}${r.description ? `\n   Snippet: ${r.description}` : ''}`
+    )
+    .join('\n\n');
 
-  const userMessage = `Virksomhed:\n${companyContext}\n\nBrave Search-resultater (${braveResults.length} hits):\n\n${braveSummary}\n\nRangér og filtrer disse resultater — returner kun artikler der handler om DENNE virksomhed.`;
+  const userMessage = `Virksomhed:\n${companyContext}\n\nSøgeresultater (${rawResults.length} hits):\n\n${resultSummary}\n\nRangér og filtrer disse resultater — returner kun artikler der handler om DENNE virksomhed.`;
 
   // ── Kald Claude ──
   const client = new Anthropic({ apiKey });

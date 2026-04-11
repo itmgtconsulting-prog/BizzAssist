@@ -165,8 +165,9 @@ async function searchBrave(
 }
 
 /**
- * Søger artikler via tre parallelle Brave-queries og merger resultater.
- * Medievirksomheder prioriteres øverst i merget output.
+ * Søger artikler via fire parallelle Brave-queries og merger resultater.
+ * Nyeste og medievirksomheder prioriteres øverst i merget output.
+ * Alle queries er begrænset til seneste år (py) eller måned (pm/pw) for at undgå gamle artikler.
  *
  * @param key         - Brave Search Subscription Token
  * @param companyName - Virksomhedens navn
@@ -177,10 +178,10 @@ async function searchBraveArticles(key: string, companyName: string): Promise<Ar
   const query3 = `"${companyName}" site:dr.dk OR site:tv2.dk OR site:borsen.dk OR site:berlingske.dk OR site:politiken.dk`;
 
   const [results1, results2, results3, resultsFresh] = await Promise.all([
-    searchBrave(key, query1, 20),
-    searchBrave(key, query2, 20),
-    searchBrave(key, query3, 10),
-    searchBrave(key, query1, 10, 'pm'), // Seneste måned — nyeste artikler
+    searchBrave(key, query1, 20, 'py'), // Seneste år — bredt søgeresultat begrænset til nyere indhold
+    searchBrave(key, query2, 20, 'py'), // Seneste år — nyheder/artikler
+    searchBrave(key, query3, 10, 'pm'), // Seneste måned — kun store medier
+    searchBrave(key, query1, 10, 'pw'), // Seneste uge — allernyes artikler prioriteres
   ]);
 
   const seen = new Set<string>();
@@ -208,8 +209,9 @@ function buildArticlesSystemPrompt(): string {
 Din opgave:
 1. Vurdér om hvert hit handler om DENNE SPECIFIKKE virksomhed (ikke en anden med lignende navn)
 2. Prioritér danske artikler, men inkludér internationale hvis relevante
-3. Sortér artikler efter dato — NYESTE artikler FØRST. Prioritér artikler fra de seneste 30 dage over ældre artikler.
-4. Forbedre snippet-beskrivelser til max 100 tegn dansk tekst
+3. Sortér artikler efter dato — NYESTE artikler FØRST. Prioritér artikler fra de seneste 30 dage stærkt over ældre.
+4. AFVIS artikler ældre end 12 måneder — med mindre de er ekstraordinært relevante (f.eks. eneste artikel om virksomheden)
+5. Forbedre snippet-beskrivelser til max 100 tegn dansk tekst
 
 EKSKLUDEREDE DOMÆNER — inkludér ALDRIG:
 ownr.dk, estatistik.dk, profiler.dk, krak.dk, proff.dk, paqle.dk, erhvervplus.dk, lasso.dk, cvrapi.dk, find-virksomhed.dk, virksomhedskartoteket.dk, crunchbase.com, b2bhint.com, resights.dk
@@ -236,7 +238,7 @@ Returner KUN validt JSON uden tekst før/efter:
 }
 
 - Brug KUN de givne URLs fra Brave — opfind IKKE nye URLs
-- Returner op til 15 artikler`;
+- Returner op til 15 artikler, sorteret nyeste FØRST`;
 }
 
 // ─── Response parser ──────────────────────────────────────────────────────────

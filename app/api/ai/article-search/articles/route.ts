@@ -564,6 +564,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   // ── Byg Claude-besked ──
+  // Cap at 25 results to keep the prompt within a safe token budget.
+  // With 48+ results the full summary exceeds ~4k input tokens and Claude's
+  // JSON response was being truncated at max_tokens=2048, causing a parse
+  // error and an empty articles array in the UI.
+  const claudeResults = rawResults.slice(0, 25);
+
   const companyContext = [
     `Virksomhedsnavn: ${companyName}`,
     cvr ? `CVR-nummer: ${cvr}` : null,
@@ -575,21 +581,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     .filter(Boolean)
     .join('\n');
 
-  const resultSummary = rawResults
+  const resultSummary = claudeResults
     .map(
       (r, i) =>
         `${i + 1}. ${r.title}\n   URL: ${r.url}\n   Kilde: ${r.source}${r.date ? `\n   Dato: ${r.date}` : ''}${r.description ? `\n   Snippet: ${r.description}` : ''}`
     )
     .join('\n\n');
 
-  const userMessage = `Virksomhed:\n${companyContext}\n\nSøgeresultater (${rawResults.length} hits):\n\n${resultSummary}\n\nRangér og filtrer disse resultater — returner kun artikler der handler om DENNE virksomhed.`;
+  const userMessage = `Virksomhed:\n${companyContext}\n\nSøgeresultater (${claudeResults.length} hits):\n\n${resultSummary}\n\nRangér og filtrer disse resultater — returner kun artikler der handler om DENNE virksomhed.`;
 
   // ── Kald Claude ──
   const client = new Anthropic({ apiKey });
   try {
     const response = await client.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 2048,
+      max_tokens: 4096,
       system: buildArticlesSystemPrompt(),
       messages: [{ role: 'user', content: userMessage }],
     });

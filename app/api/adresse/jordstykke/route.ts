@@ -11,6 +11,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { darHentJordstykke } from '@/app/lib/dar';
+import { logger } from '@/app/lib/logger';
 
 export async function GET(request: NextRequest) {
   const bfe = request.nextUrl.searchParams.get('bfe');
@@ -77,7 +78,7 @@ export async function GET(request: NextRequest) {
       headers: { 'Cache-Control': 'public, s-maxage=86400, stale-while-revalidate=3600' },
     });
   } catch (err) {
-    console.error('[adresse/jordstykke] Fejl:', err);
+    logger.error('[adresse/jordstykke] Fejl:', err);
     return NextResponse.json(null, { status: 200 });
   }
 }

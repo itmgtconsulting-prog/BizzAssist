@@ -16,6 +16,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
+import { logger } from '@/app/lib/logger';
 
 /**
  * Inserts a row into audit_log using an untyped client cast.
@@ -32,7 +33,7 @@ async function insertAuditLog(
   try {
     await client.from('audit_log').insert(entry);
   } catch (e: unknown) {
-    console.error('[audit] Failed to insert audit log:', e);
+    logger.error('[audit] Failed to insert audit log:', e);
   }
 }
 
@@ -91,7 +92,7 @@ export async function GET(): Promise<NextResponse> {
     const { data, error } = await admin.auth.admin.listUsers({ perPage: 1000 });
 
     if (error) {
-      console.error('[admin/users] listUsers error:', error.code ?? '[DB error]');
+      logger.error('[admin/users] listUsers error:', error.code ?? '[DB error]');
       return NextResponse.json({ error: 'Failed to list users' }, { status: 500 });
     }
 
@@ -122,7 +123,7 @@ export async function GET(): Promise<NextResponse> {
 
     return NextResponse.json(users);
   } catch (err) {
-    console.error('[admin/users] Unexpected error:', err);
+    logger.error('[admin/users] Unexpected error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
@@ -160,7 +161,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     });
 
     if (createError) {
-      console.error('[admin/users] Create error:', createError.code ?? '[DB error]');
+      logger.error('[admin/users] Create error:', createError.code ?? '[DB error]');
       return NextResponse.json({ error: 'Failed to create user' }, { status: 400 });
     }
 
@@ -180,7 +181,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       },
     });
   } catch (err) {
-    console.error('[admin/users] Create unexpected error:', err);
+    logger.error('[admin/users] Create unexpected error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
@@ -304,7 +305,7 @@ export async function DELETE(req: NextRequest): Promise<NextResponse> {
               });
             }
           } catch (dropErr) {
-            console.error('[admin/users] Schema drop error (non-fatal):', dropErr);
+            logger.error('[admin/users] Schema drop error (non-fatal):', dropErr);
           }
         }
 
@@ -316,19 +317,19 @@ export async function DELETE(req: NextRequest): Promise<NextResponse> {
     } catch (cascadeErr) {
       // Non-critical path — log but do not abort deletion.
       // The auth record deletion below is the source of truth for GDPR erasure.
-      console.error('[admin/users] Cascade delete error (non-fatal):', cascadeErr);
+      logger.error('[admin/users] Cascade delete error (non-fatal):', cascadeErr);
     }
 
     // Step 5: Delete from Supabase Auth (removes user, sessions, MFA factors)
     const { error: deleteError } = await admin.auth.admin.deleteUser(targetUser.id);
     if (deleteError) {
-      console.error('[admin/users] Delete error:', deleteError.code ?? '[DB error]');
+      logger.error('[admin/users] Delete error:', deleteError.code ?? '[DB error]');
       return NextResponse.json({ error: 'Failed to delete user' }, { status: 500 });
     }
 
     return NextResponse.json({ ok: true, deletedEmail: email });
   } catch (err) {
-    console.error('[admin/users] Delete unexpected error:', err);
+    logger.error('[admin/users] Delete unexpected error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

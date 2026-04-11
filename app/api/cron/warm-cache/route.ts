@@ -32,6 +32,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { safeCompare } from '@/lib/safeCompare';
+import { logger } from '@/app/lib/logger';
 
 /** Maximum number of popular BFE numbers to revalidate per run */
 const MAX_BFE = 50;
@@ -104,7 +105,7 @@ async function fetchTopBfeNumbers(): Promise<BfeCount[]> {
   };
 
   if (tenantErr || !tenants) {
-    console.error('[warm-cache] Could not fetch tenants:', tenantErr);
+    logger.error('[warm-cache] Could not fetch tenants:', tenantErr);
     return [];
   }
 
@@ -136,7 +137,7 @@ async function fetchTopBfeNumbers(): Promise<BfeCount[]> {
       }
     } catch (err) {
       // Non-fatal: skip tenant if schema query fails (e.g. schema still provisioning)
-      console.warn(`[warm-cache] Skipped tenant ${tenant.schema_name}:`, err);
+      logger.warn(`[warm-cache] Skipped tenant ${tenant.schema_name}:`, err);
     }
   }
 
@@ -168,7 +169,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   // 1. Fetch top BFE numbers from activity_log
   const topBfe = await fetchTopBfeNumbers();
 
-  console.log(
+  logger.log(
     `[warm-cache] Top ${topBfe.length} BFE numbers fetched (lookback: ${LOOKBACK_DAYS} days)`
   );
 
@@ -181,7 +182,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     revalidatePath(path);
   }
 
-  console.log(`[warm-cache] Revalidated ${allPaths.length} paths`);
+  logger.log(`[warm-cache] Revalidated ${allPaths.length} paths`);
 
   return NextResponse.json({
     revalidated: allPaths.length,

@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { createClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
+import { logger } from '@/app/lib/logger';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
@@ -81,7 +82,7 @@ export async function GET(_req: NextRequest) {
   const { data, error } = await serviceClient.from('ai_settings').select('key, value');
 
   if (error) {
-    console.error('[admin/ai-settings GET] DB error:', error.message);
+    logger.error('[admin/ai-settings GET] DB error:', error.message);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 
@@ -156,7 +157,7 @@ export async function PUT(req: NextRequest) {
     .upsert({ key, value }, { onConflict: 'key' });
 
   if (error) {
-    console.error('[admin/ai-settings PUT] DB error:', error.message);
+    logger.error('[admin/ai-settings PUT] DB error:', error.message);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 

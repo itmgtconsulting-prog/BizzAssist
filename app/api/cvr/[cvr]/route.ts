@@ -12,6 +12,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { logger } from '@/app/lib/logger';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -223,7 +224,7 @@ export async function GET(
     });
 
     if (!res.ok) {
-      console.error('[CVR/cvr] ES svarede', res.status, await res.text().catch(() => ''));
+      logger.error('[CVR/cvr] ES svarede', res.status, await res.text().catch(() => ''));
       return NextResponse.json({ error: `CVR-opslag fejlede (ES ${res.status})` }, { status: 502 });
     }
 
@@ -247,7 +248,7 @@ export async function GET(
       },
     });
   } catch (err) {
-    console.error('[CVR/cvr] Fejl:', err instanceof Error ? err.message : err);
+    logger.error('[CVR/cvr] Fejl:', err instanceof Error ? err.message : err);
     return NextResponse.json({ error: 'CVR-opslag mislykkedes' }, { status: 502 });
   }
 }

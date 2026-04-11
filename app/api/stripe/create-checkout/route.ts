@@ -21,6 +21,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { stripe, getStripePriceId } from '@/app/lib/stripe';
 import { resolvePlan, type PlanId } from '@/app/lib/subscriptions';
+import { logger } from '@/app/lib/logger';
 
 /**
  * POST /api/stripe/create-checkout
@@ -147,7 +148,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     // ── 5. Return checkout URL ──
     return NextResponse.json({ url: session.url });
   } catch (err) {
-    console.error('[stripe/create-checkout] Error:', err);
+    logger.error('[stripe/create-checkout] Error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

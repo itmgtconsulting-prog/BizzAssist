@@ -11,6 +11,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { logger } from '@/app/lib/logger';
 
 const NOTIFY_EMAIL = process.env.SUPPORT_NOTIFICATION_EMAIL || 'support@pecuniait.com';
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
@@ -41,7 +42,7 @@ function getEnvironment(): string {
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
     if (!RESEND_API_KEY) {
-      console.warn('[notify-signup] RESEND_API_KEY not configured, skipping notification');
+      logger.warn('[notify-signup] RESEND_API_KEY not configured, skipping notification');
       return NextResponse.json({ ok: true, skipped: true });
     }
 
@@ -144,16 +145,16 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     if (!res.ok) {
       const errBody = await res.text();
-      console.error('[notify-signup] Resend error:', res.status, errBody);
+      logger.error('[notify-signup] Resend error:', res.status, errBody);
       // Don't fail the signup — notification is best-effort
       return NextResponse.json({ ok: true, emailSent: false, reason: errBody });
     }
 
     const data = await res.json();
-    console.log('[notify-signup] Email sent:', data.id);
+    logger.log('[notify-signup] Email sent:', data.id);
     return NextResponse.json({ ok: true, emailSent: true, id: data.id });
   } catch (err) {
-    console.error('[notify-signup] Unexpected error:', err);
+    logger.error('[notify-signup] Unexpected error:', err);
     // Don't fail the signup — notification is best-effort
     return NextResponse.json({ ok: true, emailSent: false });
   }

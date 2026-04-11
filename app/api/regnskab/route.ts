@@ -13,6 +13,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { logger } from '@/app/lib/logger';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -149,7 +150,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     });
 
     if (!res.ok) {
-      console.error('[Regnskab] ES returned', res.status, await res.text().catch(() => ''));
+      logger.error('[Regnskab] ES returned', res.status, await res.text().catch(() => ''));
       return NextResponse.json({ regnskaber: [], tokenMangler: false }, { status: 200 });
     }
 
@@ -170,7 +171,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       }
     );
   } catch (err) {
-    console.error('[Regnskab] Fetch error:', err instanceof Error ? err.message : err);
+    logger.error('[Regnskab] Fetch error:', err instanceof Error ? err.message : err);
     return NextResponse.json({ regnskaber: [], tokenMangler: false }, { status: 200 });
   }
 }

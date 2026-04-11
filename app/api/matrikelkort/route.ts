@@ -19,6 +19,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import PDFDocument from 'pdfkit';
+import { logger } from '@/app/lib/logger';
 
 // pdfkit bruger Node.js streams — tving Node.js runtime (ikke Edge)
 export const runtime = 'nodejs';
@@ -253,7 +254,7 @@ async function hentBygninger(bounds: {
         signal: AbortSignal.timeout(22000),
       });
       if (!res.ok) {
-        console.error(`[matrikelkort] Overpass ${url} HTTP ${res.status}`);
+        logger.error(`[matrikelkort] Overpass ${url} HTTP ${res.status}`);
         return null;
       }
       const data = (await res.json()) as OverpassResponse;
@@ -265,10 +266,10 @@ async function hentBygninger(bounds: {
             el.geometry.length >= 3
         )
         .map((el) => el.geometry.map(({ lon, lat }) => [lon, lat]));
-      console.log(`[matrikelkort] Overpass ${url} → ${ringe.length} bygninger`);
+      logger.log(`[matrikelkort] Overpass ${url} → ${ringe.length} bygninger`);
       return ringe;
     } catch (err) {
-      console.error(
+      logger.error(
         `[matrikelkort] Overpass ${url} fejl:`,
         err instanceof Error ? err.message : err
       );
@@ -281,7 +282,7 @@ async function hentBygninger(bounds: {
     if (result !== null) return result;
   }
 
-  console.error('[matrikelkort] Alle Overpass-endpoints fejlede — ingen bygninger');
+  logger.error('[matrikelkort] Alle Overpass-endpoints fejlede — ingen bygninger');
   return [];
 }
 
@@ -333,7 +334,7 @@ async function hentVeje(bounds: {
           highway: el.tags!.highway!,
           nodes: el.geometry.map(({ lon, lat }) => [lon, lat] as [number, number]),
         }));
-      console.log(`[matrikelkort] Overpass veje ${url} → ${veje.length} vejsektioner`);
+      logger.log(`[matrikelkort] Overpass veje ${url} → ${veje.length} vejsektioner`);
       return veje;
     } catch {
       return null;
@@ -345,7 +346,7 @@ async function hentVeje(bounds: {
     if (result !== null) return result;
   }
 
-  console.error('[matrikelkort] Alle Overpass-endpoints fejlede for veje');
+  logger.error('[matrikelkort] Alle Overpass-endpoints fejlede for veje');
   return [];
 }
 
@@ -858,12 +859,12 @@ export async function GET(request: NextRequest): Promise<Response> {
         });
       });
 
-      console.log(
+      logger.log(
         `[matrikelkort] ${bygninger.length} af ${alleBygninger.length} bygninger inden i parcelgrænser`
       );
     } catch (bygErr) {
       // Bygninger er optional dekoration — fortsæt uden
-      console.error(
+      logger.error(
         '[matrikelkort] hentBygninger fejl:',
         bygErr instanceof Error ? bygErr.message : bygErr
       );

@@ -14,6 +14,7 @@ import Stripe from 'stripe';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { stripe } from '@/app/lib/stripe';
+import { logger } from '@/app/lib/logger';
 
 /** Row shape from token_packs table. */
 interface TokenPackRow {
@@ -105,7 +106,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json({ url: session.url });
   } catch (err) {
-    console.error('[stripe/create-topup-checkout] Error:', err);
+    logger.error('[stripe/create-topup-checkout] Error:', err);
     return NextResponse.json({ error: 'Failed to create checkout' }, { status: 500 });
   }
 }

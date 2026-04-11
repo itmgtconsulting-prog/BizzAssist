@@ -18,6 +18,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { stripe } from '@/app/lib/stripe';
+import { logger } from '@/app/lib/logger';
 
 export async function POST(_req: NextRequest): Promise<NextResponse> {
   if (!stripe) {
@@ -99,7 +100,7 @@ export async function POST(_req: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json({ ok: true, cancelAt });
   } catch (err) {
-    console.error('[stripe/cancel-subscription] Error:', err);
+    logger.error('[stripe/cancel-subscription] Error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

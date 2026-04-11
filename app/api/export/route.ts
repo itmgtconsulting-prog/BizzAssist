@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import ExcelJS from 'exceljs';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { resolveTenantId } from '@/lib/api/auth';
+import { logger } from '@/app/lib/logger';
 
 /** Header style for the worksheet */
 const HEADER_FILL: ExcelJS.Fill = {
@@ -283,7 +284,7 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (err) {
-    console.error('[/api/export] Error:', err);
+    logger.error('[/api/export] Error:', err);
     return NextResponse.json({ error: 'Export failed' }, { status: 500 });
   }
 }

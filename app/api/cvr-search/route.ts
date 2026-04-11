@@ -14,6 +14,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
+import { logger } from '@/app/lib/logger';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -217,7 +218,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     });
 
     if (!res.ok) {
-      console.error('[cvr-search] ES returned', res.status);
+      logger.error('[cvr-search] ES returned', res.status);
       return NextResponse.json({ results: [] });
     }
 
@@ -247,7 +248,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       }
     );
   } catch (err) {
-    console.error('[cvr-search] Error:', err instanceof Error ? err.message : err);
+    logger.error('[cvr-search] Error:', err instanceof Error ? err.message : err);
     return NextResponse.json({ results: [] });
   }
 }

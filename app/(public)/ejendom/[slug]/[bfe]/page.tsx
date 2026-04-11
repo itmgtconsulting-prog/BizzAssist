@@ -30,6 +30,7 @@ import { generateEjendomSlug } from '@/app/lib/slug';
 import { fetchBbrForAddress } from '@/app/lib/fetchBbrData';
 import { darHentAdresse } from '@/app/lib/dar';
 import PublicPricingSection from '@/app/(public)/components/PublicPricingSection';
+import { logger } from '@/app/lib/logger';
 
 // ─── Vurderingsportalen ES types ─────────────────────────────────────────────
 
@@ -150,14 +151,14 @@ async function hentDawaAdresse(bfe: string, slug: string): Promise<DawaAdresse |
     );
 
     if (!esRes.ok) {
-      console.error(`[PUBLIC EJENDOM] VP ES ${esRes.status} for BFE ${bfe}`);
+      logger.error(`[PUBLIC EJENDOM] VP ES ${esRes.status} for BFE ${bfe}`);
       return null;
     }
 
     const esData = (await esRes.json()) as VPEsResponse;
     const hits = esData.hits?.hits ?? [];
     if (hits.length === 0) {
-      console.error(`[PUBLIC EJENDOM] Ingen VP ES hits for BFE ${bfe}`);
+      logger.error(`[PUBLIC EJENDOM] Ingen VP ES hits for BFE ${bfe}`);
       return null;
     }
 
@@ -178,7 +179,7 @@ async function hentDawaAdresse(bfe: string, slug: string): Promise<DawaAdresse |
     const adgangsAdresseId = src.adgangsAdresseID;
 
     if (!adgangsAdresseId) {
-      console.error(`[PUBLIC EJENDOM] Mangler adgangsAdresseID i VP ES svar for BFE ${bfe}`);
+      logger.error(`[PUBLIC EJENDOM] Mangler adgangsAdresseID i VP ES svar for BFE ${bfe}`);
       return null;
     }
 
@@ -211,7 +212,7 @@ async function hentDawaAdresse(bfe: string, slug: string): Promise<DawaAdresse |
     }
 
     // Trin 2 fallback: DAR fejlede — brug VP-adressefelter (ingen koordinater)
-    console.warn(`[PUBLIC EJENDOM] DAR fejlede for ${adgangsAdresseId} — bruger VP fallback`);
+    logger.warn(`[PUBLIC EJENDOM] DAR fejlede for ${adgangsAdresseId} — bruger VP fallback`);
     return {
       id: adgangsAdresseId,
       alleIds: [adgangsAdresseId],
@@ -228,7 +229,7 @@ async function hentDawaAdresse(bfe: string, slug: string): Promise<DawaAdresse |
       jordstykke: null,
     };
   } catch (err) {
-    console.error(
+    logger.error(
       '[PUBLIC EJENDOM] hentDawaAdresse fejl:',
       err instanceof Error ? err.message : String(err)
     );
@@ -248,22 +249,22 @@ async function hentDawaAdresse(bfe: string, slug: string): Promise<DawaAdresse |
  */
 async function hentBbrBygning(dawaId: string): Promise<BbrBygning | null> {
   try {
-    console.error(`[BBR PUBLIC] fetchBbrForAddress dawaId=${dawaId}`);
+    logger.error(`[BBR PUBLIC] fetchBbrForAddress dawaId=${dawaId}`);
 
     const data = await fetchBbrForAddress(dawaId);
 
     if (data.bbrFejl) {
-      console.error(`[BBR PUBLIC] bbrFejl=${data.bbrFejl} for dawaId=${dawaId}`);
+      logger.error(`[BBR PUBLIC] bbrFejl=${data.bbrFejl} for dawaId=${dawaId}`);
     }
 
     if (!data.bbr || data.bbr.length === 0) {
-      console.error(
+      logger.error(
         `[BBR PUBLIC] Ingen bygninger returneret — dawaId=${dawaId}, bbrFejl=${data.bbrFejl ?? 'null'}`
       );
       return null;
     }
 
-    console.error(`[BBR PUBLIC] ${data.bbr.length} bygning(er) for dawaId=${dawaId}`);
+    logger.error(`[BBR PUBLIC] ${data.bbr.length} bygning(er) for dawaId=${dawaId}`);
 
     // Vælg primær bygning: foretræk beboelsesbygninger (110–199) frem for
     // udhuse/carporte (500+). Sekundær sortering på samlet areal (størst = primær).
@@ -283,7 +284,7 @@ async function hentBbrBygning(dawaId: string): Promise<BbrBygning | null> {
       pool[0]
     );
 
-    console.error(
+    logger.error(
       `[BBR PUBLIC] Primær bygning: anvendelseskode=${node.anvendelseskode}, ` +
         `samletBygningsareal=${node.samletBygningsareal}, ` +
         `samletBoligareal=${node.samletBoligareal}, ` +
@@ -307,7 +308,7 @@ async function hentBbrBygning(dawaId: string): Promise<BbrBygning | null> {
       status: node.status ?? undefined,
     };
   } catch (err) {
-    console.error('[BBR PUBLIC] Uventet fejl:', err instanceof Error ? err.message : String(err));
+    logger.error('[BBR PUBLIC] Uventet fejl:', err instanceof Error ? err.message : String(err));
     return null;
   }
 }

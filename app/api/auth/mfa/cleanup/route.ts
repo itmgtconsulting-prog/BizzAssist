@@ -15,6 +15,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { logger } from '@/app/lib/logger';
 
 export async function POST(): Promise<NextResponse> {
   try {
@@ -34,7 +35,7 @@ export async function POST(): Promise<NextResponse> {
       userId: user.id,
     });
     if (listError) {
-      console.error('[mfa/cleanup] listFactors error:', listError.message);
+      logger.error('[mfa/cleanup] listFactors error:', listError.message);
       return NextResponse.json({ error: 'Could not list factors' }, { status: 500 });
     }
 
@@ -51,7 +52,7 @@ export async function POST(): Promise<NextResponse> {
       });
       if (deleteError) {
         // Log but continue — delete remaining factors even if one fails
-        console.error('[mfa/cleanup] deleteFactor error:', deleteError.message);
+        logger.error('[mfa/cleanup] deleteFactor error:', deleteError.message);
       } else {
         deleted++;
       }
@@ -59,7 +60,7 @@ export async function POST(): Promise<NextResponse> {
 
     return NextResponse.json({ deleted });
   } catch (err) {
-    console.error('[mfa/cleanup] Unexpected error:', err);
+    logger.error('[mfa/cleanup] Unexpected error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

@@ -549,7 +549,7 @@ if (!res.ok) {
 }
 
 const property = await res.json();
-console.log(property.adresse); // "Bredgade 30, 1. th., 1260 København K"`}
+logger.log(property.adresse); // "Bredgade 30, 1. th., 1260 København K"`}
             />
 
             <h3 className="text-base font-semibold text-white/80">
@@ -563,6 +563,7 @@ import os
 
 API_KEY = os.environ["BIZZASSIST_API_KEY"]
 BASE    = "https://app.bizzassist.dk/api/v1"
+import { logger } from '@/app/lib/logger';
 
 def get_company(cvr: str) -> dict:
     """Fetch company data by CVR number."""
@@ -592,7 +593,7 @@ print(company["navn"])  # "Eksempel A/S"`}
 
     // Parse Retry-After header (seconds)
     const retryAfter = parseInt(res.headers.get("Retry-After") ?? "5", 10);
-    console.warn(\`Rate limited. Retrying in \${retryAfter}s...\`);
+    logger.warn(\`Rate limited. Retrying in \${retryAfter}s...\`);
     await new Promise((r) => setTimeout(r, retryAfter * 1000));
   }
   throw new Error("Max retries exceeded");

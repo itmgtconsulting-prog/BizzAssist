@@ -13,6 +13,7 @@ import https from 'https';
 import fs from 'fs';
 import path from 'path';
 import PDFDocument from 'pdfkit';
+import { logger } from '@/app/lib/logger';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -468,7 +469,7 @@ export async function GET(req: NextRequest) {
         },
       });
     } catch (err) {
-      console.error('[tinglysning/bilag] Fejl:', err instanceof Error ? err.message : String(err));
+      logger.error('[tinglysning/bilag] Fejl:', err instanceof Error ? err.message : String(err));
       return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
     }
   }
@@ -531,7 +532,7 @@ export async function GET(req: NextRequest) {
               }
             );
             r.on('error', (err) => {
-              console.log(`[tingbogsattest] Fejl på ${candidatePath}: ${err.message}`);
+              logger.log(`[tingbogsattest] Fejl på ${candidatePath}: ${err.message}`);
               resolve({ pdf: null, status: 0, contentType: '' });
             });
             r.on('timeout', () => {
@@ -541,7 +542,7 @@ export async function GET(req: NextRequest) {
             r.end();
           });
 
-          console.log(
+          logger.log(
             `[tingbogsattest] ${candidatePath} (Accept: ${accept}) → HTTP ${result.status}, Content-Type: ${result.contentType}, ${result.pdf?.length ?? 0} bytes, starts: ${result.pdf?.subarray(0, 10).toString() ?? 'null'}`
           );
 
@@ -553,7 +554,7 @@ export async function GET(req: NextRequest) {
             result.pdf.subarray(0, 5).toString() === '%PDF-'
           ) {
             officialPdf = result.pdf;
-            console.log(
+            logger.log(
               `[tingbogsattest] ✓ Officiel PDF hentet fra ${candidatePath} (${result.pdf.length} bytes)`
             );
             break;
@@ -573,7 +574,7 @@ export async function GET(req: NextRequest) {
       }
 
       // Fallback: generer PDF fra ejdsummarisk XML-data
-      console.log('[tingbogsattest] Officiel PDF ikke tilgængelig — genererer fra XML');
+      logger.log('[tingbogsattest] Officiel PDF ikke tilgængelig — genererer fra XML');
       const xml = await tlFetch(`/ejdsummarisk/${uuid}`);
       const sections = parseTingbogsattestXml(xml);
       const doc = new PDFDocument({
@@ -650,7 +651,7 @@ export async function GET(req: NextRequest) {
         },
       });
     } catch (err) {
-      console.error('[tinglysning/attest] Fejl:', err instanceof Error ? err.message : String(err));
+      logger.error('[tinglysning/attest] Fejl:', err instanceof Error ? err.message : String(err));
       return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
     }
   }
@@ -854,7 +855,7 @@ export async function GET(req: NextRequest) {
       },
     });
   } catch (err) {
-    console.error('[tinglysning/dokument] Fejl:', err instanceof Error ? err.message : String(err));
+    logger.error('[tinglysning/dokument] Fejl:', err instanceof Error ? err.message : String(err));
     return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
   }
 }

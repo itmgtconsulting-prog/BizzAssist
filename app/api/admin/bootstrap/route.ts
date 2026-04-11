@@ -15,6 +15,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { safeCompare } from '@/lib/safeCompare';
+import { logger } from '@/app/lib/logger';
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
@@ -62,7 +63,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json({ ok: true, email, isAdmin: true });
   } catch (err) {
-    console.error('[admin/bootstrap] Error:', err);
+    logger.error('[admin/bootstrap] Error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

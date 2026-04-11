@@ -8,6 +8,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { logger } from '@/app/lib/logger';
 
 /** Row shape from token_packs table. */
 interface TokenPackRow {
@@ -44,7 +45,7 @@ export async function GET(): Promise<NextResponse> {
     };
 
     if (error) {
-      console.error('[token-packs GET] DB error:', error.message);
+      logger.error('[token-packs GET] DB error:', error.message);
       return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
     }
 
@@ -59,7 +60,7 @@ export async function GET(): Promise<NextResponse> {
 
     return NextResponse.json(packs);
   } catch (err) {
-    console.error('[token-packs] Error:', err);
+    logger.error('[token-packs] Error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

@@ -14,6 +14,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { logger } from '@/app/lib/logger';
 
 /** Row shape from the support_questions table. */
 interface SupportQuestion {
@@ -55,7 +56,7 @@ export async function GET() {
     .limit(500)) as { data: SupportQuestion[] | null; error: { message: string } | null };
 
   if (error) {
-    console.error('[admin/support-analytics] DB error:', error.message);
+    logger.error('[admin/support-analytics] DB error:', error.message);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 

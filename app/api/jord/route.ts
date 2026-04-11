@@ -16,6 +16,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { resolveTenantId } from '@/lib/api/auth';
+import { logger } from '@/app/lib/logger';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -143,7 +144,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<JordRespon
 
     if (!res.ok) {
       const txt = await res.text().catch(() => '');
-      console.error(`[jord] DkJord HTTP ${res.status}: ${txt.slice(0, 400)}`);
+      logger.error(`[jord] DkJord HTTP ${res.status}: ${txt.slice(0, 400)}`);
       return NextResponse.json(
         {
           items: [],
@@ -209,7 +210,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<JordRespon
       }
     );
   } catch (err) {
-    console.error('[jord] Fejl ved DkJord-opslag:', err);
+    logger.error('[jord] Fejl ved DkJord-opslag:', err);
     return NextResponse.json(
       { items: [], fejl: 'Ekstern API fejl', ingenData: false },
       { status: 200 }

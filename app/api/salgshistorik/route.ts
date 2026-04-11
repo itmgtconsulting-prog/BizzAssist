@@ -18,6 +18,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import * as Sentry from '@sentry/nextjs';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
+import { logger } from '@/app/lib/logger';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -161,7 +162,7 @@ async function queryEJF<T>(
 
     // Schema/field-fejl
     if (json.errors?.length && !json.data?.[entityName]) {
-      console.warn(`[salgshistorik] ${entityName} fejl:`, json.errors[0].message);
+      logger.warn(`[salgshistorik] ${entityName} fejl:`, json.errors[0].message);
       return null;
     }
 
@@ -170,7 +171,7 @@ async function queryEJF<T>(
       authError: false,
     };
   } catch (err) {
-    console.error('[salgshistorik] queryEJF netværksfejl:', err);
+    logger.error('[salgshistorik] queryEJF netværksfejl:', err);
     return null;
   }
 }
@@ -373,7 +374,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
         return db.localeCompare(da); // nyeste først
       });
 
-    console.log(
+    logger.log(
       `[salgshistorik] ${handler.length} handler fundet for BFE ${bfeNummer} (${ejerskifter.length} ejerskifter, ${handelsIds.length} handelsoplysninger)`
     );
 

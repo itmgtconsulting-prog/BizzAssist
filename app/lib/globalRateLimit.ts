@@ -25,6 +25,7 @@
 import { Ratelimit } from '@upstash/ratelimit';
 import { Redis } from '@upstash/redis';
 import { NextRequest, NextResponse } from 'next/server';
+import { logger } from '@/app/lib/logger';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -240,7 +241,7 @@ export async function applyGlobalRateLimit(
     // Fail open: a Redis error (e.g. malformed UPSTASH_REDIS_REST_URL with trailing
     // newline, network timeout, or cold-start race) must never crash the middleware
     // and return 500 to every user. Log only — no PII.
-    console.error('[globalRateLimit] Redis error — skipping rate limit (fail open)');
+    logger.error('[globalRateLimit] Redis error — skipping rate limit (fail open)');
   }
 
   return null;

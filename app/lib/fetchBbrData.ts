@@ -24,6 +24,7 @@ import {
   boligtypeTekst,
   energiforsyningTekst,
 } from '@/app/lib/bbrKoder';
+import { logger } from '@/app/lib/logger';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -238,7 +239,7 @@ async function fetchBygningPunkter(bygningIds: string[]): Promise<BBRBygningPunk
     });
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
-      console.error(
+      logger.error(
         `[BBR WFS] HTTP ${res.status} for ids=${bygningIds.join(',')}: ${errText.slice(0, 400)}`
       );
       return null;
@@ -315,11 +316,11 @@ async function fetchDatafordelerGraphQL(
     if (!res.ok) {
       const txt = await res.text().catch(() => '');
       const hdrs = Object.fromEntries(res.headers.entries());
-      console.error(
+      logger.error(
         `[BBR GQL] HTTP ${res.status} url=${url.replace(/apiKey=[^&]+/, 'apiKey=REDACTED')}`
       );
-      console.error(`[BBR GQL] Headers:`, JSON.stringify(hdrs));
-      console.error(`[BBR GQL] Body: "${txt.slice(0, 600)}"`);
+      logger.error(`[BBR GQL] Headers:`, JSON.stringify(hdrs));
+      logger.error(`[BBR GQL] Body: "${txt.slice(0, 600)}"`);
       return null;
     }
 
@@ -329,7 +330,7 @@ async function fetchDatafordelerGraphQL(
     };
 
     if (json.errors?.length) {
-      console.error('[BBR GQL] GraphQL errors:', JSON.stringify(json.errors).slice(0, 600));
+      logger.error('[BBR GQL] GraphQL errors:', JSON.stringify(json.errors).slice(0, 600));
       return null;
     }
 
@@ -338,7 +339,7 @@ async function fetchDatafordelerGraphQL(
     const nodes = json.data?.[firstKey]?.nodes;
     return Array.isArray(nodes) ? nodes : null;
   } catch (err) {
-    console.error('[BBR GQL] Fetch error:', err);
+    logger.error('[BBR GQL] Fetch error:', err);
     return null;
   }
 }

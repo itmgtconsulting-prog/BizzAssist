@@ -25,6 +25,7 @@ import { getTenantContext } from '@/lib/db/tenant';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { fetchBbrForAddress } from '@/app/lib/fetchBbrData';
+import { logger } from '@/app/lib/logger';
 
 /**
  * Udfylder public.bbr_tracked_objects med BBR bygning-UUIDs for en fulgt ejendom.
@@ -72,7 +73,7 @@ async function enrichBbrTrackedObjects(tenantId: string, dawaId: string): Promis
       .upsert(rows, { onConflict: 'tenant_id,bfe_nummer,bbr_object_id', ignoreDuplicates: true });
   } catch (err) {
     // Fire-and-forget — log fejl men afbryd ikke tracking-svaret
-    console.error('[tracked] BBR-indeksering fejlede:', err);
+    logger.error('[tracked] BBR-indeksering fejlede:', err);
   }
 }
 
@@ -109,7 +110,7 @@ async function cleanupBbrTrackedObjects(
       .eq('tenant_id', tenantId)
       .eq('bfe_nummer', bfeNummer);
   } catch (err) {
-    console.error('[tracked] BBR-oprydning fejlede:', err);
+    logger.error('[tracked] BBR-oprydning fejlede:', err);
   }
 }
 
@@ -160,7 +161,7 @@ export async function GET(request: NextRequest) {
     });
     return NextResponse.json({ tracked: entities });
   } catch (err) {
-    console.error('[tracked GET]', err);
+    logger.error('[tracked GET]', err);
     return NextResponse.json({ tracked: [] });
   }
 }
@@ -211,7 +212,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ entity });
   } catch (err) {
-    console.error('[tracked POST]', err);
+    logger.error('[tracked POST]', err);
     return NextResponse.json({ error: 'Serverfejl' }, { status: 500 });
   }
 }
@@ -272,7 +273,7 @@ export async function DELETE(request: NextRequest) {
 
     return NextResponse.json({ ok: true });
   } catch (err) {
-    console.error('[tracked DELETE]', err);
+    logger.error('[tracked DELETE]', err);
     return NextResponse.json({ error: 'Serverfejl' }, { status: 500 });
   }
 }

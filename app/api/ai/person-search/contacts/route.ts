@@ -20,6 +20,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { checkRateLimit, braveRateLimit } from '@/app/lib/rateLimit';
 import { withBraveCache } from '@/app/lib/searchCache';
 import { createClient as createServerClient } from '@/lib/supabase/server';
+import { logger } from '@/app/lib/logger';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -401,7 +402,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     contacts = parseContactsResponse(finalText);
     // personName omitted from log — PII
   } catch (err) {
-    console.error('[person-search/contacts] Claude fejl:', err);
+    logger.error('[person-search/contacts] Claude fejl:', err);
     // Returner tomt resultat frem for fejl — kontakter er nice-to-have
     return NextResponse.json({ contacts: [], tokensUsed: 0, source: 'brave+claude' });
   }

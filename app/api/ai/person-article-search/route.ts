@@ -38,6 +38,7 @@ import { createClient } from '@supabase/supabase-js';
 import { checkRateLimit, braveRateLimit } from '@/app/lib/rateLimit';
 import { withBraveCache } from '@/app/lib/searchCache';
 import { createClient as createServerClient } from '@/lib/supabase/server';
+import { logger } from '@/app/lib/logger';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -1037,7 +1038,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     dbExcludedDomains = excludedDomains;
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Ukendt Brave Search fejl';
-    console.error('[person-article-search] Initialiseringsfejl:', msg);
+    logger.error('[person-article-search] Initialiseringsfejl:', msg);
     return NextResponse.json({ error: `Søgning fejlede: ${msg}` }, { status: 502 });
   }
 
@@ -1161,7 +1162,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     // personName omitted — PII. Platform keys (linkedin, facebook…) are safe to log.
-    console.log(
+    logger.log(
       `[person-article-search] ${articles.length} artikler, tokens=${totalTokens}, ` +
         `brave-socials=[${Object.keys(braveSocials).join(',')}], ` +
         `primære links=[${Object.keys(socialsWithMeta).join(',')}], ` +
@@ -1170,7 +1171,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     );
 
     if (articles.length === 0) {
-      console.warn(
+      logger.warn(
         '[person-article-search] Ingen artikler parsede. Råsvar:',
         finalText.slice(0, 500)
       );
@@ -1250,7 +1251,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           }
         }
       } catch (err) {
-        console.warn(
+        logger.warn(
           '[person-article-search] Sekundær telefon-søgning fejlede (ikke kritisk):',
           err instanceof Error ? err.message : err
         );
@@ -1277,7 +1278,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json(result, { status: 200 });
   } catch (err) {
-    console.error('[person-article-search] Fejl:', err);
+    logger.error('[person-article-search] Fejl:', err);
     const errorMsg =
       err instanceof Anthropic.APIError
         ? `API-fejl (${err.status}): ${err.message}`

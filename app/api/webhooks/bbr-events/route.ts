@@ -26,6 +26,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { safeCompare } from '@/lib/safeCompare';
+import { logger } from '@/app/lib/logger';
 
 /** BBR objekt-typer der overvåges */
 const BBR_TYPER = new Set(['Bygning', 'Grund', 'Enhed']);
@@ -49,7 +50,7 @@ interface BbrHaendelse {
 function verifyWebhookSecret(request: NextRequest): boolean {
   const secret = process.env.BBR_WEBHOOK_SECRET;
   if (!secret) {
-    console.error('[bbr-webhook] BBR_WEBHOOK_SECRET ikke konfigureret');
+    logger.error('[bbr-webhook] BBR_WEBHOOK_SECRET ikke konfigureret');
     return false;
   }
   const auth = request.headers.get('authorization') ?? '';
@@ -186,7 +187,7 @@ export async function POST(request: NextRequest) {
     });
   } catch (err) {
     // Returner 200 for at undgå Datafordeler genforsøg — log fejlen
-    console.error('[bbr-webhook] Fejl ved behandling:', err);
+    logger.error('[bbr-webhook] Fejl ved behandling:', err);
     return NextResponse.json({ ok: true, error: 'Intern fejl — se logs' });
   }
 }

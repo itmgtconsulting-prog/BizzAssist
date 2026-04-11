@@ -53,6 +53,7 @@ import {
   type PlanDef,
 } from '@/app/lib/subscriptions';
 import { useSubscription } from '@/app/context/SubscriptionContext';
+import { logger } from '@/app/lib/logger';
 
 // ─── GDPR Export Section ────────────────────────────────────────────────────
 
@@ -653,14 +654,14 @@ export default function SettingsPageClient() {
       if (res.ok && data.url) {
         window.location.href = data.url;
       } else {
-        console.error('[checkout] Error:', data.error);
+        logger.error('[checkout] Error:', data.error);
         setStripeError(
           data.error || (da ? 'Kunne ikke oprette betaling' : 'Could not create checkout')
         );
         setCheckoutLoading(null);
       }
     } catch (err) {
-      console.error('[checkout] Network error:', err);
+      logger.error('[checkout] Network error:', err);
       setStripeError(da ? 'Netværksfejl — prøv igen' : 'Network error — please try again');
       setCheckoutLoading(null);
     }
@@ -679,13 +680,13 @@ export default function SettingsPageClient() {
       if (res.ok && data.url) {
         window.location.href = data.url;
       } else {
-        console.error('[portal] Error:', data.error);
+        logger.error('[portal] Error:', data.error);
         setStripeError(
           data.error || (da ? 'Kunne ikke åbne betalingsportal' : 'Could not open billing portal')
         );
       }
     } catch (err) {
-      console.error('[portal] Network error:', err);
+      logger.error('[portal] Network error:', err);
       setStripeError(da ? 'Netværksfejl — prøv igen' : 'Network error — please try again');
     }
     setPortalLoading(false);
@@ -727,13 +728,13 @@ export default function SettingsPageClient() {
           );
         }
       } else {
-        console.error('[cancel] Error:', data.error);
+        logger.error('[cancel] Error:', data.error);
         setStripeError(
           data.error || (da ? 'Kunne ikke opsige abonnement' : 'Could not cancel subscription')
         );
       }
     } catch (err) {
-      console.error('[cancel] Network error:', err);
+      logger.error('[cancel] Network error:', err);
       setStripeError(da ? 'Netværksfejl — prøv igen' : 'Network error — please try again');
     }
     setCancelLoading(false);

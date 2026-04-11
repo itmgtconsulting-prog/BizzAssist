@@ -27,6 +27,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import type { ServiceManagerScan } from '@/lib/supabase/types';
+import { logger } from '@/app/lib/logger';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -158,7 +159,7 @@ export async function GET(): Promise<NextResponse> {
       configured: !!(process.env.VERCEL_API_TOKEN && process.env.VERCEL_PROJECT_ID),
     });
   } catch (err) {
-    console.error('[service-manager GET]', err);
+    logger.error('[service-manager GET]', err);
     return NextResponse.json({ error: 'Serverfejl' }, { status: 500 });
   }
 }
@@ -200,7 +201,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const scan = scanData as Pick<ServiceManagerScan, 'id'> | null;
 
     if (insertErr || !scan) {
-      console.error('[service-manager POST] insert error:', insertErr?.code ?? '[DB error]');
+      logger.error('[service-manager POST] insert error:', insertErr?.code ?? '[DB error]');
       return NextResponse.json({ error: 'Kunne ikke oprette scan' }, { status: 500 });
     }
 
@@ -214,14 +215,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ scanId: scan.id }),
-    }).catch((err) => console.error('[service-manager] scan error:', err));
+    }).catch((err) => logger.error('[service-manager] scan error:', err));
 
     return NextResponse.json({
       scanId: scan.id,
       message: 'Scan startet',
     });
   } catch (err) {
-    console.error('[service-manager POST]', err);
+    logger.error('[service-manager POST]', err);
     return NextResponse.json({ error: 'Serverfejl' }, { status: 500 });
   }
 }

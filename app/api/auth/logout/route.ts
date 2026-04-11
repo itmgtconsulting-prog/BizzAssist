@@ -9,6 +9,7 @@
  */
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { logger } from '@/app/lib/logger';
 
 export async function POST(): Promise<NextResponse> {
   try {
@@ -22,7 +23,7 @@ export async function POST(): Promise<NextResponse> {
     await supabase.auth.signOut();
     return NextResponse.json({ success: true });
   } catch (err) {
-    console.error('[logout] Unexpected error:', err);
+    logger.error('[logout] Unexpected error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

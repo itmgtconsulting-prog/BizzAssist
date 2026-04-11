@@ -22,6 +22,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { safeCompare } from '@/lib/safeCompare';
+import { logger } from '@/app/lib/logger';
 
 /** Max Vercel Hobby plan funktionsvarighed i sekunder */
 export const maxDuration = 30;
@@ -121,7 +122,7 @@ async function collectAgentStats(sinceIso: string): Promise<AgentStats> {
       }
     }
   } catch (err) {
-    console.error('[daily-report] Kunne ikke hente service_manager_scans:', err);
+    logger.error('[daily-report] Kunne ikke hente service_manager_scans:', err);
   }
 
   // ── Service Manager: fixes ────────────────────────────────────────────────
@@ -146,7 +147,7 @@ async function collectAgentStats(sinceIso: string): Promise<AgentStats> {
       }
     }
   } catch (err) {
-    console.error('[daily-report] Kunne ikke hente service_manager_fixes:', err);
+    logger.error('[daily-report] Kunne ikke hente service_manager_fixes:', err);
   }
 
   // ── Release Agent: aktivitet ──────────────────────────────────────────────
@@ -165,7 +166,7 @@ async function collectAgentStats(sinceIso: string): Promise<AgentStats> {
       }
     }
   } catch (err) {
-    console.error('[daily-report] Kunne ikke hente service_manager_activity:', err);
+    logger.error('[daily-report] Kunne ikke hente service_manager_activity:', err);
   }
 
   return stats;
@@ -199,7 +200,7 @@ async function collectStats(since: Date): Promise<DailyStats> {
       newSignups = users.filter((u) => new Date(u.created_at) > since).length;
     }
   } catch (err) {
-    console.error('[daily-report] Kunne ikke hente auth.users:', err);
+    logger.error('[daily-report] Kunne ikke hente auth.users:', err);
   }
 
   // ── Abonnementer (public.subscriptions + public.plans) ───────────────────
@@ -236,7 +237,7 @@ async function collectStats(since: Date): Promise<DailyStats> {
       subscriptionsByPlan.sort((a, b) => a.plan.localeCompare(b.plan, 'da'));
     }
   } catch (err) {
-    console.error('[daily-report] Kunne ikke hente abonnementer:', err);
+    logger.error('[daily-report] Kunne ikke hente abonnementer:', err);
   }
 
   // ── Agent statistikker (Service Manager + Release Agent) ─────────────────
@@ -292,7 +293,7 @@ async function collectStats(since: Date): Promise<DailyStats> {
       }
     }
   } catch (err) {
-    console.error('[daily-report] Kunne ikke hente tenant-data:', err);
+    logger.error('[daily-report] Kunne ikke hente tenant-data:', err);
   }
 
   return {
@@ -514,7 +515,7 @@ function buildHtml(stats: DailyStats, reportDate: Date): string {
 async function sendReport(html: string, subject: string): Promise<void> {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
-    console.warn('[daily-report] RESEND_API_KEY ikke sat — emailrapport springes over');
+    logger.warn('[daily-report] RESEND_API_KEY ikke sat — emailrapport springes over');
     return;
   }
 
@@ -536,12 +537,12 @@ async function sendReport(html: string, subject: string): Promise<void> {
 
     if (!res.ok) {
       const body = await res.text();
-      console.error('[daily-report] Resend API fejl:', res.status, body);
+      logger.error('[daily-report] Resend API fejl:', res.status, body);
     } else {
-      console.log('[daily-report] Statusrapport sendt til', TO_ADDRESS);
+      logger.log('[daily-report] Statusrapport sendt til', TO_ADDRESS);
     }
   } catch (err) {
-    console.error('[daily-report] Kunne ikke sende rapport:', err);
+    logger.error('[daily-report] Kunne ikke sende rapport:', err);
   }
 }
 

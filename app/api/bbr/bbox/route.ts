@@ -17,6 +17,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as Sentry from '@sentry/nextjs';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
+import { logger } from '@/app/lib/logger';
 
 const WFS_BASE = 'https://wfs.datafordeler.dk/BBR/BBR_WFS/1.0.0/WFS';
 const DF_API_KEY = process.env.DATAFORDELER_API_KEY ?? '';
@@ -85,7 +86,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     });
 
     if (!res.ok) {
-      console.error(`[BBR bbox] HTTP ${res.status}`);
+      logger.error(`[BBR bbox] HTTP ${res.status}`);
       return NextResponse.json([], {
         headers: { 'Cache-Control': 'public, s-maxage=60' },
       });
@@ -124,7 +125,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     });
   } catch (err) {
     Sentry.captureException(err);
-    console.error('[BBR bbox] Fejl:', err instanceof Error ? err.message : String(err));
+    logger.error('[BBR bbox] Fejl:', err instanceof Error ? err.message : String(err));
     return NextResponse.json([], {
       headers: { 'Cache-Control': 'public, s-maxage=60' },
     });

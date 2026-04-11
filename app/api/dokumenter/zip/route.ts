@@ -19,6 +19,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import JSZip from 'jszip';
+import { logger } from '@/app/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -250,7 +251,9 @@ async function hentDokument(doc: ZipDocInput): Promise<DokumentResultat> {
   // SSRF-beskyttelse: valider host og skema inden fetch
   const urlValidering = validerUrl(absolutUrl);
   if (!urlValidering.ok) {
-    console.warn(`[zip] SSRF-forsøg afvist for ${doc.filename}: ${urlValidering.fejl} (${absolutUrl})`);
+    logger.warn(
+      `[zip] SSRF-forsøg afvist for ${doc.filename}: ${urlValidering.fejl} (${absolutUrl})`
+    );
     return { buf: null, fejlÅrsag: `URL ikke tilladt: ${urlValidering.fejl}` };
   }
 
@@ -266,20 +269,20 @@ async function hentDokument(doc: ZipDocInput): Promise<DokumentResultat> {
 
     if (!res.ok) {
       const årsag = `HTTP ${res.status}`;
-      console.warn(`[zip] ${årsag} for ${doc.filename}: ${absolutUrl}`);
+      logger.warn(`[zip] ${årsag} for ${doc.filename}: ${absolutUrl}`);
       return { buf: null, fejlÅrsag: årsag };
     }
 
     const arrayBuf = await res.arrayBuffer();
 
     if (arrayBuf.byteLength === 0) {
-      console.warn(`[zip] Tom respons for ${doc.filename}`);
+      logger.warn(`[zip] Tom respons for ${doc.filename}`);
       return { buf: null, fejlÅrsag: 'tomt svar' };
     }
 
     // Valider PDF magic bytes — afviser HTML-sider, fejlsider mm.
     if (!erGyldigPdf(arrayBuf)) {
-      console.warn(
+      logger.warn(
         `[zip] Ikke en gyldig PDF (forkerte magic bytes) for ${doc.filename} — ` +
           `første bytes: ${Array.from(new Uint8Array(arrayBuf, 0, Math.min(8, arrayBuf.byteLength)))
             .map((b) => b.toString(16).padStart(2, '0'))
@@ -291,7 +294,7 @@ async function hentDokument(doc: ZipDocInput): Promise<DokumentResultat> {
     return { buf: Buffer.from(arrayBuf) };
   } catch (err) {
     const årsag = err instanceof Error ? err.message : String(err);
-    console.warn(`[zip] Kunne ikke hente ${doc.filename}:`, årsag);
+    logger.warn(`[zip] Kunne ikke hente ${doc.filename}:`, årsag);
     return { buf: null, fejlÅrsag: årsag };
   }
 }

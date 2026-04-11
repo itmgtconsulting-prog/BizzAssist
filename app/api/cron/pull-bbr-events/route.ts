@@ -24,6 +24,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { safeCompare } from '@/lib/safeCompare';
+import { logger } from '@/app/lib/logger';
 
 /** Datafordeler Hændelsesbesked base URL */
 const HHAENDELSE_BASE = 'https://hændelsesbesked.datafordeler.dk/api/v1/hændelse';
@@ -98,12 +99,12 @@ async function fetchHaendelseSide(datefrom: string, side: number): Promise<Haend
     });
     if (res.status === 204) return { totalAntalSider: 0, side: 1, sideStørrelse: 0, data: [] };
     if (!res.ok) {
-      console.error('[pull-bbr-events] Datafordeler svar:', res.status, await res.text());
+      logger.error('[pull-bbr-events] Datafordeler svar:', res.status, await res.text());
       return null;
     }
     return (await res.json()) as HaendelseSvar;
   } catch (err) {
-    console.error('[pull-bbr-events] fetch fejl:', err);
+    logger.error('[pull-bbr-events] fetch fejl:', err);
     return null;
   }
 }
@@ -135,7 +136,7 @@ export async function GET(request: NextRequest) {
     .single();
 
   if (cursorErr || !cursorRow) {
-    console.error('[pull-bbr-events] Kunne ikke hente cursor:', cursorErr);
+    logger.error('[pull-bbr-events] Kunne ikke hente cursor:', cursorErr);
     return NextResponse.json({ error: 'Cursor fejl' }, { status: 500 });
   }
 

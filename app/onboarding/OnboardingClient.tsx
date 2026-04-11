@@ -41,6 +41,7 @@ import { createClient } from '@/lib/supabase/client';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';
 import { selectFreePlan } from '@/app/auth/actions';
+import { logger } from '@/app/lib/logger';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -429,7 +430,7 @@ export default function OnboardingClient() {
           });
           if (!saveRes.ok) {
             // Non-fatal — log but continue
-            console.warn('[onboarding] save API failed:', saveRes.status);
+            logger.warn('[onboarding] save API failed:', saveRes.status);
           }
         }
 
@@ -438,14 +439,14 @@ export default function OnboardingClient() {
           data: { onboarding_complete: true },
         });
         if (updateErr) {
-          console.warn('[onboarding] updateUser failed:', updateErr.message);
+          logger.warn('[onboarding] updateUser failed:', updateErr.message);
           // Non-fatal — proceed to dashboard anyway
         }
 
         // 3. Navigate to dashboard
         router.replace('/dashboard');
       } catch (err) {
-        console.error('[onboarding] Unexpected error:', err);
+        logger.error('[onboarding] Unexpected error:', err);
         setSaveError(da ? 'Noget gik galt. Prøv igen.' : 'Something went wrong. Please try again.');
       } finally {
         setSaving(false);

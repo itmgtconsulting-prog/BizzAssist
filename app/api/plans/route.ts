@@ -13,6 +13,7 @@ import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { PLANS, type PlanId } from '@/app/lib/subscriptions';
 import { getStripePriceId } from '@/app/lib/stripe';
+import { logger } from '@/app/lib/logger';
 
 const VALID_PLAN_IDS: PlanId[] = ['demo', 'basis', 'professionel', 'enterprise'];
 
@@ -117,7 +118,7 @@ export async function GET(): Promise<NextResponse> {
 
     return NextResponse.json(plans);
   } catch (err) {
-    console.error('[plans] Unexpected error:', err);
+    logger.error('[plans] Unexpected error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

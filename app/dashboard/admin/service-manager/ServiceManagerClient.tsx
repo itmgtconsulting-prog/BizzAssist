@@ -69,6 +69,7 @@ import type {
   ScanRecord,
   ScanIssue,
 } from '@/app/api/admin/service-manager/route';
+import { logger } from '@/app/lib/logger';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -513,7 +514,9 @@ function FixCard({
         <div className="border-t border-slate-700/30 px-4 py-3 flex flex-col gap-1">
           <div className="flex items-center gap-2 text-blue-400 text-xs">
             <GitBranch size={13} />
-            {da ? 'Hotfix er oprettet og pushet til remote.' : 'Hotfix created and pushed to remote.'}
+            {da
+              ? 'Hotfix er oprettet og pushet til remote.'
+              : 'Hotfix created and pushed to remote.'}
           </div>
           {fix.commit_sha && (
             <span className="text-slate-400 text-xs font-mono pl-5">
@@ -595,7 +598,7 @@ function ScanRow({
       await loadFixes();
       if (!res.ok) {
         const err = await res.json();
-        console.warn('[auto-fix propose]', err);
+        logger.warn('[auto-fix propose]', err);
       }
     } finally {
       setProposingFor(null);

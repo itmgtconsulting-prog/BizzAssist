@@ -20,6 +20,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { getCertOAuthToken, isCertAuthConfigured } from '@/app/lib/dfCertAuth';
+import { logger } from '@/app/lib/logger';
 
 /** Forlæng Vercel serverless timeout til 30 sek. (kræver Pro-plan) */
 export const maxDuration = 30;
@@ -462,7 +463,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
 
     const ejerskabResults = ejerskabSettled.map((settled, i) => {
       if (settled.status === 'rejected') {
-        console.error(
+        logger.error(
           `[ejendomme-by-owner] EJF CVR lookup failed for CVR ${cvrNumre[i]}:`,
           settled.reason
         );
@@ -551,7 +552,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
       }
     );
   } catch (err) {
-    console.error('[ejendomme-by-owner] Fejl:', err instanceof Error ? err.message : err);
+    logger.error('[ejendomme-by-owner] Fejl:', err instanceof Error ? err.message : err);
     return NextResponse.json({
       ejendomme: [],
       totalBfe: 0,

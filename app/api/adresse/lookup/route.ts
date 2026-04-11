@@ -11,6 +11,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { darHentAdresse } from '@/app/lib/dar';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
+import { logger } from '@/app/lib/logger';
 
 export async function GET(request: NextRequest) {
   const limited = await checkRateLimit(request, rateLimit);
@@ -28,7 +29,7 @@ export async function GET(request: NextRequest) {
       headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=7200' },
     });
   } catch (err) {
-    console.error('[adresse/lookup] Fejl:', err);
+    logger.error('[adresse/lookup] Fejl:', err);
     return NextResponse.json(null, { status: 200 });
   }
 }

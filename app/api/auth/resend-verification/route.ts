@@ -11,6 +11,7 @@
 
 import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
+import { logger } from '@/app/lib/logger';
 
 export async function POST(request: NextRequest) {
   try {
@@ -36,13 +37,13 @@ export async function POST(request: NextRequest) {
     });
 
     if (error) {
-      console.error('[resend-verification] Supabase error:', error.message);
+      logger.error('[resend-verification] Supabase error:', error.message);
       return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
     }
 
     return NextResponse.json({ success: true });
   } catch (err) {
-    console.error('[resend-verification] Unexpected error:', err);
+    logger.error('[resend-verification] Unexpected error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

@@ -28,6 +28,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { safeCompare } from '@/lib/safeCompare';
+import { logger } from '@/app/lib/logger';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -101,12 +102,12 @@ async function pingDb(
       .select('id', { count: 'exact', head: true });
 
     if (error) {
-      console.error('[daily-status] DB health ping failed:', error.message);
+      logger.error('[daily-status] DB health ping failed:', error.message);
       return { tenantCount: null, dbHealthy: false };
     }
     return { tenantCount: count ?? 0, dbHealthy: true };
   } catch (err) {
-    console.error('[daily-status] DB health ping threw:', err);
+    logger.error('[daily-status] DB health ping threw:', err);
     return { tenantCount: null, dbHealthy: false };
   }
 }
@@ -131,12 +132,12 @@ async function countNewSignups(
     } = await admin.auth.admin.listUsers({ perPage: 1000 });
 
     if (error) {
-      console.error('[daily-status] Could not fetch auth.users:', error.message);
+      logger.error('[daily-status] Could not fetch auth.users:', error.message);
       return null;
     }
     return users.filter((u) => new Date(u.created_at) > since).length;
   } catch (err) {
-    console.error('[daily-status] countNewSignups threw:', err);
+    logger.error('[daily-status] countNewSignups threw:', err);
     return null;
   }
 }
@@ -190,7 +191,7 @@ async function countAiChatCalls(
     };
 
     if (error || !tenants) {
-      console.error('[daily-status] Could not fetch tenants for AI count:', error);
+      logger.error('[daily-status] Could not fetch tenants for AI count:', error);
       return null;
     }
 
@@ -211,7 +212,7 @@ async function countAiChatCalls(
       }
     }
   } catch (err) {
-    console.error('[daily-status] countAiChatCalls outer error:', err);
+    logger.error('[daily-status] countAiChatCalls outer error:', err);
     return null;
   }
 
@@ -394,7 +395,7 @@ function buildEmailHtml(stats: StatusStats, reportDate: Date): string {
 async function sendStatusEmail(html: string, subject: string): Promise<boolean> {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
-    console.warn('[daily-status] RESEND_API_KEY not set — skipping email dispatch');
+    logger.warn('[daily-status] RESEND_API_KEY not set — skipping email dispatch');
     return false;
   }
 
@@ -416,14 +417,14 @@ async function sendStatusEmail(html: string, subject: string): Promise<boolean> 
 
     if (!res.ok) {
       const body = await res.text();
-      console.error('[daily-status] Resend API error:', res.status, body);
+      logger.error('[daily-status] Resend API error:', res.status, body);
       return false;
     }
 
-    console.log('[daily-status] Status report dispatched to', TO_ADDRESS);
+    logger.log('[daily-status] Status report dispatched to', TO_ADDRESS);
     return true;
   } catch (err) {
-    console.error('[daily-status] Failed to send status email:', err);
+    logger.error('[daily-status] Failed to send status email:', err);
     return false;
   }
 }

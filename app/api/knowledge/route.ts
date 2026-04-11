@@ -20,6 +20,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
+import { logger } from '@/app/lib/logger';
 
 /** Maximum characters allowed in a knowledge item's content field. */
 const MAX_CONTENT_CHARS = 50_000;
@@ -115,7 +116,7 @@ export async function GET(_request: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json(data ?? []);
   } catch (err) {
-    console.error('[knowledge] GET fejlede:', err);
+    logger.error('[knowledge] GET fejlede:', err);
     return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
   }
 }
@@ -230,7 +231,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json(data, { status: 201 });
   } catch (err) {
-    console.error('[knowledge] POST fejlede:', err);
+    logger.error('[knowledge] POST fejlede:', err);
     return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
   }
 }
@@ -297,7 +298,7 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
 
     return new NextResponse(null, { status: 204 });
   } catch (err) {
-    console.error('[knowledge] DELETE fejlede:', err);
+    logger.error('[knowledge] DELETE fejlede:', err);
     return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
   }
 }

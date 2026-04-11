@@ -15,6 +15,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { logger } from '@/app/lib/logger';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -350,7 +351,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     });
 
     if (!res.ok) {
-      console.error('[CVR] ES returned', res.status, await res.text().catch(() => ''));
+      logger.error('[CVR] ES returned', res.status, await res.text().catch(() => ''));
       return NextResponse.json({ virksomheder: [], tokenMangler: false }, { status: 200 });
     }
 
@@ -459,7 +460,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // TimeoutError or network failure — flag apiDown so the UI can show a proper message
     const isTimeout =
       err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError');
-    console.error('[CVR] Fetch error:', msg);
+    logger.error('[CVR] Fetch error:', msg);
     return NextResponse.json(
       { virksomheder: [], tokenMangler: false, apiDown: isTimeout || msg.includes('timeout') },
       { status: 200 }

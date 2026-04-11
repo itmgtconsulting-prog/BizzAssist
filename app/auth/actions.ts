@@ -18,6 +18,7 @@ import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { checkLoginThrottle, recordFailedLogin, clearLoginThrottle } from '@/app/lib/loginThrottle';
+import { logger } from '@/app/lib/logger';
 
 // ---------------------------------------------------------------------------
 // Tenant provisioning helper
@@ -52,7 +53,7 @@ async function provisionTenantForUser(userId: string, userEmail: string): Promis
       schema_name: schemaName,
     });
     if (tenantErr) {
-      console.error('[provisionTenant] insert tenant:', tenantErr.message);
+      logger.error('[provisionTenant] insert tenant:', tenantErr.message);
       return null;
     }
 
@@ -63,7 +64,7 @@ async function provisionTenantForUser(userId: string, userEmail: string): Promis
       role: 'tenant_admin',
     });
     if (memberErr) {
-      console.error('[provisionTenant] insert membership:', memberErr.message);
+      logger.error('[provisionTenant] insert membership:', memberErr.message);
       return null;
     }
 
@@ -156,7 +157,7 @@ async function provisionTenantForUser(userId: string, userEmail: string): Promis
     const projectRef = supabaseUrl.replace('https://', '').split('.')[0];
     const accessToken = process.env.SUPABASE_ACCESS_TOKEN;
     if (!accessToken) {
-      console.error('[provisionTenant] SUPABASE_ACCESS_TOKEN not set — skipping DDL');
+      logger.error('[provisionTenant] SUPABASE_ACCESS_TOKEN not set — skipping DDL');
       return tenantId;
     }
 
@@ -171,13 +172,13 @@ async function provisionTenantForUser(userId: string, userEmail: string): Promis
 
     if (!res.ok) {
       const errText = await res.text();
-      console.error('[provisionTenant] DDL failed:', errText.substring(0, 300));
+      logger.error('[provisionTenant] DDL failed:', errText.substring(0, 300));
       // Non-fatal — tenant + membership exist, tables can be created later
     }
 
     return tenantId;
   } catch (err) {
-    console.error('[provisionTenant] Unexpected error:', err);
+    logger.error('[provisionTenant] Unexpected error:', err);
     return null;
   }
 }
@@ -257,7 +258,7 @@ export async function signIn(
       return { error: 'account_locked', lockedForSeconds: afterFail.lockedForSeconds };
     }
 
-    console.error('[signIn] Supabase auth error:', error.message, '| status:', error.status);
+    logger.error('[signIn] Supabase auth error:', error.message, '| status:', error.status);
     // Do not expose internal error details — map to user-safe messages
     if (error.message.toLowerCase().includes('invalid')) {
       // Check if the account was created via OAuth (no password identity).
@@ -359,7 +360,7 @@ export async function signIn(
   const {
     data: { user: authedUser },
   } = await supabase.auth.getUser();
-  console.log('[signIn] authedUser resolved:', authedUser ? 'yes' : 'no');
+  logger.log('[signIn] authedUser resolved:', authedUser ? 'yes' : 'no');
 
   if (authedUser) {
     try {
@@ -367,42 +368,39 @@ export async function signIn(
       const { data: freshUser, error: adminErr } = await admin.auth.admin.getUserById(
         authedUser.id
       );
-      console.log('[signIn] admin getUserById error:', adminErr?.message ?? 'none');
-      console.log(
-        '[signIn] freshUser app_metadata:',
-        JSON.stringify(freshUser?.user?.app_metadata)
-      );
+      logger.log('[signIn] admin getUserById error:', adminErr?.message ?? 'none');
+      logger.log('[signIn] freshUser app_metadata:', JSON.stringify(freshUser?.user?.app_metadata));
 
       const appMeta = freshUser?.user?.app_metadata ?? {};
       const role = appMeta.role as string | undefined;
       const sub = appMeta.subscription as { status?: string; planId?: string } | undefined;
 
-      console.log('[signIn] role:', role, 'subscription:', JSON.stringify(sub));
+      logger.log('[signIn] role:', role, 'subscription:', JSON.stringify(sub));
 
       // Admin users bypass subscription checks entirely
       if (role === 'admin') {
-        console.log('[signIn] → ALLOWED: admin role bypass');
+        logger.log('[signIn] → ALLOWED: admin role bypass');
       } else {
         if (!sub || !sub.planId) {
-          console.log('[signIn] → BLOCKED: no_subscription');
+          logger.log('[signIn] → BLOCKED: no_subscription');
           await supabase.auth.signOut();
           return { error: 'no_subscription' };
         }
         if (sub.status === 'pending') {
-          console.log('[signIn] → BLOCKED: subscription_pending');
+          logger.log('[signIn] → BLOCKED: subscription_pending');
           await supabase.auth.signOut();
           return { error: 'subscription_pending' };
         }
         if (sub.status === 'cancelled') {
-          console.log('[signIn] → BLOCKED: subscription_cancelled');
+          logger.log('[signIn] → BLOCKED: subscription_cancelled');
           await supabase.auth.signOut();
           return { error: 'subscription_cancelled' };
         }
-        console.log('[signIn] → ALLOWED: subscription active');
+        logger.log('[signIn] → ALLOWED: subscription active');
       }
     } catch (err) {
       // If admin client fails, let user through — dashboard will re-check
-      console.error('[signIn] Subscription check error:', err);
+      logger.error('[signIn] Subscription check error:', err);
     }
   }
 
@@ -474,7 +472,7 @@ export async function signUp(
   // Provision tenant schema for the new user (fire-and-forget, non-fatal)
   if (signupData?.user?.id && signupData?.user?.email) {
     provisionTenantForUser(signupData.user.id, signupData.user.email).catch((err) => {
-      console.error('[signUp] Tenant provisioning failed:', err);
+      logger.error('[signUp] Tenant provisioning failed:', err);
     });
   }
 
@@ -520,7 +518,7 @@ export async function signUp(
         },
       });
     } catch (err) {
-      console.error('[signUp] Failed to set subscription in app_metadata:', err);
+      logger.error('[signUp] Failed to set subscription in app_metadata:', err);
     }
   }
 
@@ -531,7 +529,7 @@ export async function signUp(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ fullName, email, planId, status }),
   }).catch((err) => {
-    console.error('[signUp] Failed to send notification:', err);
+    logger.error('[signUp] Failed to send notification:', err);
   });
 
   redirect(`/login/verify-email?email=${encodeURIComponent(email)}`);
@@ -707,7 +705,7 @@ export async function selectFreePlan(planId: string): Promise<AuthResult> {
       },
     });
 
-    console.log(
+    logger.log(
       '[selectFreePlan] Set plan',
       planId,
       'status',
@@ -719,7 +717,7 @@ export async function selectFreePlan(planId: string): Promise<AuthResult> {
     );
     return { error: null };
   } catch (err) {
-    console.error('[selectFreePlan] Error:', err);
+    logger.error('[selectFreePlan] Error:', err);
     return { error: 'unexpected_error' };
   }
 }

@@ -20,6 +20,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { checkRateLimit, heavyRateLimit } from '@/app/lib/rateLimit';
 import { resolveTenantId } from '@/lib/api/auth';
+import { logger } from '@/app/lib/logger';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -147,13 +148,13 @@ async function searchVurderingsportalen(
     });
 
     if (!res.ok) {
-      console.error(`Vurderingsportalen ES returned ${res.status}`);
+      logger.error(`Vurderingsportalen ES returned ${res.status}`);
       return null;
     }
 
     return (await res.json()) as ESSearchResponse;
   } catch (err) {
-    console.error('Vurderingsportalen ES fetch error:', err);
+    logger.error('Vurderingsportalen ES fetch error:', err);
     return null;
   }
 }
@@ -329,7 +330,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<ForelobigV
       }
     );
   } catch (err) {
-    console.error('[vurdering-forelobig] Fejl:', err);
+    logger.error('[vurdering-forelobig] Fejl:', err);
     return NextResponse.json({ forelobige: [], fejl: 'Ekstern API fejl' }, { status: 200 });
   }
 }

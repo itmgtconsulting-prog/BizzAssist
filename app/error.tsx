@@ -1,6 +1,7 @@
 'use client';
 import { useEffect } from 'react';
 import { AlertCircle, RefreshCw } from 'lucide-react';
+import { logger } from '@/app/lib/logger';
 
 /**
  * Root-level error boundary — catches unhandled errors anywhere in the app.
@@ -13,7 +14,7 @@ export default function GlobalError({
   reset: () => void;
 }) {
   useEffect(() => {
-    console.error('[App] Unhandled error:', error);
+    logger.error('[App] Unhandled error:', error);
   }, [error]);
 
   return (

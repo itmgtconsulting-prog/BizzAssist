@@ -24,6 +24,7 @@ import { checkRateLimit, heavyRateLimit } from '@/app/lib/rateLimit';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { getCertOAuthToken, isCertAuthConfigured } from '@/app/lib/dfCertAuth';
 import { resolveTenantId } from '@/lib/api/auth';
+import { logger } from '@/app/lib/logger';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -202,7 +203,7 @@ async function queryEJF(bfeNummer: number, token: string): Promise<EJFQueryResul
 
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    console.error(`[ejerskab] Datafordeler EJF HTTP ${res.status}: ${text.slice(0, 400)}`);
+    logger.error(`[ejerskab] Datafordeler EJF HTTP ${res.status}: ${text.slice(0, 400)}`);
     return {
       ok: false,
       manglerAdgang: false,
@@ -282,12 +283,12 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjerskabRe
       try {
         result = await queryEJF(bfeNummer, token);
         if (result.ok) {
-          console.log('[ejerskab] Shared Secret: OK —', result.nodes.length, 'ejere');
+          logger.log('[ejerskab] Shared Secret: OK —', result.nodes.length, 'ejere');
         } else if (result.manglerAdgang) {
-          console.warn('[ejerskab] Shared Secret: 403/manglerAdgang — forsøger certifikat...');
+          logger.warn('[ejerskab] Shared Secret: 403/manglerAdgang — forsøger certifikat...');
         }
       } catch (err) {
-        console.error('[ejerskab] Shared Secret fejl:', err instanceof Error ? err.message : err);
+        logger.error('[ejerskab] Shared Secret fejl:', err instanceof Error ? err.message : err);
         Sentry.captureException(err);
       }
     }
@@ -295,26 +296,26 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjerskabRe
 
   // ── Forsøg 2: OAuth Certifikat (mTLS) — hvis Shared Secret mangler adgang ──
   if ((!result || (!result.ok && result.manglerAdgang)) && hasCert) {
-    console.log('[ejerskab] Forsøger OAuth Certifikat (mTLS)...');
+    logger.log('[ejerskab] Forsøger OAuth Certifikat (mTLS)...');
     const certToken = await getCertOAuthToken();
     if (certToken) {
       try {
         const certResult = await queryEJF(bfeNummer, certToken);
         if (certResult.ok) {
-          console.log('[ejerskab] Certifikat: OK —', certResult.nodes.length, 'ejere');
+          logger.log('[ejerskab] Certifikat: OK —', certResult.nodes.length, 'ejere');
         } else {
-          console.warn(
+          logger.warn(
             '[ejerskab] Certifikat:',
             certResult.manglerAdgang ? '403/manglerAdgang' : certResult.fejl
           );
         }
         result = certResult;
       } catch (err) {
-        console.error('[ejerskab] Certifikat fejl:', err instanceof Error ? err.message : err);
+        logger.error('[ejerskab] Certifikat fejl:', err instanceof Error ? err.message : err);
         Sentry.captureException(err);
       }
     } else {
-      console.error('[ejerskab] Certifikat: Kunne ikke hente OAuth token via mTLS');
+      logger.error('[ejerskab] Certifikat: Kunne ikke hente OAuth token via mTLS');
     }
   }
 

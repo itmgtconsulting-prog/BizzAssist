@@ -26,6 +26,7 @@ import JSZip from 'jszip';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
+import { logger } from '@/app/lib/logger';
 /** Maximum allowed upload size in bytes (1 MiB). */
 const MAX_FILE_BYTES = 1_048_576;
 
@@ -256,7 +257,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       extracted = await extractDocx(buf);
     }
   } catch (err) {
-    console.error('[knowledge/upload] Tekstudtræk fejlede:', err);
+    logger.error('[knowledge/upload] Tekstudtræk fejlede:', err);
     return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
   }
 
@@ -318,7 +319,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       { status: 201 }
     );
   } catch (err) {
-    console.error('[knowledge/upload] DB-indsættelse fejlede:', err);
+    logger.error('[knowledge/upload] DB-indsættelse fejlede:', err);
     return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
   }
 }

@@ -27,6 +27,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { safeCompare } from '@/lib/safeCompare';
+import { logger } from '@/app/lib/logger';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -122,7 +123,7 @@ async function writeAuditLog(
       metadata,
     });
   } catch (err) {
-    console.error(`[purge-old-data] audit_log write failed for ${schemaName}:`, err);
+    logger.error(`[purge-old-data] audit_log write failed for ${schemaName}:`, err);
   }
 }
 
@@ -168,7 +169,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   };
 
   if (tenantErr || !tenants) {
-    console.error('[purge-old-data] Failed to fetch tenants:', tenantErr);
+    logger.error('[purge-old-data] Failed to fetch tenants:', tenantErr);
     return NextResponse.json({ error: 'Failed to fetch tenants' }, { status: 500 });
   }
 
@@ -317,7 +318,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       }
     } catch (err) {
       result.error = String(err);
-      console.error(`[purge-old-data] Error processing tenant ${tenant.schema_name}:`, err);
+      logger.error(`[purge-old-data] Error processing tenant ${tenant.schema_name}:`, err);
     }
 
     results.push(result);
@@ -339,7 +340,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       .lt('fetched_at', cutoff90d);
     regnskabCacheDeleted = cacheCount ?? 0;
   } catch (err) {
-    console.error('[purge-old-data] Failed to purge regnskab_cache:', err);
+    logger.error('[purge-old-data] Failed to purge regnskab_cache:', err);
   }
 
   return NextResponse.json({

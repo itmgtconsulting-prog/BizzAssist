@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { logger } from '@/app/lib/logger';
 
 /**
  * POST /api/subscription/track-tokens — increment token usage.
@@ -50,7 +51,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const { data: freshUser, error } = await admin.auth.admin.getUserById(user.id);
 
     if (error || !freshUser?.user) {
-      console.error('[track-tokens] getUserById error:', error?.message);
+      logger.error('[track-tokens] getUserById error:', error?.message);
       return NextResponse.json({ error: 'Failed to read user' }, { status: 500 });
     }
 
@@ -70,13 +71,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     });
 
     if (updateError) {
-      console.error('[track-tokens] Update error:', updateError.message);
+      logger.error('[track-tokens] Update error:', updateError.message);
       return NextResponse.json({ error: 'Failed to update' }, { status: 500 });
     }
 
     return NextResponse.json({ ok: true, total: currentTokens + tokensUsed });
   } catch (err) {
-    console.error('[track-tokens] Unexpected error:', err);
+    logger.error('[track-tokens] Unexpected error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

@@ -14,6 +14,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantId } from '@/lib/api/auth';
 import { getTenantContext } from '@/lib/db/tenant';
+import { logger } from '@/app/lib/logger';
 
 /**
  * GET /api/tracked-companies
@@ -34,7 +35,7 @@ export async function GET() {
     });
     return NextResponse.json({ tracked: entities });
   } catch (err) {
-    console.error('[tracked-companies GET]', err);
+    logger.error('[tracked-companies GET]', err);
     return NextResponse.json({ tracked: [] });
   }
 }
@@ -78,7 +79,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ entity });
   } catch (err) {
-    console.error('[tracked-companies POST]', err);
+    logger.error('[tracked-companies POST]', err);
     return NextResponse.json({ error: 'Serverfejl' }, { status: 500 });
   }
 }
@@ -128,7 +129,7 @@ export async function DELETE(request: NextRequest) {
 
     return NextResponse.json({ ok: true });
   } catch (err) {
-    console.error('[tracked-companies DELETE]', err);
+    logger.error('[tracked-companies DELETE]', err);
     return NextResponse.json({ error: 'Serverfejl' }, { status: 500 });
   }
 }

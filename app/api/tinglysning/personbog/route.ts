@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import https from 'https';
 import fs from 'fs';
 import path from 'path';
+import { logger } from '@/app/lib/logger';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -447,7 +448,7 @@ export async function GET(req: NextRequest) {
       headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
     });
   } catch (err) {
-    console.error('[tinglysning/personbog] Fejl:', err);
+    logger.error('[tinglysning/personbog] Fejl:', err);
     return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
   }
 }

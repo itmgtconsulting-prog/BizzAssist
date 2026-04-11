@@ -25,6 +25,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
+import { logger } from '@/app/lib/logger';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -158,7 +159,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json(data ?? []);
   } catch (err) {
-    console.error('[tokens] GET fejlede:', err);
+    logger.error('[tokens] GET fejlede:', err);
     return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
   }
 }
@@ -308,7 +309,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // ── Return plaintext token ONCE — it cannot be retrieved again ──
     return NextResponse.json({ token: rawToken, record }, { status: 201 });
   } catch (err) {
-    console.error('[tokens] POST fejlede:', err);
+    logger.error('[tokens] POST fejlede:', err);
     return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
   }
 }

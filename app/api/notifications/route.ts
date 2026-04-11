@@ -16,6 +16,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { getTenantContext } from '@/lib/db/tenant';
 import { createClient } from '@/lib/supabase/server';
+import { logger } from '@/app/lib/logger';
 
 /**
  * Resolver tenant ID fra den autentificerede brugers session.
@@ -73,7 +74,7 @@ export async function GET(request: NextRequest) {
     const notifications = await ctx.notifications.list({ unread_only: unreadOnly, limit });
     return NextResponse.json({ notifications });
   } catch (err) {
-    console.error('[notifications GET]', err);
+    logger.error('[notifications GET]', err);
     return NextResponse.json({ notifications: [], unreadCount: 0 });
   }
 }
@@ -117,7 +118,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ ok: true });
   } catch (err) {
-    console.error('[notifications POST]', err);
+    logger.error('[notifications POST]', err);
     return NextResponse.json({ error: 'Serverfejl' }, { status: 500 });
   }
 }

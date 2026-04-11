@@ -21,6 +21,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { resolveTenantId } from '@/lib/api/auth';
+import { logger } from '@/app/lib/logger';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -137,10 +138,10 @@ async function fetchMATGraphQL(query: string): Promise<Record<string, unknown> |
 
     if (!res.ok) {
       const txt = await res.text().catch(() => '');
-      console.error(
+      logger.error(
         `[MAT GQL] HTTP ${res.status} url=${url.replace(/apiKey=[^&]+/, 'apiKey=REDACTED')}`
       );
-      console.error(`[MAT GQL] Body: "${txt.slice(0, 600)}"`);
+      logger.error(`[MAT GQL] Body: "${txt.slice(0, 600)}"`);
       return null;
     }
 
@@ -150,13 +151,13 @@ async function fetchMATGraphQL(query: string): Promise<Record<string, unknown> |
     };
 
     if (json.errors?.length) {
-      console.error('[MAT GQL] GraphQL errors:', JSON.stringify(json.errors).slice(0, 600));
+      logger.error('[MAT GQL] GraphQL errors:', JSON.stringify(json.errors).slice(0, 600));
       return null;
     }
 
     return json.data ?? null;
   } catch (err) {
-    console.error('[MAT GQL] Fetch error:', err);
+    logger.error('[MAT GQL] Fetch error:', err);
     return null;
   }
 }
@@ -338,7 +339,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<MatrikelRe
 
     // Trin 2: Fald tilbage til simpel query hvis fuld query fejlede
     if (!data) {
-      console.warn(
+      logger.warn(
         '[MAT] Fuld query fejlede — prøver simpel query uden fredskov/strandbeskyttelse/klitfredning/jordrente'
       );
       data = await fetchMATGraphQL(buildSimpleQuery(bfeNummer, now));
@@ -378,7 +379,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<MatrikelRe
       }
     );
   } catch (err) {
-    console.error('[matrikel] Fejl:', err);
+    logger.error('[matrikel] Fejl:', err);
     return NextResponse.json({ matrikel: null, fejl: 'Ekstern API fejl' }, { status: 200 });
   }
 }

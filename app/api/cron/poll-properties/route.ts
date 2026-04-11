@@ -27,6 +27,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient, tenantDb, type TenantDb } from '@/lib/supabase/admin';
 import type { SnapshotType, NotificationType } from '@/lib/db/tenant';
 import { safeCompare } from '@/lib/safeCompare';
+import { logger } from '@/app/lib/logger';
 
 /** Max antal ejendomme pr. cron-kørsel */
 const MAX_PER_RUN = 150;
@@ -370,7 +371,7 @@ export async function GET(request: NextRequest) {
   };
 
   if (tenantErr || !tenants) {
-    console.error('[cron] Kunne ikke hente tenants:', tenantErr);
+    logger.error('[cron] Kunne ikke hente tenants:', tenantErr);
     return NextResponse.json({ error: 'Kunne ikke hente tenants' }, { status: 500 });
   }
 

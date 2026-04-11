@@ -23,6 +23,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 import { checkRateLimit, braveRateLimit } from '@/app/lib/rateLimit';
 import { withBraveCache } from '@/app/lib/searchCache';
+import { logger } from '@/app/lib/logger';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -446,7 +447,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const socials: SocialsResult = { ...braveSocials, ...claudeSocials };
 
-    console.log(
+    logger.log(
       `[article-search/socials] "${companyName}": primære=[${Object.keys(socialsWithMeta).join(',')}], tokens=${totalTokens}`
     );
 

@@ -32,6 +32,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { safeCompare } from '@/lib/safeCompare';
+import { logger } from '@/app/lib/logger';
 
 /** Vercel Pro function timeout (seconds) — uses full near-limit duration */
 export const maxDuration = 55;
@@ -665,7 +666,7 @@ async function sendDeepScanReport(
 ): Promise<void> {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
-    console.warn('[deep-scan] RESEND_API_KEY ikke sat — rapport springes over');
+    logger.warn('[deep-scan] RESEND_API_KEY ikke sat — rapport springes over');
     return;
   }
 
@@ -698,12 +699,12 @@ async function sendDeepScanReport(
 
     if (!res.ok) {
       const body = await res.text();
-      console.error('[deep-scan] Resend API fejl:', res.status, body);
+      logger.error('[deep-scan] Resend API fejl:', res.status, body);
     } else {
-      console.log('[deep-scan] Deep-scan rapport sendt til', TO_ADDRESS);
+      logger.log('[deep-scan] Deep-scan rapport sendt til', TO_ADDRESS);
     }
   } catch (err) {
-    console.error('[deep-scan] Kunne ikke sende rapport:', err);
+    logger.error('[deep-scan] Kunne ikke sende rapport:', err);
   }
 }
 
@@ -724,7 +725,7 @@ async function logActivity(action: string, details: Record<string, unknown>): Pr
       created_by: null, // Cron runs without a user session
     });
   } catch (err) {
-    console.error('[deep-scan] activity log error:', err);
+    logger.error('[deep-scan] activity log error:', err);
   }
 }
 
@@ -750,7 +751,7 @@ export async function GET(request: NextRequest) {
   const now = new Date();
   const admin = createAdminClient();
 
-  console.log('[deep-scan] Starting daily deep scan at', now.toISOString());
+  logger.log('[deep-scan] Starting daily deep scan at', now.toISOString());
 
   // ── 1. Run all checks in parallel ────────────────────────────────────────
   // Dependency audit can be slow (npm registry call) — run all concurrently
@@ -793,7 +794,7 @@ export async function GET(request: NextRequest) {
     .single();
 
   if (scanInsertErr || !scanData) {
-    console.error('[deep-scan] Kunne ikke oprette scan-record:', scanInsertErr?.message);
+    logger.error('[deep-scan] Kunne ikke oprette scan-record:', scanInsertErr?.message);
     return NextResponse.json({ error: 'Kunne ikke oprette scan-record' }, { status: 500 });
   }
 
@@ -813,7 +814,7 @@ export async function GET(request: NextRequest) {
   // ── 3. Send detailed email report ─────────────────────────────────────────
   await sendDeepScanReport(allCheckResults, scanId, now);
 
-  console.log(
+  logger.log(
     `[deep-scan] Done: ${allIssues.length} total issues, ${errorCount} errors, ${warningCount} warnings`
   );
 

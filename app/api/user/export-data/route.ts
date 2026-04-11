@@ -25,6 +25,7 @@ import { NextResponse } from 'next/server';
 import { resolveTenantId } from '@/lib/api/auth';
 import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { createClient } from '@/lib/supabase/server';
+import { logger } from '@/app/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -69,11 +70,7 @@ interface AiConversationExport {
  */
 async function getTenantSchema(tenantId: string): Promise<string | null> {
   const admin = createAdminClient();
-  const { data } = await admin
-    .from('tenants')
-    .select('schema_name')
-    .eq('id', tenantId)
-    .single();
+  const { data } = await admin.from('tenants').select('schema_name').eq('id', tenantId).single();
   return data?.schema_name ?? null;
 }
 
@@ -106,7 +103,10 @@ async function fetchUserRows(
 
     if (error) {
       // Table may not exist on older tenants — treat as empty rather than failing
-      console.warn(`[export-data] ${tableName} fetch skipped:`, (error as { message: string }).message);
+      logger.warn(
+        `[export-data] ${tableName} fetch skipped:`,
+        (error as { message: string }).message
+      );
       return [];
     }
     return (data as unknown[]) ?? [];
@@ -137,7 +137,7 @@ async function fetchAiConversations(
       .order('created_at', { ascending: false });
 
     if (convoErr || !convos) {
-      console.warn('[export-data] ai_conversations fetch skipped:', convoErr?.message);
+      logger.warn('[export-data] ai_conversations fetch skipped:', convoErr?.message);
       return [];
     }
 
@@ -240,7 +240,7 @@ export async function GET(): Promise<NextResponse> {
       },
     });
   } catch (err) {
-    console.error('[export-data GET]', err);
+    logger.error('[export-data GET]', err);
     return NextResponse.json({ error: 'Serverfejl' }, { status: 500 });
   }
 }

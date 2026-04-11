@@ -101,6 +101,7 @@ import dynamic from 'next/dynamic';
 import type { DiagramGraph } from '@/app/components/diagrams/DiagramData';
 import type { TooltipProps } from 'recharts';
 import type { ValueType, NameType } from 'recharts/types/component/DefaultTooltipContent';
+import { logger } from '@/app/lib/logger';
 
 const DiagramForce = dynamic(() => import('@/app/components/diagrams/DiagramForce'), {
   ssr: false,
@@ -1093,7 +1094,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
       })
       .catch((err) => {
         if (err.name === 'AbortError') return;
-        console.error('[ejendom] DAWA fetch error:', err);
+        logger.error('[ejendom] DAWA fetch error:', err);
         setDawaStatus('fejl');
       });
     return () => controller.abort();
@@ -1116,7 +1117,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
       })
       .catch((err) => {
         if (err.name === 'AbortError') return;
-        console.error('[ejendom] BBR fetch error:', err);
+        logger.error('[ejendom] BBR fetch error:', err);
         setBbrData(null);
       })
       .finally(() => {
@@ -1179,7 +1180,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
       })
       .catch((err) => {
         if (err.name === 'AbortError') return;
-        console.error('[ejendom] Tinglysning fetch error:', err);
+        logger.error('[ejendom] Tinglysning fetch error:', err);
         setTlSumLoader(false);
       });
     return () => controller.abort();
@@ -1211,7 +1212,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
       })
       .catch((err) => {
         if (err.name === 'AbortError') return;
-        console.error('[ejendom] CVR fetch error:', err);
+        logger.error('[ejendom] CVR fetch error:', err);
         setCvrVirksomheder([]);
       });
     return () => controller.abort();
@@ -1245,7 +1246,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
       })
       .catch((err) => {
         if (err.name === 'AbortError') return;
-        console.error('[ejendom] Ejerlejligheder fetch error:', err);
+        logger.error('[ejendom] Ejerlejligheder fetch error:', err);
         setLejligheder([]);
       })
       .finally(() => {
@@ -1296,7 +1297,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
       })
       .catch((err) => {
         if (err.name === 'AbortError') return;
-        console.error('[ejendom] Vurdering fetch error:', err);
+        logger.error('[ejendom] Vurdering fetch error:', err);
         setVurdering(null);
       })
       .finally(() => {
@@ -1312,7 +1313,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
       })
       .catch((err) => {
         if (err.name === 'AbortError') return;
-        console.error('[ejendom] Ejerskab fetch error:', err);
+        logger.error('[ejendom] Ejerskab fetch error:', err);
         setEjere([]);
       })
       .finally(() => {
@@ -1329,7 +1330,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
       })
       .catch((err) => {
         if (err.name === 'AbortError') return;
-        console.error('[ejendom] Salgshistorik fetch error:', err);
+        logger.error('[ejendom] Salgshistorik fetch error:', err);
         setSalgshistorik([]);
       })
       .finally(() => {
@@ -1358,7 +1359,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
       })
       .catch((err) => {
         if (err.name === 'AbortError') return;
-        console.error('[ejendom] Matrikel fetch error:', err);
+        logger.error('[ejendom] Matrikel fetch error:', err);
       })
       .finally(() => {
         if (!controller.signal.aborted) setMatrikelLoader(false);
@@ -1407,7 +1408,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
       })
       .catch((err) => {
         if (err.name === 'AbortError') return;
-        console.error('[ejendom] Forelobig vurdering fetch error:', err);
+        logger.error('[ejendom] Forelobig vurdering fetch error:', err);
         setForelobige([]);
       })
       .finally(() => {
@@ -1438,7 +1439,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
       })
       .catch((err) => {
         if (err.name === 'AbortError') return;
-        console.error('[ejendom] Energimaerke fetch error:', err);
+        logger.error('[ejendom] Energimaerke fetch error:', err);
         setEnergiFejl(
           da ? 'Netværksfejl ved hentning af energimærker' : 'Network error fetching energy labels'
         );
@@ -1478,7 +1479,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
       })
       .catch((err) => {
         if (err.name === 'AbortError') return;
-        console.error('[ejendom] Jordforurening fetch error:', err);
+        logger.error('[ejendom] Jordforurening fetch error:', err);
         setJordFejl(
           da
             ? 'Netværksfejl ved hentning af jordforureningsdata'
@@ -1510,7 +1511,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
       })
       .catch((err) => {
         if (err.name === 'AbortError') return;
-        console.error('[ejendom] Plandata fetch error:', err);
+        logger.error('[ejendom] Plandata fetch error:', err);
         setPlandataFejl(
           da ? 'Netværksfejl ved hentning af plandata' : 'Network error fetching plan data'
         );
@@ -6266,7 +6267,7 @@ function PropertyOwnerDiagram({
   const [graph, setGraph] = useState<DiagramGraph | null>(null);
   const [ejerDetaljer, setEjerDetaljer] = useState<EjerDetalje[]>([]);
   const [loading, setLoading] = useState(true);
-  const [chainFejl, setChainFejl] = useState<string | null>(null);
+  const [_chainFejl, setChainFejl] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -6303,7 +6304,7 @@ function PropertyOwnerDiagram({
         }
       })
       .catch((err) => {
-        if (err.name !== 'AbortError') console.error('[ejerskab/chain] fetch error:', err);
+        if (err.name !== 'AbortError') logger.error('[ejerskab/chain] fetch error:', err);
       })
       .finally(() => setLoading(false));
 

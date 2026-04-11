@@ -32,6 +32,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { generateEjendomSlug, generateVirksomhedSlug } from '@/app/lib/slug';
 import { safeCompare } from '@/lib/safeCompare';
+import { logger } from '@/app/lib/logger';
 
 // ─── Konstanter ────────────────────────────────────────────────────────────────
 
@@ -128,7 +129,7 @@ async function upsertBatch(
   });
 
   if (error) {
-    console.error('[generate-sitemap] Upsert fejl:', error.message);
+    logger.error('[generate-sitemap] Upsert fejl:', error.message);
     return 0;
   }
 
@@ -188,7 +189,7 @@ async function phaseCompanies(
     );
 
     if (!initRes.ok) {
-      console.error('[generate-sitemap] CVR ES initial request fejlede:', initRes.status);
+      logger.error('[generate-sitemap] CVR ES initial request fejlede:', initRes.status);
       return { count: 0 };
     }
 
@@ -206,7 +207,7 @@ async function phaseCompanies(
       return { count: totalCount };
     }
   } catch (err) {
-    console.error('[generate-sitemap] CVR ES initial scroll fejl:', err);
+    logger.error('[generate-sitemap] CVR ES initial scroll fejl:', err);
     return { count: 0 };
   }
 
@@ -224,7 +225,7 @@ async function phaseCompanies(
       });
 
       if (!scrollRes.ok) {
-        console.error('[generate-sitemap] CVR ES scroll request fejlede:', scrollRes.status);
+        logger.error('[generate-sitemap] CVR ES scroll request fejlede:', scrollRes.status);
         break;
       }
 
@@ -239,7 +240,7 @@ async function phaseCompanies(
       const batch = buildVirksomhedBatch(hits, now);
       totalCount += await upsertBatch(admin, batch);
     } catch (err) {
-      console.error('[generate-sitemap] CVR ES scroll loop fejl:', err);
+      logger.error('[generate-sitemap] CVR ES scroll loop fejl:', err);
       break;
     }
   }
@@ -327,7 +328,7 @@ async function phaseProperties(
       });
 
       if (!res.ok) {
-        console.error('[generate-sitemap] DAWA side', currentPage, 'fejlede:', res.status);
+        logger.error('[generate-sitemap] DAWA side', currentPage, 'fejlede:', res.status);
         break;
       }
 
@@ -359,7 +360,7 @@ async function phaseProperties(
         break;
       }
     } catch (err) {
-      console.error('[generate-sitemap] DAWA side', currentPage, 'fejl:', err);
+      logger.error('[generate-sitemap] DAWA side', currentPage, 'fejl:', err);
       break;
     }
   }
@@ -460,7 +461,7 @@ export async function GET(request: NextRequest) {
       const result = await phaseCompanies(admin);
       return NextResponse.json({ ok: true, phase: 'companies', count: result.count });
     } catch (err) {
-      console.error('[generate-sitemap] companies phase uventet fejl:', err);
+      logger.error('[generate-sitemap] companies phase uventet fejl:', err);
       return NextResponse.json({ error: 'Intern fejl' }, { status: 500 });
     }
   }
@@ -476,7 +477,7 @@ export async function GET(request: NextRequest) {
       done: result.done,
     });
   } catch (err) {
-    console.error('[generate-sitemap] properties phase uventet fejl:', err);
+    logger.error('[generate-sitemap] properties phase uventet fejl:', err);
     return NextResponse.json({ error: 'Intern fejl' }, { status: 500 });
   }
 }

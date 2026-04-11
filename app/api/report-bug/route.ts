@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
+import { logger } from '@/app/lib/logger';
 
 export interface BugReportPayload {
   type: 'bug' | 'feedback' | 'feature';
@@ -175,7 +176,7 @@ export async function POST(req: NextRequest) {
     if (payload.screenshotBase64) {
       await attachScreenshotToJira(issue.key, payload.screenshotBase64).catch((err) => {
         // Non-fatal — log but don't fail the request
-        console.error('[report-bug] screenshot attach failed:', err);
+        logger.error('[report-bug] screenshot attach failed:', err);
       });
     }
 
@@ -185,7 +186,7 @@ export async function POST(req: NextRequest) {
       issueUrl: `https://${process.env.JIRA_HOST}/browse/${issue.key}`,
     });
   } catch (err) {
-    console.error('[report-bug]', err instanceof Error ? err.message : err);
+    logger.error('[report-bug]', err instanceof Error ? err.message : err);
     return NextResponse.json({ error: 'Intern serverfejl' }, { status: 500 });
   }
 }

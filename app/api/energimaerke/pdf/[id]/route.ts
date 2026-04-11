@@ -9,6 +9,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { logger } from '@/app/lib/logger';
 
 const EMO_BASE = 'https://emoweb.dk/EMOData/EMOData.svc';
 
@@ -52,7 +53,7 @@ export async function GET(
       },
     });
   } catch (err) {
-    console.error('[Energimærke PDF] Fejl:', err);
+    logger.error('[Energimærke PDF] Fejl:', err);
     return new NextResponse('Timeout ved hentning af PDF', { status: 504 });
   }
 }

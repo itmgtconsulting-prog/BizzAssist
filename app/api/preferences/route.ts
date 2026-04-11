@@ -13,6 +13,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveUserId } from '@/lib/api/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { logger } from '@/app/lib/logger';
 
 /**
  * Inserts a row into the public audit_log table (non-tenant-scoped).
@@ -28,7 +29,7 @@ async function insertAuditLog(
   try {
     await admin.from('audit_log').insert(entry);
   } catch (e: unknown) {
-    console.error('[audit] Failed to insert audit log:', e);
+    logger.error('[audit] Failed to insert audit log:', e);
   }
 }
 
@@ -64,7 +65,7 @@ export async function GET() {
       preferences: row.preferences ?? {},
     });
   } catch (err) {
-    console.error('[preferences GET]', err);
+    logger.error('[preferences GET]', err);
     return NextResponse.json({ error: 'Serverfejl' }, { status: 500 });
   }
 }
@@ -123,7 +124,7 @@ export async function PUT(request: NextRequest) {
     const { error } = await admin.from('users').update(updates).eq('id', userId);
 
     if (error) {
-      console.error('[preferences PUT] Supabase error:', error);
+      logger.error('[preferences PUT] Supabase error:', error);
       return NextResponse.json({ error: 'Kunne ikke gemme' }, { status: 500 });
     }
 
@@ -137,7 +138,7 @@ export async function PUT(request: NextRequest) {
 
     return NextResponse.json({ ok: true });
   } catch (err) {
-    console.error('[preferences PUT]', err);
+    logger.error('[preferences PUT]', err);
     return NextResponse.json({ error: 'Serverfejl' }, { status: 500 });
   }
 }

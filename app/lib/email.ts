@@ -1,3 +1,5 @@
+import { logger } from '@/app/lib/logger';
+
 /**
  * Email helper — app/lib/email.ts
  *
@@ -39,7 +41,7 @@ export async function sendPaymentConfirmationEmail(
 ): Promise<void> {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
-    console.warn('[email] RESEND_API_KEY not set, skipping payment confirmation email');
+    logger.warn('[email] RESEND_API_KEY not set, skipping payment confirmation email');
     return;
   }
 
@@ -114,12 +116,12 @@ export async function sendPaymentConfirmationEmail(
 
     if (!res.ok) {
       const body = await res.text();
-      console.error('[email] Resend API error:', res.status, body);
+      logger.error('[email] Resend API error:', res.status, body);
     } else {
-      console.log('[email] Payment confirmation sent');
+      logger.log('[email] Payment confirmation sent');
     }
   } catch (err) {
-    console.error('[email] Failed to send payment confirmation:', err);
+    logger.error('[email] Failed to send payment confirmation:', err);
   }
 }
 
@@ -147,7 +149,7 @@ export interface SubscriptionApprovalParams {
 export async function sendApprovalEmail(params: SubscriptionApprovalParams): Promise<void> {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
-    console.warn('[email] RESEND_API_KEY not set, skipping approval email');
+    logger.warn('[email] RESEND_API_KEY not set, skipping approval email');
     return;
   }
 
@@ -217,12 +219,12 @@ export async function sendApprovalEmail(params: SubscriptionApprovalParams): Pro
 
     if (!res.ok) {
       const body = await res.text();
-      console.error('[email] Resend API error (approval):', res.status, body);
+      logger.error('[email] Resend API error (approval):', res.status, body);
     } else {
-      console.log('[email] Approval notification sent');
+      logger.log('[email] Approval notification sent');
     }
   } catch (err) {
-    console.error('[email] Failed to send approval email:', err);
+    logger.error('[email] Failed to send approval email:', err);
   }
 }
 
@@ -251,7 +253,7 @@ export interface RecurringPaymentParams {
 export async function sendRecurringPaymentEmail(params: RecurringPaymentParams): Promise<void> {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
-    console.warn('[email] RESEND_API_KEY not set, skipping recurring payment email');
+    logger.warn('[email] RESEND_API_KEY not set, skipping recurring payment email');
     return;
   }
 
@@ -335,11 +337,11 @@ export async function sendRecurringPaymentEmail(params: RecurringPaymentParams):
 
     if (!res.ok) {
       const body = await res.text();
-      console.error('[email] Resend API error (recurring):', res.status, body);
+      logger.error('[email] Resend API error (recurring):', res.status, body);
     } else {
-      console.log('[email] Recurring payment confirmation sent');
+      logger.log('[email] Recurring payment confirmation sent');
     }
   } catch (err) {
-    console.error('[email] Failed to send recurring payment email:', err);
+    logger.error('[email] Failed to send recurring payment email:', err);
   }
 }

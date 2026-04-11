@@ -21,6 +21,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { logger } from '@/app/lib/logger';
 
 // ─── Knowledge Base ──────────────────────────────────────────────────────────
 
@@ -315,7 +316,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ reply, suggestTicket });
   } catch (err) {
-    console.error('[/api/support] Error:', err);
+    logger.error('[/api/support] Error:', err);
     return NextResponse.json({ error: 'Internal error' }, { status: 500 });
   }
 }

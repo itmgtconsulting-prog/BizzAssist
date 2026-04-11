@@ -17,6 +17,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { createClient } from '@supabase/supabase-js';
+import { logger } from '@/app/lib/logger';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
@@ -93,7 +94,7 @@ export async function GET(req: NextRequest) {
     .eq('cvr', cvr);
 
   if (countsErr) {
-    console.error('[link-verification GET] counts error:', countsErr.message);
+    logger.error('[link-verification GET] counts error:', countsErr.message);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 
@@ -175,7 +176,7 @@ export async function POST(req: NextRequest) {
   );
 
   if (error) {
-    console.error('[link-verification POST] upsert error:', error.message);
+    logger.error('[link-verification POST] upsert error:', error.message);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 
@@ -215,7 +216,7 @@ export async function DELETE(req: NextRequest) {
     .eq('link_url', link_url);
 
   if (error) {
-    console.error('[link-verification DELETE] delete error:', error.message);
+    logger.error('[link-verification DELETE] delete error:', error.message);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 

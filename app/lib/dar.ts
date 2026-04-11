@@ -30,6 +30,7 @@ import { proxyUrl, proxyHeaders, proxyTimeout, isProxyEnabled } from '@/app/lib/
 export type { DawaAutocompleteResult, DawaAdresse, DawaJordstykke } from './dawa';
 
 import type { DawaAutocompleteResult, DawaAdresse, DawaJordstykke } from './dawa';
+import { logger } from '@/app/lib/logger';
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  * Constants
@@ -69,7 +70,7 @@ function nowTs(): string {
 async function darQuery<T = Record<string, unknown>>(query: string): Promise<T | null> {
   const url = darUrl();
   if (!url) {
-    console.error('DAR: DATAFORDELER_API_KEY not set');
+    logger.error('DAR: DATAFORDELER_API_KEY not set');
     return null;
   }
 
@@ -85,14 +86,14 @@ async function darQuery<T = Record<string, unknown>>(query: string): Promise<T |
         signal: AbortSignal.timeout(isProxy ? proxyTimeout() : 8000),
       });
       if (!res.ok) {
-        console.error(
+        logger.error(
           `DAR GraphQL ${isProxy ? 'proxy' : 'direct'} error: ${res.status} ${res.statusText}`
         );
         return null;
       }
       const json = (await res.json()) as { data?: T; errors?: unknown[] };
       if (json.errors?.length) {
-        console.error(
+        logger.error(
           `DAR GraphQL ${isProxy ? 'proxy' : 'direct'} errors:`,
           JSON.stringify(json.errors).slice(0, 600)
         );
@@ -100,7 +101,7 @@ async function darQuery<T = Record<string, unknown>>(query: string): Promise<T |
       }
       return json.data ?? null;
     } catch (err) {
-      console.error(
+      logger.error(
         `DAR GraphQL ${isProxy ? 'proxy' : 'direct'} fetch failed:`,
         err instanceof Error ? err.message : err
       );
@@ -115,7 +116,7 @@ async function darQuery<T = Record<string, unknown>>(query: string): Promise<T |
   // Attempt 2: direct to Datafordeler (API-key auth does not require IP whitelisting)
   // This handles the case where the proxy is down or misconfigured for POST/GraphQL.
   if (isProxyEnabled()) {
-    console.warn('DAR GraphQL: proxy failed, retrying direct');
+    logger.warn('DAR GraphQL: proxy failed, retrying direct');
     const directResult = await tryFetch(url, false);
     if (directResult !== null) return directResult;
   }
@@ -482,7 +483,7 @@ export async function darAutocomplete(q: string): Promise<DawaAutocompleteResult
     }
     if (nodes.length === 0) {
       // DAR returned no results — may be IP-blocked; fall back to DAWA
-      console.warn('darAutocomplete: DAR returned 0 results, trying DAWA fallback');
+      logger.warn('darAutocomplete: DAR returned 0 results, trying DAWA fallback');
       return _dawaAutocomplete(q);
     }
 
@@ -504,7 +505,7 @@ export async function darAutocomplete(q: string): Promise<DawaAutocompleteResult
       };
     });
   } catch (err) {
-    console.error('darAutocomplete fejl, falder tilbage til DAWA:', err);
+    logger.error('darAutocomplete fejl, falder tilbage til DAWA:', err);
     // Fallback til DAWA (gratis, ingen auth/IP-krav) — virker indtil 1. juli 2026
     return _dawaAutocomplete(q);
   }
@@ -556,7 +557,7 @@ export async function darHentAdresse(id: string): Promise<DawaAdresse | null> {
     const hn = hnData?.DAR_Husnummer?.nodes?.[0];
     if (!hn) {
       // DAR fandt intet — fallback til DAWA
-      console.warn('darHentAdresse: Husnummer ikke fundet i DAR, falder tilbage til DAWA');
+      logger.warn('darHentAdresse: Husnummer ikke fundet i DAR, falder tilbage til DAWA');
       return _dawaHentAdresse(id);
     }
 
@@ -619,7 +620,7 @@ export async function darHentAdresse(id: string): Promise<DawaAdresse | null> {
     // Hvis DAR ikke returnerede gyldige koordinater, brug DAWA som fallback
     // (DAR Adgangspunkt kan mangle position-felt eller returnere uventet format)
     if (!coords || (coords[0] === 0 && coords[1] === 0)) {
-      console.warn(
+      logger.warn(
         'darHentAdresse: Adgangspunkt mangler koordinater i DAR, falder tilbage til DAWA'
       );
       const dawaResult = await _dawaHentAdresse(id);
@@ -674,7 +675,7 @@ export async function darHentAdresse(id: string): Promise<DawaAdresse | null> {
     };
   } catch (err) {
     // DAR fejlede — fallback til DAWA mens den stadig virker
-    console.error('darHentAdresse fejl, falder tilbage til DAWA:', err);
+    logger.error('darHentAdresse fejl, falder tilbage til DAWA:', err);
     return _dawaHentAdresse(id);
   }
 }
@@ -749,10 +750,10 @@ export async function darHentJordstykke(lng: number, lat: number): Promise<DawaJ
           };
         }
       } else {
-        console.warn(`darHentJordstykke MAT WFS fejl: ${res.status} ${res.statusText}`);
+        logger.warn(`darHentJordstykke MAT WFS fejl: ${res.status} ${res.statusText}`);
       }
     } catch (err) {
-      console.error('darHentJordstykke MAT WFS fejl:', err);
+      logger.error('darHentJordstykke MAT WFS fejl:', err);
     }
   }
 
@@ -760,7 +761,7 @@ export async function darHentJordstykke(lng: number, lat: number): Promise<DawaJ
   try {
     return await _dawaHentJordstykke(lng, lat);
   } catch (err) {
-    console.error('darHentJordstykke DAWA fallback fejl:', err);
+    logger.error('darHentJordstykke DAWA fallback fejl:', err);
     return null;
   }
 }

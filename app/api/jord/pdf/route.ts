@@ -15,6 +15,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { logger } from '@/app/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -65,7 +66,7 @@ export async function GET(request: NextRequest): Promise<Response> {
     });
 
     if (!res.ok) {
-      console.error(
+      logger.error(
         `[jord/pdf] Miljøportalen svarede HTTP ${res.status} for elav=${elav} matrnr=${matrnr}`
       );
       return NextResponse.json(
@@ -81,7 +82,7 @@ export async function GET(request: NextRequest): Promise<Response> {
       const første = Array.from(new Uint8Array(arrayBuf, 0, Math.min(12, arrayBuf.byteLength)))
         .map((b) => b.toString(16).padStart(2, '0'))
         .join(' ');
-      console.error(`[jord/pdf] Ikke en gyldig PDF fra Miljøportalen. Første bytes: ${første}`);
+      logger.error(`[jord/pdf] Ikke en gyldig PDF fra Miljøportalen. Første bytes: ${første}`);
       return NextResponse.json(
         { fejl: 'Miljøportalen returnerede ikke en gyldig PDF' },
         { status: 502 }
@@ -101,7 +102,7 @@ export async function GET(request: NextRequest): Promise<Response> {
     });
   } catch (err) {
     const besked = err instanceof Error ? err.message : String(err);
-    console.error('[jord/pdf] Fetch fejlede:', besked);
+    logger.error('[jord/pdf] Fetch fejlede:', besked);
     return NextResponse.json(
       { fejl: `Kunne ikke hente PDF fra Miljøportalen: ${besked}` },
       { status: 502 }

@@ -11,6 +11,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { logger } from '@/app/lib/logger';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -418,7 +419,7 @@ export async function GET(req: NextRequest) {
 
     if (!enhedsRes.ok) {
       const errBody = await enhedsRes.text().catch(() => '');
-      console.error('[cvr-public/related] enhedsQuery fejl:', enhedsRes.status, errBody);
+      logger.error('[cvr-public/related] enhedsQuery fejl:', enhedsRes.status, errBody);
       return NextResponse.json(
         { virksomheder: [], error: `CVR ES fejl: ${enhedsRes.status}` },
         { status: 502 }
@@ -645,7 +646,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ virksomheder: cleaned, parentEnhedsNummer: enhedsNr });
   } catch (err) {
-    console.error('[cvr-public/related] Fejl:', err instanceof Error ? err.message : String(err));
+    logger.error('[cvr-public/related] Fejl:', err instanceof Error ? err.message : String(err));
     return NextResponse.json(
       { virksomheder: [], error: 'Kunne ikke hente relaterede virksomheder' },
       { status: 500 }

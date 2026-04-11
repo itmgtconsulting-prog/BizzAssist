@@ -23,6 +23,7 @@ import { ArrowLeft, Check, CheckCircle2, Loader2, AlertCircle, Zap, Clock } from
 import { useLanguage } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';
 import { selectFreePlan } from '@/app/auth/actions';
+import { logger } from '@/app/lib/logger';
 
 /** Plan data shape returned by /api/plans */
 interface PlanOption {
@@ -149,7 +150,7 @@ export default function SelectPlanClient() {
         });
         const json = await res.json();
         if (!res.ok || !json.url) {
-          console.error('[select-plan] Stripe checkout failed:', res.status, json.error);
+          logger.error('[select-plan] Stripe checkout failed:', res.status, json.error);
           setError(json.error ?? 'unexpected_error');
           setSubmitting(false);
           return;

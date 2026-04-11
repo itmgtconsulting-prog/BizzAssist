@@ -25,6 +25,7 @@ import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import type { EmailOtpType } from '@supabase/supabase-js';
+import { logger } from '@/app/lib/logger';
 
 /**
  * Handles the Supabase auth callback — OAuth, email verification, magic link.
@@ -36,7 +37,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const { searchParams, origin } = new URL(request.url);
 
   // DEBUG: log param keys only (values omitted to avoid leaking tokens)
-  console.error('[auth/callback] Params received:', [...searchParams.keys()].join(', '));
+  logger.error('[auth/callback] Params received:', [...searchParams.keys()].join(', '));
 
   const code = searchParams.get('code');
   const token_hash = searchParams.get('token_hash');
@@ -47,7 +48,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const oauthError = searchParams.get('error');
   const oauthErrorDesc = searchParams.get('error_description');
   if (oauthError) {
-    console.error('[auth/callback] OAuth provider returned error:', oauthError, oauthErrorDesc);
+    logger.error('[auth/callback] OAuth provider returned error:', oauthError, oauthErrorDesc);
     const details = oauthErrorDesc ?? oauthError;
     return NextResponse.redirect(
       `${origin}/login?error=auth_failed&details=${encodeURIComponent(details)}`
@@ -75,7 +76,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   // Supabase sends this when PKCE is not in use, or when the email client
   // opens the link on a different device (no code-verifier cookie available).
   if (!code && token_hash && type) {
-    console.error('[auth/callback] token_hash flow, type:', type);
+    logger.error('[auth/callback] token_hash flow, type:', type);
     const { error: otpError } = await supabase.auth.verifyOtp({ type, token_hash });
 
     if (type === 'signup' || type === 'email') {
@@ -83,7 +84,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       // verifyOtp() creates a session as a side effect; we don't want that
       // for signup verification — the user should authenticate explicitly.
       await supabase.auth.signOut();
-      console.error(
+      logger.error(
         '[auth/callback] token_hash signup verified, signed out, redirecting to /login/verified'
       );
       return NextResponse.redirect(`${origin}/login/verified`);
@@ -99,7 +100,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
 
     if (otpError) {
-      console.error('[auth/callback] token_hash verifyOtp error:', otpError.message);
+      logger.error('[auth/callback] token_hash verifyOtp error:', otpError.message);
       return NextResponse.redirect(
         `${origin}/login?error=auth_failed&details=${encodeURIComponent(otpError.message)}`
       );
@@ -113,7 +114,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   // If type=signup: the account was confirmed already (auto-confirm on,
   // re-used verification link, or verified in another browser tab).
   if (!code) {
-    console.error('[auth/callback] No code or token_hash. type:', type);
+    logger.error('[auth/callback] No code or token_hash. type:', type);
     if (type === 'signup' || type === 'email') {
       return NextResponse.redirect(`${origin}/login/verified`);
     }
@@ -123,17 +124,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   }
 
   // ── Flow A: PKCE code exchange ────────────────────────────────────────────
-  console.error('[auth/callback] PKCE code exchange, code length:', code.length);
+  logger.error('[auth/callback] PKCE code exchange, code length:', code.length);
   const { data: sessionData, error } = await supabase.auth.exchangeCodeForSession(code);
 
   if (error) {
-    console.error('[auth/callback] Code exchange failed:', error.message, 'status:', error.status);
+    logger.error('[auth/callback] Code exchange failed:', error.message, 'status:', error.status);
 
     // Graceful handling for signup verification links:
     // The PKCE code verifier cookie may be missing (different device/browser,
     // expired, or already consumed). The account IS confirmed — show verified page.
     if (type === 'signup' || type === 'email') {
-      console.error('[auth/callback] Signup code exchange failed — showing verified page');
+      logger.error('[auth/callback] Signup code exchange failed — showing verified page');
       return NextResponse.redirect(`${origin}/login/verified`);
     }
 
@@ -142,7 +143,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     );
   }
 
-  console.error('[auth/callback] Code exchange succeeded, type:', type);
+  logger.error('[auth/callback] Code exchange succeeded, type:', type);
 
   // ── Email verification success ────────────────────────────────────────────
   // When the user clicks the verification link from their signup email,
@@ -151,7 +152,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   // a side effect — sign the user out so they must log in manually afterward.
   if (type === 'signup' || type === 'email') {
     await supabase.auth.signOut();
-    console.error(
+    logger.error(
       '[auth/callback] signup code exchanged, signed out, redirecting to /login/verified'
     );
     return NextResponse.redirect(`${origin}/login/verified`);
@@ -172,14 +173,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       const sub = appMeta.subscription as { planId?: string } | undefined;
 
       if (!sub?.planId && role !== 'admin') {
-        console.error(
+        logger.error(
           '[auth/callback] New OAuth user — no subscription, redirecting to select-plan'
         );
         return NextResponse.redirect(`${origin}/login/select-plan`);
       }
     } catch (err) {
       // On admin client error, continue to dashboard — layout will re-check
-      console.error('[auth/callback] Subscription check error (non-fatal):', err);
+      logger.error('[auth/callback] Subscription check error (non-fatal):', err);
     }
   }
 

@@ -11,6 +11,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { logger } from '@/app/lib/logger';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -667,7 +668,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       }
     );
   } catch (err) {
-    console.error('[Regnskab XBRL] Error:', err instanceof Error ? err.message : err);
+    logger.error('[Regnskab XBRL] Error:', err instanceof Error ? err.message : err);
     return NextResponse.json(
       { years: [], total: 0, error: 'Intern fejl ved XBRL-parsing' },
       { status: 200 }

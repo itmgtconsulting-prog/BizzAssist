@@ -15,6 +15,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
+import { logger } from '@/app/lib/logger';
 /** Maximum characters allowed in a knowledge item's content field. */
 const MAX_CONTENT_CHARS = 50_000;
 
@@ -98,7 +99,7 @@ export async function GET(request: NextRequest, { params }: RouteParams): Promis
 
     return NextResponse.json(data);
   } catch (err) {
-    console.error('[knowledge/[id]] GET fejlede:', err);
+    logger.error('[knowledge/[id]] GET fejlede:', err);
     return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
   }
 }
@@ -231,7 +232,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams): Prom
 
     return NextResponse.json(data);
   } catch (err) {
-    console.error('[knowledge/[id]] PATCH fejlede:', err);
+    logger.error('[knowledge/[id]] PATCH fejlede:', err);
     return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
   }
 }

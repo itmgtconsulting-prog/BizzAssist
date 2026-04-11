@@ -29,6 +29,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import type { ScanIssue, VercelDeployment } from '../route';
+import { logger } from '@/app/lib/logger';
 
 // ─── Vercel API helpers ───────────────────────────────────────────────────────
 
@@ -280,7 +281,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       summary = result.summary;
       finalStatus = 'completed';
     } catch (scanErr) {
-      console.error('[service-manager/scan] runScan threw:', scanErr);
+      logger.error('[service-manager/scan] runScan threw:', scanErr);
       issues = [
         {
           type: 'config_error',
@@ -305,7 +306,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       .eq('id', scanId);
 
     if (updateErr) {
-      console.error('[service-manager/scan] update error:', updateErr.code ?? '[DB error]');
+      logger.error('[service-manager/scan] update error:', updateErr.code ?? '[DB error]');
     }
 
     return NextResponse.json({
@@ -315,7 +316,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       status: finalStatus,
     });
   } catch (err) {
-    console.error('[service-manager/scan POST]', err);
+    logger.error('[service-manager/scan POST]', err);
     return NextResponse.json({ error: 'Serverfejl' }, { status: 500 });
   }
 }

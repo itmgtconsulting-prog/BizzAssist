@@ -26,6 +26,7 @@ import { createClient } from '@supabase/supabase-js';
 import { checkRateLimit, braveRateLimit } from '@/app/lib/rateLimit';
 import { withBraveCache } from '@/app/lib/searchCache';
 import { createClient as createServerClient } from '@/lib/supabase/server';
+import { logger } from '@/app/lib/logger';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -242,7 +243,7 @@ async function searchBravePersonArticles(
     }
   }
 
-  console.log(
+  logger.log(
     `[person-search/articles] batch=${batch}: ${merged.length} merged for "${personName}", virksomheder: ${batchCompanies.map((c) => c.name).join(', ') || '(ingen)'}`
   );
 
@@ -469,7 +470,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     });
   }
 
-  console.log(
+  logger.log(
     `[person-search/articles] "${personName}" batch=${batch}: ${braveResults.length} rå Brave-resultater, hasMore=${hasMore}`
   );
 
@@ -519,12 +520,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const articles = parseArticlesResponse(finalText);
 
-    console.log(
+    logger.log(
       `[person-search/articles] "${personName}" batch=${batch}: ${articles.length} artikler, tokens=${totalTokens}, hasMore=${hasMore}`
     );
 
     if (articles.length === 0) {
-      console.warn(
+      logger.warn(
         '[person-search/articles] Ingen artikler parsede. Råsvar:',
         finalText.slice(0, 300)
       );

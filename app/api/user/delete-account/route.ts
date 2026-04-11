@@ -23,6 +23,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
+import { logger } from '@/app/lib/logger';
 
 /** The exact phrase the user must type to confirm account deletion. */
 const CONFIRM_PHRASE = 'SLET MIN KONTO';
@@ -42,7 +43,7 @@ async function insertAuditLog(
   try {
     await admin.from('audit_log').insert(entry);
   } catch (e: unknown) {
-    console.error('[audit] Failed to insert audit log:', e);
+    logger.error('[audit] Failed to insert audit log:', e);
   }
 }
 
@@ -133,7 +134,7 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
             });
           }
         } catch (dropErr) {
-          console.error('[delete-account] Schema drop error (non-fatal):', dropErr);
+          logger.error('[delete-account] Schema drop error (non-fatal):', dropErr);
         }
 
         // Remove membership and tenant record — re-registration must start clean.
@@ -153,13 +154,13 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
     // ── Step 6: Delete auth user (cascades sessions, MFA, tokens) ─────────
     const { error: deleteError } = await admin.auth.admin.deleteUser(user.id);
     if (deleteError) {
-      console.error('[delete-account] Auth deletion error:', deleteError.code ?? '[DB error]');
+      logger.error('[delete-account] Auth deletion error:', deleteError.code ?? '[DB error]');
       return NextResponse.json({ error: 'Kontosletning mislykkedes' }, { status: 500 });
     }
 
     return NextResponse.json({ ok: true });
   } catch (err) {
-    console.error('[delete-account] Unexpected error:', err);
+    logger.error('[delete-account] Unexpected error:', err);
     return NextResponse.json({ error: 'Serverfejl' }, { status: 500 });
   }
 }

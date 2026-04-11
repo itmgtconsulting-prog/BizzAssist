@@ -16,6 +16,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { logger } from '@/app/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -64,7 +65,7 @@ export async function GET(request: NextRequest): Promise<Response> {
     });
 
     if (!res.ok) {
-      console.warn(`[wms] HTTP ${res.status} fra ${service}: ${url}`);
+      logger.warn(`[wms] HTTP ${res.status} fra ${service}: ${url}`);
       return new Response(null, { status: res.status });
     }
 
@@ -80,7 +81,7 @@ export async function GET(request: NextRequest): Promise<Response> {
       },
     });
   } catch (err) {
-    console.error('[wms] proxy-fejl:', err instanceof Error ? err.message : err);
+    logger.error('[wms] proxy-fejl:', err instanceof Error ? err.message : err);
     return new Response(null, { status: 502 });
   }
 }

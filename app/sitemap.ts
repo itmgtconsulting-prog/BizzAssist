@@ -19,6 +19,7 @@
 
 import type { MetadataRoute } from 'next';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { logger } from '@/app/lib/logger';
 
 // ─── Konstanter ────────────────────────────────────────────────────────────────
 
@@ -95,7 +96,7 @@ export async function generateSitemaps(): Promise<Array<{ id: number }>> {
     });
 
     if (error) {
-      console.error('[sitemap] Kunne ikke tælle sitemap_entries:', error.message);
+      logger.error('[sitemap] Kunne ikke tælle sitemap_entries:', error.message);
       return [{ id: 0 }];
     }
 
@@ -103,7 +104,7 @@ export async function generateSitemaps(): Promise<Array<{ id: number }>> {
     const pages = Math.ceil(total / PAGE_SIZE);
     return Array.from({ length: Math.max(pages, 1) }, (_, i) => ({ id: i }));
   } catch (err) {
-    console.error('[sitemap] generateSitemaps fejl:', err);
+    logger.error('[sitemap] generateSitemaps fejl:', err);
     return [{ id: 0 }];
   }
 }
@@ -137,7 +138,7 @@ export default async function sitemap({ id }: { id: number }): Promise<MetadataR
       .range(dbOffset, dbOffset + dbLimit - 1);
 
     if (error) {
-      console.error('[sitemap] Kunne ikke hente sitemap_entries:', error.message);
+      logger.error('[sitemap] Kunne ikke hente sitemap_entries:', error.message);
       return staticEntries;
     }
 
@@ -153,7 +154,7 @@ export default async function sitemap({ id }: { id: number }): Promise<MetadataR
 
     return [...staticEntries, ...dbEntries];
   } catch (err) {
-    console.error('[sitemap] sitemap() fejl:', err);
+    logger.error('[sitemap] sitemap() fejl:', err);
     return staticEntries;
   }
 }

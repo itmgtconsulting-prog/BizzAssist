@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react';
 import { AlertTriangle } from 'lucide-react';
+import { logger } from '@/app/lib/logger';
 
 /**
  * Route-level error boundary — catches unhandled errors in this dashboard segment.
@@ -19,7 +20,7 @@ export default function Error({
 }) {
   // Log to browser console so errors are visible during development
   useEffect(() => {
-    console.error(error);
+    logger.error(error);
   }, [error]);
 
   return (

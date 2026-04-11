@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { createClient } from '@/lib/supabase/client';
+import { logger } from '@/app/lib/logger';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -206,7 +207,7 @@ export default function SecuritySettingsPageClient() {
         issuer: 'BizzAssist',
       });
       if (enrollError || !data) {
-        console.error('[mfa] enroll() failed:', enrollError?.code, enrollError?.message);
+        logger.error('[mfa] enroll() failed:', enrollError?.code, enrollError?.message);
         setError('err_enroll_failed');
         return;
       }

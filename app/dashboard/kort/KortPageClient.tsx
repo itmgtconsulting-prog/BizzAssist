@@ -46,6 +46,7 @@ import { useRouter } from 'next/navigation';
 import { type DawaAutocompleteResult, type DawaAdresse } from '@/app/lib/dawa';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { type VirksomhedMarkør, type CVRBboxResponse } from '@/app/api/cvr/bbox/route';
+import { logger } from '@/app/lib/logger';
 
 // ─── Konstanter ───────────────────────────────────────────────────────────────
 
@@ -111,13 +112,13 @@ async function fetchMatrikelBbox(
     // polygon-parameteren accepterer WGS84 direkte — bbox+bboxsrid=4326 virker ikke
     // Server-side proxy — undgår direkte DAWA-kald (DAWA lukker 1. juli 2026)
     const url = `/api/matrikel/bbox?w=${w}&s=${s}&e=${e}&n=${n}`;
-    console.log('[matrikel] henter:', url);
+    logger.log('[matrikel] henter:', url);
     // Kombiner ekstern AbortSignal med timeout — den der affyres først vinder
     const timeoutSignal = AbortSignal.timeout(25000);
     const signal = abortSignal ? AbortSignal.any([abortSignal, timeoutSignal]) : timeoutSignal;
     const res = await fetch(url, { signal });
     if (!res.ok) {
-      console.warn('[matrikel] HTTP', res.status, await res.text());
+      logger.warn('[matrikel] HTTP', res.status, await res.text());
       return EMPTY_FC;
     }
     const json = (await res.json()) as
@@ -125,17 +126,17 @@ async function fetchMatrikelBbox(
       | GeoJSON.Feature[];
     // DAWA kan returnere både FeatureCollection og bare et array
     if (Array.isArray(json)) {
-      console.log(`[matrikel] array med ${json.length} features`);
+      logger.log(`[matrikel] array med ${json.length} features`);
       return { type: 'FeatureCollection', features: json };
     }
     if (json?.type === 'FeatureCollection' && Array.isArray(json.features)) {
-      console.log(`[matrikel] FeatureCollection med ${json.features.length} features`);
+      logger.log(`[matrikel] FeatureCollection med ${json.features.length} features`);
       return json as GeoJSON.FeatureCollection;
     }
-    console.warn('[matrikel] uventet svar-format:', JSON.stringify(json).slice(0, 200));
+    logger.warn('[matrikel] uventet svar-format:', JSON.stringify(json).slice(0, 200));
     return EMPTY_FC;
   } catch (err) {
-    console.error('[matrikel] fejl:', err);
+    logger.error('[matrikel] fejl:', err);
     return EMPTY_FC;
   }
 }
@@ -854,7 +855,7 @@ function KortInner() {
         },
       });
 
-    console.log('[lag] sources og layers tilføjet');
+    logger.log('[lag] sources og layers tilføjet');
 
     // ── WMS raster lag (tilføjes initial med visibility=none — styres via visLag state) ──
     for (const wms of WMS_LAG) {

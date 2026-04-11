@@ -1,6 +1,7 @@
 'use client';
 import { useEffect } from 'react';
 import { AlertCircle, RefreshCw } from 'lucide-react';
+import { logger } from '@/app/lib/logger';
 
 /**
  * Dashboard-level error boundary — catches unhandled errors in the dashboard UI tree.
@@ -17,7 +18,7 @@ export default function DashboardError({
   reset: () => void;
 }) {
   useEffect(() => {
-    console.error('[Dashboard] Unhandled error:', error);
+    logger.error('[Dashboard] Unhandled error:', error);
   }, [error]);
 
   return (

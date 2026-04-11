@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { logger } from '@/app/lib/logger';
 
 /** Row shape from token_packs table. */
 interface TokenPackRow {
@@ -38,7 +39,7 @@ async function insertAuditLog(
   try {
     await admin.from('audit_log').insert(entry);
   } catch (e: unknown) {
-    console.error('[audit] Failed to insert audit log:', e);
+    logger.error('[audit] Failed to insert audit log:', e);
   }
 }
 
@@ -74,7 +75,7 @@ export async function GET(): Promise<NextResponse> {
     };
 
     if (error) {
-      console.error('[admin/token-packs GET] DB error:', error.message);
+      logger.error('[admin/token-packs GET] DB error:', error.message);
       return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
     }
 
@@ -93,7 +94,7 @@ export async function GET(): Promise<NextResponse> {
 
     return NextResponse.json(mapped);
   } catch (err) {
-    console.error('[admin/token-packs] Error:', err);
+    logger.error('[admin/token-packs] Error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
@@ -125,7 +126,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           sort_order: data.sortOrder ?? 0,
         } as never);
         if (error) {
-          console.error('[admin/token-packs create] DB error:', error.message);
+          logger.error('[admin/token-packs create] DB error:', error.message);
           return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
         }
         // Audit log — fire-and-forget (ISO 27001 A.12.4)
@@ -154,7 +155,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           .update(updates as never)
           .eq('id', data.id);
         if (error) {
-          console.error('[admin/token-packs update] DB error:', error.message);
+          logger.error('[admin/token-packs update] DB error:', error.message);
           return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
         }
         // Audit log — fire-and-forget (ISO 27001 A.12.4)
@@ -171,7 +172,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         if (!data.id) return NextResponse.json({ error: 'id required' }, { status: 400 });
         const { error } = await admin.from('token_packs').delete().eq('id', data.id);
         if (error) {
-          console.error('[admin/token-packs delete] DB error:', error.message);
+          logger.error('[admin/token-packs delete] DB error:', error.message);
           return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
         }
         // Audit log — fire-and-forget (ISO 27001 A.12.4)
@@ -188,7 +189,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
     }
   } catch (err) {
-    console.error('[admin/token-packs] Error:', err);
+    logger.error('[admin/token-packs] Error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

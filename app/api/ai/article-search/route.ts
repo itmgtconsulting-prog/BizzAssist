@@ -34,6 +34,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 import { checkRateLimit, braveRateLimit } from '@/app/lib/rateLimit';
+import { logger } from '@/app/lib/logger';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -333,7 +334,7 @@ async function searchBraveArticles(key: string, companyName: string): Promise<Ar
     }
   }
 
-  console.log(
+  logger.log(
     `[article-search] searchBraveArticles: q1=${results1.length} + q2=${results2.length} + q3=${results3.length} → merged=${merged.length}`
   );
   return merged;
@@ -400,9 +401,7 @@ async function searchBraveSocials(key: string, companyName: string): Promise<Soc
     }
   }
 
-  console.log(
-    `[article-search] searchBraveSocials: fandt ${Object.keys(socials).length} platforme`
-  );
+  logger.log(`[article-search] searchBraveSocials: fandt ${Object.keys(socials).length} platforme`);
   return socials;
 }
 
@@ -704,7 +703,7 @@ function parseArticleResponse(
       } else {
         // Primært link er under tærsklen — flyt til alternativer
         altsWithMeta.unshift({ url: primaryUrl, confidence, reason });
-        console.log(
+        logger.log(
           `[article-search] ${key}: primær URL "${primaryUrl}" under tærskel (${confidence} < ${threshold}) — flyttes til alternativer`
         );
       }
@@ -783,7 +782,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       ]);
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Ukendt Brave Search fejl';
-    console.error('[article-search] Initialiseringsfejl:', msg);
+    logger.error('[article-search] Initialiseringsfejl:', msg);
     return NextResponse.json({ error: `Søgning fejlede: ${msg}` }, { status: 502 });
   }
 
@@ -800,7 +799,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     });
   }
 
-  console.log(
+  logger.log(
     `[article-search] "${companyName}": Brave=${braveResults.length} rå resultater, threshold=${confidenceThreshold}`
   );
 
@@ -873,14 +872,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // Claude's kvalitetssikrede links overskriver Brave-fund
     const socials: SocialsResult = { ...braveSocials, ...claudeSocials };
 
-    console.log(
+    logger.log(
       `[article-search] "${companyName}": ${articles.length} artikler, tokens=${totalTokens}, ` +
         `primære links=[${Object.keys(socialsWithMeta).join(',')}], ` +
         `alternativer=[${Object.keys(alternativesWithMeta).join(',')}], threshold=${confidenceThreshold}`
     );
 
     if (articles.length === 0) {
-      console.warn('[article-search] Ingen artikler parsede. Råsvar:', finalText.slice(0, 500));
+      logger.warn('[article-search] Ingen artikler parsede. Råsvar:', finalText.slice(0, 500));
     }
 
     const result: ArticleSearchResponse = {
@@ -897,7 +896,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json(result, { status: 200 });
   } catch (err) {
-    console.error('[article-search] Fejl:', err);
+    logger.error('[article-search] Fejl:', err);
     const errorMsg =
       err instanceof Anthropic.APIError
         ? `API-fejl (${err.status}): ${err.message}`

@@ -53,6 +53,7 @@ import { createClient } from '@/lib/supabase/client';
 import { hasMigrated, migrateLocalStorageToSupabase } from '@/app/lib/migrateLocalStorage';
 import { initCacheUserId, clearCacheUserId } from '@/app/lib/trackedEjendomme';
 import TopProgressBar from '@/app/components/TopProgressBar';
+import { logger } from '@/app/lib/logger';
 
 /**
  * Whether AI features (chat + analysis) are enabled in this environment.
@@ -266,11 +267,11 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
       // The API uses the admin client to read FRESH subscription data.
       try {
         const res = await fetch('/api/subscription');
-        console.log('[checkAccess] /api/subscription status:', res.status);
+        logger.log('[checkAccess] /api/subscription status:', res.status);
 
         if (res.ok) {
           const json = await res.json();
-          console.log('[checkAccess] /api/subscription response:', JSON.stringify(json));
+          logger.log('[checkAccess] /api/subscription response:', JSON.stringify(json));
           const email = json.email as string | undefined;
           const serverSub = json.subscription;
 
@@ -314,7 +315,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                 bonusTokens: serverSub.bonusTokens ?? 0,
                 isPaid: serverSub.isPaid ?? false,
               };
-              console.log(
+              logger.log(
                 '[checkAccess] Server sub:',
                 sub.status,
                 '/',
@@ -332,10 +333,10 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
 
             // No subscription in Supabase — but admins still get access
             if (json.isAdmin) {
-              console.log('[checkAccess] No subscription but isAdmin → granting access');
+              logger.log('[checkAccess] No subscription but isAdmin → granting access');
               gateAccess('ok', true, null, true);
             } else {
-              console.log('[checkAccess] No subscription → no_subscription');
+              logger.log('[checkAccess] No subscription → no_subscription');
               gateAccess('no_subscription');
             }
             return;
@@ -344,28 +345,28 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
 
         // 401 or no email = not authenticated
         if (res.status === 401) {
-          console.log('[checkAccess] Not authenticated (401)');
+          logger.log('[checkAccess] Not authenticated (401)');
           window.location.href = '/login';
           return;
         }
       } catch (err) {
         // Transient network error (e.g. dev server restarting, stale Turbopack cache).
         // Retry up to 3 times with increasing delay instead of redirecting to /login.
-        console.warn('[checkAccess] /api/subscription network error (attempt', attempt, '):', err);
+        logger.warn('[checkAccess] /api/subscription network error (attempt', attempt, '):', err);
         if (attempt < 3) {
           const delay = (attempt + 1) * 1500;
-          console.log('[checkAccess] Retrying in', delay, 'ms...');
+          logger.log('[checkAccess] Retrying in', delay, 'ms...');
           setTimeout(() => checkAccess(attempt + 1), delay);
           return;
         }
-        console.error('[checkAccess] All retries exhausted:', err);
+        logger.error('[checkAccess] All retries exhausted:', err);
       }
 
       // FALLBACK: try client-side getUser (may work in some setups)
       try {
         const { data } = await supabase.auth.getUser();
         const email = data.user?.email;
-        console.log('[checkAccess] client getUser email: [redacted]');
+        logger.log('[checkAccess] client getUser email: [redacted]');
         if (email) {
           // BIZZ-180: Namespace localStorage cache keys with user ID
           if (data.user?.id) initCacheUserId(data.user.id);
@@ -1283,7 +1284,7 @@ function PlanSelectionOverlay({
           const msg = da
             ? `Stripe-pris ikke konfigureret for "${da ? plan.nameDa : plan.nameEn}". Kontakt administrator.`
             : `Stripe price not configured for "${plan.nameEn}". Contact administrator.`;
-          console.error('[PlanOverlay] Stripe price ID missing for plan', selectedPlan);
+          logger.error('[PlanOverlay] Stripe price ID missing for plan', selectedPlan);
           setError(msg);
           setSubmitting(false);
           return;
@@ -1296,7 +1297,7 @@ function PlanSelectionOverlay({
         const json = await res.json();
         if (!res.ok || !json.url) {
           const apiErr = (json.error as string | undefined) ?? '';
-          console.error('[PlanOverlay] Stripe checkout failed:', res.status, apiErr);
+          logger.error('[PlanOverlay] Stripe checkout failed:', res.status, apiErr);
           setError(
             apiErr ||
               (da ? 'Noget gik galt. Prøv igen.' : 'Something went wrong. Please try again.')
@@ -1308,7 +1309,7 @@ function PlanSelectionOverlay({
       } else {
         const result = await selectFreePlan(selectedPlan);
         if (result?.error) {
-          console.error('[PlanOverlay] selectFreePlan failed:', result.error);
+          logger.error('[PlanOverlay] selectFreePlan failed:', result.error);
           setError(da ? 'Noget gik galt. Prøv igen.' : 'Something went wrong. Please try again.');
           setSubmitting(false);
           return;

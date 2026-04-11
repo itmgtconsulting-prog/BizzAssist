@@ -13,6 +13,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { darAutocomplete } from '@/app/lib/dar';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
+import { logger } from '@/app/lib/logger';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -180,7 +181,7 @@ async function searchAddresses(q: string, normQ: string): Promise<UnifiedSearchR
       };
     });
   } catch (err) {
-    console.error('[search] Address search failed:', err);
+    logger.error('[search] Address search failed:', err);
     return [];
   }
 }
@@ -321,7 +322,7 @@ async function searchCompanies(
       };
     });
   } catch (err) {
-    console.error('[search] Company search failed:', err);
+    logger.error('[search] Company search failed:', err);
     return [];
   }
 }
@@ -382,7 +383,7 @@ async function searchPeople(
       };
     });
   } catch (err) {
-    console.error('[search] People search failed:', err);
+    logger.error('[search] People search failed:', err);
     return [];
   }
 }

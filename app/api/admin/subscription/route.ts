@@ -23,6 +23,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { sendApprovalEmail } from '@/app/lib/email';
+import { logger } from '@/app/lib/logger';
 
 /**
  * Inserts a row into audit_log using an untyped client cast.
@@ -39,7 +40,7 @@ async function insertAuditLog(
   try {
     await client.from('audit_log').insert(entry);
   } catch (e: unknown) {
-    console.error('[audit] Failed to log subscription change:', e);
+    logger.error('[audit] Failed to log subscription change:', e);
   }
 }
 
@@ -175,7 +176,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
             (planRow as { name_da?: string } | null)?.name_da ?? currentSub.planId ?? 'Demo';
           const fullName = (targetUser.user_metadata?.full_name as string | undefined) ?? undefined;
           sendApprovalEmail({ to: targetUser.email, fullName, planName }).catch((err) =>
-            console.error('[admin/subscription] Approval email error (non-fatal):', err)
+            logger.error('[admin/subscription] Approval email error (non-fatal):', err)
           );
         }
         break;
@@ -291,7 +292,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     }
 
     if (result.error) {
-      console.error('[admin/subscription]', action, 'error:', result.error);
+      logger.error('[admin/subscription]', action, 'error:', result.error);
       return NextResponse.json({ error: 'Failed to update' }, { status: 500 });
     }
 
@@ -310,7 +311,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json({ ok: true, subscription: result.subscription });
   } catch (err) {
-    console.error('[admin/subscription] Unexpected error:', err);
+    logger.error('[admin/subscription] Unexpected error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

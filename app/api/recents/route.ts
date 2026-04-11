@@ -14,6 +14,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantId } from '@/lib/api/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { logger } from '@/app/lib/logger';
 
 /** Max recent entities per type per user */
 const MAX_RECENTS: Record<string, number> = {
@@ -55,13 +56,13 @@ export async function GET(request: NextRequest) {
       .limit(MAX_RECENTS[entityType] ?? 6);
 
     if (error) {
-      console.error('[recents GET] DB error:', error);
+      logger.error('[recents GET] DB error:', error);
       return NextResponse.json({ error: 'Databasefejl ved hentning af seneste' }, { status: 500 });
     }
 
     return NextResponse.json({ recents: data ?? [] });
   } catch (err) {
-    console.error('[recents GET] Unexpected error:', err);
+    logger.error('[recents GET] Unexpected error:', err);
     return NextResponse.json({ error: 'Serverfejl' }, { status: 500 });
   }
 }
@@ -105,7 +106,7 @@ export async function POST(request: NextRequest) {
     );
 
     if (upsertError) {
-      console.error('[recents POST] upsert error:', upsertError);
+      logger.error('[recents POST] upsert error:', upsertError);
       return NextResponse.json({ error: 'Kunne ikke gemme' }, { status: 500 });
     }
 
@@ -126,7 +127,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ ok: true });
   } catch (err) {
-    console.error('[recents POST]', err);
+    logger.error('[recents POST]', err);
     return NextResponse.json({ error: 'Serverfejl' }, { status: 500 });
   }
 }
@@ -159,7 +160,7 @@ export async function DELETE(request: NextRequest) {
 
     return NextResponse.json({ ok: true });
   } catch (err) {
-    console.error('[recents DELETE]', err);
+    logger.error('[recents DELETE]', err);
     return NextResponse.json({ error: 'Serverfejl' }, { status: 500 });
   }
 }

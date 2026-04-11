@@ -26,6 +26,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
+import { logger } from '@/app/lib/logger';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -181,7 +182,7 @@ export async function POST(
       scopes: row.scopes,
     });
   } catch (err) {
-    console.error('[tokens/verify] POST fejlede:', err);
+    logger.error('[tokens/verify] POST fejlede:', err);
     // Return invalid rather than 500 to avoid leaking DB errors to callers
     return NextResponse.json<VerifyFailureResponse>({ valid: false });
   }

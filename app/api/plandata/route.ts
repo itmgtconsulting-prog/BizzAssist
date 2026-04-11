@@ -20,6 +20,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { resolveTenantId } from '@/lib/api/auth';
+import { logger } from '@/app/lib/logger';
 
 const PLANDATA_WFS = 'https://geoserver.plandata.dk/geoserver/wfs';
 const DAWA_BASE = 'https://api.dataforsyningen.dk';
@@ -254,7 +255,7 @@ async function fetchLag(x: number, y: number, layer: LayerConfig): Promise<Pland
 
     if (!res.ok) {
       const body = await res.text().catch(() => '');
-      console.error(`[Plandata] HTTP ${res.status} for ${layer.typeName}: ${body.slice(0, 300)}`);
+      logger.error(`[Plandata] HTTP ${res.status} for ${layer.typeName}: ${body.slice(0, 300)}`);
       return [];
     }
 
@@ -304,7 +305,7 @@ async function fetchLag(x: number, y: number, layer: LayerConfig): Promise<Pland
       })
       .filter((item) => item.nummer !== '');
   } catch (err) {
-    console.error(`[Plandata] Fejl for ${layer.typeName}:`, err);
+    logger.error(`[Plandata] Fejl for ${layer.typeName}:`, err);
     return [];
   }
 }
@@ -361,7 +362,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<PlandataRe
       x = coords.x!;
       y = coords.y!;
     } catch (err) {
-      console.error('[Plandata] DAWA fejl:', err);
+      logger.error('[Plandata] DAWA fejl:', err);
       return NextResponse.json({ planer: null, fejl: 'Ekstern API fejl' });
     }
 
@@ -388,7 +389,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<PlandataRe
       }
     );
   } catch (err) {
-    console.error('[Plandata] Uventet fejl:', err);
+    logger.error('[Plandata] Uventet fejl:', err);
     return NextResponse.json({ planer: null, fejl: 'Ekstern API fejl' }, { status: 200 });
   }
 }

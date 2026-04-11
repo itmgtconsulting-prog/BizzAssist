@@ -21,6 +21,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { logger } from '@/app/lib/logger';
 
 interface UnlockRequestBody {
   userId: string;
@@ -80,7 +81,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     .eq('user_id', userId);
 
   if (error) {
-    console.error('[admin/support-unlock] DB error:', error.message);
+    logger.error('[admin/support-unlock] DB error:', error.message);
     return NextResponse.json({ error: 'Intern serverfejl' }, { status: 500 });
   }
 

@@ -15,6 +15,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { stripe } from '@/app/lib/stripe';
 import { resolvePlan } from '@/app/lib/subscriptions';
 import { sendPaymentConfirmationEmail } from '@/app/lib/email';
+import { logger } from '@/app/lib/logger';
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   if (!stripe) {
@@ -89,7 +90,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           .update({ sales_count: currentCount + 1 } as never)
           .eq('plan_id', planId as string);
       } catch (countErr) {
-        console.error('[stripe/verify-session] Failed to increment sales_count:', countErr);
+        logger.error('[stripe/verify-session] Failed to increment sales_count:', countErr);
       }
     }
 
@@ -138,17 +139,17 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           periodEnd: periodEnd ?? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
           cancelUrl,
         }).catch((emailErr) => {
-          console.error('[stripe/verify-session] Email send error:', emailErr);
+          logger.error('[stripe/verify-session] Email send error:', emailErr);
         });
       }
     } catch (emailErr) {
       // Email failure should never block payment verification
-      console.error('[stripe/verify-session] Email setup error:', emailErr);
+      logger.error('[stripe/verify-session] Email setup error:', emailErr);
     }
 
     return NextResponse.json({ ok: true });
   } catch (err) {
-    console.error('[stripe/verify-session] Error:', err);
+    logger.error('[stripe/verify-session] Error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

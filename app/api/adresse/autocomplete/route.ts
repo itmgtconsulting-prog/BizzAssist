@@ -18,6 +18,7 @@ import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { resolveTenantId } from '@/lib/api/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { logActivity } from '@/app/lib/activityLog';
+import { logger } from '@/app/lib/logger';
 
 export async function GET(request: NextRequest) {
   const limited = await checkRateLimit(request, rateLimit);
@@ -45,7 +46,7 @@ export async function GET(request: NextRequest) {
       headers: { 'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=120' },
     });
   } catch (err) {
-    console.error('[adresse/autocomplete] Fejl:', err);
+    logger.error('[adresse/autocomplete] Fejl:', err);
     return NextResponse.json([], { status: 200 });
   }
 }

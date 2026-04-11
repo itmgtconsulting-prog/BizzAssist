@@ -23,6 +23,7 @@ import {
   type PlanId,
   type PlanDef,
 } from '@/app/lib/subscriptions';
+import { logger } from '@/app/lib/logger';
 
 /** Row shape from plan_configs table */
 interface PlanConfigRow {
@@ -109,7 +110,7 @@ async function fetchStripeBilling(customerId: string): Promise<StripeBillingInfo
       stripeStatus: sub.status,
     };
   } catch (err) {
-    console.error('[subscription] Stripe billing fetch error:', err);
+    logger.error('[subscription] Stripe billing fetch error:', err);
     return null;
   }
 }
@@ -145,7 +146,7 @@ export async function GET(): Promise<NextResponse> {
 
     if (error || !freshUser?.user) {
       // Fallback to JWT data if admin lookup fails
-      console.warn('[subscription] Admin getUserById failed, using JWT data:', error?.message);
+      logger.warn('[subscription] Admin getUserById failed, using JWT data:', error?.message);
       const subscription = user.app_metadata?.subscription ?? null;
       return NextResponse.json({
         email: user.email,
@@ -191,9 +192,7 @@ export async function GET(): Promise<NextResponse> {
         try {
           const adminWithMfa = admin.auth.admin as unknown as {
             mfa: {
-              listFactors: (params: {
-                userId: string;
-              }) => Promise<{
+              listFactors: (params: { userId: string }) => Promise<{
                 data: { factors: Array<{ status: string; factor_type: string }> } | null;
               }>;
             };
@@ -346,7 +345,7 @@ export async function GET(): Promise<NextResponse> {
     });
   } catch (err) {
     Sentry.captureException(err);
-    console.error('[subscription] Unexpected error:', err);
+    logger.error('[subscription] Unexpected error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

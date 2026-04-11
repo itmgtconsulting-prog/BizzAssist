@@ -57,6 +57,7 @@ import {
   type ClassifiedEmail,
   type GraphEmail,
 } from '@/lib/monitorEmail';
+import { logger } from '@/app/lib/logger';
 
 /** Vercel Cron max duration (seconds) — stays within 30 s Hobby plan limit */
 export const maxDuration = 30;
@@ -106,7 +107,7 @@ async function logActivity(action: string, details: Record<string, unknown>): Pr
       created_by: null, // Cron — no user session
     });
   } catch (err) {
-    console.error('[monitor-email] activity log error:', err);
+    logger.error('[monitor-email] activity log error:', err);
   }
 }
 
@@ -151,7 +152,7 @@ async function createEmailScanRecord(
     .single();
 
   if (error || !data) {
-    console.error('[monitor-email] Kunne ikke oprette scan-record:', error?.message);
+    logger.error('[monitor-email] Kunne ikke oprette scan-record:', error?.message);
     return null;
   }
 
@@ -173,7 +174,7 @@ async function triggerAutoFix(scanId: string, issueIndex: number): Promise<boole
   const cronSecret = process.env.CRON_SECRET;
 
   if (!cronSecret) {
-    console.warn('[monitor-email] CRON_SECRET ikke sat — kan ikke kalde auto-fix internt');
+    logger.warn('[monitor-email] CRON_SECRET ikke sat — kan ikke kalde auto-fix internt');
     return false;
   }
 
@@ -197,13 +198,13 @@ async function triggerAutoFix(scanId: string, issueIndex: number): Promise<boole
 
     if (!res.ok) {
       const body = await res.text().catch(() => '');
-      console.error(`[monitor-email] auto-fix endpoint returnerede HTTP ${res.status}: ${body}`);
+      logger.error(`[monitor-email] auto-fix endpoint returnerede HTTP ${res.status}: ${body}`);
       return false;
     }
 
     return true;
   } catch (err) {
-    console.error('[monitor-email] triggerAutoFix fejlede:', err);
+    logger.error('[monitor-email] triggerAutoFix fejlede:', err);
     return false;
   }
 }
@@ -227,7 +228,7 @@ async function createJiraSecurityTicket(classified: ClassifiedEmail): Promise<st
   const userEmail = process.env.JIRA_USER_EMAIL;
 
   if (!jiraBase || !projectKey || !apiToken || !userEmail) {
-    console.warn(
+    logger.warn(
       '[monitor-email] JIRA env vars mangler — sikkerhedsalert-ticket springes over. ' +
         'Sæt JIRA_BASE_URL, JIRA_PROJECT_KEY, JIRA_API_TOKEN og JIRA_USER_EMAIL.'
     );
@@ -276,17 +277,17 @@ async function createJiraSecurityTicket(classified: ClassifiedEmail): Promise<st
 
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
-      console.error(
+      logger.error(
         `[monitor-email] JIRA ticket-oprettelse mislykkedes: HTTP ${res.status} — ${errText}`
       );
       return null;
     }
 
     const data = (await res.json()) as { key: string };
-    console.log(`[monitor-email] JIRA ticket oprettet: ${data.key}`);
+    logger.log(`[monitor-email] JIRA ticket oprettet: ${data.key}`);
     return data.key ?? null;
   } catch (err) {
-    console.error('[monitor-email] createJiraSecurityTicket fejlede:', err);
+    logger.error('[monitor-email] createJiraSecurityTicket fejlede:', err);
     return null;
   }
 }
@@ -377,7 +378,7 @@ async function processEmail(
           return { ...base, action: 'auto_fix_triggered', scanId };
         }
       } else {
-        console.warn(
+        logger.warn(
           `[monitor-email] Rate-limit nået (${MAX_AUTO_FIX_TRIGGERS}) — ` +
             `auto-fix springes over for: ${email.subject}`
         );
@@ -423,7 +424,7 @@ async function processEmail(
           return { ...base, action: 'auto_fix_triggered', scanId };
         }
       } else {
-        console.warn(
+        logger.warn(
           `[monitor-email] Rate-limit nået (${MAX_AUTO_FIX_TRIGGERS}) — ` +
             `auto-fix springes over for: ${email.subject}`
         );
@@ -498,7 +499,7 @@ export async function GET(request: NextRequest) {
     }
 
     const now = new Date();
-    console.log(`[monitor-email] Cron startet kl. ${now.toISOString()}`);
+    logger.log(`[monitor-email] Cron startet kl. ${now.toISOString()}`);
 
     // ── Early exit if Graph API credentials are missing ───────────────────────
     const missingVars = (
@@ -506,7 +507,7 @@ export async function GET(request: NextRequest) {
     ).filter((key) => !process.env[key]);
 
     if (missingVars.length > 0) {
-      console.warn(
+      logger.warn(
         `[monitor-email] Manglende env vars: ${missingVars.join(', ')} — cron afslutter tidligt.`
       );
       return NextResponse.json({
@@ -522,7 +523,7 @@ export async function GET(request: NextRequest) {
     try {
       emails = await fetchUnreadEmails(20);
     } catch (err) {
-      console.error('[monitor-email] fetchUnreadEmails kastede en fejl:', err);
+      logger.error('[monitor-email] fetchUnreadEmails kastede en fejl:', err);
       return NextResponse.json(
         {
           ok: false,
@@ -533,11 +534,11 @@ export async function GET(request: NextRequest) {
     }
 
     if (emails.length === 0) {
-      console.log('[monitor-email] Ingen ulæste emails fundet — cron afsluttes.');
+      logger.log('[monitor-email] Ingen ulæste emails fundet — cron afsluttes.');
       return NextResponse.json({ ok: true, processed: 0, emails: [] });
     }
 
-    console.log(
+    logger.log(
       `[monitor-email] ${emails.length} ulæst(e) email(s) fundet — starter klassificering`
     );
 
@@ -549,7 +550,7 @@ export async function GET(request: NextRequest) {
       acc[c.category] = (acc[c.category] ?? 0) + 1;
       return acc;
     }, {});
-    console.log('[monitor-email] Klassificering:', categoryCounts);
+    logger.log('[monitor-email] Klassificering:', categoryCounts);
 
     // ── 3. Process each actionable email ─────────────────────────────────────
     const autoFixCounter = { count: 0 };
@@ -574,7 +575,7 @@ export async function GET(request: NextRequest) {
         // Mark as read regardless of whether action succeeded — prevents infinite retries
         toMarkAsRead.push(c.email.id);
       } catch (err) {
-        console.error(`[monitor-email] processEmail fejlede for "${c.email.subject}":`, err);
+        logger.error(`[monitor-email] processEmail fejlede for "${c.email.subject}":`, err);
         // Still mark as read to avoid re-processing a broken email on every tick
         toMarkAsRead.push(c.email.id);
         results.push({
@@ -592,7 +593,7 @@ export async function GET(request: NextRequest) {
       (r) => r.status === 'fulfilled' && r.value === true
     ).length;
 
-    console.log(`[monitor-email] Markerede ${markedCount}/${toMarkAsRead.length} emails som læst`);
+    logger.log(`[monitor-email] Markerede ${markedCount}/${toMarkAsRead.length} emails som læst`);
 
     // ── 5. Log overall run summary ────────────────────────────────────────────
     const actionCounts = results.reduce<Record<string, number>>((acc, r) => {
@@ -610,7 +611,7 @@ export async function GET(request: NextRequest) {
       run_at: now.toISOString(),
     });
 
-    console.log(
+    logger.log(
       `[monitor-email] Done: ${emails.length} emails, ` +
         `${autoFixCounter.count} auto-fix triggers, ` +
         `${markedCount} markeret læst`
@@ -626,7 +627,7 @@ export async function GET(request: NextRequest) {
       emails: results,
     });
   } catch (err) {
-    console.error('[monitor-email] Uventet fejl i cron-handler:', err);
+    logger.error('[monitor-email] Uventet fejl i cron-handler:', err);
     return NextResponse.json(
       {
         ok: false,

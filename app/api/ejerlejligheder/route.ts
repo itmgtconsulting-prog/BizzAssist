@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import https from 'https';
 import fs from 'fs';
 import path from 'path';
+import { logger } from '@/app/lib/logger';
 // EJF/Datafordeler er ikke nødvendig — alt data hentes fra tinglysning summarisk XML
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -194,7 +195,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
     const tlResult = await tlFetch(searchPath);
 
     if (tlResult.status !== 200) {
-      console.error(`[ejerlejligheder] Tinglysning svarede ${tlResult.status}`);
+      logger.error(`[ejerlejligheder] Tinglysning svarede ${tlResult.status}`);
       return NextResponse.json(
         { lejligheder: [], fejl: `Tinglysning svarede ${tlResult.status}` },
         { status: 200 }
@@ -206,7 +207,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
       const parsed = JSON.parse(tlResult.body) as TLSearchResponse;
       items = parsed.items ?? [];
     } catch {
-      console.error('[ejerlejligheder] Kunne ikke parse tinglysning JSON');
+      logger.error('[ejerlejligheder] Kunne ikke parse tinglysning JSON');
       return NextResponse.json(
         { lejligheder: [], fejl: 'Ugyldig tinglysning-respons' },
         { status: 200 }
@@ -230,7 +231,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
       );
     }
 
-    console.log(
+    logger.log(
       `[ejerlejligheder] ${lejlighedItems.length} lejligheder fundet via tinglysning for ejerlav ${ejerlavKode} matr. ${matrikelnr}`
     );
 
@@ -318,7 +319,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
 
             summariskMap.set(item.uuid, { areal, ejer, ejertype, koebspris, koebsdato });
           } catch (err) {
-            console.warn(
+            logger.warn(
               `[ejerlejligheder] Summarisk fejl for ${item.uuid}:`,
               err instanceof Error ? err.message : err
             );
@@ -409,7 +410,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
       }
     );
   } catch (err) {
-    console.error('[ejerlejligheder] Uventet fejl:', err);
+    logger.error('[ejerlejligheder] Uventet fejl:', err);
     return NextResponse.json({ lejligheder: [], fejl: 'Intern serverfejl' }, { status: 500 });
   }
 }

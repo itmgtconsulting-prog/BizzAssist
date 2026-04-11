@@ -18,6 +18,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantId } from '@/lib/api/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { logActivity } from '@/app/lib/activityLog';
+import { logger } from '@/app/lib/logger';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -829,7 +830,7 @@ async function fetchProduktionsenheder(
       })
       .filter((pe): pe is NonNullable<typeof pe> => pe !== null);
   } catch (err) {
-    console.error('[cvr-public] PE fetch error:', err instanceof Error ? err.message : err);
+    logger.error('[cvr-public] PE fetch error:', err instanceof Error ? err.message : err);
     return null;
   }
 }
@@ -967,7 +968,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<CVRPublicData 
     });
 
     if (!res.ok) {
-      console.error('[cvr-public] ES returned', res.status);
+      logger.error('[cvr-public] ES returned', res.status);
       return NextResponse.json(
         { error: `CVR-opslag fejlede (HTTP ${res.status})` },
         { status: 502 }
@@ -1013,7 +1014,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<CVRPublicData 
       headers: { 'Cache-Control': `public, s-maxage=${cacheTime}, stale-while-revalidate=600` },
     });
   } catch (err) {
-    console.error('[cvr-public] Error:', err instanceof Error ? err.message : err);
+    logger.error('[cvr-public] Error:', err instanceof Error ? err.message : err);
     return NextResponse.json(
       { error: 'CVR-opslag mislykkedes — prøv igen senere' },
       { status: 502 }

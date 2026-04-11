@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { PLANS, type PlanId } from '@/app/lib/subscriptions';
+import { logger } from '@/app/lib/logger';
 
 const LEGACY_PLAN_IDS: PlanId[] = ['demo', 'basis', 'professionel', 'enterprise'];
 
@@ -54,7 +55,7 @@ async function insertAuditLog(
   try {
     await admin.from('audit_log').insert(entry);
   } catch (e: unknown) {
-    console.error('[audit] Failed to insert audit log:', e);
+    logger.error('[audit] Failed to insert audit log:', e);
   }
 }
 
@@ -117,7 +118,7 @@ export async function GET(): Promise<NextResponse> {
     };
 
     if (error) {
-      console.error('[admin/plans GET] DB error:', error.message);
+      logger.error('[admin/plans GET] DB error:', error.message);
       return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
     }
 
@@ -165,7 +166,7 @@ export async function GET(): Promise<NextResponse> {
 
     return NextResponse.json(plans);
   } catch (err) {
-    console.error('[admin/plans] Unexpected error:', err);
+    logger.error('[admin/plans] Unexpected error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
@@ -211,7 +212,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         };
         const { error } = await admin.from('plan_configs').insert(row as never);
         if (error) {
-          console.error('[admin/plans create] DB error:', error.message);
+          logger.error('[admin/plans create] DB error:', error.message);
           return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
         }
         // Audit log — fire-and-forget (ISO 27001 A.12.4)
@@ -228,7 +229,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         if (!planId) return NextResponse.json({ error: 'planId required' }, { status: 400 });
         const { error } = await admin.from('plan_configs').delete().eq('plan_id', planId);
         if (error) {
-          console.error('[admin/plans delete] DB error:', error.message);
+          logger.error('[admin/plans delete] DB error:', error.message);
           return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
         }
         // Audit log — fire-and-forget (ISO 27001 A.12.4)
@@ -310,7 +311,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
         if (error) {
           // Omit error.message and error.details from log — may expose schema/column names
-          console.error('[admin/plans] Upsert error:', error.code ?? '[DB error]');
+          logger.error('[admin/plans] Upsert error:', error.code ?? '[DB error]');
           return NextResponse.json({ error: 'Failed to update plan' }, { status: 500 });
         }
 
@@ -329,7 +330,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       }
     }
   } catch (err) {
-    console.error('[admin/plans] Unexpected error:', err);
+    logger.error('[admin/plans] Unexpected error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

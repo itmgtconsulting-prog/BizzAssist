@@ -21,6 +21,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import * as Sentry from '@sentry/nextjs';
 import { checkRateLimit, heavyRateLimit } from '@/app/lib/rateLimit';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
+import { logger } from '@/app/lib/logger';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -563,7 +564,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<VurderingR
 
   const token = await getOAuthToken();
   if (!token) {
-    console.error(
+    logger.error(
       '[vurdering] OAuth token kunne ikke hentes — tjek DATAFORDELER_OAUTH_CLIENT_ID og _SECRET'
     );
     return NextResponse.json(
@@ -728,7 +729,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<VurderingR
     );
   } catch (err) {
     Sentry.captureException(err);
-    console.error('[vurdering] Fejl:', err);
+    logger.error('[vurdering] Fejl:', err);
     return NextResponse.json(
       {
         vurdering: null,

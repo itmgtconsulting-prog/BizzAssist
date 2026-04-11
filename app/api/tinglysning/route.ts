@@ -22,6 +22,7 @@ export const maxDuration = 60;
 import https from 'https';
 import fs from 'fs';
 import path from 'path';
+import { logger } from '@/app/lib/logger';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -238,7 +239,7 @@ export async function GET(req: NextRequest) {
   } catch (err) {
     Sentry.captureException(err);
     const msg = err instanceof Error ? err.message : String(err);
-    console.error('[tinglysning] Fejl:', msg);
+    logger.error('[tinglysning] Fejl:', msg);
     // Expose actual error in dev so we can diagnose cert/connection issues
     const body =
       process.env.NODE_ENV === 'development'

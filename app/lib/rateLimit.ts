@@ -28,6 +28,7 @@
 import { Ratelimit } from '@upstash/ratelimit';
 import { Redis } from '@upstash/redis';
 import { NextRequest, NextResponse } from 'next/server';
+import { logger } from '@/app/lib/logger';
 
 // ─── Lazy Redis + Limiters ───────────────────────────────────────────────────
 // Initialised on first use so Next.js static page collection doesn't fail
@@ -165,7 +166,7 @@ export async function checkRateLimit(
   } catch {
     // Fail open: Redis errors (malformed URL, network timeout) must never
     // block legitimate requests. Log only — no PII.
-    console.error('[rateLimit] Redis error — skipping rate limit (fail open)');
+    logger.error('[rateLimit] Redis error — skipping rate limit (fail open)');
   }
 
   return null;

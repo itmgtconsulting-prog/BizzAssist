@@ -42,6 +42,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { sendCriticalAlert } from '@/lib/service-manager-alerts';
 import { sendCriticalSms } from '@/lib/sms';
 import { evaluateAutoApproval, logAutoApproval } from '@/lib/service-manager-rules';
+import { logger } from '@/app/lib/logger';
 
 export const maxDuration = 30;
 
@@ -138,9 +139,7 @@ interface ClaudeFixResponse {
 function verifyWebhookAuth(request: NextRequest, rawBody: string): boolean {
   const secret = process.env.VERCEL_DEPLOY_WEBHOOK_SECRET;
   if (!secret) {
-    console.warn(
-      '[vercel-deploy] VERCEL_DEPLOY_WEBHOOK_SECRET is not set — rejecting all requests'
-    );
+    logger.warn('[vercel-deploy] VERCEL_DEPLOY_WEBHOOK_SECRET is not set — rejecting all requests');
     return false;
   }
 
@@ -343,7 +342,7 @@ async function logActivity(action: string, details: Record<string, unknown>): Pr
       created_by: null, // System action — no user session
     });
   } catch (err) {
-    console.error('[vercel-deploy] activity log error:', err);
+    logger.error('[vercel-deploy] activity log error:', err);
   }
 }
 
@@ -372,12 +371,12 @@ async function triggerReleaseAgent(fixId: string, scanId: string): Promise<void>
     });
     if (!res.ok) {
       const body = await res.text();
-      console.error('[vercel-deploy] Release Agent returned non-OK:', res.status, body);
+      logger.error('[vercel-deploy] Release Agent returned non-OK:', res.status, body);
     } else {
-      console.log('[vercel-deploy] Release Agent triggered for hotfix, fix:', fixId);
+      logger.log('[vercel-deploy] Release Agent triggered for hotfix, fix:', fixId);
     }
   } catch (err) {
-    console.error('[vercel-deploy] Release Agent trigger failed:', err);
+    logger.error('[vercel-deploy] Release Agent trigger failed:', err);
   }
 }
 
@@ -404,7 +403,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   // Auth check
   if (!verifyWebhookAuth(request, rawBody)) {
-    console.warn('[vercel-deploy] Rejected unauthorized webhook request');
+    logger.warn('[vercel-deploy] Rejected unauthorized webhook request');
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -449,7 +448,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         commit_message: commitMessage,
         commit_ref: commitRef,
       });
-      console.log('[vercel-deploy] Deployment succeeded:', deploymentId);
+      logger.log('[vercel-deploy] Deployment succeeded:', deploymentId);
     } else {
       // Unknown event type — log and ignore
       await logActivity('deploy_webhook_ignored', {
@@ -462,7 +461,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   // ── Build failure handling ────────────────────────────────────────────────
-  console.log('[vercel-deploy] Build failure detected:', deploymentId, deploymentState);
+  logger.log('[vercel-deploy] Build failure detected:', deploymentId, deploymentState);
 
   // Fetch detailed build logs from Vercel API for better Claude context
   const buildLogs = deploymentId ? await fetchBuildErrorLogs(deploymentId) : '';
@@ -499,7 +498,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     .single();
 
   if (scanInsertErr || !scanData) {
-    console.error('[vercel-deploy] Failed to create scan record:', scanInsertErr?.message);
+    logger.error('[vercel-deploy] Failed to create scan record:', scanInsertErr?.message);
     return NextResponse.json({ error: 'Kunne ikke oprette scan-record' }, { status: 500 });
   }
 
@@ -522,7 +521,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
     claudeResult = await proposeFixWithClaude(issue, buildLogs);
   } catch (aiErr) {
-    console.error('[vercel-deploy] Claude API error:', aiErr);
+    logger.error('[vercel-deploy] Claude API error:', aiErr);
     // Non-fatal — continue with alert even if fix proposal fails
     claudeResult = {
       file_path: '',
@@ -598,7 +597,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const fixId = fixData?.id as string | undefined;
 
   if (fixInsertErr || !fixData) {
-    console.error('[vercel-deploy] Failed to persist fix proposal:', fixInsertErr?.message);
+    logger.error('[vercel-deploy] Failed to persist fix proposal:', fixInsertErr?.message);
   } else {
     await logActivity('auto_fix_proposed', {
       fix_id: fixId,
@@ -647,7 +646,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     `\uD83D\uDEA8 BizzAssist: build-fejl \u2014 ${issue.message.slice(0, 90)}. Check admin panel.`
   );
 
-  console.log(
+  logger.log(
     `[vercel-deploy] Done: scan=${scanId}, fix=${fixId ?? 'none'}, ` +
       `classification=${finalClassification}, autoApproved=${initialStatus === 'approved'}`
   );

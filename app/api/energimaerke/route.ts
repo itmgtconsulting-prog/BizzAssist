@@ -16,6 +16,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { logger } from '@/app/lib/logger';
 
 const EMO_BASE = 'https://emoweb.dk/EMOData/EMOData.svc';
 
@@ -185,7 +186,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<Energimaer
 
     if (!res.ok) {
       const body = await res.text().catch(() => '');
-      console.error(`[Energimærke] HTTP ${res.status} for BFE ${bfeNummer}: ${body.slice(0, 300)}`);
+      logger.error(`[Energimærke] HTTP ${res.status} for BFE ${bfeNummer}: ${body.slice(0, 300)}`);
       return NextResponse.json({
         maerker: null,
         manglerAdgang: false,
@@ -256,7 +257,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<Energimaer
       }
     );
   } catch (err) {
-    console.error('[Energimærke] Fetch fejl:', err);
+    logger.error('[Energimærke] Fetch fejl:', err);
     return NextResponse.json({
       maerker: null,
       manglerAdgang: false,

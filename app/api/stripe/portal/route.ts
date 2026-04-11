@@ -17,6 +17,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { stripe } from '@/app/lib/stripe';
+import { logger } from '@/app/lib/logger';
 
 /**
  * POST /api/stripe/portal
@@ -62,7 +63,7 @@ export async function POST(): Promise<NextResponse> {
     // ── 4. Return portal URL ──
     return NextResponse.json({ url: session.url });
   } catch (err) {
-    console.error('[stripe/portal] Error:', err);
+    logger.error('[stripe/portal] Error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

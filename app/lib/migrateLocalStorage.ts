@@ -1,3 +1,5 @@
+import { logger } from '@/app/lib/logger';
+
 /**
  * One-time migration of localStorage data to Supabase.
  *
@@ -166,6 +168,6 @@ export async function migrateLocalStorageToSupabase(): Promise<void> {
     localStorage.setItem(MIGRATION_KEY, 'true');
   } catch {
     // Don't set the flag — retry next time
-    console.error('[migrateLocalStorage] Migration failed, will retry');
+    logger.error('[migrateLocalStorage] Migration failed, will retry');
   }
 }

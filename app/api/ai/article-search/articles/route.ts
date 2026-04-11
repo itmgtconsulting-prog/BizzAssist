@@ -23,6 +23,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 import { checkRateLimit, braveRateLimit } from '@/app/lib/rateLimit';
 import { withBraveCache } from '@/app/lib/searchCache';
+import { logger } from '@/app/lib/logger';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -390,7 +391,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     });
   }
 
-  console.log(
+  logger.log(
     `[article-search/articles] "${companyName}": ${braveResults.length} rå Brave-resultater`
   );
 
@@ -436,7 +437,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const articles = parseArticlesResponse(finalText);
 
-    console.log(
+    logger.log(
       `[article-search/articles] "${companyName}": ${articles.length} artikler, tokens=${totalTokens}`
     );
 

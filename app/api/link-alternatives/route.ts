@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { createClient } from '@supabase/supabase-js';
+import { logger } from '@/app/lib/logger';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
@@ -65,7 +66,7 @@ export async function GET(req: NextRequest) {
       .eq('cvr', cvr);
 
     if (error) {
-      console.error('[link-alternatives GET] Supabase fejl:', error.message);
+      logger.error('[link-alternatives GET] Supabase fejl:', error.message);
       return NextResponse.json({ error: 'Databasefejl' }, { status: 500 });
     }
 
@@ -78,7 +79,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json(result);
   } catch (err) {
-    console.error('[link-alternatives GET] Uventet fejl:', err);
+    logger.error('[link-alternatives GET] Uventet fejl:', err);
     return NextResponse.json({ error: 'Intern serverfejl' }, { status: 500 });
   }
 }
@@ -140,13 +141,13 @@ export async function PUT(req: NextRequest) {
       .upsert(rows, { onConflict: 'cvr,platform' });
 
     if (error) {
-      console.error('[link-alternatives PUT] Supabase fejl:', error.message);
+      logger.error('[link-alternatives PUT] Supabase fejl:', error.message);
       return NextResponse.json({ error: 'Databasefejl' }, { status: 500 });
     }
 
     return NextResponse.json({ success: true, saved: rows.length });
   } catch (err) {
-    console.error('[link-alternatives PUT] Uventet fejl:', err);
+    logger.error('[link-alternatives PUT] Uventet fejl:', err);
     return NextResponse.json({ error: 'Intern serverfejl' }, { status: 500 });
   }
 }

@@ -12,6 +12,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import https from 'https';
 import fs from 'fs';
 import path from 'path';
+import { logger } from '@/app/lib/logger';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -893,10 +894,7 @@ export async function GET(req: NextRequest) {
     );
   } catch (err) {
     // Log for server-side debugging, but never expose err.message to the client.
-    console.error(
-      '[tinglysning/summarisk] Fejl:',
-      err instanceof Error ? err.message : String(err)
-    );
+    logger.error('[tinglysning/summarisk] Fejl:', err instanceof Error ? err.message : String(err));
     return NextResponse.json({
       ejere: [],
       haeftelser: [],

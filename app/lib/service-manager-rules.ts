@@ -15,6 +15,7 @@
  */
 
 import { createAdminClient } from '@/lib/supabase/admin';
+import { logger } from '@/app/lib/logger';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -283,18 +284,20 @@ export async function logAutoApproval(
   extraDetails: Record<string, unknown> = {}
 ): Promise<void> {
   try {
-    await createAdminClient().from('service_manager_activity').insert({
-      action: 'auto_approved',
-      details: {
-        fix_id: fixId,
-        scan_id: scanId,
-        rule_name: ruleName,
-        rule_description: ruleDescription,
-        ...extraDetails,
-      },
-      created_by: null, // System action — no user session
-    });
+    await createAdminClient()
+      .from('service_manager_activity')
+      .insert({
+        action: 'auto_approved',
+        details: {
+          fix_id: fixId,
+          scan_id: scanId,
+          rule_name: ruleName,
+          rule_description: ruleDescription,
+          ...extraDetails,
+        },
+        created_by: null, // System action — no user session
+      });
   } catch (err) {
-    console.error('[service-manager-rules] logAutoApproval error:', err);
+    logger.error('[service-manager-rules] logAutoApproval error:', err);
   }
 }

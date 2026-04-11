@@ -1,6 +1,7 @@
 'use client';
 import { useEffect } from 'react';
 import { AlertCircle, RefreshCw } from 'lucide-react';
+import { logger } from '@/app/lib/logger';
 
 /**
  * Public route group error boundary — catches unhandled errors in the public UI tree.
@@ -17,7 +18,7 @@ export default function PublicError({
   reset: () => void;
 }) {
   useEffect(() => {
-    console.error('[Public] Unhandled error:', error);
+    logger.error('[Public] Unhandled error:', error);
   }, [error]);
 
   return (

@@ -28,6 +28,7 @@ import * as Sentry from '@sentry/nextjs';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { checkRateLimit, aiRateLimit } from '@/app/lib/rateLimit';
+import { logger } from '@/app/lib/logger';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -424,7 +425,7 @@ Afslør IKKE oplysningerne medmindre brugeren spørger direkte til dem.`;
             }
           } catch (err) {
             // Non-critical — log infra errors only, no PII
-            console.error(
+            logger.error(
               '[support/chat] post-response processing failed:',
               err instanceof Error ? err.message : String(err)
             );

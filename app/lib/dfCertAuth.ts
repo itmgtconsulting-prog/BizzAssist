@@ -17,6 +17,7 @@
 import https from 'node:https';
 import fs from 'node:fs';
 import { isProxyEnabled } from './dfProxy';
+import { logger } from '@/app/lib/logger';
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -50,7 +51,7 @@ function getPfxBuffer(): Buffer | null {
     try {
       return Buffer.from(CERT_PFX_BASE64, 'base64');
     } catch {
-      console.error('[dfCertAuth] Kunne ikke decode DATAFORDELER_CERT_PFX_BASE64');
+      logger.error('[dfCertAuth] Kunne ikke decode DATAFORDELER_CERT_PFX_BASE64');
       return null;
     }
   }
@@ -60,7 +61,7 @@ function getPfxBuffer(): Buffer | null {
     try {
       return fs.readFileSync(CERT_PFX_PATH);
     } catch (err) {
-      console.error('[dfCertAuth] Kunne ikke læse certifikat fra', CERT_PFX_PATH, err);
+      logger.error('[dfCertAuth] Kunne ikke læse certifikat fra', CERT_PFX_PATH, err);
       return null;
     }
   }
@@ -88,7 +89,7 @@ export async function getCertOAuthToken(): Promise<string | null> {
   // Hvis proxy er aktiv, kan vi ikke bruge mTLS direkte
   // (proxyen skal håndtere certifikatet)
   if (isProxyEnabled()) {
-    console.warn(
+    logger.warn(
       '[dfCertAuth] mTLS via proxy er ikke understøttet endnu — brug direkte forbindelse'
     );
     return null;
@@ -127,7 +128,7 @@ export async function getCertOAuthToken(): Promise<string | null> {
           });
           res.on('end', () => {
             if (res.statusCode !== 200) {
-              console.error(
+              logger.error(
                 '[dfCertAuth] Token request failed:',
                 res.statusCode,
                 data.slice(0, 300)
@@ -143,7 +144,7 @@ export async function getCertOAuthToken(): Promise<string | null> {
               };
               resolve(json.access_token);
             } catch {
-              console.error('[dfCertAuth] Kunne ikke parse token response');
+              logger.error('[dfCertAuth] Kunne ikke parse token response');
               resolve(null);
             }
           });
@@ -151,12 +152,12 @@ export async function getCertOAuthToken(): Promise<string | null> {
       );
 
       req.on('error', (err) => {
-        console.error('[dfCertAuth] Token request error:', err.message);
+        logger.error('[dfCertAuth] Token request error:', err.message);
         resolve(null);
       });
 
       req.on('timeout', () => {
-        console.error('[dfCertAuth] Token request timeout');
+        logger.error('[dfCertAuth] Token request timeout');
         req.destroy();
         resolve(null);
       });
@@ -167,7 +168,7 @@ export async function getCertOAuthToken(): Promise<string | null> {
 
     return token;
   } catch (err) {
-    console.error('[dfCertAuth] Unexpected error:', err instanceof Error ? err.message : err);
+    logger.error('[dfCertAuth] Unexpected error:', err instanceof Error ? err.message : err);
     return null;
   }
 }

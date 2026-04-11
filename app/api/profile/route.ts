@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { logger } from '@/app/lib/logger';
 
 /**
  * Inserts a row into audit_log using the admin client.
@@ -29,7 +30,7 @@ async function insertAuditLog(entry: {
     const admin = createAdminClient();
     await admin.from('audit_log').insert(entry);
   } catch (e: unknown) {
-    console.error('[audit] Failed to insert audit log:', e);
+    logger.error('[audit] Failed to insert audit log:', e);
   }
 }
 
@@ -60,7 +61,7 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
     });
 
     if (error) {
-      console.error('[profile] Update name error:', error.message);
+      logger.error('[profile] Update name error:', error.message);
       return NextResponse.json({ error: 'Failed to update name' }, { status: 500 });
     }
 
@@ -74,7 +75,7 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json({ ok: true, fullName: fullName.trim() });
   } catch (err) {
-    console.error('[profile] Unexpected error:', err);
+    logger.error('[profile] Unexpected error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
@@ -127,7 +128,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       if (msg.includes('same password') || msg.includes('different')) {
         return NextResponse.json({ error: 'same_password' }, { status: 400 });
       }
-      console.error('[profile] Change password error:', updateError.message);
+      logger.error('[profile] Change password error:', updateError.message);
       return NextResponse.json({ error: 'Failed to change password' }, { status: 500 });
     }
 
@@ -141,7 +142,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json({ ok: true });
   } catch (err) {
-    console.error('[profile] Unexpected error:', err);
+    logger.error('[profile] Unexpected error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

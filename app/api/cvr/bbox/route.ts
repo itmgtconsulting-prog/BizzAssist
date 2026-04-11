@@ -26,6 +26,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { gyldigNu } from '@/app/api/cvr/route';
+import { logger } from '@/app/lib/logger';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -222,14 +223,14 @@ export async function GET(req: NextRequest): Promise<NextResponse<CVRBboxRespons
       const body = await res.text().catch(() => '');
       // ElasticSearch returnerer 400 ved geo_point-fejl (feltet ikke mappet)
       if (res.status === 400 && body.includes('geo')) {
-        console.warn('[CVR bbox] geo_distance ikke understøttet:', body.slice(0, 200));
+        logger.warn('[CVR bbox] geo_distance ikke understøttet:', body.slice(0, 200));
         return NextResponse.json({
           virksomheder: [],
           tokenMangler: false,
           geoIkkeStøttet: true,
         });
       }
-      console.error('[CVR bbox] ES fejl', res.status, body.slice(0, 200));
+      logger.error('[CVR bbox] ES fejl', res.status, body.slice(0, 200));
       return NextResponse.json({ virksomheder: [], tokenMangler: false, geoIkkeStøttet: false });
     }
 
@@ -240,7 +241,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<CVRBboxRespons
 
     // Håndter ES-fejl i response-body (f.eks. parsing-fejl)
     if (data.error) {
-      console.warn('[CVR bbox] ES body-fejl:', JSON.stringify(data.error).slice(0, 200));
+      logger.warn('[CVR bbox] ES body-fejl:', JSON.stringify(data.error).slice(0, 200));
       return NextResponse.json({
         virksomheder: [],
         tokenMangler: false,
@@ -261,7 +262,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<CVRBboxRespons
       }
     );
   } catch (err) {
-    console.error('[CVR bbox] Fetch fejl:', err instanceof Error ? err.message : err);
+    logger.error('[CVR bbox] Fetch fejl:', err instanceof Error ? err.message : err);
     return NextResponse.json({ virksomheder: [], tokenMangler: false, geoIkkeStøttet: false });
   }
 }

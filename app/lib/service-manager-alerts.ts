@@ -1,3 +1,5 @@
+import { logger } from '@/app/lib/logger';
+
 /**
  * Service Manager Critical Alerts — app/lib/service-manager-alerts.ts
  *
@@ -186,14 +188,14 @@ export async function sendCriticalAlert(params: CriticalAlertParams): Promise<vo
   const detectedAt = params.detectedAt ?? new Date();
 
   // Always log so errors are visible in Vercel function logs
-  console.error(
+  logger.error(
     `[service-manager-alerts] KRITISK FEJL: ${params.issueType} — ${params.description}` +
       (params.affectedPath ? ` (${params.affectedPath})` : '') +
       ` @ ${detectedAt.toISOString()}`
   );
 
   if (!apiKey) {
-    console.warn('[service-manager-alerts] RESEND_API_KEY ikke sat — kritisk alert springes over');
+    logger.warn('[service-manager-alerts] RESEND_API_KEY ikke sat — kritisk alert springes over');
     return;
   }
 
@@ -217,12 +219,12 @@ export async function sendCriticalAlert(params: CriticalAlertParams): Promise<vo
 
     if (!res.ok) {
       const body = await res.text();
-      console.error('[service-manager-alerts] Resend API fejl:', res.status, body);
+      logger.error('[service-manager-alerts] Resend API fejl:', res.status, body);
     } else {
-      console.log('[service-manager-alerts] Kritisk alert sendt til', TO_ADDRESS);
+      logger.log('[service-manager-alerts] Kritisk alert sendt til', TO_ADDRESS);
     }
   } catch (err) {
-    console.error('[service-manager-alerts] Kunne ikke sende kritisk alert:', err);
+    logger.error('[service-manager-alerts] Kunne ikke sende kritisk alert:', err);
   }
 }
 

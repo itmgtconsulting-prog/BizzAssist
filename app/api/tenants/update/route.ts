@@ -17,6 +17,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { logger } from '@/app/lib/logger';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -109,7 +110,7 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
       .eq('id', auth.tenantId);
 
     if (error) {
-      console.error('[tenants/update] Supabase error:', (error as { message: string }).message);
+      logger.error('[tenants/update] Supabase error:', (error as { message: string }).message);
       return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
     }
 

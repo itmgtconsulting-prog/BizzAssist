@@ -15,6 +15,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
+import { logger } from '@/app/lib/logger';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -439,7 +440,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<CvrSalgshi
         return db.localeCompare(da); // nyeste først
       });
 
-    console.log(
+    logger.log(
       `[salgshistorik/cvr] CVR ${cvr}: ${bfeList.length} BFE'er, ${handler.length} handler`
     );
 

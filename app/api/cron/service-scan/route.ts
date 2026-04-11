@@ -39,6 +39,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { sendCriticalAlert, isCriticalIssue } from '@/lib/service-manager-alerts';
 import { safeCompare } from '@/lib/safeCompare';
+import { logger } from '@/app/lib/logger';
 
 /** Vercel Cron max duration (seconds) — Hobby plan limit */
 export const maxDuration = 30;
@@ -447,7 +448,7 @@ async function logActivity(action: string, details: Record<string, unknown>): Pr
       created_by: null, // Cron runs without a user session
     });
   } catch (err) {
-    console.error('[service-scan] activity log error:', err);
+    logger.error('[service-scan] activity log error:', err);
   }
 }
 
@@ -578,7 +579,7 @@ async function sendAlertEmail(
 ): Promise<void> {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
-    console.warn('[service-scan] RESEND_API_KEY ikke sat — alert-email springes over');
+    logger.warn('[service-scan] RESEND_API_KEY ikke sat — alert-email springes over');
     return;
   }
 
@@ -603,12 +604,12 @@ async function sendAlertEmail(
 
     if (!res.ok) {
       const body = await res.text();
-      console.error('[service-scan] Resend API fejl:', res.status, body);
+      logger.error('[service-scan] Resend API fejl:', res.status, body);
     } else {
-      console.log('[service-scan] Alert-email sendt til', TO_ADDRESS);
+      logger.log('[service-scan] Alert-email sendt til', TO_ADDRESS);
     }
   } catch (err) {
-    console.error('[service-scan] Kunne ikke sende alert-email:', err);
+    logger.error('[service-scan] Kunne ikke sende alert-email:', err);
   }
 }
 
@@ -644,7 +645,7 @@ export async function GET(request: NextRequest) {
     summary = result.summary;
     scanStatus = 'completed';
   } catch (scanErr) {
-    console.error('[service-scan] runScan threw:', scanErr);
+    logger.error('[service-scan] runScan threw:', scanErr);
     issues = [
       {
         type: 'config_error',
@@ -672,7 +673,7 @@ export async function GET(request: NextRequest) {
     .single();
 
   if (scanInsertErr || !scanData) {
-    console.error('[service-scan] Kunne ikke oprette scan-record:', scanInsertErr?.message);
+    logger.error('[service-scan] Kunne ikke oprette scan-record:', scanInsertErr?.message);
     return NextResponse.json({ error: 'Kunne ikke oprette scan-record' }, { status: 500 });
   }
 
@@ -707,7 +708,7 @@ export async function GET(request: NextRequest) {
       .maybeSingle();
 
     if (existingData) {
-      console.log(
+      logger.log(
         `[service-scan] Issue ${idx} already has active fix ${existingData.id} — skipping`
       );
       continue;
@@ -718,7 +719,7 @@ export async function GET(request: NextRequest) {
     try {
       claudeResult = await proposeFixWithClaude(issue, summary);
     } catch (aiErr) {
-      console.error(`[service-scan] Claude API error for issue ${idx}:`, aiErr);
+      logger.error(`[service-scan] Claude API error for issue ${idx}:`, aiErr);
       continue;
     }
 
@@ -764,7 +765,7 @@ export async function GET(request: NextRequest) {
       .single();
 
     if (fixInsertErr || !fixData) {
-      console.error('[service-scan] Kunne ikke gemme fix-forslag:', fixInsertErr?.message);
+      logger.error('[service-scan] Kunne ikke gemme fix-forslag:', fixInsertErr?.message);
       continue;
     }
 
@@ -815,7 +816,7 @@ export async function GET(request: NextRequest) {
     await sendAlertEmail(issues, scanId, proposedFixCount, now);
   }
 
-  console.log(
+  logger.log(
     `[service-scan] Done: ${issues.length} issues, ${errorIssues.length} errors, ${proposedFixCount} fixes proposed`
   );
 

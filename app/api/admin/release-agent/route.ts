@@ -57,6 +57,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import type { ServiceManagerFix, ServiceManagerActivity } from '@/lib/supabase/types';
+import { logger } from '@/app/lib/logger';
 
 /**
  * Returns the admin client for operations on service_manager tables.
@@ -136,7 +137,7 @@ async function logActivity(
       created_by: userId,
     });
   } catch (err) {
-    console.error('[release-agent] activity log error:', err);
+    logger.error('[release-agent] activity log error:', err);
   }
 }
 
@@ -333,13 +334,13 @@ async function createGitHubPR(branch: string, title: string, body: string): Prom
     });
     if (!res.ok) {
       const err = await res.text();
-      console.warn('[release-agent] GitHub PR creation failed:', err);
+      logger.warn('[release-agent] GitHub PR creation failed:', err);
       return null;
     }
     const data = (await res.json()) as { html_url?: string };
     return data.html_url ?? null;
   } catch (err) {
-    console.warn('[release-agent] GitHub PR API error:', err);
+    logger.warn('[release-agent] GitHub PR API error:', err);
     return null;
   }
 }
@@ -708,7 +709,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           result = await createHotfix(fixId, userId);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          console.error('[release-agent] create-hotfix error:', msg);
+          logger.error('[release-agent] create-hotfix error:', msg);
           await logActivity('hotfix_error', { fix_id: fixId, error: msg }, userId);
           return NextResponse.json({ error: msg }, { status: 422 });
         }
@@ -733,7 +734,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           result = await deployToTest(branch, userId);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          console.error('[release-agent] deploy-to-test error:', msg);
+          logger.error('[release-agent] deploy-to-test error:', msg);
           await logActivity('deploy_test_error', { branch, error: msg }, userId);
           return NextResponse.json({ error: msg }, { status: 422 });
         }
@@ -756,7 +757,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           result = await promoteToProd(confirmationToken, userId);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          console.error('[release-agent] promote-to-prod error:', msg);
+          logger.error('[release-agent] promote-to-prod error:', msg);
           await logActivity('promote_prod_error', { error: msg }, userId);
           return NextResponse.json({ error: msg }, { status: 422 });
         }
@@ -768,7 +769,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         return NextResponse.json({ error: `Ukendt action: ${action}` }, { status: 400 });
     }
   } catch (err) {
-    console.error('[release-agent POST]', err);
+    logger.error('[release-agent POST]', err);
     return NextResponse.json({ error: 'Serverfejl' }, { status: 500 });
   }
 }
@@ -805,7 +806,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json({ activities: (activities ?? []) as ServiceManagerActivity[] });
   } catch (err) {
-    console.error('[release-agent GET]', err);
+    logger.error('[release-agent GET]', err);
     return NextResponse.json({ error: 'Serverfejl' }, { status: 500 });
   }
 }

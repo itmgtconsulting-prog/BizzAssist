@@ -44,6 +44,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import type { ServiceManagerFix, ServiceManagerScan } from '@/lib/supabase/types';
 import type { ScanIssue } from '../route';
 import { evaluateAutoApproval, logAutoApproval } from '@/lib/service-manager-rules';
+import { logger } from '@/app/lib/logger';
 
 /**
  * Returns the admin client cast to `any` for tables that are not yet in the
@@ -389,7 +390,7 @@ async function logActivity(
     });
   } catch (err) {
     // Activity log failures are non-fatal
-    console.error('[auto-fix] activity log error:', err);
+    logger.error('[auto-fix] activity log error:', err);
   }
 }
 
@@ -425,7 +426,7 @@ async function triggerHotfixCreation(fixId: string, requestUrl: string): Promise
   }
 
   if (!cronSecret) {
-    console.error('[auto-fix] CRON_SECRET mangler — kan ikke trigge Release Agent');
+    logger.error('[auto-fix] CRON_SECRET mangler — kan ikke trigge Release Agent');
     await logTriggerError({ fix_id: fixId, error: 'CRON_SECRET env var mangler' });
     return;
   }
@@ -445,17 +446,17 @@ async function triggerHotfixCreation(fixId: string, requestUrl: string): Promise
 
     if (!res.ok) {
       const errText = await res.text().catch(() => '(ingen body)');
-      console.error(`[auto-fix] Release Agent returnerede ${res.status}:`, errText.slice(0, 200));
+      logger.error(`[auto-fix] Release Agent returnerede ${res.status}:`, errText.slice(0, 200));
       await logTriggerError({ fix_id: fixId, status: res.status, error: errText.slice(0, 500) });
     } else {
       const data = (await res.json()) as { branch?: string; prUrl?: string | null };
-      console.log(
+      logger.log(
         `[auto-fix] Hotfix oprettet: branch=${data.branch ?? '?'}, PR=${data.prUrl ?? 'ingen'}`
       );
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error('[auto-fix] triggerHotfixCreation fejlede:', msg);
+    logger.error('[auto-fix] triggerHotfixCreation fejlede:', msg);
     await logTriggerError({ fix_id: fixId, error: msg });
   }
 }
@@ -532,7 +533,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     try {
       claudeResult = await proposeFixWithClaude(issue, scan.summary);
     } catch (aiErr) {
-      console.error('[auto-fix] Claude API error:', aiErr);
+      logger.error('[auto-fix] Claude API error:', aiErr);
       return NextResponse.json({ error: 'Claude API fejl — prøv igen' }, { status: 502 });
     }
 
@@ -614,7 +615,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const fix = fixData as Pick<ServiceManagerFix, 'id' | 'status' | 'classification'> | null;
 
     if (insertErr || !fix) {
-      console.error('[auto-fix] insert error:', insertErr?.code ?? '[DB error]');
+      logger.error('[auto-fix] insert error:', insertErr?.code ?? '[DB error]');
       return NextResponse.json({ error: 'Kunne ikke gemme fix-forslag' }, { status: 500 });
     }
 
@@ -668,7 +669,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       autoApprovalRule: autoApprovalRuleName,
     });
   } catch (err) {
-    console.error('[service-manager/auto-fix POST]', err);
+    logger.error('[service-manager/auto-fix POST]', err);
     return NextResponse.json({ error: 'Serverfejl' }, { status: 500 });
   }
 }
@@ -736,7 +737,7 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
       .eq('id', fixId);
 
     if (updateErr) {
-      console.error('[auto-fix PATCH] update error:', updateErr.code ?? '[DB error]');
+      logger.error('[auto-fix PATCH] update error:', updateErr.code ?? '[DB error]');
       return NextResponse.json({ error: 'Kunne ikke opdatere fix' }, { status: 500 });
     }
 
@@ -754,7 +755,7 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json({ fixId, status: newStatus });
   } catch (err) {
-    console.error('[service-manager/auto-fix PATCH]', err);
+    logger.error('[service-manager/auto-fix PATCH]', err);
     return NextResponse.json({ error: 'Serverfejl' }, { status: 500 });
   }
 }
@@ -793,7 +794,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json({ fixes: (fixes ?? []) as ServiceManagerFix[] });
   } catch (err) {
-    console.error('[service-manager/auto-fix GET]', err);
+    logger.error('[service-manager/auto-fix GET]', err);
     return NextResponse.json({ error: 'Serverfejl' }, { status: 500 });
   }
 }

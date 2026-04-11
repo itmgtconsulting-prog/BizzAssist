@@ -30,6 +30,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { logger } from '@/app/lib/logger';
 
 /** Expected shape of the POST body */
 interface OnboardingSaveBody {
@@ -111,7 +112,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         .eq('id', tenantId);
 
       if (updateErr) {
-        console.error(
+        logger.error(
           '[onboarding/save] tenant update error:',
           (updateErr as { message?: string }).message
         );
@@ -132,7 +133,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json({ ok: true });
   } catch (err) {
-    console.error('[onboarding/save] Unexpected error:', err);
+    logger.error('[onboarding/save] Unexpected error:', err);
     return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
   }
 }

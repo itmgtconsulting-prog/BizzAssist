@@ -13,6 +13,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { logger } from '@/app/lib/logger';
 
 interface NewsArticle {
   title: string;
@@ -130,7 +131,7 @@ async function fetchRitzauNews(query: string): Promise<NewsArticle[]> {
       }
     );
     if (!res.ok) {
-      console.log('[news] Ritzau Nyhedstjenesten returned', res.status);
+      logger.log('[news] Ritzau Nyhedstjenesten returned', res.status);
       return [];
     }
 
@@ -185,7 +186,7 @@ async function fetchRitzauNews(query: string): Promise<NewsArticle[]> {
       })
       .filter((a: NewsArticle) => a.title && a.url);
   } catch (err) {
-    console.error('[news] Ritzau Nyhedstjenesten error:', err);
+    logger.error('[news] Ritzau Nyhedstjenesten error:', err);
     return [];
   }
 }
@@ -401,7 +402,7 @@ export async function GET(req: NextRequest) {
       fetchGoogleNewsRss(q),
     ]);
 
-    console.log(
+    logger.log(
       `[news] Resultater for "${q}": Ritzau=${ritzauNews.length}, RitzauVia=${ritzauVia.length}, RSS=${rssArticles.length}, GoogleNews=${googleNewsArticles.length}`
     );
 

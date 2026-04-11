@@ -5718,14 +5718,6 @@ function RegnskabstalTable({ years, lang, regnskaber = [] }: RegnskabstalTablePr
     return val.toLocaleString('da-DK');
   };
 
-  /** Formaterer tal kort til graf-aksen (f.eks. 12.3m, 500k) */
-  const fmtShort = (val: number): string => {
-    const abs = Math.abs(val);
-    if (abs >= 1_000_000) return `${(val / 1_000_000).toFixed(1)}m`;
-    if (abs >= 1_000) return `${(val / 1_000).toFixed(0)}k`;
-    return val.toFixed(0);
-  };
-
   /** Beregner %-ændring mellem to værdier */
   const pctChange = (current: number | null, previous: number | null): number | null => {
     if (current == null || previous == null || previous === 0) return null;
@@ -6220,9 +6212,8 @@ function RegnskabstalTable({ years, lang, regnskaber = [] }: RegnskabstalTablePr
           <div className="h-64">
             <RegnskabChart
               chartData={chartData}
-              chartRows={chartRows}
+              chartRowIds={Array.from(chartRows)}
               alleRows={alleRows}
-              fmtShort={fmtShort}
               colors={CHART_COLORS}
             />
           </div>

@@ -5,10 +5,12 @@
  * Extracted so recharts can be loaded in a single dynamic import
  * instead of one per exported symbol.
  *
+ * All props are plain serializable values (no Set, no functions) so
+ * the component works correctly across the Next.js dynamic import boundary.
+ *
  * @param chartData  - Data points keyed by row ID and year
- * @param chartRows  - Set of selected row IDs to render as lines
+ * @param chartRowIds - Ordered list of row IDs to render as lines
  * @param alleRows   - Metadata for each row (label, isPercent)
- * @param fmtShort   - Axis tick formatter (e.g. 1.2m, 500k)
  * @param colors     - Colour palette for the lines
  */
 
@@ -31,17 +33,30 @@ interface ChartRow {
 
 interface RegnskabChartProps {
   chartData: Record<string, number | string | null>[];
-  chartRows: Set<string>;
+  /** Plain array — caller should pass Array.from(chartRows) */
+  chartRowIds: string[];
   alleRows: ChartRow[];
-  fmtShort: (val: number) => string;
   colors: readonly string[];
+}
+
+/**
+ * Formats a number compactly for the Y-axis tick labels.
+ * Examples: 1 200 000 → "1.2m", 500 000 → "500k", 123 → "123"
+ *
+ * @param val - The numeric axis value
+ * @returns Compact string representation
+ */
+function fmtShort(val: number): string {
+  const abs = Math.abs(val);
+  if (abs >= 1_000_000) return `${(val / 1_000_000).toFixed(1)}m`;
+  if (abs >= 1_000) return `${(val / 1_000).toFixed(0)}k`;
+  return val.toFixed(0);
 }
 
 export default function RegnskabChart({
   chartData,
-  chartRows,
+  chartRowIds,
   alleRows,
-  fmtShort,
   colors,
 }: RegnskabChartProps) {
   return (
@@ -80,7 +95,7 @@ export default function RegnskabChart({
             return [formatted, label] as [string, string];
           }}
         />
-        {Array.from(chartRows).map((id, idx) => (
+        {chartRowIds.map((id, idx) => (
           <Line
             key={id}
             type="monotone"

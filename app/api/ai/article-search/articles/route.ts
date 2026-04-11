@@ -186,9 +186,10 @@ async function searchBrave(
 async function searchSerper(
   apiKey: string,
   query: string,
-  tbs = 'qdr:m'
+  tbs = 'qdr:m',
+  num = 30
 ): Promise<ArticleResult[]> {
-  const body = JSON.stringify({ q: query, gl: 'dk', hl: 'da', num: 10, tbs });
+  const body = JSON.stringify({ q: query, gl: 'dk', hl: 'da', num, tbs });
   const res = await fetch('https://google.serper.dev/search', {
     method: 'POST',
     headers: { 'X-API-KEY': apiKey, 'Content-Type': 'application/json' },
@@ -219,7 +220,7 @@ async function searchSerper(
 }
 
 /**
- * Søger artikler via Serper.dev med 2 parallelle queries.
+ * Søger artikler via Serper.dev med 3 parallelle queries for maksimal dækning.
  * Returnerer tom liste (aldrig kast) hvis nøgle mangler eller Serper fejler.
  *
  * @param apiKey      - Serper.dev API-nøgle
@@ -229,13 +230,15 @@ async function searchSerperArticles(apiKey: string, companyName: string): Promis
   const currentYear = new Date().getFullYear();
   const qGeneral = `"${companyName}" nyheder OR artikel OR omtale`;
   const qMedia = `"${companyName}" ${currentYear} site:dr.dk OR site:tv2.dk OR site:borsen.dk OR site:berlingske.dk OR site:politiken.dk`;
+  const qDanmark = `"${companyName}" Danmark nyheder`;
 
   try {
-    const [general, media] = await Promise.all([
-      searchSerper(apiKey, qGeneral, 'qdr:m').catch(() => [] as ArticleResult[]),
-      searchSerper(apiKey, qMedia, 'qdr:m3').catch(() => [] as ArticleResult[]),
+    const [general, media, danmark] = await Promise.all([
+      searchSerper(apiKey, qGeneral, 'qdr:m', 30).catch(() => [] as ArticleResult[]),
+      searchSerper(apiKey, qMedia, 'qdr:m3', 30).catch(() => [] as ArticleResult[]),
+      searchSerper(apiKey, qDanmark, 'qdr:m6', 20).catch(() => [] as ArticleResult[]),
     ]);
-    return dedupArticles([...general, ...media]);
+    return dedupArticles([...general, ...media, ...danmark]);
   } catch {
     return [];
   }
@@ -278,11 +281,11 @@ async function searchBraveArticles(key: string, companyName: string): Promise<Ar
 
   // Fase 1+2: Uge- og måneds-queries køres parallelt for minimal latency
   const [weekGeneral, weekMedia, monthGeneral, monthMedia, monthYearQuery] = await Promise.all([
-    searchBrave(key, q1, 10, 'pw'), // Seneste uge — bred søgning (højeste prioritet)
-    searchBrave(key, qMedia, 10, 'pw'), // Seneste uge — kun store medier
+    searchBrave(key, q1, 20, 'pw'), // Seneste uge — bred søgning (højeste prioritet)
+    searchBrave(key, qMedia, 20, 'pw'), // Seneste uge — kun store medier
     searchBrave(key, q1, 20, 'pm'), // Seneste måned — bred søgning
-    searchBrave(key, qMedia, 10, 'pm'), // Seneste måned — store medier
-    searchBrave(key, qYear, 10, 'pm'), // Seneste måned — med årstal for bedre friskhed
+    searchBrave(key, qMedia, 20, 'pm'), // Seneste måned — store medier
+    searchBrave(key, qYear, 20, 'pm'), // Seneste måned — med årstal for bedre friskhed
   ]);
 
   const weekCombined = dedupArticles([...weekGeneral, ...weekMedia]);
@@ -295,7 +298,7 @@ async function searchBraveArticles(key: string, companyName: string): Promise<Ar
   if (merged.length < 5) {
     const [yearGeneral, yearYearQuery] = await Promise.all([
       searchBrave(key, q1, 20, 'py'),
-      searchBrave(key, qYear, 15, 'py'),
+      searchBrave(key, qYear, 20, 'py'),
     ]);
     const yearCombined = dedupArticles([...yearGeneral, ...yearYearQuery]);
     const seen = new Set(merged.map((r) => r.url));
@@ -352,7 +355,7 @@ Returner KUN validt JSON uden tekst før/efter:
 }
 
 - Brug KUN de givne URLs fra søgeresultaterne — opfind IKKE nye URLs
-- Returner op til 15 artikler, sorteret nyeste FØRST`;
+- Returner op til 20 artikler, sorteret nyeste FØRST`;
 }
 
 // ─── Response parser ──────────────────────────────────────────────────────────
@@ -422,7 +425,7 @@ function parseArticlesResponse(text: string): ArticleResult[] {
     const rawArticles: unknown[] = Array.isArray(raw.articles) ? raw.articles : [];
 
     return rawArticles
-      .slice(0, 15)
+      .slice(0, 20)
       .filter(
         (a): a is Record<string, unknown> =>
           typeof a === 'object' &&
@@ -564,11 +567,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   // ── Byg Claude-besked ──
-  // Cap at 25 results to keep the prompt within a safe token budget.
-  // With 48+ results the full summary exceeds ~4k input tokens and Claude's
-  // JSON response was being truncated at max_tokens=2048, causing a parse
-  // error and an empty articles array in the UI.
-  const claudeResults = rawResults.slice(0, 25);
+  // Cap at 40 results to keep the prompt within a safe token budget.
+  // max_tokens=4096 comfortably handles 40 results (~6k input tokens).
+  const claudeResults = rawResults.slice(0, 40);
 
   const companyContext = [
     `Virksomhedsnavn: ${companyName}`,

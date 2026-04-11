@@ -18,6 +18,7 @@ import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { createClient } from '@supabase/supabase-js';
 import { logger } from '@/app/lib/logger';
+import { resolveTenantId } from '@/lib/api/auth';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
@@ -69,6 +70,8 @@ export interface LinkVerificationSummary {
 // ─── GET ─────────────────────────────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
+  const auth = await resolveTenantId();
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const cvr = req.nextUrl.searchParams.get('cvr') ?? '';
   if (!cvr) {
     return NextResponse.json({ error: 'cvr er påkrævet' }, { status: 400 });
@@ -128,6 +131,8 @@ export async function GET(req: NextRequest) {
 // ─── POST ────────────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
+  const auth = await resolveTenantId();
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
     return NextResponse.json({ error: 'Supabase ikke konfigureret' }, { status: 503 });
   }
@@ -186,6 +191,8 @@ export async function POST(req: NextRequest) {
 // ─── DELETE ──────────────────────────────────────────────────────────────────
 
 export async function DELETE(req: NextRequest) {
+  const auth = await resolveTenantId();
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
     return NextResponse.json({ error: 'Supabase ikke konfigureret' }, { status: 503 });
   }

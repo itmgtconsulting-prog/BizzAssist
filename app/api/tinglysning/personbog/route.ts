@@ -14,6 +14,7 @@ import https from 'https';
 import fs from 'fs';
 import path from 'path';
 import { logger } from '@/app/lib/logger';
+import { resolveTenantId } from '@/lib/api/auth';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -357,6 +358,8 @@ function normalizeType(raw: string): string {
 // ─── Route Handler ──────────────────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
+  const auth = await resolveTenantId();
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const cvr = req.nextUrl.searchParams.get('cvr');
 
   if (!cvr || !/^\d{8}$/.test(cvr)) {

@@ -27,6 +27,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { gyldigNu } from '@/app/api/cvr/route';
 import { logger } from '@/app/lib/logger';
+import { resolveTenantId } from '@/lib/api/auth';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -184,6 +185,11 @@ function mapTilMarkør(hit: Record<string, unknown>): VirksomhedMarkør | null {
 
 /** GET /api/cvr/bbox */
 export async function GET(req: NextRequest): Promise<NextResponse<CVRBboxResponse>> {
+  const session = await resolveTenantId();
+  if (!session)
+    return NextResponse.json({ error: 'Unauthorized' } as unknown as CVRBboxResponse, {
+      status: 401,
+    });
   const { searchParams } = req.nextUrl;
 
   const latStr = searchParams.get('lat');

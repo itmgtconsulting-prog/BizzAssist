@@ -15,6 +15,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { logger } from '@/app/lib/logger';
+import { resolveTenantId } from '@/lib/api/auth';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -143,6 +144,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   // Rate limit: protect paid CVR ES credentials from abuse
   const limited = await checkRateLimit(req, rateLimit);
   if (limited) return limited;
+  const auth = await resolveTenantId();
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const q = req.nextUrl.searchParams.get('q')?.trim() ?? '';
 

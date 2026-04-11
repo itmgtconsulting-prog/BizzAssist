@@ -14,6 +14,7 @@ import fs from 'fs';
 import path from 'path';
 import PDFDocument from 'pdfkit';
 import { logger } from '@/app/lib/logger';
+import { resolveTenantId } from '@/lib/api/auth';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -417,6 +418,8 @@ function parseTingbogsattestXml(
 // ─── Route Handler ──────────────────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
+  const auth = await resolveTenantId();
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const uuid = req.nextUrl.searchParams.get('uuid');
   const bilagId = req.nextUrl.searchParams.get('bilag');
 

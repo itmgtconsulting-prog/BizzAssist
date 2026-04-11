@@ -6,6 +6,7 @@
  * @returns { adresse: string, id: string | null }
  */
 import { NextRequest, NextResponse } from 'next/server';
+import { resolveTenantId } from '@/lib/api/auth';
 
 // const DAR_ENDPOINT = 'https://graphql.datafordeler.dk/DAR/v1';
 // TODO: DAR GraphQL doesn't support spatial queries yet — enable when it does.
@@ -18,6 +19,8 @@ import { NextRequest, NextResponse } from 'next/server';
  * @returns JSON med adresse-streng og DAR id
  */
 export async function GET(request: NextRequest) {
+  const auth = await resolveTenantId();
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const { searchParams } = new URL(request.url);
   const lng = parseFloat(searchParams.get('lng') ?? '');
   const lat = parseFloat(searchParams.get('lat') ?? '');

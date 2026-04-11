@@ -20,6 +20,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import PDFDocument from 'pdfkit';
 import { logger } from '@/app/lib/logger';
+import { resolveTenantId } from '@/lib/api/auth';
 
 // pdfkit bruger Node.js streams — tving Node.js runtime (ikke Edge)
 export const runtime = 'nodejs';
@@ -637,6 +638,8 @@ async function genererPdf(
 // ─── Route handler ─────────────────────────────────────────────────────────────
 
 export async function GET(request: NextRequest): Promise<Response> {
+  const auth = await resolveTenantId();
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const { searchParams } = request.nextUrl;
   const ejerlavKodeStr = searchParams.get('ejerlavKode');
   const matrikelnr = searchParams.get('matrikelnr');

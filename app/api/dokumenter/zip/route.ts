@@ -20,6 +20,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import JSZip from 'jszip';
 import { logger } from '@/app/lib/logger';
+import { resolveTenantId } from '@/lib/api/auth';
 
 export const runtime = 'nodejs';
 
@@ -300,6 +301,8 @@ async function hentDokument(doc: ZipDocInput): Promise<DokumentResultat> {
 }
 
 export async function POST(request: NextRequest): Promise<Response> {
+  const auth = await resolveTenantId();
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   let body: ZipRequestBody;
   try {
     body = (await request.json()) as ZipRequestBody;

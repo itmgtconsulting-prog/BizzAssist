@@ -18,6 +18,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import * as Sentry from '@sentry/nextjs';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { logger } from '@/app/lib/logger';
+import { resolveTenantId } from '@/lib/api/auth';
 
 const WFS_BASE = 'https://wfs.datafordeler.dk/BBR/BBR_WFS/1.0.0/WFS';
 const DF_API_KEY = process.env.DATAFORDELER_API_KEY ?? '';
@@ -41,6 +42,8 @@ export interface BBRTypePunkt {
  * @returns JSON array af BBRTypePunkt
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const auth = await resolveTenantId();
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const { searchParams } = request.nextUrl;
   const w = parseFloat(searchParams.get('w') ?? '');
   const s = parseFloat(searchParams.get('s') ?? '');

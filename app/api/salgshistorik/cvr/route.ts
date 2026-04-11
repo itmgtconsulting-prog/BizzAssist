@@ -16,6 +16,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { logger } from '@/app/lib/logger';
+import { resolveTenantId } from '@/lib/api/auth';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -219,6 +220,11 @@ async function hentAdresseFraBfe(bfe: number): Promise<DawaBfeResult> {
 // ─── Route handler ───────────────────────────────────────────────────────────
 
 export async function GET(request: NextRequest): Promise<NextResponse<CvrSalgshistorikResponse>> {
+  const auth = await resolveTenantId();
+  if (!auth)
+    return NextResponse.json({ error: 'Unauthorized' } as unknown as CvrSalgshistorikResponse, {
+      status: 401,
+    });
   const clientId = process.env.DATAFORDELER_OAUTH_CLIENT_ID;
   const clientSecret = process.env.DATAFORDELER_OAUTH_CLIENT_SECRET;
 

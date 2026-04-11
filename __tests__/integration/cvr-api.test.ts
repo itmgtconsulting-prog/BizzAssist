@@ -16,6 +16,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { parseHusnr, gyldigNu } from '@/app/api/cvr/route';
 
+// Mock auth so route handlers can run outside a Next.js request scope
+vi.mock('@/lib/api/auth', () => ({
+  resolveTenantId: vi.fn().mockResolvedValue({ tenantId: 'test-tenant', userId: 'test-user' }),
+}));
+
 // ── Environment ───────────────────────────────────────────────────────────────
 
 const VALID_USER = 'Pecunia_IT_Consulting_CVR_I_SKYEN';

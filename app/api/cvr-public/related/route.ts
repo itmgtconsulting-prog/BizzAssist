@@ -12,6 +12,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/app/lib/logger';
+import { resolveTenantId } from '@/lib/api/auth';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -119,6 +120,8 @@ function mapEjerandelInterval(val: number): string {
 // ─── Route Handler ───────────────────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
+  const session = await resolveTenantId();
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const cvr = req.nextUrl.searchParams.get('cvr')?.replace(/\D/g, '');
   if (!cvr || cvr.length !== 8) {
     return NextResponse.json({ virksomheder: [], error: 'Ugyldigt CVR-nummer' }, { status: 400 });

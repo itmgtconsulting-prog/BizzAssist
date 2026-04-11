@@ -9,6 +9,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { resolveTenantId } from '@/lib/api/auth';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -122,6 +123,9 @@ function mapEjerandelInterval(val: number): string {
 export async function GET(
   req: NextRequest
 ): Promise<NextResponse<PersonPublicData | PersonPublicError>> {
+  const session = await resolveTenantId();
+  if (!session)
+    return NextResponse.json({ error: 'Unauthorized' } as PersonPublicError, { status: 401 });
   const enhedsNummer = req.nextUrl.searchParams.get('enhedsNummer')?.replace(/\D/g, '');
 
   if (!enhedsNummer) {

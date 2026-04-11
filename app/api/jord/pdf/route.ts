@@ -16,6 +16,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/app/lib/logger';
+import { resolveTenantId } from '@/lib/api/auth';
 
 export const runtime = 'nodejs';
 
@@ -38,6 +39,8 @@ function erGyldigPdf(buf: ArrayBuffer): boolean {
 }
 
 export async function GET(request: NextRequest): Promise<Response> {
+  const auth = await resolveTenantId();
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const { searchParams } = new URL(request.url);
   const elav = searchParams.get('elav');
   const matrnr = searchParams.get('matrnr');

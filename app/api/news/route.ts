@@ -14,6 +14,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/app/lib/logger';
+import { resolveTenantId } from '@/lib/api/auth';
 
 interface NewsArticle {
   title: string;
@@ -383,6 +384,8 @@ function buildSearchTerms(q: string): string[] {
 }
 
 export async function GET(req: NextRequest) {
+  const auth = await resolveTenantId();
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const q = req.nextUrl.searchParams.get('q') ?? '';
   if (!q.trim()) {
     return NextResponse.json([], { status: 200 });

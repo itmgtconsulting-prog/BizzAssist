@@ -10,6 +10,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
+import { resolveTenantId } from '@/lib/api/auth';
 
 /**
  * Henter matrikelpolygoner for en bounding box via Datafordeler MAT WFS.
@@ -19,6 +20,8 @@ import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
  * @returns GeoJSON FeatureCollection
  */
 export async function GET(request: NextRequest) {
+  const auth = await resolveTenantId();
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const { searchParams } = new URL(request.url);
   const w = parseFloat(searchParams.get('w') ?? '');
   const s = parseFloat(searchParams.get('s') ?? '');

@@ -19,6 +19,7 @@ import * as Sentry from '@sentry/nextjs';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { logger } from '@/app/lib/logger';
+import { resolveTenantId } from '@/lib/api/auth';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -181,6 +182,11 @@ async function queryEJF<T>(
 export async function GET(request: NextRequest): Promise<NextResponse<SalgshistorikResponse>> {
   const limited = await checkRateLimit(request, rateLimit);
   if (limited) return limited as NextResponse<SalgshistorikResponse>;
+  const auth = await resolveTenantId();
+  if (!auth)
+    return NextResponse.json({ error: 'Unauthorized' } as unknown as SalgshistorikResponse, {
+      status: 401,
+    });
 
   const clientId = process.env.DATAFORDELER_OAUTH_CLIENT_ID;
   const clientSecret = process.env.DATAFORDELER_OAUTH_CLIENT_SECRET;

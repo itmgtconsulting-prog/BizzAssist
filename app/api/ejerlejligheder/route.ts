@@ -15,6 +15,7 @@ import https from 'https';
 import fs from 'fs';
 import path from 'path';
 import { logger } from '@/app/lib/logger';
+import { resolveTenantId } from '@/lib/api/auth';
 // EJF/Datafordeler er ikke nødvendig — alt data hentes fra tinglysning summarisk XML
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -169,6 +170,11 @@ function parseDoerSortValue(doer: string | null | undefined): number {
 // ─── Route handler ──────────────────────────────────────────────────────────
 
 export async function GET(request: NextRequest): Promise<NextResponse<EjerlejlighederResponse>> {
+  const auth = await resolveTenantId();
+  if (!auth)
+    return NextResponse.json({ error: 'Unauthorized' } as unknown as EjerlejlighederResponse, {
+      status: 401,
+    });
   const { searchParams } = request.nextUrl;
   const ejerlavKode = searchParams.get('ejerlavKode');
   const matrikelnr = searchParams.get('matrikelnr');

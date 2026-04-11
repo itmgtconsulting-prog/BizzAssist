@@ -12,8 +12,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { darHentJordstykke } from '@/app/lib/dar';
 import { logger } from '@/app/lib/logger';
+import { resolveTenantId } from '@/lib/api/auth';
 
 export async function GET(request: NextRequest) {
+  const auth = await resolveTenantId();
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const bfe = request.nextUrl.searchParams.get('bfe');
 
   // BFE-baseret opslag — returnerer jordstykke + første adgangsadresse-UUID

@@ -21,6 +21,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { getCertOAuthToken, isCertAuthConfigured } from '@/app/lib/dfCertAuth';
 import { logger } from '@/app/lib/logger';
+import { resolveTenantId } from '@/lib/api/auth';
 
 /** Forlæng Vercel serverless timeout til 30 sek. (kræver Pro-plan) */
 export const maxDuration = 30;
@@ -363,6 +364,11 @@ async function pMap<T, R>(
  * @returns EjendommeByOwnerResponse
  */
 export async function GET(request: NextRequest): Promise<NextResponse<EjendommeByOwnerResponse>> {
+  const auth = await resolveTenantId();
+  if (!auth)
+    return NextResponse.json({ error: 'Unauthorized' } as unknown as EjendommeByOwnerResponse, {
+      status: 401,
+    });
   const hasSharedSecret = !!(
     process.env.DATAFORDELER_OAUTH_CLIENT_ID && process.env.DATAFORDELER_OAUTH_CLIENT_SECRET
   );

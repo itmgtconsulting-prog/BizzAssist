@@ -22,6 +22,7 @@ import * as Sentry from '@sentry/nextjs';
 import { checkRateLimit, heavyRateLimit } from '@/app/lib/rateLimit';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { logger } from '@/app/lib/logger';
+import { resolveTenantId } from '@/lib/api/auth';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -522,6 +523,11 @@ async function fetchUdvidedeData(
 export async function GET(request: NextRequest): Promise<NextResponse<VurderingResponse>> {
   const limited = await checkRateLimit(request, heavyRateLimit);
   if (limited) return limited as NextResponse<VurderingResponse>;
+  const auth = await resolveTenantId();
+  if (!auth)
+    return NextResponse.json({ error: 'Unauthorized' } as unknown as VurderingResponse, {
+      status: 401,
+    });
 
   const emptyExtended = {
     fordeling: [] as FordelingData[],

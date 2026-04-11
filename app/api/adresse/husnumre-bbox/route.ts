@@ -9,6 +9,7 @@
  * @returns GeoJSON FeatureCollection med adressepunkter (Point geometry)
  */
 import { NextRequest, NextResponse } from 'next/server';
+import { resolveTenantId } from '@/lib/api/auth';
 
 const emptyFc: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
 
@@ -20,6 +21,8 @@ const emptyFc: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features
  * @returns GeoJSON FeatureCollection med Point features
  */
 export async function GET(request: NextRequest) {
+  const auth = await resolveTenantId();
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const { searchParams } = new URL(request.url);
   const w = parseFloat(searchParams.get('w') ?? '');
   const s = parseFloat(searchParams.get('s') ?? '');

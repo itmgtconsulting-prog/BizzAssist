@@ -17,6 +17,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/app/lib/logger';
+import { resolveTenantId } from '@/lib/api/auth';
 
 const EMO_BASE = 'https://emoweb.dk/EMOData/EMOData.svc';
 
@@ -154,6 +155,11 @@ function basicAuth(): string {
 // ─── Route handler ──────────────────────────────────────────────────────────
 
 export async function GET(request: NextRequest): Promise<NextResponse<EnergimaerkeResponse>> {
+  const auth = await resolveTenantId();
+  if (!auth)
+    return NextResponse.json({ error: 'Unauthorized' } as unknown as EnergimaerkeResponse, {
+      status: 401,
+    });
   const { searchParams } = new URL(request.url);
   const bfeNummer = searchParams.get('bfeNummer');
 

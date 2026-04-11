@@ -17,6 +17,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/app/lib/logger';
+import { resolveTenantId } from '@/lib/api/auth';
 
 export const runtime = 'nodejs';
 
@@ -40,6 +41,8 @@ type ServiceKey = keyof typeof WMS_BASES;
  * @returns PNG-billedet fra WMS-serveren, eller HTTP-fejl
  */
 export async function GET(request: NextRequest): Promise<Response> {
+  const auth = await resolveTenantId();
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const { searchParams } = request.nextUrl;
   const service = searchParams.get('service');
 

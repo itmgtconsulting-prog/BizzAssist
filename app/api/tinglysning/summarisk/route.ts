@@ -13,6 +13,7 @@ import https from 'https';
 import fs from 'fs';
 import path from 'path';
 import { logger } from '@/app/lib/logger';
+import { resolveTenantId } from '@/lib/api/auth';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -156,6 +157,8 @@ export interface TLServitut {
 }
 
 export async function GET(req: NextRequest) {
+  const auth = await resolveTenantId();
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const uuid = req.nextUrl.searchParams.get('uuid');
   if (!uuid) {
     return NextResponse.json({ error: 'uuid parameter er påkrævet' }, { status: 400 });

@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { darAutocomplete } from '@/app/lib/dar';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { logger } from '@/app/lib/logger';
+import { resolveTenantId } from '@/lib/api/auth';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -394,6 +395,8 @@ export async function GET(request: NextRequest) {
   // Rate limit: 60 req/min (standard)
   const limited = await checkRateLimit(request, rateLimit);
   if (limited) return limited;
+  const auth = await resolveTenantId();
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const q = request.nextUrl.searchParams.get('q') ?? '';
 

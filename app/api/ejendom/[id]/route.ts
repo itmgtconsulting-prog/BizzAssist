@@ -19,6 +19,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchBbrForAddress } from '@/app/lib/fetchBbrData';
+import { resolveTenantId } from '@/lib/api/auth';
 
 // Re-export all types so existing importers (dashboard page etc.) keep working
 export type {
@@ -45,6 +46,8 @@ export async function GET(
   _req: NextRequest,
   context: { params: Promise<{ id: string }> }
 ): Promise<NextResponse> {
+  const auth = await resolveTenantId();
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const { id } = await context.params;
 
   // UUID validation

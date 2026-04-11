@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { logger } from '@/app/lib/logger';
+import { resolveTenantId } from '@/lib/api/auth';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -515,6 +516,8 @@ interface RegnskabEntry {
 }
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
+  const auth = await resolveTenantId();
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const { searchParams } = req.nextUrl;
   const cvr = searchParams.get('cvr') ?? '';
 

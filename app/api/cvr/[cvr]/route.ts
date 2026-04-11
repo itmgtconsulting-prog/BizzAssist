@@ -13,6 +13,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/app/lib/logger';
+import { resolveTenantId } from '@/lib/api/auth';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -176,6 +177,8 @@ export async function GET(
   _req: NextRequest,
   context: { params: Promise<{ cvr: string }> }
 ): Promise<NextResponse> {
+  const session = await resolveTenantId();
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const { cvr } = await context.params;
 
   // Valider: CVR skal være 8 cifre

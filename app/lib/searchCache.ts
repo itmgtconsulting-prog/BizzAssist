@@ -135,11 +135,26 @@ async function supabaseSet(cacheKey: string, results: unknown): Promise<void> {
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
+ * Returns true if a cached value is usable — i.e. non-null and not an empty array.
+ * Empty arrays may have been written by an older version of this module before the
+ * "don't cache empty results" guard was added. Treating them as a cache miss ensures
+ * a fresh Brave fetch is attempted rather than serving stale empty data.
+ *
+ * @param v - Value read from the cache store
+ */
+function isUsableCacheValue(v: unknown): boolean {
+  return v !== null && !(Array.isArray(v) && v.length === 0);
+}
+
+/**
  * Wraps a Brave Search call with a 24-hour cache.
  *
  * Check order: Redis → Supabase → fetch from Brave.
  * On a miss, runs `fetchFn`, stores result in Redis (primary) and
  * Supabase (fallback). Both writes are fire-and-forget.
+ *
+ * Empty arrays are treated as cache misses on both read and write:
+ * an empty result may be a transient Brave outage, not a permanent state.
  *
  * @param cacheKey - Unique key for this search (e.g. `articles|Acme A/S|12345678`)
  * @param fetchFn  - Async function that performs the actual Brave search
@@ -148,11 +163,11 @@ async function supabaseSet(cacheKey: string, results: unknown): Promise<void> {
 export async function withBraveCache<T>(cacheKey: string, fetchFn: () => Promise<T>): Promise<T> {
   // 1. Try Redis first (fast path)
   const redisCached = await redisGet(cacheKey);
-  if (redisCached !== null) return redisCached as T;
+  if (isUsableCacheValue(redisCached)) return redisCached as T;
 
   // 2. Try Supabase fallback
   const supabaseCached = await supabaseGet(cacheKey);
-  if (supabaseCached !== null) {
+  if (isUsableCacheValue(supabaseCached)) {
     // Backfill Redis for next time
     redisSet(cacheKey, supabaseCached).catch(() => {});
     return supabaseCached as T;

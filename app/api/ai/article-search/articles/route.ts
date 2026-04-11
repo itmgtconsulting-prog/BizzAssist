@@ -92,18 +92,6 @@ interface BraveWebResult {
   meta_url?: { hostname?: string };
 }
 
-/** Google CSE-resultat råformat */
-interface GoogleCSEItem {
-  title: string;
-  link: string;
-  snippet?: string;
-  displayLink?: string;
-  pagemap?: {
-    metatags?: Array<Record<string, string>>;
-    newsarticle?: Array<Record<string, string>>;
-  };
-}
-
 // ─── Supabase helpers ─────────────────────────────────────────────────────────
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
@@ -174,97 +162,6 @@ async function searchBrave(
     }))
     .filter((r) => r.title && r.url)
     .filter((r) => !isExcludedDomain(r.url));
-}
-
-// ─── Google CSE Search ───────────────────────────────────────────────────────
-
-/**
- * Søger via Google Custom Search Engine API og returnerer artikelresultater.
- * Brug: `https://www.googleapis.com/customsearch/v1?key={KEY}&cx={CSE_ID}&q={query}&dateRestrict=m1&lr=lang_da`
- *
- * @param apiKey - Google CSE API-nøgle
- * @param cseId  - Google Custom Search Engine ID
- * @param query  - Søgeforespørgsel
- * @param dateRestrict - Begrænsning på dato (f.eks. 'm1' = seneste måned, 'w1' = seneste uge)
- */
-async function searchGoogleCSE(
-  apiKey: string,
-  cseId: string,
-  query: string,
-  dateRestrict = 'm1'
-): Promise<ArticleResult[]> {
-  const params = new URLSearchParams({
-    key: apiKey,
-    cx: cseId,
-    q: query,
-    dateRestrict,
-    lr: 'lang_da',
-    num: '10',
-  });
-  const url = `https://www.googleapis.com/customsearch/v1?${params}`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
-  if (!res.ok) {
-    const errText = await res.text().catch(() => '');
-    throw new Error(`Google CSE HTTP ${res.status}: ${errText.slice(0, 120)}`);
-  }
-  const data = (await res.json()) as { items?: GoogleCSEItem[] };
-  const items: GoogleCSEItem[] = data.items ?? [];
-  if (items.length === 0) return [];
-
-  const seen = new Set<string>();
-  return items
-    .filter((item) => {
-      if (!item.link || seen.has(item.link)) return false;
-      seen.add(item.link);
-      return true;
-    })
-    .map((item) => {
-      // Forsøg at udtrække dato fra pagemap-metadata
-      const metatags = item.pagemap?.metatags?.[0] ?? {};
-      const rawDate =
-        metatags['article:published_time'] ??
-        metatags['og:updated_time'] ??
-        metatags['date'] ??
-        item.pagemap?.newsarticle?.[0]?.['datepublished'] ??
-        undefined;
-      return {
-        title: item.title?.trim() ?? '',
-        url: item.link?.trim() ?? '',
-        source: item.displayLink?.replace(/^www\./, '').trim() ?? '',
-        description: item.snippet?.trim().slice(0, 150) ?? undefined,
-        date: typeof rawDate === 'string' ? rawDate.trim() : undefined,
-      };
-    })
-    .filter((r) => r.title && r.url)
-    .filter((r) => !isExcludedDomain(r.url));
-}
-
-/**
- * Søger artikler via Google CSE med 2 parallelle queries.
- * Returnerer tom liste (aldrig kast) hvis nøgler mangler eller CSE fejler.
- *
- * @param apiKey      - Google CSE API-nøgle
- * @param cseId       - Google Custom Search Engine ID
- * @param companyName - Virksomhedens navn
- */
-async function searchGoogleCSEArticles(
-  apiKey: string,
-  cseId: string,
-  companyName: string
-): Promise<ArticleResult[]> {
-  const currentYear = new Date().getFullYear();
-  const qGeneral = `"${companyName}" nyheder OR artikel OR omtale`;
-  const qMedia = `"${companyName}" ${currentYear} site:dr.dk OR site:tv2.dk OR site:borsen.dk OR site:berlingske.dk OR site:politiken.dk`;
-
-  try {
-    const [general, media] = await Promise.all([
-      searchGoogleCSE(apiKey, cseId, qGeneral, 'm1').catch(() => [] as ArticleResult[]),
-      searchGoogleCSE(apiKey, cseId, qMedia, 'm3').catch(() => [] as ArticleResult[]),
-    ]);
-    return dedupArticles([...general, ...media]);
-  } catch {
-    return [];
-  }
 }
 
 /**
@@ -492,18 +389,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'BIZZASSIST_CLAUDE_KEY ikke konfigureret' }, { status: 500 });
 
   const braveKey = process.env.BRAVE_SEARCH_API_KEY?.trim();
-  const googleCseApiKey = process.env.GOOGLE_CSE_API_KEY?.trim();
-  const googleCseId = process.env.GOOGLE_CSE_ID?.trim();
-
-  // Brave er primær kilde — fejl kun hvis hverken Brave eller Google CSE er konfigureret
-  if (!braveKey && (!googleCseApiKey || !googleCseId))
-    return NextResponse.json(
-      {
-        error:
-          'Ingen søge-API konfigureret (BRAVE_SEARCH_API_KEY eller GOOGLE_CSE_API_KEY+GOOGLE_CSE_ID påkrævet)',
-      },
-      { status: 500 }
-    );
+  if (!braveKey)
+    return NextResponse.json({ error: 'BRAVE_SEARCH_API_KEY ikke konfigureret' }, { status: 500 });
 
   let body: CompanyInput;
   try {
@@ -516,61 +403,29 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (!companyName?.trim())
     return NextResponse.json({ error: 'companyName er påkrævet' }, { status: 400 });
 
-  // ── Brave + Google CSE + Supabase parallelt ──
+  // ── Brave-søgning + Supabase parallelt ──
   // Brave results are cached 24h in Supabase search_cache to reduce API usage.
-  // Google CSE køres parallelt med Brave for at øge dækning — resultaterne merges og dedupliceres.
-  let rawResults: ArticleResult[];
+  let braveResults: ArticleResult[];
   let dbExcludedDomains: string[];
 
   try {
+    // Cache-nøgle inkluderer datoen (YYYY-MM-DD) for at sikre daglig refresh af resultater
     const cacheDate = new Date().toISOString().slice(0, 10);
-
-    const bravePromise = braveKey
-      ? withBraveCache(`articles|${companyName.toLowerCase()}|${cvr ?? ''}|${cacheDate}`, () =>
-          searchBraveArticles(braveKey, companyName)
-        ).catch((err: unknown) => {
-          logger.log(
-            `[article-search/articles] Brave fejl: ${err instanceof Error ? err.message : String(err)}`
-          );
-          return [] as ArticleResult[];
-        })
-      : Promise.resolve([] as ArticleResult[]);
-
-    const googlePromise =
-      googleCseApiKey && googleCseId
-        ? searchGoogleCSEArticles(googleCseApiKey, googleCseId, companyName).catch(
-            (err: unknown) => {
-              logger.log(
-                `[article-search/articles] Google CSE fejl: ${err instanceof Error ? err.message : String(err)}`
-              );
-              return [] as ArticleResult[];
-            }
-          )
-        : Promise.resolve([] as ArticleResult[]);
-
-    const [braveResults, googleResults, resolvedDbDomains] = await Promise.all([
-      bravePromise,
-      googlePromise,
+    [braveResults, dbExcludedDomains] = await Promise.all([
+      withBraveCache(`articles|${companyName.toLowerCase()}|${cvr ?? ''}|${cacheDate}`, () =>
+        searchBraveArticles(braveKey, companyName)
+      ),
       fetchExcludedDomains(),
     ]);
-
-    dbExcludedDomains = resolvedDbDomains;
-
-    logger.log(
-      `[article-search/articles] "${companyName}": Brave=${braveResults.length}, Google CSE=${googleResults.length} rå resultater`
-    );
-
-    // Merge: Brave har prioritet (kommer først), Google CSE supplementerer
-    rawResults = dedupArticles([...braveResults, ...googleResults]);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Søgefejl';
+    const msg = err instanceof Error ? err.message : 'Brave Search fejl';
     return NextResponse.json({ error: `Søgning fejlede: ${msg}` }, { status: 502 });
   }
 
   // Anvend ekstra DB-domæne-filter
   if (dbExcludedDomains.length > EXCLUDED_ARTICLE_DOMAINS.length) {
     const dbExtra = new Set(dbExcludedDomains.filter((d) => !EXCLUDED_ARTICLE_DOMAINS.includes(d)));
-    rawResults = rawResults.filter((r) => {
+    braveResults = braveResults.filter((r) => {
       try {
         const hostname = new URL(r.url).hostname.replace(/^www\./, '');
         return ![...dbExtra].some((d) => hostname === d || hostname.endsWith(`.${d}`));
@@ -580,10 +435,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     });
   }
 
-  const braveResults = rawResults; // alias for nedenstående brug i Claude-besked
-
   logger.log(
-    `[article-search/articles] "${companyName}": ${rawResults.length} samlede resultater efter merge+dedup`
+    `[article-search/articles] "${companyName}": ${braveResults.length} rå Brave-resultater`
   );
 
   // ── Byg Claude-besked ──
@@ -632,17 +485,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       `[article-search/articles] "${companyName}": ${articles.length} artikler, tokens=${totalTokens}`
     );
 
-    const searchSource = [
-      braveKey ? 'brave' : null,
-      googleCseApiKey && googleCseId ? 'google-cse' : null,
-    ]
-      .filter(Boolean)
-      .join('+');
-    return NextResponse.json({
-      articles,
-      tokensUsed: totalTokens,
-      source: `${searchSource}+claude`,
-    });
+    return NextResponse.json({ articles, tokensUsed: totalTokens, source: 'brave+claude' });
   } catch (err) {
     const msg =
       err instanceof Anthropic.APIError

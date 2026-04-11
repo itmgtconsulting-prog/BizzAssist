@@ -3752,6 +3752,7 @@ function AIArticleSearchPanel({
   }, [
     anyLoading,
     ctxSub,
+    isAdmin,
     companyData,
     keyPersons,
     addTokenUsage,

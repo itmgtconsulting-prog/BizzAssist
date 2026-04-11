@@ -3608,7 +3608,7 @@ function AIArticleSearchPanel({
   /** Callback med confidence-tærskel fra ai_settings */
   onThresholdFound?: (threshold: number) => void;
 }) {
-  const { subscription: ctxSub, addTokenUsage } = useSubscription();
+  const { subscription: ctxSub, addTokenUsage, isAdmin } = useSubscription();
   const { isActive: subActive } = useSubscriptionAccess('ai');
   const [articles, setArticles] = useState<AIArticleResult[]>([]);
   const [hasSearched, setHasSearched] = useState(false);
@@ -3655,7 +3655,8 @@ function AIArticleSearchPanel({
   const handleSearch = useCallback(async () => {
     if (anyLoading) return;
 
-    if (ctxSub) {
+    // Admin users bypass subscription/token gating (mirrors subActive = isAdmin || ...).
+    if (ctxSub && !isAdmin) {
       const plan = resolvePlan(ctxSub.planId);
       if (!isSubscriptionFunctional(ctxSub, plan)) return;
       if (!plan.aiEnabled) return;

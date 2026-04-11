@@ -165,34 +165,71 @@ async function searchBrave(
 }
 
 /**
- * Søger artikler via fire parallelle Brave-queries og merger resultater.
- * Nyeste og medievirksomheder prioriteres øverst i merget output.
- * Alle queries er begrænset til seneste år (py) eller måned (pm/pw) for at undgå gamle artikler.
+ * Fjerner duplikater fra et array af artikler baseret på URL.
+ *
+ * @param articles - Array af artikler med potentielle duplikater
+ * @returns Deduplikeret array med første forekomst bevaret
+ */
+function dedupArticles(articles: ArticleResult[]): ArticleResult[] {
+  const seen = new Set<string>();
+  return articles.filter((r) => {
+    if (seen.has(r.url)) return false;
+    seen.add(r.url);
+    return true;
+  });
+}
+
+/**
+ * Søger artikler via parallelle Brave-queries og merger resultater.
+ *
+ * Strategi (3 faser):
+ * 1. Seneste uge (pw) — primær kilde, kørers altid parallelt med måneds-queries
+ * 2. Seneste måned (pm) — supplement til ugentlige resultater, inkluderer årstal i query
+ * 3. Seneste år (py) — fallback, KUN hvis fase 1+2 giver færre end 5 resultater
+ *
+ * Årstallet tilføjes til query3 for at hjælpe Brave finde nyere indekserede artikler.
+ * Prioritering i merge: uge > måned > år.
  *
  * @param key         - Brave Search Subscription Token
  * @param companyName - Virksomhedens navn
  */
 async function searchBraveArticles(key: string, companyName: string): Promise<ArticleResult[]> {
-  const query1 = `"${companyName}" anmeldelse OR artikel OR nyheder OR guide OR omtale`;
-  const query2 = `"${companyName}" nyheder artikel`;
-  const query3 = `"${companyName}" site:dr.dk OR site:tv2.dk OR site:borsen.dk OR site:berlingske.dk OR site:politiken.dk`;
+  const currentYear = new Date().getFullYear();
+  const q1 = `"${companyName}" anmeldelse OR artikel OR nyheder OR guide OR omtale`;
+  const qMedia = `"${companyName}" site:dr.dk OR site:tv2.dk OR site:borsen.dk OR site:berlingske.dk OR site:politiken.dk`;
+  const qYear = `"${companyName}" nyheder ${currentYear}`;
 
-  const [results1, results2, results3, resultsFresh] = await Promise.all([
-    searchBrave(key, query1, 20, 'py'), // Seneste år — bredt søgeresultat begrænset til nyere indhold
-    searchBrave(key, query2, 20, 'py'), // Seneste år — nyheder/artikler
-    searchBrave(key, query3, 10, 'pm'), // Seneste måned — kun store medier
-    searchBrave(key, query1, 10, 'pw'), // Seneste uge — allernyes artikler prioriteres
+  // Fase 1+2: Uge- og måneds-queries køres parallelt for minimal latency
+  const [weekGeneral, weekMedia, monthGeneral, monthMedia, monthYearQuery] = await Promise.all([
+    searchBrave(key, q1, 10, 'pw'), // Seneste uge — bred søgning (højeste prioritet)
+    searchBrave(key, qMedia, 10, 'pw'), // Seneste uge — kun store medier
+    searchBrave(key, q1, 20, 'pm'), // Seneste måned — bred søgning
+    searchBrave(key, qMedia, 10, 'pm'), // Seneste måned — store medier
+    searchBrave(key, qYear, 10, 'pm'), // Seneste måned — med årstal for bedre friskhed
   ]);
 
-  const seen = new Set<string>();
-  const merged: ArticleResult[] = [];
-  // Nyeste (fresh) og medievirksomheder prioriteres
-  for (const r of [...resultsFresh, ...results3, ...results1, ...results2]) {
-    if (!seen.has(r.url)) {
-      seen.add(r.url);
-      merged.push(r);
+  const weekCombined = dedupArticles([...weekGeneral, ...weekMedia]);
+  const monthCombined = dedupArticles([...monthGeneral, ...monthMedia, ...monthYearQuery]);
+
+  // Merge med prioritet: seneste uge > seneste måned
+  const merged = dedupArticles([...weekCombined, ...monthCombined]);
+
+  // Fase 3: Fald tilbage til seneste år KUN hvis for få resultater
+  if (merged.length < 5) {
+    const [yearGeneral, yearYearQuery] = await Promise.all([
+      searchBrave(key, q1, 20, 'py'),
+      searchBrave(key, qYear, 15, 'py'),
+    ]);
+    const yearCombined = dedupArticles([...yearGeneral, ...yearYearQuery]);
+    const seen = new Set(merged.map((r) => r.url));
+    for (const r of yearCombined) {
+      if (!seen.has(r.url)) {
+        seen.add(r.url);
+        merged.push(r);
+      }
     }
   }
+
   return merged;
 }
 
@@ -372,8 +409,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   let dbExcludedDomains: string[];
 
   try {
+    // Cache-nøgle inkluderer datoen (YYYY-MM-DD) for at sikre daglig refresh af resultater
+    const cacheDate = new Date().toISOString().slice(0, 10);
     [braveResults, dbExcludedDomains] = await Promise.all([
-      withBraveCache(`articles|${companyName.toLowerCase()}|${cvr ?? ''}`, () =>
+      withBraveCache(`articles|${companyName.toLowerCase()}|${cvr ?? ''}|${cacheDate}`, () =>
         searchBraveArticles(braveKey, companyName)
       ),
       fetchExcludedDomains(),

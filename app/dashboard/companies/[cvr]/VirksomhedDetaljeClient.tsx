@@ -3550,6 +3550,31 @@ interface AIArticleResult {
 }
 
 /**
+ * Konverterer en dato-streng (ISO, relativ "X days ago" etc.) til sorterbar timestamp.
+ * Returnerer 0 hvis datoen ikke kan parses — disse vises sidst.
+ *
+ * @param dateStr - Datostreng fra API-svar
+ * @returns Unix timestamp i millisekunder
+ */
+function parseDateForClientSort(dateStr: string | undefined): number {
+  if (!dateStr) return 0;
+  const d = new Date(dateStr);
+  if (!isNaN(d.getTime())) return d.getTime();
+  const agoMatch = dateStr.match(/(\d+)\s+(hour|day|week|month|year|time|dag|uge|m.ned|.r)/i);
+  if (agoMatch) {
+    const n = parseInt(agoMatch[1], 10);
+    const unit = agoMatch[2].toLowerCase();
+    const now = Date.now();
+    if (unit.startsWith('hour') || unit.startsWith('time')) return now - n * 3_600_000;
+    if (unit.startsWith('day') || unit.startsWith('dag')) return now - n * 86_400_000;
+    if (unit.startsWith('week') || unit.startsWith('uge')) return now - n * 7 * 86_400_000;
+    if (unit.startsWith('month') || unit.startsWith('m')) return now - n * 30 * 86_400_000;
+    if (unit.startsWith('year') || unit.startsWith('.r')) return now - n * 365 * 86_400_000;
+  }
+  return 0;
+}
+
+/**
  * AIArticleSearchPanel — AI-drevet artikelsøgning i nyheds-sidepanelet.
  *
  * Viser tokens til rådighed og en "Søg"-knap. Når brugeren klikker,
@@ -3704,7 +3729,11 @@ function AIArticleSearchPanel({
         const json = await res.json();
         if (json.error) setError(json.error);
         const fetchedArticles: AIArticleResult[] = json.articles ?? [];
-        setArticles(fetchedArticles);
+        // Sortér nyeste artikler øverst uanset API-rækkefølge
+        const sorted = [...fetchedArticles].sort(
+          (a, b) => parseDateForClientSort(b.date) - parseDateForClientSort(a.date)
+        );
+        setArticles(sorted);
         setVisibleCount(5);
         return (json.tokensUsed as number) ?? 0;
       })

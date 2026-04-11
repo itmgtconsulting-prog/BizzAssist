@@ -969,10 +969,12 @@ export default function SettingsPageClient() {
         <h1 className="text-white text-xl font-bold mb-3">{t.titel}</h1>
 
         {/* Tab-bar — matcher ejendomsdetalje-stil */}
-        <div className="flex gap-1 -mb-px">
+        <div role="tablist" className="flex gap-1 -mb-px">
           {tabs.map((item) => (
             <button
               key={item.key}
+              role="tab"
+              aria-selected={tab === item.key}
               onClick={() => setTab(item.key)}
               className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-all whitespace-nowrap ${
                 tab === item.key
@@ -986,6 +988,8 @@ export default function SettingsPageClient() {
           ))}
           {/* Organisation tab — navigates to sub-route */}
           <button
+            role="tab"
+            aria-selected={false}
             onClick={() => router.push('/dashboard/settings/organisation')}
             className="flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-all whitespace-nowrap"
           >

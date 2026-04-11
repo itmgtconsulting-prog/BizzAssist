@@ -1273,8 +1273,10 @@ export default function ServiceManagerClient() {
 
             {/* ─── Scan history / Activity log tabs ─── */}
             <section>
-              <div className="flex items-center gap-4 mb-3">
+              <div role="tablist" className="flex items-center gap-4 mb-3">
                 <button
+                  role="tab"
+                  aria-selected={activeTab === 'scans'}
                   onClick={() => setActiveTab('scans')}
                   className={`flex items-center gap-2 text-sm font-semibold pb-1 border-b-2 transition-colors ${
                     activeTab === 'scans'
@@ -1287,6 +1289,8 @@ export default function ServiceManagerClient() {
                   {hasRunning && <Activity size={12} className="text-blue-400 animate-pulse" />}
                 </button>
                 <button
+                  role="tab"
+                  aria-selected={activeTab === 'activity'}
                   onClick={() => setActiveTab('activity')}
                   className={`flex items-center gap-2 text-sm font-semibold pb-1 border-b-2 transition-colors ${
                     activeTab === 'activity'

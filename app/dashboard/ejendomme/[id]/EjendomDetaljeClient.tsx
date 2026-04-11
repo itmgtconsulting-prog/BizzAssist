@@ -1942,10 +1942,12 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
             </div>
 
             {/* Tabs */}
-            <div className="flex gap-1 -mb-px overflow-x-auto scrollbar-hide">
+            <div role="tablist" className="flex gap-1 -mb-px overflow-x-auto scrollbar-hide">
               {tabs.map((tab) => (
                 <button
                   key={tab.id}
+                  role="tab"
+                  aria-selected={aktivTab === tab.id}
                   onClick={() => setAktivTab(tab.id)}
                   className={`flex items-center gap-1 px-2 py-1.5 text-xs font-medium border-b-2 transition-all whitespace-nowrap ${
                     aktivTab === tab.id
@@ -4608,10 +4610,12 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
         </div>
 
         {/* Tab navigation */}
-        <div className="flex gap-1 -mb-px">
+        <div role="tablist" className="flex gap-1 -mb-px">
           {tabs.map((tab) => (
             <button
               key={tab.id}
+              role="tab"
+              aria-selected={aktivTab === tab.id}
               onClick={() => setAktivTab(tab.id)}
               className={`flex items-center gap-1 px-2 py-1.5 text-xs font-medium border-b-2 transition-all whitespace-nowrap ${
                 aktivTab === tab.id

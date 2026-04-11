@@ -51,7 +51,10 @@ export default async function HomePage({
 
   return (
     <main className="flex flex-col min-h-screen">
-      {/* JSON-LD struktureret data */}
+      {/* JSON-LD struktureret data
+          BIZZ-219: dangerouslySetInnerHTML is safe here — __html is produced
+          exclusively by JSON.stringify() on a server-side constant object.
+          No user input, external data, or interpolated strings are involved. */}
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(websiteJsonLd) }}

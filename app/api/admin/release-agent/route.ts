@@ -82,6 +82,119 @@ const GITHUB_API = 'https://api.github.com';
 /** Timeout for individual GitHub API calls */
 const GITHUB_TIMEOUT_MS = 15_000;
 
+// ─── Success notification ─────────────────────────────────────────────────────
+
+/**
+ * Send email + SMS to support@pecuniait.com after a hotfix is successfully
+ * created and deployed by the Release Agent.
+ *
+ * Both channels are best-effort — failures are logged but do NOT abort the
+ * release flow. Requires RESEND_API_KEY (email) and TWILIO_ACCOUNT_SID /
+ * TWILIO_AUTH_TOKEN / TWILIO_FROM / TWILIO_TO (SMS).
+ *
+ * @param sha    - Commit SHA of the applied hotfix
+ * @param branch - Hotfix branch name
+ */
+async function sendHotfixNotification(sha: string, branch: string): Promise<void> {
+  const target = process.env.SUPPORT_NOTIFICATION_EMAIL ?? 'support@pecuniait.com';
+  const shortSha = sha.slice(0, 8);
+  const adminUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://bizzassist.dk'}/dashboard/admin/service-manager`;
+
+  // ── Email via Resend ────────────────────────────────────────────────────
+  const resendKey = process.env.RESEND_API_KEY;
+  if (resendKey) {
+    try {
+      const emailRes = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          from: 'BizzAssist Release Agent <noreply@bizzassist.dk>',
+          to: [target],
+          subject: `[BizzAssist] Build-fejl automatisk fixet og deployet`,
+          html: `
+            <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:560px;margin:0 auto">
+              <div style="background:#0f172a;padding:20px 28px;border-radius:10px 10px 0 0">
+                <h1 style="color:#fff;font-size:18px;margin:0">
+                  <span style="color:#60a5fa">Bizz</span>Assist Release Agent
+                </h1>
+              </div>
+              <div style="background:#1e293b;padding:20px 28px;border-radius:0 0 10px 10px;border:1px solid #334155;border-top:none">
+                <p style="color:#34d399;font-size:15px;font-weight:600;margin:0 0 12px">
+                  ✅ Build-fejl automatisk fixet og deployet
+                </p>
+                <table style="width:100%;border-collapse:collapse">
+                  <tr>
+                    <td style="color:#94a3b8;font-size:13px;padding:6px 0;width:80px">Commit:</td>
+                    <td style="color:#fff;font-size:13px;font-family:monospace;padding:6px 0">${shortSha}</td>
+                  </tr>
+                  <tr>
+                    <td style="color:#94a3b8;font-size:13px;padding:6px 0">Branch:</td>
+                    <td style="color:#60a5fa;font-size:13px;font-family:monospace;padding:6px 0">${branch}</td>
+                  </tr>
+                  <tr>
+                    <td style="color:#94a3b8;font-size:13px;padding:6px 0">Tidspunkt:</td>
+                    <td style="color:#94a3b8;font-size:13px;padding:6px 0">${new Date().toLocaleString('da-DK', { timeZone: 'Europe/Copenhagen' })}</td>
+                  </tr>
+                </table>
+                <div style="margin-top:16px">
+                  <a href="${adminUrl}" style="display:inline-block;background:#2563eb;color:#fff;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:600">
+                    Se i admin panel →
+                  </a>
+                </div>
+              </div>
+              <p style="color:#475569;font-size:11px;text-align:center;margin-top:12px">
+                Sendt automatisk fra BizzAssist Release Agent
+              </p>
+            </div>
+          `,
+        }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!emailRes.ok) {
+        logger.warn('[release-agent] hotfix email notification failed:', await emailRes.text());
+      }
+    } catch (err) {
+      logger.warn(
+        '[release-agent] hotfix email notification error:',
+        err instanceof Error ? err.message : String(err)
+      );
+    }
+  }
+
+  // ── SMS via Twilio ──────────────────────────────────────────────────────
+  const twilioSid = process.env.TWILIO_ACCOUNT_SID;
+  const twilioToken = process.env.TWILIO_AUTH_TOKEN;
+  const twilioFrom = process.env.TWILIO_FROM;
+  const twilioTo = process.env.TWILIO_TO;
+
+  if (twilioSid && twilioToken && twilioFrom && twilioTo) {
+    try {
+      const body = `BizzAssist: Build-fejl automatisk fixet og deployet. Commit: ${shortSha}. Se admin panel: ${adminUrl}`;
+      const params = new URLSearchParams({ From: twilioFrom, To: twilioTo, Body: body });
+      const smsRes = await fetch(
+        `https://api.twilio.com/2010-04-01/Accounts/${twilioSid}/Messages.json`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Basic ${Buffer.from(`${twilioSid}:${twilioToken}`).toString('base64')}`,
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: params.toString(),
+          signal: AbortSignal.timeout(10_000),
+        }
+      );
+      if (!smsRes.ok) {
+        logger.warn('[release-agent] hotfix SMS notification failed:', await smsRes.text());
+      }
+    } catch (err) {
+      logger.warn(
+        '[release-agent] hotfix SMS notification error:',
+        err instanceof Error ? err.message : String(err)
+      );
+    }
+  }
+}
+
 // ─── Admin verification ───────────────────────────────────────────────────────
 
 /**
@@ -557,6 +670,9 @@ async function createHotfix(
     { fix_id: fixId, branch, sha: commitSha, pr_url: prUrl ?? null },
     userId
   );
+
+  // Fire-and-forget — notification is best-effort and must not delay the response.
+  void sendHotfixNotification(commitSha, branch);
 
   return { branch, prUrl, sha: commitSha };
 }

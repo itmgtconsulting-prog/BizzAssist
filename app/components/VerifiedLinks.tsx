@@ -17,7 +17,7 @@
  * @param aiAlternatives - AI-fundne alternative URLs per platform
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, memo } from 'react';
 import { ExternalLink, Loader2, ThumbsUp, ThumbsDown, ChevronDown, X } from 'lucide-react';
 import { useAuth } from '@/app/hooks/useAuth';
 
@@ -204,12 +204,13 @@ const PLATFORM_META: Record<string, { label: string; icon: string; color: string
 /**
  * AlternativesPopup — Viser en liste af alternative URLs for en platform.
  * Lukker ved klik udenfor. Hvert alternativ er klikbart og åbner i ny fane.
+ * Wrapped in React.memo because it receives an onClose callback as prop.
  *
  * @param popup - Popup state med platform, alternativer og verified counts
  * @param onClose - Callback der lukker popup
  * @param lang - Sprogkode
  */
-function AlternativesPopup({
+const AlternativesPopup = memo(function AlternativesPopup({
   popup,
   onClose,
   lang,
@@ -231,6 +232,37 @@ function AlternativesPopup({
     return () => document.removeEventListener('keydown', handleKey);
   }, [onClose]);
 
+  /**
+   * Focus trap: Tab/Shift+Tab cycles within the popup.
+   * First focusable element receives focus on open.
+   */
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const focusable = el.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const trap = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab') return;
+      if (e.shiftKey) {
+        if (document.activeElement === first) {
+          e.preventDefault();
+          last?.focus();
+        }
+      } else {
+        if (document.activeElement === last) {
+          e.preventDefault();
+          first?.focus();
+        }
+      }
+    };
+    document.addEventListener('keydown', trap);
+    first?.focus();
+    return () => document.removeEventListener('keydown', trap);
+  }, []);
+
   return (
     <>
       {/* Backdrop — lukker popup ved klik udenfor */}
@@ -238,10 +270,16 @@ function AlternativesPopup({
       {/* Modal — centreret på skærmen, max 90vw på mobil */}
       <div
         ref={ref}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="alt-popup-title"
         className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[min(320px,90vw)] rounded-lg border border-slate-600/60 bg-slate-800 shadow-xl"
       >
         <div className="flex items-center justify-between px-3 py-2 border-b border-slate-700/50">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+          <p
+            id="alt-popup-title"
+            className="text-[10px] font-semibold uppercase tracking-wide text-slate-400"
+          >
             {lang === 'da' ? 'Alternative links' : 'Alternative links'}
           </p>
           <button
@@ -302,7 +340,7 @@ function AlternativesPopup({
       </div>
     </>
   );
-}
+});
 
 // ─── Component ───────────────────────────────────────────────────────────────
 

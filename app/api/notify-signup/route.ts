@@ -47,7 +47,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     }
 
     const body = await req.json();
-    const { fullName, email, planId, status } = body;
+    const { email, planId, status } = body;
 
     if (!email) {
       return NextResponse.json({ error: 'Email required' }, { status: 400 });
@@ -71,7 +71,18 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
               ? 'Enterprise'
               : (planId ?? 'Ikke valgt');
 
-    const subject = `[BizzAssist] Ny bruger: ${email} (${environment})`;
+    // BIZZ-220: Subject must not contain raw PII (email/name) — email subjects
+    // are often cached and indexed by mail clients and providers unencrypted.
+    // Full details remain in the email body which is encrypted in transit.
+    const subject = `[BizzAssist] Ny tilmelding — ${planLabel} · ${environment}`;
+
+    // Mask email for body: show first char + *** + @domain (e.g. j***@gmail.com).
+    // Full email stays available to admins via the admin panel.
+    const maskedEmail = (() => {
+      const at = email.indexOf('@');
+      if (at <= 0) return '***';
+      return `${email[0]}***${email.slice(at)}`;
+    })();
 
     const htmlBody = `
       <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -83,12 +94,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         <div style="background: #1e293b; padding: 24px 32px; border-radius: 0 0 12px 12px; border: 1px solid #334155; border-top: none;">
           <table style="width: 100%; border-collapse: collapse;">
             <tr>
-              <td style="padding: 8px 0; color: #94a3b8; font-size: 14px; width: 140px;">Navn:</td>
-              <td style="padding: 8px 0; color: #ffffff; font-size: 14px; font-weight: 600;">${fullName || 'Ikke angivet'}</td>
-            </tr>
-            <tr>
               <td style="padding: 8px 0; color: #94a3b8; font-size: 14px;">E-mail:</td>
-              <td style="padding: 8px 0; color: #ffffff; font-size: 14px; font-weight: 600;">${email}</td>
+              <td style="padding: 8px 0; color: #ffffff; font-size: 14px; font-weight: 600;">${maskedEmail}</td>
             </tr>
             <tr>
               <td style="padding: 8px 0; color: #94a3b8; font-size: 14px;">Ansøgt plan:</td>

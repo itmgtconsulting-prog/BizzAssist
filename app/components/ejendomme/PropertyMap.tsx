@@ -1186,7 +1186,19 @@ function PropertyMap({
 
         {/* Ejendomsmarkør */}
         <Marker longitude={lng} latitude={lat} anchor="bottom">
-          <div className="flex flex-col items-center cursor-pointer" onClick={centerMap}>
+          {/* Interactive marker — converted from div to button for keyboard accessibility (BIZZ-212) */}
+          <button
+            className="flex flex-col items-center cursor-pointer bg-transparent border-0 p-0 m-0"
+            onClick={centerMap}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                centerMap();
+              }
+            }}
+            aria-label={`Centrer kortet på ${adresse}`}
+            type="button"
+          >
             <div className="relative flex items-center gap-1 bg-blue-600 text-white text-xs px-2 py-1 rounded-lg shadow-lg font-medium whitespace-nowrap mb-1">
               {adresse.split(',')[0]}
               {/* EL-badge vises altid på hoved-markøren når erEjerlejlighed=true og togget er aktivt */}
@@ -1197,7 +1209,7 @@ function PropertyMap({
               )}
             </div>
             <div className="w-3 h-3 bg-blue-600 rounded-full border-2 border-white shadow-lg" />
-          </div>
+          </button>
         </Marker>
 
         {/* BBR-bygningsmarkører — cirkler kun i BBR-tilstand, badges i ALLE tre kortstile */}

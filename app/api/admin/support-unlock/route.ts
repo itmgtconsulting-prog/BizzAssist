@@ -66,9 +66,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   // ── Apply unlock ──
-  // Cast needed because the generated Supabase types don't include 'public' as a schema literal.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const publicDb = (adminClient as unknown as { schema: (s: string) => any }).schema('public');
+  // Cast needed: the generated Supabase types don't include 'public' as a schema literal.
+  // The structural type covers the .from().update().eq() chain used below.
+  type SchemaSwitched = {
+    schema: (s: string) => {
+      from: (t: string) => {
+        update: (v: Record<string, unknown>) => {
+          eq: (c: string, v: unknown) => PromiseLike<{ error: { message: string } | null }>;
+        };
+      };
+    };
+  };
+  const publicDb = (adminClient as unknown as SchemaSwitched).schema('public');
   const { error } = await publicDb
     .from('support_chat_abuse')
     .update({

@@ -51,15 +51,54 @@ interface TenantRow {
   closed_at: string | null;
 }
 
+/** PostgREST error shape returned by tenant schema queries */
+interface TenantQueryError {
+  message: string;
+  code: string;
+  details: string | null;
+  hint: string | null;
+}
+
+/**
+ * Awaitable query chain for tenant schema tables.
+ * Mirrors PostgrestQueryBuilder structurally without using `any`.
+ * Tenant schemas are not in the generated Database types.
+ */
+type TenantQuery = PromiseLike<{
+  data: Record<string, unknown>[] | null;
+  error: TenantQueryError | null;
+  count: number | null;
+}> & {
+  select(
+    cols?: string,
+    opts?: { count?: 'exact' | 'planned' | 'estimated'; head?: boolean }
+  ): TenantQuery;
+  insert(values: Record<string, unknown> | Record<string, unknown>[]): TenantQuery;
+  update(values: Record<string, unknown>): TenantQuery;
+  delete(opts?: { count?: 'exact' | 'planned' | 'estimated' }): TenantQuery;
+  eq(col: string, val: unknown): TenantQuery;
+  neq(col: string, val: unknown): TenantQuery;
+  gt(col: string, val: unknown): TenantQuery;
+  gte(col: string, val: unknown): TenantQuery;
+  lt(col: string, val: unknown): TenantQuery;
+  lte(col: string, val: unknown): TenantQuery;
+  in(col: string, vals: unknown[]): TenantQuery;
+  is(col: string, val: unknown): TenantQuery;
+  not(col: string, op: string, val: unknown): TenantQuery;
+  order(col: string, opts?: { ascending?: boolean; nullsFirst?: boolean }): TenantQuery;
+  limit(n: number): TenantQuery;
+  range(from: number, to: number): TenantQuery;
+  single(): PromiseLike<{ data: Record<string, unknown> | null; error: TenantQueryError | null }>;
+};
+
 /**
  * Typed helper for schema-switched Supabase operations.
  * The Supabase JS client's .schema() method returns a client typed to the
  * dynamic tenant schema, but generated types only cover public. We cast to
- * this interface to get a usable untyped query builder for tenant tables.
+ * this interface using TenantQuery to avoid `any`.
  */
 interface SchemaClient {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  from: (table: string) => any;
+  from: (table: string) => TenantQuery;
 }
 
 // ── Auth ─────────────────────────────────────────────────────────────────────

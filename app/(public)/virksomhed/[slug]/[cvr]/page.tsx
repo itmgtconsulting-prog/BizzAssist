@@ -385,6 +385,8 @@ function JsonLd({ v, slug }: { v: VirksomhedPublicData; slug: string }) {
 
   return (
     <>
+      {/* BIZZ-219: dangerouslySetInnerHTML is safe — __html is JSON.stringify() of
+          a server-side schema object. No user input or external strings interpolated. */}
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(organizationSchema) }}

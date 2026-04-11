@@ -389,10 +389,30 @@ Afslør IKKE oplysningerne medmindre brugeren spørger direkte til dem.`;
 
       // ── Post-response: record session + run abuse detection ──
       // Fire-and-forget async IIFE — must not delay or block the stream.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const db = (adminClient as unknown as { schema: (s: string) => any }).schema(
-        schemaName ?? 'tenant'
-      );
+      // The structural type covers .from().insert() and .from().select().eq().gte()
+      // used below; tenant schemas are not in the generated Database types.
+      type TenantSchemaClient = {
+        schema: (s: string) => {
+          from: (t: string) => {
+            insert(v: Record<string, unknown>): PromiseLike<{ error: { message: string } | null }>;
+            select(cols?: string): {
+              eq(
+                c: string,
+                v: unknown
+              ): {
+                gte(
+                  c: string,
+                  v: unknown
+                ): PromiseLike<{
+                  data: Record<string, unknown>[] | null;
+                  error: { message: string } | null;
+                }>;
+              };
+            };
+          };
+        };
+      };
+      const db = (adminClient as unknown as TenantSchemaClient).schema(schemaName ?? 'tenant');
       if (totalTokens > 0 && schemaName) {
         void (async () => {
           try {

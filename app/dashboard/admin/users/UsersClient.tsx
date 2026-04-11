@@ -20,7 +20,7 @@
  * @see app/api/admin/subscription/route.ts — subscription mutations API
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef, memo } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -164,13 +164,14 @@ async function adminAction(
 /**
  * User detail panel — slide-out panel for editing a user's subscription.
  * All actions are performed directly on Supabase via the admin API.
+ * Wrapped in React.memo because it receives onClose/onRefresh callbacks as props.
  *
  * @param user - The user to edit
  * @param da - Whether to use Danish labels
  * @param onClose - Close handler
  * @param onRefresh - Refresh data handler
  */
-function UserDetailPanel({
+const UserDetailPanel = memo(function UserDetailPanel({
   user,
   da,
   onClose,
@@ -197,6 +198,48 @@ function UserDetailPanel({
   const [tokenAmount, setTokenAmount] = useState('');
   const [showTokenInput, setShowTokenInput] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
+
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  /** Close panel on Escape key */
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [onClose]);
+
+  /**
+   * Focus trap: Tab/Shift+Tab cycles through focusable children only.
+   * First focusable element receives focus on mount.
+   */
+  useEffect(() => {
+    const panel = panelRef.current;
+    if (!panel) return;
+    const focusable = panel.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const trap = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab') return;
+      if (e.shiftKey) {
+        if (document.activeElement === first) {
+          e.preventDefault();
+          last?.focus();
+        }
+      } else {
+        if (document.activeElement === last) {
+          e.preventDefault();
+          first?.focus();
+        }
+      }
+    };
+    document.addEventListener('keydown', trap);
+    first?.focus();
+    return () => document.removeEventListener('keydown', trap);
+  }, []);
 
   /** Execute an admin action and refresh — awaits refresh so loading state stays active until data is fresh */
   const doAction = async (action: string, data?: Record<string, unknown>) => {
@@ -250,9 +293,17 @@ function UserDetailPanel({
     return (
       <div className="fixed inset-0 z-50 flex justify-end">
         <div className="absolute inset-0 bg-black/60" onClick={onClose} />
-        <div className="relative w-full max-w-md bg-slate-900 border-l border-slate-700/50 overflow-y-auto">
+        <div
+          ref={panelRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="user-panel-title"
+          className="relative w-full max-w-md bg-slate-900 border-l border-slate-700/50 overflow-y-auto"
+        >
           <div className="sticky top-0 bg-slate-900/95 backdrop-blur-sm border-b border-slate-700/50 px-6 py-4 flex items-center justify-between z-10">
-            <h2 className="text-white font-bold text-base">{user.email}</h2>
+            <h2 id="user-panel-title" className="text-white font-bold text-base">
+              {user.email}
+            </h2>
             <button
               onClick={onClose}
               className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700/50 rounded-lg transition-colors"
@@ -328,10 +379,18 @@ function UserDetailPanel({
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
 
       {/* Panel */}
-      <div className="relative w-full max-w-md bg-slate-900 border-l border-slate-700/50 overflow-y-auto">
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="user-panel-title"
+        className="relative w-full max-w-md bg-slate-900 border-l border-slate-700/50 overflow-y-auto"
+      >
         {/* Header */}
         <div className="sticky top-0 bg-slate-900/95 backdrop-blur-sm border-b border-slate-700/50 px-6 py-4 flex items-center justify-between z-10">
-          <h2 className="text-white font-bold text-base">{da ? 'Rediger bruger' : 'Edit user'}</h2>
+          <h2 id="user-panel-title" className="text-white font-bold text-base">
+            {da ? 'Rediger bruger' : 'Edit user'}
+          </h2>
           <button
             onClick={onClose}
             className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700/50 rounded-lg transition-colors"
@@ -731,7 +790,7 @@ function UserDetailPanel({
       </div>
     </div>
   );
-}
+});
 
 // ─── Main page ──────────────────────────────────────────────────────────────
 

@@ -5,7 +5,10 @@
  * Del af parallelt søge-flow: kald dette endpoint sideløbende med /socials.
  *
  * Strategi:
- * 1. Brave Search — søger artikler via 3 parallelle queries
+ * 1. Serper.dev (Google) — 3 parallelle queries med forskellig tidshorisont
+ *    - Seneste 3 måneder (qdr:m3, num=30) — primær kilde med brede søgetermer
+ *    - Seneste år (qdr:y, num=20) — supplement for ældre men relevante artikler
+ *    - Ingen tidsfilter (num=10) — fanger ældre artikler f.eks. fra 2022-2023
  * 2. Claude — rangerer og filtrerer resultater
  * 3. Supabase — henter ekskluderede domæner
  *
@@ -22,7 +25,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 import { checkRateLimit, braveRateLimit } from '@/app/lib/rateLimit';
-import { withBraveCache } from '@/app/lib/searchCache';
 import { logger } from '@/app/lib/logger';
 import { resolveUserId } from '@/lib/api/auth';
 
@@ -83,15 +85,6 @@ interface CompanyInput {
   keyPersons?: string[];
 }
 
-/** Brave-resultat råformat */
-interface BraveWebResult {
-  title: string;
-  url: string;
-  description?: string;
-  age?: string;
-  meta_url?: { hostname?: string };
-}
-
 /** Serper.dev organisk resultat råformat */
 interface SerperOrganicResult {
   title: string;
@@ -130,66 +123,25 @@ async function fetchExcludedDomains(): Promise<string[]> {
   }
 }
 
-// ─── Brave Search ─────────────────────────────────────────────────────────────
-
-/**
- * Søger via Brave Search API og returnerer rå web-resultater.
- *
- * @param key   - Brave Search Subscription Token
- * @param query - Søgeforespørgsel
- * @param count - Antal resultater (max 20 pr. kald)
- */
-async function searchBrave(
-  key: string,
-  query: string,
-  count = 20,
-  freshness?: string
-): Promise<ArticleResult[]> {
-  const params = new URLSearchParams({ q: query, count: String(count), country: 'dk' });
-  if (freshness) params.set('freshness', freshness);
-  const url = `https://api.search.brave.com/res/v1/web/search?${params}`;
-  const res = await fetch(url, {
-    headers: { 'X-Subscription-Token': key, Accept: 'application/json' },
-    signal: AbortSignal.timeout(10000),
-  });
-  if (!res.ok) throw new Error(`Brave HTTP ${res.status}`);
-  const data = await res.json();
-  const raw: BraveWebResult[] = data.web?.results ?? [];
-  if (raw.length === 0) return [];
-  const seen = new Set<string>();
-  return raw
-    .filter((r) => {
-      if (!r.url || seen.has(r.url)) return false;
-      seen.add(r.url);
-      return true;
-    })
-    .map((r) => ({
-      title: r.title?.trim() ?? '',
-      url: r.url?.trim() ?? '',
-      source: r.meta_url?.hostname?.replace(/^www\./, '').trim() ?? '',
-      description: r.description?.trim().slice(0, 150) ?? undefined,
-      date: r.age?.trim() ?? undefined,
-    }))
-    .filter((r) => r.title && r.url)
-    .filter((r) => !isExcludedDomain(r.url));
-}
-
 // ─── Serper.dev Search ────────────────────────────────────────────────────────
 
 /**
  * Søger via Serper.dev (Google-søgning) og returnerer artikelresultater.
  *
- * @param apiKey      - Serper.dev API-nøgle
- * @param query       - Søgeforespørgsel
- * @param tbs         - Google tbs-parameter til datofilter (f.eks. 'qdr:m' = seneste måned)
+ * @param apiKey - Serper.dev API-nøgle
+ * @param query  - Søgeforespørgsel
+ * @param tbs    - Google tbs-parameter til datofilter (f.eks. 'qdr:m3' = seneste 3 måneder). Udelad for ingen filter.
+ * @param num    - Antal resultater (max 100 pr. kald hos Serper)
  */
 async function searchSerper(
   apiKey: string,
   query: string,
-  tbs = 'qdr:m',
+  tbs?: string,
   num = 30
 ): Promise<ArticleResult[]> {
-  const body = JSON.stringify({ q: query, gl: 'dk', hl: 'da', num, tbs });
+  const payload: Record<string, unknown> = { q: query, gl: 'dk', hl: 'da', num };
+  if (tbs) payload.tbs = tbs;
+  const body = JSON.stringify(payload);
   const res = await fetch('https://google.serper.dev/search', {
     method: 'POST',
     headers: { 'X-API-KEY': apiKey, 'Content-Type': 'application/json' },
@@ -221,24 +173,29 @@ async function searchSerper(
 
 /**
  * Søger artikler via Serper.dev med 3 parallelle queries for maksimal dækning.
- * Returnerer tom liste (aldrig kast) hvis nøgle mangler eller Serper fejler.
+ *
+ * Strategi:
+ * - Query 1: seneste 3 måneder (qdr:m3), num=30 — primær, fanger nyeste artikler
+ * - Query 2: seneste år (qdr:y), num=20 — supplement for lidt ældre indhold
+ * - Query 3: ingen tidsfilter, num=10 — fanger artikler fra 2022-2023 og ældre
+ *
+ * Resultater merges og dedupliceres efter URL, med nyeste artikler øverst.
+ * Returnerer aldrig kast — fejl fra individuelle queries giver tom liste.
  *
  * @param apiKey      - Serper.dev API-nøgle
  * @param companyName - Virksomhedens navn
  */
 async function searchSerperArticles(apiKey: string, companyName: string): Promise<ArticleResult[]> {
-  const currentYear = new Date().getFullYear();
-  const qGeneral = `"${companyName}" nyheder OR artikel OR omtale`;
-  const qMedia = `"${companyName}" ${currentYear} site:dr.dk OR site:tv2.dk OR site:borsen.dk OR site:berlingske.dk OR site:politiken.dk`;
-  const qDanmark = `"${companyName}" Danmark nyheder`;
+  const q = `"${companyName}" nyheder OR artikel OR omtale`;
 
   try {
-    const [general, media, danmark] = await Promise.all([
-      searchSerper(apiKey, qGeneral, 'qdr:m', 30).catch(() => [] as ArticleResult[]),
-      searchSerper(apiKey, qMedia, 'qdr:m3', 30).catch(() => [] as ArticleResult[]),
-      searchSerper(apiKey, qDanmark, 'qdr:m6', 20).catch(() => [] as ArticleResult[]),
+    const [recent, yearly, allTime] = await Promise.all([
+      searchSerper(apiKey, q, 'qdr:m3', 30).catch(() => [] as ArticleResult[]),
+      searchSerper(apiKey, q, 'qdr:y', 20).catch(() => [] as ArticleResult[]),
+      searchSerper(apiKey, q, undefined, 10).catch(() => [] as ArticleResult[]),
     ]);
-    return dedupArticles([...general, ...media, ...danmark]);
+    // Prioritering: nyeste (recent) > seneste år (yearly) > alle tider (allTime)
+    return dedupArticles([...recent, ...yearly, ...allTime]);
   } catch {
     return [];
   }
@@ -259,60 +216,6 @@ function dedupArticles(articles: ArticleResult[]): ArticleResult[] {
   });
 }
 
-/**
- * Søger artikler via parallelle Brave-queries og merger resultater.
- *
- * Strategi (3 faser):
- * 1. Seneste uge (pw) — primær kilde, kørers altid parallelt med måneds-queries
- * 2. Seneste måned (pm) — supplement til ugentlige resultater, inkluderer årstal i query
- * 3. Seneste år (py) — fallback, KUN hvis fase 1+2 giver færre end 5 resultater
- *
- * Årstallet tilføjes til query3 for at hjælpe Brave finde nyere indekserede artikler.
- * Prioritering i merge: uge > måned > år.
- *
- * @param key         - Brave Search Subscription Token
- * @param companyName - Virksomhedens navn
- */
-async function searchBraveArticles(key: string, companyName: string): Promise<ArticleResult[]> {
-  const currentYear = new Date().getFullYear();
-  const q1 = `"${companyName}" anmeldelse OR artikel OR nyheder OR guide OR omtale`;
-  const qMedia = `"${companyName}" site:dr.dk OR site:tv2.dk OR site:borsen.dk OR site:berlingske.dk OR site:politiken.dk`;
-  const qYear = `"${companyName}" nyheder ${currentYear}`;
-
-  // Fase 1+2: Uge- og måneds-queries køres parallelt for minimal latency
-  const [weekGeneral, weekMedia, monthGeneral, monthMedia, monthYearQuery] = await Promise.all([
-    searchBrave(key, q1, 20, 'pw'), // Seneste uge — bred søgning (højeste prioritet)
-    searchBrave(key, qMedia, 20, 'pw'), // Seneste uge — kun store medier
-    searchBrave(key, q1, 20, 'pm'), // Seneste måned — bred søgning
-    searchBrave(key, qMedia, 20, 'pm'), // Seneste måned — store medier
-    searchBrave(key, qYear, 20, 'pm'), // Seneste måned — med årstal for bedre friskhed
-  ]);
-
-  const weekCombined = dedupArticles([...weekGeneral, ...weekMedia]);
-  const monthCombined = dedupArticles([...monthGeneral, ...monthMedia, ...monthYearQuery]);
-
-  // Merge med prioritet: seneste uge > seneste måned
-  const merged = dedupArticles([...weekCombined, ...monthCombined]);
-
-  // Fase 3: Fald tilbage til seneste år KUN hvis for få resultater
-  if (merged.length < 5) {
-    const [yearGeneral, yearYearQuery] = await Promise.all([
-      searchBrave(key, q1, 20, 'py'),
-      searchBrave(key, qYear, 20, 'py'),
-    ]);
-    const yearCombined = dedupArticles([...yearGeneral, ...yearYearQuery]);
-    const seen = new Set(merged.map((r) => r.url));
-    for (const r of yearCombined) {
-      if (!seen.has(r.url)) {
-        seen.add(r.url);
-        merged.push(r);
-      }
-    }
-  }
-
-  return merged;
-}
-
 // ─── System prompt ────────────────────────────────────────────────────────────
 
 /**
@@ -326,8 +229,8 @@ function buildArticlesSystemPrompt(): string {
 Din opgave:
 1. Vurdér om hvert hit handler om DENNE SPECIFIKKE virksomhed (ikke en anden med lignende navn)
 2. Prioritér danske artikler, men inkludér internationale hvis relevante
-3. Sortér artikler efter dato — NYESTE artikler FØRST. Prioritér artikler fra de seneste 30 dage stærkt over ældre.
-4. AFVIS artikler ældre end 12 måneder — med mindre de er ekstraordinært relevante (f.eks. eneste artikel om virksomheden)
+3. Sortér artikler efter dato — NYESTE artikler FØRST
+4. Inkludér gerne ældre artikler (2022-2023 og ældre) hvis de er relevante — især for mindre virksomheder
 5. Forbedre snippet-beskrivelser til max 100 tegn dansk tekst
 
 EKSKLUDEREDE DOMÆNER — inkludér ALDRIG:
@@ -388,7 +291,7 @@ function isSocialDomain(url: string): boolean {
  * Konverterer en dato-streng (ISO, relativ "X days ago" etc.) til sorterbar timestamp.
  * Returnerer 0 hvis datoen ikke kan parses.
  *
- * @param dateStr - Datostreng fra Brave/Claude
+ * @param dateStr - Datostreng fra Serper/Claude
  */
 function parseDateForSort(dateStr: string | undefined): number {
   if (!dateStr) return 0;
@@ -456,7 +359,7 @@ function parseArticlesResponse(text: string): ArticleResult[] {
 
 /**
  * POST /api/ai/article-search/articles
- * Søger og rangerer nyheder/artikler om en virksomhed via Brave Search + Claude.
+ * Søger og rangerer nyheder/artikler om en virksomhed via Serper.dev + Claude.
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const limited = await checkRateLimit(request, braveRateLimit);
@@ -470,17 +373,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (!apiKey)
     return NextResponse.json({ error: 'BIZZASSIST_CLAUDE_KEY ikke konfigureret' }, { status: 500 });
 
-  const braveKey = process.env.BRAVE_SEARCH_API_KEY?.trim();
   const serperApiKey = process.env.SERPER_API_KEY?.trim();
-
-  // Brave er primær kilde — fejl kun hvis hverken Brave eller Serper er konfigureret
-  if (!braveKey && !serperApiKey)
-    return NextResponse.json(
-      {
-        error: 'Ingen søge-API konfigureret (BRAVE_SEARCH_API_KEY eller SERPER_API_KEY påkrævet)',
-      },
-      { status: 500 }
-    );
+  if (!serperApiKey)
+    return NextResponse.json({ error: 'SERPER_API_KEY ikke konfigureret' }, { status: 500 });
 
   let body: CompanyInput;
   try {
@@ -493,49 +388,28 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (!companyName?.trim())
     return NextResponse.json({ error: 'companyName er påkrævet' }, { status: 400 });
 
-  // ── Brave + Google CSE + Supabase parallelt ──
-  // Brave results are cached 24h in Supabase search_cache to reduce API usage.
-  // Google CSE køres parallelt med Brave for at øge dækning — resultaterne merges og dedupliceres.
+  // ── Serper + Supabase parallelt ──
   let rawResults: ArticleResult[];
   let dbExcludedDomains: string[];
 
   try {
-    const cacheDate = new Date().toISOString().slice(0, 10);
-
-    const bravePromise = braveKey
-      ? withBraveCache(`articles|${companyName.toLowerCase()}|${cvr ?? ''}|${cacheDate}`, () =>
-          searchBraveArticles(braveKey, companyName)
-        ).catch((err: unknown) => {
-          logger.log(
-            `[article-search/articles] Brave fejl: ${err instanceof Error ? err.message : String(err)}`
-          );
-          return [] as ArticleResult[];
-        })
-      : Promise.resolve([] as ArticleResult[]);
-
-    const serperPromise = serperApiKey
-      ? searchSerperArticles(serperApiKey, companyName).catch((err: unknown) => {
-          logger.log(
-            `[article-search/articles] Serper fejl: ${err instanceof Error ? err.message : String(err)}`
-          );
-          return [] as ArticleResult[];
-        })
-      : Promise.resolve([] as ArticleResult[]);
-
-    const [braveResults, serperResults, resolvedDbDomains] = await Promise.all([
-      bravePromise,
-      serperPromise,
+    const [serperResults, resolvedDbDomains] = await Promise.all([
+      searchSerperArticles(serperApiKey, companyName).catch((err: unknown) => {
+        logger.log(
+          `[article-search/articles] Serper fejl: ${err instanceof Error ? err.message : String(err)}`
+        );
+        return [] as ArticleResult[];
+      }),
       fetchExcludedDomains(),
     ]);
 
     dbExcludedDomains = resolvedDbDomains;
 
     logger.log(
-      `[article-search/articles] "${companyName}": Brave=${braveResults.length}, Serper=${serperResults.length} rå resultater`
+      `[article-search/articles] "${companyName}": Serper=${serperResults.length} rå resultater`
     );
 
-    // Merge: Brave har prioritet (kommer først), Serper supplementerer
-    rawResults = dedupArticles([...braveResults, ...serperResults]);
+    rawResults = serperResults;
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Søgefejl';
     return NextResponse.json({ error: `Søgning fejlede: ${msg}` }, { status: 502 });
@@ -555,15 +429,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   logger.log(
-    `[article-search/articles] "${companyName}": ${rawResults.length} samlede resultater efter merge+dedup`
+    `[article-search/articles] "${companyName}": ${rawResults.length} samlede resultater efter dedup+filter`
   );
 
-  // Ingen resultater fra hverken Brave eller Serper — spring Claude over og returnér tomt
+  // Ingen resultater fra Serper — spring Claude over og returnér tomt
   if (rawResults.length === 0) {
-    const searchSource = [braveKey ? 'brave' : null, serperApiKey ? 'serper' : null]
-      .filter(Boolean)
-      .join('+');
-    return NextResponse.json({ articles: [], tokensUsed: 0, source: `${searchSource}+no-results` });
+    return NextResponse.json({ articles: [], tokensUsed: 0, source: 'serper+no-results' });
   }
 
   // ── Byg Claude-besked ──
@@ -613,13 +484,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       `[article-search/articles] "${companyName}": ${articles.length} artikler, tokens=${totalTokens}`
     );
 
-    const searchSource = [braveKey ? 'brave' : null, serperApiKey ? 'serper' : null]
-      .filter(Boolean)
-      .join('+');
     return NextResponse.json({
       articles,
       tokensUsed: totalTokens,
-      source: `${searchSource}+claude`,
+      source: 'serper+claude',
     });
   } catch (err) {
     const msg =

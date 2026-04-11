@@ -1,15 +1,14 @@
 /**
  * Server entry — forces dynamic rendering (Vercel lambda).
- * KortPageClient is lazy-loaded with ssr:false because it depends on
- * mapbox-gl, a heavy browser-only library.
+ * The actual lazy-load with ssr:false lives in KortDynamicLoader (a Client
+ * Component) because Turbopack disallows next/dynamic ssr:false in Server
+ * Components.
  */
-import nextDynamic from 'next/dynamic';
+import KortDynamicLoader from './KortDynamicLoader';
 
 export const dynamic = 'force-dynamic';
 
-/** Lazy-loaded to keep mapbox-gl out of the server bundle */
-const KortPageClient = nextDynamic(() => import('./KortPageClient'), { ssr: false });
-
+/** @returns Server shell that delegates rendering to the client-side loader */
 export default function KortPage() {
-  return <KortPageClient />;
+  return <KortDynamicLoader />;
 }

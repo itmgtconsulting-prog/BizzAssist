@@ -5680,14 +5680,9 @@ function RegnskabstalTable({ years, lang, regnskaber = [] }: RegnskabstalTablePr
   const [chartRows, setChartRows] = useState<Set<string>>(
     () => new Set(['r-brutto', 'r-aaret', 'b-egenkap'])
   );
-  /** Alle 3 sektioner sammenklappet som default */
+  /** Balance og Nøgletal sammenklappet som default — Resultatopgørelse åben */
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(
-    () =>
-      new Set([
-        da ? 'Resultatopgørelse' : 'Income Statement',
-        da ? 'Balance' : 'Balance Sheet',
-        da ? 'Nøgletal' : 'Key Ratios',
-      ])
+    () => new Set([da ? 'Balance' : 'Balance Sheet', da ? 'Nøgletal' : 'Key Ratios'])
   );
 
   /** Viste år — 5 default, alle hvis udfoldet */

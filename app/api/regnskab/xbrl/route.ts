@@ -530,9 +530,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
   try {
     // ── 1. Hent regnskab-liste fra ES (hurtig — kun metadata) ──
+    // Forward session cookie so the internal /api/regnskab auth guard passes.
     const baseUrl = req.nextUrl.origin;
     const regnskabRes = await fetch(`${baseUrl}/api/regnskab?cvr=${cvr}`, {
       signal: AbortSignal.timeout(12000),
+      headers: { cookie: req.headers.get('cookie') ?? '' },
     });
     if (!regnskabRes.ok) {
       return NextResponse.json(

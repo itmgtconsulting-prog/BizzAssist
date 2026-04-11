@@ -92,16 +92,14 @@ interface BraveWebResult {
   meta_url?: { hostname?: string };
 }
 
-/** Google CSE-resultat råformat */
-interface GoogleCSEItem {
+/** Serper.dev organisk resultat råformat */
+interface SerperOrganicResult {
   title: string;
   link: string;
   snippet?: string;
+  date?: string;
+  source?: string;
   displayLink?: string;
-  pagemap?: {
-    metatags?: Array<Record<string, string>>;
-    newsarticle?: Array<Record<string, string>>;
-  };
 }
 
 // ─── Supabase helpers ─────────────────────────────────────────────────────────
@@ -176,39 +174,30 @@ async function searchBrave(
     .filter((r) => !isExcludedDomain(r.url));
 }
 
-// ─── Google CSE Search ───────────────────────────────────────────────────────
+// ─── Serper.dev Search ────────────────────────────────────────────────────────
 
 /**
- * Søger via Google Custom Search Engine API og returnerer artikelresultater.
- * Brug: `https://www.googleapis.com/customsearch/v1?key={KEY}&cx={CSE_ID}&q={query}&dateRestrict=m1&lr=lang_da`
+ * Søger via Serper.dev (Google-søgning) og returnerer artikelresultater.
  *
- * @param apiKey - Google CSE API-nøgle
- * @param cseId  - Google Custom Search Engine ID
- * @param query  - Søgeforespørgsel
- * @param dateRestrict - Begrænsning på dato (f.eks. 'm1' = seneste måned, 'w1' = seneste uge)
+ * @param apiKey      - Serper.dev API-nøgle
+ * @param query       - Søgeforespørgsel
+ * @param tbs         - Google tbs-parameter til datofilter (f.eks. 'qdr:m' = seneste måned)
  */
-async function searchGoogleCSE(
+async function searchSerper(
   apiKey: string,
-  cseId: string,
   query: string,
-  dateRestrict = 'm1'
+  tbs = 'qdr:m'
 ): Promise<ArticleResult[]> {
-  const params = new URLSearchParams({
-    key: apiKey,
-    cx: cseId,
-    q: query,
-    dateRestrict,
-    lr: 'lang_da',
-    num: '10',
+  const body = JSON.stringify({ q: query, gl: 'dk', hl: 'da', num: 10, tbs });
+  const res = await fetch('https://google.serper.dev/search', {
+    method: 'POST',
+    headers: { 'X-API-KEY': apiKey, 'Content-Type': 'application/json' },
+    body,
+    signal: AbortSignal.timeout(10000),
   });
-  const url = `https://www.googleapis.com/customsearch/v1?${params}`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
-  if (!res.ok) {
-    const errText = await res.text().catch(() => '');
-    throw new Error(`Google CSE HTTP ${res.status}: ${errText.slice(0, 120)}`);
-  }
-  const data = (await res.json()) as { items?: GoogleCSEItem[] };
-  const items: GoogleCSEItem[] = data.items ?? [];
+  if (!res.ok) throw new Error(`Serper HTTP ${res.status}`);
+  const data = (await res.json()) as { organic?: SerperOrganicResult[] };
+  const items: SerperOrganicResult[] = data.organic ?? [];
   if (items.length === 0) return [];
 
   const seen = new Set<string>();
@@ -218,48 +207,33 @@ async function searchGoogleCSE(
       seen.add(item.link);
       return true;
     })
-    .map((item) => {
-      // Forsøg at udtrække dato fra pagemap-metadata
-      const metatags = item.pagemap?.metatags?.[0] ?? {};
-      const rawDate =
-        metatags['article:published_time'] ??
-        metatags['og:updated_time'] ??
-        metatags['date'] ??
-        item.pagemap?.newsarticle?.[0]?.['datepublished'] ??
-        undefined;
-      return {
-        title: item.title?.trim() ?? '',
-        url: item.link?.trim() ?? '',
-        source: item.displayLink?.replace(/^www\./, '').trim() ?? '',
-        description: item.snippet?.trim().slice(0, 150) ?? undefined,
-        date: typeof rawDate === 'string' ? rawDate.trim() : undefined,
-      };
-    })
+    .map((item) => ({
+      title: item.title?.trim() ?? '',
+      url: item.link?.trim() ?? '',
+      source: (item.source ?? item.displayLink ?? '').replace(/^www\./, '').trim(),
+      description: item.snippet?.trim().slice(0, 150) ?? undefined,
+      date: item.date?.trim() ?? undefined,
+    }))
     .filter((r) => r.title && r.url)
     .filter((r) => !isExcludedDomain(r.url));
 }
 
 /**
- * Søger artikler via Google CSE med 2 parallelle queries.
- * Returnerer tom liste (aldrig kast) hvis nøgler mangler eller CSE fejler.
+ * Søger artikler via Serper.dev med 2 parallelle queries.
+ * Returnerer tom liste (aldrig kast) hvis nøgle mangler eller Serper fejler.
  *
- * @param apiKey      - Google CSE API-nøgle
- * @param cseId       - Google Custom Search Engine ID
+ * @param apiKey      - Serper.dev API-nøgle
  * @param companyName - Virksomhedens navn
  */
-async function searchGoogleCSEArticles(
-  apiKey: string,
-  cseId: string,
-  companyName: string
-): Promise<ArticleResult[]> {
+async function searchSerperArticles(apiKey: string, companyName: string): Promise<ArticleResult[]> {
   const currentYear = new Date().getFullYear();
   const qGeneral = `"${companyName}" nyheder OR artikel OR omtale`;
   const qMedia = `"${companyName}" ${currentYear} site:dr.dk OR site:tv2.dk OR site:borsen.dk OR site:berlingske.dk OR site:politiken.dk`;
 
   try {
     const [general, media] = await Promise.all([
-      searchGoogleCSE(apiKey, cseId, qGeneral, 'm1').catch(() => [] as ArticleResult[]),
-      searchGoogleCSE(apiKey, cseId, qMedia, 'm3').catch(() => [] as ArticleResult[]),
+      searchSerper(apiKey, qGeneral, 'qdr:m').catch(() => [] as ArticleResult[]),
+      searchSerper(apiKey, qMedia, 'qdr:m3').catch(() => [] as ArticleResult[]),
     ]);
     return dedupArticles([...general, ...media]);
   } catch {
@@ -494,15 +468,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'BIZZASSIST_CLAUDE_KEY ikke konfigureret' }, { status: 500 });
 
   const braveKey = process.env.BRAVE_SEARCH_API_KEY?.trim();
-  const googleCseApiKey = process.env.GOOGLE_CSE_API_KEY?.trim();
-  const googleCseId = process.env.GOOGLE_CSE_ID?.trim();
+  const serperApiKey = process.env.SERPER_API_KEY?.trim();
 
-  // Brave er primær kilde — fejl kun hvis hverken Brave eller Google CSE er konfigureret
-  if (!braveKey && (!googleCseApiKey || !googleCseId))
+  // Brave er primær kilde — fejl kun hvis hverken Brave eller Serper er konfigureret
+  if (!braveKey && !serperApiKey)
     return NextResponse.json(
       {
-        error:
-          'Ingen søge-API konfigureret (BRAVE_SEARCH_API_KEY eller GOOGLE_CSE_API_KEY+GOOGLE_CSE_ID påkrævet)',
+        error: 'Ingen søge-API konfigureret (BRAVE_SEARCH_API_KEY eller SERPER_API_KEY påkrævet)',
       },
       { status: 500 }
     );
@@ -538,32 +510,29 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         })
       : Promise.resolve([] as ArticleResult[]);
 
-    const googlePromise =
-      googleCseApiKey && googleCseId
-        ? searchGoogleCSEArticles(googleCseApiKey, googleCseId, companyName).catch(
-            (err: unknown) => {
-              logger.log(
-                `[article-search/articles] Google CSE fejl: ${err instanceof Error ? err.message : String(err)}`
-              );
-              return [] as ArticleResult[];
-            }
-          )
-        : Promise.resolve([] as ArticleResult[]);
+    const serperPromise = serperApiKey
+      ? searchSerperArticles(serperApiKey, companyName).catch((err: unknown) => {
+          logger.log(
+            `[article-search/articles] Serper fejl: ${err instanceof Error ? err.message : String(err)}`
+          );
+          return [] as ArticleResult[];
+        })
+      : Promise.resolve([] as ArticleResult[]);
 
-    const [braveResults, googleResults, resolvedDbDomains] = await Promise.all([
+    const [braveResults, serperResults, resolvedDbDomains] = await Promise.all([
       bravePromise,
-      googlePromise,
+      serperPromise,
       fetchExcludedDomains(),
     ]);
 
     dbExcludedDomains = resolvedDbDomains;
 
     logger.log(
-      `[article-search/articles] "${companyName}": Brave=${braveResults.length}, Google CSE=${googleResults.length} rå resultater`
+      `[article-search/articles] "${companyName}": Brave=${braveResults.length}, Serper=${serperResults.length} rå resultater`
     );
 
-    // Merge: Brave har prioritet (kommer først), Google CSE supplementerer
-    rawResults = dedupArticles([...braveResults, ...googleResults]);
+    // Merge: Brave har prioritet (kommer først), Serper supplementerer
+    rawResults = dedupArticles([...braveResults, ...serperResults]);
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Søgefejl';
     return NextResponse.json({ error: `Søgning fejlede: ${msg}` }, { status: 502 });
@@ -634,10 +603,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       `[article-search/articles] "${companyName}": ${articles.length} artikler, tokens=${totalTokens}`
     );
 
-    const searchSource = [
-      braveKey ? 'brave' : null,
-      googleCseApiKey && googleCseId ? 'google-cse' : null,
-    ]
+    const searchSource = [braveKey ? 'brave' : null, serperApiKey ? 'serper' : null]
       .filter(Boolean)
       .join('+');
     return NextResponse.json({

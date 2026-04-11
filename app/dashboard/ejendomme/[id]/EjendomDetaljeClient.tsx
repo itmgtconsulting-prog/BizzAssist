@@ -41,24 +41,8 @@ import {
   Info,
   Loader2,
 } from 'lucide-react';
-/** Recharts — dynamisk importeret for at undgå at inkludere i initial bundle */
-const AreaChart = dynamic(() => import('recharts').then((m) => ({ default: m.AreaChart })), {
-  ssr: false,
-});
-const Area = dynamic(() => import('recharts').then((m) => ({ default: m.Area })), { ssr: false });
-const XAxis = dynamic(() => import('recharts').then((m) => ({ default: m.XAxis })), { ssr: false });
-const YAxis = dynamic(() => import('recharts').then((m) => ({ default: m.YAxis })), { ssr: false });
-const CartesianGrid = dynamic(
-  () => import('recharts').then((m) => ({ default: m.CartesianGrid })),
-  { ssr: false }
-);
-const Tooltip = dynamic(() => import('recharts').then((m) => ({ default: m.Tooltip })), {
-  ssr: false,
-});
-const ResponsiveContainer = dynamic(
-  () => import('recharts').then((m) => ({ default: m.ResponsiveContainer })),
-  { ssr: false }
-);
+/** Recharts — single dynamic import keeps recharts in one chunk */
+const EjendomPrisChart = dynamic(() => import('./EjendomPrisChart'), { ssr: false });
 
 /** PropertyMap — dynamisk importeret pga. Mapbox GL (browser-only) */
 const PropertyMap = dynamic(() => import('@/app/components/ejendomme/PropertyMap'), {
@@ -99,8 +83,6 @@ import { useLanguage } from '@/app/context/LanguageContext';
 import { useSetAIPageContext } from '@/app/context/AIPageContext';
 import dynamic from 'next/dynamic';
 import type { DiagramGraph } from '@/app/components/diagrams/DiagramData';
-import type { TooltipProps } from 'recharts';
-import type { ValueType, NameType } from 'recharts/types/component/DefaultTooltipContent';
 import { logger } from '@/app/lib/logger';
 
 const DiagramForce = dynamic(() => import('@/app/components/diagrams/DiagramForce'), {
@@ -5757,50 +5739,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                       <span>mio. DKK</span>
                     </div>
                   </div>
-                  <ResponsiveContainer width="100%" height={200}>
-                    <AreaChart data={prisData}>
-                      <defs>
-                        <linearGradient id="prisGradient" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
-                          <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                      <XAxis
-                        dataKey="dato"
-                        tick={{ fill: '#64748b', fontSize: 12 }}
-                        axisLine={false}
-                        tickLine={false}
-                      />
-                      <YAxis
-                        tick={{ fill: '#64748b', fontSize: 12 }}
-                        axisLine={false}
-                        tickLine={false}
-                        tickFormatter={(v: number) => `${v}M`}
-                      />
-                      <Tooltip
-                        contentStyle={{
-                          background: '#0f172a',
-                          border: '1px solid #1e293b',
-                          borderRadius: '12px',
-                          color: '#fff',
-                        }}
-                        formatter={
-                          ((value: number | string) => [
-                            `${value} mio. DKK`,
-                            da ? 'Pris' : 'Price',
-                          ]) as TooltipProps<ValueType, NameType>['formatter']
-                        }
-                      />
-                      <Area
-                        type="monotone"
-                        dataKey="pris"
-                        stroke="#3b82f6"
-                        strokeWidth={2}
-                        fill="url(#prisGradient)"
-                      />
-                    </AreaChart>
-                  </ResponsiveContainer>
+                  <EjendomPrisChart data={prisData} lang={lang} />
                 </div>
 
                 {/* Salgshistorik */}

@@ -73,24 +73,8 @@ import { buildDiagramGraph } from '@/app/components/diagrams/DiagramData';
 import type { DiagramPropertySummary } from '@/app/components/diagrams/DiagramData';
 import dynamic from 'next/dynamic';
 import VerifiedLinks from '@/app/components/VerifiedLinks';
-/** Recharts — dynamisk importeret for at undgå at inkludere i initial bundle */
-const ResponsiveContainer = dynamic(
-  () => import('recharts').then((m) => ({ default: m.ResponsiveContainer })),
-  { ssr: false }
-);
-const LineChart = dynamic(() => import('recharts').then((m) => ({ default: m.LineChart })), {
-  ssr: false,
-});
-const Line = dynamic(() => import('recharts').then((m) => ({ default: m.Line })), { ssr: false });
-const XAxis = dynamic(() => import('recharts').then((m) => ({ default: m.XAxis })), { ssr: false });
-const YAxis = dynamic(() => import('recharts').then((m) => ({ default: m.YAxis })), { ssr: false });
-const CartesianGrid = dynamic(
-  () => import('recharts').then((m) => ({ default: m.CartesianGrid })),
-  { ssr: false }
-);
-const Tooltip = dynamic(() => import('recharts').then((m) => ({ default: m.Tooltip })), {
-  ssr: false,
-});
+/** Recharts — single dynamic import keeps recharts in one chunk */
+const RegnskabChart = dynamic(() => import('./RegnskabChart'), { ssr: false });
 
 /** Lazy-loaded diagram variants */
 const DiagramForce = dynamic(() => import('@/app/components/diagrams/DiagramForce'), {
@@ -1152,8 +1136,14 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
         </div>
         {/* Loading indicator */}
         <div className="flex items-center gap-2 py-1">
-          <Loader2 size={14} className="text-blue-400 flex-shrink-0" style={{ animation: 'spin 0.8s linear infinite' }} />
-          <span className="text-slate-400 text-sm" style={{ animation: 'none' }}>{c.loading}</span>
+          <Loader2
+            size={14}
+            className="text-blue-400 flex-shrink-0"
+            style={{ animation: 'spin 0.8s linear infinite' }}
+          />
+          <span className="text-slate-400 text-sm" style={{ animation: 'none' }}>
+            {c.loading}
+          </span>
         </div>
         {/* Tabs skeleton */}
         <div className="flex gap-4 border-b border-slate-700/30 pb-2">
@@ -6228,55 +6218,13 @@ function RegnskabstalTable({ years, lang, regnskaber = [] }: RegnskabstalTablePr
           </div>
           {/* SVG chart — Recharts */}
           <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                <XAxis
-                  dataKey="aar"
-                  tick={{ fill: '#94a3b8', fontSize: 11 }}
-                  axisLine={{ stroke: '#475569' }}
-                  tickLine={false}
-                />
-                <YAxis
-                  tick={{ fill: '#94a3b8', fontSize: 11 }}
-                  axisLine={{ stroke: '#475569' }}
-                  tickLine={false}
-                  tickFormatter={fmtShort}
-                  width={55}
-                />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: '#1e293b',
-                    border: '1px solid #334155',
-                    borderRadius: '8px',
-                    fontSize: '12px',
-                  }}
-                  labelStyle={{ color: '#94a3b8' }}
-                  formatter={(value: unknown, name: unknown) => {
-                    const numVal = typeof value === 'number' ? value : 0;
-                    const nameStr = String(name ?? '');
-                    const row = alleRows.find((r) => r.id === nameStr);
-                    const label = row?.label ?? nameStr;
-                    const formatted = row?.isPercent
-                      ? `${numVal}%`
-                      : (numVal?.toLocaleString('da-DK') ?? '—');
-                    return [formatted, label] as [string, string];
-                  }}
-                />
-                {Array.from(chartRows).map((id, idx) => (
-                  <Line
-                    key={id}
-                    type="monotone"
-                    dataKey={id}
-                    stroke={CHART_COLORS[idx % CHART_COLORS.length]}
-                    strokeWidth={2}
-                    dot={{ r: 4, fill: CHART_COLORS[idx % CHART_COLORS.length] }}
-                    activeDot={{ r: 6 }}
-                    connectNulls
-                  />
-                ))}
-              </LineChart>
-            </ResponsiveContainer>
+            <RegnskabChart
+              chartData={chartData}
+              chartRows={chartRows}
+              alleRows={alleRows}
+              fmtShort={fmtShort}
+              colors={CHART_COLORS}
+            />
           </div>
         </div>
       )}

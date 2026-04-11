@@ -35,7 +35,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 import { checkRateLimit, braveRateLimit } from '@/app/lib/rateLimit';
 import { logger } from '@/app/lib/logger';
-import { resolveTenantId } from '@/lib/api/auth';
+import { resolveUserId } from '@/lib/api/auth';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -742,8 +742,11 @@ function parseArticleResponse(
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const limited = await checkRateLimit(request, braveRateLimit);
   if (limited) return limited;
-  const auth = await resolveTenantId();
-  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  // Article-search routes do not access tenant-scoped data (they call external APIs
+  // and use service-role Supabase for ai_settings/search_cache). User auth is
+  // sufficient here — consistent with /api/ai/chat which also uses resolveUserId().
+  const userId = await resolveUserId();
+  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const apiKey = process.env.BIZZASSIST_CLAUDE_KEY?.trim();
   if (!apiKey) {

@@ -30,6 +30,7 @@ import {
   Smartphone,
   Info,
 } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { createClient } from '@/lib/supabase/client';
 import { logger } from '@/app/lib/logger';
@@ -44,11 +45,9 @@ type MfaState = 'loading' | 'idle' | 'enrolling' | 'enrolled';
 /** Data returned by supabase.auth.mfa.enroll for a TOTP factor */
 interface EnrollData {
   factorId: string;
-  /** SVG string of the QR code */
-  qrCode: string;
   /** Base-32 secret for manual entry into authenticator apps */
   secret: string;
-  /** Full otpauth:// URI */
+  /** Full otpauth:// URI — used to render the QR code without dangerouslySetInnerHTML */
   uri: string;
 }
 
@@ -213,7 +212,6 @@ export default function SecuritySettingsPageClient() {
       }
       setEnrollData({
         factorId: data.id,
-        qrCode: data.totp.qr_code,
         secret: data.totp.secret,
         uri: data.totp.uri,
       });
@@ -422,13 +420,11 @@ export default function SecuritySettingsPageClient() {
               </div>
             </div>
 
-            {/* QR code — SVG from Supabase enroll response */}
+            {/* QR code — rendered from otpauth:// URI via qrcode.react, no raw HTML injection */}
             <div className="flex justify-center">
-              <div
-                className="bg-white p-3 rounded-xl inline-block"
-                /* SVG QR code returned by Supabase — no external scripts, purely geometric paths */
-                dangerouslySetInnerHTML={{ __html: enrollData.qrCode }}
-              />
+              <div className="bg-white p-3 rounded-xl inline-block">
+                <QRCodeSVG value={enrollData.uri} size={176} />
+              </div>
             </div>
 
             {/* Manual secret */}

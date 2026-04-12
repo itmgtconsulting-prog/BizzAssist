@@ -903,11 +903,11 @@ ${outputInstructions[type]}
  * @returns SSE stream or error NextResponse
  */
 export async function POST(request: NextRequest): Promise<Response> {
-  // Feature gate: AI analysis is only available when explicitly enabled via env var
-  if (process.env.NEXT_PUBLIC_AI_ENABLED !== 'true') {
+  // BIZZ-236: AI access gated by API key availability (not env flag)
+  if (!process.env.BIZZASSIST_CLAUDE_KEY) {
     return NextResponse.json(
-      { error: 'AI-analyse er ikke aktiveret i dette miljø' },
-      { status: 403 }
+      { error: 'AI-analyse er ikke konfigureret i dette miljø' },
+      { status: 503 }
     );
   }
 

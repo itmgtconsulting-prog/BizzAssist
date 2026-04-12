@@ -13,7 +13,7 @@
  * @module components/RecentEntityTagBar
  */
 
-import { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { Building2, Briefcase, User, X } from 'lucide-react';
 
@@ -110,7 +110,8 @@ interface RecentEntityTagBarProps {
  * @param currentPath - Aktuel URL-sti — undgår at vise tag for siden man er på
  * @param variant     - 'inline' | 'bar' (default: 'inline')
  */
-export default function RecentEntityTagBar({
+/** BIZZ-211: memoized to prevent re-renders from dashboard layout state changes */
+const RecentEntityTagBar = React.memo(function RecentEntityTagBar({
   currentPath,
   variant = 'inline',
 }: RecentEntityTagBarProps) {
@@ -184,4 +185,6 @@ export default function RecentEntityTagBar({
 
   // inline — bare tags, ingen ydre wrapper styling
   return tagList;
-}
+});
+
+export default RecentEntityTagBar;

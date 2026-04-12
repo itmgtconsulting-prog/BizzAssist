@@ -174,6 +174,11 @@ export default function OnboardingModal() {
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
     const trap = (e: KeyboardEvent) => {
+      // BIZZ-212: Escape key closes the modal (keyboard equivalent of clicking backdrop)
+      if (e.key === 'Escape') {
+        complete();
+        return;
+      }
       if (e.key !== 'Tab') return;
       if (e.shiftKey) {
         if (document.activeElement === first) {

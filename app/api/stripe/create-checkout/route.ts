@@ -16,12 +16,19 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import type Stripe from 'stripe';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { stripe, getStripePriceId } from '@/app/lib/stripe';
 import { resolvePlan, type PlanId } from '@/app/lib/subscriptions';
+import { parseBody } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
+
+/** BIZZ-210: Zod schema for checkout request body */
+const checkoutSchema = z.object({
+  planId: z.enum(['demo', 'basis', 'professionel', 'enterprise']),
+});
 
 /**
  * POST /api/stripe/create-checkout
@@ -45,13 +52,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // ── 2. Parse and validate plan ──
-    const body = await req.json();
-    const planId = body.planId as PlanId;
-
-    if (!planId) {
-      return NextResponse.json({ error: 'Invalid plan ID' }, { status: 400 });
-    }
+    // ── 2. Parse and validate plan (BIZZ-210: Zod schema validation) ──
+    const parsed = await parseBody(req, checkoutSchema);
+    if (!parsed.success) return parsed.response;
+    const planId: PlanId = parsed.data.planId;
 
     const admin = createAdminClient();
 

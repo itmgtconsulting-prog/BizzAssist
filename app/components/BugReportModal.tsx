@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   X,
   Bug,
@@ -116,7 +116,13 @@ const text = {
  * @param lang - UI language ('da' | 'en'), defaults to 'da'
  * @param currentPage - Optional URL path override for the report context
  */
-export default function BugReportModal({ open, onClose, lang = 'da', currentPage }: Props) {
+/** BIZZ-211: memoized to prevent re-renders when parent FeedbackButton state changes */
+const BugReportModal = React.memo(function BugReportModal({
+  open,
+  onClose,
+  lang = 'da',
+  currentPage,
+}: Props) {
   const t = text[lang];
   const [type, setType] = useState<'bug' | 'feedback' | 'feature'>('bug');
   const [title, setTitle] = useState('');
@@ -151,6 +157,11 @@ export default function BugReportModal({ open, onClose, lang = 'da', currentPage
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
     const trap = (e: KeyboardEvent) => {
+      // BIZZ-212: Escape key closes the modal (keyboard equivalent of clicking backdrop)
+      if (e.key === 'Escape') {
+        handleClose();
+        return;
+      }
       if (e.key !== 'Tab') return;
       if (e.shiftKey) {
         if (document.activeElement === first) {
@@ -167,6 +178,7 @@ export default function BugReportModal({ open, onClose, lang = 'da', currentPage
     document.addEventListener('keydown', trap);
     first?.focus();
     return () => document.removeEventListener('keydown', trap);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   /**
@@ -550,4 +562,6 @@ export default function BugReportModal({ open, onClose, lang = 'da', currentPage
       </div>
     </div>
   );
-}
+});
+
+export default BugReportModal;

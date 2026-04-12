@@ -49,14 +49,14 @@ export const metadata: Metadata = {
     type: 'website',
     siteName: 'BizzAssist',
     locale: 'da_DK',
-    // TODO: Erstat /icons/og-image.png med en rigtig 1200×630 PNG før launch
+    // TODO(pre-launch): Erstat /icons/og-image.png med en rigtig 1200×630 PNG før launch
     images: [{ url: '/icons/og-image.png', width: 1200, height: 630, alt: 'BizzAssist' }],
   },
   twitter: {
     card: 'summary_large_image',
     title: 'BizzAssist',
     description: 'Dansk erhvervs- og ejendomsintelligens',
-    // TODO: Erstat /icons/og-image.png med en rigtig 1200×630 PNG før launch
+    // TODO(pre-launch): Erstat /icons/og-image.png med en rigtig 1200×630 PNG før launch
     images: ['/icons/og-image.png'],
   },
   // Bloker alle sider fra indeksering på test/preview-miljøer

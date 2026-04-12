@@ -15,6 +15,7 @@
 
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import JsonLdScript from '@/app/components/JsonLd';
 import {
   MapPin,
   Home,
@@ -623,16 +624,9 @@ function JsonLd({
 
   return (
     <>
-      {/* BIZZ-219: dangerouslySetInnerHTML is safe — __html is JSON.stringify() of
-          a server-side schema object. No user input or external strings interpolated. */}
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(realEstateSchema) }}
-      />
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbSchema) }}
-      />
+      {/* BIZZ-219: JSON-LD structured data via safe helper component */}
+      <JsonLdScript data={realEstateSchema} />
+      <JsonLdScript data={breadcrumbSchema} />
     </>
   );
 }

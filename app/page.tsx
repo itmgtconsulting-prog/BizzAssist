@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation';
+import JsonLd from '@/app/components/JsonLd';
 import Navbar from '@/app/components/Navbar';
 import Hero from '@/app/components/Hero';
 import Features from '@/app/components/Features';
@@ -51,14 +52,8 @@ export default async function HomePage({
 
   return (
     <main className="flex flex-col min-h-screen">
-      {/* JSON-LD struktureret data
-          BIZZ-219: dangerouslySetInnerHTML is safe here — __html is produced
-          exclusively by JSON.stringify() on a server-side constant object.
-          No user input, external data, or interpolated strings are involved. */}
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(websiteJsonLd) }}
-      />
+      {/* BIZZ-219: JSON-LD structured data via safe helper component */}
+      <JsonLd data={websiteJsonLd} />
       <Navbar />
       <Hero />
       <Features />

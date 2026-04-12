@@ -109,6 +109,9 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
   const { pathname, protocol } = req.nextUrl;
   const ip = getClientIp(req);
 
+  // ── BIZZ-209: Generate per-request nonce for CSP ──────────────────────────
+  const nonce = Buffer.from(crypto.randomUUID()).toString('base64');
+
   // ── 0. Global rate limit (Upstash sliding window — BIZZ-178) ─────────────
   // Runs before auth to shed abusive traffic without spending Supabase quota.
   // userId is null here — authenticated tier is applied per-route instead.
@@ -223,6 +226,36 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
 
   // ── 6. Add request ID for Sentry audit trail correlation ──────────────────
   supabaseResponse.headers.set('x-request-id', crypto.randomUUID());
+
+  // ── 6b. BIZZ-209: Set nonce-based CSP header ─────────────────────────────
+  // Mapbox GL JS needs unsafe-inline (dynamic script injection) and
+  // unsafe-eval (WebGL shader compilation) — scoped to map routes only.
+  const isMapRoute = pathname === '/dashboard/kort' || pathname === '/kort';
+  const isDev = process.env.NODE_ENV === 'development';
+
+  const scriptSrc = isMapRoute
+    ? "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://browser.sentry-cdn.com"
+    : `script-src 'self' 'nonce-${nonce}'${isDev ? " 'unsafe-eval'" : ''} https://browser.sentry-cdn.com`;
+
+  const csp = [
+    "default-src 'self'",
+    scriptSrc,
+    // style-src keeps unsafe-inline — Tailwind CSS, Mapbox, and framework
+    // style injection all require it. Nonce-based style CSP is not viable.
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob: https:",
+    "font-src 'self' https://fonts.gstatic.com",
+    "connect-src 'self' https://*.supabase.co https://*.supabase.io wss://*.supabase.co https://*.sentry.io https://o4511077193416704.ingest.de.sentry.io wss: https://api.dataforsyningen.dk https://*.mapbox.com https://events.mapbox.com",
+    "worker-src blob: 'self'",
+    "child-src blob: 'self'",
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+  ].join('; ');
+
+  supabaseResponse.headers.set('Content-Security-Policy', csp);
+  // Expose nonce to server components — they can read it via headers().get('x-nonce')
+  supabaseResponse.headers.set('x-nonce', nonce);
 
   // ── 7. Rate-limit info headers on API routes ───────────────────────────────
   // Informational only — actual enforcement is handled in step 2 above.

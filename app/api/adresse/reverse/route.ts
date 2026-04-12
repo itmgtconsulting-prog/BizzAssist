@@ -9,7 +9,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantId } from '@/lib/api/auth';
 
 // const DAR_ENDPOINT = 'https://graphql.datafordeler.dk/DAR/v1';
-// TODO: DAR GraphQL doesn't support spatial queries yet — enable when it does.
+// TODO(BIZZ-92): DAR GraphQL doesn't support spatial queries yet — enable when it does (before July 2026).
 
 /**
  * Reverse geocoder — finder nærmeste adresse for koordinat.

@@ -24,7 +24,7 @@ import { createClient } from '@supabase/supabase-js';
 import { checkRateLimit, braveRateLimit } from '@/app/lib/rateLimit';
 import { withBraveCache } from '@/app/lib/searchCache';
 import { logger } from '@/app/lib/logger';
-import { resolveTenantId } from '@/lib/api/auth';
+import { resolveUserId } from '@/lib/api/auth';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -363,8 +363,10 @@ function parseSocialsResponse(
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const limited = await checkRateLimit(request, braveRateLimit);
   if (limited) return limited;
-  const auth = await resolveTenantId();
-  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  // Article-search does not access tenant-scoped data — user auth is sufficient.
+  // Consistent with /api/ai/chat which also uses resolveUserId().
+  const userId = await resolveUserId();
+  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const apiKey = process.env.BIZZASSIST_CLAUDE_KEY?.trim();
   if (!apiKey)

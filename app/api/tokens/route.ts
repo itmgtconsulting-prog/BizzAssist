@@ -22,9 +22,11 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
+import { parseBody } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -35,8 +37,12 @@ const MAX_TOKENS_PER_TENANT = 20;
 /** Valid scope values for API token permissions. */
 const VALID_SCOPES = ['read:properties', 'read:companies', 'read:people', 'read:ai'] as const;
 
-/** Union type of all valid token scope strings. */
-type TokenScope = (typeof VALID_SCOPES)[number];
+/** BIZZ-210: Zod schema for token creation body */
+const createTokenSchema = z.object({
+  name: z.string().trim().min(1, 'name er påkrævet').max(100, 'name må maks være 100 tegn'),
+  scopes: z.array(z.enum(VALID_SCOPES)).min(1, 'Mindst ét scope er påkrævet'),
+  expiresInDays: z.number().int().min(1).max(3650).optional(),
+});
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -55,13 +61,6 @@ export interface ApiTokenRecord {
   expires_at: string | null;
   revoked: boolean;
   created_at: string;
-}
-
-/** Expected POST request body shape. */
-interface CreateTokenBody {
-  name: string;
-  scopes: string[];
-  expiresInDays?: number;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -196,52 +195,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Ingen tenant-tilknytning fundet' }, { status: 403 });
   }
 
-  // ── Parse body ──
-  let body: CreateTokenBody;
-  try {
-    body = (await request.json()) as CreateTokenBody;
-  } catch {
-    return NextResponse.json({ error: 'Ugyldig JSON' }, { status: 400 });
-  }
+  // ── Parse and validate body (BIZZ-210: Zod schema validation) ──
+  const parsed = await parseBody(request, createTokenSchema);
+  if (!parsed.success) return parsed.response;
+  const { name, scopes, expiresInDays } = parsed.data;
 
-  const { name, scopes, expiresInDays } = body;
-
-  // ── Validate name ──
-  if (typeof name !== 'string' || name.trim().length === 0) {
-    return NextResponse.json({ error: 'name er påkrævet' }, { status: 400 });
-  }
-  if (name.trim().length > 100) {
-    return NextResponse.json({ error: 'name må maks være 100 tegn' }, { status: 400 });
-  }
-
-  // ── Validate scopes ──
-  if (!Array.isArray(scopes) || scopes.length === 0) {
-    return NextResponse.json({ error: 'Mindst ét scope er påkrævet' }, { status: 400 });
-  }
-  const invalidScopes = scopes.filter((s) => !VALID_SCOPES.includes(s as TokenScope));
-  if (invalidScopes.length > 0) {
-    return NextResponse.json(
-      {
-        error: `Ugyldige scopes: ${invalidScopes.join(', ')}. Tilladte: ${VALID_SCOPES.join(', ')}`,
-      },
-      { status: 400 }
-    );
-  }
-
-  // ── Validate expiresInDays ──
+  // ── Compute expiry date ──
   let expiresAt: string | null = null;
   if (expiresInDays !== undefined) {
-    if (
-      typeof expiresInDays !== 'number' ||
-      !Number.isInteger(expiresInDays) ||
-      expiresInDays < 1 ||
-      expiresInDays > 3650
-    ) {
-      return NextResponse.json(
-        { error: 'expiresInDays skal være et heltal mellem 1 og 3650' },
-        { status: 400 }
-      );
-    }
     const expiry = new Date();
     expiry.setDate(expiry.getDate() + expiresInDays);
     expiresAt = expiry.toISOString();

@@ -1,8 +1,8 @@
 /**
  * POST /api/ai/article-search/articles
  *
- * Split-endpoint til progressiv loading — søger KUN nyheder/artikler om en dansk virksomhed.
- * Del af parallelt søge-flow: kald dette endpoint sideløbende med /socials.
+ * Split-endpoint til progressiv loading — søger KUN nyheder/artikler om en dansk virksomhed
+ * eller person. Del af parallelt søge-flow: kald dette endpoint sideløbende med /socials.
  *
  * Strategi:
  * 1. Serper.dev (Google) — 3 parallelle queries med forskellig tidshorisont og fokus.
@@ -14,7 +14,10 @@
  * 2. Claude — rangerer og filtrerer resultater, prioriterer foretrukne mediekilder
  * 3. Supabase — henter ekskluderede domæner og primære mediedomæner (admin-konfigureret)
  *
- * @param body.companyName  - Virksomhedens navn
+ * @param body.entityType   - 'company' (standard) eller 'person'
+ * @param body.companyName  - Virksomhedens navn (entityType=company)
+ * @param body.name         - Personens fulde navn (entityType=person)
+ * @param body.company      - Tilknyttet virksomhedsnavn for personen (entityType=person, valgfrit)
  * @param body.cvr          - CVR-nummer (valgfrit)
  * @param body.industry     - Branchebeskrivelse (valgfrit)
  * @param body.employees    - Antal ansatte (valgfrit)
@@ -99,9 +102,15 @@ interface ArticleResult {
   description?: string;
 }
 
-/** Input-format */
+/** Input-format for virksomhedssøgning */
 interface CompanyInput {
-  companyName: string;
+  /** Angiver om søgningen er for en virksomhed eller person. Standard: 'company'. */
+  entityType?: 'company' | 'person';
+  companyName?: string;
+  /** Personens fulde navn — bruges når entityType='person'. */
+  name?: string;
+  /** Tilknyttet virksomhedsnavn for personen — bruges når entityType='person'. */
+  company?: string;
   cvr?: string;
   industry?: string;
   employees?: number | string;
@@ -388,6 +397,52 @@ async function searchSerperArticles(
 }
 
 /**
+ * Søger artikler om en person via Serper.dev med parallelle queries.
+ *
+ * Strategi:
+ * - Query 1: personnavnet i anførselstegn, seneste år (qdr:y, num=20)
+ * - Query 2: personnavnet i anførselstegn, ingen tidsfilter (num=20)
+ * - Query 3: personnavnet + tilknyttet virksomhed (num=20)
+ * - Query 4: /news endpoint med personnavnet (num=20)
+ *
+ * @param apiKey         - Serper.dev API-nøgle
+ * @param personName     - Personens fulde navn
+ * @param company        - Tilknyttet virksomhedsnavn (valgfrit)
+ * @param primaryDomains - Foretrukne mediedomæner til site-filter query
+ */
+async function searchSerperPersonArticles(
+  apiKey: string,
+  personName: string,
+  company: string | undefined,
+  primaryDomains: string[]
+): Promise<ArticleResult[]> {
+  const qPerson = `"${personName}"`;
+  const qPersonCompany = company ? `"${personName}" "${company}"` : qPerson;
+
+  // Byg site:-filter query fra foretrukne mediedomæner
+  const siteFilter = primaryDomains.map((d) => `site:${d}`).join(' OR ');
+  const qMedia = `"${personName}" (${siteFilter})`;
+
+  try {
+    const [yearly, allTime, withCompany, newsResults] = await Promise.all([
+      searchSerper(apiKey, qPerson, 'qdr:y', 20).catch(() => [] as ArticleResult[]),
+      searchSerper(apiKey, qPerson, undefined, 20).catch(() => [] as ArticleResult[]),
+      searchSerper(apiKey, qPersonCompany, undefined, 20).catch(() => [] as ArticleResult[]),
+      searchSerperNews(apiKey, personName, 20).catch(() => [] as ArticleResult[]),
+    ]);
+
+    // Person-artikler prioriteres over firma-artikler; media-filter og nyheder øverst
+    const mediaOnly = await searchSerper(apiKey, qMedia, undefined, 20).catch(
+      () => [] as ArticleResult[]
+    );
+
+    return dedupArticles([...mediaOnly, ...newsResults, ...yearly, ...allTime, ...withCompany]);
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Fjerner duplikater fra et array af artikler baseret på URL.
  *
  * @param articles - Array af artikler med potentielle duplikater
@@ -432,6 +487,55 @@ AFVIS et resultat hvis:
 - Det handler om en ANDEN virksomhed med samme eller lignende navn
 - Det er et jobopslag (stillingsopslag, karriere, ledige stillinger)
 - Det er en generisk brancheportal der bare lister virksomheden
+- Det er åbenlyst spam eller irrelevant indhold
+- Det stammer fra et af de ekskluderede domæner
+
+Returner KUN validt JSON uden tekst før/efter:
+
+{
+  "articles": [
+    {
+      "title": "Artiklens titel",
+      "url": "https://...",
+      "source": "Kildename",
+      "date": "15. jan. 2025",
+      "description": "Max 100 tegn beskrivelse"
+    }
+  ]
+}
+
+- Brug KUN de givne URLs fra søgeresultaterne — opfind IKKE nye URLs
+- Returner op til 20 artikler, sorteret med foretrukne medier FØRST, derefter nyeste`;
+}
+
+/**
+ * Bygger system prompt til rangering af artikler om en person.
+ * Prioriterer artikler der direkte omtaler personen; virksomhedsartikler er sekundære.
+ *
+ * @param primaryDomains - Foretrukne mediedomæner fra admin-konfiguration
+ * @returns Komplet system prompt til Claude
+ */
+function buildPersonArticlesSystemPrompt(primaryDomains: string[]): string {
+  const preferredList = primaryDomains.join(', ');
+  return `Du er en dansk medieekspert. Du rangerer og filtrerer nyheder/artikler om en dansk PERSON.
+
+Din opgave:
+1. Vurdér om hvert hit handler om DENNE SPECIFIKKE PERSON (ikke en anden med samme navn)
+2. Prioritér artikler der handler om PERSONEN DIREKTE — artikler om virksomheder personen er tilknyttet er sekundært relevante
+3. Prioritér artikler fra FORETRUKNE MEDIER — placer dem øverst uanset dato
+4. Sortér derefter øvrige artikler efter dato — NYESTE artikler FØRST
+5. Forbedre snippet-beskrivelser til max 100 tegn dansk tekst
+
+FORETRUKNE MEDIEDOMÆNER — placer disse ØVERST i resultatlisten:
+${preferredList}
+
+EKSKLUDEREDE DOMÆNER — inkludér ALDRIG:
+ownr.dk, estatistik.dk, profiler.dk, krak.dk, proff.dk, paqle.dk, erhvervplus.dk, lasso.dk, cvrapi.dk, find-virksomhed.dk, virksomhedskartoteket.dk, crunchbase.com, b2bhint.com, resights.dk
+
+AFVIS et resultat hvis:
+- Det handler om en ANDEN person med samme eller lignende navn
+- Det er en generisk telefonbog/adressebog/CVR-katalog side
+- Det er et jobopslag (stillingsopslag, karriere, ledige stillinger)
 - Det er åbenlyst spam eller irrelevant indhold
 - Det stammer fra et af de ekskluderede domæner
 
@@ -558,7 +662,7 @@ function parseArticlesResponse(text: string): ArticleResult[] {
 
 /**
  * POST /api/ai/article-search/articles
- * Søger og rangerer nyheder/artikler om en virksomhed via Serper.dev + Claude.
+ * Søger og rangerer nyheder/artikler om en virksomhed eller person via Serper.dev + Claude.
  *
  * Understøtter progressiv to-fase loading via ?phase query param:
  * - ?phase=raw  — returnerer Serper-resultater direkte uden Claude (~2-3s). Ingen tokens brugt.
@@ -566,6 +670,9 @@ function parseArticlesResponse(text: string): ArticleResult[] {
  *
  * Frontenden kalder begge faser parallelt: raw-fasen viser foreløbige resultater straks,
  * ai-fasen erstatter dem med kuraterede resultater når Claude er færdig.
+ *
+ * Understøtter entityType='person' til personsøgning: brug `name` (personens navn) og
+ * `company` (tilknyttet virksomhedsnavn, valgfrit) i stedet for `companyName`.
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const limited = await checkRateLimit(request, braveRateLimit);
@@ -594,9 +701,27 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Ugyldig JSON' }, { status: 400 });
   }
 
-  const { companyName, cvr, industry, employees, city, keyPersons } = body;
-  if (!companyName?.trim())
-    return NextResponse.json({ error: 'companyName er påkrævet' }, { status: 400 });
+  const {
+    entityType = 'company',
+    companyName,
+    name,
+    company,
+    cvr,
+    industry,
+    employees,
+    city,
+    keyPersons,
+  } = body;
+
+  // ── Validér input baseret på entityType ──
+  const isPerson = entityType === 'person';
+  const searchLabel = isPerson ? (name?.trim() ?? '') : (companyName?.trim() ?? '');
+  if (!searchLabel) {
+    return NextResponse.json(
+      { error: isPerson ? 'name er påkrævet for entityType=person' : 'companyName er påkrævet' },
+      { status: 400 }
+    );
+  }
 
   // ── Serper + Supabase parallelt ──
   let rawResults: ArticleResult[];
@@ -619,14 +744,26 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         phase !== 'raw'
           ? fetchArticleLimits()
           : Promise.resolve({ maxArticles: DEFAULT_MAX_ARTICLES, maxTokens: DEFAULT_MAX_TOKENS }),
-        searchSerperArticles(serperApiKey, companyName, DEFAULT_PRIMARY_MEDIA_DOMAINS).catch(
-          (err: unknown) => {
-            logger.log(
-              `[article-search/articles] Serper fejl: ${err instanceof Error ? err.message : String(err)}`
-            );
-            return [] as ArticleResult[];
-          }
-        ),
+        isPerson
+          ? searchSerperPersonArticles(
+              serperApiKey,
+              searchLabel,
+              company,
+              DEFAULT_PRIMARY_MEDIA_DOMAINS
+            ).catch((err: unknown) => {
+              logger.log(
+                `[article-search/articles] Serper person fejl: ${err instanceof Error ? err.message : String(err)}`
+              );
+              return [] as ArticleResult[];
+            })
+          : searchSerperArticles(serperApiKey, searchLabel, DEFAULT_PRIMARY_MEDIA_DOMAINS).catch(
+              (err: unknown) => {
+                logger.log(
+                  `[article-search/articles] Serper fejl: ${err instanceof Error ? err.message : String(err)}`
+                );
+                return [] as ArticleResult[];
+              }
+            ),
       ]);
 
     dbExcludedDomains = resolvedDbDomains;
@@ -635,7 +772,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     maxTokens = resolvedLimits.maxTokens;
 
     logger.log(
-      `[article-search/articles] "${companyName}" [${phase}]: Serper=${serperResults.length} rå resultater`
+      `[article-search/articles] "${searchLabel}" [${entityType}][${phase}]: Serper=${serperResults.length} rå resultater`
     );
 
     rawResults = serperResults;
@@ -658,7 +795,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   logger.log(
-    `[article-search/articles] "${companyName}" [${phase}]: ${rawResults.length} resultater efter dedup+filter`
+    `[article-search/articles] "${searchLabel}" [${entityType}][${phase}]: ${rawResults.length} resultater efter dedup+filter`
   );
 
   // ── Raw-fase: returnér Serper-resultater direkte uden Claude ──
@@ -677,17 +814,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   // Cap results to admin-configured max (default 40) to stay within token budget.
   const claudeResults = rawResults.slice(0, maxArticles);
 
-  const companyContext = [
-    `Virksomhedsnavn: ${companyName}`,
-    cvr ? `CVR-nummer: ${cvr}` : null,
-    industry ? `Branche: ${industry}` : null,
-    employees ? `Ansatte: ${employees}` : null,
-    city ? `By: ${city}` : null,
-    keyPersons?.length ? `Nøglepersoner: ${keyPersons.slice(0, 6).join(', ')}` : null,
-  ]
-    .filter(Boolean)
-    .join('\n');
-
   const resultSummary = claudeResults
     .map(
       (r, i) =>
@@ -695,7 +821,36 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     )
     .join('\n\n');
 
-  const userMessage = `Virksomhed:\n${companyContext}\n\nSøgeresultater (${claudeResults.length} hits):\n\n${resultSummary}\n\nRangér og filtrer disse resultater — returner kun artikler der handler om DENNE virksomhed.`;
+  // Byg kontekst og user-message afhængigt af entityType
+  let userMessage: string;
+  let systemPrompt: string;
+
+  if (isPerson) {
+    const personContext = [
+      `Personens fulde navn: ${searchLabel}`,
+      company ? `Tilknyttet virksomhed: ${company}` : null,
+      city ? `By: ${city}` : null,
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    userMessage = `Person:\n${personContext}\n\nSøgeresultater (${claudeResults.length} hits):\n\n${resultSummary}\n\nRangér og filtrer disse resultater — returner kun artikler der handler om DENNE person.`;
+    systemPrompt = buildPersonArticlesSystemPrompt(primaryDomains);
+  } else {
+    const companyContext = [
+      `Virksomhedsnavn: ${searchLabel}`,
+      cvr ? `CVR-nummer: ${cvr}` : null,
+      industry ? `Branche: ${industry}` : null,
+      employees ? `Ansatte: ${employees}` : null,
+      city ? `By: ${city}` : null,
+      keyPersons?.length ? `Nøglepersoner: ${keyPersons.slice(0, 6).join(', ')}` : null,
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    userMessage = `Virksomhed:\n${companyContext}\n\nSøgeresultater (${claudeResults.length} hits):\n\n${resultSummary}\n\nRangér og filtrer disse resultater — returner kun artikler der handler om DENNE virksomhed.`;
+    systemPrompt = buildArticlesSystemPrompt(primaryDomains);
+  }
 
   // ── Kald Claude ──
   const client = new Anthropic({ apiKey: apiKey! });
@@ -703,7 +858,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const response = await client.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: maxTokens,
-      system: buildArticlesSystemPrompt(primaryDomains),
+      system: systemPrompt,
       messages: [{ role: 'user', content: userMessage }],
     });
 
@@ -719,7 +874,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const articles = sortByPrimaryDomains(claudeArticles, primaryDomains);
 
     logger.log(
-      `[article-search/articles] "${companyName}" [ai]: ${articles.length} artikler, tokens=${totalTokens}`
+      `[article-search/articles] "${searchLabel}" [${entityType}][ai]: ${articles.length} artikler, tokens=${totalTokens}`
     );
 
     return NextResponse.json({

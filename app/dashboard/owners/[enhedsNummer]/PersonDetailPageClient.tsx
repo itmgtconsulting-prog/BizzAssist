@@ -2195,6 +2195,31 @@ function ContactList({ contacts }: { contacts: ContactResult[] }) {
 // ─── PersonArticleSearchPanel ─────────────────────────────────────────────────
 
 /**
+ * Konverterer en dato-streng (ISO, relativ "X days ago", dansk tekst) til sorterbar timestamp.
+ * Returnerer 0 hvis datoen ikke kan parses — disse vises sidst.
+ *
+ * @param dateStr - Datostreng fra API-svar
+ * @returns Unix timestamp i millisekunder
+ */
+function parseDateForClientSort(dateStr: string | undefined): number {
+  if (!dateStr) return 0;
+  const d = new Date(dateStr);
+  if (!isNaN(d.getTime())) return d.getTime();
+  const agoMatch = dateStr.match(/(\d+)\s+(hour|day|week|month|year|time|dag|uge|m.ned|.r)/i);
+  if (agoMatch) {
+    const n = parseInt(agoMatch[1], 10);
+    const unit = agoMatch[2].toLowerCase();
+    const now = Date.now();
+    if (unit.startsWith('hour') || unit.startsWith('time')) return now - n * 3_600_000;
+    if (unit.startsWith('day') || unit.startsWith('dag')) return now - n * 86_400_000;
+    if (unit.startsWith('week') || unit.startsWith('uge')) return now - n * 7 * 86_400_000;
+    if (unit.startsWith('month') || unit.startsWith('m')) return now - n * 30 * 86_400_000;
+    if (unit.startsWith('year') || unit.startsWith('.r')) return now - n * 365 * 86_400_000;
+  }
+  return 0;
+}
+
+/**
  * Synkroniserer token-forbrug til Supabase i baggrunden (fire-and-forget).
  *
  * @param tokensUsed - Antal forbrugte tokens
@@ -2274,8 +2299,13 @@ function PersonArticleSearchPanel({
   const [socialsLoading, setSocialsLoading] = useState(false);
   const [articlesLoading, setArticlesLoading] = useState(false);
   const [contactsLoading, setContactsLoading] = useState(false);
-  /** Aktuel batch-status-label — vises mens artikler hentes i batches */
-  const [articlesBatchLabel, setArticlesBatchLabel] = useState<string | null>(null);
+  /**
+   * Fase for artikelsøgning:
+   * - 'idle'    — ikke søgt endnu
+   * - 'raw'     — Serper-resultater vist (foreløbige, Claude-verificering i gang)
+   * - 'curated' — Claude har returneret kurerede resultater
+   */
+  const [articlesPhase, setArticlesPhase] = useState<'idle' | 'raw' | 'curated'>('idle');
   const [error, setError] = useState<string | null>(null);
   const [tokenInfo, setTokenInfo] = useState<{ used: number; limit: number } | null>(null);
   const [tokensUsedThisSearch, setTokensUsedThisSearch] = useState(0);
@@ -2302,16 +2332,24 @@ function PersonArticleSearchPanel({
   }, [ctxSub]);
 
   /**
-   * Bygger liste af virksomheder personen er aktiv tilknyttet — sendes til API som søgekontekst.
+   * Bygger liste af virksomheder personen er aktiv tilknyttet — bruges som søgekontekst.
    * Inkluderer alle aktive roller (ikke kun ejerroller) da artikel-søgning profiterer af
    * alle offentlige tilknytninger (DIREKTØR, STIFTER, EJER osv.).
-   * Ingen begrænsning — alle virksomheder sendes og batches håndteres af API'et.
    */
   const ownedCompanies = useMemo(() => {
     return personData.virksomheder
       .filter((v) => v.aktiv && v.roller.some((r) => !r.til))
       .map((v) => ({ cvr: v.cvr, name: v.navn }));
   }, [personData.virksomheder]);
+
+  /**
+   * Personens primære tilknyttede virksomhed — sendes som `company` til artikel-API'et
+   * så Serper kan søge "{person}" + "{virksomhed}" for bedre præcision.
+   * Tager den første aktive virksomhed med en aktiv rolle.
+   */
+  const primaryCompanyName = useMemo(() => {
+    return ownedCompanies[0]?.name ?? undefined;
+  }, [ownedCompanies]);
 
   /** Finder personens primære by fra ejervirksomhedernes adresser */
   const city = useMemo(() => {
@@ -2323,7 +2361,9 @@ function PersonArticleSearchPanel({
 
   /**
    * Starter AI-søgning med 3 parallelle kald (socials, articles, contacts).
-   * Hvert kald opdaterer sin egen loading-state og viser resultater progressivt.
+   * Artikler bruger to-fase progressiv loading:
+   * - Fase 1 (?phase=raw, ~2-3s): Serper-resultater vises straks uden Claude.
+   * - Fase 2 (?phase=ai, ~10-30s): Claude rangerer/filtrerer — erstatter raw hvis der er resultater.
    */
   const handleSearch = useCallback(async () => {
     if (anyLoading) return;
@@ -2341,11 +2381,11 @@ function PersonArticleSearchPanel({
     setHasSearched(true);
     setError(null);
     setArticles([]);
+    setArticlesPhase('idle');
     setVisibleCount(5);
     setSocialsLoading(true);
     setArticlesLoading(true);
     setContactsLoading(true);
-    setArticlesBatchLabel(null);
     setTokensUsedThisSearch(0);
 
     const sharedPayload = {
@@ -2353,6 +2393,14 @@ function PersonArticleSearchPanel({
       companies: ownedCompanies,
       city,
     };
+
+    /** Payload til /api/ai/article-search/articles med entityType=person */
+    const articlesPayload = JSON.stringify({
+      entityType: 'person' as const,
+      name: personData.navn,
+      company: primaryCompanyName,
+      city,
+    });
 
     // ── Sociale medier (hurtigst ~2s) ──
     const socialsPromise = fetch('/api/ai/person-search/socials', {
@@ -2380,71 +2428,60 @@ function PersonArticleSearchPanel({
       .catch(() => 0)
       .finally(() => setSocialsLoading(false));
 
-    // ── Artikler — progressiv batching, ingen max-begrænsning på virksomheder ──
-    // Hvert batch dækker 5 virksomheder. Batch 0 inkluderer personens egne generiske søgninger.
-    // Frontend kalder endpoint gentagne gange til hasMore=false, deduplicerer på tværs af batches.
-    const articlesPromise = (async (): Promise<number> => {
-      const seenUrls = new Set<string>();
-      let batchNum = 0;
-      let totalArticlesTokens = 0;
+    // ── Artikler — progressiv to-fase loading ──
+    // Fase 1 (?phase=raw, ~2-3s): Serper-resultater vises straks uden Claude.
+    // Fase 2 (?phase=ai, ~10-30s): Claude rangerer/filtrerer — erstatter raw hvis der er resultater.
+    // Begge kald startes parallelt så ventetiden på fase 2 begynder straks.
 
-      try {
-        while (true) {
-          const BATCH_SIZE = 5;
-          const batchStart = batchNum * BATCH_SIZE;
-          const batchSlice = ownedCompanies.slice(batchStart, batchStart + BATCH_SIZE);
-
-          // Batch 0 kører altid (person-niveau søgning). Efterfølgende stopper ved tomme batches.
-          if (batchNum > 0 && batchSlice.length === 0) break;
-
-          if (batchSlice.length > 0) {
-            setArticlesBatchLabel(
-              lang === 'da'
-                ? `Søger artikler for ${batchSlice.map((c) => c.name).join(', ')}…`
-                : `Searching articles for ${batchSlice.map((c) => c.name).join(', ')}…`
-            );
-          } else {
-            setArticlesBatchLabel(
-              lang === 'da' ? 'Søger artikler om personen…' : 'Searching articles about person…'
-            );
-          }
-
-          const res = await fetch('/api/ai/person-search/articles', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...sharedPayload, batch: batchNum }),
-          });
-
-          const json = await res.json();
-          if (json.error) setError(json.error as string);
-
-          // Tilføj nye artikler — dedupliker på URL på tværs af batches
-          const newArticles: PersonAIArticleResult[] = (
-            (json.articles as PersonAIArticleResult[]) ?? []
-          ).filter((a) => {
-            if (seenUrls.has(a.url)) return false;
-            seenUrls.add(a.url);
-            return true;
-          });
-
-          if (newArticles.length > 0) {
-            setArticles((prev) => [...prev, ...newArticles]);
-          }
-
-          totalArticlesTokens += (json.tokensUsed as number) ?? 0;
-
-          if (!json.hasMore) break;
-          batchNum++;
+    const rawArticlesPromise = fetch('/api/ai/article-search/articles?phase=raw', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: articlesPayload,
+    })
+      .then(async (res) => {
+        const json = await res.json();
+        const rawArticles: PersonAIArticleResult[] = json.articles ?? [];
+        if (rawArticles.length > 0) {
+          // Sortér nyeste artikler øverst uanset API-rækkefølge
+          const sorted = [...rawArticles].sort(
+            (a, b) => parseDateForClientSort(b.date) - parseDateForClientSort(a.date)
+          );
+          setArticles(sorted);
+          setArticlesPhase('raw');
+          setVisibleCount(5);
         }
-      } catch {
-        // Søgefejl ignoreres — vi viser hvad vi har
-      } finally {
-        setArticlesLoading(false);
-        setArticlesBatchLabel(null);
-      }
+      })
+      .catch(() => {
+        // Stille fejl — AI-fasen fortsætter
+      });
 
-      return totalArticlesTokens;
-    })();
+    const aiArticlesPromise = fetch('/api/ai/article-search/articles?phase=ai', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: articlesPayload,
+    })
+      .then(async (res) => {
+        const json = await res.json();
+        if (json.error) setError(json.error as string);
+        const aiArticles: PersonAIArticleResult[] = json.articles ?? [];
+        if (aiArticles.length > 0) {
+          // Claude returnerede kuraterede resultater — erstat foreløbige
+          const sorted = [...aiArticles].sort(
+            (a, b) => parseDateForClientSort(b.date) - parseDateForClientSort(a.date)
+          );
+          setArticles(sorted);
+          setVisibleCount(5);
+        }
+        // Sæt altid fase til curated når AI-kaldet er færdigt (selv hvis 0 resultater)
+        setArticlesPhase('curated');
+        return (json.tokensUsed as number) ?? 0;
+      })
+      .catch(() => 0)
+      .finally(() => setArticlesLoading(false));
+
+    const articlesPromise = rawArticlesPromise
+      .then(() => aiArticlesPromise)
+      .then((tokens) => tokens);
 
     // ── Kontaktoplysninger (~3-5s) ──
     const contactsPromise = fetch('/api/ai/person-search/contacts', {
@@ -2481,8 +2518,8 @@ function PersonArticleSearchPanel({
     isAdmin,
     personData,
     ownedCompanies,
+    primaryCompanyName,
     city,
-    lang,
     addTokenUsage,
     onSocialsFound,
     onAlternativesFound,
@@ -2597,7 +2634,15 @@ function PersonArticleSearchPanel({
           {articlesLoading && (
             <div className="flex items-center gap-2 text-slate-400 text-xs">
               <Loader2 size={10} className="animate-spin text-purple-400 flex-shrink-0" />
-              <span>{articlesBatchLabel ?? (da ? 'Søger artikler…' : 'Searching articles…')}</span>
+              <span>
+                {articlesPhase === 'raw'
+                  ? da
+                    ? 'Bekræfter med AI…'
+                    : 'Verifying with AI…'
+                  : da
+                    ? 'Søger artikler…'
+                    : 'Searching articles…'}
+              </span>
             </div>
           )}
           {contactsLoading && (
@@ -2619,6 +2664,13 @@ function PersonArticleSearchPanel({
       )}
 
       {error && <p className="text-red-400 text-xs mb-2">{error}</p>}
+
+      {/* Foreløbige resultater-badge — vises mens AI-verificering kører */}
+      {articlesPhase === 'raw' && articles.length > 0 && (
+        <p className="text-[10px] text-amber-500/70 mb-1.5">
+          {da ? 'Foreløbige resultater — AI verificerer…' : 'Preliminary results — AI verifying…'}
+        </p>
+      )}
 
       {/* Artikler — fade-in når de ankommer */}
       {articlesLoading && articles.length === 0 ? null : articles.length === 0 &&
@@ -2659,11 +2711,12 @@ function PersonArticleSearchPanel({
               </div>
             </a>
           ))}
-          {articles.length > visibleCount && (
+          {visibleCount < articles.length && (
             <button
-              onClick={() => setVisibleCount((v) => v + 5)}
-              className="text-[10px] text-slate-500 hover:text-blue-400 transition-colors mt-1"
+              onClick={() => setVisibleCount((c) => Math.min(c + 5, articles.length))}
+              className="mt-1 flex items-center gap-1 text-[10px] text-slate-500 hover:text-blue-400 transition-colors"
             >
+              <ChevronDown size={10} />
               {da
                 ? `Vis flere (${articles.length - visibleCount} mere)`
                 : `Show more (${articles.length - visibleCount} more)`}

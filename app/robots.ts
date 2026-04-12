@@ -32,10 +32,12 @@ export default function robots(): MetadataRoute.Robots {
     };
   }
 
-  // Brug NEXT_PUBLIC_APP_URL som base — falder tilbage til den kanoniske produktions-URL
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://bizzassist.dk';
+  // Produktions-URL hardkodes for at undgå at NEXT_PUBLIC_APP_URL (som kan pege
+  // på test.bizzassist.dk) bruges i robots.txt på bizzassist.dk.
+  const baseUrl = 'https://bizzassist.dk';
 
-  // Production: Tillad offentlige SEO-sider, bloker alt andet
+  // Production: Tillad offentlige SEO-sider, bloker alt andet.
+  // Next.js paginerede sitemaps serveres på /sitemap/[id] — index er /sitemap/0.xml.
   return {
     rules: [
       {
@@ -44,6 +46,6 @@ export default function robots(): MetadataRoute.Robots {
         disallow: ['/dashboard/', '/api/', '/login/', '/auth/', '/admin/'],
       },
     ],
-    sitemap: `${baseUrl}/sitemap.xml`,
+    sitemap: `${baseUrl}/sitemap/0.xml`,
   };
 }

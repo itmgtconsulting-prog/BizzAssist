@@ -35,6 +35,20 @@ import { logger } from '@/app/lib/logger';
 
 // ─── Vurderingsportalen ES types ─────────────────────────────────────────────
 
+/** DAWA adgangsadresse response — delmængde brugt til jordstykke-data */
+interface DawaAdgangResponse {
+  jordstykke?: {
+    matrikelnr?: string;
+    ejerlav?: { kode?: number; navn?: string };
+    registreretAreal?: number;
+  } | null;
+}
+
+/** DAWA adresse mini response — bruges til at finde fuld adresse-UUID for ejerlejligheder */
+interface DawaAdresseMini {
+  id: string;
+}
+
 /** Rå _source fra Vurderingsportalens Elasticsearch */
 interface VPEsSource {
   adgangsAdresseID?: string;
@@ -184,38 +198,80 @@ async function hentDawaAdresse(bfe: string, slug: string): Promise<DawaAdresse |
       return null;
     }
 
-    // Trin 2: adgangsAdresseID → fuld adresse + koordinater via DAR GraphQL (Hetzner-proxy).
-    const darAdresse = await darHentAdresse(adgangsAdresseId);
+    // Trin 2: Tre parallelle kald:
+    //   a. darHentAdresse → vejnavn, husnr, kommunenavn, koordinater
+    //   b. DAWA /adgangsadresser/{id} → jordstykke (matrikelnr, ejerlav, grundareal)
+    //   c. DAWA /adresser?... → fuld adresse-UUID (kun for ejerlejligheder med etage/dør)
+    //      Fuld adresse-UUID giver BBR ENHED_QUERY præcist match → enhedens areal
+    const DAWA_API = 'https://api.dataforsyningen.dk';
+    const hasEtageOrDoer = !!(src.floor || src.door);
 
-    // Kommunekode: VP returnerer f.eks. "157", DAR returnerer "0157".
-    // Brug DAR's kommunenavn; kommunekode paddes til 4 cifre.
+    const [darAdresse, adgJson, fullAdresseArr] = await Promise.all([
+      darHentAdresse(adgangsAdresseId),
+      fetch(`${DAWA_API}/adgangsadresser/${adgangsAdresseId}`, {
+        signal: AbortSignal.timeout(5000),
+        next: { revalidate: 3600 },
+      })
+        .then((r) => (r.ok ? (r.json() as Promise<DawaAdgangResponse>) : Promise.resolve(null)))
+        .catch(() => null),
+      hasEtageOrDoer
+        ? fetch(
+            `${DAWA_API}/adresser?adgangsadresseid=${encodeURIComponent(adgangsAdresseId)}` +
+              (src.floor ? `&etage=${encodeURIComponent(src.floor)}` : '') +
+              // 'dør' URL-encoded som 'd%C3%B8r' for RFC 3986-compliance
+              (src.door ? `&d%C3%B8r=${encodeURIComponent(src.door)}` : '') +
+              `&per_side=1&struktur=mini`,
+            { signal: AbortSignal.timeout(5000), next: { revalidate: 3600 } }
+          )
+            .then((r) => (r.ok ? (r.json() as Promise<DawaAdresseMini[]>) : Promise.resolve(null)))
+            .catch(() => null)
+        : (Promise.resolve(null) as Promise<DawaAdresseMini[] | null>),
+    ]);
+
+    // Kommunekode: VP returnerer f.eks. "157", paddes til 4 cifre.
     const kommunekodeRaw = src.municipalityNumber ?? '';
     const kommunekode = kommunekodeRaw.padStart(4, '0');
 
+    // Jordstykke fra DAWA adgangsadresse (matrikelnr + ejerlav + grundareal)
+    const jst = adgJson?.jordstykke;
+    const jordstykke: DawaAdresse['jordstykke'] =
+      jst?.matrikelnr && jst.ejerlav?.navn
+        ? {
+            matrikelnr: jst.matrikelnr,
+            ejerlav: { navn: jst.ejerlav.navn },
+            registreretAreal: jst.registreretAreal ?? 0,
+          }
+        : null;
+
+    // Fuld adresse-UUID giver BBR ENHED_QUERY præcist match til ejerlejlighedens enhed.
+    // Fallback til adgangsadresse-UUID (finder bygningen men ikke den specifikke enhed).
+    const fullAdresseId =
+      Array.isArray(fullAdresseArr) && fullAdresseArr.length > 0 ? fullAdresseArr[0].id : null;
+    const effectiveId = fullAdresseId ?? adgangsAdresseId;
+
     if (darAdresse) {
       return {
-        id: adgangsAdresseId,
+        id: effectiveId,
         alleIds: [adgangsAdresseId],
         vejnavn: darAdresse.vejnavn,
         husnr: darAdresse.husnr,
-        etage: darAdresse.etage ?? null,
-        dør: darAdresse.dør ?? null,
+        // VP ES er autoritativ for etage/dør — DAR_Husnummer returnerer dem ikke
+        etage: src.floor ?? null,
+        dør: src.door ?? null,
         postnr: darAdresse.postnr || src.zipcode || '',
         postnrnavn: darAdresse.postnrnavn || src.postDistrict || '',
         kommunenavn: darAdresse.kommunenavn,
         kommunekode,
         x: darAdresse.x,
         y: darAdresse.y,
-        // Jordstykke (matrikelnr/ejerlav) hentes ikke her — vises som null
-        // hvis det ikke allerede er tilgængeligt. Kan udvides via MAT WFS.
-        jordstykke: null,
+        jordstykke,
       };
     }
 
     // Trin 2 fallback: DAR fejlede — brug VP-adressefelter (ingen koordinater)
     logger.warn(`[PUBLIC EJENDOM] DAR fejlede for ${adgangsAdresseId} — bruger VP fallback`);
     return {
-      id: adgangsAdresseId,
+      id: effectiveId,
       alleIds: [adgangsAdresseId],
       vejnavn: src.roadName ?? '',
       husnr: src.houseNumber ?? '',
@@ -227,7 +283,7 @@ async function hentDawaAdresse(bfe: string, slug: string): Promise<DawaAdresse |
       kommunekode,
       x: 0,
       y: 0,
-      jordstykke: null,
+      jordstykke,
     };
   } catch (err) {
     logger.error(
@@ -294,13 +350,26 @@ async function hentBbrBygning(dawaId: string): Promise<BbrBygning | null> {
         `ejerforholdskode=${node.ejerforholdskode}`
     );
 
+    // For ejerlejligheder: brug enhedens areal fremfor bygningens samlede areal.
+    // data.ejerlejlighedBfe er sat når fetchBbrForAddress detekterede en ejerlejlighed,
+    // og data.enheder[0] er den specifikke enhed (kun matchet med fuld adresse-UUID).
+    const enhed =
+      data.ejerlejlighedBfe != null && data.enheder && data.enheder.length > 0
+        ? data.enheder[0]
+        : null;
+
     // Map LiveBBRBygning (normaliseret) tilbage til BbrBygning (rå felter) så render-koden
     // ikke skal ændres. byg021BygningensAnvendelse sendes som numerisk streng da
     // bygAnvendelseTekst() kalder Number() på det.
+    // Areal: enhedens areal foretrækkes for ejerlejligheder, bygningens samlet ellers.
     return {
       byg026Opfoerelsesaar: node.opfoerelsesaar ?? undefined,
-      byg038SamletBygningsareal: node.samletBygningsareal ?? undefined,
-      byg039BygningensSamledeBoligAreal: node.samletBoligareal ?? undefined,
+      byg038SamletBygningsareal: enhed
+        ? (enhed.areal ?? undefined)
+        : (node.samletBygningsareal ?? undefined),
+      byg039BygningensSamledeBoligAreal: enhed
+        ? (enhed.arealBolig ?? undefined)
+        : (node.samletBoligareal ?? undefined),
       byg041BebyggetAreal: node.bebyggetAreal ?? undefined,
       byg054AntalEtager: node.antalEtager ?? undefined,
       byg021BygningensAnvendelse:
@@ -411,7 +480,10 @@ export async function generateMetadata({
     };
   }
 
-  const adresseStr = `${adresse.vejnavn} ${adresse.husnr}, ${adresse.postnr} ${adresse.postnrnavn}`;
+  const etageDoerMeta = [adresse.etage ? `${adresse.etage}.` : null, adresse.dør]
+    .filter(Boolean)
+    .join(' ');
+  const adresseStr = `${adresse.vejnavn} ${adresse.husnr}${etageDoerMeta ? `, ${etageDoerMeta}` : ''}, ${adresse.postnr} ${adresse.postnrnavn}`;
   const type = bbr?.byg021BygningensAnvendelse
     ? bygAnvendelseTekst(Number(bbr.byg021BygningensAnvendelse))
     : 'Ejendom';
@@ -572,8 +644,11 @@ function JsonLd({
   slug: string;
   bfe: string;
 }) {
-  const adresseNavn = `${adresse.vejnavn} ${adresse.husnr}, ${adresse.postnr} ${adresse.postnrnavn}`;
-  const adresseKort = `${adresse.vejnavn} ${adresse.husnr}`;
+  const etageDoerJld = [adresse.etage ? `${adresse.etage}.` : null, adresse.dør]
+    .filter(Boolean)
+    .join(' ');
+  const adresseKort = `${adresse.vejnavn} ${adresse.husnr}${etageDoerJld ? `, ${etageDoerJld}` : ''}`;
+  const adresseNavn = `${adresseKort}, ${adresse.postnr} ${adresse.postnrnavn}`;
   const canonicalUrl = `https://bizzassist.dk/ejendom/${slug}/${bfe}`;
 
   const realEstateSchema = {
@@ -664,7 +739,10 @@ export default async function EjendomPublicPage({
     );
   }
 
-  const adresseStr = `${adresse.vejnavn} ${adresse.husnr}`;
+  const etageDoerPage = [adresse.etage ? `${adresse.etage}.` : null, adresse.dør]
+    .filter(Boolean)
+    .join(' ');
+  const adresseStr = `${adresse.vejnavn} ${adresse.husnr}${etageDoerPage ? `, ${etageDoerPage}` : ''}`;
   const byStr = `${adresse.postnr} ${adresse.postnrnavn}`;
   const ejendomstype = bbr?.byg021BygningensAnvendelse
     ? bygAnvendelseTekst(Number(bbr.byg021BygningensAnvendelse))

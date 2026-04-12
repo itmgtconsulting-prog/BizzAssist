@@ -4,8 +4,8 @@
  * Bygger og vedligeholder `public.sitemap_entries`-tabellen med alle
  * danske ejendomme og virksomheder til SEO-sitemap.
  *
- * Kør via ?phase=companies eller ?phase=properties (ét ad gangen for
- * at holde sig under Vercels 10-sekunders function timeout).
+ * Kør via ?phase=companies, ?phase=properties eller ?phase=vp-properties
+ * (ét ad gangen for at holde sig under Vercels 10-sekunders function timeout).
  *
  * Phase: companies
  *   Paginerer CVR ElasticSearch (Erhvervsstyrelsen) via search_after sorteret
@@ -21,13 +21,22 @@
  *   så næste kørsel kan fortsætte hvor den slap.
  *   Skipper jordstykker uden bfenummer.
  *
+ * Phase: vp-properties
+ *   Paginerer Vurderingsportalen ElasticSearch (api-fs.vurderingsportalen.dk)
+ *   via search_after sorteret på bfeNumbers. Dækker ALLE BFE-numre inkl.
+ *   ejerlejligheder som ikke har et jordstykke i DAWA (og dermed mangler i
+ *   'properties'-fasen). Behandler VP_PAGE_SIZE BFE'er pr. kørsel (ét ES-request).
+ *   Gemmer search_after-cursor i public.ai_settings med nøglen 'sitemap_vp_after'.
+ *   Slug bygges fra adresse + etage + dør — BFE-nummeret er den funktionelle ID.
+ *
  * Sikring:
  *   - Kræver Authorization: Bearer <CRON_SECRET>
  *   - I production: kræver også x-vercel-cron: 1
  *
  * Trigger:
- *   - Vercel Cron: søndag kl. 02:00 UTC (companies) og 03:00 UTC (properties)
- *   - Manuel: GET /api/cron/generate-sitemap?phase=companies|properties
+ *   - Vercel Cron: søndag kl. 02:00 UTC (companies), 03:00 UTC (properties),
+ *     04:00 UTC (vp-properties)
+ *   - Manuel: GET /api/cron/generate-sitemap?phase=companies|properties|vp-properties
  *
  * @module api/cron/generate-sitemap
  */
@@ -57,6 +66,15 @@ const CVR_PROGRESS_KEY = 'sitemap_cvr_after';
 
 /** Supabase ai_settings nøgle til jordstykke-side fremskridt */
 const JORDSTYKKE_PROGRESS_KEY = 'sitemap_jordstykke_page';
+
+/** Vurderingsportalen ES endpoint — undokumenteret, men bruges af dashboard */
+const VP_ES_URL = 'https://api-fs.vurderingsportalen.dk/preliminaryproperties/_search';
+
+/** Antal BFE'er pr. VP ES request (lavt for at holde sig under Vercels 10s timeout) */
+const VP_PAGE_SIZE = 500;
+
+/** Supabase ai_settings nøgle til VP search_after-cursor (sidst sete bfeNumbers) */
+const VP_PROGRESS_KEY = 'sitemap_vp_after';
 
 // ─── Auth ──────────────────────────────────────────────────────────────────────
 
@@ -109,6 +127,25 @@ interface DawaJordstykke {
   bfenummer?: number | null;
   ejerlav?: { kode?: number; navn?: string };
   matrikelnr?: string;
+}
+
+/** VP ES hit — kun de felter vi bruger fra preliminaryproperties-indekset */
+interface VpEsHit {
+  _source?: {
+    bfeNumbers?: string | number | null;
+    address?: string | null;
+    floor?: string | null;
+    door?: string | null;
+  };
+  /** ES sort-values til search_after-paginering */
+  sort?: unknown[];
+}
+
+/** VP ES response */
+interface VpEsResponse {
+  hits?: {
+    hits?: VpEsHit[];
+  };
 }
 
 // ─── Upsert helper ─────────────────────────────────────────────────────────────
@@ -420,17 +457,153 @@ async function saveProgress(
     .upsert({ key: JORDSTYKKE_PROGRESS_KEY, value: page }, { onConflict: 'key' });
 }
 
+// ─── Phase: vp-properties ─────────────────────────────────────────────────────
+
+/**
+ * Paginerer Vurderingsportalen ElasticSearch og upserts ejendomme (inkl.
+ * ejerlejligheder) til sitemap_entries.
+ *
+ * Bruger search_after-paginering sorteret på bfeNumbers — stateless og
+ * timeout-sikkert på tværs af Vercel-kald. Behandler VP_PAGE_SIZE BFE'er
+ * pr. kørsel (ét enkelt ES-request) og gemmer cursor i public.ai_settings.
+ *
+ * Denne fase supplerer 'properties'-fasen: DAWA jordstykker dækker kun
+ * grund-ejendomme. Ejerlejligheder har egne BFE-numre i VP ES men intet
+ * jordstykke i DAWA og ville ellers mangle i sitemappet.
+ *
+ * Slug bygges fra address + floor + door. BFE-nummeret er den funktionelle ID —
+ * sluggen er dekorativ og bruges kun til læsbar URL.
+ *
+ * @param admin - Supabase admin client til DB-writes og fremskridt
+ * @returns Antal upserted BFE'er, sidst sete BFE og om scan er afsluttet
+ */
+async function phaseVpProperties(
+  admin: ReturnType<typeof createAdminClient>
+): Promise<{ count: number; lastBfe: string | null; done: boolean }> {
+  // Hent search_after-cursor fra forrige kørsel
+  const { data: progressRow } = await admin
+    .from('ai_settings')
+    .select('value')
+    .eq('key', VP_PROGRESS_KEY)
+    .maybeSingle();
+
+  const progressValue = (progressRow as Record<string, unknown> | null)?.['value'];
+  const afterBfe: string | null = progressValue != null ? String(progressValue) : null;
+
+  // Byg search_after query — sorteret på bfeNumbers for stateless paginering
+  const query: Record<string, unknown> = {
+    size: VP_PAGE_SIZE,
+    sort: [{ bfeNumbers: 'asc' }],
+    query: { match_all: {} },
+    _source: ['bfeNumbers', 'address', 'floor', 'door'],
+    ...(afterBfe != null ? { search_after: [afterBfe] } : {}),
+  };
+
+  let hits: VpEsHit[] = [];
+
+  try {
+    const res = await fetch(VP_ES_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        // VP ES kræver en User-Agent der ligner en browser
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      },
+      body: JSON.stringify(query),
+      // 7s timeout — lader 3s til upsert + Vercel overhead inden 10s grænsen
+      signal: AbortSignal.timeout(7000),
+    });
+
+    if (!res.ok) {
+      logger.error('[generate-sitemap] VP ES request fejlede:', res.status);
+      return { count: 0, lastBfe: afterBfe, done: false };
+    }
+
+    const data = (await res.json()) as VpEsResponse;
+    hits = data.hits?.hits ?? [];
+  } catch (err) {
+    logger.error('[generate-sitemap] VP ES request fejl:', err);
+    return { count: 0, lastBfe: afterBfe, done: false };
+  }
+
+  if (hits.length === 0) {
+    // Ingen flere resultater — fuld scan afsluttet, nulstil cursor
+    await admin
+      .from('ai_settings')
+      .upsert({ key: VP_PROGRESS_KEY, value: null }, { onConflict: 'key' });
+    return { count: 0, lastBfe: null, done: true };
+  }
+
+  const now = new Date().toISOString();
+  const batch: SitemapUpsert[] = [];
+  let newLastBfe: string | null = afterBfe;
+
+  for (const hit of hits) {
+    const s = hit._source;
+    const bfe = s?.bfeNumbers;
+    if (!bfe) continue;
+
+    const bfeStr = String(bfe);
+    const address = s.address ? String(s.address).trim() : '';
+    const floor = s.floor ? String(s.floor).trim() : '';
+    const door = s.door ? String(s.door).trim() : '';
+
+    if (!address) continue;
+
+    // Slug bygges fra adresse + etage + dør. Sluggen er dekorativ —
+    // kun BFE-nummeret bruges til datahentning på den offentlige side.
+    const slugParts = [address, floor, door].filter(Boolean).join(' ');
+
+    batch.push({
+      type: 'ejendom',
+      slug: generateSlug(slugParts),
+      entity_id: bfeStr,
+      updated_at: now,
+    });
+
+    // Brug ES sort-værdien som cursor hvis tilgængeligt, ellers BFE-streng
+    const sortCursor = hit.sort?.[0];
+    newLastBfe = sortCursor != null ? String(sortCursor) : bfeStr;
+  }
+
+  // Upsert i batches
+  let totalCount = 0;
+  let batchStart = 0;
+  while (batchStart < batch.length) {
+    const slice = batch.slice(batchStart, batchStart + UPSERT_BATCH_SIZE);
+    totalCount += await upsertBatch(admin, slice);
+    batchStart += UPSERT_BATCH_SIZE;
+  }
+
+  // Gem cursor til næste kørsel
+  if (newLastBfe !== afterBfe) {
+    await admin
+      .from('ai_settings')
+      .upsert({ key: VP_PROGRESS_KEY, value: newLastBfe }, { onConflict: 'key' });
+  }
+
+  const done = hits.length < VP_PAGE_SIZE;
+  if (done) {
+    // Kortere side = sidste side i datasættet, nulstil cursor
+    await admin
+      .from('ai_settings')
+      .upsert({ key: VP_PROGRESS_KEY, value: null }, { onConflict: 'key' });
+  }
+
+  return { count: totalCount, lastBfe: newLastBfe, done };
+}
+
 // ─── Route handler ─────────────────────────────────────────────────────────────
 
 /**
- * GET /api/cron/generate-sitemap?phase=companies|properties
+ * GET /api/cron/generate-sitemap?phase=companies|properties|vp-properties
  *
  * Kræver:
  *   - Authorization: Bearer <CRON_SECRET>
  *   - x-vercel-cron: 1 (kun i production)
  *
  * Query params:
- *   - phase: 'companies' | 'properties' (påkrævet)
+ *   - phase: 'companies' | 'properties' | 'vp-properties' (påkrævet)
  *
  * @param request - Indgående Next.js request med Authorization header og phase query param
  * @returns JSON-respons med fase, antal upserted og status
@@ -443,9 +616,12 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const phase = searchParams.get('phase');
 
-  if (phase !== 'companies' && phase !== 'properties') {
+  if (phase !== 'companies' && phase !== 'properties' && phase !== 'vp-properties') {
     return NextResponse.json(
-      { error: 'Ugyldig phase — brug ?phase=companies eller ?phase=properties' },
+      {
+        error:
+          'Ugyldig phase — brug ?phase=companies, ?phase=properties eller ?phase=vp-properties',
+      },
       { status: 400 }
     );
   }
@@ -464,6 +640,22 @@ export async function GET(request: NextRequest) {
       });
     } catch (err) {
       logger.error('[generate-sitemap] companies phase uventet fejl:', err);
+      return NextResponse.json({ error: 'Intern fejl' }, { status: 500 });
+    }
+  }
+
+  if (phase === 'vp-properties') {
+    try {
+      const result = await phaseVpProperties(admin);
+      return NextResponse.json({
+        ok: true,
+        phase: 'vp-properties',
+        count: result.count,
+        lastBfe: result.lastBfe,
+        done: result.done,
+      });
+    } catch (err) {
+      logger.error('[generate-sitemap] vp-properties phase uventet fejl:', err);
       return NextResponse.json({ error: 'Intern fejl' }, { status: 500 });
     }
   }

@@ -9,6 +9,10 @@
       "schedule": "0 3 * * 0"
     },
     {
+      "path": "/api/cron/generate-sitemap?phase=vp-properties",
+      "schedule": "0 4 * * 0"
+    },
+    {
       "path": "/api/cron/poll-properties",
       "schedule": "0 3 * * *"
     },

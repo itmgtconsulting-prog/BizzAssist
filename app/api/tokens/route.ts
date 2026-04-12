@@ -37,15 +37,10 @@ const MAX_TOKENS_PER_TENANT = 20;
 /** Valid scope values for API token permissions. */
 const VALID_SCOPES = ['read:properties', 'read:companies', 'read:people', 'read:ai'] as const;
 
-/** Union type of all valid token scope strings. */
-type TokenScope = (typeof VALID_SCOPES)[number];
-
 /** BIZZ-210: Zod schema for token creation body */
 const createTokenSchema = z.object({
   name: z.string().trim().min(1, 'name er påkrævet').max(100, 'name må maks være 100 tegn'),
-  scopes: z
-    .array(z.enum(VALID_SCOPES))
-    .min(1, 'Mindst ét scope er påkrævet'),
+  scopes: z.array(z.enum(VALID_SCOPES)).min(1, 'Mindst ét scope er påkrævet'),
   expiresInDays: z.number().int().min(1).max(3650).optional(),
 });
 
@@ -66,13 +61,6 @@ export interface ApiTokenRecord {
   expires_at: string | null;
   revoked: boolean;
   created_at: string;
-}
-
-/** Expected POST request body shape. */
-interface CreateTokenBody {
-  name: string;
-  scopes: string[];
-  expiresInDays?: number;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

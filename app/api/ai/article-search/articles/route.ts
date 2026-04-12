@@ -119,6 +119,15 @@ interface SerperOrganicResult {
   displayLink?: string;
 }
 
+/** Serper.dev news resultat råformat */
+interface SerperNewsResult {
+  title: string;
+  link: string;
+  snippet?: string;
+  date?: string;
+  source?: string;
+}
+
 // ─── Supabase helpers ─────────────────────────────────────────────────────────
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
@@ -261,6 +270,46 @@ async function searchSerper(
 }
 
 /**
+ * Søger via Serper.dev /news endpoint (Google Nyheder) og returnerer nyhedsresultater.
+ * Returnerer typisk redaktionelle nyhedsartikler frem for SEO/katalog-sider.
+ *
+ * @param apiKey - Serper.dev API-nøgle
+ * @param query  - Søgeforespørgsel (typisk blot virksomhedsnavnet)
+ * @param num    - Antal resultater (max 100)
+ */
+async function searchSerperNews(apiKey: string, query: string, num = 20): Promise<ArticleResult[]> {
+  const payload: Record<string, unknown> = { q: query, gl: 'dk', hl: 'da', num };
+  const body = JSON.stringify(payload);
+  const res = await fetch('https://google.serper.dev/news', {
+    method: 'POST',
+    headers: { 'X-API-KEY': apiKey, 'Content-Type': 'application/json' },
+    body,
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) throw new Error(`Serper News HTTP ${res.status}`);
+  const data = (await res.json()) as { news?: SerperNewsResult[] };
+  const items: SerperNewsResult[] = data.news ?? [];
+  if (items.length === 0) return [];
+
+  const seen = new Set<string>();
+  return items
+    .filter((item) => {
+      if (!item.link || seen.has(item.link)) return false;
+      seen.add(item.link);
+      return true;
+    })
+    .map((item) => ({
+      title: item.title?.trim() ?? '',
+      url: item.link?.trim() ?? '',
+      source: (item.source ?? '').replace(/^www\./, '').trim(),
+      description: item.snippet?.trim().slice(0, 150) ?? undefined,
+      date: item.date?.trim() ?? undefined,
+    }))
+    .filter((r) => r.title && r.url)
+    .filter((r) => !isExcludedDomain(r.url));
+}
+
+/**
  * Strips common Danish/international legal suffixes from a company name so that
  * the cleaned name matches how journalists and media write about the company.
  *
@@ -296,6 +345,9 @@ function cleanCompanyName(name: string): string {
  * - Query 2: ingen tidsfilter, num=20 — fanger ældre artikler (2022-2023 og ældre)
  * - Query 3: site:-filter med admin-konfigurerede foretrukne danske medier, num=20 —
  *   sikrer at vigtige kilder (DR, Berlingske, Politiken osv.) altid er repræsenteret.
+ * - Query 4: /news endpoint (Google Nyheder), num=20 — fanger redaktionelle artikler
+ *   fra regionale/lokale medier (Tidende.dk, TV2 Bornholm osv.) der ikke fanges af
+ *   /search + keyword-filtre.
  *
  * CVR-lovformens suffiks (ApS, A/S, IVS osv.) strippes inden søgning, da
  * artikler aldrig citerer det officielle CVR-navn med suffiks.
@@ -321,13 +373,15 @@ async function searchSerperArticles(
 
   try {
     // Note: Serper returns a 400 for num>20 combined with tbs filters — cap at 20.
-    const [yearly, allTime, mediaOnly] = await Promise.all([
+    // News-query bruger kun virksomhedsnavnet — /news-endpointet håndterer relevans selv.
+    const [yearly, allTime, mediaOnly, newsResults] = await Promise.all([
       searchSerper(apiKey, q, 'qdr:y', 20).catch(() => [] as ArticleResult[]),
       searchSerper(apiKey, q, undefined, 20).catch(() => [] as ArticleResult[]),
       searchSerper(apiKey, qMedia, undefined, 20).catch(() => [] as ArticleResult[]),
+      searchSerperNews(apiKey, name, 20).catch(() => [] as ArticleResult[]),
     ]);
-    // Prioritering: foretrukne medier + seneste år > alle tider
-    return dedupArticles([...mediaOnly, ...yearly, ...allTime]);
+    // Prioritering: foretrukne medier + news (redaktionelt) > seneste år > alle tider
+    return dedupArticles([...mediaOnly, ...newsResults, ...yearly, ...allTime]);
   } catch {
     return [];
   }
@@ -448,34 +502,13 @@ function isPrimaryDomain(url: string, primaryDomains: string[]): boolean {
  * @param articles       - Artikler i Claude's returnerede rækkefølge
  * @param primaryDomains - Foretrukne mediedomæner fra admin-konfiguration
  */
-function sortByPrimaryDomains(articles: ArticleResult[], primaryDomains: string[]): ArticleResult[] {
+function sortByPrimaryDomains(
+  articles: ArticleResult[],
+  primaryDomains: string[]
+): ArticleResult[] {
   const primary = articles.filter((a) => isPrimaryDomain(a.url, primaryDomains));
   const rest = articles.filter((a) => !isPrimaryDomain(a.url, primaryDomains));
   return [...primary, ...rest];
-}
-
-/**
- * Konverterer en dato-streng (ISO, relativ "X days ago" etc.) til sorterbar timestamp.
- * Returnerer 0 hvis datoen ikke kan parses.
- *
- * @param dateStr - Datostreng fra Serper/Claude
- */
-function parseDateForSort(dateStr: string | undefined): number {
-  if (!dateStr) return 0;
-  const d = new Date(dateStr);
-  if (!isNaN(d.getTime())) return d.getTime();
-  const agoMatch = dateStr.match(/(\d+)\s+(hour|day|week|month|year|time|dag|uge|m.ned|.r)/i);
-  if (agoMatch) {
-    const n = parseInt(agoMatch[1], 10);
-    const unit = agoMatch[2].toLowerCase();
-    const now = Date.now();
-    if (unit.startsWith('hour') || unit.startsWith('time')) return now - n * 3_600_000;
-    if (unit.startsWith('day') || unit.startsWith('dag')) return now - n * 86_400_000;
-    if (unit.startsWith('week') || unit.startsWith('uge')) return now - n * 7 * 86_400_000;
-    if (unit.startsWith('month') || unit.startsWith('m')) return now - n * 30 * 86_400_000;
-    if (unit.startsWith('year') || unit.startsWith('.r')) return now - n * 365 * 86_400_000;
-  }
-  return 0;
 }
 
 /**

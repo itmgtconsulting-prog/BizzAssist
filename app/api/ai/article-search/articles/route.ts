@@ -68,6 +68,10 @@ const DEFAULT_PRIMARY_MEDIA_DOMAINS = [
   'eb.dk',
   'version2.dk',
   'computerworld.dk',
+  'information.dk',
+  'weekendavisen.dk',
+  'finans.dk',
+  'medwatch.dk',
 ];
 
 /**
@@ -422,6 +426,35 @@ function isSocialDomain(url: string): boolean {
 }
 
 /**
+ * Returnerer true hvis URL'ens domæne er på listen over foretrukne medier.
+ *
+ * @param url            - URL der skal tjekkes
+ * @param primaryDomains - Liste af foretrukne mediedomæner
+ */
+function isPrimaryDomain(url: string, primaryDomains: string[]): boolean {
+  try {
+    const hostname = new URL(url).hostname.replace(/^www\./, '');
+    return primaryDomains.some((d) => hostname === d || hostname.endsWith(`.${d}`));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Stable post-processing sort: artikler fra foretrukne medier øverst (bevarer
+ * Claude's interne rækkefølge), efterfulgt af øvrige artikler (ligeledes i
+ * Claude's rækkefølge). Erstatter Claude's upålidelige media-prioritering.
+ *
+ * @param articles       - Artikler i Claude's returnerede rækkefølge
+ * @param primaryDomains - Foretrukne mediedomæner fra admin-konfiguration
+ */
+function sortByPrimaryDomains(articles: ArticleResult[], primaryDomains: string[]): ArticleResult[] {
+  const primary = articles.filter((a) => isPrimaryDomain(a.url, primaryDomains));
+  const rest = articles.filter((a) => !isPrimaryDomain(a.url, primaryDomains));
+  return [...primary, ...rest];
+}
+
+/**
  * Konverterer en dato-streng (ISO, relativ "X days ago" etc.) til sorterbar timestamp.
  * Returnerer 0 hvis datoen ikke kan parses.
  *
@@ -482,8 +515,7 @@ function parseArticlesResponse(text: string): ArticleResult[] {
         description:
           typeof a.description === 'string' ? a.description.trim().slice(0, 150) : undefined,
       }))
-      .filter((a) => !isSocialDomain(a.url))
-      .sort((a, b) => parseDateForSort(b.date) - parseDateForSort(a.date));
+      .filter((a) => !isSocialDomain(a.url));
   } catch {
     return [];
   }
@@ -624,7 +656,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       .map((b) => b.text)
       .join('');
 
-    const articles = parseArticlesResponse(finalText);
+    const claudeArticles = parseArticlesResponse(finalText);
+    // Post-processing: sort programmatically so foretrukne medier altid er øverst.
+    // Claude's rækkefølge inden for hver gruppe bevares.
+    const articles = sortByPrimaryDomains(claudeArticles, primaryDomains);
 
     logger.log(
       `[article-search/articles] "${companyName}": ${articles.length} artikler, tokens=${totalTokens}`

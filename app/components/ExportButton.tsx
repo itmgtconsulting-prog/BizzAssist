@@ -9,7 +9,7 @@
  * @param label - Button text
  */
 
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { Download, Loader2 } from 'lucide-react';
 
 interface ExportButtonProps {
@@ -23,7 +23,8 @@ interface ExportButtonProps {
   className?: string;
 }
 
-export default function ExportButton({
+/** BIZZ-211: memoized to prevent re-renders on detail pages */
+const ExportButton = React.memo(function ExportButton({
   type,
   data,
   label = 'Excel',
@@ -77,4 +78,6 @@ export default function ExportButton({
       {label}
     </button>
   );
-}
+});
+
+export default ExportButton;

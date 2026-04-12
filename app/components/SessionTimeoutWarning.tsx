@@ -13,7 +13,7 @@
  * @param onTimeout   - Log brugeren ud (kaldes ved 0 sekunder)
  */
 
-import { useEffect } from 'react';
+import React, { useEffect } from 'react';
 import { Clock, LogOut } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 
@@ -36,7 +36,13 @@ function formatTime(secs: number): string {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-export default function SessionTimeoutWarning({ show, secondsLeft, onExtend, onTimeout }: Props) {
+/** BIZZ-211: memoized to prevent re-renders from parent layout state changes */
+const SessionTimeoutWarning = React.memo(function SessionTimeoutWarning({
+  show,
+  secondsLeft,
+  onExtend,
+  onTimeout,
+}: Props) {
   const { lang } = useLanguage();
 
   // Automatisk log ud når nedtællingen rammer 0
@@ -96,4 +102,6 @@ export default function SessionTimeoutWarning({ show, secondsLeft, onExtend, onT
       </div>
     </div>
   );
-}
+});
+
+export default SessionTimeoutWarning;

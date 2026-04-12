@@ -1320,8 +1320,14 @@ export default function PersonDetailPageClient({
             <div className="h-8 w-64 bg-slate-800 rounded-lg" />
           </div>
           <div className="flex items-center gap-2 mt-2">
-            <Loader2 size={14} className="text-blue-400 flex-shrink-0" style={{ animation: 'spin 0.8s linear infinite' }} />
-            <span className="text-slate-400 text-sm" style={{ animation: 'none' }}>{c.loading}</span>
+            <Loader2
+              size={14}
+              className="text-blue-400 flex-shrink-0"
+              style={{ animation: 'spin 0.8s linear infinite' }}
+            />
+            <span className="text-slate-400 text-sm" style={{ animation: 'none' }}>
+              {c.loading}
+            </span>
           </div>
         </div>
         {/* Tab bar */}
@@ -1843,7 +1849,9 @@ export default function PersonDetailPageClient({
               {/* Indledende spinner — vises kun før første batch ankommer */}
               {ejendommeLoading && ejendommeData.length === 0 && (
                 <SektionLoader
-                  label={lang === 'da' ? 'Henter ejendomsportefølje…' : 'Loading property portfolio…'}
+                  label={
+                    lang === 'da' ? 'Henter ejendomsportefølje…' : 'Loading property portfolio…'
+                  }
                   rows={4}
                 />
               )}

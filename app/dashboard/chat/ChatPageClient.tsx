@@ -25,6 +25,7 @@ import { useSearchParams } from 'next/navigation';
 import { MessageSquare, Plus, Trash2, Send, Square, Bot, Sparkles, Loader2 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { useSubscription } from '@/app/context/SubscriptionContext';
+import { useAIPageContext } from '@/app/context/AIPageContext';
 import { resolvePlan, isSubscriptionFunctional, formatTokens } from '@/app/lib/subscriptions';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -297,6 +298,8 @@ export default function ChatPageClient() {
   const da = lang === 'da';
   const searchParams = useSearchParams();
   const { subscription: ctxSub, addTokenUsage } = useSubscription();
+  /** BIZZ-232: Page context from previous page (passed from sidebar AIChatPanel) */
+  const { pageData } = useAIPageContext();
 
   // ── Conversation state ──
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -526,7 +529,26 @@ export default function ChatPageClient() {
       const res = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: newMessages }),
+        body: JSON.stringify({
+          messages: newMessages,
+          // BIZZ-232: pass page context from sidebar if available
+          ...(pageData?.bfeNummer || pageData?.cvrNummer
+            ? {
+                context: [
+                  pageData.adresse && `Adresse: ${pageData.adresse}`,
+                  pageData.bfeNummer && `BFE-nummer: ${pageData.bfeNummer}`,
+                  pageData.adresseId && `adresseId: ${pageData.adresseId}`,
+                  pageData.kommunekode && `kommunekode: ${pageData.kommunekode}`,
+                  pageData.cvrNummer && `CVR: ${pageData.cvrNummer}`,
+                  pageData.virksomhedNavn && `Virksomhed: ${pageData.virksomhedNavn}`,
+                  pageData.enhedsNummer && `enhedsNummer: ${pageData.enhedsNummer}`,
+                  pageData.personNavn && `Person: ${pageData.personNavn}`,
+                ]
+                  .filter(Boolean)
+                  .join('\n'),
+              }
+            : {}),
+        }),
         signal: controller.signal,
       });
 

@@ -451,13 +451,15 @@ export async function generateMetadata({
       description,
       type: 'website',
       url: canonicalUrl,
-      images: [{ url: '/images/og-image.svg', width: 1200, height: 630, alt: 'BizzAssist' }],
+      images: [
+        { url: '/images/dashboard-preview.png', width: 1902, height: 915, alt: 'BizzAssist' },
+      ],
     },
     twitter: {
       card: 'summary_large_image',
       title: `${adresseStr} — BizzAssist`,
       description,
-      images: ['/images/og-image.svg'],
+      images: ['/images/dashboard-preview.png'],
     },
   };
 }

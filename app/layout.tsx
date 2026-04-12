@@ -24,7 +24,7 @@ const isProduction =
     !process.env.NEXT_PUBLIC_APP_URL.includes('test.bizzassist.dk'));
 
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? 'https://app.bizzassist.dk'),
+  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? 'https://bizzassist.dk'),
   title: 'BizzAssist — Danmarks forretningsintelligens platform',
   description:
     'Få øjeblikkelig adgang til data om virksomheder, ejendomme og personer i Danmark. Analysér med AI og tag bedre beslutninger.',
@@ -49,15 +49,20 @@ export const metadata: Metadata = {
     type: 'website',
     siteName: 'BizzAssist',
     locale: 'da_DK',
-    // TODO(pre-launch): Erstat /icons/og-image.png med en rigtig 1200×630 PNG før launch
-    images: [{ url: '/icons/og-image.png', width: 1200, height: 630, alt: 'BizzAssist' }],
+    images: [
+      {
+        url: '/images/dashboard-preview.png',
+        width: 1902,
+        height: 915,
+        alt: 'BizzAssist dashboard',
+      },
+    ],
   },
   twitter: {
     card: 'summary_large_image',
     title: 'BizzAssist',
     description: 'Dansk erhvervs- og ejendomsintelligens',
-    // TODO(pre-launch): Erstat /icons/og-image.png med en rigtig 1200×630 PNG før launch
-    images: ['/icons/og-image.png'],
+    images: ['/images/dashboard-preview.png'],
   },
   // Bloker alle sider fra indeksering på test/preview-miljøer
   ...(!isProduction && {

@@ -3615,6 +3615,13 @@ function AIArticleSearchPanel({
   /** Individuelle loading-states per søge-kategori — til progressiv visning */
   const [socialsLoading, setSocialsLoading] = useState(false);
   const [articlesLoading, setArticlesLoading] = useState(false);
+  /**
+   * Fase for artikelsøgning:
+   * - 'idle'    — ikke søgt endnu
+   * - 'raw'     — Serper-resultater vist (foreløbige, Claude-verificering i gang)
+   * - 'curated' — Claude har returneret kurerede resultater
+   */
+  const [articlesPhase, setArticlesPhase] = useState<'idle' | 'raw' | 'curated'>('idle');
   const [error, setError] = useState<string | null>(null);
   const [tokenInfo, setTokenInfo] = useState<{ used: number; limit: number } | null>(null);
   const [tokensUsedThisSearch, setTokensUsedThisSearch] = useState(0);
@@ -3668,6 +3675,7 @@ function AIArticleSearchPanel({
     setHasSearched(true);
     setError(null);
     setArticles([]);
+    setArticlesPhase('idle');
     setVisibleCount(5);
     setSocialsLoading(true);
     setArticlesLoading(true);
@@ -3720,8 +3728,34 @@ function AIArticleSearchPanel({
       .catch(() => 0)
       .finally(() => setSocialsLoading(false));
 
-    // ── Artikler (~5-8s) ──
-    const articlesPromise = fetch('/api/ai/article-search/articles', {
+    // ── Artikler — progressiv to-fase loading ──
+    // Fase 1 (?phase=raw, ~2-3s): Serper-resultater vises straks uden Claude.
+    // Fase 2 (?phase=ai, ~20-60s): Claude rangerer/filtrerer — erstatter raw hvis der er resultater.
+    // Begge kald startes parallelt så ventetiden på fase 2 begynder straks.
+
+    const rawArticlesPromise = fetch('/api/ai/article-search/articles?phase=raw', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: payload,
+    })
+      .then(async (res) => {
+        const json = await res.json();
+        const rawArticles: AIArticleResult[] = json.articles ?? [];
+        if (rawArticles.length > 0) {
+          // Sortér nyeste artikler øverst uanset API-rækkefølge
+          const sorted = [...rawArticles].sort(
+            (a, b) => parseDateForClientSort(b.date) - parseDateForClientSort(a.date)
+          );
+          setArticles(sorted);
+          setArticlesPhase('raw');
+          setVisibleCount(5);
+        }
+      })
+      .catch(() => {
+        // Stille fejl — AI-fasen fortsætter
+      });
+
+    const aiArticlesPromise = fetch('/api/ai/article-search/articles?phase=ai', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: payload,
@@ -3729,17 +3763,25 @@ function AIArticleSearchPanel({
       .then(async (res) => {
         const json = await res.json();
         if (json.error) setError(json.error);
-        const fetchedArticles: AIArticleResult[] = json.articles ?? [];
-        // Sortér nyeste artikler øverst uanset API-rækkefølge
-        const sorted = [...fetchedArticles].sort(
-          (a, b) => parseDateForClientSort(b.date) - parseDateForClientSort(a.date)
-        );
-        setArticles(sorted);
-        setVisibleCount(5);
+        const aiArticles: AIArticleResult[] = json.articles ?? [];
+        if (aiArticles.length > 0) {
+          // Claude returnerede kuraterede resultater — erstat foreløbige
+          const sorted = [...aiArticles].sort(
+            (a, b) => parseDateForClientSort(b.date) - parseDateForClientSort(a.date)
+          );
+          setArticles(sorted);
+          setVisibleCount(5);
+        }
+        // Sæt altid fase til curated når AI-kaldet er færdigt (selv hvis 0 resultater)
+        setArticlesPhase('curated');
         return (json.tokensUsed as number) ?? 0;
       })
       .catch(() => 0)
       .finally(() => setArticlesLoading(false));
+
+    const articlesPromise = rawArticlesPromise
+      .then(() => aiArticlesPromise)
+      .then((tokens) => tokens);
 
     // ── Vent på begge og rapportér samlet token-forbrug ──
     const [socialsTokens, articlesTokens] = await Promise.all([socialsPromise, articlesPromise]);
@@ -3759,6 +3801,7 @@ function AIArticleSearchPanel({
     onSocialsFound,
     onAlternativesFound,
     onThresholdFound,
+    setArticlesPhase,
   ]);
 
   const da = lang === 'da';
@@ -3868,7 +3911,15 @@ function AIArticleSearchPanel({
           {articlesLoading && (
             <div className="flex items-center gap-2 text-slate-400 text-xs">
               <Loader2 size={10} className="animate-spin text-purple-400 flex-shrink-0" />
-              <span>{da ? 'Søger artikler…' : 'Searching articles…'}</span>
+              <span>
+                {articlesPhase === 'raw'
+                  ? da
+                    ? 'Bekræfter med AI…'
+                    : 'Verifying with AI…'
+                  : da
+                    ? 'Søger artikler…'
+                    : 'Searching articles…'}
+              </span>
             </div>
           )}
         </div>
@@ -3884,6 +3935,13 @@ function AIArticleSearchPanel({
       )}
 
       {error && <p className="text-red-400 text-xs mb-2">{error}</p>}
+
+      {/* Foreløbige resultater-badge — vises mens AI-verificering kører */}
+      {articlesPhase === 'raw' && articles.length > 0 && (
+        <p className="text-[10px] text-amber-500/70 mb-1.5">
+          {da ? 'Foreløbige resultater — AI verificerer…' : 'Preliminary results — AI verifying…'}
+        </p>
+      )}
 
       {/* Artikler — fade-in når de ankommer */}
       {articlesLoading && articles.length === 0 ? null : articles.length === 0 &&

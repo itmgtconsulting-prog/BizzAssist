@@ -559,6 +559,13 @@ function parseArticlesResponse(text: string): ArticleResult[] {
 /**
  * POST /api/ai/article-search/articles
  * Søger og rangerer nyheder/artikler om en virksomhed via Serper.dev + Claude.
+ *
+ * Understøtter progressiv to-fase loading via ?phase query param:
+ * - ?phase=raw  — returnerer Serper-resultater direkte uden Claude (~2-3s). Ingen tokens brugt.
+ * - ?phase=ai   — fuld pipeline: Serper → Claude rangering (~20-60s). Standard-adfærd hvis phase udelades.
+ *
+ * Frontenden kalder begge faser parallelt: raw-fasen viser foreløbige resultater straks,
+ * ai-fasen erstatter dem med kuraterede resultater når Claude er færdig.
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const limited = await checkRateLimit(request, braveRateLimit);
@@ -568,13 +575,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const userId = await resolveUserId();
   if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const apiKey = process.env.BIZZASSIST_CLAUDE_KEY?.trim();
-  if (!apiKey)
-    return NextResponse.json({ error: 'BIZZASSIST_CLAUDE_KEY ikke konfigureret' }, { status: 500 });
+  /** Faseparameter: 'raw' = kun Serper (hurtigt), 'ai' = Serper + Claude (standard) */
+  const phase = request.nextUrl.searchParams.get('phase') ?? 'ai';
 
   const serperApiKey = process.env.SERPER_API_KEY?.trim();
   if (!serperApiKey)
     return NextResponse.json({ error: 'SERPER_API_KEY ikke konfigureret' }, { status: 500 });
+
+  // Claude API-nøgle er kun nødvendig i ai-fasen
+  const apiKey = phase !== 'raw' ? process.env.BIZZASSIST_CLAUDE_KEY?.trim() : undefined;
+  if (phase !== 'raw' && !apiKey)
+    return NextResponse.json({ error: 'BIZZASSIST_CLAUDE_KEY ikke konfigureret' }, { status: 500 });
 
   let body: CompanyInput;
   try {
@@ -598,11 +609,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // Kør Supabase-konfiguration og Serper i PARALLEL for at undgå sekventiel ventetid.
     // Serper-søgningen bruger DEFAULT_PRIMARY_MEDIA_DOMAINS til qMedia-query — de
     // admin-konfigurerede domæner bruges kun til post-processing sort, ikke til søgning.
+    // I raw-fasen hentes kun excluded domains (primær-domæner og limits bruges ikke).
     const [resolvedDbDomains, resolvedPrimaryDomains, resolvedLimits, serperResults] =
       await Promise.all([
         fetchExcludedDomains(),
-        fetchPrimaryMediaDomains(),
-        fetchArticleLimits(),
+        phase !== 'raw'
+          ? fetchPrimaryMediaDomains()
+          : Promise.resolve(DEFAULT_PRIMARY_MEDIA_DOMAINS),
+        phase !== 'raw'
+          ? fetchArticleLimits()
+          : Promise.resolve({ maxArticles: DEFAULT_MAX_ARTICLES, maxTokens: DEFAULT_MAX_TOKENS }),
         searchSerperArticles(serperApiKey, companyName, DEFAULT_PRIMARY_MEDIA_DOMAINS).catch(
           (err: unknown) => {
             logger.log(
@@ -619,7 +635,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     maxTokens = resolvedLimits.maxTokens;
 
     logger.log(
-      `[article-search/articles] "${companyName}": Serper=${serperResults.length} rå resultater`
+      `[article-search/articles] "${companyName}" [${phase}]: Serper=${serperResults.length} rå resultater`
     );
 
     rawResults = serperResults;
@@ -642,8 +658,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   logger.log(
-    `[article-search/articles] "${companyName}": ${rawResults.length} samlede resultater efter dedup+filter`
+    `[article-search/articles] "${companyName}" [${phase}]: ${rawResults.length} resultater efter dedup+filter`
   );
+
+  // ── Raw-fase: returnér Serper-resultater direkte uden Claude ──
+  // Foretrukne medier sorteres øverst, derefter sorterer frontenden efter dato.
+  if (phase === 'raw') {
+    const articles = sortByPrimaryDomains(rawResults.slice(0, 20), DEFAULT_PRIMARY_MEDIA_DOMAINS);
+    return NextResponse.json({ articles, tokensUsed: 0, source: 'serper+raw', preliminary: true });
+  }
 
   // Ingen resultater fra Serper — spring Claude over og returnér tomt
   if (rawResults.length === 0) {
@@ -675,7 +698,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const userMessage = `Virksomhed:\n${companyContext}\n\nSøgeresultater (${claudeResults.length} hits):\n\n${resultSummary}\n\nRangér og filtrer disse resultater — returner kun artikler der handler om DENNE virksomhed.`;
 
   // ── Kald Claude ──
-  const client = new Anthropic({ apiKey });
+  const client = new Anthropic({ apiKey: apiKey! });
   try {
     const response = await client.messages.create({
       model: 'claude-sonnet-4-6',
@@ -696,7 +719,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const articles = sortByPrimaryDomains(claudeArticles, primaryDomains);
 
     logger.log(
-      `[article-search/articles] "${companyName}": ${articles.length} artikler, tokens=${totalTokens}`
+      `[article-search/articles] "${companyName}" [ai]: ${articles.length} artikler, tokens=${totalTokens}`
     );
 
     return NextResponse.json({

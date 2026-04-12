@@ -11,9 +11,8 @@
  */
 
 import { useState, useRef, useEffect, useCallback, memo } from 'react';
-import { createPortal } from 'react-dom';
 import { usePathname, useRouter } from 'next/navigation';
-import { ChevronDown, Send, Bot, Sparkles, Square, Maximize2, Minimize2 } from 'lucide-react';
+import { ChevronDown, Send, Bot, Sparkles, Square, Maximize2 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';
 import { resolvePlan, isSubscriptionFunctional, formatTokens } from '@/app/lib/subscriptions';
@@ -102,8 +101,6 @@ function AIChatPanel() {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isOpen, setIsOpen] = useState(true);
-  /** Om chattet vises som et stort pop-out modal */
-  const [isExpanded, setIsExpanded] = useState(false);
   /** Streamet tekst for den aktuelle assistent-besked */
   const [streamText, setStreamText] = useState('');
   /** Status-besked under tool-kald (f.eks. "Henter BBR-data…") */
@@ -111,19 +108,9 @@ function AIChatPanel() {
   /** Token usage state — refreshed after each AI response */
   const [tokenInfo, setTokenInfo] = useState<{ used: number; limit: number } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const modalMessagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const modalInputRef = useRef<HTMLInputElement>(null);
   /** AbortController for at kunne stoppe streaming */
   const abortRef = useRef<AbortController | null>(null);
-  /** Om vi er mounted på client (nødvendigt for createPortal) */
-  const [isMounted, setIsMounted] = useState(false);
-
-  /** Marker som mounted efter første render så createPortal virker */
-  useEffect(() => {
-    setIsMounted(true);
-  }, []);
-
   /** Refresh token info from subscription context (server-authoritative) */
   const refreshTokenInfo = useCallback(() => {
     if (!ctxSub) {
@@ -148,47 +135,33 @@ function AIChatPanel() {
 
   /** Scroll til bunden ved nye beskeder eller stream-opdatering */
   useEffect(() => {
-    if (isExpanded) {
-      modalMessagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    } else if (isOpen) {
+    if (isOpen) {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [messages, streamText, isOpen, isExpanded]);
+  }, [messages, streamText, isOpen]);
 
-  /** Fokuser input første gang panelet åbnes eller modal pop-out åbnes */
+  /** Fokuser input første gang panelet åbnes */
   useEffect(() => {
-    // Capture timer id so it can be cleared if the component unmounts before the delay fires
     let timerId: ReturnType<typeof setTimeout> | undefined;
-    if (isExpanded) {
-      timerId = setTimeout(() => modalInputRef.current?.focus(), 150);
-    } else if (isOpen) {
+    if (isOpen) {
       timerId = setTimeout(() => inputRef.current?.focus(), 150);
     }
     return () => clearTimeout(timerId);
-  }, [isOpen, isExpanded]);
-
-  /** Luk modal med Escape-tasten */
-  useEffect(() => {
-    if (!isExpanded) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setIsExpanded(false);
-    };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [isExpanded]);
+  }, [isOpen]);
 
   /** Åbn/luk panelet (sidebar-tilstand) */
   const togglePanel = useCallback(() => {
     setIsOpen((prev) => !prev);
   }, []);
 
-  /** Åbn/luk pop-out modal */
-  const toggleExpanded = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation(); // Forhindre at header-klik lukker panelet
-    setIsExpanded((prev) => !prev);
-    // Sørg for at panelet er åbent i sidebar-tilstand som fallback
-    setIsOpen(true);
-  }, []);
+  /** BIZZ-228: Navigate to full-page chat instead of opening portal modal */
+  const openFullPageChat = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      router.push('/dashboard/chat');
+    },
+    [router]
+  );
 
   /** Stop streaming */
   const stopStreaming = useCallback(() => {
@@ -506,14 +479,14 @@ function AIChatPanel() {
             )}
           </div>
           <div className="flex items-center gap-2">
-            {/* Pop-out knap — åbner modal */}
+            {/* BIZZ-228: Navigate to full-page chat instead of portal modal */}
             <button
-              onClick={toggleExpanded}
+              onClick={openFullPageChat}
               className="text-slate-500 hover:text-slate-300 transition-colors shrink-0 p-0.5 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-              aria-label={isExpanded ? 'Luk pop-out' : 'Åbn i større vindue'}
-              title={isExpanded ? 'Luk pop-out' : 'Åbn i større vindue'}
+              aria-label="Åbn fuld AI Bizzness Assistent"
+              title="Åbn fuld AI Bizzness Assistent"
             >
-              {isExpanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+              <Maximize2 size={13} />
             </button>
             <ChevronDown
               size={14}
@@ -717,216 +690,6 @@ function AIChatPanel() {
           </div>
         </>
       )}
-
-      {/* ── Pop-out modal via portal ──────────────────────────────────────── */}
-      {isMounted &&
-        isExpanded &&
-        createPortal(
-          <div
-            className="fixed inset-0 z-[200] flex items-center justify-center p-4"
-            style={{ backgroundColor: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(4px)' }}
-            onClick={(e) => {
-              // Luk ved klik på backdrop
-              if (e.target === e.currentTarget) setIsExpanded(false);
-            }}
-          >
-            <div
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="ai-modal-title"
-              className="flex flex-col w-full max-w-3xl bg-[#0f172a] border border-slate-700/60 rounded-2xl shadow-2xl overflow-hidden"
-              style={{ height: 'min(80vh, 720px)' }}
-            >
-              {/* Modal header */}
-              <div className="shrink-0 flex items-center justify-between px-5 py-3.5 border-b border-slate-700/50">
-                <div className="flex items-center gap-3">
-                  <div className="w-7 h-7 bg-blue-600/25 rounded-lg flex items-center justify-center">
-                    <Sparkles size={13} className="text-blue-400" />
-                  </div>
-                  <span id="ai-modal-title" className="text-slate-200 text-sm font-semibold">
-                    {a.title}
-                  </span>
-                  {isLoading && toolStatus && (
-                    <span className="text-[11px] text-blue-400/80 font-medium">{toolStatus}</span>
-                  )}
-                </div>
-                <button
-                  onClick={() => setIsExpanded(false)}
-                  className="text-slate-500 hover:text-slate-200 transition-colors p-1 rounded-lg hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-                  aria-label="Luk pop-out"
-                >
-                  <Minimize2 size={15} />
-                </button>
-              </div>
-
-              {/* Token bar + disclaimer */}
-              {tokenInfo && (tokenInfo.limit > 0 || tokenInfo.limit === -1) && (
-                <div className="shrink-0 flex items-center gap-2 px-5 py-2 border-b border-slate-700/30">
-                  <span className="text-[10px] text-slate-400 whitespace-nowrap">
-                    {a.tokenStatus}
-                  </span>
-                  <div className="flex-1 h-1 bg-slate-800 rounded-full overflow-hidden">
-                    {tokenInfo.limit === -1 ? (
-                      <div className="h-full rounded-full bg-purple-500 w-full" />
-                    ) : (
-                      <div
-                        className={`h-full rounded-full transition-all ${
-                          tokenInfo.used / tokenInfo.limit > 0.9
-                            ? 'bg-red-500'
-                            : tokenInfo.used / tokenInfo.limit > 0.7
-                              ? 'bg-amber-500'
-                              : 'bg-blue-500'
-                        }`}
-                        style={{
-                          width: `${Math.min(100, (tokenInfo.used / tokenInfo.limit) * 100)}%`,
-                        }}
-                      />
-                    )}
-                  </div>
-                  <span className="text-[10px] font-medium text-slate-400 whitespace-nowrap">
-                    {tokenInfo.limit === -1
-                      ? '∞'
-                      : `${Math.min(100, Math.round((tokenInfo.used / tokenInfo.limit) * 100))}%`}
-                  </span>
-                </div>
-              )}
-
-              {/* Locked state */}
-              {!subActive && (
-                <div className="flex-1 flex flex-col items-center justify-center text-center px-6 py-8">
-                  <div className="w-12 h-12 bg-amber-500/10 rounded-xl flex items-center justify-center mb-4">
-                    <Lock size={22} className="text-amber-400" />
-                  </div>
-                  <p className="text-slate-400 text-sm leading-relaxed max-w-xs">
-                    {lang === 'da'
-                      ? 'AI-assistenten kræver et aktivt abonnement.'
-                      : 'The AI assistant requires an active subscription.'}
-                  </p>
-                </div>
-              )}
-
-              {/* Chat body */}
-              {subActive && (
-                <>
-                  <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3 min-h-0">
-                    {messages.length === 0 && !streamText ? (
-                      <div className="flex flex-col items-center justify-center h-full text-center py-8">
-                        <div className="w-12 h-12 bg-blue-600/20 rounded-xl flex items-center justify-center mb-4">
-                          <Bot size={24} className="text-blue-400" />
-                        </div>
-                        <p className="text-slate-400 text-sm leading-relaxed max-w-xs">
-                          {a.emptyPrompt}
-                        </p>
-                      </div>
-                    ) : (
-                      <>
-                        {messages.map((msg, i) => (
-                          <div
-                            key={i}
-                            className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                          >
-                            <div
-                              className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap ${
-                                msg.role === 'user'
-                                  ? 'bg-blue-600 text-white'
-                                  : 'bg-slate-800/80 text-slate-200 border border-slate-700/40'
-                              }`}
-                            >
-                              {msg.content}
-                            </div>
-                          </div>
-                        ))}
-
-                        {/* Live streaming-tekst */}
-                        {streamText && (
-                          <div className="flex justify-start">
-                            <div className="max-w-[80%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap bg-slate-800/80 text-slate-200 border border-slate-700/40">
-                              {streamText}
-                              <span className="inline-block w-1.5 h-4 bg-blue-400/70 ml-0.5 animate-pulse rounded-sm" />
-                            </div>
-                          </div>
-                        )}
-                      </>
-                    )}
-
-                    {/* Tænke-animation */}
-                    {isLoading && !streamText && (
-                      <div className="flex justify-start">
-                        <div className="bg-slate-800/80 border border-slate-700/40 rounded-2xl px-4 py-3 flex flex-col gap-2">
-                          <div className="flex gap-1.5">
-                            <span
-                              className="w-2 h-2 bg-blue-400 rounded-full animate-bounce"
-                              style={{ animationDelay: '0ms' }}
-                            />
-                            <span
-                              className="w-2 h-2 bg-blue-400 rounded-full animate-bounce"
-                              style={{ animationDelay: '140ms' }}
-                            />
-                            <span
-                              className="w-2 h-2 bg-blue-400 rounded-full animate-bounce"
-                              style={{ animationDelay: '280ms' }}
-                            />
-                          </div>
-                          {toolStatus && (
-                            <span className="text-xs text-blue-400/80 font-medium">
-                              {toolStatus}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                    <div ref={modalMessagesEndRef} />
-                  </div>
-
-                  {/* AI disclaimer */}
-                  <p className="shrink-0 px-5 pb-1 text-xs text-slate-500">
-                    ⚠️ Svar genereret af AI er ikke nødvendigvis korrekte. Verificér altid vigtig
-                    information.
-                  </p>
-
-                  {/* Modal input-felt */}
-                  <div className="shrink-0 px-5 pb-5 pt-2">
-                    <div className="flex items-center gap-3 bg-slate-800/60 border border-slate-700/40 rounded-xl px-4 py-3 focus-within:border-blue-500/50 transition-colors">
-                      <input
-                        ref={modalInputRef}
-                        type="text"
-                        value={input}
-                        onChange={(e) => setInput(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' && !e.shiftKey) {
-                            e.preventDefault();
-                            sendMessage();
-                          }
-                        }}
-                        placeholder={a.inputPlaceholder}
-                        className="flex-1 bg-transparent text-slate-200 text-sm placeholder-slate-600 focus:outline-none"
-                      />
-                      {isLoading ? (
-                        <button
-                          onClick={stopStreaming}
-                          className="text-red-400 hover:text-red-300 transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 rounded"
-                          aria-label={a.stopLabel}
-                        >
-                          <Square size={16} />
-                        </button>
-                      ) : (
-                        <button
-                          onClick={sendMessage}
-                          disabled={!input.trim()}
-                          className="text-blue-400 hover:text-blue-300 disabled:text-slate-600 transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded"
-                          aria-label={a.sendLabel}
-                        >
-                          <Send size={16} />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>,
-          document.body
-        )}
     </div>
   );
 }

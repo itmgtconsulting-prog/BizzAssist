@@ -5,10 +5,11 @@
  * Del af parallelt søge-flow: kald dette endpoint sideløbende med /socials.
  *
  * Strategi:
- * 1. Serper.dev (Google) — 3 parallelle queries med forskellig tidshorisont
- *    - Seneste 3 måneder (qdr:m3, num=30) — primær kilde med brede søgetermer
- *    - Seneste år (qdr:y, num=20) — supplement for ældre men relevante artikler
- *    - Ingen tidsfilter (num=10) — fanger ældre artikler f.eks. fra 2022-2023
+ * 1. Serper.dev (Google) — 2 parallelle queries med forskellig tidshorisont.
+ *    CVR-lovformens suffiks (ApS, A/S, IVS …) strippes inden søgning.
+ *    - Seneste år (qdr:y, num=20) — primær kilde (qdr:m3 undgås — returnerer støj for SMV'er)
+ *    - Ingen tidsfilter (num=20) — fanger ældre artikler f.eks. fra 2022-2023
+ *    (Serper fejler med 400 ved num>20 kombineret med tbs-filter)
  * 2. Claude — rangerer og filtrerer resultater
  * 3. Supabase — henter ekskluderede domæner
  *
@@ -172,30 +173,61 @@ async function searchSerper(
 }
 
 /**
- * Søger artikler via Serper.dev med 3 parallelle queries for maksimal dækning.
+ * Strips common Danish/international legal suffixes from a company name so that
+ * the cleaned name matches how journalists and media write about the company.
+ *
+ * CVR often stores names as "SØRENS VÆRTSHUS APS" — the quoted suffix produces
+ * zero Google results because articles always omit it.
+ *
+ * @param name - Raw company name from CVR (e.g. "SØRENS VÆRTSHUS APS")
+ * @returns Cleaned name suitable for a search query (e.g. "Sørens Værtshus")
+ */
+function cleanCompanyName(name: string): string {
+  // Remove trailing legal suffix (case-insensitive, with optional punctuation)
+  const cleaned = name
+    .replace(
+      /\s+(ApS|A\/S|IVS|K\/S|P\/S|I\/S|SE|SMBA|FMBA|Fonden|Forening|Fond|GmbH|Ltd\.?|Inc\.?|LLC|SRL|BV|NV|AG)\s*$/i,
+      ''
+    )
+    .trim();
+
+  // Convert ALL-CAPS names to title case (e.g. "SØRENS VÆRTSHUS" → "Sørens Værtshus")
+  if (cleaned === cleaned.toUpperCase() && cleaned.length > 2) {
+    return cleaned.toLowerCase().replace(/(^|\s)\S/g, (c) => c.toUpperCase());
+  }
+
+  return cleaned;
+}
+
+/**
+ * Søger artikler via Serper.dev med 2 parallelle queries for maksimal dækning.
  *
  * Strategi:
- * - Query 1: seneste 3 måneder (qdr:m3), num=30 — primær, fanger nyeste artikler
- * - Query 2: seneste år (qdr:y), num=20 — supplement for lidt ældre indhold
- * - Query 3: ingen tidsfilter, num=10 — fanger artikler fra 2022-2023 og ældre
+ * - Query 1: seneste år (qdr:y), num=30 — primær kilde. qdr:m3 undgås da det
+ *   returnerer støj for virksomheder uden nylig presseomtale.
+ * - Query 2: ingen tidsfilter, num=20 — fanger ældre artikler (2022-2023 og ældre)
+ *
+ * CVR-lovformens suffiks (ApS, A/S, IVS osv.) strippes inden søgning, da
+ * artikler aldrig citerer det officielle CVR-navn med suffiks.
  *
  * Resultater merges og dedupliceres efter URL, med nyeste artikler øverst.
  * Returnerer aldrig kast — fejl fra individuelle queries giver tom liste.
  *
  * @param apiKey      - Serper.dev API-nøgle
- * @param companyName - Virksomhedens navn
+ * @param companyName - Virksomhedens navn (råt CVR-navn — renses internt)
  */
 async function searchSerperArticles(apiKey: string, companyName: string): Promise<ArticleResult[]> {
-  const q = `"${companyName}" nyheder OR artikel OR omtale`;
+  const name = cleanCompanyName(companyName);
+  const q = `"${name}" nyheder OR artikel OR omtale`;
 
   try {
-    const [recent, yearly, allTime] = await Promise.all([
-      searchSerper(apiKey, q, 'qdr:m3', 30).catch(() => [] as ArticleResult[]),
+    // Note: Serper returns a 400 for num>20 combined with tbs filters — cap at 20.
+    const [yearly, allTime] = await Promise.all([
       searchSerper(apiKey, q, 'qdr:y', 20).catch(() => [] as ArticleResult[]),
-      searchSerper(apiKey, q, undefined, 10).catch(() => [] as ArticleResult[]),
+      searchSerper(apiKey, q, undefined, 20).catch(() => [] as ArticleResult[]),
     ]);
-    // Prioritering: nyeste (recent) > seneste år (yearly) > alle tider (allTime)
-    return dedupArticles([...recent, ...yearly, ...allTime]);
+    // Prioritering: seneste år (yearly) > alle tider (allTime)
+    return dedupArticles([...yearly, ...allTime]);
   } catch {
     return [];
   }

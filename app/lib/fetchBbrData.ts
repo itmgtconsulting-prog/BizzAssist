@@ -701,6 +701,44 @@ const BYGNING_QUERY = `
   }
 `;
 
+/**
+ * Fallback-query der slår en bygning op via id_lokalId.
+ * Bruges når BYGNING_QUERY (husnummer-match) returnerer 0 resultater men
+ * ENHED_QUERY har enheder med bygnings-UUIDs (fx ejerlejligheder i komplekser
+ * med adgang registreret under et andet husnummer end lejlighedens adresse).
+ */
+const BYGNING_BY_ID_QUERY = `
+  query($vt: DafDateTime!, $id: String!) {
+    BBR_Bygning(first: 100, virkningstid: $vt, where: { id_lokalId: { eq: $id } }) {
+      nodes {
+        id_lokalId
+        byg026Opfoerelsesaar
+        byg027OmTilbygningsaar
+        byg038SamletBygningsareal
+        byg039BygningensSamledeBoligAreal
+        byg040BygningensSamledeErhvervsAreal
+        byg041BebyggetAreal
+        byg024AntalLejlighederMedKoekken
+        byg025AntalLejlighederUdenKoekken
+        byg054AntalEtager
+        byg033Tagdaekningsmateriale
+        byg032YdervaeggensMateriale
+        byg056Varmeinstallation
+        byg057Opvarmningsmiddel
+        byg058SupplerendeVarme
+        byg030Vandforsyning
+        byg031Afloebsforhold
+        byg021BygningensAnvendelse
+        byg070Fredning
+        byg071BevaringsvaerdighedReference
+        byg094Revisionsdato
+        status
+        husnummer
+      }
+    }
+  }
+`;
+
 const ENHED_QUERY = `
   query($vt: DafDateTime!, $id: String!) {
     BBR_Enhed(first: 100, virkningstid: $vt, where: { adresseIdentificerer: { eq: $id } }) {
@@ -802,10 +840,25 @@ export async function fetchBbrForAddress(
         .filter((b): b is string => typeof b === 'string' && b.length > 0)
     : [];
 
+  // Fallback: hvis BYGNING_QUERY returnerede 0 resultater men enheder refererer til
+  // bygnings-UUIDs (fx ejerlejligheder i komplekser hvor bygningens husnummer-adresse
+  // adskiller sig fra lejlighedens adresse), hent bygningerne via id_lokalId.
+  let effectiveRawBygninger = rawBygninger;
+  if ((!rawBygninger || rawBygninger.length === 0) && fraEnheder.length > 0) {
+    const uniqueBygIds = [...new Set(fraEnheder)];
+    const fallbackResults = await Promise.all(
+      uniqueBygIds.map((bygId) => fetchBBRGraphQL(BYGNING_BY_ID_QUERY, { vt, id: bygId }))
+    );
+    const combined = fallbackResults.flatMap((r) => r ?? []);
+    if (combined.length > 0) {
+      effectiveRawBygninger = combined;
+    }
+  }
+
   // Fallback: brug id_lokalId fra rawBygninger hvis enheder ikke giver bygning-UUID'er
   // (fx adresser der er registreret direkte på bygningen uden enheder)
-  const fraBygninger: string[] = rawBygninger
-    ? (rawBygninger as RawBBRBygning[])
+  const fraBygninger: string[] = effectiveRawBygninger
+    ? (effectiveRawBygninger as RawBBRBygning[])
         .map((b) => b.id_lokalId)
         .filter((bId): bId is string => typeof bId === 'string' && bId.length > 0)
     : [];
@@ -826,7 +879,9 @@ export async function fetchBbrForAddress(
     });
   };
 
-  const rawBygningerUnique = rawBygninger ? deduplicerBBR(rawBygninger as RawBBRBygning[]) : null;
+  const rawBygningerUnique = effectiveRawBygninger
+    ? deduplicerBBR(effectiveRawBygninger as RawBBRBygning[])
+    : null;
   const rawEnhederUnique = rawEnheder ? deduplicerBBR(rawEnheder as RawBBREnhed[]) : null;
 
   // Byg et map fra bygnings-UUID → bygningsnr fra WFS-punkterne (byg007Bygningsnummer)

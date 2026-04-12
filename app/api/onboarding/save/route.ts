@@ -28,19 +28,21 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { parseBody } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
 
-/** Expected shape of the POST body */
-interface OnboardingSaveBody {
-  tenantId: string;
-  companyName: string;
-  companyCvr: string | null;
-  industry: string | null;
-  headcount: string | null;
-  plan: string;
-}
+/** BIZZ-210: Zod schema for onboarding save body */
+const onboardingSchema = z.object({
+  tenantId: z.string().uuid(),
+  companyName: z.string().trim().max(200).default(''),
+  companyCvr: z.string().regex(/^\d{8}$/).nullable().optional(),
+  industry: z.string().max(100).nullable().optional(),
+  headcount: z.string().max(50).nullable().optional(),
+  plan: z.string().min(1).max(50),
+});
 
 /**
  * POST /api/onboarding/save
@@ -62,23 +64,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Ikke autentificeret' }, { status: 401 });
     }
 
-    // ── Parse body ────────────────────────────────────────────────────────────
-    let body: OnboardingSaveBody;
-    try {
-      body = (await request.json()) as OnboardingSaveBody;
-    } catch {
-      return NextResponse.json({ error: 'Ugyldig JSON' }, { status: 400 });
-    }
-
-    const { tenantId, companyName, companyCvr } = body;
-
-    if (!tenantId || typeof tenantId !== 'string') {
-      return NextResponse.json({ error: 'tenantId mangler' }, { status: 400 });
-    }
-    if (!companyName || typeof companyName !== 'string' || companyName.trim().length === 0) {
-      // Company name is optional — allow empty string (skip update)
-      // Return early if tenantId is the only thing missing
-    }
+    // ── Parse and validate body (BIZZ-210: Zod schema validation) ──
+    const parsed = await parseBody(request, onboardingSchema);
+    if (!parsed.success) return parsed.response;
+    const { tenantId, companyName, companyCvr } = parsed.data;
 
     // ── Authorise: verify caller is a member of the given tenant ─────────────
     const { data: membership } = (await supabase

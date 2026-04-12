@@ -11,10 +11,17 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { darAutocomplete } from '@/app/lib/dar';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
+import { parseQuery } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
+
+/** BIZZ-210: Zod schema for search query params */
+const searchParamsSchema = z.object({
+  q: z.string().trim().min(2).max(500),
+});
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -398,13 +405,14 @@ export async function GET(request: NextRequest) {
   const auth = await resolveTenantId();
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const q = request.nextUrl.searchParams.get('q') ?? '';
-
-  if (q.trim().length < 2) {
+  // BIZZ-210: Zod schema validation for query params
+  const parsed = parseQuery(request, searchParamsSchema);
+  if (!parsed.success) {
     return NextResponse.json([], {
       headers: { 'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=120' },
     });
   }
+  const q = parsed.data.q;
 
   const normQ = normalize(q);
 

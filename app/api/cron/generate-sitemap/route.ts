@@ -8,14 +8,18 @@
  * at holde sig under Vercels 10-sekunders function timeout).
  *
  * Phase: companies
- *   Scroll-paginerer CVR ElasticSearch (Erhvervsstyrelsen) for alle aktive
- *   virksomheder. Upserts slug + CVR-nummer i batches af 200 per scroll-side.
+ *   Paginerer CVR ElasticSearch (Erhvervsstyrelsen) via search_after sorteret
+ *   på cvrNummer. Gemmer seneste cvrNummer i public.ai_settings med nøglen
+ *   'sitemap_cvr_after' så næste kørsel kan fortsætte hvor den slap.
+ *   Behandler CVR_PAGE_SIZE virksomheder pr. kørsel (ét enkelt ES-request).
  *
  * Phase: properties
- *   Paginerer DAWA adgangsadresser (1000 pr. side, max 20 sider pr. kørsel).
- *   Gemmer fremskridt i public.ai_settings med nøglen 'sitemap_dawa_page'
+ *   Paginerer DAWA jordstykker (1000 pr. side, max 20 sider pr. kørsel).
+ *   Hvert jordstykke indeholder bfenummer direkte — ingen DAWA adgangsadresser
+ *   bruges (de indeholder ikke bfenummer i jordstykke-sub-objektet).
+ *   Gemmer fremskridt i public.ai_settings med nøglen 'sitemap_jordstykke_page'
  *   så næste kørsel kan fortsætte hvor den slap.
- *   Skipper adresser uden bfenummer.
+ *   Skipper jordstykker uden bfenummer.
  *
  * Sikring:
  *   - Kræver Authorization: Bearer <CRON_SECRET>
@@ -30,29 +34,29 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { generateEjendomSlug, generateVirksomhedSlug } from '@/app/lib/slug';
+import { generateSlug, generateVirksomhedSlug } from '@/app/lib/slug';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 
 // ─── Konstanter ────────────────────────────────────────────────────────────────
 
-/** Antal virksomheder pr. CVR ES scroll-side */
-const CVR_SCROLL_SIZE = 500;
+/** Antal virksomheder pr. CVR ES request (lavt for at holde sig under Vercels 10s timeout) */
+const CVR_PAGE_SIZE = 200;
 
-/** Antal adresser pr. DAWA-side (max 1000) */
-const DAWA_PAGE_SIZE = 1_000;
+/** Antal jordstykker pr. DAWA-side (max 1000) */
+const JORDSTYKKE_PAGE_SIZE = 1_000;
 
 /** Max antal DAWA-sider pr. kørsel (beskytter mod Vercel 10s timeout) */
-const MAX_DAWA_PAGES_PER_RUN = 20;
+const MAX_JORDSTYKKE_PAGES_PER_RUN = 20;
 
 /** Antal rækker der upserts til Supabase ad gangen */
 const UPSERT_BATCH_SIZE = 200;
 
-/** Supabase ai_settings nøgle til DAWA-side fremskridt */
-const DAWA_PROGRESS_KEY = 'sitemap_dawa_page';
+/** Supabase ai_settings nøgle til sidst behandlede cvrNummer */
+const CVR_PROGRESS_KEY = 'sitemap_cvr_after';
 
-/** CVR ES scroll TTL */
-const CVR_SCROLL_TTL = '2m';
+/** Supabase ai_settings nøgle til jordstykke-side fremskridt */
+const JORDSTYKKE_PROGRESS_KEY = 'sitemap_jordstykke_page';
 
 // ─── Auth ──────────────────────────────────────────────────────────────────────
 
@@ -83,9 +87,8 @@ interface SitemapUpsert {
   updated_at: string;
 }
 
-/** CVR ES scroll-svar */
-interface CvrScrollResponse {
-  _scroll_id?: string;
+/** CVR ES response for search_after paginering */
+interface CvrSearchResponse {
   hits?: {
     hits?: Array<{
       _source?: {
@@ -96,16 +99,16 @@ interface CvrScrollResponse {
           };
         };
       };
+      sort?: number[];
     }>;
   };
 }
 
-/** DAWA adgangsadresse (nestet struktur) — kun de felter vi bruger */
-interface DawaAdgangsadresse {
-  vejstykke?: { navn?: string };
-  husnr?: string;
-  postnummer?: { nr?: string; navn?: string };
-  jordstykke?: { bfenummer?: number | null };
+/** DAWA jordstykke — kun de felter vi bruger */
+interface DawaJordstykke {
+  bfenummer?: number | null;
+  ejerlav?: { kode?: number; navn?: string };
+  matrikelnr?: string;
 }
 
 // ─── Upsert helper ─────────────────────────────────────────────────────────────
@@ -139,159 +142,144 @@ async function upsertBatch(
 // ─── Phase: companies ──────────────────────────────────────────────────────────
 
 /**
- * Scroll-paginerer CVR ElasticSearch og upserts alle aktive virksomheder
- * til sitemap_entries. Bruger Erhvervsstyrelsens Basic Auth credentials.
+ * Paginerer CVR ElasticSearch via search_after sorteret på cvrNummer.
+ * Behandler CVR_PAGE_SIZE virksomheder per kørsel (ét enkelt ES-request)
+ * og gemmer fremskridt i public.ai_settings for at fortsætte ved næste kørsel.
  *
- * Stopper automatisk når scroll returnerer tom hits-array.
+ * Undgår scroll-API'et som kræver en aktiv scroll-session på tværs af kald —
+ * search_after med range-query er stateless og timeout-sikkert.
  *
  * @param admin - Supabase admin client til DB-writes
- * @returns Antal virksomheder der blev upserted
+ * @returns Antal virksomheder der blev upserted og om paginering er nulstillet
  */
 async function phaseCompanies(
   admin: ReturnType<typeof createAdminClient>
-): Promise<{ count: number }> {
+): Promise<{ count: number; lastCvr: number; done: boolean }> {
   const cvrUser = process.env.CVR_ES_USER ?? '';
   const cvrPass = process.env.CVR_ES_PASS ?? '';
 
   if (!cvrUser || !cvrPass) {
-    return { count: 0 };
+    logger.error('[generate-sitemap] CVR_ES_USER/CVR_ES_PASS mangler');
+    return { count: 0, lastCvr: 0, done: false };
   }
+
+  // Hent sidst behandlede cvrNummer fra ai_settings
+  const { data: progressRow } = await admin
+    .from('ai_settings')
+    .select('value')
+    .eq('key', CVR_PROGRESS_KEY)
+    .maybeSingle();
+
+  const progressValue = (progressRow as Record<string, unknown> | null)?.['value'];
+  const afterCvr: number = progressValue != null ? Number(progressValue) : 0;
 
   const authHeader = `Basic ${Buffer.from(`${cvrUser}:${cvrPass}`).toString('base64')}`;
   const now = new Date().toISOString();
-  let totalCount = 0;
-  let scrollId: string | undefined;
 
-  // Initial scroll-request
-  const initialQuery = {
-    size: CVR_SCROLL_SIZE,
+  // Byg search_after query med range på cvrNummer — stateless og hurtigt
+  const query: Record<string, unknown> = {
+    size: CVR_PAGE_SIZE,
+    sort: [{ 'Vrvirksomhed.cvrNummer': 'asc' }],
     query: {
       bool: {
-        must: [{ term: { 'Vrvirksomhed.reklamebeskyttet': false } }],
+        must: [
+          { term: { 'Vrvirksomhed.reklamebeskyttet': false } },
+          ...(afterCvr > 0 ? [{ range: { 'Vrvirksomhed.cvrNummer': { gt: afterCvr } } }] : []),
+        ],
         must_not: [{ exists: { field: 'Vrvirksomhed.livsforloeb.periode.gyldigTil' } }],
       },
     },
     _source: ['Vrvirksomhed.cvrNummer', 'Vrvirksomhed.virksomhedMetadata.nyesteNavn.navn'],
   };
 
+  let hits: NonNullable<CvrSearchResponse['hits']>['hits'] = [];
+
   try {
-    const initRes = await fetch(
-      `https://distribution.virk.dk/cvr-permanent/virksomhed/_search?scroll=${CVR_SCROLL_TTL}`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: authHeader,
-        },
-        body: JSON.stringify(initialQuery),
-        signal: AbortSignal.timeout(10000),
-      }
-    );
+    const res = await fetch('https://distribution.virk.dk/cvr-permanent/virksomhed/_search', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: authHeader,
+      },
+      body: JSON.stringify(query),
+      // 7s timeout — lader 3s til upsert + Vercel overhead inden 10s grænsen
+      signal: AbortSignal.timeout(7000),
+    });
 
-    if (!initRes.ok) {
-      logger.error('[generate-sitemap] CVR ES initial request fejlede:', initRes.status);
-      return { count: 0 };
+    if (!res.ok) {
+      logger.error('[generate-sitemap] CVR ES request fejlede:', res.status);
+      return { count: 0, lastCvr: afterCvr, done: false };
     }
 
-    const initData = (await initRes.json()) as CvrScrollResponse;
-    scrollId = initData._scroll_id;
-
-    // Behandl første side
-    const firstHits = initData.hits?.hits ?? [];
-    if (firstHits.length > 0) {
-      const batch = buildVirksomhedBatch(firstHits, now);
-      totalCount += await upsertBatch(admin, batch);
-    }
-
-    if (firstHits.length === 0 || !scrollId) {
-      return { count: totalCount };
-    }
+    const data = (await res.json()) as CvrSearchResponse;
+    hits = data.hits?.hits ?? [];
   } catch (err) {
-    logger.error('[generate-sitemap] CVR ES initial scroll fejl:', err);
-    return { count: 0 };
+    logger.error('[generate-sitemap] CVR ES request fejl:', err);
+    return { count: 0, lastCvr: afterCvr, done: false };
   }
 
-  // Fortsæt scroll-loop
-  while (scrollId) {
-    try {
-      const scrollRes = await fetch('https://distribution.virk.dk/_search/scroll', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: authHeader,
-        },
-        body: JSON.stringify({ scroll: CVR_SCROLL_TTL, scroll_id: scrollId }),
-        signal: AbortSignal.timeout(10000),
-      });
-
-      if (!scrollRes.ok) {
-        logger.error('[generate-sitemap] CVR ES scroll request fejlede:', scrollRes.status);
-        break;
-      }
-
-      const scrollData = (await scrollRes.json()) as CvrScrollResponse;
-      const hits = scrollData.hits?.hits ?? [];
-
-      // Tom hits = ingen flere resultater
-      if (hits.length === 0) break;
-
-      scrollId = scrollData._scroll_id;
-
-      const batch = buildVirksomhedBatch(hits, now);
-      totalCount += await upsertBatch(admin, batch);
-    } catch (err) {
-      logger.error('[generate-sitemap] CVR ES scroll loop fejl:', err);
-      break;
-    }
+  if (hits.length === 0) {
+    // Ingen flere resultater — fuld scan afsluttet, nulstil fremskridt
+    await admin
+      .from('ai_settings')
+      .upsert({ key: CVR_PROGRESS_KEY, value: 0 }, { onConflict: 'key' });
+    return { count: 0, lastCvr: 0, done: true };
   }
 
-  return { count: totalCount };
-}
-
-/**
- * Bygger en SitemapUpsert-batch fra CVR ES hits.
- *
- * @param hits - Array af CVR ES hit-objekter
- * @param updatedAt - ISO-tidsstempel for updated_at-feltet
- * @returns Array af SitemapUpsert klar til upsert
- */
-function buildVirksomhedBatch(
-  hits: NonNullable<CvrScrollResponse['hits']>['hits'],
-  updatedAt: string
-): SitemapUpsert[] {
+  // Byg og upsert batch
   const batch: SitemapUpsert[] = [];
+  let maxCvr = afterCvr;
 
-  for (const hit of hits ?? []) {
+  for (const hit of hits) {
     const vvs = hit._source?.Vrvirksomhed;
     const cvr = vvs?.cvrNummer;
     const navn = vvs?.virksomhedMetadata?.nyesteNavn?.navn;
-
     if (!cvr || !navn) continue;
+
+    if (cvr > maxCvr) maxCvr = cvr;
 
     batch.push({
       type: 'virksomhed',
       slug: generateVirksomhedSlug(navn),
       entity_id: String(cvr),
-      updated_at: updatedAt,
+      updated_at: now,
     });
-
-    // Flush delbatch ved grænse for at holde memory-forbrug lavt
-    if (batch.length >= UPSERT_BATCH_SIZE) {
-      break; // Returnér batch — outer loop kalder upsertBatch
-    }
   }
 
-  return batch;
+  const count = await upsertBatch(admin, batch);
+
+  // Gem fremskridt — næste kørsel starter fra maxCvr
+  if (maxCvr > afterCvr) {
+    await admin
+      .from('ai_settings')
+      .upsert({ key: CVR_PROGRESS_KEY, value: maxCvr }, { onConflict: 'key' });
+  }
+
+  const done = hits.length < CVR_PAGE_SIZE;
+  if (done) {
+    // Kortere side = alle virksomheder behandlet, nulstil
+    await admin
+      .from('ai_settings')
+      .upsert({ key: CVR_PROGRESS_KEY, value: 0 }, { onConflict: 'key' });
+  }
+
+  return { count, lastCvr: maxCvr, done };
 }
 
 // ─── Phase: properties ─────────────────────────────────────────────────────────
 
 /**
- * Paginerer DAWA adgangsadresser og upserts ejendomme til sitemap_entries.
- * Gemmer sidefremskridt i public.ai_settings for at kunne fortsætte
- * ved næste kørsel (Vercel 10s timeout begrænser til MAX_DAWA_PAGES_PER_RUN sider).
+ * Paginerer DAWA jordstykker og upserts ejendomme til sitemap_entries.
  *
- * Når DAWA returnerer tom side, nulstilles fremskridt til 0 (fuld scan afsluttet).
+ * Bruger DAWA jordstykker-endpointet (fremfor adgangsadresser) fordi
+ * jordstykker indeholder bfenummer direkte. DAWA adgangsadresser?struktur=nestet
+ * returnerer IKKE bfenummer i jordstykke-sub-objektet.
+ *
+ * Slug genereres fra ejerlav.navn + matrikelnr. Sluggen er dekorativ —
+ * den offentlige ejendomsside bruger kun BFE-nummeret til datahentning.
+ *
+ * Gemmer sidefremskridt i public.ai_settings for at fortsætte
+ * ved næste kørsel (Vercel 10s timeout begrænser til MAX_JORDSTYKKE_PAGES_PER_RUN sider).
  *
  * @param admin - Supabase admin client til DB-writes og fremskridt
  * @returns Sidetal, antal upserted og om scan er afsluttet
@@ -303,10 +291,9 @@ async function phaseProperties(
   const { data: progressRow } = await admin
     .from('ai_settings')
     .select('value')
-    .eq('key', DAWA_PROGRESS_KEY)
+    .eq('key', JORDSTYKKE_PROGRESS_KEY)
     .maybeSingle();
 
-  // Supabase returns unknown row shape — extract value safely via index access.
   const progressValue = (progressRow as Record<string, unknown> | null)?.['value'];
   let startPage: number = progressValue != null ? Number(progressValue) : 1;
   if (startPage < 1) startPage = 1;
@@ -316,10 +303,11 @@ async function phaseProperties(
   let currentPage = startPage;
   let done = false;
 
-  for (let i = 0; i < MAX_DAWA_PAGES_PER_RUN; i++) {
+  for (let i = 0; i < MAX_JORDSTYKKE_PAGES_PER_RUN; i++) {
+    // DAWA jordstykker returnerer bfenummer direkte — adgangsadresser gør ikke
     const url =
-      `https://api.dataforsyningen.dk/adgangsadresser` +
-      `?struktur=nestet&per_side=${DAWA_PAGE_SIZE}&side=${currentPage}`;
+      `https://api.dataforsyningen.dk/jordstykker` +
+      `?per_side=${JORDSTYKKE_PAGE_SIZE}&side=${currentPage}`;
 
     try {
       const res = await fetch(url, {
@@ -328,7 +316,12 @@ async function phaseProperties(
       });
 
       if (!res.ok) {
-        logger.error('[generate-sitemap] DAWA side', currentPage, 'fejlede:', res.status);
+        logger.error(
+          '[generate-sitemap] DAWA jordstykker side',
+          currentPage,
+          'fejlede:',
+          res.status
+        );
         break;
       }
 
@@ -353,14 +346,14 @@ async function phaseProperties(
 
       currentPage++;
 
-      if (data.length < DAWA_PAGE_SIZE) {
+      if (data.length < JORDSTYKKE_PAGE_SIZE) {
         // Kortere side = sidste side i datasættet
         await saveProgress(admin, 1);
         done = true;
         break;
       }
     } catch (err) {
-      logger.error('[generate-sitemap] DAWA side', currentPage, 'fejl:', err);
+      logger.error('[generate-sitemap] DAWA jordstykker side', currentPage, 'fejl:', err);
       break;
     }
   }
@@ -374,10 +367,13 @@ async function phaseProperties(
 }
 
 /**
- * Bygger SitemapUpsert-entries fra DAWA adgangsadresser.
- * Skipper adresser uden bfenummer.
+ * Bygger SitemapUpsert-entries fra DAWA jordstykker.
+ * Skipper jordstykker uden bfenummer.
  *
- * @param data - Array af DAWA adgangsadresse-objekter (nestet struktur)
+ * Slug genereres fra ejerlav.navn + matrikelnr da jordstykker ikke har
+ * adressedata. Sluggen er dekorativ — BFE-nummeret er den funktionelle ID.
+ *
+ * @param data - Array af DAWA jordstykke-objekter
  * @param updatedAt - ISO-tidsstempel for updated_at-feltet
  * @returns Filtreret array af SitemapUpsert klar til upsert
  */
@@ -385,21 +381,21 @@ function buildEjendomEntries(data: unknown[], updatedAt: string): SitemapUpsert[
   const entries: SitemapUpsert[] = [];
 
   for (const item of data) {
-    const a = item as DawaAdgangsadresse;
+    const js = item as DawaJordstykke;
 
-    const bfe = a.jordstykke?.bfenummer;
-    if (!bfe) continue; // Skip adresser uden BFE
+    const bfe = js.bfenummer;
+    if (!bfe) continue; // Skip jordstykker uden BFE
 
-    const vejnavn = a.vejstykke?.navn ?? '';
-    const husnr = a.husnr ?? '';
-    const postnr = a.postnummer?.nr ?? '';
-    const postnrnavn = a.postnummer?.navn ?? '';
+    // Brug ejerlav.navn + matrikelnr som slug-grundlag.
+    // Sluggen er dekorativ — den offentlige side bruger kun BFE til opslag.
+    const ejerlavNavn = js.ejerlav?.navn ?? String(js.ejerlav?.kode ?? '');
+    const matrikelnr = js.matrikelnr ?? '';
 
-    if (!vejnavn || !postnr) continue; // Skip ufuldstændige adresser
+    if (!ejerlavNavn && !matrikelnr) continue;
 
     entries.push({
       type: 'ejendom',
-      slug: generateEjendomSlug(vejnavn, husnr, postnr, postnrnavn),
+      slug: generateSlug(`${ejerlavNavn} ${matrikelnr}`),
       entity_id: String(bfe),
       updated_at: updatedAt,
     });
@@ -409,7 +405,7 @@ function buildEjendomEntries(data: unknown[], updatedAt: string): SitemapUpsert[
 }
 
 /**
- * Gemmer DAWA-sidefremskridt i public.ai_settings.
+ * Gemmer jordstykke-sidefremskridt i public.ai_settings.
  * Bruges til at fortsætte ved næste cron-kørsel.
  *
  * @param admin - Supabase admin client
@@ -421,7 +417,7 @@ async function saveProgress(
 ): Promise<void> {
   await admin
     .from('ai_settings')
-    .upsert({ key: DAWA_PROGRESS_KEY, value: page }, { onConflict: 'key' });
+    .upsert({ key: JORDSTYKKE_PROGRESS_KEY, value: page }, { onConflict: 'key' });
 }
 
 // ─── Route handler ─────────────────────────────────────────────────────────────
@@ -459,7 +455,13 @@ export async function GET(request: NextRequest) {
   if (phase === 'companies') {
     try {
       const result = await phaseCompanies(admin);
-      return NextResponse.json({ ok: true, phase: 'companies', count: result.count });
+      return NextResponse.json({
+        ok: true,
+        phase: 'companies',
+        count: result.count,
+        lastCvr: result.lastCvr,
+        done: result.done,
+      });
     } catch (err) {
       logger.error('[generate-sitemap] companies phase uventet fejl:', err);
       return NextResponse.json({ error: 'Intern fejl' }, { status: 500 });

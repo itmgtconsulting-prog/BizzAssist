@@ -105,6 +105,13 @@ function DanishPrivacy() {
             <strong className="text-white">Lovmæssige forpligtelser</strong> (GDPR art. 6, stk. 1,
             litra c): Bogføring og skattemæssige forpligtelser.
           </li>
+          <li>
+            <strong className="text-white">Intern notifikation ved tilmelding</strong> (GDPR art. 6,
+            stk. 1, litra f — legitim interesse): Ved oprettelse af en ny konto sendes en intern
+            notifikation til vores supportteam med maskeret e-mailadresse og valgt abonnementsplan
+            med henblik på onboarding og kundeservice. Denne e-mail opbevares ikke separat og
+            indeholder ikke dit fulde navn eller adgangskode.
+          </li>
         </ul>
       </section>
 

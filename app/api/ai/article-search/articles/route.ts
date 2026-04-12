@@ -167,6 +167,47 @@ async function fetchPrimaryMediaDomains(): Promise<string[]> {
   }
 }
 
+/** Maksimalt antal artikler der sendes til Claude (fallback). */
+const DEFAULT_MAX_ARTICLES = 40;
+
+/** Maksimalt antal tokens til Claude-kaldet (fallback). */
+const DEFAULT_MAX_TOKENS = 4096;
+
+/**
+ * Henter article-search grænseværdier (max artikler + max tokens) fra ai_settings.
+ * Bruges til at styre Claude-prompt-størrelsen og token-budgettet.
+ *
+ * @returns { maxArticles, maxTokens }
+ */
+async function fetchArticleLimits(): Promise<{ maxArticles: number; maxTokens: number }> {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
+    return { maxArticles: DEFAULT_MAX_ARTICLES, maxTokens: DEFAULT_MAX_TOKENS };
+  }
+  try {
+    const client = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+    const { data: rows } = await client
+      .from('ai_settings')
+      .select('key, value')
+      .in('key', ['max_articles_per_search', 'max_tokens_per_search']);
+
+    let maxArticles = DEFAULT_MAX_ARTICLES;
+    let maxTokens = DEFAULT_MAX_TOKENS;
+
+    for (const row of rows ?? []) {
+      if (row.key === 'max_articles_per_search' && typeof row.value === 'number' && row.value > 0) {
+        maxArticles = row.value;
+      }
+      if (row.key === 'max_tokens_per_search' && typeof row.value === 'number' && row.value > 0) {
+        maxTokens = row.value;
+      }
+    }
+
+    return { maxArticles, maxTokens };
+  } catch {
+    return { maxArticles: DEFAULT_MAX_ARTICLES, maxTokens: DEFAULT_MAX_TOKENS };
+  }
+}
+
 // ─── Serper.dev Search ────────────────────────────────────────────────────────
 
 /**
@@ -485,15 +526,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   let rawResults: ArticleResult[];
   let dbExcludedDomains: string[];
   let primaryDomains: string[];
+  let maxArticles: number;
+  let maxTokens: number;
 
   try {
-    // Hent DB-konfiguration parallelt med Serper-søgning
-    const [resolvedDbDomains, resolvedPrimaryDomains] = await Promise.all([
+    // Hent DB-konfiguration parallelt (3 uafhængige queries)
+    const [resolvedDbDomains, resolvedPrimaryDomains, resolvedLimits] = await Promise.all([
       fetchExcludedDomains(),
       fetchPrimaryMediaDomains(),
+      fetchArticleLimits(),
     ]);
     dbExcludedDomains = resolvedDbDomains;
     primaryDomains = resolvedPrimaryDomains;
+    maxArticles = resolvedLimits.maxArticles;
+    maxTokens = resolvedLimits.maxTokens;
 
     const serperResults = await searchSerperArticles(
       serperApiKey,
@@ -539,9 +585,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   // ── Byg Claude-besked ──
-  // Cap at 40 results to keep the prompt within a safe token budget.
-  // max_tokens=4096 comfortably handles 40 results (~6k input tokens).
-  const claudeResults = rawResults.slice(0, 40);
+  // Cap results to admin-configured max (default 40) to stay within token budget.
+  const claudeResults = rawResults.slice(0, maxArticles);
 
   const companyContext = [
     `Virksomhedsnavn: ${companyName}`,
@@ -568,7 +613,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
     const response = await client.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 4096,
+      max_tokens: maxTokens,
       system: buildArticlesSystemPrompt(primaryDomains),
       messages: [{ role: 'user', content: userMessage }],
     });

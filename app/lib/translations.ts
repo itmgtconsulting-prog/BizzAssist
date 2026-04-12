@@ -215,7 +215,7 @@ export const translations = {
       map: 'Kort',
       search: 'Søg',
       analysis: 'AI Analyse',
-      chat: 'AI Chat',
+      chat: 'AI Bizzness Assistent',
       admin: 'Admin',
       searchPlaceholder: 'Søg adresse, CVR, virksomhed…',
       settings: 'Indstillinger',
@@ -247,7 +247,7 @@ export const translations = {
       companies: 'virksomheder',
     },
 
-    /* ─── AI Chat ──────────────────────────────────────────────────── */
+    /* ─── AI Bizzness Assistent ─────────────────────────────────────── */
     ai: {
       title: 'AI Bizzness Assistent',
       tokenStatus: 'Token status',
@@ -718,7 +718,7 @@ export const translations = {
       map: 'Map',
       search: 'Search',
       analysis: 'AI Analysis',
-      chat: 'AI Chat',
+      chat: 'AI Bizzness Assistant',
       admin: 'Admin',
       searchPlaceholder: 'Search address, CVR, company…',
       settings: 'Settings',
@@ -750,7 +750,7 @@ export const translations = {
       companies: 'companies',
     },
 
-    /* ─── AI Chat ──────────────────────────────────────────────────── */
+    /* ─── AI Bizzness Assistent ─────────────────────────────────────── */
     ai: {
       title: 'AI Bizzness Assistant',
       tokenStatus: 'Token status',

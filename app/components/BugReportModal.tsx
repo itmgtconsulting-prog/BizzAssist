@@ -157,6 +157,11 @@ const BugReportModal = React.memo(function BugReportModal({
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
     const trap = (e: KeyboardEvent) => {
+      // BIZZ-212: Escape key closes the modal (keyboard equivalent of clicking backdrop)
+      if (e.key === 'Escape') {
+        handleClose();
+        return;
+      }
       if (e.key !== 'Tab') return;
       if (e.shiftKey) {
         if (document.activeElement === first) {
@@ -173,6 +178,7 @@ const BugReportModal = React.memo(function BugReportModal({
     document.addEventListener('keydown', trap);
     first?.focus();
     return () => document.removeEventListener('keydown', trap);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   /**

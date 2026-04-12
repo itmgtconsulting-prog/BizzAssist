@@ -5,13 +5,14 @@
  * Del af parallelt søge-flow: kald dette endpoint sideløbende med /socials.
  *
  * Strategi:
- * 1. Serper.dev (Google) — 2 parallelle queries med forskellig tidshorisont.
+ * 1. Serper.dev (Google) — 3 parallelle queries med forskellig tidshorisont og fokus.
  *    CVR-lovformens suffiks (ApS, A/S, IVS …) strippes inden søgning.
  *    - Seneste år (qdr:y, num=20) — primær kilde (qdr:m3 undgås — returnerer støj for SMV'er)
  *    - Ingen tidsfilter (num=20) — fanger ældre artikler f.eks. fra 2022-2023
+ *    - Site-filter (num=20) — søger kun på admin-konfigurerede foretrukne danske medier
  *    (Serper fejler med 400 ved num>20 kombineret med tbs-filter)
- * 2. Claude — rangerer og filtrerer resultater
- * 3. Supabase — henter ekskluderede domæner
+ * 2. Claude — rangerer og filtrerer resultater, prioriterer foretrukne mediekilder
+ * 3. Supabase — henter ekskluderede domæner og primære mediedomæner (admin-konfigureret)
  *
  * @param body.companyName  - Virksomhedens navn
  * @param body.cvr          - CVR-nummer (valgfrit)
@@ -34,6 +35,7 @@ export const maxDuration = 60;
 
 // ─── Ekskluderede domæner ─────────────────────────────────────────────────────
 
+/** Fallback-liste af ekskluderede domæner (konkurrenter og katalogsider). */
 const EXCLUDED_ARTICLE_DOMAINS = [
   'ownr.dk',
   'estatistik.dk',
@@ -49,6 +51,23 @@ const EXCLUDED_ARTICLE_DOMAINS = [
   'crunchbase.com',
   'b2bhint.com',
   'resights.dk',
+];
+
+/**
+ * Foretrukne danske mediedomæner brugt som fallback når admin-konfiguration mangler.
+ * Matcher standardlisten i AiMediaAgentsClient.tsx.
+ */
+const DEFAULT_PRIMARY_MEDIA_DOMAINS = [
+  'dr.dk',
+  'tv2.dk',
+  'borsen.dk',
+  'berlingske.dk',
+  'politiken.dk',
+  'jyllands-posten.dk',
+  'bt.dk',
+  'eb.dk',
+  'version2.dk',
+  'computerworld.dk',
 ];
 
 /**
@@ -121,6 +140,30 @@ async function fetchExcludedDomains(): Promise<string[]> {
     return EXCLUDED_ARTICLE_DOMAINS;
   } catch {
     return EXCLUDED_ARTICLE_DOMAINS;
+  }
+}
+
+/**
+ * Henter admin-konfigurerede foretrukne mediedomæner fra ai_settings-tabellen.
+ * Bruges til at bygge en site:-filter Serper-query og til Claude-system-prompten.
+ *
+ * @returns Array af foretrukne domæner (f.eks. ['dr.dk', 'berlingske.dk'])
+ */
+async function fetchPrimaryMediaDomains(): Promise<string[]> {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) return DEFAULT_PRIMARY_MEDIA_DOMAINS;
+  try {
+    const client = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+    const { data } = await client
+      .from('ai_settings')
+      .select('value')
+      .eq('key', 'primary_media_domains')
+      .single();
+    if (Array.isArray(data?.value) && data.value.length > 0) {
+      return data.value as string[];
+    }
+    return DEFAULT_PRIMARY_MEDIA_DOMAINS;
+  } catch {
+    return DEFAULT_PRIMARY_MEDIA_DOMAINS;
   }
 }
 
@@ -200,34 +243,46 @@ function cleanCompanyName(name: string): string {
 }
 
 /**
- * Søger artikler via Serper.dev med 2 parallelle queries for maksimal dækning.
+ * Søger artikler via Serper.dev med 3 parallelle queries for maksimal dækning.
  *
  * Strategi:
- * - Query 1: seneste år (qdr:y), num=30 — primær kilde. qdr:m3 undgås da det
+ * - Query 1: seneste år (qdr:y), num=20 — primær kilde. qdr:m3 undgås da det
  *   returnerer støj for virksomheder uden nylig presseomtale.
  * - Query 2: ingen tidsfilter, num=20 — fanger ældre artikler (2022-2023 og ældre)
+ * - Query 3: site:-filter med admin-konfigurerede foretrukne danske medier, num=20 —
+ *   sikrer at vigtige kilder (DR, Berlingske, Politiken osv.) altid er repræsenteret.
  *
  * CVR-lovformens suffiks (ApS, A/S, IVS osv.) strippes inden søgning, da
  * artikler aldrig citerer det officielle CVR-navn med suffiks.
  *
- * Resultater merges og dedupliceres efter URL, med nyeste artikler øverst.
+ * Resultater merges og dedupliceres efter URL, med foretrukne medier øverst.
  * Returnerer aldrig kast — fejl fra individuelle queries giver tom liste.
  *
- * @param apiKey      - Serper.dev API-nøgle
- * @param companyName - Virksomhedens navn (råt CVR-navn — renses internt)
+ * @param apiKey         - Serper.dev API-nøgle
+ * @param companyName    - Virksomhedens navn (råt CVR-navn — renses internt)
+ * @param primaryDomains - Foretrukne mediedomæner fra admin-konfiguration
  */
-async function searchSerperArticles(apiKey: string, companyName: string): Promise<ArticleResult[]> {
+async function searchSerperArticles(
+  apiKey: string,
+  companyName: string,
+  primaryDomains: string[]
+): Promise<ArticleResult[]> {
   const name = cleanCompanyName(companyName);
   const q = `"${name}" nyheder OR artikel OR omtale`;
 
+  // Byg site:-filter query fra de foretrukne mediedomæner
+  const siteFilter = primaryDomains.map((d) => `site:${d}`).join(' OR ');
+  const qMedia = `"${name}" (${siteFilter})`;
+
   try {
     // Note: Serper returns a 400 for num>20 combined with tbs filters — cap at 20.
-    const [yearly, allTime] = await Promise.all([
+    const [yearly, allTime, mediaOnly] = await Promise.all([
       searchSerper(apiKey, q, 'qdr:y', 20).catch(() => [] as ArticleResult[]),
       searchSerper(apiKey, q, undefined, 20).catch(() => [] as ArticleResult[]),
+      searchSerper(apiKey, qMedia, undefined, 20).catch(() => [] as ArticleResult[]),
     ]);
-    // Prioritering: seneste år (yearly) > alle tider (allTime)
-    return dedupArticles([...yearly, ...allTime]);
+    // Prioritering: foretrukne medier + seneste år > alle tider
+    return dedupArticles([...mediaOnly, ...yearly, ...allTime]);
   } catch {
     return [];
   }
@@ -252,18 +307,24 @@ function dedupArticles(articles: ArticleResult[]): ArticleResult[] {
 
 /**
  * Bygger system prompt til rangering af artikler om en virksomhed.
+ * Inkluderer admin-konfigurerede foretrukne mediedomæner så Claude prioriterer dem.
  *
+ * @param primaryDomains - Foretrukne mediedomæner fra admin-konfiguration
  * @returns Komplet system prompt til Claude
  */
-function buildArticlesSystemPrompt(): string {
+function buildArticlesSystemPrompt(primaryDomains: string[]): string {
+  const preferredList = primaryDomains.join(', ');
   return `Du er en dansk medieekspert. Du rangerer og filtrerer nyheder/artikler om en dansk VIRKSOMHED.
 
 Din opgave:
 1. Vurdér om hvert hit handler om DENNE SPECIFIKKE virksomhed (ikke en anden med lignende navn)
-2. Prioritér danske artikler, men inkludér internationale hvis relevante
-3. Sortér artikler efter dato — NYESTE artikler FØRST
+2. Prioritér artikler fra FORETRUKNE MEDIER — placer dem øverst uanset dato
+3. Sortér derefter øvrige artikler efter dato — NYESTE artikler FØRST
 4. Inkludér gerne ældre artikler (2022-2023 og ældre) hvis de er relevante — især for mindre virksomheder
 5. Forbedre snippet-beskrivelser til max 100 tegn dansk tekst
+
+FORETRUKNE MEDIEDOMÆNER — placer disse ØVERST i resultatlisten:
+${preferredList}
 
 EKSKLUDEREDE DOMÆNER — inkludér ALDRIG:
 ownr.dk, estatistik.dk, profiler.dk, krak.dk, proff.dk, paqle.dk, erhvervplus.dk, lasso.dk, cvrapi.dk, find-virksomhed.dk, virksomhedskartoteket.dk, crunchbase.com, b2bhint.com, resights.dk
@@ -290,7 +351,7 @@ Returner KUN validt JSON uden tekst før/efter:
 }
 
 - Brug KUN de givne URLs fra søgeresultaterne — opfind IKKE nye URLs
-- Returner op til 20 artikler, sorteret nyeste FØRST`;
+- Returner op til 20 artikler, sorteret med foretrukne medier FØRST, derefter nyeste`;
 }
 
 // ─── Response parser ──────────────────────────────────────────────────────────
@@ -423,19 +484,27 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   // ── Serper + Supabase parallelt ──
   let rawResults: ArticleResult[];
   let dbExcludedDomains: string[];
+  let primaryDomains: string[];
 
   try {
-    const [serperResults, resolvedDbDomains] = await Promise.all([
-      searchSerperArticles(serperApiKey, companyName).catch((err: unknown) => {
-        logger.log(
-          `[article-search/articles] Serper fejl: ${err instanceof Error ? err.message : String(err)}`
-        );
-        return [] as ArticleResult[];
-      }),
+    // Hent DB-konfiguration parallelt med Serper-søgning
+    const [resolvedDbDomains, resolvedPrimaryDomains] = await Promise.all([
       fetchExcludedDomains(),
+      fetchPrimaryMediaDomains(),
     ]);
-
     dbExcludedDomains = resolvedDbDomains;
+    primaryDomains = resolvedPrimaryDomains;
+
+    const serperResults = await searchSerperArticles(
+      serperApiKey,
+      companyName,
+      primaryDomains
+    ).catch((err: unknown) => {
+      logger.log(
+        `[article-search/articles] Serper fejl: ${err instanceof Error ? err.message : String(err)}`
+      );
+      return [] as ArticleResult[];
+    });
 
     logger.log(
       `[article-search/articles] "${companyName}": Serper=${serperResults.length} rå resultater`
@@ -500,7 +569,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const response = await client.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 4096,
-      system: buildArticlesSystemPrompt(),
+      system: buildArticlesSystemPrompt(primaryDomains),
       messages: [{ role: 'user', content: userMessage }],
     });
 

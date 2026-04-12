@@ -15,6 +15,7 @@
 
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import JsonLdScript from '@/app/components/JsonLd';
 import {
   Building2,
   MapPin,
@@ -385,16 +386,9 @@ function JsonLd({ v, slug }: { v: VirksomhedPublicData; slug: string }) {
 
   return (
     <>
-      {/* BIZZ-219: dangerouslySetInnerHTML is safe — __html is JSON.stringify() of
-          a server-side schema object. No user input or external strings interpolated. */}
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(organizationSchema) }}
-      />
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbSchema) }}
-      />
+      {/* BIZZ-219: JSON-LD structured data via safe helper component */}
+      <JsonLdScript data={organizationSchema} />
+      <JsonLdScript data={breadcrumbSchema} />
     </>
   );
 }

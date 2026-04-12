@@ -2258,7 +2258,7 @@ function PersonArticleSearchPanel({
   onThresholdFound?: (threshold: number) => void;
   onContactsFound?: (contacts: ContactResult[]) => void;
 }) {
-  const { subscription: ctxSub, addTokenUsage } = useSubscription();
+  const { subscription: ctxSub, addTokenUsage, isAdmin } = useSubscription();
   const { isActive: subActive } = useSubscriptionAccess('ai');
   const [articles, setArticles] = useState<PersonAIArticleResult[]>([]);
   const [hasSearched, setHasSearched] = useState(false);
@@ -2320,7 +2320,8 @@ function PersonArticleSearchPanel({
   const handleSearch = useCallback(async () => {
     if (anyLoading) return;
 
-    if (ctxSub) {
+    // Admin users bypass subscription/token gating (mirrors subActive = isAdmin || ...).
+    if (ctxSub && !isAdmin) {
       const plan = resolvePlan(ctxSub.planId);
       if (!isSubscriptionFunctional(ctxSub, plan)) return;
       if (!plan.aiEnabled) return;
@@ -2469,6 +2470,7 @@ function PersonArticleSearchPanel({
   }, [
     anyLoading,
     ctxSub,
+    isAdmin,
     personData,
     ownedCompanies,
     city,

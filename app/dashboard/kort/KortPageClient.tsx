@@ -87,7 +87,7 @@ interface MatrikelPopup {
 
 // ─── API-hjælpere ─────────────────────────────────────────────────────────────
 
-// TODO: Migrate fetchMatrikelBbox to DAR when DAR supports spatial polygon queries (before July 2026)
+// TODO(BIZZ-92): Migrate fetchMatrikelBbox to DAR when DAR supports spatial polygon queries (before July 2026)
 /**
  * Henter matrikel polygoner fra DAWA for en bounding box via polygon-parameter.
  * VIGTIGT: DAWA's bbox-parameter kræver UTM32-koordinater som standard — bboxsrid=4326
@@ -141,7 +141,7 @@ async function fetchMatrikelBbox(
   }
 }
 
-// TODO: Migrate fetchHusnumre to DAR when DAR supports spatial polygon queries (before July 2026)
+// TODO(BIZZ-92): Migrate fetchHusnumre to DAR when DAR supports spatial polygon queries (before July 2026)
 /**
  * Henter adresse-punkter fra DAWA for en bounding box til husnummer-lag.
  * Bruger polygon-parameteren med WGS84-koordinater (bbox+bboxsrid=4326 virker ikke).
@@ -233,7 +233,7 @@ async function fetchVirksomheder(
   }
 }
 
-// TODO: Migrate reverseGeocode to DAR when DAR supports reverse geocoding (before July 2026)
+// TODO(BIZZ-92): Migrate reverseGeocode to DAR when DAR supports reverse geocoding (before July 2026)
 /**
  * Reverse geocoder — finder nærmeste DAWA adresse for koordinat.
  *

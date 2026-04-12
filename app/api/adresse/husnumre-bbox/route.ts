@@ -47,7 +47,7 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // TODO: Replace with DAR GraphQL spatial query when supported (before July 2026)
+  // TODO(BIZZ-92): Replace with DAR GraphQL spatial query when supported (before July 2026)
   // DAWA fallback
   try {
     const poly = encodeURIComponent(

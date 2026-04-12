@@ -25,7 +25,7 @@
  * @param body.entity - Valgt entitet { id, title, type, meta? }
  * @returns SSE stream
  *
- * TODO: Udtræk TOOLS + executeTool til app/lib/aiTools.ts og del med /api/ai/chat
+ * TODO(tech-debt): Udtræk TOOLS + executeTool til app/lib/aiTools.ts og del med /api/ai/chat
  */
 
 import { NextRequest, NextResponse } from 'next/server';

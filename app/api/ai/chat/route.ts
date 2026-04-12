@@ -265,6 +265,21 @@ const TOOLS: Anthropic.Tool[] = [
       required: ['navn'],
     },
   },
+  {
+    name: 'hent_tinglysning',
+    description:
+      'Henter tinglysningsdata for en ejendom fra Den Digitale Tinglysning (e-TL). Returnerer ejere (adkomsthavere) med navne, ejerandele og CVR; hæftelser (pantebreve) med beløb, kreditor og låntype; samt servitutter med titler og påtaleberettigede. Kræver BFE-nummer.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        bfeNummer: {
+          type: 'string',
+          description: 'BFE-nummer for ejendommen',
+        },
+      },
+      required: ['bfeNummer'],
+    },
+  },
 ];
 
 // ─── Tool labels (for status messages) ──────────────────────────────────────
@@ -285,6 +300,7 @@ const TOOL_STATUS: Record<string, string> = {
   hent_regnskab_noegletal: 'Henter regnskabsnøgletal…',
   hent_datterselskaber: 'Henter datterselskaber…',
   soeg_person_cvr: 'Søger efter person i CVR…',
+  hent_tinglysning: 'Henter tinglysningsdata…',
 };
 
 // ─── System prompt ──────────────────────────────────────────────────────────
@@ -926,6 +942,36 @@ async function executeTool(
           aktiveTilknytninger: relations,
           antalAktive: relations.length,
         };
+        break;
+      }
+
+      // BIZZ-233: Tinglysning (e-TL) — ejere, hæftelser, servitutter
+      case 'hent_tinglysning': {
+        // Step 1: Get tinglysning UUID from BFE number
+        const uuidRes = await fetch(
+          `${baseUrl}/api/tinglysning?bfe=${encodeURIComponent(input.bfeNummer)}`,
+          { signal: AbortSignal.timeout(timeout) }
+        );
+        if (!uuidRes.ok) {
+          result = { fejl: `Tinglysning UUID-opslag svarede ${uuidRes.status}` };
+          break;
+        }
+        const uuidData = (await uuidRes.json()) as { uuid?: string };
+        if (!uuidData.uuid) {
+          result = { fejl: 'Ingen tinglysning UUID fundet for denne ejendom' };
+          break;
+        }
+
+        // Step 2: Get summarisk data (ejere, hæftelser, servitutter)
+        const sumRes = await fetch(
+          `${baseUrl}/api/tinglysning/summarisk?uuid=${encodeURIComponent(uuidData.uuid)}`,
+          { signal: AbortSignal.timeout(timeout) }
+        );
+        if (!sumRes.ok) {
+          result = { fejl: `Tinglysning summarisk svarede ${sumRes.status}` };
+          break;
+        }
+        result = await sumRes.json();
         break;
       }
 

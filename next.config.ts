@@ -17,42 +17,16 @@ const withBundleAnalyzer =
  * HTTP security headers applied to all responses.
  * Implements ISO 27001 A.13 (Communications Security) and A.14 (Secure Development).
  *
- * Content-Security-Policy: restricts which resources the browser may load.
+ * Content-Security-Policy is NOT here — it is set dynamically per request in
+ * middleware.ts with a unique nonce (BIZZ-209). Only static headers remain.
+ *
  * Strict-Transport-Security: enforces HTTPS for 2 years including subdomains.
  * X-Frame-Options: prevents clickjacking by disallowing iframes.
  * X-Content-Type-Options: prevents MIME-type sniffing.
  * Referrer-Policy: limits referrer information sent to third parties.
  * Permissions-Policy: disables browser features not needed by BizzAssist.
- *
- * BIZZ-194: 'unsafe-eval' is NOT included in the global CSP.
- * Mapbox GL JS requires eval() for shader compilation, so it is added
- * only for the map routes (/dashboard/kort and /kort) via route-specific
- * headers below.
  */
 const securityHeaders = [
-  {
-    key: 'Content-Security-Policy',
-    value: [
-      "default-src 'self'",
-      // 'unsafe-inline': required by Mapbox GL JS (inlines worker bootstrapping code) and Next.js
-      // inline event handlers. Nonces are not currently viable because Mapbox injects scripts
-      // dynamically at runtime without nonce support.
-      // NOTE: 'unsafe-eval' is intentionally omitted in production — it is only added for map routes.
-      // In development, React 19 requires eval() for stack trace reconstruction (callstack debugging).
-      `script-src 'self' 'unsafe-inline'${process.env.NODE_ENV === 'development' ? " 'unsafe-eval'" : ''} https://browser.sentry-cdn.com`,
-      "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data: blob: https:",
-      "font-src 'self' https://fonts.gstatic.com",
-      // Supabase + DAWA (Danmarks Adressers Web API) + Mapbox tile servers + Sentry
-      "connect-src 'self' https://*.supabase.co https://*.supabase.io wss://*.supabase.co https://*.sentry.io https://o4511077193416704.ingest.de.sentry.io wss: https://api.dataforsyningen.dk https://*.mapbox.com https://events.mapbox.com",
-      // Mapbox GL JS kræver blob: WebWorkers til tile-dekodning
-      "worker-src blob: 'self'",
-      "child-src blob: 'self'",
-      "frame-ancestors 'none'",
-      "base-uri 'self'",
-      "form-action 'self'",
-    ].join('; '),
-  },
   {
     key: 'Strict-Transport-Security',
     value: 'max-age=63072000; includeSubDomains; preload',
@@ -95,38 +69,12 @@ const nextConfig: NextConfig = {
         process.env.NEXT_PUBLIC_APP_URL.includes('bizzassist.dk') &&
         !process.env.NEXT_PUBLIC_APP_URL.includes('test.bizzassist.dk'));
 
-    // CSP with 'unsafe-eval' added — only for map routes that load Mapbox GL JS.
-    // Mapbox GL JS uses eval() internally for WebGL shader compilation.
-    // Scoping this to /dashboard/kort and /kort limits the attack surface.
-    // In dev the base CSP already includes 'unsafe-eval'. This replace ensures
-    // map routes always have it regardless of environment.
-    const baseCsp = securityHeaders.find((h) => h.key === 'Content-Security-Policy')!.value;
-    const mapCspValue = baseCsp.includes("'unsafe-eval'")
-      ? baseCsp
-      : baseCsp.replace(
-          "script-src 'self' 'unsafe-inline' https://browser.sentry-cdn.com",
-          "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://browser.sentry-cdn.com"
-        );
-
-    const mapHeaders = securityHeaders.map((h) =>
-      h.key === 'Content-Security-Policy' ? { key: h.key, value: mapCspValue } : h
-    );
-
+    // CSP is handled dynamically in middleware.ts (BIZZ-209 — nonce-based).
+    // Only static security headers are applied here.
     const headers: { source: string; headers: { key: string; value: string }[] }[] = [
       {
-        // Apply security headers to all routes
         source: '/(.*)',
         headers: securityHeaders,
-      },
-      {
-        // Override CSP on map pages to allow 'unsafe-eval' needed by Mapbox GL JS.
-        // BIZZ-194: unsafe-eval is only allowed on these two routes, not globally.
-        source: '/dashboard/kort',
-        headers: mapHeaders,
-      },
-      {
-        source: '/kort',
-        headers: mapHeaders,
       },
     ];
 

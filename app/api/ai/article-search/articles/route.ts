@@ -31,7 +31,7 @@ import { logger } from '@/app/lib/logger';
 import { resolveUserId } from '@/lib/api/auth';
 
 export const runtime = 'nodejs';
-export const maxDuration = 60;
+export const maxDuration = 90;
 
 // ─── Ekskluderede domæner ─────────────────────────────────────────────────────
 
@@ -595,27 +595,28 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   let maxTokens: number;
 
   try {
-    // Hent DB-konfiguration parallelt (3 uafhængige queries)
-    const [resolvedDbDomains, resolvedPrimaryDomains, resolvedLimits] = await Promise.all([
-      fetchExcludedDomains(),
-      fetchPrimaryMediaDomains(),
-      fetchArticleLimits(),
-    ]);
+    // Kør Supabase-konfiguration og Serper i PARALLEL for at undgå sekventiel ventetid.
+    // Serper-søgningen bruger DEFAULT_PRIMARY_MEDIA_DOMAINS til qMedia-query — de
+    // admin-konfigurerede domæner bruges kun til post-processing sort, ikke til søgning.
+    const [resolvedDbDomains, resolvedPrimaryDomains, resolvedLimits, serperResults] =
+      await Promise.all([
+        fetchExcludedDomains(),
+        fetchPrimaryMediaDomains(),
+        fetchArticleLimits(),
+        searchSerperArticles(serperApiKey, companyName, DEFAULT_PRIMARY_MEDIA_DOMAINS).catch(
+          (err: unknown) => {
+            logger.log(
+              `[article-search/articles] Serper fejl: ${err instanceof Error ? err.message : String(err)}`
+            );
+            return [] as ArticleResult[];
+          }
+        ),
+      ]);
+
     dbExcludedDomains = resolvedDbDomains;
     primaryDomains = resolvedPrimaryDomains;
     maxArticles = resolvedLimits.maxArticles;
     maxTokens = resolvedLimits.maxTokens;
-
-    const serperResults = await searchSerperArticles(
-      serperApiKey,
-      companyName,
-      primaryDomains
-    ).catch((err: unknown) => {
-      logger.log(
-        `[article-search/articles] Serper fejl: ${err instanceof Error ? err.message : String(err)}`
-      );
-      return [] as ArticleResult[];
-    });
 
     logger.log(
       `[article-search/articles] "${companyName}": Serper=${serperResults.length} rå resultater`

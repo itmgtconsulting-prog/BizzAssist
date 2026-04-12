@@ -47,6 +47,8 @@ interface DawaAdgangResponse {
 /** DAWA adresse mini response — bruges til at finde fuld adresse-UUID for ejerlejligheder */
 interface DawaAdresseMini {
   id: string;
+  /** adgangsadresse-UUID — tilgængelig i struktur=mini, bruges til fallback adgangsadresse-opslag */
+  adgangsadresseid?: string;
 }
 
 /** Rå _source fra Vurderingsportalens Elasticsearch */
@@ -206,6 +208,11 @@ async function hentDawaAdresse(bfe: string, slug: string): Promise<DawaAdresse |
     const DAWA_API = 'https://api.dataforsyningen.dk';
     const hasEtageOrDoer = !!(src.floor || src.door);
 
+    // Kommunekode: VP returnerer f.eks. "157", paddes til 4 cifre.
+    // Beregnes her (før parallel-kald) da den bruges i tekst-fallback nedenfor.
+    const kommunekodeRaw = src.municipalityNumber ?? '';
+    const kommunekode = kommunekodeRaw.padStart(4, '0');
+
     const [darAdresse, adgJson, fullAdresseArr] = await Promise.all([
       darHentAdresse(adgangsAdresseId),
       fetch(`${DAWA_API}/adgangsadresser/${adgangsAdresseId}`, {
@@ -216,7 +223,8 @@ async function hentDawaAdresse(bfe: string, slug: string): Promise<DawaAdresse |
         .catch(() => null),
       hasEtageOrDoer
         ? fetch(
-            `${DAWA_API}/adresser?adgangsadresseid=${encodeURIComponent(adgangsAdresseId)}` +
+            // Korrekt DAWA-parameter er 'adgangsadresse' (ikke 'adgangsadresseid')
+            `${DAWA_API}/adresser?adgangsadresse=${encodeURIComponent(adgangsAdresseId)}` +
               (src.floor ? `&etage=${encodeURIComponent(src.floor)}` : '') +
               // 'dør' URL-encoded som 'd%C3%B8r' for RFC 3986-compliance
               (src.door ? `&d%C3%B8r=${encodeURIComponent(src.door)}` : '') +
@@ -228,12 +236,48 @@ async function hentDawaAdresse(bfe: string, slug: string): Promise<DawaAdresse |
         : (Promise.resolve(null) as Promise<DawaAdresseMini[] | null>),
     ]);
 
-    // Kommunekode: VP returnerer f.eks. "157", paddes til 4 cifre.
-    const kommunekodeRaw = src.municipalityNumber ?? '';
-    const kommunekode = kommunekodeRaw.padStart(4, '0');
+    // Fallback: VP ES kan returnere et adgangsAdresseID der ikke eksisterer i DAWA/DAR.
+    // Hvis adgJson er null (404 fra DAWA) prøver vi en tekst-baseret DAWA-søgning med
+    // vejnavn, husnr, etage, dør og kommunekode — dette giver det korrekte adgangsadresse-UUID.
+    let resolvedAdgJson = adgJson;
+    let resolvedFullAdresseArr = fullAdresseArr;
+
+    if (!adgJson && src.roadName && src.houseNumber) {
+      logger.warn(
+        `[PUBLIC EJENDOM] VP adgangsAdresseId ${adgangsAdresseId} er ugyldig i DAWA — prøver tekst-fallback`
+      );
+      const textParams = new URLSearchParams({
+        vejnavn: src.roadName,
+        husnr: src.houseNumber,
+        ...(src.floor ? { etage: src.floor } : {}),
+        ...(src.door ? { dør: src.door } : {}),
+        kommunekode,
+        per_side: '1',
+        struktur: 'mini',
+      });
+      const textResult = await fetch(`${DAWA_API}/adresser?${textParams}`, {
+        signal: AbortSignal.timeout(5000),
+        next: { revalidate: 3600 },
+      })
+        .then((r) => (r.ok ? (r.json() as Promise<DawaAdresseMini[]>) : Promise.resolve(null)))
+        .catch(() => null);
+
+      if (Array.isArray(textResult) && textResult.length > 0) {
+        resolvedFullAdresseArr = textResult;
+        const correctAdgId = textResult[0].adgangsadresseid;
+        if (correctAdgId) {
+          resolvedAdgJson = await fetch(`${DAWA_API}/adgangsadresser/${correctAdgId}`, {
+            signal: AbortSignal.timeout(5000),
+            next: { revalidate: 3600 },
+          })
+            .then((r) => (r.ok ? (r.json() as Promise<DawaAdgangResponse>) : Promise.resolve(null)))
+            .catch(() => null);
+        }
+      }
+    }
 
     // Jordstykke fra DAWA adgangsadresse (matrikelnr + ejerlav + grundareal)
-    const jst = adgJson?.jordstykke;
+    const jst = resolvedAdgJson?.jordstykke;
     const jordstykke: DawaAdresse['jordstykke'] =
       jst?.matrikelnr && jst.ejerlav?.navn
         ? {
@@ -246,7 +290,9 @@ async function hentDawaAdresse(bfe: string, slug: string): Promise<DawaAdresse |
     // Fuld adresse-UUID giver BBR ENHED_QUERY præcist match til ejerlejlighedens enhed.
     // Fallback til adgangsadresse-UUID (finder bygningen men ikke den specifikke enhed).
     const fullAdresseId =
-      Array.isArray(fullAdresseArr) && fullAdresseArr.length > 0 ? fullAdresseArr[0].id : null;
+      Array.isArray(resolvedFullAdresseArr) && resolvedFullAdresseArr.length > 0
+        ? resolvedFullAdresseArr[0].id
+        : null;
     const effectiveId = fullAdresseId ?? adgangsAdresseId;
 
     if (darAdresse) {

@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "predev": "node -e \"try{require('fs').rmSync('.next/dev',{recursive:true,force:true})}catch{}\"",
+    "backup:env": "bash scripts/backup-env.sh",
+    "predev": "bash scripts/backup-env.sh 2>/dev/null; node -e \"try{require('fs').rmSync('.next/dev',{recursive:true,force:true})}catch{}\"",
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
@@ -64,6 +65,7 @@
     "mapbox-gl": "^3.20.0",
     "next": "16.2.0",
     "next-pwa": "^5.6.0",
+    "node-forge": "^1.4.0",
     "pdfkit": "^0.18.0",
     "qrcode.react": "^4.2.0",
     "react": "19.2.4",
@@ -72,7 +74,8 @@
     "recharts": "^3.8.0",
     "resend": "^6.9.4",
     "stripe": "^21.0.1",
-    "twilio": "^5.13.1"
+    "twilio": "^5.13.1",
+    "xml-crypto": "^6.1.2"
   },
   "overrides": {
     "serialize-javascript": "^7.0.5"
@@ -90,6 +93,7 @@
     "@testing-library/user-event": "^14.6.1",
     "@types/jszip": "^3.4.0",
     "@types/node": "^20",
+    "@types/node-forge": "^1.3.14",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^6.0.1",

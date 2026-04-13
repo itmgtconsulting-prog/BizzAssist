@@ -545,9 +545,7 @@ async function executeTool(
         const params = new URLSearchParams();
         if (input.bfeNummer) params.set('bfeNummer', input.bfeNummer);
         if (input.kommunekode) params.set('kommunekode', input.kommunekode);
-        const res = await fetch(`${baseUrl}/api/vurdering?${params}`, {
-          signal: AbortSignal.timeout(timeout),
-        });
+        const res = await fetch(`${baseUrl}/api/vurdering?${params}`, internalFetchOpts);
         if (!res.ok) {
           result = { fejl: toolErrorMessage('Vurderings-API', res.status) };
           break;
@@ -560,9 +558,7 @@ async function executeTool(
         const params = new URLSearchParams();
         if (input.adresseId) params.set('adresseId', input.adresseId);
         if (input.bfeNummer) params.set('bfeNummer', input.bfeNummer);
-        const res = await fetch(`${baseUrl}/api/vurdering-forelobig?${params}`, {
-          signal: AbortSignal.timeout(timeout),
-        });
+        const res = await fetch(`${baseUrl}/api/vurdering-forelobig?${params}`, internalFetchOpts);
         if (!res.ok) {
           result = { fejl: toolErrorMessage('Foreloebig-vurderings-API', res.status) };
           break;
@@ -615,9 +611,7 @@ async function executeTool(
           ejerlavKode: input.ejerlavKode,
           matrikelnr: input.matrikelnr,
         });
-        const res = await fetch(`${baseUrl}/api/jord?${params}`, {
-          signal: AbortSignal.timeout(timeout),
-        });
+        const res = await fetch(`${baseUrl}/api/jord?${params}`, internalFetchOpts);
         if (!res.ok) {
           result = { fejl: toolErrorMessage('Jordforurenings-API', res.status) };
           break;
@@ -640,9 +634,10 @@ async function executeTool(
       }
 
       case 'hent_cvr_virksomhed': {
-        const res = await fetch(`${baseUrl}/api/cvr/${encodeURIComponent(input.cvr)}`, {
-          signal: AbortSignal.timeout(timeout),
-        });
+        const res = await fetch(
+          `${baseUrl}/api/cvr/${encodeURIComponent(input.cvr)}`,
+          internalFetchOpts
+        );
         if (!res.ok) {
           result = { fejl: toolErrorMessage('CVR-API', res.status) };
           break;
@@ -653,9 +648,10 @@ async function executeTool(
 
       case 'hent_matrikeldata': {
         const bfe = input.bfeNummer as string;
-        const matRes = await fetch(`${baseUrl}/api/matrikel?bfeNummer=${encodeURIComponent(bfe)}`, {
-          signal: AbortSignal.timeout(timeout),
-        });
+        const matRes = await fetch(
+          `${baseUrl}/api/matrikel?bfeNummer=${encodeURIComponent(bfe)}`,
+          internalFetchOpts
+        );
         if (!matRes.ok) {
           result = { matrikel: null, fejl: `HTTP ${matRes.status}` };
           break;

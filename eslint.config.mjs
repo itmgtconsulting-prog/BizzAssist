@@ -12,6 +12,12 @@ const eslintConfig = defineConfig([
     'out/**',
     'build/**',
     'next-env.d.ts',
+    // Generated coverage reports contain minified bundles — not source code
+    'coverage/**',
+    // Vercel build output — generated bundles, not source code
+    '.vercel/**',
+    // Git worktrees created by Claude Code agents — not the main working tree
+    '.claude/**',
   ]),
   {
     rules: {

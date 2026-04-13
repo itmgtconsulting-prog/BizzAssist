@@ -197,7 +197,7 @@ describe('validerUrl — ugyldig syntaks', () => {
   });
 
   it('afviser URL med mellemrum', () => {
-    const res = validerUrl('https://bizzassist.dk/api /rapport.pdf');
+    const _res = validerUrl('https://bizzassist.dk/api /rapport.pdf');
     // URL parseren normaliserer typisk mellemrum — men den resulterende host er stadig valid;
     // testen sikrer at vi ikke går ned på parsefejlen
     const res2 = validerUrl('not a url at all');

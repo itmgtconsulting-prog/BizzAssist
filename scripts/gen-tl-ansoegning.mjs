@@ -10,7 +10,6 @@ import {
   Packer,
   Paragraph,
   TextRun,
-  HeadingLevel,
   Table,
   TableRow,
   TableCell,

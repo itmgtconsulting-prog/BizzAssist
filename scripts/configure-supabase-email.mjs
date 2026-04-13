@@ -47,7 +47,7 @@ const PROJECTS = [
 
 // ─── Email HTML-template builder ─────────────────────────────────────────────
 
-function emailHtml({ title, preheader, body, ctaUrl, ctaText }) {
+function emailHtml({ title, preheader: _preheader, body, ctaUrl, ctaText }) {
   return `<!DOCTYPE html>
 <html lang="da">
 <head>

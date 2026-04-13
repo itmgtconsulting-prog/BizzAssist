@@ -376,12 +376,18 @@ export default function ChatPageClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Sync messages from context when drawer finishes streaming ──
+  // ── Sync messages from context when streaming finishes (drawer or local) ──
+  const wasStreamingRef = useRef(false);
   useEffect(() => {
-    if (!isLoadingLocal && !chatCtx.isStreaming && chatCtx.messages.length > 0) {
-      setMessages(chatCtx.messages);
+    const nowStreaming = chatCtx.isStreaming || isLoadingLocal;
+    if (wasStreamingRef.current && !nowStreaming) {
+      // Streaming just finished — reload from localStorage to get final messages
+      const fresh = loadConversations();
+      const active = fresh.find((c) => c.id === (activeId ?? chatCtx.activeId));
+      if (active) setMessages(active.messages);
     }
-  }, [chatCtx.isStreaming, chatCtx.messages, isLoadingLocal]);
+    wasStreamingRef.current = nowStreaming;
+  }, [chatCtx.isStreaming, isLoadingLocal, activeId, chatCtx.activeId]);
 
   // ── Pre-fill from URL query param (?context=…) ──
   useEffect(() => {

@@ -134,11 +134,17 @@ function AIChatPanel() {
     refreshTokenInfo();
   }, [refreshTokenInfo]);
 
-  /** Sync local messages when activeId changes in context (e.g. fullpage "Ny samtale") */
+  /** Sync local messages only when active conversation changes (e.g. fullpage "Ny samtale").
+   *  Does NOT sync on chatCtx.messages changes to avoid overwriting during streaming. */
+  const prevActiveIdRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!isLoading) {
-      // Only sync if not currently streaming — avoid interrupting active responses
-      setMessages(chatCtx.messages);
+    if (chatCtx.activeId !== prevActiveIdRef.current) {
+      prevActiveIdRef.current = chatCtx.activeId;
+      if (!isLoading) {
+        setMessages(chatCtx.messages);
+        setStreamText('');
+        setToolStatus('');
+      }
     }
   }, [chatCtx.activeId, chatCtx.messages, isLoading]);
 

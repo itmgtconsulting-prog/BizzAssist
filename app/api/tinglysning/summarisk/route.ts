@@ -855,6 +855,28 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // ── Indskannede akter (pre-digitale — fra EjendomIndskannetAktSamling) ──
+    // Ligger inde i ejdsummarisk XML; hvert element hedder DokumentFilnavnTekst.
+    // Bemærk: aktNavn optræder gentagne gange (en gang per dokument der refererer til akten),
+    // så vi deduplikerer.
+    const indskannedeAkterNavne: string[] = [];
+    const aktSamlingStart = xml.indexOf('EjendomIndskannetAktSamling>');
+    const aktSamlingEnd = xml.indexOf('/EjendomIndskannetAktSamling>');
+    if (aktSamlingStart !== -1 && aktSamlingEnd !== -1) {
+      const aktBlock = xml.substring(aktSamlingStart, aktSamlingEnd);
+      const aktMatches = [
+        ...aktBlock.matchAll(
+          /<(?:[a-zA-Z]+:)?DokumentFilnavnTekst>([^<]+)<\/(?:[a-zA-Z]+:)?DokumentFilnavnTekst>/g
+        ),
+      ];
+      for (const [, navn] of aktMatches) {
+        const trimmed = navn.trim();
+        if (trimmed && !indskannedeAkterNavne.includes(trimmed)) {
+          indskannedeAkterNavne.push(trimmed);
+        }
+      }
+    }
+
     // ── Saml alle bilagsreferencer (UUIDs der kan hentes som original PDF) ──
     const bilagRefs: { id: string; tekst: string }[] = [];
     for (const t of tillaegEntries) {
@@ -890,7 +912,15 @@ export async function GET(req: NextRequest) {
     };
 
     return NextResponse.json(
-      { ejere, haeftelser, servitutter, bilagRefs, tingbogsattest, fejl: null },
+      {
+        ejere,
+        haeftelser,
+        servitutter,
+        bilagRefs,
+        indskannedeAkterNavne,
+        tingbogsattest,
+        fejl: null,
+      },
       {
         headers: { 'Cache-Control': 'public, s-maxage=3600' },
       }

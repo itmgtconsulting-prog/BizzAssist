@@ -6453,11 +6453,8 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
   const [showMatrikler, setShowMatrikler] = useState(false);
   const [showNoteringer, setShowNoteringer] = useState(false);
   const [showTillaeg, setShowTillaeg] = useState(false);
-  /** Indskannede akter — pre-digitale dokumenter gemt i Tinglysningens bilagsbank */
-  const [indskannedeAkter, setIndskannedeAkter] = useState<
-    { aktNavn: string; beskrivelse: string | null; dato: string | null; loebNr: number }[]
-  >([]);
-  const [akterLoading, setAkterLoading] = useState(false);
+  /** Indskannede akter — pre-digitale akt-navne fra EjendomIndskannetAktSamling i ejdsummarisk */
+  const [indskannedeAkterNavne, setIndskannedeAkterNavne] = useState<string[]>([]);
 
   const toggleDoc = (docId: string) => {
     setSelectedDocs((prev) => {
@@ -6483,8 +6480,7 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
     setBilagRefs([]);
     setTingbogsattest(null);
     setTlUuid(null);
-    setIndskannedeAkter([]);
-    setAkterLoading(false);
+    setIndskannedeAkterNavne([]);
 
     const controller = new AbortController();
     const { signal } = controller;
@@ -6514,24 +6510,10 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
           return;
         }
         setTlUuid(tlData.uuid);
-        // Trin 2: Hent summariske data og indskannede akter parallelt
-        setAkterLoading(true);
+        // Trin 2: Hent summariske data (inkl. indskannedeAkterNavne fra EjendomIndskannetAktSamling)
         const summariskPromise = fetch(`/api/tinglysning/summarisk?uuid=${tlData.uuid}`, {
           signal,
         }).then((r) => (r.ok ? r.json() : null));
-        const akterPromise = fetch(`/api/tinglysning/indskannede-akter?ejendomId=${tlData.uuid}`, {
-          signal,
-        })
-          .then((r) => (r.ok ? r.json() : null))
-          .then((akterData) => {
-            setIndskannedeAkter(akterData?.akter ?? []);
-          })
-          .catch(() => {
-            // Indskannede akter er valgfri — fejl her blokkerer ikke øvrige data
-          })
-          .finally(() => setAkterLoading(false));
-        // Kør akter-fetch i baggrunden uden at blokere summarisk-kæden
-        void akterPromise;
         return summariskPromise;
       })
       .then((data) => {
@@ -6541,6 +6523,7 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
           setServitutter(data.servitutter ?? []);
           setBilagRefs(data.bilagRefs ?? []);
           setTingbogsattest(data.tingbogsattest ?? null);
+          setIndskannedeAkterNavne(data.indskannedeAkterNavne ?? []);
         }
       })
       .catch((err) => {
@@ -7740,13 +7723,12 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
           </>
         )}
 
-        {/* ── INDSKANNEDE AKTER (pre-digitale dokumenter fra bilagsbanken) ── */}
-        {(akterLoading || indskannedeAkter.length > 0) && (
+        {/* ── INDSKANNEDE AKTER (pre-digitale dokumenter fra EjendomIndskannetAktSamling) ── */}
+        {indskannedeAkterNavne.length > 0 && (
           <>
             <div className="px-4 py-1.5 bg-amber-500/5 border-b border-slate-700/20">
               <span className="text-[10px] font-semibold text-amber-400 uppercase tracking-wider">
-                {da ? 'Indskannede akter' : 'Scanned acts'}{' '}
-                {!akterLoading && `(${indskannedeAkter.length})`}
+                {da ? 'Indskannede akter' : 'Scanned acts'} {`(${indskannedeAkterNavne.length})`}
               </span>
             </div>
 
@@ -7766,72 +7748,29 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
               </p>
             </div>
 
-            {akterLoading ? (
-              <div className="px-4 py-3 flex items-center gap-2">
-                <svg
-                  className="w-3.5 h-3.5 text-blue-400 animate-spin"
-                  viewBox="0 0 24 24"
-                  fill="none"
+            {indskannedeAkterNavne.map((aktNavn, i) => (
+              <div
+                key={aktNavn}
+                className="grid grid-cols-[24px_1fr_auto] gap-x-2 px-4 py-2.5 border-b border-slate-700/15 hover:bg-slate-700/10 transition-colors items-center"
+              >
+                <span className="text-slate-500 text-[10px] tabular-nums text-center">{i + 1}</span>
+                <span className="text-sm text-slate-200 truncate">{aktNavn}</span>
+                <a
+                  href={`/api/tinglysning/indskannede-akter/download?aktNavn=${encodeURIComponent(aktNavn)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-xs text-amber-400 hover:text-amber-300 transition-colors px-2 py-1 border border-amber-500/30 rounded-md hover:border-amber-400/50"
+                  title={
+                    da
+                      ? 'Download som PDF — kan være stor fil'
+                      : 'Download as PDF — may be a large file'
+                  }
                 >
-                  <circle
-                    className="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    strokeWidth="4"
-                  />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                </svg>
-                <span className="text-slate-400 text-xs">
-                  {da ? 'Søger efter indskannede akter…' : 'Searching for scanned acts…'}
-                </span>
+                  <FileText size={11} />
+                  PDF
+                </a>
               </div>
-            ) : (
-              indskannedeAkter.map((akt) => (
-                <div
-                  key={akt.aktNavn}
-                  className="grid grid-cols-[24px_1fr_auto] gap-x-2 px-4 py-2.5 border-b border-slate-700/15 hover:bg-slate-700/10 transition-colors items-center"
-                >
-                  <span className="text-slate-500 text-[10px] tabular-nums text-center">
-                    {akt.loebNr}
-                  </span>
-                  <div className="min-w-0">
-                    <span className="text-sm text-slate-200 truncate block">
-                      {akt.beskrivelse ?? akt.aktNavn}
-                    </span>
-                    <span className="text-[10px] text-slate-500">
-                      {akt.aktNavn}
-                      {akt.dato && (
-                        <>
-                          {' '}
-                          ·{' '}
-                          {new Date(akt.dato).toLocaleDateString(da ? 'da-DK' : 'en-GB', {
-                            day: 'numeric',
-                            month: 'short',
-                            year: 'numeric',
-                          })}
-                        </>
-                      )}
-                    </span>
-                  </div>
-                  <a
-                    href={`/api/tinglysning/indskannede-akter/download?aktNavn=${encodeURIComponent(akt.aktNavn)}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-xs text-amber-400 hover:text-amber-300 transition-colors px-2 py-1 border border-amber-500/30 rounded-md hover:border-amber-400/50"
-                    title={
-                      da
-                        ? 'Download som PDF — kan være stor fil'
-                        : 'Download as PDF — may be a large file'
-                    }
-                  >
-                    <FileText size={11} />
-                    PDF
-                  </a>
-                </div>
-              ))
-            )}
+            ))}
           </>
         )}
       </div>

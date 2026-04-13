@@ -30,6 +30,7 @@ import {
   ChevronLeft,
   ChevronRight,
   BarChart2,
+  Sparkles,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';
@@ -1051,7 +1052,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
             </div>
             <NotifikationsDropdown lang={lang} />
 
-            {/* AI Chat drawer toggle — always visible in topbar */}
+            {/* AI Chat button — always visible in topbar */}
             <button
               onClick={() => {
                 if (pathname === '/dashboard/chat') {
@@ -1060,16 +1061,16 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                   chatCtx.setDrawerOpen(!chatCtx.drawerOpen);
                 }
               }}
-              className={`relative text-slate-400 hover:text-white transition-colors p-2 rounded-lg hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
-                pathname === '/dashboard/chat' ? 'text-blue-400' : ''
+              className={`relative flex items-center gap-1.5 text-sm font-medium transition-colors px-3 py-1.5 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                pathname === '/dashboard/chat' || chatCtx.drawerOpen
+                  ? 'bg-blue-600 text-white'
+                  : 'text-slate-400 hover:text-white hover:bg-white/5'
               }`}
-              aria-label={lang === 'da' ? 'AI Chat' : 'AI Chat'}
+              aria-label="AI Chat"
               title="AI Chat"
             >
-              <MessageSquare size={18} />
-              {chatCtx.conversations.length > 0 && pathname !== '/dashboard/chat' && (
-                <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-blue-500 rounded-full" />
-              )}
+              <Sparkles size={14} />
+              <span className="hidden sm:inline">AI Chat</span>
             </button>
 
             {/* Profile dropdown */}

@@ -21,8 +21,8 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { useSearchParams } from 'next/navigation';
-import { MessageSquare, Plus, Trash2, Send, Square, Bot, Sparkles, Loader2 } from 'lucide-react';
+import { useSearchParams, useRouter } from 'next/navigation';
+import { MessageSquare, Plus, Trash2, Send, Square, Bot, Sparkles, Loader2, X } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { useSubscription } from '@/app/context/SubscriptionContext';
 import { useAIPageContext } from '@/app/context/AIPageContext';
@@ -315,6 +315,7 @@ export default function ChatPageClient() {
   const { lang } = useLanguage();
   const da = lang === 'da';
   const searchParams = useSearchParams();
+  const router = useRouter();
   const { subscription: ctxSub, addTokenUsage } = useSubscription();
   /** BIZZ-232: Page context from previous page (passed from sidebar AIChatPanel) */
   const { pageData } = useAIPageContext();
@@ -331,7 +332,7 @@ export default function ChatPageClient() {
       // Force context to re-read (context listens to storage events for cross-tab,
       // but same-tab needs direct state update — this happens via loadConversations in context)
     },
-    [chatCtx.conversations],
+    [chatCtx.conversations]
   );
   const [activeId, setActiveIdLocal] = useState<string | null>(chatCtx.activeId);
   const setActiveId = useCallback(
@@ -339,7 +340,7 @@ export default function ChatPageClient() {
       setActiveIdLocal(id);
       if (id) chatCtx.selectConversation(id);
     },
-    [chatCtx],
+    [chatCtx]
   );
   const [messages, setMessages] = useState<ChatMessage[]>(chatCtx.messages);
   const [input, setInput] = useState('');
@@ -718,7 +719,24 @@ export default function ChatPageClient() {
       <aside className="w-64 shrink-0 flex flex-col border-r border-white/8 bg-[#0f172a]">
         {/* Header */}
         <div className="px-4 pt-5 pb-3 border-b border-white/8">
-          <h1 className="text-white font-bold text-base mb-3">{da ? 'AI Chat' : 'AI Chat'}</h1>
+          <div className="flex items-center justify-between mb-3">
+            <h1 className="text-white font-bold text-base">{da ? 'AI Chat' : 'AI Chat'}</h1>
+            <button
+              onClick={() => {
+                // Navigate back to previous page, or dashboard if no history
+                if (window.history.length > 1) {
+                  router.back();
+                } else {
+                  router.push('/dashboard');
+                }
+              }}
+              className="text-slate-500 hover:text-slate-200 transition-colors p-1 rounded-lg hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              aria-label={da ? 'Luk AI Chat' : 'Close AI Chat'}
+              title={da ? 'Luk' : 'Close'}
+            >
+              <X size={16} />
+            </button>
+          </div>
           <button
             onClick={handleNewConversation}
             className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
@@ -772,32 +790,36 @@ export default function ChatPageClient() {
       {/* ─── Main chat area ───────────────────────────────────────────────────── */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Token tracking bar */}
-        {ctxSub && (() => {
-          const plan = resolvePlan(ctxSub.planId);
-          if (!plan.aiEnabled) return null;
-          const limit = plan.aiTokensPerMonth < 0 ? -1 : plan.aiTokensPerMonth + (ctxSub.bonusTokens ?? 0);
-          if (limit === 0) return null;
-          const used = ctxSub.tokensUsedThisMonth;
-          const pct = limit === -1 ? 0 : Math.min(100, (used / limit) * 100);
-          return (
-            <div className="shrink-0 flex items-center gap-3 px-6 py-2 border-b border-white/8">
-              <span className="text-[11px] text-slate-400 whitespace-nowrap">Token status</span>
-              <div className="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                {limit === -1 ? (
-                  <div className="h-full rounded-full bg-purple-500 w-full" />
-                ) : (
-                  <div
-                    className={`h-full rounded-full transition-all ${pct > 90 ? 'bg-red-500' : pct > 70 ? 'bg-amber-500' : 'bg-blue-500'}`}
-                    style={{ width: `${pct}%` }}
-                  />
-                )}
+        {ctxSub &&
+          (() => {
+            const plan = resolvePlan(ctxSub.planId);
+            if (!plan.aiEnabled) return null;
+            const limit =
+              plan.aiTokensPerMonth < 0 ? -1 : plan.aiTokensPerMonth + (ctxSub.bonusTokens ?? 0);
+            if (limit === 0) return null;
+            const used = ctxSub.tokensUsedThisMonth;
+            const pct = limit === -1 ? 0 : Math.min(100, (used / limit) * 100);
+            return (
+              <div className="shrink-0 flex items-center gap-3 px-6 py-2 border-b border-white/8">
+                <span className="text-[11px] text-slate-400 whitespace-nowrap">Token status</span>
+                <div className="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                  {limit === -1 ? (
+                    <div className="h-full rounded-full bg-purple-500 w-full" />
+                  ) : (
+                    <div
+                      className={`h-full rounded-full transition-all ${pct > 90 ? 'bg-red-500' : pct > 70 ? 'bg-amber-500' : 'bg-blue-500'}`}
+                      style={{ width: `${pct}%` }}
+                    />
+                  )}
+                </div>
+                <span className="text-[11px] font-medium text-slate-400 whitespace-nowrap">
+                  {limit === -1
+                    ? `${formatTokens(used)} / ∞`
+                    : `${formatTokens(used)} / ${formatTokens(limit)}`}
+                </span>
               </div>
-              <span className="text-[11px] font-medium text-slate-400 whitespace-nowrap">
-                {limit === -1 ? `${formatTokens(used)} / ∞` : `${formatTokens(used)} / ${formatTokens(limit)}`}
-              </span>
-            </div>
-          );
-        })()}
+            );
+          })()}
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto px-4 py-6 space-y-4">

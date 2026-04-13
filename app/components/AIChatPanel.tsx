@@ -440,7 +440,10 @@ function AIChatPanel() {
         setMessages(finalMsgs);
         chatCtx.persistConversation(convId, finalMsgs);
       } else {
-        const finalMsgs = [...newMessages, { role: 'assistant' as const, content: a.connectionError }];
+        const finalMsgs = [
+          ...newMessages,
+          { role: 'assistant' as const, content: a.connectionError },
+        ];
         setMessages(finalMsgs);
         chatCtx.persistConversation(convId, finalMsgs);
       }

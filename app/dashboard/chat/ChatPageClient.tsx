@@ -344,10 +344,15 @@ export default function ChatPageClient() {
   );
   const [messages, setMessages] = useState<ChatMessage[]>(chatCtx.messages);
   const [input, setInput] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [streamText, setStreamText] = useState('');
-  const [toolStatus, setToolStatus] = useState('');
+  const [isLoadingLocal, setIsLoading] = useState(false);
+  const [streamTextLocal, setStreamText] = useState('');
+  const [toolStatusLocal, setToolStatus] = useState('');
   const [isMounted, setIsMounted] = useState(false);
+
+  // Combine local streaming state with context (drawer may be streaming in background)
+  const isLoading = isLoadingLocal || chatCtx.isStreaming;
+  const streamText = streamTextLocal || chatCtx.streamText;
+  const toolStatus = toolStatusLocal || chatCtx.toolStatus;
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -364,6 +369,13 @@ export default function ChatPageClient() {
       setMessages(stored[0].messages);
     }
   }, []);
+
+  // ── Sync messages from context when drawer finishes streaming ──
+  useEffect(() => {
+    if (!isLoadingLocal && !chatCtx.isStreaming && chatCtx.messages.length > 0) {
+      setMessages(chatCtx.messages);
+    }
+  }, [chatCtx.isStreaming, chatCtx.messages, isLoadingLocal]);
 
   // ── Pre-fill from URL query param (?context=…) ──
   useEffect(() => {

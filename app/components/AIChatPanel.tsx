@@ -348,9 +348,13 @@ function AIChatPanel() {
 
     setInput('');
     setMessages(newMessages);
+    chatCtx.setMessages(newMessages);
     setIsLoading(true);
+    chatCtx.setIsStreaming(true);
     setStreamText('');
+    chatCtx.setStreamText('');
     setToolStatus('');
+    chatCtx.setToolStatus('');
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -412,17 +416,21 @@ function AIChatPanel() {
               if (parsed.error) {
                 accumulated += `\n⚠️ ${parsed.error}`;
                 setStreamText(accumulated);
+                chatCtx.setStreamText(accumulated);
               } else if (parsed.usage) {
-                // Update token usage in-memory + sync to server
                 addTokenUsage(parsed.usage.totalTokens);
                 syncTokenUsageToServer(parsed.usage.totalTokens);
               } else if (parsed.status) {
                 setToolStatus(parsed.status);
+                chatCtx.setToolStatus(parsed.status);
               } else if (parsed.t) {
-                // Første tekst-chunk → ryd status
-                if (!accumulated) setToolStatus('');
+                if (!accumulated) {
+                  setToolStatus('');
+                  chatCtx.setToolStatus('');
+                }
                 accumulated += parsed.t;
                 setStreamText(accumulated);
+                chatCtx.setStreamText(accumulated);
               }
             } catch {
               // Ignorer ugyldige JSON-chunks
@@ -459,6 +467,9 @@ function AIChatPanel() {
       setStreamText('');
       setToolStatus('');
       setIsLoading(false);
+      chatCtx.setStreamText('');
+      chatCtx.setToolStatus('');
+      chatCtx.setIsStreaming(false);
       abortRef.current = null;
       refreshTokenInfo();
     }

@@ -12,14 +12,7 @@
  * @module context/AIChatContext
  */
 
-import {
-  createContext,
-  useContext,
-  useState,
-  useCallback,
-  useEffect,
-  type ReactNode,
-} from 'react';
+import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
 import {
   loadConversations,
@@ -44,6 +37,15 @@ interface AIChatContextValue {
   drawerOpen: boolean;
   /** Open/close the drawer */
   setDrawerOpen: (open: boolean) => void;
+  /** Live streaming text from drawer (visible to fullpage chat during streaming) */
+  streamText: string;
+  setStreamText: (text: string) => void;
+  /** Tool status from drawer (visible to fullpage chat during streaming) */
+  toolStatus: string;
+  setToolStatus: (status: string) => void;
+  /** Whether the drawer is currently streaming a response */
+  isStreaming: boolean;
+  setIsStreaming: (streaming: boolean) => void;
   /** Create a new empty conversation and select it */
   createConversation: (lang: 'da' | 'en') => string;
   /** Select an existing conversation */
@@ -70,6 +72,9 @@ export function AIChatContextProvider({ children }: { children: ReactNode }) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [drawerOpen, setDrawerOpenRaw] = useState(false);
+  const [streamText, setStreamTextRaw] = useState('');
+  const [toolStatus, setToolStatusRaw] = useState('');
+  const [isStreaming, setIsStreamingRaw] = useState(false);
 
   // Load conversations from localStorage on mount
   useEffect(() => {
@@ -113,7 +118,7 @@ export function AIChatContextProvider({ children }: { children: ReactNode }) {
       setMessages([]);
       return newConv.id;
     },
-    [conversations],
+    [conversations]
   );
 
   const selectConversation = useCallback(
@@ -123,7 +128,7 @@ export function AIChatContextProvider({ children }: { children: ReactNode }) {
       setActiveId(id);
       setMessages(conv.messages);
     },
-    [conversations],
+    [conversations]
   );
 
   const deleteConversation = useCallback(
@@ -141,7 +146,7 @@ export function AIChatContextProvider({ children }: { children: ReactNode }) {
         }
       }
     },
-    [conversations, activeId],
+    [conversations, activeId]
   );
 
   const persistConversation = useCallback((id: string, updatedMessages: ChatMessage[]) => {
@@ -153,7 +158,9 @@ export function AIChatContextProvider({ children }: { children: ReactNode }) {
 
   const titleConversation = useCallback((id: string, firstMessage: string) => {
     const fresh = loadConversations();
-    const updated = fresh.map((c) => (c.id === id ? { ...c, title: deriveTitle(firstMessage) } : c));
+    const updated = fresh.map((c) =>
+      c.id === id ? { ...c, title: deriveTitle(firstMessage) } : c
+    );
     saveConversations(updated);
     setConversations(updated);
   }, []);
@@ -163,7 +170,7 @@ export function AIChatContextProvider({ children }: { children: ReactNode }) {
       if (activeId) return activeId;
       return createConversation(lang);
     },
-    [activeId, createConversation],
+    [activeId, createConversation]
   );
 
   return (
@@ -174,6 +181,12 @@ export function AIChatContextProvider({ children }: { children: ReactNode }) {
         messages,
         drawerOpen,
         setDrawerOpen,
+        streamText,
+        setStreamText: setStreamTextRaw,
+        toolStatus,
+        setToolStatus: setToolStatusRaw,
+        isStreaming,
+        setIsStreaming: setIsStreamingRaw,
         createConversation,
         selectConversation,
         deleteConversation,

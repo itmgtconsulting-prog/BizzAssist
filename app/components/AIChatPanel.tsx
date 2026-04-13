@@ -10,7 +10,7 @@
  * Kontekst-bevidst: sender den aktuelle pathname som kontekst til Claude.
  */
 
-import { useState, useRef, useEffect, useCallback, memo, useMemo } from 'react';
+import { useState, useRef, useEffect, useCallback, memo } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { Send, Bot, Sparkles, Square, Maximize2, X } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
@@ -32,7 +32,6 @@ interface Message {
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 /** Højde når panelet er lukket (kun header synlig) */
-const COLLAPSED_HEIGHT = 48;
 
 // ─── Token usage tracking ────────────────────────────────────────────────────
 

@@ -425,8 +425,8 @@ export default function ChatPageClient() {
    * Create a new empty conversation and select it.
    */
   const handleNewConversation = useCallback(() => {
-    abortRef.current?.abort();
-    abortRef.current = null;
+    // Don't abort — let streaming finish in background for the old conversation
+    abortRef.current = null; // Detach so stop button doesn't kill background stream
     // Use context to create conversation — syncs with drawer
     const newId = chatCtx.createConversation(lang as 'da' | 'en');
     setActiveIdLocal(newId);
@@ -654,24 +654,31 @@ export default function ChatPageClient() {
                 status?: string;
                 usage?: { inputTokens: number; outputTokens: number; totalTokens: number };
               };
+              const isActive = activeId === convId;
               if (parsed.error) {
                 accumulated += `\n⚠️ ${parsed.error}`;
-                setStreamText(accumulated);
-                chatCtx.setStreamText(accumulated);
+                if (isActive) {
+                  setStreamText(accumulated);
+                  chatCtx.setStreamText(accumulated);
+                }
               } else if (parsed.usage) {
                 addTokenUsage(parsed.usage.totalTokens);
                 syncTokenUsageToServer(parsed.usage.totalTokens);
               } else if (parsed.status) {
-                setToolStatus(parsed.status);
-                chatCtx.setToolStatus(parsed.status);
-              } else if (parsed.t) {
-                if (!accumulated) {
-                  setToolStatus('');
-                  chatCtx.setToolStatus('');
+                if (isActive) {
+                  setToolStatus(parsed.status);
+                  chatCtx.setToolStatus(parsed.status);
                 }
+              } else if (parsed.t) {
                 accumulated += parsed.t;
-                setStreamText(accumulated);
-                chatCtx.setStreamText(accumulated);
+                if (isActive) {
+                  if (accumulated === parsed.t) {
+                    setToolStatus('');
+                    chatCtx.setToolStatus('');
+                  }
+                  setStreamText(accumulated);
+                  chatCtx.setStreamText(accumulated);
+                }
               }
             } catch {
               // Ignore invalid JSON chunks
@@ -685,8 +692,10 @@ export default function ChatPageClient() {
       if (accumulated) {
         const assistantMsg: ChatMessage = { role: 'assistant', content: accumulated };
         const finalMessages = [...newMessages, assistantMsg];
-        setMessages(finalMessages);
         persistConversation(convId, finalMessages);
+        if (activeId === convId) {
+          setMessages(finalMessages);
+        }
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') {

@@ -429,24 +429,32 @@ function AIChatPanel() {
                 status?: string;
                 usage?: { inputTokens: number; outputTokens: number; totalTokens: number };
               };
+              // Only update UI if user is still viewing this conversation
+              const isActive = chatCtx.activeId === convId;
               if (parsed.error) {
                 accumulated += `\n⚠️ ${parsed.error}`;
-                setStreamText(accumulated);
-                chatCtx.setStreamText(accumulated);
+                if (isActive) {
+                  setStreamText(accumulated);
+                  chatCtx.setStreamText(accumulated);
+                }
               } else if (parsed.usage) {
                 addTokenUsage(parsed.usage.totalTokens);
                 syncTokenUsageToServer(parsed.usage.totalTokens);
               } else if (parsed.status) {
-                setToolStatus(parsed.status);
-                chatCtx.setToolStatus(parsed.status);
-              } else if (parsed.t) {
-                if (!accumulated) {
-                  setToolStatus('');
-                  chatCtx.setToolStatus('');
+                if (isActive) {
+                  setToolStatus(parsed.status);
+                  chatCtx.setToolStatus(parsed.status);
                 }
+              } else if (parsed.t) {
                 accumulated += parsed.t;
-                setStreamText(accumulated);
-                chatCtx.setStreamText(accumulated);
+                if (isActive) {
+                  if (accumulated === parsed.t) {
+                    setToolStatus('');
+                    chatCtx.setToolStatus('');
+                  }
+                  setStreamText(accumulated);
+                  chatCtx.setStreamText(accumulated);
+                }
               }
             } catch {
               // Ignorer ugyldige JSON-chunks
@@ -462,8 +470,11 @@ function AIChatPanel() {
       // Flyt streamed tekst til message-array + persist
       if (accumulated) {
         const finalMsgs = [...newMessages, { role: 'assistant' as const, content: accumulated }];
-        setMessages(finalMsgs);
         chatCtx.persistConversation(convId, finalMsgs);
+        // Only update UI if still on same conversation
+        if (chatCtx.activeId === convId) {
+          setMessages(finalMsgs);
+        }
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') {
@@ -523,11 +534,12 @@ function AIChatPanel() {
             )}
           </div>
           <div className="flex items-center gap-2">
-            {/* New conversation button */}
+            {/* New conversation button — does NOT abort streaming; lets it finish in background */}
             <button
               onClick={() => {
-                abortRef.current?.abort();
-                abortRef.current = null;
+                // Don't abort — let the old conversation's streaming finish in background.
+                // It will persist its result to localStorage via convId captured in closure.
+                abortRef.current = null; // Detach so stop button doesn't kill background stream
                 chatCtx.createConversation(lang as 'da' | 'en');
                 setMessages([]);
                 setStreamText('');

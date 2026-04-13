@@ -134,6 +134,14 @@ function AIChatPanel() {
     refreshTokenInfo();
   }, [refreshTokenInfo]);
 
+  /** Sync local messages when activeId changes in context (e.g. fullpage "Ny samtale") */
+  useEffect(() => {
+    if (!isLoading) {
+      // Only sync if not currently streaming — avoid interrupting active responses
+      setMessages(chatCtx.messages);
+    }
+  }, [chatCtx.activeId, chatCtx.messages, isLoading]);
+
   /** Scroll til bunden ved nye beskeder eller stream-opdatering */
   useEffect(() => {
     {

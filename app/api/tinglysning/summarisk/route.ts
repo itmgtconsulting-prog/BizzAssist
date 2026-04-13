@@ -63,7 +63,6 @@ export function clearXmlCache(): void {
 }
 
 function tlFetch(urlPath: string): Promise<{ status: number; body: string }> {
-  // Check cache first
   const cached = xmlCache.get(urlPath);
   if (cached && Date.now() - cached.ts < XML_CACHE_TTL) {
     return Promise.resolve({ status: cached.status, body: cached.body });
@@ -92,7 +91,7 @@ function tlFetch(urlPath: string): Promise<{ status: number; body: string }> {
         pfx,
         passphrase: CERT_PASSWORD,
         rejectUnauthorized: false,
-        timeout: 55000, // Turbopack dev + test mTLS kan tage 30s+
+        timeout: 55000,
         headers: { Accept: 'application/xml' },
       },
       (res) => {
@@ -100,7 +99,6 @@ function tlFetch(urlPath: string): Promise<{ status: number; body: string }> {
         res.on('data', (d) => (body += d));
         res.on('end', () => {
           const result = { status: res.statusCode ?? 500, body };
-          // Cache successful responses
           if (result.status === 200) {
             xmlCache.set(urlPath, { ...result, ts: Date.now() });
           }

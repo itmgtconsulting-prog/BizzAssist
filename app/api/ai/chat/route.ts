@@ -435,6 +435,17 @@ function setCache(name: string, input: Record<string, string>, result: unknown):
  * Executes a tool by calling the appropriate internal API route or external endpoint.
  * Results are cached in-memory for 5 minutes to avoid duplicate API calls within a session.
  *
+ * BIZZ-239: Provide a clear, actionable error message for tool API failures.
+ * 401 errors in dev are expected (IP not whitelisted) — explain this to the AI.
+ */
+function toolErrorMessage(apiName: string, status: number): string {
+  if (status === 401 || status === 403) {
+    return `${apiName} returnerede ${status} (ikke autoriseret). Adgangsnogler eller IP-whitelisting mangler for dette register. Data er ikke tilgaengeligt i det aktuelle miljoe.`;
+  }
+  return `${apiName} svarede ${status}`;
+}
+
+/**
  * @param name - Tool name matching one of TOOLS[].name
  * @param input - Tool input parameters from Claude
  * @param baseUrl - Base URL for internal API routes (e.g. http://localhost:3000)
@@ -461,7 +472,7 @@ async function executeTool(
           { signal: AbortSignal.timeout(timeout) }
         );
         if (!res.ok) {
-          result = { fejl: `Adresse-autocomplete svarede ${res.status}` };
+          result = { fejl: toolErrorMessage('Adresse-autocomplete', res.status) };
           break;
         }
         const data = await res.json();
@@ -495,7 +506,7 @@ async function executeTool(
           { signal: AbortSignal.timeout(timeout) }
         );
         if (!res.ok) {
-          result = { fejl: `Adresse-opslag svarede ${res.status}` };
+          result = { fejl: toolErrorMessage('Adresse-opslag', res.status) };
           break;
         }
         const d = (await res.json()) as Record<string, unknown>;
@@ -530,7 +541,7 @@ async function executeTool(
           signal: AbortSignal.timeout(timeout),
         });
         if (!res.ok) {
-          result = { fejl: `Vurderings-API svarede ${res.status}` };
+          result = { fejl: toolErrorMessage('Vurderings-API', res.status) };
           break;
         }
         result = await res.json();
@@ -545,7 +556,7 @@ async function executeTool(
           signal: AbortSignal.timeout(timeout),
         });
         if (!res.ok) {
-          result = { fejl: `Foreløbig-vurdering-API svarede ${res.status}` };
+          result = { fejl: toolErrorMessage('Foreloebig-vurderings-API', res.status) };
           break;
         }
         result = await res.json();
@@ -558,7 +569,7 @@ async function executeTool(
           { signal: AbortSignal.timeout(timeout) }
         );
         if (!res.ok) {
-          result = { fejl: `Ejerskabs-API svarede ${res.status}` };
+          result = { fejl: toolErrorMessage('Ejerskabs-API', res.status) };
           break;
         }
         result = await res.json();
@@ -571,7 +582,7 @@ async function executeTool(
           { signal: AbortSignal.timeout(timeout) }
         );
         if (!res.ok) {
-          result = { fejl: `Salgshistorik-API svarede ${res.status}` };
+          result = { fejl: toolErrorMessage('Salgshistorik-API', res.status) };
           break;
         }
         result = await res.json();
@@ -584,7 +595,7 @@ async function executeTool(
           { signal: AbortSignal.timeout(timeout) }
         );
         if (!res.ok) {
-          result = { fejl: `Energimærke-API svarede ${res.status}` };
+          result = { fejl: toolErrorMessage('Energimaerke-API', res.status) };
           break;
         }
         result = await res.json();
@@ -600,7 +611,7 @@ async function executeTool(
           signal: AbortSignal.timeout(timeout),
         });
         if (!res.ok) {
-          result = { fejl: `Jord-API svarede ${res.status}` };
+          result = { fejl: toolErrorMessage('Jordforurenings-API', res.status) };
           break;
         }
         result = await res.json();
@@ -613,7 +624,7 @@ async function executeTool(
           { signal: AbortSignal.timeout(timeout) }
         );
         if (!res.ok) {
-          result = { fejl: `Plandata-API svarede ${res.status}` };
+          result = { fejl: toolErrorMessage('Plandata-API', res.status) };
           break;
         }
         result = await res.json();
@@ -625,7 +636,7 @@ async function executeTool(
           signal: AbortSignal.timeout(timeout),
         });
         if (!res.ok) {
-          result = { fejl: `CVR-API svarede ${res.status}` };
+          result = { fejl: toolErrorMessage('CVR-API', res.status) };
           break;
         }
         result = await res.json();
@@ -653,7 +664,7 @@ async function executeTool(
           { signal: AbortSignal.timeout(timeout) }
         );
         if (!xbrlRes.ok) {
-          result = { fejl: `Regnskabs-API svarede ${xbrlRes.status}` };
+          result = { fejl: toolErrorMessage('Regnskabs-API', xbrlRes.status) };
           break;
         }
         const xbrlData = (await xbrlRes.json()) as {
@@ -717,7 +728,7 @@ async function executeTool(
           { signal: AbortSignal.timeout(timeout) }
         );
         if (!relRes.ok) {
-          result = { fejl: `Related-API svarede ${relRes.status}` };
+          result = { fejl: toolErrorMessage('Related-API', relRes.status) };
           break;
         }
         const relData = (await relRes.json()) as Array<{
@@ -784,7 +795,7 @@ async function executeTool(
         });
 
         if (!res.ok) {
-          result = { fejl: `CVR søge-API svarede ${res.status}` };
+          result = { fejl: toolErrorMessage('CVR-soege-API', res.status) };
           break;
         }
 
@@ -865,7 +876,7 @@ async function executeTool(
         });
 
         if (!esRes.ok) {
-          result = { fejl: `CVR deltager-API svarede ${esRes.status}` };
+          result = { fejl: toolErrorMessage('CVR-deltager-API', esRes.status) };
           break;
         }
 
@@ -953,7 +964,7 @@ async function executeTool(
           { signal: AbortSignal.timeout(timeout) }
         );
         if (!uuidRes.ok) {
-          result = { fejl: `Tinglysning UUID-opslag svarede ${uuidRes.status}` };
+          result = { fejl: toolErrorMessage('Tinglysning UUID-opslag', uuidRes.status) };
           break;
         }
         const uuidData = (await uuidRes.json()) as { uuid?: string };
@@ -968,7 +979,7 @@ async function executeTool(
           { signal: AbortSignal.timeout(timeout) }
         );
         if (!sumRes.ok) {
-          result = { fejl: `Tinglysning summarisk svarede ${sumRes.status}` };
+          result = { fejl: toolErrorMessage('Tinglysning summarisk', sumRes.status) };
           break;
         }
         result = await sumRes.json();

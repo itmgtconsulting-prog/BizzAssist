@@ -454,12 +454,20 @@ function toolErrorMessage(apiName: string, status: number): string {
 async function executeTool(
   name: string,
   input: Record<string, string>,
-  baseUrl: string
+  baseUrl: string,
+  /** Forward user's Cookie header for authenticated internal API calls */
+  cookieHeader?: string | null
 ): Promise<unknown> {
   const cached = getCached(name, input);
   if (cached !== null) return cached;
 
   const timeout = 15_000;
+
+  /** Fetch options for internal API calls — includes forwarded auth cookies */
+  const internalFetchOpts: RequestInit = {
+    signal: AbortSignal.timeout(timeout),
+    ...(cookieHeader ? { headers: { Cookie: cookieHeader } } : {}),
+  };
 
   try {
     let result: unknown;
@@ -469,7 +477,7 @@ async function executeTool(
         // Server-side proxy via DAR (DAWA lukker 1. juli 2026)
         const res = await fetch(
           `${baseUrl}/api/adresse/autocomplete?q=${encodeURIComponent(input.q)}`,
-          { signal: AbortSignal.timeout(timeout) }
+          internalFetchOpts
         );
         if (!res.ok) {
           result = { fejl: toolErrorMessage('Adresse-autocomplete', res.status) };
@@ -503,7 +511,7 @@ async function executeTool(
         // Server-side proxy via DAR (DAWA lukker 1. juli 2026)
         const res = await fetch(
           `${baseUrl}/api/adresse/lookup?id=${encodeURIComponent(input.dawaId)}`,
-          { signal: AbortSignal.timeout(timeout) }
+          internalFetchOpts
         );
         if (!res.ok) {
           result = { fejl: toolErrorMessage('Adresse-opslag', res.status) };
@@ -566,7 +574,7 @@ async function executeTool(
       case 'hent_ejerskab': {
         const res = await fetch(
           `${baseUrl}/api/ejerskab?bfeNummer=${encodeURIComponent(input.bfeNummer)}`,
-          { signal: AbortSignal.timeout(timeout) }
+          internalFetchOpts
         );
         if (!res.ok) {
           result = { fejl: toolErrorMessage('Ejerskabs-API', res.status) };
@@ -579,7 +587,7 @@ async function executeTool(
       case 'hent_salgshistorik': {
         const res = await fetch(
           `${baseUrl}/api/salgshistorik?bfeNummer=${encodeURIComponent(input.bfeNummer)}`,
-          { signal: AbortSignal.timeout(timeout) }
+          internalFetchOpts
         );
         if (!res.ok) {
           result = { fejl: toolErrorMessage('Salgshistorik-API', res.status) };
@@ -592,7 +600,7 @@ async function executeTool(
       case 'hent_energimaerke': {
         const res = await fetch(
           `${baseUrl}/api/energimaerke?bfeNummer=${encodeURIComponent(input.bfeNummer)}`,
-          { signal: AbortSignal.timeout(timeout) }
+          internalFetchOpts
         );
         if (!res.ok) {
           result = { fejl: toolErrorMessage('Energimaerke-API', res.status) };
@@ -621,7 +629,7 @@ async function executeTool(
       case 'hent_plandata': {
         const res = await fetch(
           `${baseUrl}/api/plandata?adresseId=${encodeURIComponent(input.adresseId)}`,
-          { signal: AbortSignal.timeout(timeout) }
+          internalFetchOpts
         );
         if (!res.ok) {
           result = { fejl: toolErrorMessage('Plandata-API', res.status) };
@@ -661,7 +669,7 @@ async function executeTool(
         // Returnerer de seneste 2 regnskabsår med nøgletal for formueestimering.
         const xbrlRes = await fetch(
           `${baseUrl}/api/regnskab/xbrl?cvr=${encodeURIComponent(input.cvr)}`,
-          { signal: AbortSignal.timeout(timeout) }
+          internalFetchOpts
         );
         if (!xbrlRes.ok) {
           result = { fejl: toolErrorMessage('Regnskabs-API', xbrlRes.status) };
@@ -725,7 +733,7 @@ async function executeTool(
         // Henter relaterede virksomheder (datterselskaber/kapitalandele) via CVR-public/related.
         const relRes = await fetch(
           `${baseUrl}/api/cvr-public/related?cvr=${encodeURIComponent(input.cvr)}`,
-          { signal: AbortSignal.timeout(timeout) }
+          internalFetchOpts
         );
         if (!relRes.ok) {
           result = { fejl: toolErrorMessage('Related-API', relRes.status) };
@@ -961,7 +969,7 @@ async function executeTool(
         // Step 1: Get tinglysning UUID from BFE number
         const uuidRes = await fetch(
           `${baseUrl}/api/tinglysning?bfe=${encodeURIComponent(input.bfeNummer)}`,
-          { signal: AbortSignal.timeout(timeout) }
+          internalFetchOpts
         );
         if (!uuidRes.ok) {
           result = { fejl: toolErrorMessage('Tinglysning UUID-opslag', uuidRes.status) };
@@ -976,7 +984,7 @@ async function executeTool(
         // Step 2: Get summarisk data (ejere, hæftelser, servitutter)
         const sumRes = await fetch(
           `${baseUrl}/api/tinglysning/summarisk?uuid=${encodeURIComponent(uuidData.uuid)}`,
-          { signal: AbortSignal.timeout(timeout) }
+          internalFetchOpts
         );
         if (!sumRes.ok) {
           result = { fejl: toolErrorMessage('Tinglysning summarisk', sumRes.status) };
@@ -1444,7 +1452,8 @@ export async function POST(request: NextRequest): Promise<Response> {
               const result = await executeTool(
                 toolBlock.name,
                 toolBlock.input as Record<string, string>,
-                baseUrl
+                baseUrl,
+                request.headers.get('cookie')
               );
               return {
                 type: 'tool_result' as const,

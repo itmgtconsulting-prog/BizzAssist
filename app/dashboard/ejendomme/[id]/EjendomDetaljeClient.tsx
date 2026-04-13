@@ -1135,16 +1135,20 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
           if (data.ejendomsnummer && data.kommuneNummer) {
             setEsrNummer(`${data.kommuneNummer}-${data.ejendomsnummer}`);
           }
-          // Hent summarisk data (adkomster + hæftelser) for Økonomi-tab
+          // Hent ejere + hæftelser for Økonomi-tab (sektions-kald)
           if (data.uuid) {
-            fetch(`/api/tinglysning/summarisk?uuid=${data.uuid}`, { signal })
-              .then((r) => (r.ok ? r.json() : null))
-              .then((sum) => {
+            Promise.all([
+              fetch(`/api/tinglysning/summarisk?uuid=${data.uuid}&section=ejere`, { signal }).then(
+                (r) => (r.ok ? r.json() : null)
+              ),
+              fetch(`/api/tinglysning/summarisk?uuid=${data.uuid}&section=haeftelser`, {
+                signal,
+              }).then((r) => (r.ok ? r.json() : null)),
+            ])
+              .then(([ejereData, haeftelserData]) => {
                 if (signal.aborted) return;
-                if (sum) {
-                  setTlEjere(sum.ejere ?? []);
-                  setTlHaeftelser(sum.haeftelser ?? []);
-                }
+                if (ejereData) setTlEjere(ejereData.ejere ?? []);
+                if (haeftelserData) setTlHaeftelser(haeftelserData.haeftelser ?? []);
               })
               .catch((err) => {
                 if (err.name === 'AbortError') return;
@@ -6510,21 +6514,27 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
           return;
         }
         setTlUuid(tlData.uuid);
-        // Trin 2: Hent summariske data (inkl. indskannedeAkterNavne fra EjendomIndskannetAktSamling)
-        const summariskPromise = fetch(`/api/tinglysning/summarisk?uuid=${tlData.uuid}`, {
-          signal,
-        }).then((r) => (r.ok ? r.json() : null));
-        return summariskPromise;
-      })
-      .then((data) => {
-        if (data) {
-          setEjere(data.ejere ?? []);
-          setHaeftelser(data.haeftelser ?? []);
-          setServitutter(data.servitutter ?? []);
-          setBilagRefs(data.bilagRefs ?? []);
-          setTingbogsattest(data.tingbogsattest ?? null);
-          setIndskannedeAkterNavne(data.indskannedeAkterNavne ?? []);
-        }
+        // Trin 2: Hent summariske data i 3 parallelle sektions-kald
+        // (reducerer response-størrelse pr. kald for store ejendomme)
+        const base = `/api/tinglysning/summarisk?uuid=${tlData.uuid}`;
+        return Promise.all([
+          fetch(`${base}&section=ejere`, { signal }).then((r) => (r.ok ? r.json() : null)),
+          fetch(`${base}&section=haeftelser`, { signal }).then((r) => (r.ok ? r.json() : null)),
+          fetch(`${base}&section=servitutter`, { signal }).then((r) => (r.ok ? r.json() : null)),
+        ]).then(([ejereRes, haeftelserRes, servituterRes]) => {
+          if (ejereRes) {
+            setEjere(ejereRes.ejere ?? []);
+            setTingbogsattest(ejereRes.tingbogsattest ?? null);
+          }
+          if (haeftelserRes) {
+            setHaeftelser(haeftelserRes.haeftelser ?? []);
+            setBilagRefs(haeftelserRes.bilagRefs ?? []);
+          }
+          if (servituterRes) {
+            setServitutter(servituterRes.servitutter ?? []);
+            setIndskannedeAkterNavne(servituterRes.indskannedeAkterNavne ?? []);
+          }
+        });
       })
       .catch((err) => {
         if (err.name !== 'AbortError')

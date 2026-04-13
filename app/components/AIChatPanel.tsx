@@ -12,7 +12,7 @@
 
 import { useState, useRef, useEffect, useCallback, memo } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { Send, Bot, Sparkles, Square, Maximize2, X } from 'lucide-react';
+import { Send, Bot, Sparkles, Square, Maximize2, X, Plus } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';
 import { resolvePlan, isSubscriptionFunctional, formatTokens } from '@/app/lib/subscriptions';
@@ -501,6 +501,22 @@ function AIChatPanel() {
             )}
           </div>
           <div className="flex items-center gap-2">
+            {/* New conversation button */}
+            <button
+              onClick={() => {
+                abortRef.current?.abort();
+                chatCtx.createConversation(lang as 'da' | 'en');
+                setMessages([]);
+                setStreamText('');
+                setToolStatus('');
+                setInput('');
+              }}
+              className="text-slate-500 hover:text-slate-300 transition-colors shrink-0 p-1 rounded hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              aria-label={lang === 'da' ? 'Ny samtale' : 'New conversation'}
+              title={lang === 'da' ? 'Ny samtale' : 'New conversation'}
+            >
+              <Plus size={14} />
+            </button>
             <button
               onClick={openFullPageChat}
               className="text-slate-500 hover:text-slate-300 transition-colors shrink-0 p-1 rounded hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"

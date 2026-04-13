@@ -420,22 +420,15 @@ export default function ChatPageClient() {
    */
   const handleNewConversation = useCallback(() => {
     abortRef.current?.abort();
-    const newConv: Conversation = {
-      id: generateId(),
-      title: da ? 'Ny samtale' : 'New conversation',
-      messages: [],
-      createdAt: new Date().toISOString(),
-    };
-    const updated = [newConv, ...conversations];
-    saveConversations(updated);
-    setConversations(updated);
-    setActiveId(newConv.id);
+    // Use context to create conversation — syncs with drawer
+    const newId = chatCtx.createConversation(lang as 'da' | 'en');
+    setActiveIdLocal(newId);
     setMessages([]);
     setStreamText('');
     setToolStatus('');
     setInput('');
     setTimeout(() => inputRef.current?.focus(), 100);
-  }, [conversations, da]);
+  }, [chatCtx, lang]);
 
   /**
    * Select a conversation from the history list.

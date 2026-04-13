@@ -2,25 +2,25 @@
  * GET /api/tinglysning/indskannede-akter/download?aktNavn=<aktNavn>
  *
  * Downloader en indskannet akt som PDF fra Tinglysningsrettens HTTP XML API
- * (ElektroniskAkt-service, SOAP 1.1, v53.1.0.1).
+ * (ElektroniskAkt-service, v53.1.0.1).
  *
  * Flow:
- *   1. Byg XML-request med EjendomIndskannetAktHent + DokumentFilnavnTekst
- *   2. Sign XML med XMLDSig enveloped signature (OCES cert — obligatorisk jf. XSD)
- *   3. POST til https://[test-]xml-api.tinglysning.dk/etl/services/ElektroniskAkt (mTLS)
+ *   1. Udtræk PEM-nøgle og certifikat fra P12
+ *   2. Byg EjendomIndskannetAktHent XML og sign med XMLDSig enveloped signature (obligatorisk jf. XSD)
+ *   3. POST til https://[test-]xml-api.tinglysning.dk/ElektroniskAkt/EjendomIndskannetAktHent (mTLS)
  *   4. Parse EjendomIndskannetAktHentResultat → IndskannetDokumentData (base64 PDF)
  *   5. Returnér decoded PDF til klienten
  *
- * Fallback:
- *   - Hvis XML API fejler returneres 501 med metadata så UI kan vise passende besked.
- *
- * Endpoint: /etl/services/ElektroniskAkt
- * SOAPAction: urn:#EjendomIndskannetAktHent
+ * Endpoint (ny S2S HTTP-stil, jf. s2s-dokumentation-07):
+ *   /ElektroniskAkt/EjendomIndskannetAktHent
  * Schema: http://rep.oio.dk/tinglysning.dk/service/message/elektroniskakt/1/
  * Dokumentation: docs/tinglysning/xmlapi/XMLAPI-NOTES.md
  *
  * Bekræftet af Domstolsstyrelsen (e-tl-011@domstol.dk, 2026-04-13):
  * "Akterne kan hentes via EjendomIndskannetAktHent."
+ *
+ * BLOKER: Kræver S2S-actor registrering hos Tinglysningsretten (ansøgning sendt 2026-04-13).
+ * Afventer: godkendelse + upload af cert i S2S SysParam på test.tinglysning.dk.
  *
  * @param aktNavn - Akt-filnavn fra EjendomIndskannetAktSamling i ejdsummarisk (f.eks. "1_H-I_458")
  * @returns PDF-binary hvis download lykkedes, ellers JSON 501 med fejlinfo
@@ -49,21 +49,18 @@ const CERT_PASSWORD =
   process.env.TINGLYSNING_CERT_PASSWORD ?? process.env.NEMLOGIN_DEVTEST4_CERT_PASSWORD ?? '';
 const CERT_B64 = process.env.TINGLYSNING_CERT_B64 ?? process.env.NEMLOGIN_DEVTEST4_CERT_B64 ?? '';
 
-/** HTTP REST API base (f.eks. https://test.tinglysning.dk) — bruges til metadata-opslag */
-const TL_REST_BASE = process.env.TINGLYSNING_BASE_URL ?? 'https://test.tinglysning.dk';
-
 /**
- * HTTP XML API base (SOAP/ElektroniskAkt).
+ * HTTP XML API base.
  * Test: test-xml-api.tinglysning.dk / Prod: xml-api.tinglysning.dk
- * Udledes automatisk fra TL_REST_BASE hvis ikke sat eksplicit.
+ * Udledes automatisk fra TINGLYSNING_BASE_URL hvis TINGLYSNING_XML_API_URL ikke er sat eksplicit.
  */
 const TL_XML_API_BASE =
   process.env.TINGLYSNING_XML_API_URL ??
-  (TL_REST_BASE.includes('test')
+  ((process.env.TINGLYSNING_BASE_URL ?? '').includes('test')
     ? 'https://test-xml-api.tinglysning.dk'
     : 'https://xml-api.tinglysning.dk');
 
-const XML_API_SERVICE_PATH = '/etl/services/ElektroniskAkt';
+const XML_API_SERVICE_PATH = '/ElektroniskAkt/EjendomIndskannetAktHent';
 
 // ─── Namespaces ───────────────────────────────────────────────────────────────
 
@@ -239,8 +236,8 @@ function callXmlApi(
       path: xmlUrl.pathname,
       method: 'POST',
       headers: {
-        'Content-Type': 'text/xml; charset=UTF-8',
-        SOAPAction: '"urn:#EjendomIndskannetAktHent"',
+        // Ny S2S HTTP-stil (s2s-dokumentation-07): application/xml, ingen SOAPAction
+        'Content-Type': 'application/xml',
         'Content-Length': String(body.byteLength),
         // Header-navn og format bekræftet af e-TL XML API (400-svar ved forkert format)
         'Tinglysning-Message-ID': `uuid:${randomUUID()}`,
@@ -248,27 +245,6 @@ function callXmlApi(
     },
     body
   );
-}
-
-/**
- * Henter aktNavn-metadata fra HTTP REST API (/ssl/indskannetakt/<aktNavn>).
- * Bruges til at verificere at akten eksisterer inden XML API-kald.
- *
- * @returns metadata-objekt eller null ved 404
- */
-function fetchAktMetadata(
-  aktNavn: string
-): Promise<{ status: number; headers: Record<string, string>; buffer: Buffer }> {
-  const url = new URL(
-    TL_REST_BASE + '/tinglysning/ssl/indskannetakt/' + encodeURIComponent(aktNavn)
-  );
-  return tlHttpRequest({
-    hostname: url.hostname,
-    port: 443,
-    path: url.pathname + url.search,
-    method: 'GET',
-    headers: { Accept: 'application/json, */*' },
-  });
 }
 
 // ─── Response parsing ─────────────────────────────────────────────────────────
@@ -337,32 +313,8 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    // Trin 1: Verificér at akten eksisterer via HTTP REST API (hurtig, ingen signing)
-    let aktUuid: string | undefined;
-    let aktFilnavn: string | undefined;
-    let aktDatabaseTabel: string | undefined;
-
-    try {
-      const metaRes = await fetchAktMetadata(aktNavn);
-      if (metaRes.status === 404) {
-        return NextResponse.json({ error: 'Indskannet akt ikke fundet' }, { status: 404 });
-      }
-      if (metaRes.status === 200 && metaRes.buffer.length > 0) {
-        const meta = JSON.parse(metaRes.buffer.toString('utf-8')) as {
-          uuid?: string;
-          databaseTabel?: string;
-          filnavn?: string;
-        };
-        aktUuid = meta.uuid;
-        aktFilnavn = meta.filnavn;
-        aktDatabaseTabel = meta.databaseTabel;
-      }
-    } catch (metaErr) {
-      // Metadata-opslag er ikke kritisk — fortsæt til XML API-kald
-      logger.log('[indskannede-akter/download] Metadata-opslag fejlede (ikke kritisk):', metaErr);
-    }
-
-    // Trin 2: Udtræk PEM-nøgle og -certifikat fra P12 til XMLDSig
+    // Trin 1: Udtræk PEM-nøgle og -certifikat fra P12 til XMLDSig
+    // (Metadata-opslag via HTTP REST er fjernet — /ssl/indskannetakt/<aktNavn> eksisterer ikke)
     let privateKeyPem: string;
     let certPem: string;
     try {
@@ -376,7 +328,7 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // Trin 3: Byg og sign XML-request (XMLDSig enveloped signature — obligatorisk jf. XSD)
+    // Trin 2: Byg og sign XML-request (XMLDSig enveloped signature — obligatorisk jf. XSD)
     let signedXml: string;
     try {
       signedXml = buildSignedRequest(aktNavn, privateKeyPem, certPem);
@@ -385,7 +337,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'XML signing fejlede' }, { status: 503 });
     }
 
-    // Trin 4: POST til HTTP XML API (ElektroniskAkt-service, mTLS)
+    // Trin 3: POST til HTTP XML API (ElektroniskAkt-service, mTLS)
     logger.log(
       `[indskannede-akter/download] Kalder XML API: ${TL_XML_API_BASE}${XML_API_SERVICE_PATH} for aktNavn=${aktNavn}`
     );
@@ -422,7 +374,7 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // Trin 5: Alle forsøg fejlede — returnér 501 med metadata til UI
+    // Trin 4: Alle forsøg fejlede — returnér 501 med info til UI
     logger.log(
       '[indskannede-akter/download] XML API-kald fejlede. HTTP status:',
       xmlRes.status,
@@ -434,13 +386,10 @@ export async function GET(req: NextRequest) {
       {
         error: 'download_ikke_tilgaengelig',
         aktNavn,
-        uuid: aktUuid,
-        filnavn: aktFilnavn,
-        databaseTabel: aktDatabaseTabel,
         xmlApiStatus: xmlRes.status,
         besked:
           'EjendomIndskannetAktHent (HTTP XML API) returnerede ikke et gyldigt dokument. ' +
-          'Kontrollér at aktNavn er korrekt og at IP er whitelistet hos Tinglysningsretten.',
+          'Kontrollér at aktNavn er korrekt og at S2S-actor er registreret hos Tinglysningsretten.',
       },
       { status: 501 }
     );

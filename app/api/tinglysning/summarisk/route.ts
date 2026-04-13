@@ -53,7 +53,22 @@ export interface TLEjer {
   dato: string | null;
 }
 
+/** In-memory cache for summarisk XML — avoids re-fetching large responses */
+const xmlCache = new Map<string, { status: number; body: string; ts: number }>();
+const XML_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+/** Exposed for test teardown only — clears the in-memory XML cache. */
+export function clearXmlCache(): void {
+  xmlCache.clear();
+}
+
 function tlFetch(urlPath: string): Promise<{ status: number; body: string }> {
+  // Check cache first
+  const cached = xmlCache.get(urlPath);
+  if (cached && Date.now() - cached.ts < XML_CACHE_TTL) {
+    return Promise.resolve({ status: cached.status, body: cached.body });
+  }
+
   return new Promise((resolve, reject) => {
     let pfx: Buffer;
     if (CERT_B64) {
@@ -83,7 +98,14 @@ function tlFetch(urlPath: string): Promise<{ status: number; body: string }> {
       (res) => {
         let body = '';
         res.on('data', (d) => (body += d));
-        res.on('end', () => resolve({ status: res.statusCode ?? 500, body }));
+        res.on('end', () => {
+          const result = { status: res.statusCode ?? 500, body };
+          // Cache successful responses
+          if (result.status === 200) {
+            xmlCache.set(urlPath, { ...result, ts: Date.now() });
+          }
+          resolve(result);
+        });
       }
     );
     req.on('error', reject);
@@ -163,6 +185,13 @@ export async function GET(req: NextRequest) {
   if (!uuid) {
     return NextResponse.json({ error: 'uuid parameter er påkrævet' }, { status: 400 });
   }
+  /**
+   * Optional section filter: ?section=ejere|haeftelser|servitutter
+   * When set, only that section is parsed and returned — reduces processing
+   * time for large XML responses. Klienten kalder 3 gange i stedet for 1.
+   * Uden section returneres alt (bagudkompatibelt).
+   */
+  const section = req.nextUrl.searchParams.get('section');
 
   if ((!CERT_PATH && !CERT_B64) || !CERT_PASSWORD) {
     return NextResponse.json({
@@ -911,6 +940,33 @@ export async function GET(req: NextRequest) {
       tillaegstekster,
     };
 
+    // Section-filtered response for incremental loading
+    if (section === 'ejere') {
+      return NextResponse.json(
+        { ejere, tingbogsattest, fejl: null },
+        {
+          headers: { 'Cache-Control': 'public, s-maxage=3600' },
+        }
+      );
+    }
+    if (section === 'haeftelser') {
+      return NextResponse.json(
+        { haeftelser, bilagRefs, fejl: null },
+        {
+          headers: { 'Cache-Control': 'public, s-maxage=3600' },
+        }
+      );
+    }
+    if (section === 'servitutter') {
+      return NextResponse.json(
+        { servitutter, indskannedeAkterNavne, fejl: null },
+        {
+          headers: { 'Cache-Control': 'public, s-maxage=3600' },
+        }
+      );
+    }
+
+    // Full response (default — backward compatible)
     return NextResponse.json(
       {
         ejere,

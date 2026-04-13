@@ -77,7 +77,7 @@ function tlFetch(urlPath: string): Promise<{ status: number; body: string }> {
         pfx,
         passphrase: CERT_PASSWORD,
         rejectUnauthorized: false,
-        timeout: 45000, // test.tinglysning.dk kan tage 20-30s for summarisk
+        timeout: 55000, // Turbopack dev + test mTLS kan tage 30s+
         headers: { Accept: 'application/xml' },
       },
       (res) => {

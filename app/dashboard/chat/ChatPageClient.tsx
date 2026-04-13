@@ -340,20 +340,25 @@ export default function ChatPageClient() {
 
   /**
    * Persist the current active conversation back to localStorage.
+   * BIZZ-240: reads fresh from localStorage (not stale React state) so
+   * auto-derived conversation titles are preserved after streaming.
    *
    * @param id - Conversation ID to update
    * @param updatedMessages - New message array
-   * @param currentConvs - Current conversations snapshot
    */
   const persistConversation = useCallback(
-    (id: string, updatedMessages: ChatMessage[], currentConvs: Conversation[]) => {
-      const updated = currentConvs.map((c) =>
+    (id: string, updatedMessages: ChatMessage[]) => {
+      // Read fresh from localStorage to avoid overwriting title changes
+      // made between sendMessage start and streaming completion.
+
+      const freshConvs = loadConversations();
+      const updated = freshConvs.map((c) =>
         c.id === id ? { ...c, messages: updatedMessages } : c
       );
       saveConversations(updated);
       setConversations(updated);
     },
-    []
+    [] // No deps — always reads fresh from localStorage
   );
 
   /**
@@ -514,7 +519,7 @@ export default function ChatPageClient() {
       const errorMsg: ChatMessage = { role: 'assistant', content: blockReason };
       const withError = [...newMessages, errorMsg];
       setMessages(withError);
-      persistConversation(convId, withError, currentConvs);
+      persistConversation(convId, withError);
       setIsLoading(false);
       return;
     }
@@ -538,7 +543,7 @@ export default function ChatPageClient() {
         };
         const withErr = [...newMessages, errMsg];
         setMessages(withErr);
-        persistConversation(convId, withErr, currentConvs);
+        persistConversation(convId, withErr);
         setIsLoading(false);
         return;
       }
@@ -603,7 +608,7 @@ export default function ChatPageClient() {
         const assistantMsg: ChatMessage = { role: 'assistant', content: accumulated };
         const finalMessages = [...newMessages, assistantMsg];
         setMessages(finalMessages);
-        persistConversation(convId, finalMessages, currentConvs);
+        persistConversation(convId, finalMessages);
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') {
@@ -611,7 +616,7 @@ export default function ChatPageClient() {
         const stoppedMsg: ChatMessage = { role: 'assistant', content: current };
         const finalMessages = [...newMessages, stoppedMsg];
         setMessages(finalMessages);
-        persistConversation(convId, finalMessages, currentConvs);
+        persistConversation(convId, finalMessages);
       } else {
         const errMsg: ChatMessage = {
           role: 'assistant',
@@ -619,7 +624,7 @@ export default function ChatPageClient() {
         };
         const withErr = [...newMessages, errMsg];
         setMessages(withErr);
-        persistConversation(convId, withErr, currentConvs);
+        persistConversation(convId, withErr);
       }
     } finally {
       setStreamText('');

@@ -358,16 +358,22 @@ export default function ChatPageClient() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  // ── Load from localStorage on mount ──
+  // ── Load from localStorage on mount — prefer context's active conversation ──
   useEffect(() => {
     setIsMounted(true);
     const stored = loadConversations();
     setConversations(stored);
-    // Select most recent conversation if any
-    if (stored.length > 0) {
+    // Prefer context's active conversation (e.g. from drawer), else most recent
+    const targetId = chatCtx.activeId;
+    const target = targetId ? stored.find((c) => c.id === targetId) : null;
+    if (target) {
+      setActiveIdLocal(target.id);
+      setMessages(target.messages);
+    } else if (stored.length > 0) {
       setActiveId(stored[0].id);
       setMessages(stored[0].messages);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── Sync messages from context when drawer finishes streaming ──
@@ -558,9 +564,13 @@ export default function ChatPageClient() {
 
     setInput('');
     setMessages(newMessages);
+    chatCtx.setMessages(newMessages);
     setIsLoading(true);
+    chatCtx.setIsStreaming(true);
     setStreamText('');
+    chatCtx.setStreamText('');
     setToolStatus('');
+    chatCtx.setToolStatus('');
 
     // If blocked, show error as assistant message and return
     if (blockReason) {
@@ -647,15 +657,21 @@ export default function ChatPageClient() {
               if (parsed.error) {
                 accumulated += `\n⚠️ ${parsed.error}`;
                 setStreamText(accumulated);
+                chatCtx.setStreamText(accumulated);
               } else if (parsed.usage) {
                 addTokenUsage(parsed.usage.totalTokens);
                 syncTokenUsageToServer(parsed.usage.totalTokens);
               } else if (parsed.status) {
                 setToolStatus(parsed.status);
+                chatCtx.setToolStatus(parsed.status);
               } else if (parsed.t) {
-                if (!accumulated) setToolStatus('');
+                if (!accumulated) {
+                  setToolStatus('');
+                  chatCtx.setToolStatus('');
+                }
                 accumulated += parsed.t;
                 setStreamText(accumulated);
+                chatCtx.setStreamText(accumulated);
               }
             } catch {
               // Ignore invalid JSON chunks
@@ -692,6 +708,9 @@ export default function ChatPageClient() {
       setStreamText('');
       setToolStatus('');
       setIsLoading(false);
+      chatCtx.setStreamText('');
+      chatCtx.setToolStatus('');
+      chatCtx.setIsStreaming(false);
       abortRef.current = null;
     }
   }, [
@@ -812,9 +831,13 @@ export default function ChatPageClient() {
                     ? `${formatTokens(used)} / ∞`
                     : `${formatTokens(used)} / ${formatTokens(limit)}`}
                 </span>
-                {/* Close button — navigates back to previous page */}
+                {/* Close button — if streaming, opens drawer to continue; otherwise navigates back */}
                 <button
                   onClick={() => {
+                    if (isLoadingLocal) {
+                      // Hand off streaming to drawer: open it so user sees progress
+                      chatCtx.setDrawerOpen(true);
+                    }
                     if (window.history.length > 1) {
                       router.back();
                     } else {
@@ -834,6 +857,7 @@ export default function ChatPageClient() {
           <div className="shrink-0 flex items-center justify-end px-6 py-2 border-b border-white/8">
             <button
               onClick={() => {
+                if (isLoadingLocal) chatCtx.setDrawerOpen(true);
                 if (window.history.length > 1) {
                   router.back();
                 } else {

@@ -329,6 +329,15 @@ function AIChatPanel() {
     const userMsg: Message = { role: 'user', content: text };
     const newMessages = [...messages, userMsg];
 
+    // Ensure conversation exists in shared context (persists to localStorage)
+    const convId = chatCtx.ensureConversation(lang as 'da' | 'en');
+    // Auto-title from first user message
+    if (messages.length === 0) {
+      chatCtx.titleConversation(convId, text);
+    }
+    // Persist user message immediately
+    chatCtx.persistConversation(convId, newMessages);
+
     setInput('');
     setMessages(newMessages);
     setIsLoading(true);
@@ -418,17 +427,22 @@ function AIChatPanel() {
         reader.cancel().catch(() => {});
       }
 
-      // Flyt streamed tekst til message-array
+      // Flyt streamed tekst til message-array + persist
       if (accumulated) {
-        setMessages((prev) => [...prev, { role: 'assistant', content: accumulated }]);
+        const finalMsgs = [...newMessages, { role: 'assistant' as const, content: accumulated }];
+        setMessages(finalMsgs);
+        chatCtx.persistConversation(convId, finalMsgs);
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') {
-        // Brugeren stoppede streaming — gem hvad vi har
         const current = streamText || a.stopped;
-        setMessages((prev) => [...prev, { role: 'assistant', content: current }]);
+        const finalMsgs = [...newMessages, { role: 'assistant' as const, content: current }];
+        setMessages(finalMsgs);
+        chatCtx.persistConversation(convId, finalMsgs);
       } else {
-        setMessages((prev) => [...prev, { role: 'assistant', content: a.connectionError }]);
+        const finalMsgs = [...newMessages, { role: 'assistant' as const, content: a.connectionError }];
+        setMessages(finalMsgs);
+        chatCtx.persistConversation(convId, finalMsgs);
       }
     } finally {
       setStreamText('');

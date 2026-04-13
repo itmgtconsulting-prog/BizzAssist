@@ -1051,20 +1051,26 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
             </div>
             <NotifikationsDropdown lang={lang} />
 
-            {/* AI Chat drawer toggle — hidden when on full-page chat */}
-            {pathname !== '/dashboard/chat' && (
-              <button
-                onClick={() => chatCtx.setDrawerOpen(!chatCtx.drawerOpen)}
-                className="relative text-slate-400 hover:text-white transition-colors p-2 rounded-lg hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-                aria-label={lang === 'da' ? 'Åbn AI Chat' : 'Open AI Chat'}
-                title={lang === 'da' ? 'AI Chat' : 'AI Chat'}
-              >
-                <MessageSquare size={18} />
-                {chatCtx.conversations.length > 0 && (
-                  <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-blue-500 rounded-full" />
-                )}
-              </button>
-            )}
+            {/* AI Chat drawer toggle — always visible in topbar */}
+            <button
+              onClick={() => {
+                if (pathname === '/dashboard/chat') {
+                  // Already on full-page chat — no drawer needed
+                } else {
+                  chatCtx.setDrawerOpen(!chatCtx.drawerOpen);
+                }
+              }}
+              className={`relative text-slate-400 hover:text-white transition-colors p-2 rounded-lg hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                pathname === '/dashboard/chat' ? 'text-blue-400' : ''
+              }`}
+              aria-label={lang === 'da' ? 'AI Chat' : 'AI Chat'}
+              title="AI Chat"
+            >
+              <MessageSquare size={18} />
+              {chatCtx.conversations.length > 0 && pathname !== '/dashboard/chat' && (
+                <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-blue-500 rounded-full" />
+              )}
+            </button>
 
             {/* Profile dropdown */}
             <div className="relative" ref={profileRef}>

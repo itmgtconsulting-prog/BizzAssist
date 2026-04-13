@@ -771,6 +771,34 @@ export default function ChatPageClient() {
 
       {/* ─── Main chat area ───────────────────────────────────────────────────── */}
       <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Token tracking bar */}
+        {ctxSub && (() => {
+          const plan = resolvePlan(ctxSub.planId);
+          if (!plan.aiEnabled) return null;
+          const limit = plan.aiTokensPerMonth < 0 ? -1 : plan.aiTokensPerMonth + (ctxSub.bonusTokens ?? 0);
+          if (limit === 0) return null;
+          const used = ctxSub.tokensUsedThisMonth;
+          const pct = limit === -1 ? 0 : Math.min(100, (used / limit) * 100);
+          return (
+            <div className="shrink-0 flex items-center gap-3 px-6 py-2 border-b border-white/8">
+              <span className="text-[11px] text-slate-400 whitespace-nowrap">Token status</span>
+              <div className="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                {limit === -1 ? (
+                  <div className="h-full rounded-full bg-purple-500 w-full" />
+                ) : (
+                  <div
+                    className={`h-full rounded-full transition-all ${pct > 90 ? 'bg-red-500' : pct > 70 ? 'bg-amber-500' : 'bg-blue-500'}`}
+                    style={{ width: `${pct}%` }}
+                  />
+                )}
+              </div>
+              <span className="text-[11px] font-medium text-slate-400 whitespace-nowrap">
+                {limit === -1 ? `${formatTokens(used)} / ∞` : `${formatTokens(used)} / ${formatTokens(limit)}`}
+              </span>
+            </div>
+          );
+        })()}
+
         {/* Messages */}
         <div className="flex-1 overflow-y-auto px-4 py-6 space-y-4">
           {messages.length === 0 && !isLoading && (
@@ -778,9 +806,7 @@ export default function ChatPageClient() {
               <div className="w-14 h-14 bg-blue-600/20 rounded-2xl flex items-center justify-center mb-4">
                 <Sparkles size={24} className="text-blue-400" />
               </div>
-              <h2 className="text-white font-semibold text-lg mb-2">
-                {da ? 'AI Bizzness Assistent' : 'AI Business Assistant'}
-              </h2>
+              <h2 className="text-white font-semibold text-lg mb-2">AI Chat</h2>
               <p className="text-slate-400 text-sm max-w-sm leading-relaxed">
                 {da
                   ? 'Stil spørgsmål om ejendomme, virksomheder og ejerskab. Brug @-omtale for at nævne en enhed.'

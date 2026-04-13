@@ -26,6 +26,7 @@ import { MessageSquare, Plus, Trash2, Send, Square, Bot, Sparkles, Loader2 } fro
 import { useLanguage } from '@/app/context/LanguageContext';
 import { useSubscription } from '@/app/context/SubscriptionContext';
 import { useAIPageContext } from '@/app/context/AIPageContext';
+import { useAIChatContext } from '@/app/context/AIChatContext';
 import { resolvePlan, isSubscriptionFunctional, formatTokens } from '@/app/lib/subscriptions';
 
 // ─── Token sync helper ──────────────────────────────────────────────────────
@@ -317,11 +318,30 @@ export default function ChatPageClient() {
   const { subscription: ctxSub, addTokenUsage } = useSubscription();
   /** BIZZ-232: Page context from previous page (passed from sidebar AIChatPanel) */
   const { pageData } = useAIPageContext();
+  /** Shared conversation context — syncs with drawer panel */
+  const chatCtx = useAIChatContext();
 
-  // ── Conversation state ──
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // ── Conversation state (synced with AIChatContext) ──
+  const conversations = chatCtx.conversations;
+  const setConversations = useCallback(
+    (updater: Conversation[] | ((prev: Conversation[]) => Conversation[])) => {
+      // When ChatPageClient updates conversations, sync back to context via localStorage
+      const updated = typeof updater === 'function' ? updater(chatCtx.conversations) : updater;
+      saveConversations(updated);
+      // Force context to re-read (context listens to storage events for cross-tab,
+      // but same-tab needs direct state update — this happens via loadConversations in context)
+    },
+    [chatCtx.conversations],
+  );
+  const [activeId, setActiveIdLocal] = useState<string | null>(chatCtx.activeId);
+  const setActiveId = useCallback(
+    (id: string | null) => {
+      setActiveIdLocal(id);
+      if (id) chatCtx.selectConversation(id);
+    },
+    [chatCtx],
+  );
+  const [messages, setMessages] = useState<ChatMessage[]>(chatCtx.messages);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [streamText, setStreamText] = useState('');

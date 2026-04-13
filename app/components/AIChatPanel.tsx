@@ -10,15 +10,16 @@
  * Kontekst-bevidst: sender den aktuelle pathname som kontekst til Claude.
  */
 
-import { useState, useRef, useEffect, useCallback, memo } from 'react';
+import { useState, useRef, useEffect, useCallback, memo, useMemo } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { ChevronDown, Send, Bot, Sparkles, Square, Maximize2 } from 'lucide-react';
+import { Send, Bot, Sparkles, Square, Maximize2, X } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';
 import { resolvePlan, isSubscriptionFunctional, formatTokens } from '@/app/lib/subscriptions';
 import { useSubscriptionAccess } from '@/app/components/SubscriptionGate';
 import { useSubscription } from '@/app/context/SubscriptionContext';
 import { useAIPageContext } from '@/app/context/AIPageContext';
+import { useAIChatContext } from '@/app/context/AIChatContext';
 import { Lock } from 'lucide-react';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -97,10 +98,11 @@ function AIChatPanel() {
   const { isActive: subActive } = useSubscriptionAccess('ai');
   /** Subscription context — server-authoritative, no localStorage */
   const { subscription: ctxSub, addTokenUsage } = useSubscription();
+  /** Shared conversation context — syncs with fullpage chat */
+  const chatCtx = useAIChatContext();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [isOpen, setIsOpen] = useState(true);
   /** Streamet tekst for den aktuelle assistent-besked */
   const [streamText, setStreamText] = useState('');
   /** Status-besked under tool-kald (f.eks. "Henter BBR-data…") */
@@ -131,27 +133,22 @@ function AIChatPanel() {
   /** Load token info on mount and when panel opens */
   useEffect(() => {
     refreshTokenInfo();
-  }, [refreshTokenInfo, isOpen]);
+  }, [refreshTokenInfo]);
 
   /** Scroll til bunden ved nye beskeder eller stream-opdatering */
   useEffect(() => {
-    if (isOpen) {
+    {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [messages, streamText, isOpen]);
+  }, [messages, streamText]);
 
   /** Fokuser input første gang panelet åbnes */
   useEffect(() => {
     let timerId: ReturnType<typeof setTimeout> | undefined;
-    if (isOpen) {
+    {
       timerId = setTimeout(() => inputRef.current?.focus(), 150);
     }
     return () => clearTimeout(timerId);
-  }, [isOpen]);
-
-  /** Åbn/luk panelet (sidebar-tilstand) */
-  const togglePanel = useCallback(() => {
-    setIsOpen((prev) => !prev);
   }, []);
 
   /** BIZZ-228: Navigate to full-page chat instead of opening portal modal */
@@ -455,45 +452,37 @@ function AIChatPanel() {
   ]);
 
   return (
-    <div
-      className={`border-t border-white/10 bg-[#0f172a] flex flex-col overflow-hidden transition-[flex] duration-200 ${
-        isOpen ? 'flex-1 min-h-0' : 'shrink-0'
-      }`}
-      style={isOpen ? undefined : { height: COLLAPSED_HEIGHT }}
-    >
-      {/* ── Header / toggle ──────────────────────────────────────────────── */}
+    <div className="flex flex-col h-full overflow-hidden bg-[#0f172a]">
+      {/* ── Drawer header ────────────────────────────────────────────────── */}
       <div className="shrink-0">
-        <button
-          onClick={togglePanel}
-          aria-expanded={isOpen}
-          aria-label={isOpen ? 'Luk AI-assistent' : 'Åbn AI-assistent'}
-          className="w-full flex items-center justify-between px-4 py-3 cursor-pointer select-none hover:bg-white/5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
-        >
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
           <div className="flex items-center gap-2.5">
-            <div className="w-6 h-6 bg-blue-600/25 rounded-md flex items-center justify-center shrink-0">
-              <Sparkles size={11} className="text-blue-400" />
+            <div className="w-7 h-7 bg-blue-600/25 rounded-lg flex items-center justify-center shrink-0">
+              <Sparkles size={13} className="text-blue-400" />
             </div>
-            <span className="text-slate-300 text-sm font-medium">{a.title}</span>
-            {messages.length > 0 && !isOpen && (
-              <span className="w-1.5 h-1.5 bg-blue-500 rounded-full shrink-0" />
+            <span className="text-slate-200 text-sm font-semibold">{a.title}</span>
+            {isLoading && toolStatus && (
+              <span className="text-[11px] text-blue-400/80 font-medium">{toolStatus}</span>
             )}
           </div>
           <div className="flex items-center gap-2">
-            {/* BIZZ-228: Navigate to full-page chat instead of portal modal */}
             <button
               onClick={openFullPageChat}
-              className="text-slate-500 hover:text-slate-300 transition-colors shrink-0 p-0.5 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-              aria-label="Åbn fuld AI Bizzness Assistent"
-              title="Åbn fuld AI Bizzness Assistent"
+              className="text-slate-500 hover:text-slate-300 transition-colors shrink-0 p-1 rounded hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              aria-label={lang === 'da' ? 'Åbn fuld AI Chat' : 'Open full AI Chat'}
+              title={lang === 'da' ? 'Åbn fuld AI Chat' : 'Open full AI Chat'}
             >
-              <Maximize2 size={13} />
+              <Maximize2 size={14} />
             </button>
-            <ChevronDown
-              size={14}
-              className={`text-slate-500 transition-transform duration-200 shrink-0 ${isOpen ? 'rotate-180' : ''}`}
-            />
+            <button
+              onClick={() => chatCtx.setDrawerOpen(false)}
+              className="text-slate-500 hover:text-slate-200 transition-colors p-1 rounded hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              aria-label={lang === 'da' ? 'Luk chat' : 'Close chat'}
+            >
+              <X size={16} />
+            </button>
           </div>
-        </button>
+        </div>
 
         {/* ── Token status — mini bar under overskriften ── */}
         {tokenInfo &&
@@ -567,7 +556,7 @@ function AIChatPanel() {
       </div>
 
       {/* ── Chat-indhold ─────────────────────────────────────────────────── */}
-      {isOpen && !subActive && (
+      {!subActive && (
         <div className="flex-1 flex flex-col items-center justify-center text-center px-4 py-6">
           <div className="w-10 h-10 bg-amber-500/10 rounded-xl flex items-center justify-center mb-3">
             <Lock size={18} className="text-amber-400" />
@@ -579,7 +568,7 @@ function AIChatPanel() {
           </p>
         </div>
       )}
-      {isOpen && subActive && (
+      {subActive && (
         <>
           {/* Beskeder */}
           <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2.5 min-h-0">

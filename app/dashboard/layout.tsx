@@ -49,6 +49,7 @@ import SubscriptionGate from '@/app/components/SubscriptionGate';
 import { cachePlans, type UserSubscription, type PlanDef } from '@/app/lib/subscriptions';
 import { SubscriptionProvider, useSubscription } from '@/app/context/SubscriptionContext';
 import { AIPageProvider } from '@/app/context/AIPageContext';
+import { AIChatContextProvider, useAIChatContext } from '@/app/context/AIChatContext';
 import { createClient } from '@/lib/supabase/client';
 import { hasMigrated, migrateLocalStorageToSupabase } from '@/app/lib/migrateLocalStorage';
 import { initCacheUserId, clearCacheUserId } from '@/app/lib/trackedEjendomme';
@@ -93,7 +94,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   return (
     <SubscriptionProvider>
       <AIPageProvider>
-        <DashboardLayoutInner>{children}</DashboardLayoutInner>
+        <AIChatContextProvider>
+          <DashboardLayoutInner>{children}</DashboardLayoutInner>
+        </AIChatContextProvider>
       </AIPageProvider>
     </SubscriptionProvider>
   );
@@ -105,6 +108,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
   const s = t.sidebar;
   const pathname = usePathname();
   const router = useRouter();
+  const chatCtx = useAIChatContext();
   const [isPending, startTransition] = useTransition();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   /** Om sidebar er foldet ind til ikoner-only (desktop) */
@@ -668,25 +672,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
               })}
           </nav>
 
-          {/* AI Bizzness Assistent — BIZZ-236: always visible, subscription gates access */}
-          {!sidebarCollapsed && (
-            <ErrorBoundary
-              lang={lang}
-              fallback={
-                <div className="p-4 text-center">
-                  <p className="text-sm text-slate-400 mb-3">Chat er midlertidigt utilgængelig</p>
-                  <button
-                    onClick={() => window.location.reload()}
-                    className="text-xs text-blue-400 hover:text-blue-300 border border-slate-700 rounded-lg px-3 py-1.5 transition-colors"
-                  >
-                    Prøv igen
-                  </button>
-                </div>
-              }
-            >
-              <AIChatPanel />
-            </ErrorBoundary>
-          )}
+          {/* AI Chat panel moved to topbar drawer — see AIChatDrawer below */}
         </aside>
 
         {/* Resize-bjælke — kun desktop */}
@@ -1064,6 +1050,22 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
               </button>
             </div>
             <NotifikationsDropdown lang={lang} />
+
+            {/* AI Chat drawer toggle — hidden when on full-page chat */}
+            {pathname !== '/dashboard/chat' && (
+              <button
+                onClick={() => chatCtx.setDrawerOpen(!chatCtx.drawerOpen)}
+                className="relative text-slate-400 hover:text-white transition-colors p-2 rounded-lg hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                aria-label={lang === 'da' ? 'Åbn AI Chat' : 'Open AI Chat'}
+                title={lang === 'da' ? 'AI Chat' : 'AI Chat'}
+              >
+                <MessageSquare size={18} />
+                {chatCtx.conversations.length > 0 && (
+                  <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-blue-500 rounded-full" />
+                )}
+              </button>
+            )}
+
             {/* Profile dropdown */}
             <div className="relative" ref={profileRef}>
               <button
@@ -1153,6 +1155,42 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
           )}
         </main>
       </div>
+
+      {/* ── AI Chat Drawer (slide-in from right) ──────────────────────── */}
+      {pathname !== '/dashboard/chat' && (
+        <>
+          {/* Backdrop (mobile only) */}
+          {chatCtx.drawerOpen && (
+            <div
+              className="fixed inset-0 z-40 bg-black/30 sm:hidden"
+              onClick={() => chatCtx.setDrawerOpen(false)}
+            />
+          )}
+          {/* Drawer panel */}
+          <div
+            className={`fixed top-0 right-0 h-full z-40 w-full sm:w-[420px] bg-[#0f172a] border-l border-white/10 shadow-2xl flex flex-col transform transition-transform duration-300 ease-in-out ${
+              chatCtx.drawerOpen ? 'translate-x-0' : 'translate-x-full'
+            }`}
+          >
+            <ErrorBoundary
+              lang={lang}
+              fallback={
+                <div className="p-4 text-center">
+                  <p className="text-sm text-slate-400 mb-3">Chat er midlertidigt utilgængelig</p>
+                  <button
+                    onClick={() => window.location.reload()}
+                    className="text-xs text-blue-400 hover:text-blue-300 border border-slate-700 rounded-lg px-3 py-1.5 transition-colors"
+                  >
+                    Prøv igen
+                  </button>
+                </div>
+              }
+            >
+              <AIChatPanel />
+            </ErrorBoundary>
+          </div>
+        </>
+      )}
 
       {/* Plan-selection / pending-approval overlay — shown based on subscription state */}
       {overlayMode && <PlanSelectionOverlay lang={lang} mode={overlayMode} />}

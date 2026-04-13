@@ -215,7 +215,7 @@ export const translations = {
       map: 'Kort',
       search: 'Søg',
       analysis: 'AI Analyse',
-      chat: 'AI Bizzness Assistent',
+      chat: 'AI Chat',
       admin: 'Admin',
       searchPlaceholder: 'Søg adresse, CVR, virksomhed…',
       settings: 'Indstillinger',
@@ -249,7 +249,7 @@ export const translations = {
 
     /* ─── AI Bizzness Assistent ─────────────────────────────────────── */
     ai: {
-      title: 'AI Bizzness Assistent',
+      title: 'AI Chat',
       tokenStatus: 'Token status',
       emptyPrompt: 'Spørg om den ejendom, virksomhed eller person du kigger på.',
       inputPlaceholder: 'Stil et spørgsmål…',
@@ -718,7 +718,7 @@ export const translations = {
       map: 'Map',
       search: 'Search',
       analysis: 'AI Analysis',
-      chat: 'AI Bizzness Assistant',
+      chat: 'AI Chat',
       admin: 'Admin',
       searchPlaceholder: 'Search address, CVR, company…',
       settings: 'Settings',
@@ -752,7 +752,7 @@ export const translations = {
 
     /* ─── AI Bizzness Assistent ─────────────────────────────────────── */
     ai: {
-      title: 'AI Bizzness Assistant',
+      title: 'AI Chat',
       tokenStatus: 'Token status',
       emptyPrompt: 'Ask about the property, company or person you are looking at.',
       inputPlaceholder: 'Ask a question…',

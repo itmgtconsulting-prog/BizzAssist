@@ -28,6 +28,23 @@ import { useSubscription } from '@/app/context/SubscriptionContext';
 import { useAIPageContext } from '@/app/context/AIPageContext';
 import { resolvePlan, isSubscriptionFunctional, formatTokens } from '@/app/lib/subscriptions';
 
+// ─── Token sync helper ──────────────────────────────────────────────────────
+
+/** Fire-and-forget token sync with 3 retries and exponential backoff */
+function syncTokenUsageToServer(tokensUsed: number): void {
+  if (tokensUsed <= 0) return;
+  const attempt = (retries: number) => {
+    fetch('/api/subscription/track-tokens', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tokensUsed }),
+    }).catch(() => {
+      if (retries > 0) setTimeout(() => attempt(retries - 1), 2000);
+    });
+  };
+  attempt(2);
+}
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 /** A single chat message */
@@ -599,12 +616,7 @@ export default function ChatPageClient() {
                 setStreamText(accumulated);
               } else if (parsed.usage) {
                 addTokenUsage(parsed.usage.totalTokens);
-                // Fire-and-forget token sync
-                fetch('/api/subscription/track-tokens', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ tokensUsed: parsed.usage.totalTokens }),
-                }).catch(() => {});
+                syncTokenUsageToServer(parsed.usage.totalTokens);
               } else if (parsed.status) {
                 setToolStatus(parsed.status);
               } else if (parsed.t) {

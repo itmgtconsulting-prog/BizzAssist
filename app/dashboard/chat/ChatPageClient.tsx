@@ -719,24 +719,7 @@ export default function ChatPageClient() {
       <aside className="w-64 shrink-0 flex flex-col border-r border-white/8 bg-[#0f172a]">
         {/* Header */}
         <div className="px-4 pt-5 pb-3 border-b border-white/8">
-          <div className="flex items-center justify-between mb-3">
-            <h1 className="text-white font-bold text-base">{da ? 'AI Chat' : 'AI Chat'}</h1>
-            <button
-              onClick={() => {
-                // Navigate back to previous page, or dashboard if no history
-                if (window.history.length > 1) {
-                  router.back();
-                } else {
-                  router.push('/dashboard');
-                }
-              }}
-              className="text-slate-500 hover:text-slate-200 transition-colors p-1 rounded-lg hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-              aria-label={da ? 'Luk AI Chat' : 'Close AI Chat'}
-              title={da ? 'Luk' : 'Close'}
-            >
-              <X size={16} />
-            </button>
-          </div>
+          <h1 className="text-white font-bold text-base mb-3">{da ? 'AI Chat' : 'AI Chat'}</h1>
           <button
             onClick={handleNewConversation}
             className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
@@ -790,7 +773,7 @@ export default function ChatPageClient() {
       {/* ─── Main chat area ───────────────────────────────────────────────────── */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Token tracking bar */}
-        {ctxSub &&
+        {(ctxSub &&
           (() => {
             const plan = resolvePlan(ctxSub.planId);
             if (!plan.aiEnabled) return null;
@@ -817,9 +800,42 @@ export default function ChatPageClient() {
                     ? `${formatTokens(used)} / ∞`
                     : `${formatTokens(used)} / ${formatTokens(limit)}`}
                 </span>
+                {/* Close button — navigates back to previous page */}
+                <button
+                  onClick={() => {
+                    if (window.history.length > 1) {
+                      router.back();
+                    } else {
+                      router.push('/dashboard');
+                    }
+                  }}
+                  className="text-slate-500 hover:text-slate-200 transition-colors p-1 rounded-lg hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ml-1"
+                  aria-label={da ? 'Luk AI Chat' : 'Close AI Chat'}
+                  title={da ? 'Luk' : 'Close'}
+                >
+                  <X size={16} />
+                </button>
               </div>
             );
-          })()}
+          })()) || (
+          /* Fallback: show close button even without token bar */
+          <div className="shrink-0 flex items-center justify-end px-6 py-2 border-b border-white/8">
+            <button
+              onClick={() => {
+                if (window.history.length > 1) {
+                  router.back();
+                } else {
+                  router.push('/dashboard');
+                }
+              }}
+              className="text-slate-500 hover:text-slate-200 transition-colors p-1 rounded-lg hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              aria-label={da ? 'Luk AI Chat' : 'Close AI Chat'}
+              title={da ? 'Luk' : 'Close'}
+            >
+              <X size={16} />
+            </button>
+          </div>
+        )}
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto px-4 py-6 space-y-4">

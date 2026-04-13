@@ -552,13 +552,9 @@ export default function ChatPageClient() {
     const userMsg: ChatMessage = { role: 'user', content: text };
     const newMessages: ChatMessage[] = [...messages, userMsg];
 
-    // Auto-title from first user message
+    // Auto-title from first user message — use context for sync with drawer
     if (messages.length === 0) {
-      const updated = currentConvs.map((c) =>
-        c.id === convId ? { ...c, title: deriveTitle(text), messages: newMessages } : c
-      );
-      saveConversations(updated);
-      setConversations(updated);
+      chatCtx.titleConversation(convId, text);
     }
 
     setInput('');

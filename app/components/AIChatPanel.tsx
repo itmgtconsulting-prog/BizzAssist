@@ -20,6 +20,7 @@ import { useSubscriptionAccess } from '@/app/components/SubscriptionGate';
 import { useSubscription } from '@/app/context/SubscriptionContext';
 import { useAIPageContext } from '@/app/context/AIPageContext';
 import { useAIChatContext } from '@/app/context/AIChatContext';
+import { loadConversations } from '@/app/lib/chatStorage';
 import { Lock } from 'lucide-react';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -134,19 +135,28 @@ function AIChatPanel() {
     refreshTokenInfo();
   }, [refreshTokenInfo]);
 
-  /** Sync local messages only when active conversation changes (e.g. fullpage "Ny samtale").
-   *  Does NOT sync on chatCtx.messages changes to avoid overwriting during streaming. */
+  /** Sync local messages when:
+   *  1. Active conversation changes (e.g. fullpage "Ny samtale")
+   *  2. Drawer becomes visible (user navigates away from /dashboard/chat)
+   *  Does NOT sync during active streaming to avoid overwriting. */
   const prevActiveIdRef = useRef<string | null>(null);
+  const prevDrawerOpenRef = useRef(chatCtx.drawerOpen);
   useEffect(() => {
-    if (chatCtx.activeId !== prevActiveIdRef.current) {
-      prevActiveIdRef.current = chatCtx.activeId;
-      if (!isLoading) {
-        setMessages(chatCtx.messages);
-        setStreamText('');
-        setToolStatus('');
-      }
+    const activeChanged = chatCtx.activeId !== prevActiveIdRef.current;
+    const drawerJustOpened = chatCtx.drawerOpen && !prevDrawerOpenRef.current;
+
+    prevActiveIdRef.current = chatCtx.activeId;
+    prevDrawerOpenRef.current = chatCtx.drawerOpen;
+
+    if ((activeChanged || drawerJustOpened) && !isLoading) {
+      // Reload fresh from localStorage to get any messages added by fullpage chat
+      const fresh = loadConversations();
+      const active = chatCtx.activeId ? fresh.find((c) => c.id === chatCtx.activeId) : null;
+      setMessages(active?.messages ?? []);
+      setStreamText('');
+      setToolStatus('');
     }
-  }, [chatCtx.activeId, chatCtx.messages, isLoading]);
+  }, [chatCtx.activeId, chatCtx.drawerOpen, isLoading]);
 
   /** Scroll til bunden ved nye beskeder eller stream-opdatering */
   useEffect(() => {

@@ -62,10 +62,18 @@ export function clearXmlCache(): void {
   xmlCache.clear();
 }
 
-function tlFetch(urlPath: string): Promise<{ status: number; body: string }> {
+/**
+ * @param urlPath - Tinglysning API path
+ * @param maxBytes - Stop downloading after this many bytes (0 = no limit).
+ *   Used for sectioned calls where we only need part of the XML.
+ */
+function tlFetch(
+  urlPath: string,
+  maxBytes = 0
+): Promise<{ status: number; body: string; truncated: boolean }> {
   const cached = xmlCache.get(urlPath);
   if (cached && Date.now() - cached.ts < XML_CACHE_TTL) {
-    return Promise.resolve({ status: cached.status, body: cached.body });
+    return Promise.resolve({ status: cached.status, body: cached.body, truncated: false });
   }
 
   return new Promise((resolve, reject) => {
@@ -96,17 +104,34 @@ function tlFetch(urlPath: string): Promise<{ status: number; body: string }> {
       },
       (res) => {
         let body = '';
-        res.on('data', (d) => (body += d));
+        let truncated = false;
+        res.on('data', (d) => {
+          body += d;
+          // Early termination: stop downloading once we have enough data
+          if (maxBytes > 0 && body.length >= maxBytes) {
+            truncated = true;
+            res.destroy(); // Stop reading
+          }
+        });
         res.on('end', () => {
-          const result = { status: res.statusCode ?? 500, body };
-          if (result.status === 200) {
+          const result = { status: res.statusCode ?? 500, body, truncated: false };
+          if (result.status === 200 && !truncated) {
             xmlCache.set(urlPath, { ...result, ts: Date.now() });
           }
-          resolve(result);
+          resolve({ ...result, truncated });
+        });
+        res.on('close', () => {
+          if (truncated) {
+            resolve({ status: res.statusCode ?? 200, body, truncated: true });
+          }
         });
       }
     );
-    req.on('error', reject);
+    req.on('error', (err) => {
+      // If we truncated intentionally, that's not an error
+      if (err.message.includes('aborted')) return;
+      reject(err);
+    });
     req.on('timeout', () => {
       req.destroy();
       reject(new Error('Timeout'));
@@ -201,7 +226,12 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const res = await tlFetch(`/ejdsummarisk/${uuid}`);
+    // For ejere/haeftelser sections, limit download to 25KB — enough for adkomst+haeftelser
+    // but skips most servitutter (which can be 60KB+ for hovedejendomme).
+    // Full download only for servitutter section or no section (backwards compat).
+    const needsFullXml = !section || section === 'servitutter';
+    const maxBytes = needsFullXml ? 0 : 25_000;
+    const res = await tlFetch(`/ejdsummarisk/${uuid}`, maxBytes);
     if (res.status !== 200) {
       return NextResponse.json({
         ejere: [],

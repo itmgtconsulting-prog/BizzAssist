@@ -467,10 +467,16 @@ function AIChatPanel() {
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') {
+        // User aborted (e.g. clicked "Ny samtale") — persist partial response
+        // to the ORIGINAL conversation but don't update local messages state
+        // (which may now belong to a different conversation).
         const current = streamText || a.stopped;
         const finalMsgs = [...newMessages, { role: 'assistant' as const, content: current }];
-        setMessages(finalMsgs);
         chatCtx.persistConversation(convId, finalMsgs);
+        // Only update local messages if we're still on the same conversation
+        if (chatCtx.activeId === convId) {
+          setMessages(finalMsgs);
+        }
       } else {
         const finalMsgs = [
           ...newMessages,
@@ -521,10 +527,15 @@ function AIChatPanel() {
             <button
               onClick={() => {
                 abortRef.current?.abort();
+                abortRef.current = null;
                 chatCtx.createConversation(lang as 'da' | 'en');
                 setMessages([]);
                 setStreamText('');
                 setToolStatus('');
+                setIsLoading(false);
+                chatCtx.setStreamText('');
+                chatCtx.setToolStatus('');
+                chatCtx.setIsStreaming(false);
                 setInput('');
               }}
               className="text-slate-500 hover:text-slate-300 transition-colors shrink-0 p-1 rounded hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"

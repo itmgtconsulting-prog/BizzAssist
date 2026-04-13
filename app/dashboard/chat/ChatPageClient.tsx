@@ -426,12 +426,17 @@ export default function ChatPageClient() {
    */
   const handleNewConversation = useCallback(() => {
     abortRef.current?.abort();
+    abortRef.current = null;
     // Use context to create conversation — syncs with drawer
     const newId = chatCtx.createConversation(lang as 'da' | 'en');
     setActiveIdLocal(newId);
     setMessages([]);
     setStreamText('');
     setToolStatus('');
+    setIsLoading(false);
+    chatCtx.setStreamText('');
+    chatCtx.setToolStatus('');
+    chatCtx.setIsStreaming(false);
     setInput('');
     setTimeout(() => inputRef.current?.focus(), 100);
   }, [chatCtx, lang]);
@@ -685,11 +690,15 @@ export default function ChatPageClient() {
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') {
+        // Persist partial response to ORIGINAL conversation
         const current = streamText || '*(stoppet)*';
         const stoppedMsg: ChatMessage = { role: 'assistant', content: current };
         const finalMessages = [...newMessages, stoppedMsg];
-        setMessages(finalMessages);
         persistConversation(convId, finalMessages);
+        // Only update UI if still on same conversation (user may have clicked "Ny samtale")
+        if (activeId === convId) {
+          setMessages(finalMessages);
+        }
       } else {
         const errMsg: ChatMessage = {
           role: 'assistant',

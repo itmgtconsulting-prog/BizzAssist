@@ -297,8 +297,16 @@ function _EjerstrukturTrae({ noder }: { noder: EjerstrukturNode[] }) {
 /**
  * Ejendomsdetaljeside med tabs og kortvisning.
  * @param params - URL params med ejendoms-id (Promise i React 19)
+ * @param prefetched - Optional server-side prefetched DAWA + BBR data (eliminerer klient-side waterfall)
  */
-export default function EjendomDetaljeClient({ params }: { params: Promise<{ id: string }> }) {
+export default function EjendomDetaljeClient({
+  params,
+  prefetched,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams?: Promise<Record<string, string | string[]>>;
+  prefetched?: import('./page').PrefetchedPropertyData;
+}) {
   const { id } = use(params);
   const router = useRouter();
   const { lang } = useLanguage();
@@ -798,13 +806,18 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
   }, [trækker]);
 
   // DAWA-tilstand — kun aktiv når id er et DAWA UUID
-  const [dawaAdresse, setDawaAdresse] = useState<DawaAdresse | null>(null);
+  // Hvis server-side prefetch leverede data, brug det som initial state
+  const [dawaAdresse, setDawaAdresse] = useState<DawaAdresse | null>(
+    prefetched?.dawaAdresse ?? null
+  );
   const [dawaJordstykke, setDawaJordstykke] = useState<DawaJordstykke | null>(null);
   // true = loader, false = fejl, null = idle/done
-  const [dawaStatus, setDawaStatus] = useState<'loader' | 'fejl' | 'ok' | 'idle'>('idle');
+  const [dawaStatus, setDawaStatus] = useState<'loader' | 'fejl' | 'ok' | 'idle'>(
+    prefetched?.dawaAdresse ? 'ok' : 'idle'
+  );
 
   /** BBR data fra server-side API-route — null = ikke hentet / ikke tilgængeligt */
-  const [bbrData, setBbrData] = useState<EjendomApiResponse | null>(null);
+  const [bbrData, setBbrData] = useState<EjendomApiResponse | null>(prefetched?.bbrData ?? null);
   /** True mens BBR-data hentes */
   const [bbrLoader, setBbrLoader] = useState(false);
 
@@ -1030,11 +1043,40 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
 
   /**
    * Henter DAWA-adresse og jordstykke.
+   * Skippes hvis server-side prefetch allerede leverede data (dawaAdresse er sat).
    * Al setState sker i async then-callback — ikke synkront.
    * AbortController sikrer at forældede svar fra tidligere navigation ignoreres.
    */
   useEffect(() => {
     if (!erDAWA) return;
+    // Skip DAWA fetch hvis server-side prefetch allerede leverede adressen
+    if (prefetched?.dawaAdresse) {
+      // Stadig hent jordstykke (ikke prefetched) og gem besøg
+      const adr = prefetched.dawaAdresse;
+      const adresseLabel = adr.etage
+        ? `${adr.vejnavn} ${adr.husnr}, ${adr.etage}.${adr.dør ? ` ${adr.dør}` : ''}`
+        : adr.adressebetegnelse.split(',')[0];
+      gemRecentEjendom({
+        id,
+        adresse: adresseLabel,
+        postnr: adr.postnr,
+        by: adr.postnrnavn,
+        kommune: adr.kommunenavn,
+        anvendelse: null,
+      });
+      recordRecentVisit('property', id, adresseLabel, `/dashboard/ejendomme/${id}`, {
+        postnr: adr.postnr,
+        by: adr.postnrnavn,
+      });
+      // Hent jordstykke asynkront (billigt kald)
+      fetch(`/api/adresse/jordstykke?lng=${adr.x}&lat=${adr.y}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((jord: DawaJordstykke | null) => setDawaJordstykke(jord))
+        .catch(() => {
+          /* ignore */
+        });
+      return;
+    }
     const controller = new AbortController();
     const signal = controller.signal;
     setDawaStatus('loader');
@@ -1084,11 +1126,14 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
 
   /**
    * Henter BBR-data fra server-side API-route når DAWA-adressen er klar.
+   * Skippes hvis server-side prefetch allerede leverede BBR-data.
    * Fejler stille — bbrData.bbrFejl beskriver årsagen hvis data mangler.
    * AbortController sikrer at forældede svar ignoreres ved hurtig navigation.
    */
   useEffect(() => {
     if (!erDAWA || dawaStatus !== 'ok') return;
+    // Skip BBR fetch hvis server-side prefetch allerede leverede data
+    if (prefetched?.bbrData) return;
     const controller = new AbortController();
     setBbrLoader(true);
     fetch(`/api/ejendom/${id}`, { signal: controller.signal })
@@ -3196,26 +3241,36 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
             {/* ══ EJERFORHOLD ══ */}
             {aktivTab === 'ejerforhold' && (
               <div className="space-y-4">
+                {/* Loading state for ejerskab */}
+                {ejereLoader && (
+                  <div className="flex items-center justify-center py-16">
+                    <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
+                    <span className="ml-2 text-slate-400 text-sm">
+                      {lang === 'da' ? 'Henter ejerskabsdata…' : 'Loading ownership data…'}
+                    </span>
+                  </div>
+                )}
                 {/* ── Ejerskabsdiagram / Relationsdiagram (fra Tinglysning + EJF kæde) ── */}
-                {(() => {
-                  const bfeForDiagram =
-                    bbrData?.ejerlejlighedBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer;
-                  if (!bfeForDiagram) return null;
-                  return (
-                    <div>
-                      <SectionTitle title={t.ownershipStructure} />
-                      <PropertyOwnerDiagram
-                        bfe={bfeForDiagram}
-                        adresse={
-                          dawaAdresse
-                            ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
-                            : `BFE ${bfeForDiagram}`
-                        }
-                        lang={lang}
-                      />
-                    </div>
-                  );
-                })()}
+                {!ejereLoader &&
+                  (() => {
+                    const bfeForDiagram =
+                      bbrData?.ejerlejlighedBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer;
+                    if (!bfeForDiagram) return null;
+                    return (
+                      <div>
+                        <SectionTitle title={t.ownershipStructure} />
+                        <PropertyOwnerDiagram
+                          bfe={bfeForDiagram}
+                          adresse={
+                            dawaAdresse
+                              ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
+                              : `BFE ${bfeForDiagram}`
+                          }
+                          lang={lang}
+                        />
+                      </div>
+                    );
+                  })()}
               </div>
             )}
 

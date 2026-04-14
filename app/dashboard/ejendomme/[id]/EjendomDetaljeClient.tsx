@@ -860,15 +860,15 @@ export default function EjendomDetaljeClient({
   const [vurdering, setVurdering] = useState<VurderingData | null>(null);
   /** Alle vurderinger fra Datafordeler — bruges til historiktabel */
   const [alleVurderinger, setAlleVurderinger] = useState<VurderingData[]>([]);
-  /** True mens vurderingsdata hentes */
-  const [vurderingLoader, setVurderingLoader] = useState(false);
+  /** True mens vurderingsdata hentes — starter som true når prefetch giver BBR data med det samme */
+  const [vurderingLoader, setVurderingLoader] = useState(!!prefetched?.bbrData);
   /** True = vis fuld vurderingshistorik-tabel */
   const [visVurderingHistorik, setVisVurderingHistorik] = useState(false);
 
   /** Ejere fra Ejerfortegnelsen (Datafordeler) */
   const [_ejereEjf, setEjere] = useState<EjerData[] | null>(null);
-  /** True mens ejerdata hentes */
-  const [ejereLoader, setEjereLoader] = useState(false);
+  /** True mens ejerdata hentes — starter som true når prefetched data medfører at ejerskab-fetch kører med det samme */
+  const [ejereLoader, setEjereLoader] = useState(!!prefetched?.bbrData);
   /** True hvis Datafordeler returnerer 403 — Dataadgang-ansøgning mangler for EJF */
   const [_manglerEjereAdgang, setManglerEjereAdgang] = useState(false);
 

@@ -3390,7 +3390,7 @@ export default function EjendomDetaljeClient({
                             )}
                           </p>
                           <p className="text-white text-lg font-bold">
-                            {vurdering.ejendomsvaerdi != null
+                            {vurdering.ejendomsvaerdi
                               ? formatDKK(vurdering.ejendomsvaerdi)
                               : t.notAssessed}
                           </p>
@@ -3398,7 +3398,7 @@ export default function EjendomDetaljeClient({
                         <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
                           <p className="text-slate-400 text-xs mb-1">{t.landValue}</p>
                           <p className="text-white text-lg font-bold">
-                            {vurdering.grundvaerdi != null ? formatDKK(vurdering.grundvaerdi) : '–'}
+                            {vurdering.grundvaerdi ? formatDKK(vurdering.grundvaerdi) : '–'}
                           </p>
                         </div>
                         <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">

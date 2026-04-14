@@ -853,30 +853,50 @@ export async function fetchBbrForAddress(
     ejerlejlighedBfe
   ) {
     try {
-      // Hent adresser for ejerlejligheds-BFE via DAWA
-      const bfeRes = await fetch(`https://api.dataforsyningen.dk/bfe/${ejerlejlighedBfe}`, {
-        signal: AbortSignal.timeout(5000),
-        next: { revalidate: 3600 },
-      });
-      if (bfeRes.ok) {
-        const bfeData = (await bfeRes.json()) as {
-          type?: string;
-          adgangsadresse?: { id?: string };
-          adresser?: { id?: string; adgangsadresse?: { id?: string } }[];
-        };
-        // Brug første lejligheds-adresse til at finde enheder → bygning
-        const lejAdresseId = bfeData.adresser?.[0]?.id ?? bfeData.adgangsadresse?.id;
-        if (lejAdresseId) {
-          const lejEnheder = await fetchBBRGraphQL(ENHED_QUERY, { vt, id: lejAdresseId });
-          if (lejEnheder && lejEnheder.length > 0) {
-            effectiveRawEnheder = lejEnheder;
-            fraEnheder = (lejEnheder as RawBBREnhed[])
-              .map((e) => e.bygning)
-              .filter((b): b is string => typeof b === 'string' && b.length > 0);
-            logger.log(
-              `[fetchBBR] Hovedejendom fallback: fandt ${lejEnheder.length} enheder via EL-BFE ${ejerlejlighedBfe}`
+      // Strategi: find BBR_Grund via adgangsadresser på matriklen → grund UUID → BBR_Bygning
+      let grundId: string | null = null;
+
+      // Trin 1: Prøv BBR_Grund med vores adgangsadresse
+      const grundResult = await fetchBBRGraphQL(
+        `query($vt: DafDateTime!, $id: String!) { BBR_Grund(first: 1, virkningstid: $vt, where: { husnummer: { eq: $id } }) { nodes { id_lokalId } } }`,
+        { vt, id: adgangsadresseId }
+      );
+      grundId = (grundResult as { id_lokalId: string }[])?.[0]?.id_lokalId ?? null;
+
+      // Trin 2: Ingen grund? Find andre adgangsadresser på samme matrikel via DAWA
+      if (!grundId && ejerlavKode && matrikelnr) {
+        const adgRes = await fetch(
+          `${DAWA_BASE}/adgangsadresser?ejerlavkode=${ejerlavKode}&matrikelnr=${encodeURIComponent(matrikelnr)}&per_side=10`,
+          { signal: AbortSignal.timeout(5000), next: { revalidate: 3600 } }
+        );
+        if (adgRes.ok) {
+          const adgangsadresser = (await adgRes.json()) as { id: string }[];
+          for (const adg of adgangsadresser) {
+            if (adg.id === adgangsadresseId) continue;
+            const altGrund = await fetchBBRGraphQL(
+              `query($vt: DafDateTime!, $id: String!) { BBR_Grund(first: 1, virkningstid: $vt, where: { husnummer: { eq: $id } }) { nodes { id_lokalId } } }`,
+              { vt, id: adg.id }
             );
+            grundId = (altGrund as { id_lokalId: string }[])?.[0]?.id_lokalId ?? null;
+            if (grundId) break;
           }
+        }
+      }
+
+      // Trin 3: Har grund → hent bygninger via grund UUID
+      if (grundId) {
+        const grundBygQuery = BYGNING_QUERY.replace('husnummer: { eq: $id }', 'grund: { eq: $id }');
+        const grundBygninger = await fetchBBRGraphQL(grundBygQuery, { vt, id: grundId });
+        if (grundBygninger && grundBygninger.length > 0) {
+          // Sæt fraEnheder fra bygnings-ID'er så den eksisterende dedup-logik virker
+          fraEnheder = (grundBygninger as RawBBRBygning[])
+            .map((b) => b.id_lokalId)
+            .filter((id): id is string => typeof id === 'string');
+          // Override rawBygninger via effectiveRawBygninger nedenfor
+          effectiveRawEnheder = rawEnheder; // behold tomme enheder
+          logger.log(
+            `[fetchBBR] Hovedejendom: fandt ${grundBygninger.length} bygning(er) via BBR_Grund ${grundId}`
+          );
         }
       }
     } catch {

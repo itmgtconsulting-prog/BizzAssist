@@ -6,8 +6,9 @@
  *   2. For virksomhedsejere med CVR → henter ejere fra CVR ES (rekursivt op til 3 niveauer)
  *   3. Returnerer en flad graf (nodes + edges) klar til DiagramForce
  *
- * EJF (Datafordeler Ejerfortegnelse) bruges IKKE — vi afventer godkendelse.
- * Tinglysning adkomst + CVR API er tilstrækkeligt til fuld ejerskabskæde.
+ * EJF (Datafordeler Ejerfortegnelse) bruges som fallback når Tinglysning
+ * ikke returnerer faktiske ejere (typisk for ejerlejligheder hvor
+ * Tinglysning kun viser "Opdelt i ejerlejligheder" som status).
  *
  * Node-typer: property (grøn), company (blå), person (lilla)
  *
@@ -365,6 +366,122 @@ export async function GET(req: NextRequest) {
     }
   } catch {
     /* Tinglysning valgfri */
+  }
+
+  // ── EJF fallback — bruges når Tinglysning ikke returnerer faktiske ejere ──
+  // For ejerlejligheder returnerer Tinglysning typisk kun "Opdelt i ejerlejlighed"
+  // som status-tekst, ikke de individuelle ejere. EJF (Ejerfortegnelsen) har de
+  // korrekte ejere for den specifikke BFE.
+  const harFaktiskeEjere = nodes.some((n) => n.type === 'company' || n.type === 'person');
+
+  if (!harFaktiskeEjere) {
+    try {
+      const ejfRes = await fetch(`${req.nextUrl.origin}/api/ejerskab?bfeNummer=${bfe}`, {
+        headers: { cookie: cookieHeader },
+        signal: AbortSignal.timeout(15000),
+      });
+      if (ejfRes.ok) {
+        const ejfData = await ejfRes.json();
+        const ejere = ejfData.ejere ?? [];
+
+        for (const ejer of ejere) {
+          const andel =
+            ejer.ejerandel_taeller != null && ejer.ejerandel_naevner != null
+              ? `${Math.round((ejer.ejerandel_taeller / ejer.ejerandel_naevner) * 100)}%`
+              : undefined;
+
+          if (ejer.cvr) {
+            const id = `cvr-${ejer.cvr}`;
+            if (!seenIds.has(id)) {
+              seenIds.add(id);
+              nodes.push({
+                id,
+                label: ejer.personNavn || `CVR ${ejer.cvr}`,
+                type: 'company',
+                cvr: parseInt(ejer.cvr, 10),
+                link: `/dashboard/companies/${ejer.cvr}`,
+              });
+              companyOwnersToResolve.push({
+                nodeId: id,
+                cvr: parseInt(ejer.cvr, 10),
+                depth: 0,
+              });
+            }
+            edges.push({ from: id, to: mainId, ejerandel: andel });
+            ejerDetaljer.push({
+              navn: ejer.personNavn || `CVR ${ejer.cvr}`,
+              cvr: ejer.cvr,
+              enhedsNummer: null,
+              type: 'selskab',
+              andel: andel ?? null,
+              adresse: null,
+              overtagelsesdato: ejer.virkningFra ?? null,
+              adkomstType: null,
+              koebesum: null,
+            });
+          } else if (ejer.personNavn) {
+            const id = `person-ejf-${nodes.length}`;
+
+            // Søg efter personens enhedsNummer i CVR ES via navn
+            let personLink: string | undefined;
+            let personEnhedsNummer: number | undefined;
+            if (CVR_ES_USER && CVR_ES_PASS) {
+              try {
+                const auth = Buffer.from(`${CVR_ES_USER}:${CVR_ES_PASS}`).toString('base64');
+                const pRes = await fetch(`${CVR_ES_BASE}/deltager/_search`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Basic ${auth}`,
+                  },
+                  body: JSON.stringify({
+                    query: { match: { 'Vrdeltagerperson.navne.navn': ejer.personNavn } },
+                    _source: ['Vrdeltagerperson.enhedsNummer'],
+                    size: 1,
+                  }),
+                  signal: AbortSignal.timeout(5000),
+                });
+                if (pRes.ok) {
+                  const pData = await pRes.json();
+                  const enr = pData?.hits?.hits?.[0]?._source?.Vrdeltagerperson?.enhedsNummer;
+                  if (typeof enr === 'number') {
+                    personEnhedsNummer = enr;
+                    personLink = `/dashboard/owners/${enr}`;
+                  }
+                }
+              } catch {
+                /* ignore */
+              }
+            }
+
+            if (!seenIds.has(id)) {
+              seenIds.add(id);
+              nodes.push({
+                id,
+                label: ejer.personNavn,
+                type: 'person',
+                enhedsNummer: personEnhedsNummer,
+                link: personLink,
+              });
+            }
+            edges.push({ from: id, to: mainId, ejerandel: andel });
+            ejerDetaljer.push({
+              navn: ejer.personNavn,
+              cvr: null,
+              enhedsNummer: personEnhedsNummer ?? null,
+              type: 'person',
+              andel: andel ?? null,
+              adresse: null,
+              overtagelsesdato: ejer.virkningFra ?? null,
+              adkomstType: null,
+              koebesum: null,
+            });
+          }
+        }
+      }
+    } catch {
+      /* EJF fallback valgfri */
+    }
   }
 
   // Resolver virksomhedsejere rekursivt (BFS)

@@ -9,21 +9,12 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import https from 'https';
-import fs from 'fs';
-import path from 'path';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
+import { tlFetch as tlFetchBase } from '@/app/lib/tlFetch';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
-
-const CERT_PATH =
-  process.env.TINGLYSNING_CERT_PATH ?? process.env.NEMLOGIN_DEVTEST4_CERT_PATH ?? '';
-const CERT_PASSWORD =
-  process.env.TINGLYSNING_CERT_PASSWORD ?? process.env.NEMLOGIN_DEVTEST4_CERT_PASSWORD ?? '';
-const CERT_B64 = process.env.TINGLYSNING_CERT_B64 ?? process.env.NEMLOGIN_DEVTEST4_CERT_B64 ?? '';
-const TL_BASE = process.env.TINGLYSNING_BASE_URL ?? 'https://test.tinglysning.dk';
 
 export interface TLEjer {
   navn: string;
@@ -79,9 +70,10 @@ async function batchParallel<T>(
 }
 
 /**
- * @param urlPath - Tinglysning API path
- * @param maxBytes - Stop downloading after this many bytes (0 = no limit).
- *   Used for sectioned calls where we only need part of the XML.
+ * Wrapper around shared tlFetch with in-memory caching and optional maxBytes truncation.
+ *
+ * @param urlPath - Tinglysning API path under /tinglysning/ssl/
+ * @param maxBytes - Truncate response body after this many bytes (0 = no limit).
  */
 function tlFetch(
   urlPath: string,
@@ -92,67 +84,17 @@ function tlFetch(
     return Promise.resolve({ status: cached.status, body: cached.body, truncated: false });
   }
 
-  return new Promise((resolve, reject) => {
-    let pfx: Buffer;
-    if (CERT_B64) {
-      pfx = Buffer.from(CERT_B64, 'base64');
-    } else {
-      const certAbsPath = path.resolve(CERT_PATH);
-      if (!fs.existsSync(certAbsPath)) {
-        reject(new Error('Certifikat ikke fundet'));
-        return;
-      }
-      pfx = fs.readFileSync(certAbsPath);
+  return tlFetchBase(urlPath, { accept: 'application/xml' }).then((result) => {
+    let truncated = false;
+    let body = result.body;
+    if (maxBytes > 0 && body.length >= maxBytes) {
+      body = body.slice(0, maxBytes);
+      truncated = true;
     }
-    const url = new URL(TL_BASE + '/tinglysning/ssl' + urlPath);
-
-    const req = https.request(
-      {
-        hostname: url.hostname,
-        port: 443,
-        path: url.pathname + url.search,
-        method: 'GET',
-        pfx,
-        passphrase: CERT_PASSWORD,
-        rejectUnauthorized: false,
-        timeout: 55000,
-        headers: { Accept: 'application/xml' },
-      },
-      (res) => {
-        let body = '';
-        let truncated = false;
-        res.on('data', (d) => {
-          body += d;
-          // Early termination: stop downloading once we have enough data
-          if (maxBytes > 0 && body.length >= maxBytes) {
-            truncated = true;
-            res.destroy(); // Stop reading
-          }
-        });
-        res.on('end', () => {
-          const result = { status: res.statusCode ?? 500, body, truncated: false };
-          if (result.status === 200 && !truncated) {
-            xmlCache.set(urlPath, { ...result, ts: Date.now() });
-          }
-          resolve({ ...result, truncated });
-        });
-        res.on('close', () => {
-          if (truncated) {
-            resolve({ status: res.statusCode ?? 200, body, truncated: true });
-          }
-        });
-      }
-    );
-    req.on('error', (err) => {
-      // If we truncated intentionally, that's not an error
-      if (err.message.includes('aborted')) return;
-      reject(err);
-    });
-    req.on('timeout', () => {
-      req.destroy();
-      reject(new Error('Timeout'));
-    });
-    req.end();
+    if (!truncated) {
+      xmlCache.set(urlPath, { status: result.status, body, ts: Date.now() });
+    }
+    return { status: result.status, body, truncated };
   });
 }
 
@@ -236,7 +178,18 @@ export async function GET(req: NextRequest) {
   /** Valgfri: BFE for hovedejendom — henter servitutter for BÅDE lejlighed og hovedejendom */
   const hovedBfe = req.nextUrl.searchParams.get('hovedBfe');
 
-  if ((!CERT_PATH && !CERT_B64) || !CERT_PASSWORD) {
+  const hasCert = !!(
+    process.env.TINGLYSNING_CERT_PATH ||
+    process.env.NEMLOGIN_DEVTEST4_CERT_PATH ||
+    process.env.TINGLYSNING_CERT_B64 ||
+    process.env.NEMLOGIN_DEVTEST4_CERT_B64
+  );
+  const hasProxy = !!process.env.DF_PROXY_URL;
+  const hasPassword = !!(
+    process.env.TINGLYSNING_CERT_PASSWORD || process.env.NEMLOGIN_DEVTEST4_CERT_PASSWORD
+  );
+
+  if (!hasProxy && (!hasCert || !hasPassword)) {
     return NextResponse.json({
       ejere: [],
       haeftelser: [],
@@ -1028,9 +981,7 @@ export async function GET(req: NextRequest) {
               if (hovedXmlRes.status === 200) {
                 const hovedXml = hovedXmlRes.body;
                 const hovedServitutEntries = [
-                  ...hovedXml.matchAll(
-                    /<ns:ServitutSummarisk>([\s\S]*?)<\/ns:ServitutSummarisk>/g
-                  ),
+                  ...hovedXml.matchAll(/<ns:ServitutSummarisk>([\s\S]*?)<\/ns:ServitutSummarisk>/g),
                 ];
                 for (const [, entry] of hovedServitutEntries) {
                   const type = entry.match(/ServitutType[^>]*>([^<]+)/)?.[1] ?? null;
@@ -1038,8 +989,7 @@ export async function GET(req: NextRequest) {
                     entry.match(/TinglysningsDato[^>]*>([^<]+)/)?.[1]?.split('+')[0] ?? null;
                   const tekst = entry.match(/ServitutTekstSummarisk[^>]*>([^<]+)/)?.[1] ?? null;
                   const prioritet = entry.match(/PrioritetNummer[^>]*>([^<]+)/)?.[1] ?? null;
-                  const dokumentId =
-                    entry.match(/DokumentIdentifikator[^>]*>([^<]+)/)?.[1] ?? null;
+                  const dokumentId = entry.match(/DokumentIdentifikator[^>]*>([^<]+)/)?.[1] ?? null;
                   // Marker som fra hovedejendom
                   servitutter.push({
                     type: type ?? '',

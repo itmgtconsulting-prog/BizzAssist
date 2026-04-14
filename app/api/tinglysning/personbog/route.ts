@@ -17,6 +17,12 @@ import { tlFetch as tlFetchShared } from '@/app/lib/tlFetch';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
+const CERT_PATH =
+  process.env.TINGLYSNING_CERT_PATH ?? process.env.NEMLOGIN_DEVTEST4_CERT_PATH ?? '';
+const CERT_B64 = process.env.TINGLYSNING_CERT_B64 ?? process.env.NEMLOGIN_DEVTEST4_CERT_B64 ?? '';
+const CERT_PASSWORD =
+  process.env.TINGLYSNING_CERT_PASSWORD ?? process.env.NEMLOGIN_DEVTEST4_CERT_PASSWORD ?? '';
+
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 export interface PersonbogHaeftelse {

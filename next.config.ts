@@ -116,5 +116,9 @@ export default withBundleAnalyzer(
     },
     tunnelRoute: '/monitoring',
     telemetry: false,
+    // Disable auto-wrapping of page/layout/error components with Sentry error
+    // boundaries. Fixes useContext crash during prerender of _global-error.
+    // Error capturing is handled by ErrorBoundary component + instrumentation.ts.
+    autoInstrumentAppDirectory: false,
   })
 );

@@ -9,6 +9,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import https from 'https';
+import fs from 'fs';
 import PDFDocument from 'pdfkit';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
@@ -16,6 +18,22 @@ import { tlFetch as tlFetchShared } from '@/app/lib/tlFetch';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
+
+// ─── Cert config — same pattern as app/lib/tlFetch.ts ──────────────────────
+
+const CERT_PATH =
+  process.env.TINGLYSNING_CERT_PATH ?? process.env.NEMLOGIN_DEVTEST4_CERT_PATH ?? '';
+const CERT_B64 = process.env.TINGLYSNING_CERT_B64 ?? process.env.NEMLOGIN_DEVTEST4_CERT_B64 ?? '';
+const CERT_PASSWORD =
+  process.env.TINGLYSNING_CERT_PASSWORD ?? process.env.NEMLOGIN_DEVTEST4_CERT_PASSWORD ?? '';
+const TL_BASE = process.env.TINGLYSNING_BASE_URL ?? 'https://test.tinglysning.dk';
+
+/** Loads PFX certificate from file path or base64 env var. */
+function loadCert(): Buffer {
+  if (CERT_B64) return Buffer.from(CERT_B64, 'base64');
+  if (CERT_PATH) return fs.readFileSync(CERT_PATH);
+  throw new Error('No Tinglysning certificate configured');
+}
 
 // ─── XML field labels (DA) ──────────────────────────────────────────────────
 

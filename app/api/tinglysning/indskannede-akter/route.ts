@@ -18,6 +18,12 @@ import { resolveTenantId } from '@/lib/api/auth';
 import { logger } from '@/app/lib/logger';
 import { tlFetch } from '@/app/lib/tlFetch';
 
+const CERT_PATH =
+  process.env.TINGLYSNING_CERT_PATH ?? process.env.NEMLOGIN_DEVTEST4_CERT_PATH ?? '';
+const CERT_B64 = process.env.TINGLYSNING_CERT_B64 ?? process.env.NEMLOGIN_DEVTEST4_CERT_B64 ?? '';
+const CERT_PASSWORD =
+  process.env.TINGLYSNING_CERT_PASSWORD ?? process.env.NEMLOGIN_DEVTEST4_CERT_PASSWORD ?? '';
+
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 

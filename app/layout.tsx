@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next';
+import { Suspense } from 'react';
 import { headers } from 'next/headers';
 import { Geist } from 'next/font/google';
 import './globals.css';
@@ -96,14 +97,16 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <link rel="apple-touch-icon" href="/icons/icon-192.png" />
       </head>
       <body className="min-h-full flex flex-col antialiased">
-        <LanguageProvider>
-          {children}
-          <CookieBanner />
-          <SupportChatWidget />
-          <HideNextDevIndicator />
-          <ServiceWorkerRegistration />
-          {analyticsAllowed && <Analytics />}
-        </LanguageProvider>
+        <Suspense>
+          <LanguageProvider>
+            {children}
+            <CookieBanner />
+            <SupportChatWidget />
+            <HideNextDevIndicator />
+            <ServiceWorkerRegistration />
+            {analyticsAllowed && <Analytics />}
+          </LanguageProvider>
+        </Suspense>
       </body>
     </html>
   );

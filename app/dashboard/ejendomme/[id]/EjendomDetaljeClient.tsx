@@ -2081,7 +2081,7 @@ export default function EjendomDetaljeClient({
                                 <p className="text-white text-sm font-medium">
                                   {tinglysningData?.tinglystAreal
                                     ? `${tinglysningData.tinglystAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                    : '–'}
+                                    : formatDKK(0)}
                                 </p>
                               </div>
                               <div>
@@ -2117,7 +2117,7 @@ export default function EjendomDetaljeClient({
                                 <p className="text-white text-sm font-medium">
                                   {grundareal
                                     ? `${grundareal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                    : '–'}
+                                    : formatDKK(0)}
                                 </p>
                               </div>
                               <div>
@@ -2185,7 +2185,9 @@ export default function EjendomDetaljeClient({
                               )}
                             </p>
                             <p className="text-white text-base font-bold">
-                              {vurdering.ejendomsvaerdi ? formatDKK(vurdering.ejendomsvaerdi) : '–'}
+                              {vurdering.ejendomsvaerdi
+                                ? formatDKK(vurdering.ejendomsvaerdi)
+                                : formatDKK(0)}
                             </p>
                             {vurdering.afgiftspligtigEjendomsvaerdi !== null &&
                               vurdering.afgiftspligtigEjendomsvaerdi !==
@@ -2203,7 +2205,9 @@ export default function EjendomDetaljeClient({
                               )}
                             </p>
                             <p className="text-white text-sm font-medium">
-                              {vurdering.grundvaerdi ? formatDKK(vurdering.grundvaerdi) : '–'}
+                              {vurdering.grundvaerdi
+                                ? formatDKK(vurdering.grundvaerdi)
+                                : formatDKK(0)}
                             </p>
                             {vurdering.afgiftspligtigGrundvaerdi !== null &&
                               vurdering.afgiftspligtigGrundvaerdi !== vurdering.grundvaerdi && (
@@ -2222,7 +2226,7 @@ export default function EjendomDetaljeClient({
                             <p className="text-white text-sm font-medium">
                               {vurdering.vurderetAreal
                                 ? `${vurdering.vurderetAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                : '–'}
+                                : formatDKK(0)}
                             </p>
                           </div>
                           {/* Grundskyld — foretrækker faktisk fra Vurderingsportalen, falder tilbage til estimeret */}
@@ -2302,7 +2306,7 @@ export default function EjendomDetaljeClient({
                               <p className="text-amber-200 text-sm font-medium">
                                 {nyesteForelobig.ejendomsvaerdi
                                   ? formatDKK(nyesteForelobig.ejendomsvaerdi)
-                                  : '–'}
+                                  : formatDKK(0)}
                               </p>
                             </div>
                             <div>
@@ -2367,7 +2371,7 @@ export default function EjendomDetaljeClient({
                               <p className="text-white text-sm font-medium">
                                 {totAreal
                                   ? `${totAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                  : '–'}
+                                  : formatDKK(0)}
                               </p>
                             </div>
                             <div>
@@ -2387,7 +2391,7 @@ export default function EjendomDetaljeClient({
                               <p className="text-white text-sm font-medium">
                                 {erhvAreal
                                   ? `${erhvAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                  : '–'}
+                                  : formatDKK(0)}
                               </p>
                             </div>
                             <div>
@@ -2448,7 +2452,7 @@ export default function EjendomDetaljeClient({
                               <p className="text-white text-sm font-medium">
                                 {lejligheder && antalLej > 0
                                   ? `${lejligheder.reduce((s, l) => s + (l.areal ?? 0), 0).toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                  : '–'}
+                                  : formatDKK(0)}
                               </p>
                             </div>
                           </div>
@@ -2484,7 +2488,7 @@ export default function EjendomDetaljeClient({
                             <p className="text-white text-sm font-medium">
                               {totAreal
                                 ? `${totAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                : '–'}
+                                : formatDKK(0)}
                             </p>
                           </div>
                         </div>
@@ -2884,12 +2888,12 @@ export default function EjendomDetaljeClient({
                                   <span className="text-slate-300 text-right">
                                     {b.bebyggetAreal
                                       ? `${b.bebyggetAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                      : '–'}
+                                      : formatDKK(0)}
                                   </span>
                                   <span className="text-slate-300 text-right">
                                     {b.samletBygningsareal
                                       ? `${b.samletBygningsareal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                      : '–'}
+                                      : formatDKK(0)}
                                   </span>
                                   {/* Geodata-status: grøn ✓ hvis koordinater kendes, rød ✗ hvis mangler */}
                                   <span className="flex justify-center">
@@ -3070,7 +3074,7 @@ export default function EjendomDetaljeClient({
                                   <span className="text-slate-300 text-right">
                                     {e.areal
                                       ? `${e.areal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                      : '–'}
+                                      : formatDKK(0)}
                                   </span>
                                   <span className="text-slate-400 text-right">
                                     {e.vaerelser ?? '–'}
@@ -3178,7 +3182,7 @@ export default function EjendomDetaljeClient({
                                 <p className="text-slate-300 text-sm tabular-nums text-right">
                                   {js.registreretAreal != null
                                     ? `${js.registreretAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                    : '–'}
+                                    : formatDKK(0)}
                                 </p>
                                 <p className="text-slate-500 text-xs text-right">
                                   {js.vejareal != null && js.vejareal > 0
@@ -3315,12 +3319,12 @@ export default function EjendomDetaljeClient({
                                       {lej.ejer}
                                     </span>
                                     <span className="text-slate-300 text-[10px] text-right">
-                                      {lej.areal ? `${lej.areal} m²` : '–'}
+                                      {lej.areal ? `${lej.areal} m²` : formatDKK(0)}
                                     </span>
                                     <span className="text-slate-300 text-[10px] text-right font-medium">
                                       {lej.koebspris
                                         ? `${lej.koebspris.toLocaleString('da-DK')} DKK`
-                                        : '–'}
+                                        : formatDKK(0)}
                                     </span>
                                     <span className="text-slate-400 text-[10px] text-right">
                                       {lej.koebsdato
@@ -3329,7 +3333,7 @@ export default function EjendomDetaljeClient({
                                             month: 'short',
                                             year: 'numeric',
                                           })
-                                        : '–'}
+                                        : formatDKK(0)}
                                     </span>
                                   </Link>
                                 ))}
@@ -3397,13 +3401,17 @@ export default function EjendomDetaljeClient({
                             )}
                           </p>
                           <p className="text-white text-lg font-bold">
-                            {vurdering.ejendomsvaerdi ? formatDKK(vurdering.ejendomsvaerdi) : '–'}
+                            {vurdering.ejendomsvaerdi
+                              ? formatDKK(vurdering.ejendomsvaerdi)
+                              : formatDKK(0)}
                           </p>
                         </div>
                         <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
                           <p className="text-slate-400 text-xs mb-1">{t.landValue}</p>
                           <p className="text-white text-lg font-bold">
-                            {vurdering.grundvaerdi ? formatDKK(vurdering.grundvaerdi) : '–'}
+                            {vurdering.grundvaerdi
+                              ? formatDKK(vurdering.grundvaerdi)
+                              : formatDKK(0)}
                           </p>
                         </div>
                         <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
@@ -3411,7 +3419,7 @@ export default function EjendomDetaljeClient({
                           <p className="text-white text-lg font-bold">
                             {vurdering.vurderetAreal != null
                               ? `${vurdering.vurderetAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                              : '–'}
+                              : formatDKK(0)}
                           </p>
                         </div>
                       </div>
@@ -3462,7 +3470,9 @@ export default function EjendomDetaljeClient({
                                     </span>
                                   </div>
                                   <span className="text-amber-200/80">
-                                    {fv.ejendomsvaerdi ? formatDKK(fv.ejendomsvaerdi) : '–'}
+                                    {fv.ejendomsvaerdi
+                                      ? formatDKK(fv.ejendomsvaerdi)
+                                      : formatDKK(0)}
                                   </span>
                                   <span className="text-amber-200/80">
                                     {fv.grundvaerdi ? formatDKK(fv.grundvaerdi) : '0 DKK'}
@@ -3489,7 +3499,9 @@ export default function EjendomDetaljeClient({
                                       )}
                                     </div>
                                     <span className="text-slate-300">
-                                      {v.ejendomsvaerdi != null ? formatDKK(v.ejendomsvaerdi) : '–'}
+                                      {v.ejendomsvaerdi != null
+                                        ? formatDKK(v.ejendomsvaerdi)
+                                        : formatDKK(0)}
                                     </span>
                                     <span className="text-slate-300">
                                       {v.grundvaerdi != null ? formatDKK(v.grundvaerdi) : '0 DKK'}
@@ -3497,7 +3509,7 @@ export default function EjendomDetaljeClient({
                                     <span className="text-slate-400 text-right">
                                       {v.vurderetAreal != null
                                         ? `${v.vurderetAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                        : '–'}
+                                        : formatDKK(0)}
                                     </span>
                                   </div>
                                 );
@@ -3701,7 +3713,9 @@ export default function EjendomDetaljeClient({
                               {/* Grundskyld */}
                               <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
                                 <p className="text-white text-lg font-bold flex items-center gap-1.5">
-                                  {effektivGrundskyld > 0 ? formatDKK(effektivGrundskyld) : '–'}
+                                  {effektivGrundskyld > 0
+                                    ? formatDKK(effektivGrundskyld)
+                                    : formatDKK(0)}
                                   <span className="text-slate-500 text-xs font-normal">DKK</span>
                                 </p>
                                 <p className="text-slate-500 text-xs mt-0.5">
@@ -5168,12 +5182,12 @@ export default function EjendomDetaljeClient({
                                   <span className="text-slate-300 text-right">
                                     {b.bebyggetAreal
                                       ? `${b.bebyggetAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                      : '–'}
+                                      : formatDKK(0)}
                                   </span>
                                   <span className="text-slate-300 text-right">
                                     {b.samletBygningsareal
                                       ? `${b.samletBygningsareal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                      : '–'}
+                                      : formatDKK(0)}
                                   </span>
                                   <ChevronRight
                                     size={14}
@@ -5291,7 +5305,7 @@ export default function EjendomDetaljeClient({
                                   <span className="text-slate-300 text-right">
                                     {e.areal
                                       ? `${e.areal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                      : '–'}
+                                      : formatDKK(0)}
                                   </span>
                                   <span className="text-slate-400 text-right">
                                     {e.vaerelser ?? '–'}
@@ -5391,7 +5405,7 @@ export default function EjendomDetaljeClient({
                                 <p className="text-slate-300 text-sm tabular-nums text-right">
                                   {js.registreretAreal != null
                                     ? `${js.registreretAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                    : '–'}
+                                    : formatDKK(0)}
                                 </p>
                                 <p className="text-slate-500 text-xs text-right">
                                   {js.vejareal != null && js.vejareal > 0

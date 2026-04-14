@@ -5,7 +5,7 @@
   "scripts": {
     "backup:env": "node -e \"const fs=require('fs'),p=require('path');const s=p.join(__dirname,'.env.local');if(!fs.existsSync(s)){process.exit(0)}const d=p.join(__dirname,'.env-backups');fs.mkdirSync(d,{recursive:true});const t=new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);fs.copyFileSync(s,p.join(d,'.env.local.'+t));console.log('Backup: .env-backups/.env.local.'+t)\"",
     "predev": "npm run backup:env 2>&1 || true && node -e \"try{require('fs').rmSync('.next/dev',{recursive:true,force:true})}catch{}\"",
-    "dev": "next dev --turbopack",
+    "dev": "next dev --turbopack --hostname 0.0.0.0",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",

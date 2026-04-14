@@ -1,0 +1,327 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://schemas.xmlsoap.org/wsdl/" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/" xmlns:http="http://schemas.xmlsoap.org/wsdl/http/" xmlns:eaifc="http://rep.oio.dk/tinglysning.dk/service/interface/elektroniskakt/1/" xmlns:eabnd="http://rep.oio.dk/tinglysning.dk/service/binding/elektroniskakt/1/" name="ElektroniskAkt" targetNamespace="http://rep.oio.dk/tinglysning.dk/service/binding/elektroniskakt/1/">
+	<import namespace="http://rep.oio.dk/tinglysning.dk/service/interface/elektroniskakt/1/" location="../../../interface/elektroniskakt/1/ElektroniskAkt.wsdl"/>
+	<binding name="ElektroniskAkt" type="eaifc:ElektroniskAkt">
+		<soap:binding style="document" transport="http://schemas.xmlsoap.org/soap/http"/>
+		<operation name="SenesteAendringTinglysningsobjektHent">
+			<soap:operation soapAction="urn:#SenesteAendringTinglysningsobjektHent"/>
+			<input>
+				<soap:body use="literal"/>
+			</input>
+			<output>
+				<soap:body use="literal"/>
+			</output>
+		</operation>
+		<operation name="AendredeTinglysningsobjekterHent">
+			<soap:operation soapAction="urn:#AendredeTinglysningsobjekterHent"/>
+			<input>
+				<soap:body use="literal"/>
+			</input>
+			<output>
+				<soap:body use="literal"/>
+			</output>
+		</operation>
+		<operation name="AliasSoeg">
+			<soap:operation soapAction="urn:#AliasSoeg"/>
+			<input>
+				<soap:body use="literal"/>
+			</input>
+			<output>
+				<soap:body use="literal"/>
+			</output>
+		</operation>
+		<operation name="AndelsbogDokumentAktuelHent">
+			<soap:operation soapAction="urn:#AndelsbogDokumentAktuelHent"/>
+			<input>
+				<soap:body use="literal"/>
+			</input>
+			<output>
+				<soap:body use="literal"/>
+			</output>
+		</operation>
+		<operation name="AndelsbogDokumentRevisionssporHent">
+			<soap:operation soapAction="urn:#AndelsbogDokumentRevisionssporHent"/>
+			<input>
+				<soap:body use="literal"/>
+			</input>
+			<output>
+				<soap:body use="literal"/>
+			</output>
+		</operation>
+		<operation name="AndelSoeg">
+			<soap:operation soapAction="urn:#AndelSoeg"/>
+			<input>
+				<soap:body use="literal"/>
+			</input>
+			<output>
+				<soap:body use="literal"/>
+			</output>
+		</operation>
+		<operation name="AndelSummariskHent">
+			<soap:operation soapAction="urn:#AndelSummariskHent"/>
+			<input>
+				<soap:body use="literal"/>
+			</input>
+			<output>
+				<soap:body use="literal"/>
+			</output>
+		</operation>
+		<operation name="BilbogDokumentAktuelHent">
+			<soap:operation soapAction="urn:#BilbogDokumentAktuelHent"/>
+			<input>
+				<soap:body use="literal"/>
+			</input>
+			<output>
+				<soap:body use="literal"/>
+			</output>
+		</operation>
+		<operation name="BilbogDokumentRevisionssporHent">
+			<soap:operation soapAction="urn:#BilbogDokumentRevisionssporHent"/>
+			<input>
+				<soap:body use="literal"/>
+			</input>
+			<output>
+				<soap:body use="literal"/>
+			</output>
+		</operation>
+		<operation name="BilSoeg">
+			<soap:operation soapAction="urn:#BilSoeg"/>
+			<input>
+				<soap:body use="literal"/>
+			</input>
+			<output>
+				<soap:body use="literal"/>
+			</output>
+		</operation>
+		<operation name="BilSummariskHent">
+			<soap:operation soapAction="urn:#BilSummariskHent"/>
+			<input>
+				<soap:body use="literal"/>
+			</input>
+			<output>
+				<soap:body use="literal"/>
+			</output>
+		</operation>
+		<operation name="DokumentAktuelHent">
+			<soap:operation soapAction="urn:#DokumentAktuelHent"/>
+			<input>
+				<soap:body use="literal"/>
+			</input>
+			<output>
+				<soap:body use="literal"/>
+			</output>
+		</operation>
+		<operation name="DokumentRevisionssporHent">
+			<soap:operation soapAction="urn:#DokumentRevisionssporHent"/>
+			<input>
+				<soap:body use="literal"/>
+			</input>
+			<output>
+				<soap:body use="literal"/>
+			</output>
+		</operation>
+		<operation name="EjendomAdkomsterHent">
+			<soap:operation soapAction="urn:#EjendomAdkomsterHent"/>
+			<input>
+				<soap:body use="literal"/>
+			</input>
+			<output>
+				<soap:body use="literal"/>
+			</output>
+		</operation>
+		<operation name="EjendomHistoriskAdkomsterHent">
+			<soap:operation soapAction="urn:#EjendomHistoriskAdkomsterHent"/>
+			<input>
+				<soap:body use="literal"/>
+			</input>
+			<output>
+				<soap:body use="literal"/>
+			</output>
+		</operation>
+		<operation name="EjendomHaeftelserHent">
+			<soap:operation soapAction="urn:#EjendomHaeftelserHent"/>
+			<input>
+				<soap:body use="literal"/>
+			</input>
+			<output>
+				<soap:body use="literal"/>
+			</output>
+		</operation>
+		<operation name="EjendomIndskannetAktHent">
+			<soap:operation soapAction="urn:#EjendomIndskannetAktHent"/>
+			<input>
+				<soap:body use="literal"/>
+			</input>
+			<output>
+				<soap:body use="literal"/>
+			</output>
+		</operation>
+		<operation name="EjendomServitutterHent">
+			<soap:operation soapAction="urn:#EjendomServitutterHent"/>
+			<input>
+				<soap:body use="literal"/>
+			</input>
+			<output>
+				<soap:body use="literal"/>
+			</output>
+		</operation>
+		<operation name="EjendomSoeg">
+			<soap:operation soapAction="urn:#EjendomSoeg"/>
+			<input>
+				<soap:body use="literal"/>
+			</input>
+			<output>
+				<soap:body use="literal"/>
+			</output>
+		</operation>
+		<operation name="EjendomStamoplysningerHent">
+			<soap:operation soapAction="urn:#EjendomStamoplysningerHent"/>
+			<input>
+				<soap:body use="literal"/>
+			</input>
+			<output>
+				<soap:body use="literal"/>
+			</output>
+		</operation>
+		<operation name="EjendomSummariskHent">
+			<soap:operation soapAction="urn:#EjendomSummariskHent"/>
+			<input>
+				<soap:body use="literal"/>
+			</input>
+			<output>
+				<soap:body use="literal"/>
+			</output>
+		</operation>
+		<operation name="EjendomUdskriftBestil">
+			<soap:operation soapAction="urn:#EjendomUdskriftBestil"/>
+			<input>
+				<soap:body use="literal"/>
+			</input>
+			<output>
+				<soap:body use="literal"/>
+			</output>
+		</operation>
+		<operation name="FuldmagtAndelSoeg">
+			<soap:operation soapAction="urn:#FuldmagtAndelSoeg"/>
+			<input>
+				<soap:body use="literal"/>
+			</input>
+			<output>
+				<soap:body use="literal"/>
+			</output>
+		</operation>
+		<operation name="FuldmagtBilSoeg">
+			<soap:operation soapAction="urn:#FuldmagtBilSoeg"/>
+			<input>
+				<soap:body use="literal"/>
+			</input>
+			<output>
+				<soap:body use="literal"/>
+			</output>
+		</operation>
+		<operation name="FuldmagtFastEjendomSoeg">
+			<soap:operation soapAction="urn:#FuldmagtFastEjendomSoeg"/>
+			<input>
+				<soap:body use="literal"/>
+			</input>
+			<output>
+				<soap:body use="literal"/>
+			</output>
+		</operation>
+		<operation name="FuldmagtLoesoereSoeg">
+			<soap:operation soapAction="urn:#FuldmagtLoesoereSoeg"/>
+			<input>
+				<soap:body use="literal"/>
+			</input>
+			<output>
+				<soap:body use="literal"/>
+			</output>
+		</operation>
+		<operation name="LoesoereSoeg">
+			<soap:operation soapAction="urn:#LoesoereSoeg"/>
+			<input>
+				<soap:body use="literal"/>
+			</input>
+			<output>
+				<soap:body use="literal"/>
+			</output>
+		</operation>
+		<operation name="LoesoereSummariskHent">
+			<soap:operation soapAction="urn:#LoesoereSummariskHent"/>
+			<input>
+				<soap:body use="literal"/>
+			</input>
+			<output>
+				<soap:body use="literal"/>
+			</output>
+		</operation>
+		<operation name="PersonbogDokumentAktuelHent">
+			<soap:operation soapAction="urn:#PersonbogDokumentAktuelHent"/>
+			<input>
+				<soap:body use="literal"/>
+			</input>
+			<output>
+				<soap:body use="literal"/>
+			</output>
+		</operation>
+		<operation name="PersonbogDokumentRevisionssporHent">
+			<soap:operation soapAction="urn:#PersonbogDokumentRevisionssporHent"/>
+			<input>
+				<soap:body use="literal"/>
+			</input>
+			<output>
+				<soap:body use="literal"/>
+			</output>
+		</operation>
+		<operation name="PersondokumentSummariskHent">
+			<soap:operation soapAction="urn:#PersondokumentSummariskHent"/>
+			<input>
+				<soap:body use="literal"/>
+			</input>
+			<output>
+				<soap:body use="literal"/>
+			</output>
+		</operation>
+		<operation name="PersondokumentSkifteretHent">
+			<soap:operation soapAction="urn:#PersondokumentSkifteretHent"/>
+			<input>
+				<soap:body use="literal"/>
+			</input>
+			<output>
+				<soap:body use="literal"/>
+			</output>
+		</operation>
+		<operation name="UdskriftBestil">
+			<soap:operation soapAction="urn:#UdskriftBestil"/>
+			<input>
+				<soap:body use="literal"/>
+			</input>
+			<output>
+				<soap:body use="literal"/>
+			</output>
+		</operation>
+		<operation name="VirksomhedSoeg">
+			<soap:operation soapAction="urn:#VirksomhedSoeg"/>
+			<input>
+				<soap:body use="literal"/>
+			</input>
+			<output>
+				<soap:body use="literal"/>
+			</output>
+		</operation>
+		<operation name="DokumentTinglysningsobjekterHent">
+			<soap:operation soapAction="urn:#DokumentTinglysningsobjekterHent"/>
+			<input>
+				<soap:body use="literal"/>
+			</input>
+			<output>
+				<soap:body use="literal"/>
+			</output>
+		</operation>
+	</binding>
+	<service name="ElektroniskAkt">
+		<port name="ElektroniskAkt" binding="eabnd:ElektroniskAkt">
+			<soap:address location="https://host:port/etl/services/ElektroniskAkt"/>
+		</port>
+	</service>
+</definitions>

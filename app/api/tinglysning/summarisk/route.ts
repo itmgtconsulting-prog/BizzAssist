@@ -53,7 +53,29 @@ export interface TLEjer {
   dato: string | null;
 }
 
-function tlFetch(urlPath: string): Promise<{ status: number; body: string }> {
+/** In-memory cache for summarisk XML — avoids re-fetching large responses */
+const xmlCache = new Map<string, { status: number; body: string; ts: number }>();
+const XML_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+/** Exposed for test teardown only — clears the in-memory XML cache. */
+export function clearXmlCache(): void {
+  xmlCache.clear();
+}
+
+/**
+ * @param urlPath - Tinglysning API path
+ * @param maxBytes - Stop downloading after this many bytes (0 = no limit).
+ *   Used for sectioned calls where we only need part of the XML.
+ */
+function tlFetch(
+  urlPath: string,
+  maxBytes = 0
+): Promise<{ status: number; body: string; truncated: boolean }> {
+  const cached = xmlCache.get(urlPath);
+  if (cached && Date.now() - cached.ts < XML_CACHE_TTL) {
+    return Promise.resolve({ status: cached.status, body: cached.body, truncated: false });
+  }
+
   return new Promise((resolve, reject) => {
     let pfx: Buffer;
     if (CERT_B64) {
@@ -77,16 +99,39 @@ function tlFetch(urlPath: string): Promise<{ status: number; body: string }> {
         pfx,
         passphrase: CERT_PASSWORD,
         rejectUnauthorized: false,
-        timeout: 15000,
+        timeout: 55000,
         headers: { Accept: 'application/xml' },
       },
       (res) => {
         let body = '';
-        res.on('data', (d) => (body += d));
-        res.on('end', () => resolve({ status: res.statusCode ?? 500, body }));
+        let truncated = false;
+        res.on('data', (d) => {
+          body += d;
+          // Early termination: stop downloading once we have enough data
+          if (maxBytes > 0 && body.length >= maxBytes) {
+            truncated = true;
+            res.destroy(); // Stop reading
+          }
+        });
+        res.on('end', () => {
+          const result = { status: res.statusCode ?? 500, body, truncated: false };
+          if (result.status === 200 && !truncated) {
+            xmlCache.set(urlPath, { ...result, ts: Date.now() });
+          }
+          resolve({ ...result, truncated });
+        });
+        res.on('close', () => {
+          if (truncated) {
+            resolve({ status: res.statusCode ?? 200, body, truncated: true });
+          }
+        });
       }
     );
-    req.on('error', reject);
+    req.on('error', (err) => {
+      // If we truncated intentionally, that's not an error
+      if (err.message.includes('aborted')) return;
+      reject(err);
+    });
     req.on('timeout', () => {
       req.destroy();
       reject(new Error('Timeout'));
@@ -163,6 +208,13 @@ export async function GET(req: NextRequest) {
   if (!uuid) {
     return NextResponse.json({ error: 'uuid parameter er påkrævet' }, { status: 400 });
   }
+  /**
+   * Optional section filter: ?section=ejere|haeftelser|servitutter
+   * When set, only that section is parsed and returned — reduces processing
+   * time for large XML responses. Klienten kalder 3 gange i stedet for 1.
+   * Uden section returneres alt (bagudkompatibelt).
+   */
+  const section = req.nextUrl.searchParams.get('section');
 
   if ((!CERT_PATH && !CERT_B64) || !CERT_PASSWORD) {
     return NextResponse.json({
@@ -174,7 +226,12 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const res = await tlFetch(`/ejdsummarisk/${uuid}`);
+    // For ejere/haeftelser sections, limit download to 25KB — enough for adkomst+haeftelser
+    // but skips most servitutter (which can be 60KB+ for hovedejendomme).
+    // Full download only for servitutter section or no section (backwards compat).
+    const needsFullXml = !section || section === 'servitutter';
+    const maxBytes = needsFullXml ? 0 : 25_000;
+    const res = await tlFetch(`/ejdsummarisk/${uuid}`, maxBytes);
     if (res.status !== 200) {
       return NextResponse.json({
         ejere: [],
@@ -855,6 +912,28 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // ── Indskannede akter (pre-digitale — fra EjendomIndskannetAktSamling) ──
+    // Ligger inde i ejdsummarisk XML; hvert element hedder DokumentFilnavnTekst.
+    // Bemærk: aktNavn optræder gentagne gange (en gang per dokument der refererer til akten),
+    // så vi deduplikerer.
+    const indskannedeAkterNavne: string[] = [];
+    const aktSamlingStart = xml.indexOf('EjendomIndskannetAktSamling>');
+    const aktSamlingEnd = xml.indexOf('/EjendomIndskannetAktSamling>');
+    if (aktSamlingStart !== -1 && aktSamlingEnd !== -1) {
+      const aktBlock = xml.substring(aktSamlingStart, aktSamlingEnd);
+      const aktMatches = [
+        ...aktBlock.matchAll(
+          /<(?:[a-zA-Z]+:)?DokumentFilnavnTekst>([^<]+)<\/(?:[a-zA-Z]+:)?DokumentFilnavnTekst>/g
+        ),
+      ];
+      for (const [, navn] of aktMatches) {
+        const trimmed = navn.trim();
+        if (trimmed && !indskannedeAkterNavne.includes(trimmed)) {
+          indskannedeAkterNavne.push(trimmed);
+        }
+      }
+    }
+
     // ── Saml alle bilagsreferencer (UUIDs der kan hentes som original PDF) ──
     const bilagRefs: { id: string; tekst: string }[] = [];
     for (const t of tillaegEntries) {
@@ -889,8 +968,43 @@ export async function GET(req: NextRequest) {
       tillaegstekster,
     };
 
+    // Section-filtered response for incremental loading
+    if (section === 'ejere') {
+      return NextResponse.json(
+        { ejere, tingbogsattest, fejl: null },
+        {
+          headers: { 'Cache-Control': 'public, s-maxage=3600' },
+        }
+      );
+    }
+    if (section === 'haeftelser') {
+      return NextResponse.json(
+        { haeftelser, bilagRefs, fejl: null },
+        {
+          headers: { 'Cache-Control': 'public, s-maxage=3600' },
+        }
+      );
+    }
+    if (section === 'servitutter') {
+      return NextResponse.json(
+        { servitutter, indskannedeAkterNavne, fejl: null },
+        {
+          headers: { 'Cache-Control': 'public, s-maxage=3600' },
+        }
+      );
+    }
+
+    // Full response (default — backward compatible)
     return NextResponse.json(
-      { ejere, haeftelser, servitutter, bilagRefs, tingbogsattest, fejl: null },
+      {
+        ejere,
+        haeftelser,
+        servitutter,
+        bilagRefs,
+        indskannedeAkterNavne,
+        tingbogsattest,
+        fejl: null,
+      },
       {
         headers: { 'Cache-Control': 'public, s-maxage=3600' },
       }

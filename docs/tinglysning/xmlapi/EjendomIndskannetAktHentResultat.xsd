@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?><schema xmlns="http://www.w3.org/2001/XMLSchema" xmlns:ds="http://www.w3.org/2000/09/xmldsig#" xmlns:eakt="http://rep.oio.dk/tinglysning.dk/schema/elektroniskakt/1/" xmlns:eamsg="http://rep.oio.dk/tinglysning.dk/service/message/elektroniskakt/1/" elementFormDefault="qualified" targetNamespace="http://rep.oio.dk/tinglysning.dk/service/message/elektroniskakt/1/" version="53.1.0.1" xml:lang="DA">
+
+  <import namespace="http://rep.oio.dk/tinglysning.dk/schema/elektroniskakt/1/" schemaLocation="http://rep.oio.dk/tinglysning.dk/schema/elektroniskakt/1/IndskannetDokumentDataBinaer.xsd"/>
+  <import namespace="http://www.w3.org/2000/09/xmldsig#" schemaLocation="https://www.w3.org/TR/xmldsig-core/xmldsig-core-schema.xsd"/>
+
+  <element name="EjendomIndskannetAktHentResultat" type="eamsg:EjendomIndskannetAktHentResultatType">
+      <annotation>
+         <documentation>Resultat fra en forespørgsel på en indskannet akt.</documentation>
+      </annotation>
+  </element>
+
+  <complexType name="EjendomIndskannetAktHentResultatType">
+      <sequence>
+         <element ref="eakt:IndskannetDokumentDataBinaer"/>
+			      <element ref="ds:Signature"/>
+      </sequence>
+  </complexType>
+</schema>

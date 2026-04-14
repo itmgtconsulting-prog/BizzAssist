@@ -265,6 +265,21 @@ const TOOLS: Anthropic.Tool[] = [
       required: ['navn'],
     },
   },
+  {
+    name: 'hent_tinglysning',
+    description:
+      'Henter tinglysningsdata for en ejendom fra Den Digitale Tinglysning (e-TL). Returnerer ejere (adkomsthavere) med navne, ejerandele og CVR; hæftelser (pantebreve) med beløb, kreditor og låntype; samt servitutter med titler og påtaleberettigede. Kræver BFE-nummer.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        bfeNummer: {
+          type: 'string',
+          description: 'BFE-nummer for ejendommen',
+        },
+      },
+      required: ['bfeNummer'],
+    },
+  },
 ];
 
 // ─── Tool labels (for status messages) ──────────────────────────────────────
@@ -285,6 +300,7 @@ const TOOL_STATUS: Record<string, string> = {
   hent_regnskab_noegletal: 'Henter regnskabsnøgletal…',
   hent_datterselskaber: 'Henter datterselskaber…',
   soeg_person_cvr: 'Søger efter person i CVR…',
+  hent_tinglysning: 'Henter tinglysningsdata…',
 };
 
 // ─── System prompt ──────────────────────────────────────────────────────────
@@ -419,6 +435,17 @@ function setCache(name: string, input: Record<string, string>, result: unknown):
  * Executes a tool by calling the appropriate internal API route or external endpoint.
  * Results are cached in-memory for 5 minutes to avoid duplicate API calls within a session.
  *
+ * BIZZ-239: Provide a clear, actionable error message for tool API failures.
+ * 401 errors in dev are expected (IP not whitelisted) — explain this to the AI.
+ */
+function toolErrorMessage(apiName: string, status: number): string {
+  if (status === 401 || status === 403) {
+    return `${apiName} returnerede ${status} (ikke autoriseret). Adgangsnogler eller IP-whitelisting mangler for dette register. Data er ikke tilgaengeligt i det aktuelle miljoe.`;
+  }
+  return `${apiName} svarede ${status}`;
+}
+
+/**
  * @param name - Tool name matching one of TOOLS[].name
  * @param input - Tool input parameters from Claude
  * @param baseUrl - Base URL for internal API routes (e.g. http://localhost:3000)
@@ -427,12 +454,20 @@ function setCache(name: string, input: Record<string, string>, result: unknown):
 async function executeTool(
   name: string,
   input: Record<string, string>,
-  baseUrl: string
+  baseUrl: string,
+  /** Forward user's Cookie header for authenticated internal API calls */
+  cookieHeader?: string | null
 ): Promise<unknown> {
   const cached = getCached(name, input);
   if (cached !== null) return cached;
 
   const timeout = 15_000;
+
+  /** Fetch options for internal API calls — includes forwarded auth cookies */
+  const internalFetchOpts: RequestInit = {
+    signal: AbortSignal.timeout(timeout),
+    ...(cookieHeader ? { headers: { Cookie: cookieHeader } } : {}),
+  };
 
   try {
     let result: unknown;
@@ -442,10 +477,10 @@ async function executeTool(
         // Server-side proxy via DAR (DAWA lukker 1. juli 2026)
         const res = await fetch(
           `${baseUrl}/api/adresse/autocomplete?q=${encodeURIComponent(input.q)}`,
-          { signal: AbortSignal.timeout(timeout) }
+          internalFetchOpts
         );
         if (!res.ok) {
-          result = { fejl: `Adresse-autocomplete svarede ${res.status}` };
+          result = { fejl: toolErrorMessage('Adresse-autocomplete', res.status) };
           break;
         }
         const data = await res.json();
@@ -476,10 +511,10 @@ async function executeTool(
         // Server-side proxy via DAR (DAWA lukker 1. juli 2026)
         const res = await fetch(
           `${baseUrl}/api/adresse/lookup?id=${encodeURIComponent(input.dawaId)}`,
-          { signal: AbortSignal.timeout(timeout) }
+          internalFetchOpts
         );
         if (!res.ok) {
-          result = { fejl: `Adresse-opslag svarede ${res.status}` };
+          result = { fejl: toolErrorMessage('Adresse-opslag', res.status) };
           break;
         }
         const d = (await res.json()) as Record<string, unknown>;
@@ -510,11 +545,9 @@ async function executeTool(
         const params = new URLSearchParams();
         if (input.bfeNummer) params.set('bfeNummer', input.bfeNummer);
         if (input.kommunekode) params.set('kommunekode', input.kommunekode);
-        const res = await fetch(`${baseUrl}/api/vurdering?${params}`, {
-          signal: AbortSignal.timeout(timeout),
-        });
+        const res = await fetch(`${baseUrl}/api/vurdering?${params}`, internalFetchOpts);
         if (!res.ok) {
-          result = { fejl: `Vurderings-API svarede ${res.status}` };
+          result = { fejl: toolErrorMessage('Vurderings-API', res.status) };
           break;
         }
         result = await res.json();
@@ -525,11 +558,9 @@ async function executeTool(
         const params = new URLSearchParams();
         if (input.adresseId) params.set('adresseId', input.adresseId);
         if (input.bfeNummer) params.set('bfeNummer', input.bfeNummer);
-        const res = await fetch(`${baseUrl}/api/vurdering-forelobig?${params}`, {
-          signal: AbortSignal.timeout(timeout),
-        });
+        const res = await fetch(`${baseUrl}/api/vurdering-forelobig?${params}`, internalFetchOpts);
         if (!res.ok) {
-          result = { fejl: `Foreløbig-vurdering-API svarede ${res.status}` };
+          result = { fejl: toolErrorMessage('Foreloebig-vurderings-API', res.status) };
           break;
         }
         result = await res.json();
@@ -539,10 +570,10 @@ async function executeTool(
       case 'hent_ejerskab': {
         const res = await fetch(
           `${baseUrl}/api/ejerskab?bfeNummer=${encodeURIComponent(input.bfeNummer)}`,
-          { signal: AbortSignal.timeout(timeout) }
+          internalFetchOpts
         );
         if (!res.ok) {
-          result = { fejl: `Ejerskabs-API svarede ${res.status}` };
+          result = { fejl: toolErrorMessage('Ejerskabs-API', res.status) };
           break;
         }
         result = await res.json();
@@ -552,10 +583,10 @@ async function executeTool(
       case 'hent_salgshistorik': {
         const res = await fetch(
           `${baseUrl}/api/salgshistorik?bfeNummer=${encodeURIComponent(input.bfeNummer)}`,
-          { signal: AbortSignal.timeout(timeout) }
+          internalFetchOpts
         );
         if (!res.ok) {
-          result = { fejl: `Salgshistorik-API svarede ${res.status}` };
+          result = { fejl: toolErrorMessage('Salgshistorik-API', res.status) };
           break;
         }
         result = await res.json();
@@ -565,10 +596,10 @@ async function executeTool(
       case 'hent_energimaerke': {
         const res = await fetch(
           `${baseUrl}/api/energimaerke?bfeNummer=${encodeURIComponent(input.bfeNummer)}`,
-          { signal: AbortSignal.timeout(timeout) }
+          internalFetchOpts
         );
         if (!res.ok) {
-          result = { fejl: `Energimærke-API svarede ${res.status}` };
+          result = { fejl: toolErrorMessage('Energimaerke-API', res.status) };
           break;
         }
         result = await res.json();
@@ -580,11 +611,9 @@ async function executeTool(
           ejerlavKode: input.ejerlavKode,
           matrikelnr: input.matrikelnr,
         });
-        const res = await fetch(`${baseUrl}/api/jord?${params}`, {
-          signal: AbortSignal.timeout(timeout),
-        });
+        const res = await fetch(`${baseUrl}/api/jord?${params}`, internalFetchOpts);
         if (!res.ok) {
-          result = { fejl: `Jord-API svarede ${res.status}` };
+          result = { fejl: toolErrorMessage('Jordforurenings-API', res.status) };
           break;
         }
         result = await res.json();
@@ -594,10 +623,10 @@ async function executeTool(
       case 'hent_plandata': {
         const res = await fetch(
           `${baseUrl}/api/plandata?adresseId=${encodeURIComponent(input.adresseId)}`,
-          { signal: AbortSignal.timeout(timeout) }
+          internalFetchOpts
         );
         if (!res.ok) {
-          result = { fejl: `Plandata-API svarede ${res.status}` };
+          result = { fejl: toolErrorMessage('Plandata-API', res.status) };
           break;
         }
         result = await res.json();
@@ -605,11 +634,12 @@ async function executeTool(
       }
 
       case 'hent_cvr_virksomhed': {
-        const res = await fetch(`${baseUrl}/api/cvr/${encodeURIComponent(input.cvr)}`, {
-          signal: AbortSignal.timeout(timeout),
-        });
+        const res = await fetch(
+          `${baseUrl}/api/cvr/${encodeURIComponent(input.cvr)}`,
+          internalFetchOpts
+        );
         if (!res.ok) {
-          result = { fejl: `CVR-API svarede ${res.status}` };
+          result = { fejl: toolErrorMessage('CVR-API', res.status) };
           break;
         }
         result = await res.json();
@@ -618,9 +648,10 @@ async function executeTool(
 
       case 'hent_matrikeldata': {
         const bfe = input.bfeNummer as string;
-        const matRes = await fetch(`${baseUrl}/api/matrikel?bfeNummer=${encodeURIComponent(bfe)}`, {
-          signal: AbortSignal.timeout(timeout),
-        });
+        const matRes = await fetch(
+          `${baseUrl}/api/matrikel?bfeNummer=${encodeURIComponent(bfe)}`,
+          internalFetchOpts
+        );
         if (!matRes.ok) {
           result = { matrikel: null, fejl: `HTTP ${matRes.status}` };
           break;
@@ -634,10 +665,10 @@ async function executeTool(
         // Returnerer de seneste 2 regnskabsår med nøgletal for formueestimering.
         const xbrlRes = await fetch(
           `${baseUrl}/api/regnskab/xbrl?cvr=${encodeURIComponent(input.cvr)}`,
-          { signal: AbortSignal.timeout(timeout) }
+          internalFetchOpts
         );
         if (!xbrlRes.ok) {
-          result = { fejl: `Regnskabs-API svarede ${xbrlRes.status}` };
+          result = { fejl: toolErrorMessage('Regnskabs-API', xbrlRes.status) };
           break;
         }
         const xbrlData = (await xbrlRes.json()) as {
@@ -698,10 +729,10 @@ async function executeTool(
         // Henter relaterede virksomheder (datterselskaber/kapitalandele) via CVR-public/related.
         const relRes = await fetch(
           `${baseUrl}/api/cvr-public/related?cvr=${encodeURIComponent(input.cvr)}`,
-          { signal: AbortSignal.timeout(timeout) }
+          internalFetchOpts
         );
         if (!relRes.ok) {
-          result = { fejl: `Related-API svarede ${relRes.status}` };
+          result = { fejl: toolErrorMessage('Related-API', relRes.status) };
           break;
         }
         const relData = (await relRes.json()) as Array<{
@@ -768,7 +799,7 @@ async function executeTool(
         });
 
         if (!res.ok) {
-          result = { fejl: `CVR søge-API svarede ${res.status}` };
+          result = { fejl: toolErrorMessage('CVR-soege-API', res.status) };
           break;
         }
 
@@ -849,7 +880,7 @@ async function executeTool(
         });
 
         if (!esRes.ok) {
-          result = { fejl: `CVR deltager-API svarede ${esRes.status}` };
+          result = { fejl: toolErrorMessage('CVR-deltager-API', esRes.status) };
           break;
         }
 
@@ -926,6 +957,36 @@ async function executeTool(
           aktiveTilknytninger: relations,
           antalAktive: relations.length,
         };
+        break;
+      }
+
+      // BIZZ-233: Tinglysning (e-TL) — ejere, hæftelser, servitutter
+      case 'hent_tinglysning': {
+        // Step 1: Get tinglysning UUID from BFE number
+        const uuidRes = await fetch(
+          `${baseUrl}/api/tinglysning?bfe=${encodeURIComponent(input.bfeNummer)}`,
+          internalFetchOpts
+        );
+        if (!uuidRes.ok) {
+          result = { fejl: toolErrorMessage('Tinglysning UUID-opslag', uuidRes.status) };
+          break;
+        }
+        const uuidData = (await uuidRes.json()) as { uuid?: string };
+        if (!uuidData.uuid) {
+          result = { fejl: 'Ingen tinglysning UUID fundet for denne ejendom' };
+          break;
+        }
+
+        // Step 2: Get summarisk data (ejere, hæftelser, servitutter)
+        const sumRes = await fetch(
+          `${baseUrl}/api/tinglysning/summarisk?uuid=${encodeURIComponent(uuidData.uuid)}`,
+          internalFetchOpts
+        );
+        if (!sumRes.ok) {
+          result = { fejl: toolErrorMessage('Tinglysning summarisk', sumRes.status) };
+          break;
+        }
+        result = await sumRes.json();
         break;
       }
 
@@ -1017,9 +1078,9 @@ function recordTenantTokenUsage(
 // ─── Handler ────────────────────────────────────────────────────────────────
 
 export async function POST(request: NextRequest): Promise<Response> {
-  // Feature gate: AI chat is only available when explicitly enabled via env var
-  if (process.env.NEXT_PUBLIC_AI_ENABLED !== 'true') {
-    return Response.json({ error: 'AI-chat er ikke aktiveret i dette miljø' }, { status: 403 });
+  // BIZZ-236: AI access gated by API key availability (not env flag)
+  if (!process.env.BIZZASSIST_CLAUDE_KEY) {
+    return Response.json({ error: 'AI-chat er ikke konfigureret i dette miljø' }, { status: 503 });
   }
 
   // Rate limit: 10 req/min for AI chat
@@ -1387,7 +1448,8 @@ export async function POST(request: NextRequest): Promise<Response> {
               const result = await executeTool(
                 toolBlock.name,
                 toolBlock.input as Record<string, string>,
-                baseUrl
+                baseUrl,
+                request.headers.get('cookie')
               );
               return {
                 type: 'tool_result' as const,

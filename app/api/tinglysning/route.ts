@@ -96,9 +96,9 @@ function tlFetch(urlPath: string): Promise<{ status: number; body: string }> {
         pfx,
         passphrase: CERT_PASSWORD,
         rejectUnauthorized: false,
-        // test.tinglysning.dk kan svare langsomt (op til 6-7s) — 20s timeout giver margin.
-        // Prod-miljøet er væsentligt hurtigere.
-        timeout: 20000,
+        // Turbopack dev + test.tinglysning.dk mTLS kan tage 30s+.
+        // Prod er hurtigere. maxDuration=60 på route-niveau.
+        timeout: 55000,
         headers: { Accept: 'application/json, application/xml, */*' },
       },
       (res) => {

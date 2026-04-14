@@ -73,7 +73,7 @@ vi.mock('@/lib/api/auth', () => ({
 
 // ── Import route AFTER mocks ──────────────────────────────────────────────────
 
-import { GET } from '@/app/api/tinglysning/summarisk/route';
+import { GET, clearXmlCache } from '@/app/api/tinglysning/summarisk/route';
 
 // ── Helper: make a NextRequest with a uuid query param ───────────────────────
 
@@ -157,6 +157,7 @@ function servitutXml(): string {
 describe('GET /api/tinglysning/summarisk — adkomst parsing', () => {
   beforeEach(() => {
     httpsState.statusCode = 200;
+    clearXmlCache();
   });
 
   it('parses a selskabsejer (CVR present) correctly', async () => {
@@ -288,6 +289,7 @@ describe('GET /api/tinglysning/summarisk — adkomst parsing', () => {
 describe('GET /api/tinglysning/summarisk — hæftelse parsing', () => {
   beforeEach(() => {
     httpsState.statusCode = 200;
+    clearXmlCache();
   });
 
   it('parses kreditor navn and CVR', async () => {
@@ -380,6 +382,7 @@ describe('GET /api/tinglysning/summarisk — hæftelse parsing', () => {
 describe('GET /api/tinglysning/summarisk — servitut parsing', () => {
   beforeEach(() => {
     httpsState.statusCode = 200;
+    clearXmlCache();
   });
 
   it('parses servitut type and dato', async () => {
@@ -449,6 +452,11 @@ describe('GET /api/tinglysning/summarisk — servitut parsing', () => {
 // ─── Tests: Error handling ────────────────────────────────────────────────────
 
 describe('GET /api/tinglysning/summarisk — error handling', () => {
+  beforeEach(() => {
+    httpsState.statusCode = 200;
+    clearXmlCache();
+  });
+
   it('returns fejl message when https returns non-200 status', async () => {
     httpsState.statusCode = 404;
     httpsState.xmlBody = '';

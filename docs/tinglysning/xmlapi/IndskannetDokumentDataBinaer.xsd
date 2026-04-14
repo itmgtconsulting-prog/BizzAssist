@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schema xmlns="http://www.w3.org/2001/XMLSchema" xmlns:eakt="http://rep.oio.dk/tinglysning.dk/schema/elektroniskakt/1/" elementFormDefault="qualified" targetNamespace="http://rep.oio.dk/tinglysning.dk/schema/elektroniskakt/1/" version="53.1.0.1" xml:lang="DA">
+	<include schemaLocation="http://rep.oio.dk/tinglysning.dk/schema/elektroniskakt/1/DokumentFilnavnTekst.xsd"/>
+	<include schemaLocation="http://rep.oio.dk/tinglysning.dk/schema/elektroniskakt/1/MimetypeKodeTekst.xsd"/>
+	<include schemaLocation="http://rep.oio.dk/tinglysning.dk/schema/elektroniskakt/1/IndskannetDokumentData.xsd"/>
+	<element name="IndskannetDokumentDataBinaer" type="eakt:IndskannetDokumentDataBinaerType">
+		<annotation>
+			<documentation>Til at håndtere binært indhold.</documentation>
+		</annotation>
+	</element>
+	<complexType name="IndskannetDokumentDataBinaerType">
+		<sequence>
+			<element ref="eakt:DokumentFilnavnTekst"/>
+			<element ref="eakt:MimetypeKodeTekst"/>
+			<element ref="eakt:IndskannetDokumentData">
+				<annotation>
+					<documentation>Det indskannede dokuments indhold i base64 format</documentation>
+				</annotation>
+			</element>
+		</sequence>
+	</complexType>
+</schema>

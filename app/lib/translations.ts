@@ -247,9 +247,9 @@ export const translations = {
       companies: 'virksomheder',
     },
 
-    /* ─── AI Chat ──────────────────────────────────────────────────── */
+    /* ─── AI Bizzness Assistent ─────────────────────────────────────── */
     ai: {
-      title: 'AI Bizzness Assistent',
+      title: 'AI Chat',
       tokenStatus: 'Token status',
       emptyPrompt: 'Spørg om den ejendom, virksomhed eller person du kigger på.',
       inputPlaceholder: 'Stil et spørgsmål…',
@@ -750,9 +750,9 @@ export const translations = {
       companies: 'companies',
     },
 
-    /* ─── AI Chat ──────────────────────────────────────────────────── */
+    /* ─── AI Bizzness Assistent ─────────────────────────────────────── */
     ai: {
-      title: 'AI Bizzness Assistant',
+      title: 'AI Chat',
       tokenStatus: 'Token status',
       emptyPrompt: 'Ask about the property, company or person you are looking at.',
       inputPlaceholder: 'Ask a question…',

@@ -1135,16 +1135,20 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
           if (data.ejendomsnummer && data.kommuneNummer) {
             setEsrNummer(`${data.kommuneNummer}-${data.ejendomsnummer}`);
           }
-          // Hent summarisk data (adkomster + hæftelser) for Økonomi-tab
+          // Hent ejere + hæftelser for Økonomi-tab (sektions-kald)
           if (data.uuid) {
-            fetch(`/api/tinglysning/summarisk?uuid=${data.uuid}`, { signal })
-              .then((r) => (r.ok ? r.json() : null))
-              .then((sum) => {
+            Promise.all([
+              fetch(`/api/tinglysning/summarisk?uuid=${data.uuid}&section=ejere`, { signal }).then(
+                (r) => (r.ok ? r.json() : null)
+              ),
+              fetch(`/api/tinglysning/summarisk?uuid=${data.uuid}&section=haeftelser`, {
+                signal,
+              }).then((r) => (r.ok ? r.json() : null)),
+            ])
+              .then(([ejereData, haeftelserData]) => {
                 if (signal.aborted) return;
-                if (sum) {
-                  setTlEjere(sum.ejere ?? []);
-                  setTlHaeftelser(sum.haeftelser ?? []);
-                }
+                if (ejereData) setTlEjere(ejereData.ejere ?? []);
+                if (haeftelserData) setTlHaeftelser(haeftelserData.haeftelser ?? []);
               })
               .catch((err) => {
                 if (err.name === 'AbortError') return;
@@ -6453,6 +6457,8 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
   const [showMatrikler, setShowMatrikler] = useState(false);
   const [showNoteringer, setShowNoteringer] = useState(false);
   const [showTillaeg, setShowTillaeg] = useState(false);
+  /** Indskannede akter — pre-digitale akt-navne fra EjendomIndskannetAktSamling i ejdsummarisk */
+  const [indskannedeAkterNavne, setIndskannedeAkterNavne] = useState<string[]>([]);
 
   const toggleDoc = (docId: string) => {
     setSelectedDocs((prev) => {
@@ -6478,6 +6484,7 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
     setBilagRefs([]);
     setTingbogsattest(null);
     setTlUuid(null);
+    setIndskannedeAkterNavne([]);
 
     const controller = new AbortController();
     const { signal } = controller;
@@ -6507,19 +6514,27 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
           return;
         }
         setTlUuid(tlData.uuid);
-        // Trin 2: Hent summariske data
-        return fetch(`/api/tinglysning/summarisk?uuid=${tlData.uuid}`, { signal }).then((r) =>
-          r.ok ? r.json() : null
-        );
-      })
-      .then((data) => {
-        if (data) {
-          setEjere(data.ejere ?? []);
-          setHaeftelser(data.haeftelser ?? []);
-          setServitutter(data.servitutter ?? []);
-          setBilagRefs(data.bilagRefs ?? []);
-          setTingbogsattest(data.tingbogsattest ?? null);
-        }
+        // Trin 2: Hent summariske data i 3 parallelle sektions-kald
+        // (reducerer response-størrelse pr. kald for store ejendomme)
+        const base = `/api/tinglysning/summarisk?uuid=${tlData.uuid}`;
+        return Promise.all([
+          fetch(`${base}&section=ejere`, { signal }).then((r) => (r.ok ? r.json() : null)),
+          fetch(`${base}&section=haeftelser`, { signal }).then((r) => (r.ok ? r.json() : null)),
+          fetch(`${base}&section=servitutter`, { signal }).then((r) => (r.ok ? r.json() : null)),
+        ]).then(([ejereRes, haeftelserRes, servituterRes]) => {
+          if (ejereRes) {
+            setEjere(ejereRes.ejere ?? []);
+            setTingbogsattest(ejereRes.tingbogsattest ?? null);
+          }
+          if (haeftelserRes) {
+            setHaeftelser(haeftelserRes.haeftelser ?? []);
+            setBilagRefs(haeftelserRes.bilagRefs ?? []);
+          }
+          if (servituterRes) {
+            setServitutter(servituterRes.servitutter ?? []);
+            setIndskannedeAkterNavne(servituterRes.indskannedeAkterNavne ?? []);
+          }
+        });
       })
       .catch((err) => {
         if (err.name !== 'AbortError')
@@ -7713,6 +7728,57 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
                     )}
                   </span>
                 </label>
+              </div>
+            ))}
+          </>
+        )}
+
+        {/* ── INDSKANNEDE AKTER (pre-digitale dokumenter fra EjendomIndskannetAktSamling) ── */}
+        {indskannedeAkterNavne.length > 0 && (
+          <>
+            <div className="px-4 py-1.5 bg-amber-500/5 border-b border-slate-700/20">
+              <span className="text-[10px] font-semibold text-amber-400 uppercase tracking-wider">
+                {da ? 'Indskannede akter' : 'Scanned acts'} {`(${indskannedeAkterNavne.length})`}
+              </span>
+            </div>
+
+            {/* Advarsel om potentielt store filer */}
+            <div className="px-4 py-2 border-b border-slate-700/10 flex items-start gap-2 bg-amber-500/5">
+              <svg
+                viewBox="0 0 16 16"
+                className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 mt-0.5"
+                fill="currentColor"
+              >
+                <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 3.5a.75.75 0 0 1 .75.75v3a.75.75 0 0 1-1.5 0v-3A.75.75 0 0 1 8 4.5zm0 6.25a.875.875 0 1 1 0-1.75.875.875 0 0 1 0 1.75z" />
+              </svg>
+              <p className="text-amber-300/80 text-[10px] leading-relaxed">
+                {da
+                  ? 'Disse akter er indskannede papirdokumenter fra før den digitale tinglysning (ca. 2009). De kan være meget store (hundredvis af sider) og kan tage tid at downloade.'
+                  : 'These acts are scanned paper documents from before digital land registration (approx. 2009). They may be very large (hundreds of pages) and may take time to download.'}
+              </p>
+            </div>
+
+            {indskannedeAkterNavne.map((aktNavn, i) => (
+              <div
+                key={aktNavn}
+                className="grid grid-cols-[24px_1fr_auto] gap-x-2 px-4 py-2.5 border-b border-slate-700/15 hover:bg-slate-700/10 transition-colors items-center"
+              >
+                <span className="text-slate-500 text-[10px] tabular-nums text-center">{i + 1}</span>
+                <span className="text-sm text-slate-200 truncate">{aktNavn}</span>
+                <a
+                  href={`/api/tinglysning/indskannede-akter/download?aktNavn=${encodeURIComponent(aktNavn)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-xs text-amber-400 hover:text-amber-300 transition-colors px-2 py-1 border border-amber-500/30 rounded-md hover:border-amber-400/50"
+                  title={
+                    da
+                      ? 'Download som PDF — kan være stor fil'
+                      : 'Download as PDF — may be a large file'
+                  }
+                >
+                  <FileText size={11} />
+                  PDF
+                </a>
               </div>
             ))}
           </>

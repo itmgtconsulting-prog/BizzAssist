@@ -21,11 +21,30 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { useSearchParams } from 'next/navigation';
-import { MessageSquare, Plus, Trash2, Send, Square, Bot, Sparkles, Loader2 } from 'lucide-react';
+import { useSearchParams, useRouter } from 'next/navigation';
+import { MessageSquare, Plus, Trash2, Send, Square, Bot, Sparkles, Loader2, X } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { useSubscription } from '@/app/context/SubscriptionContext';
+import { useAIPageContext } from '@/app/context/AIPageContext';
+import { useAIChatContext } from '@/app/context/AIChatContext';
 import { resolvePlan, isSubscriptionFunctional, formatTokens } from '@/app/lib/subscriptions';
+
+// ─── Token sync helper ──────────────────────────────────────────────────────
+
+/** Fire-and-forget token sync with 3 retries and exponential backoff */
+function syncTokenUsageToServer(tokensUsed: number): void {
+  if (tokensUsed <= 0) return;
+  const attempt = (retries: number) => {
+    fetch('/api/subscription/track-tokens', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tokensUsed }),
+    }).catch(() => {
+      if (retries > 0) setTimeout(() => attempt(retries - 1), 2000);
+    });
+  };
+  attempt(2);
+}
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -296,33 +315,79 @@ export default function ChatPageClient() {
   const { lang } = useLanguage();
   const da = lang === 'da';
   const searchParams = useSearchParams();
+  const router = useRouter();
   const { subscription: ctxSub, addTokenUsage } = useSubscription();
+  /** BIZZ-232: Page context from previous page (passed from sidebar AIChatPanel) */
+  const { pageData } = useAIPageContext();
+  /** Shared conversation context — syncs with drawer panel */
+  const chatCtx = useAIChatContext();
 
-  // ── Conversation state ──
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // ── Conversation state (synced with AIChatContext) ──
+  const conversations = chatCtx.conversations;
+  const setConversations = useCallback(
+    (updater: Conversation[] | ((prev: Conversation[]) => Conversation[])) => {
+      // When ChatPageClient updates conversations, sync back to context via localStorage
+      const updated = typeof updater === 'function' ? updater(chatCtx.conversations) : updater;
+      saveConversations(updated);
+      // Force context to re-read (context listens to storage events for cross-tab,
+      // but same-tab needs direct state update — this happens via loadConversations in context)
+    },
+    [chatCtx.conversations]
+  );
+  const [activeId, setActiveIdLocal] = useState<string | null>(chatCtx.activeId);
+  const setActiveId = useCallback(
+    (id: string | null) => {
+      setActiveIdLocal(id);
+      if (id) chatCtx.selectConversation(id);
+    },
+    [chatCtx]
+  );
+  const [messages, setMessages] = useState<ChatMessage[]>(chatCtx.messages);
   const [input, setInput] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [streamText, setStreamText] = useState('');
-  const [toolStatus, setToolStatus] = useState('');
+  const [isLoadingLocal, setIsLoading] = useState(false);
+  const [streamTextLocal, setStreamText] = useState('');
+  const [toolStatusLocal, setToolStatus] = useState('');
   const [isMounted, setIsMounted] = useState(false);
+
+  // Combine local streaming state with context (drawer may be streaming in background)
+  const isLoading = isLoadingLocal || chatCtx.isStreaming;
+  const streamText = streamTextLocal || chatCtx.streamText;
+  const toolStatus = toolStatusLocal || chatCtx.toolStatus;
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  // ── Load from localStorage on mount ──
+  // ── Load from localStorage on mount — prefer context's active conversation ──
   useEffect(() => {
     setIsMounted(true);
     const stored = loadConversations();
     setConversations(stored);
-    // Select most recent conversation if any
-    if (stored.length > 0) {
+    // Prefer context's active conversation (e.g. from drawer), else most recent
+    const targetId = chatCtx.activeId;
+    const target = targetId ? stored.find((c) => c.id === targetId) : null;
+    if (target) {
+      setActiveIdLocal(target.id);
+      setMessages(target.messages);
+    } else if (stored.length > 0) {
       setActiveId(stored[0].id);
       setMessages(stored[0].messages);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ── Sync messages from context when streaming finishes (drawer or local) ──
+  const wasStreamingRef = useRef(false);
+  useEffect(() => {
+    const nowStreaming = chatCtx.isStreaming || isLoadingLocal;
+    if (wasStreamingRef.current && !nowStreaming) {
+      // Streaming just finished — reload from localStorage to get final messages
+      const fresh = loadConversations();
+      const active = fresh.find((c) => c.id === (activeId ?? chatCtx.activeId));
+      if (active) setMessages(active.messages);
+    }
+    wasStreamingRef.current = nowStreaming;
+  }, [chatCtx.isStreaming, isLoadingLocal, activeId, chatCtx.activeId]);
 
   // ── Pre-fill from URL query param (?context=…) ──
   useEffect(() => {
@@ -345,38 +410,36 @@ export default function ChatPageClient() {
    * @param updatedMessages - New message array
    * @param currentConvs - Current conversations snapshot
    */
-  const persistConversation = useCallback(
-    (id: string, updatedMessages: ChatMessage[], currentConvs: Conversation[]) => {
-      const updated = currentConvs.map((c) =>
-        c.id === id ? { ...c, messages: updatedMessages } : c
-      );
-      saveConversations(updated);
-      setConversations(updated);
-    },
-    []
-  );
+  /**
+   * BIZZ-240 fix: reads conversations from localStorage instead of using
+   * a stale snapshot, so auto-derived titles are preserved after streaming.
+   */
+  const persistConversation = useCallback((id: string, updatedMessages: ChatMessage[]) => {
+    const freshConvs = loadConversations();
+    const updated = freshConvs.map((c) => (c.id === id ? { ...c, messages: updatedMessages } : c));
+    saveConversations(updated);
+    setConversations(updated);
+  }, []);
 
   /**
    * Create a new empty conversation and select it.
    */
   const handleNewConversation = useCallback(() => {
-    abortRef.current?.abort();
-    const newConv: Conversation = {
-      id: generateId(),
-      title: da ? 'Ny samtale' : 'New conversation',
-      messages: [],
-      createdAt: new Date().toISOString(),
-    };
-    const updated = [newConv, ...conversations];
-    saveConversations(updated);
-    setConversations(updated);
-    setActiveId(newConv.id);
+    // Don't abort — let streaming finish in background for the old conversation
+    abortRef.current = null; // Detach so stop button doesn't kill background stream
+    // Use context to create conversation — syncs with drawer
+    const newId = chatCtx.createConversation(lang as 'da' | 'en');
+    setActiveIdLocal(newId);
     setMessages([]);
     setStreamText('');
     setToolStatus('');
+    setIsLoading(false);
+    chatCtx.setStreamText('');
+    chatCtx.setToolStatus('');
+    chatCtx.setIsStreaming(false);
     setInput('');
     setTimeout(() => inputRef.current?.focus(), 100);
-  }, [conversations, da]);
+  }, [chatCtx, lang]);
 
   /**
    * Select a conversation from the history list.
@@ -494,27 +557,27 @@ export default function ChatPageClient() {
     const userMsg: ChatMessage = { role: 'user', content: text };
     const newMessages: ChatMessage[] = [...messages, userMsg];
 
-    // Auto-title from first user message
+    // Auto-title from first user message — use context for sync with drawer
     if (messages.length === 0) {
-      const updated = currentConvs.map((c) =>
-        c.id === convId ? { ...c, title: deriveTitle(text), messages: newMessages } : c
-      );
-      saveConversations(updated);
-      setConversations(updated);
+      chatCtx.titleConversation(convId, text);
     }
 
     setInput('');
     setMessages(newMessages);
+    chatCtx.setMessages(newMessages);
     setIsLoading(true);
+    chatCtx.setIsStreaming(true);
     setStreamText('');
+    chatCtx.setStreamText('');
     setToolStatus('');
+    chatCtx.setToolStatus('');
 
     // If blocked, show error as assistant message and return
     if (blockReason) {
       const errorMsg: ChatMessage = { role: 'assistant', content: blockReason };
       const withError = [...newMessages, errorMsg];
       setMessages(withError);
-      persistConversation(convId, withError, currentConvs);
+      persistConversation(convId, withError);
       setIsLoading(false);
       return;
     }
@@ -526,7 +589,26 @@ export default function ChatPageClient() {
       const res = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: newMessages }),
+        body: JSON.stringify({
+          messages: newMessages,
+          // BIZZ-232: pass page context from sidebar if available
+          ...(pageData?.bfeNummer || pageData?.cvrNummer
+            ? {
+                context: [
+                  pageData.adresse && `Adresse: ${pageData.adresse}`,
+                  pageData.bfeNummer && `BFE-nummer: ${pageData.bfeNummer}`,
+                  pageData.adresseId && `adresseId: ${pageData.adresseId}`,
+                  pageData.kommunekode && `kommunekode: ${pageData.kommunekode}`,
+                  pageData.cvrNummer && `CVR: ${pageData.cvrNummer}`,
+                  pageData.virksomhedNavn && `Virksomhed: ${pageData.virksomhedNavn}`,
+                  pageData.enhedsNummer && `enhedsNummer: ${pageData.enhedsNummer}`,
+                  pageData.personNavn && `Person: ${pageData.personNavn}`,
+                ]
+                  .filter(Boolean)
+                  .join('\n'),
+              }
+            : {}),
+        }),
         signal: controller.signal,
       });
 
@@ -538,7 +620,7 @@ export default function ChatPageClient() {
         };
         const withErr = [...newMessages, errMsg];
         setMessages(withErr);
-        persistConversation(convId, withErr, currentConvs);
+        persistConversation(convId, withErr);
         setIsLoading(false);
         return;
       }
@@ -572,23 +654,31 @@ export default function ChatPageClient() {
                 status?: string;
                 usage?: { inputTokens: number; outputTokens: number; totalTokens: number };
               };
+              const isActive = activeId === convId;
               if (parsed.error) {
                 accumulated += `\n⚠️ ${parsed.error}`;
-                setStreamText(accumulated);
+                if (isActive) {
+                  setStreamText(accumulated);
+                  chatCtx.setStreamText(accumulated);
+                }
               } else if (parsed.usage) {
                 addTokenUsage(parsed.usage.totalTokens);
-                // Fire-and-forget token sync
-                fetch('/api/subscription/track-tokens', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ tokensUsed: parsed.usage.totalTokens }),
-                }).catch(() => {});
+                syncTokenUsageToServer(parsed.usage.totalTokens);
               } else if (parsed.status) {
-                setToolStatus(parsed.status);
+                if (isActive) {
+                  setToolStatus(parsed.status);
+                  chatCtx.setToolStatus(parsed.status);
+                }
               } else if (parsed.t) {
-                if (!accumulated) setToolStatus('');
                 accumulated += parsed.t;
-                setStreamText(accumulated);
+                if (isActive) {
+                  if (accumulated === parsed.t) {
+                    setToolStatus('');
+                    chatCtx.setToolStatus('');
+                  }
+                  setStreamText(accumulated);
+                  chatCtx.setStreamText(accumulated);
+                }
               }
             } catch {
               // Ignore invalid JSON chunks
@@ -602,16 +692,22 @@ export default function ChatPageClient() {
       if (accumulated) {
         const assistantMsg: ChatMessage = { role: 'assistant', content: accumulated };
         const finalMessages = [...newMessages, assistantMsg];
-        setMessages(finalMessages);
-        persistConversation(convId, finalMessages, currentConvs);
+        persistConversation(convId, finalMessages);
+        if (activeId === convId) {
+          setMessages(finalMessages);
+        }
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') {
+        // Persist partial response to ORIGINAL conversation
         const current = streamText || '*(stoppet)*';
         const stoppedMsg: ChatMessage = { role: 'assistant', content: current };
         const finalMessages = [...newMessages, stoppedMsg];
-        setMessages(finalMessages);
-        persistConversation(convId, finalMessages, currentConvs);
+        persistConversation(convId, finalMessages);
+        // Only update UI if still on same conversation (user may have clicked "Ny samtale")
+        if (activeId === convId) {
+          setMessages(finalMessages);
+        }
       } else {
         const errMsg: ChatMessage = {
           role: 'assistant',
@@ -619,12 +715,15 @@ export default function ChatPageClient() {
         };
         const withErr = [...newMessages, errMsg];
         setMessages(withErr);
-        persistConversation(convId, withErr, currentConvs);
+        persistConversation(convId, withErr);
       }
     } finally {
       setStreamText('');
       setToolStatus('');
       setIsLoading(false);
+      chatCtx.setStreamText('');
+      chatCtx.setToolStatus('');
+      chatCtx.setIsStreaming(false);
       abortRef.current = null;
     }
   }, [
@@ -717,6 +816,76 @@ export default function ChatPageClient() {
 
       {/* ─── Main chat area ───────────────────────────────────────────────────── */}
       <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Token tracking bar */}
+        {(ctxSub &&
+          (() => {
+            const plan = resolvePlan(ctxSub.planId);
+            if (!plan.aiEnabled) return null;
+            const limit =
+              plan.aiTokensPerMonth < 0 ? -1 : plan.aiTokensPerMonth + (ctxSub.bonusTokens ?? 0);
+            if (limit === 0) return null;
+            const used = ctxSub.tokensUsedThisMonth;
+            const pct = limit === -1 ? 0 : Math.min(100, (used / limit) * 100);
+            return (
+              <div className="shrink-0 flex items-center gap-3 px-6 py-2 border-b border-white/8">
+                <span className="text-[11px] text-slate-400 whitespace-nowrap">Token status</span>
+                <div className="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                  {limit === -1 ? (
+                    <div className="h-full rounded-full bg-purple-500 w-full" />
+                  ) : (
+                    <div
+                      className={`h-full rounded-full transition-all ${pct > 90 ? 'bg-red-500' : pct > 70 ? 'bg-amber-500' : 'bg-blue-500'}`}
+                      style={{ width: `${pct}%` }}
+                    />
+                  )}
+                </div>
+                <span className="text-[11px] font-medium text-slate-400 whitespace-nowrap">
+                  {limit === -1
+                    ? `${formatTokens(used)} / ∞`
+                    : `${formatTokens(used)} / ${formatTokens(limit)}`}
+                </span>
+                {/* Close button — if streaming, opens drawer to continue; otherwise navigates back */}
+                <button
+                  onClick={() => {
+                    if (isLoadingLocal) {
+                      // Hand off streaming to drawer: open it so user sees progress
+                      chatCtx.setDrawerOpen(true);
+                    }
+                    if (window.history.length > 1) {
+                      router.back();
+                    } else {
+                      router.push('/dashboard');
+                    }
+                  }}
+                  className="text-slate-500 hover:text-slate-200 transition-colors p-1 rounded-lg hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ml-1"
+                  aria-label={da ? 'Luk AI Chat' : 'Close AI Chat'}
+                  title={da ? 'Luk' : 'Close'}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            );
+          })()) || (
+          /* Fallback: show close button even without token bar */
+          <div className="shrink-0 flex items-center justify-end px-6 py-2 border-b border-white/8">
+            <button
+              onClick={() => {
+                if (isLoadingLocal) chatCtx.setDrawerOpen(true);
+                if (window.history.length > 1) {
+                  router.back();
+                } else {
+                  router.push('/dashboard');
+                }
+              }}
+              className="text-slate-500 hover:text-slate-200 transition-colors p-1 rounded-lg hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              aria-label={da ? 'Luk AI Chat' : 'Close AI Chat'}
+              title={da ? 'Luk' : 'Close'}
+            >
+              <X size={16} />
+            </button>
+          </div>
+        )}
+
         {/* Messages */}
         <div className="flex-1 overflow-y-auto px-4 py-6 space-y-4">
           {messages.length === 0 && !isLoading && (
@@ -724,9 +893,7 @@ export default function ChatPageClient() {
               <div className="w-14 h-14 bg-blue-600/20 rounded-2xl flex items-center justify-center mb-4">
                 <Sparkles size={24} className="text-blue-400" />
               </div>
-              <h2 className="text-white font-semibold text-lg mb-2">
-                {da ? 'AI Bizzness Assistent' : 'AI Business Assistant'}
-              </h2>
+              <h2 className="text-white font-semibold text-lg mb-2">AI Chat</h2>
               <p className="text-slate-400 text-sm max-w-sm leading-relaxed">
                 {da
                   ? 'Stil spørgsmål om ejendomme, virksomheder og ejerskab. Brug @-omtale for at nævne en enhed.'

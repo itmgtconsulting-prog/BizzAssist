@@ -50,3 +50,7 @@ next-env.d.ts
 .playwright/
 playwright-report/
 docs/legal/signed/*.pdf
+.env*.local
+
+# Env backup directory
+.env-backups/

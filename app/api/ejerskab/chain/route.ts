@@ -241,17 +241,17 @@ export async function GET(req: NextRequest) {
   try {
     const tlRes = await fetch(`${req.nextUrl.origin}/api/tinglysning?bfe=${bfe}`, {
       headers: { cookie: cookieHeader },
-      signal: AbortSignal.timeout(12000),
+      signal: AbortSignal.timeout(30000),
     });
     if (tlRes.ok) {
       const tlData = await tlRes.json();
       if (tlData.uuid && !tlData.error) {
-        // Hent summarisk XML fra Tinglysning for at parse ejere
+        // Hent KUN ejere-sektion fra summarisk (undgår at parse 90KB+ XML for servitutter)
         const tlSumRes = await fetch(
-          `${req.nextUrl.origin}/api/tinglysning/summarisk?uuid=${tlData.uuid}`,
+          `${req.nextUrl.origin}/api/tinglysning/summarisk?uuid=${tlData.uuid}&section=ejere`,
           {
             headers: { cookie: cookieHeader },
-            signal: AbortSignal.timeout(12000),
+            signal: AbortSignal.timeout(30000),
           }
         );
         if (tlSumRes.ok) {

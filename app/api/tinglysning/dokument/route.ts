@@ -91,7 +91,7 @@ function tlFetch(urlPath: string): Promise<string> {
         pfx,
         passphrase: CERT_PASSWORD,
         rejectUnauthorized: false,
-        timeout: 15000,
+        timeout: 55000, // Turbopack dev + test mTLS
         headers: { Accept: 'application/xml' },
       },
       (res) => {
@@ -443,7 +443,7 @@ export async function GET(req: NextRequest) {
             pfx,
             passphrase: CERT_PASSWORD,
             rejectUnauthorized: false,
-            timeout: 15000,
+            timeout: 55000, // Turbopack dev + test mTLS
             headers: { Accept: 'application/pdf' },
           },
           (res) => {

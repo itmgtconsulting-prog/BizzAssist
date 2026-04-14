@@ -30,6 +30,7 @@ import {
   ChevronLeft,
   ChevronRight,
   BarChart2,
+  Sparkles,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';
@@ -49,6 +50,7 @@ import SubscriptionGate from '@/app/components/SubscriptionGate';
 import { cachePlans, type UserSubscription, type PlanDef } from '@/app/lib/subscriptions';
 import { SubscriptionProvider, useSubscription } from '@/app/context/SubscriptionContext';
 import { AIPageProvider } from '@/app/context/AIPageContext';
+import { AIChatContextProvider, useAIChatContext } from '@/app/context/AIChatContext';
 import { createClient } from '@/lib/supabase/client';
 import { hasMigrated, migrateLocalStorageToSupabase } from '@/app/lib/migrateLocalStorage';
 import { initCacheUserId, clearCacheUserId } from '@/app/lib/trackedEjendomme';
@@ -56,15 +58,13 @@ import TopProgressBar from '@/app/components/TopProgressBar';
 import { logger } from '@/app/lib/logger';
 
 /**
- * Whether AI features (chat + analysis) are enabled in this environment.
- * Controlled by NEXT_PUBLIC_AI_ENABLED — only set to 'true' in dev (.env.local).
- * Test and production do NOT have this flag → AI features are hidden.
+ * BIZZ-236: AI features are now gated by subscription plan (aiEnabled flag)
+ * instead of NEXT_PUBLIC_AI_ENABLED env var. The nav items are always visible;
+ * SubscriptionGate in AIChatPanel and ChatPageClient handles access control.
  */
-const AI_ENABLED = process.env.NEXT_PUBLIC_AI_ENABLED === 'true';
 
 /** Navigation items — 'adminOnly' items are only shown for admin users.
  *  'key' maps to translations[lang].sidebar[key] for the label.
- *  'aiOnly' items are hidden unless AI_ENABLED is true.
  */
 const navItems = [
   { icon: LayoutDashboard, key: 'overview' as const, href: '/dashboard', adminOnly: false },
@@ -73,20 +73,8 @@ const navItems = [
   { icon: Briefcase, key: 'companies' as const, href: '/dashboard/companies', adminOnly: false },
   { icon: Users, key: 'owners' as const, href: '/dashboard/owners', adminOnly: false },
   { icon: Map, key: 'map' as const, href: '/dashboard/kort', adminOnly: false },
-  {
-    icon: BarChart2,
-    key: 'analysis' as const,
-    href: '/dashboard/analysis',
-    adminOnly: false,
-    aiOnly: true,
-  },
-  {
-    icon: MessageSquare,
-    key: 'chat' as const,
-    href: '/dashboard/chat',
-    adminOnly: false,
-    aiOnly: true,
-  },
+  { icon: BarChart2, key: 'analysis' as const, href: '/dashboard/analysis', adminOnly: false },
+  { icon: MessageSquare, key: 'chat' as const, href: '/dashboard/chat', adminOnly: false },
   { icon: Shield, key: 'admin' as const, href: '/dashboard/admin/users', adminOnly: true },
 ];
 
@@ -107,7 +95,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   return (
     <SubscriptionProvider>
       <AIPageProvider>
-        <DashboardLayoutInner>{children}</DashboardLayoutInner>
+        <AIChatContextProvider>
+          <DashboardLayoutInner>{children}</DashboardLayoutInner>
+        </AIChatContextProvider>
       </AIPageProvider>
     </SubscriptionProvider>
   );
@@ -119,6 +109,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
   const s = t.sidebar;
   const pathname = usePathname();
   const router = useRouter();
+  const chatCtx = useAIChatContext();
   const [isPending, startTransition] = useTransition();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   /** Om sidebar er foldet ind til ikoner-only (desktop) */
@@ -637,7 +628,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
           {/* Navigation — shrink-0 så AI-panelet nedenfor fylder resten */}
           <nav className={`shrink-0 py-6 space-y-1 ${sidebarCollapsed ? 'px-2' : 'px-4'}`}>
             {navItems
-              .filter((item) => (!item.adminOnly || isAdmin) && (!item.aiOnly || AI_ENABLED))
+              .filter((item) => !item.adminOnly || isAdmin)
               .map((item) => {
                 const Icon = item.icon;
                 const label = s[item.key];
@@ -682,25 +673,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
               })}
           </nav>
 
-          {/* AI Chat Panel — skjules når sidebar er foldet ind, eller AI er deaktiveret */}
-          {AI_ENABLED && !sidebarCollapsed && (
-            <ErrorBoundary
-              lang={lang}
-              fallback={
-                <div className="p-4 text-center">
-                  <p className="text-sm text-slate-400 mb-3">Chat er midlertidigt utilgængelig</p>
-                  <button
-                    onClick={() => window.location.reload()}
-                    className="text-xs text-blue-400 hover:text-blue-300 border border-slate-700 rounded-lg px-3 py-1.5 transition-colors"
-                  >
-                    Prøv igen
-                  </button>
-                </div>
-              }
-            >
-              <AIChatPanel />
-            </ErrorBoundary>
-          )}
+          {/* AI Chat panel moved to topbar drawer — see AIChatDrawer below */}
         </aside>
 
         {/* Resize-bjælke — kun desktop */}
@@ -1078,6 +1051,28 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
               </button>
             </div>
             <NotifikationsDropdown lang={lang} />
+
+            {/* AI Chat button — always visible in topbar */}
+            <button
+              onClick={() => {
+                if (pathname === '/dashboard/chat') {
+                  // Already on full-page chat — no drawer needed
+                } else {
+                  chatCtx.setDrawerOpen(!chatCtx.drawerOpen);
+                }
+              }}
+              className={`relative flex items-center gap-1.5 text-sm font-medium transition-colors px-3 py-1.5 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                pathname === '/dashboard/chat' || chatCtx.drawerOpen
+                  ? 'bg-blue-600 text-white'
+                  : 'text-slate-400 hover:text-white hover:bg-white/5'
+              }`}
+              aria-label="AI Chat"
+              title="AI Chat"
+            >
+              <Sparkles size={14} />
+              <span className="hidden sm:inline">AI Chat</span>
+            </button>
+
             {/* Profile dropdown */}
             <div className="relative" ref={profileRef}>
               <button
@@ -1166,6 +1161,43 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
             <SubscriptionGate isFunctional={isFunctional}>{children}</SubscriptionGate>
           )}
         </main>
+      </div>
+
+      {/* ── AI Chat Drawer (slide-in from right) ─────────────────────────
+           Always mounted so streaming survives navigation to /dashboard/chat.
+           Hidden via translate-x-full + pointer-events-none when closed or on chat page. */}
+      {/* Backdrop (mobile only, visible only when drawer is open and not on chat page) */}
+      {chatCtx.drawerOpen && pathname !== '/dashboard/chat' && (
+        <div
+          className="fixed inset-0 z-40 bg-black/30 sm:hidden"
+          onClick={() => chatCtx.setDrawerOpen(false)}
+        />
+      )}
+      {/* Drawer panel — never unmounted, only visually hidden */}
+      <div
+        className={`fixed top-0 right-0 h-full z-40 w-full sm:w-[420px] bg-[#0f172a] border-l border-white/10 shadow-2xl flex flex-col transform transition-transform duration-300 ease-in-out ${
+          chatCtx.drawerOpen && pathname !== '/dashboard/chat'
+            ? 'translate-x-0'
+            : 'translate-x-full pointer-events-none'
+        }`}
+        aria-hidden={!chatCtx.drawerOpen || pathname === '/dashboard/chat'}
+      >
+        <ErrorBoundary
+          lang={lang}
+          fallback={
+            <div className="p-4 text-center">
+              <p className="text-sm text-slate-400 mb-3">Chat er midlertidigt utilgængelig</p>
+              <button
+                onClick={() => window.location.reload()}
+                className="text-xs text-blue-400 hover:text-blue-300 border border-slate-700 rounded-lg px-3 py-1.5 transition-colors"
+              >
+                Prøv igen
+              </button>
+            </div>
+          }
+        >
+          <AIChatPanel />
+        </ErrorBoundary>
       </div>
 
       {/* Plan-selection / pending-approval overlay — shown based on subscription state */}

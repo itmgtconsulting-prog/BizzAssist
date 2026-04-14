@@ -1,14 +1,14 @@
 /**
  * GET /api/salgshistorik
  *
- * Henter historiske salgsoplysninger fra Datafordeler EJF GraphQL v1.
+ * Henter historiske salgsoplysninger fra Datafordeler FlexibleCurrent custom tjeneste.
  * Bruger samme OAuth-flow som /api/ejerskab.
  *
- * Endpoint: https://graphql.datafordeler.dk/EJF/v1
+ * Endpoint: https://graphql.datafordeler.dk/flexibleCurrent/v1/
  *
- * Schema (verificeret via EJF.graphql 2026-03-27):
- *   Trin 1: EJF_Ejerskifte  → filtrér på bestemtFastEjendomBFENr → hent handelsoplysningerLokalId
- *   Trin 2: EJF_Handelsoplysninger → filtrér på id_lokalId ∈ [ids] → hent prisdata
+ * Trin 1: EJF_Ejerskifte  → filtrér på bestemtFastEjendomBFENr → hent handelsoplysningerLokalId
+ * Trin 2: EJF_Handelsoplysninger → filtrér på id_lokalId ∈ [ids] → hent prisdata
+ * NB: Ejerskifte/Handelsoplysninger kan kræve custom query-navne — testes efter deploy.
  *
  * @param request - Next.js request med ?bfeNummer=xxx
  * @returns { handler: HandelData[], fejl, manglerNoegle, manglerAdgang }
@@ -54,7 +54,7 @@ export interface SalgshistorikResponse {
 
 // ─── Datafordeler EJF GraphQL ────────────────────────────────────────────────
 
-const EJF_GQL_URL = 'https://graphql.datafordeler.dk/EJF/v1';
+const EJF_GQL_URL = 'https://graphql.datafordeler.dk/flexibleCurrent/v1/';
 const TOKEN_URL = 'https://auth.datafordeler.dk/realms/distribution/protocol/openid-connect/token';
 
 /** OAuth token cache */

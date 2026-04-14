@@ -70,7 +70,7 @@ export interface EjendommeByOwnerResponse {
 
 // ─── Konstanter ─────────────────────────────────────────────────────────────
 
-const EJF_GQL_URL = 'https://graphql.datafordeler.dk/EJF/v1';
+const EJF_GQL_URL = 'https://graphql.datafordeler.dk/flexibleCurrent/v1/';
 const TOKEN_URL = 'https://auth.datafordeler.dk/realms/distribution/protocol/openid-connect/token';
 
 /** Maks antal CVR-numre der accepteres per kald */
@@ -151,7 +151,7 @@ async function hentBfeByCvr(
   const virkningstid = new Date().toISOString();
 
   const query = `{
-    EJF_Ejerskab(
+    EJFCustom_EjerskabBegraenset(
       first: 500
       virkningstid: "${virkningstid}"
       where: {
@@ -190,7 +190,7 @@ async function hentBfeByCvr(
       ) ?? false;
     if (authError) return { bfeNumre: [], authError: true };
 
-    const nodes = json.data?.EJF_Ejerskab?.nodes ?? [];
+    const nodes = json.data?.EJFCustom_EjerskabBegraenset?.nodes ?? [];
     const bfeNumre = nodes
       .map((n) => n.bestemtFastEjendomBFENr)
       .filter((b): b is number => b != null);

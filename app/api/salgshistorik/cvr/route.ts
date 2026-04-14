@@ -59,7 +59,7 @@ export interface CvrSalgshistorikResponse {
 
 // ─── Datafordeler EJF GraphQL ────────────────────────────────────────────────
 
-const EJF_GQL_URL = 'https://graphql.datafordeler.dk/EJF/v1';
+const EJF_GQL_URL = 'https://graphql.datafordeler.dk/flexibleCurrent/v1/';
 const TOKEN_URL = 'https://auth.datafordeler.dk/realms/distribution/protocol/openid-connect/token';
 
 let _cachedToken: { token: string; expiresAt: number } | null = null;
@@ -256,7 +256,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<CvrSalgshi
   try {
     // ── Trin 1: Find alle BFE-numre ejet af CVR (nuværende + historiske) ──
     const ejerskabQuery = `{
-      EJF_Ejerskab(
+      EJFCustom_EjerskabBegraenset(
         first: 500
         where: {
           ejendeVirksomhedCVRNr: { eq: ${parseInt(cvr, 10)} }
@@ -270,7 +270,11 @@ export async function GET(request: NextRequest): Promise<NextResponse<CvrSalgshi
       }
     }`;
 
-    const ejerskabResult = await queryEJF<RawEjerskab>(ejerskabQuery, 'EJF_Ejerskab', token);
+    const ejerskabResult = await queryEJF<RawEjerskab>(
+      ejerskabQuery,
+      'EJFCustom_EjerskabBegraenset',
+      token
+    );
     if (ejerskabResult?.authError) {
       return NextResponse.json(
         { cvr, handler: [], fejl: null, manglerNoegle: false, manglerAdgang: true },

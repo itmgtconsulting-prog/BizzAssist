@@ -841,7 +841,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
     import('@/app/api/ejerlejligheder/route').Ejerlejlighed[] | null
   >(null);
   /** True mens lejlighedsdata hentes */
-  const [_lejlighederLoader, setLejlighederLoader] = useState(false);
+  const [lejlighederLoader, setLejlighederLoader] = useState(false);
 
   /** Ejendomsvurderingsdata fra Datafordeler — null = ikke hentet endnu */
   const [vurdering, setVurdering] = useState<VurderingData | null>(null);
@@ -2397,7 +2397,15 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                   })()}
                 </div>
 
-                {/* Lejligheder — vises i stedet for CVR når ejendommen er opdelt i ejerlejligheder */}
+                {/* Lejligheder — loading spinner + tabel */}
+                {lejlighederLoader && (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
+                    <span className="ml-2 text-slate-400 text-sm">
+                      {da ? 'Henter lejlighedsdata…' : 'Loading apartment data…'}
+                    </span>
+                  </div>
+                )}
                 {lejligheder !== null && lejligheder.length > 0 ? (
                   <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden overflow-x-auto">
                     <div className="px-3 py-2.5 border-b border-slate-700/40 flex items-center justify-between">

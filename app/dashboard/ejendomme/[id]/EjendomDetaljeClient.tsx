@@ -1160,7 +1160,10 @@ export default function EjendomDetaljeClient({
    * AbortController sikrer at forældede svar ignoreres ved hurtig navigation.
    */
   useEffect(() => {
-    const bfe = bbrData?.ejerlejlighedBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer;
+    const erModerTl = dawaAdresse && !dawaAdresse.etage && !!bbrData?.ejerlejlighedBfe;
+    const bfe = erModerTl
+      ? (bbrData?.moderBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer)
+      : (bbrData?.ejerlejlighedBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer);
     if (!bfe) return;
     const controller = new AbortController();
     const signal = controller.signal;
@@ -1215,7 +1218,7 @@ export default function EjendomDetaljeClient({
         setTlSumLoader(false);
       });
     return () => controller.abort();
-  }, [bbrData]);
+  }, [bbrData, dawaAdresse]);
 
   /**
    * Henter CVR-virksomheder på adressen via /api/cvr når DAWA-adressen er klar.
@@ -1455,8 +1458,12 @@ export default function EjendomDetaljeClient({
    * AbortController sikrer at forældede svar ignoreres ved hurtig navigation.
    */
   useEffect(() => {
-    if (!erDAWA || !bbrData?.ejendomsrelationer?.length) return;
-    const bfeNummer = bbrData.ejendomsrelationer[0]?.bfeNummer;
+    if (!erDAWA || !bbrData?.ejendomsrelationer?.length || !dawaAdresse) return;
+    // Hovedejendom: brug moderBfe (energimærke gælder hele bygningen)
+    const erModerEnergi = !dawaAdresse.etage && !!bbrData.ejerlejlighedBfe;
+    const bfeNummer = erModerEnergi
+      ? (bbrData.moderBfe ?? bbrData.ejendomsrelationer[0]?.bfeNummer)
+      : bbrData.ejendomsrelationer[0]?.bfeNummer;
     if (!bfeNummer) return;
 
     const controller = new AbortController();

@@ -186,12 +186,31 @@ function mapESHit(hit: Record<string, unknown>): CVRVirksomhed | null {
     !harSlutdato;
   const aktivFra = typeof aktuelStatus?.gyldigFra === 'string' ? aktuelStatus.gyldigFra : null;
 
-  // ── Ansatte (seneste kvartal) ──
+  // ── Ansatte (nyeste af metadata kvartal/måned → gyldigNu(kvartalsbeskaeftigelse)) ──
+  const metaTemp = src.virksomhedMetadata as Record<string, unknown> | undefined;
+  const nyesteKvartalMeta = metaTemp?.nyesteKvartalsbeskaeftigelse as
+    | Record<string, unknown>
+    | undefined;
+  const maanedsMeta = metaTemp?.nyesteErstMaanedsbeskaeftigelse as
+    | Record<string, unknown>
+    | undefined;
+  const kvartalUpd =
+    typeof nyesteKvartalMeta?.sidstOpdateret === 'string' ? nyesteKvartalMeta.sidstOpdateret : '';
+  const maanedUpd =
+    typeof maanedsMeta?.sidstOpdateret === 'string' ? maanedsMeta.sidstOpdateret : '';
+  const metaAnsatte =
+    nyesteKvartalMeta?.antalAnsatte != null && maanedsMeta?.antalAnsatte != null
+      ? maanedUpd > kvartalUpd
+        ? (maanedsMeta.antalAnsatte as number)
+        : (nyesteKvartalMeta.antalAnsatte as number)
+      : ((nyesteKvartalMeta?.antalAnsatte as number | undefined) ??
+        (maanedsMeta?.antalAnsatte as number | undefined) ??
+        null);
   const kvartal = Array.isArray(src.kvartalsbeskaeftigelse)
     ? (src.kvartalsbeskaeftigelse as (Periodic & { antalAnsatte?: number })[])
     : [];
-  const senestKvartal = kvartal.length > 0 ? kvartal[kvartal.length - 1] : null;
-  const ansatte = senestKvartal?.antalAnsatte ?? null;
+  const senestKvartal = gyldigNu(kvartal);
+  const ansatte = metaAnsatte ?? senestKvartal?.antalAnsatte ?? null;
 
   return {
     cvr,

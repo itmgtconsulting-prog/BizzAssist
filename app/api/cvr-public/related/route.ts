@@ -245,14 +245,28 @@ export async function GET(req: NextRequest) {
       (statusVal === 'NORMAL' || statusVal === 'AKTIV' || statusVal === '') &&
       sammensatStatus !== 'Ophørt' &&
       !harSlutdato;
+    // Ansatte: nyeste af kvartal- og månedsmetadata
+    const nyesteKvartalMeta = meta?.nyesteKvartalsbeskaeftigelse as
+      | Record<string, unknown>
+      | undefined;
     const maanedsBeskæf = meta?.nyesteErstMaanedsbeskaeftigelse as
       | Record<string, unknown>
       | undefined;
+    const kvartalUpd =
+      typeof nyesteKvartalMeta?.sidstOpdateret === 'string' ? nyesteKvartalMeta.sidstOpdateret : '';
+    const maanedUpd =
+      typeof maanedsBeskæf?.sidstOpdateret === 'string' ? maanedsBeskæf.sidstOpdateret : '';
+    const besteMeta =
+      nyesteKvartalMeta && maanedsBeskæf
+        ? maanedUpd > kvartalUpd
+          ? maanedsBeskæf
+          : nyesteKvartalMeta
+        : (maanedsBeskæf ?? nyesteKvartalMeta ?? null);
     const ansatte =
-      maanedsBeskæf?.antalAnsatte != null
-        ? String(maanedsBeskæf.antalAnsatte)
-        : maanedsBeskæf?.intervalKodeAntalAnsatte
-          ? (intervalKodeMap[maanedsBeskæf.intervalKodeAntalAnsatte as string] ?? null)
+      besteMeta?.antalAnsatte != null
+        ? String(besteMeta.antalAnsatte)
+        : besteMeta?.intervalKodeAntalAnsatte
+          ? (intervalKodeMap[besteMeta.intervalKodeAntalAnsatte as string] ?? null)
           : null;
 
     // Stiftet

@@ -303,28 +303,54 @@ function mapESHit(hit: Record<string, unknown>): CVRPublicData | null {
       ? formatDate(forloeb.periode.gyldigTil)
       : null;
 
-  // ── Ansatte (seneste kvartal → metadata fallback) ──
+  // ── Ansatte (nyeste af metadata.nyesteKvartalsbeskaeftigelse og nyesteErstMaanedsbeskaeftigelse) ──
+  const metaTemp = src.virksomhedMetadata as Record<string, unknown> | undefined;
+
+  // Kvartal-metadata
+  const nyesteKvartalMeta = metaTemp?.nyesteKvartalsbeskaeftigelse as
+    | Record<string, unknown>
+    | undefined;
+  const kvartalUpdated =
+    typeof nyesteKvartalMeta?.sidstOpdateret === 'string' ? nyesteKvartalMeta.sidstOpdateret : '';
+  const employeesFromMetaKvartal =
+    nyesteKvartalMeta?.antalAnsatte != null
+      ? String(nyesteKvartalMeta.antalAnsatte)
+      : mapIntervalKode(nyesteKvartalMeta?.intervalKodeAntalAnsatte as string | undefined);
+
+  // Måneds-metadata (ofte nyere end kvartal — vælg den nyeste)
+  const maanedsBeskæf = metaTemp?.nyesteErstMaanedsbeskaeftigelse as
+    | Record<string, unknown>
+    | undefined;
+  const maanedUpdated =
+    typeof maanedsBeskæf?.sidstOpdateret === 'string' ? maanedsBeskæf.sidstOpdateret : '';
+  const employeesFromMeta =
+    maanedsBeskæf?.antalAnsatte != null
+      ? String(maanedsBeskæf.antalAnsatte)
+      : mapIntervalKode(maanedsBeskæf?.intervalKodeAntalAnsatte as string | undefined);
+
+  // Vælg den nyeste af kvartal og måned baseret på sidstOpdateret
+  let employeesFromMetadata: string | null = null;
+  if (employeesFromMetaKvartal && employeesFromMeta) {
+    employeesFromMetadata =
+      maanedUpdated > kvartalUpdated ? employeesFromMeta : employeesFromMetaKvartal;
+  } else {
+    employeesFromMetadata = employeesFromMetaKvartal ?? employeesFromMeta;
+  }
+
+  // Fallback: gyldigNu() på kvartalsbeskaeftigelse-arrayet (åben periode)
   const kvartal = Array.isArray(src.kvartalsbeskaeftigelse)
     ? (src.kvartalsbeskaeftigelse as (Periodic & {
         antalAnsatte?: number;
         intervalKodeAntalAnsatte?: string;
       })[])
     : [];
-  const senestKvartal = kvartal.length > 0 ? kvartal[kvartal.length - 1] : null;
+  const senestKvartal = gyldigNu(kvartal);
   const employeesFromKvartal =
     senestKvartal?.antalAnsatte != null
       ? String(senestKvartal.antalAnsatte)
       : mapIntervalKode(senestKvartal?.intervalKodeAntalAnsatte);
-  // Fallback: nyesteErstMaanedsbeskaeftigelse fra virksomhedMetadata
-  const metaTemp = src.virksomhedMetadata as Record<string, unknown> | undefined;
-  const maanedsBeskæf = metaTemp?.nyesteErstMaanedsbeskaeftigelse as
-    | Record<string, unknown>
-    | undefined;
-  const employeesFromMeta =
-    maanedsBeskæf?.antalAnsatte != null
-      ? String(maanedsBeskæf.antalAnsatte)
-      : mapIntervalKode(maanedsBeskæf?.intervalKodeAntalAnsatte as string | undefined);
-  const employees = employeesFromKvartal ?? employeesFromMeta;
+
+  const employees = employeesFromMetadata ?? employeesFromKvartal;
 
   // ── Formål ──
   const formaalArr = Array.isArray(src.formaal)

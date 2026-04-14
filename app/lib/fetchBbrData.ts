@@ -834,11 +834,55 @@ export async function fetchBbrForAddress(
   ]);
 
   // Udtræk unikke bygning-UUID'er fra enheder (primær kilde)
-  const fraEnheder: string[] = rawEnheder
+  let fraEnheder: string[] = rawEnheder
     ? (rawEnheder as RawBBREnhed[])
         .map((e) => e.bygning)
         .filter((b): b is string => typeof b === 'string' && b.length > 0)
     : [];
+
+  // ── Hovedejendom fallback ────────────────────────────────────────────────
+  // For hovedejendomme (adgangsadresse uden etage/dør, med ejerlejligheder) returnerer
+  // hverken BYGNING_QUERY eller ENHED_QUERY resultater, fordi bygningens husnummer
+  // er registreret under en anden adgangsadresse (f.eks. Plads 16 vs 18).
+  // Løsning: find en lejligheds-adresse via DAWA BFE-opslag og brug den til at hente
+  // enheder → bygnings-UUID.
+  let effectiveRawEnheder = rawEnheder;
+  if (
+    (!rawBygninger || rawBygninger.length === 0) &&
+    (!rawEnheder || rawEnheder.length === 0) &&
+    ejerlejlighedBfe
+  ) {
+    try {
+      // Hent adresser for ejerlejligheds-BFE via DAWA
+      const bfeRes = await fetch(`https://api.dataforsyningen.dk/bfe/${ejerlejlighedBfe}`, {
+        signal: AbortSignal.timeout(5000),
+        next: { revalidate: 3600 },
+      });
+      if (bfeRes.ok) {
+        const bfeData = (await bfeRes.json()) as {
+          type?: string;
+          adgangsadresse?: { id?: string };
+          adresser?: { id?: string; adgangsadresse?: { id?: string } }[];
+        };
+        // Brug første lejligheds-adresse til at finde enheder → bygning
+        const lejAdresseId = bfeData.adresser?.[0]?.id ?? bfeData.adgangsadresse?.id;
+        if (lejAdresseId) {
+          const lejEnheder = await fetchBBRGraphQL(ENHED_QUERY, { vt, id: lejAdresseId });
+          if (lejEnheder && lejEnheder.length > 0) {
+            effectiveRawEnheder = lejEnheder;
+            fraEnheder = (lejEnheder as RawBBREnhed[])
+              .map((e) => e.bygning)
+              .filter((b): b is string => typeof b === 'string' && b.length > 0);
+            logger.log(
+              `[fetchBBR] Hovedejendom fallback: fandt ${lejEnheder.length} enheder via EL-BFE ${ejerlejlighedBfe}`
+            );
+          }
+        }
+      }
+    } catch {
+      // Fallback fejler stille — BBR-tab viser bare tom data
+    }
+  }
 
   // Fallback: hvis BYGNING_QUERY returnerede 0 resultater men enheder refererer til
   // bygnings-UUIDs (fx ejerlejligheder i komplekser hvor bygningens husnummer-adresse
@@ -882,7 +926,9 @@ export async function fetchBbrForAddress(
   const rawBygningerUnique = effectiveRawBygninger
     ? deduplicerBBR(effectiveRawBygninger as RawBBRBygning[])
     : null;
-  const rawEnhederUnique = rawEnheder ? deduplicerBBR(rawEnheder as RawBBREnhed[]) : null;
+  const rawEnhederUnique = effectiveRawEnheder
+    ? deduplicerBBR(effectiveRawEnheder as RawBBREnhed[])
+    : null;
 
   // Byg et map fra bygnings-UUID → bygningsnr fra WFS-punkterne (byg007Bygningsnummer)
   const bygningsnrFraWFS = new Map<string, number>();

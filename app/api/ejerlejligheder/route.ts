@@ -44,8 +44,11 @@ export interface EjerlejlighederResponse {
 
 // ─── Tinglysning mTLS ───────────────────────────────────────────────────────
 
-const CERT_PATH = process.env.NEMLOGIN_DEVTEST4_CERT_PATH ?? '';
-const CERT_PASSWORD = process.env.NEMLOGIN_DEVTEST4_CERT_PASSWORD ?? '';
+const CERT_PATH =
+  process.env.TINGLYSNING_CERT_PATH ?? process.env.NEMLOGIN_DEVTEST4_CERT_PATH ?? '';
+const CERT_PASSWORD =
+  process.env.TINGLYSNING_CERT_PASSWORD ?? process.env.NEMLOGIN_DEVTEST4_CERT_PASSWORD ?? '';
+const CERT_B64 = process.env.TINGLYSNING_CERT_B64 ?? process.env.NEMLOGIN_DEVTEST4_CERT_B64 ?? '';
 const TL_BASE = process.env.TINGLYSNING_BASE_URL ?? 'https://test.tinglysning.dk';
 const TL_API_PATH = '/tinglysning/ssl';
 
@@ -73,13 +76,17 @@ interface TLSearchResponse {
  */
 function tlFetch(urlPath: string): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
-    const certAbsPath = path.resolve(CERT_PATH);
-    if (!fs.existsSync(certAbsPath)) {
-      reject(new Error('Certifikat ikke fundet: ' + certAbsPath));
-      return;
+    let pfx: Buffer;
+    if (CERT_B64) {
+      pfx = Buffer.from(CERT_B64, 'base64');
+    } else {
+      const certAbsPath = path.resolve(CERT_PATH);
+      if (!fs.existsSync(certAbsPath)) {
+        reject(new Error('Certifikat ikke fundet: ' + certAbsPath));
+        return;
+      }
+      pfx = fs.readFileSync(certAbsPath);
     }
-
-    const pfx = fs.readFileSync(certAbsPath);
     const url = new URL(TL_BASE + TL_API_PATH + urlPath);
 
     const req = https.request(
@@ -186,7 +193,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
     );
   }
 
-  if (!CERT_PATH || !CERT_PASSWORD) {
+  if ((!CERT_PATH && !CERT_B64) || !CERT_PASSWORD) {
     return NextResponse.json(
       { lejligheder: [], fejl: 'Tinglysning certifikat ikke konfigureret' },
       { status: 200 }

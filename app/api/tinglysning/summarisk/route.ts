@@ -63,6 +63,22 @@ export function clearXmlCache(): void {
 }
 
 /**
+ * Run async tasks in parallel batches to avoid overwhelming the external API.
+ * @param items - Array of items to process
+ * @param fn - Async function to call for each item
+ * @param batchSize - Max concurrent calls (default 5)
+ */
+async function batchParallel<T>(
+  items: T[],
+  fn: (item: T) => Promise<void>,
+  batchSize = 5
+): Promise<void> {
+  for (let i = 0; i < items.length; i += batchSize) {
+    await Promise.allSettled(items.slice(i, i + batchSize).map(fn));
+  }
+}
+
+/**
  * @param urlPath - Tinglysning API path
  * @param maxBytes - Stop downloading after this many bytes (0 = no limit).
  *   Used for sectioned calls where we only need part of the XML.
@@ -199,6 +215,8 @@ export interface TLServitut {
   /** Original PDF bilagsreferencer (UUID'er der kan hentes via /bilag/{id}) */
   bilagRefs: string[];
   ogsaaLystPaa: number | null;
+  /** True hvis servitutten er hentet fra hovedejendommen (for ejerlejligheder) */
+  fraHovedejendom?: boolean;
 }
 
 export async function GET(req: NextRequest) {
@@ -215,6 +233,8 @@ export async function GET(req: NextRequest) {
    * Uden section returneres alt (bagudkompatibelt).
    */
   const section = req.nextUrl.searchParams.get('section');
+  /** Valgfri: BFE for hovedejendom — henter servitutter for BÅDE lejlighed og hovedejendom */
+  const hovedBfe = req.nextUrl.searchParams.get('hovedBfe');
 
   if ((!CERT_PATH && !CERT_B64) || !CERT_PASSWORD) {
     return NextResponse.json({
@@ -343,43 +363,46 @@ export async function GET(req: NextRequest) {
     }
 
     // ── Berig adkomst med dokument-detaljer (anmelder, skødetekst, kategori) ──
-    for (const ejer of ejere) {
-      if (!ejer.dokumentId) continue;
-      try {
-        const dokRes = await tlFetch(`/dokaktuel/uuid/${ejer.dokumentId}`);
-        if (dokRes.status === 200) {
-          const dok = dokRes.body;
-          // Anmelder
-          const anmelderSection =
-            dok.match(/AnmelderInformation[\s\S]*?<\/[^>]*AnmelderInformation/)?.[0] ?? '';
-          ejer.anmelderCvr = anmelderSection.match(/CVRnumberIdentifier[^>]*>([^<]+)/)?.[1] ?? null;
-          ejer.anmelderNavn = anmelderSection.match(/PersonName[^>]*>([^<]+)/)?.[1] ?? null;
-          ejer.anmelderEmail =
-            anmelderSection.match(/EmailAddressIdentifier[^>]*>([^<]+)/)?.[1] ?? null;
-          // Lookup anmelder company name from CVR if we have it
-          if (ejer.anmelderCvr && !ejer.anmelderNavn) {
-            ejer.anmelderNavn = `CVR ${ejer.anmelderCvr}`;
+    // Paralleliseret i batches af 5 for at undgå at overbelaste Tinglysning API
+    await batchParallel(
+      ejere.filter((e) => e.dokumentId),
+      async (ejer) => {
+        try {
+          const dokRes = await tlFetch(`/dokaktuel/uuid/${ejer.dokumentId}`);
+          if (dokRes.status === 200) {
+            const dok = dokRes.body;
+            // Anmelder
+            const anmelderSection =
+              dok.match(/AnmelderInformation[\s\S]*?<\/[^>]*AnmelderInformation/)?.[0] ?? '';
+            ejer.anmelderCvr =
+              anmelderSection.match(/CVRnumberIdentifier[^>]*>([^<]+)/)?.[1] ?? null;
+            ejer.anmelderNavn = anmelderSection.match(/PersonName[^>]*>([^<]+)/)?.[1] ?? null;
+            ejer.anmelderEmail =
+              anmelderSection.match(/EmailAddressIdentifier[^>]*>([^<]+)/)?.[1] ?? null;
+            if (ejer.anmelderCvr && !ejer.anmelderNavn) {
+              ejer.anmelderNavn = `CVR ${ejer.anmelderCvr}`;
+            }
+            // Skødetekst
+            const skoedeTekst = dok
+              .match(/SkoedeTekst[\s\S]*?Afsnit[^>]*>([\s\S]*?)<\/[^>]*Afsnit/)?.[1]
+              ?.trim();
+            ejer.skoedeTekst = skoedeTekst ?? null;
+            // Ejendomskategori
+            const katTag = dok.match(/EjendomKategori(\w+)\//)?.[1];
+            ejer.ejendomKategori = katTag ?? null;
+            // Handelskode
+            ejer.handelKode = dok.match(/AdkomstHandelKode[^>]*>([^<]+)/)?.[1] ?? null;
+            // Købeaftaledato (fra dokument hvis ikke i summarisk)
+            if (!ejer.koebsaftaledato) {
+              ejer.koebsaftaledato =
+                dok.match(/KoebsaftaleDato[^>]*>([^<]+)/)?.[1]?.split('+')[0] ?? null;
+            }
           }
-          // Skødetekst
-          const skoedeTekst = dok
-            .match(/SkoedeTekst[\s\S]*?Afsnit[^>]*>([\s\S]*?)<\/[^>]*Afsnit/)?.[1]
-            ?.trim();
-          ejer.skoedeTekst = skoedeTekst ?? null;
-          // Ejendomskategori
-          const katTag = dok.match(/EjendomKategori(\w+)\//)?.[1];
-          ejer.ejendomKategori = katTag ?? null;
-          // Handelskode
-          ejer.handelKode = dok.match(/AdkomstHandelKode[^>]*>([^<]+)/)?.[1] ?? null;
-          // Købeaftaledato (fra dokument hvis ikke i summarisk)
-          if (!ejer.koebsaftaledato) {
-            ejer.koebsaftaledato =
-              dok.match(/KoebsaftaleDato[^>]*>([^<]+)/)?.[1]?.split('+')[0] ?? null;
-          }
+        } catch {
+          /* ignore — detaljer er valgfrie */
         }
-      } catch {
-        /* ignore — detaljer er valgfrie */
       }
-    }
+    );
 
     // ── Parse hæftelser ──
     const haeftelser: TLHaeftelse[] = [];
@@ -591,10 +614,14 @@ export async function GET(req: NextRequest) {
     }
 
     // ── Berig hæftelser med dokument-detaljer (rente-detaljer, underpant, fuldmagt, kreditorbetegnelse) ──
+    // Dedupliker dokumentId'er og paralleliser i batches af 5
     const enrichedHaeftelseDocs = new Set<string>();
-    for (const h of haeftelser) {
-      if (!h.dokumentId || enrichedHaeftelseDocs.has(h.dokumentId)) continue;
+    const haeftelserToEnrich = haeftelser.filter((h) => {
+      if (!h.dokumentId || enrichedHaeftelseDocs.has(h.dokumentId)) return false;
       enrichedHaeftelseDocs.add(h.dokumentId);
+      return true;
+    });
+    await batchParallel(haeftelserToEnrich, async (h) => {
       try {
         const dokRes = await tlFetch(`/dokaktuel/uuid/${h.dokumentId}`);
         if (dokRes.status === 200) {
@@ -754,7 +781,7 @@ export async function GET(req: NextRequest) {
       } catch {
         /* ignore — detaljer er valgfrie */
       }
-    }
+    });
 
     // ── Parse servitutter ──
     const servitutter: TLServitut[] = [];
@@ -835,29 +862,29 @@ export async function GET(req: NextRequest) {
     }
 
     // ── Berig servitutter med tillægstekst fra dokument-detaljer ──
-    for (const s of servitutter) {
-      if (!s.dokumentId) continue;
-      // Kun berig hvis tillægstekst mangler eller er kort (summarisk giver ofte kun ét afsnit)
-      try {
-        const dokRes = await tlFetch(`/dokaktuel/uuid/${s.dokumentId}`);
-        if (dokRes.status === 200) {
-          const dok = dokRes.body;
-          // Saml alle Afsnit-elementer fra dokumentet
-          const dokAfsnit = [...dok.matchAll(/Afsnit[^>]*>([^<]{3,})/g)]
-            .map((m) => m[1].trim())
-            .filter((v) => v.length > 0 && !v.match(/^[0-9a-f-]{36}$/));
-          if (dokAfsnit.length > 0) {
-            const dokTekst = dokAfsnit.join('\n');
-            // Brug dokumentets tekst hvis den er længere end summarisk-versionen
-            if (!s.tillaegsTekst || dokTekst.length > s.tillaegsTekst.length) {
-              s.tillaegsTekst = dokTekst;
+    // Paralleliseret i batches af 5
+    await batchParallel(
+      servitutter.filter((s) => s.dokumentId),
+      async (s) => {
+        try {
+          const dokRes = await tlFetch(`/dokaktuel/uuid/${s.dokumentId}`);
+          if (dokRes.status === 200) {
+            const dok = dokRes.body;
+            const dokAfsnit = [...dok.matchAll(/Afsnit[^>]*>([^<]{3,})/g)]
+              .map((m) => m[1].trim())
+              .filter((v) => v.length > 0 && !v.match(/^[0-9a-f-]{36}$/));
+            if (dokAfsnit.length > 0) {
+              const dokTekst = dokAfsnit.join('\n');
+              if (!s.tillaegsTekst || dokTekst.length > s.tillaegsTekst.length) {
+                s.tillaegsTekst = dokTekst;
+              }
             }
           }
+        } catch {
+          /* ignore — detaljer er valgfrie */
         }
-      } catch {
-        /* ignore — detaljer er valgfrie */
       }
-    }
+    );
 
     // ── Parse tingbogsattest stamoplysninger ──
     const bfeNr = xml.match(/BestemtFastEjendomNummer[^>]*>([^<]+)/)?.[1] ?? null;
@@ -986,6 +1013,59 @@ export async function GET(req: NextRequest) {
       );
     }
     if (section === 'servitutter') {
+      // Hent servitutter fra hovedejendom hvis hovedBfe er angivet (ejerlejligheder)
+      if (hovedBfe && /^\d+$/.test(hovedBfe)) {
+        try {
+          const hovedSearchRes = await tlFetch(
+            `/ejendom/hovednoteringsnummer?hovednoteringsnummer=${hovedBfe}`
+          );
+          if (hovedSearchRes.status === 200) {
+            const hovedData = JSON.parse(hovedSearchRes.body);
+            const hovedItems = hovedData?.items ?? [];
+            if (hovedItems.length > 0 && hovedItems[0].uuid !== uuid) {
+              const hovedUuid = hovedItems[0].uuid;
+              const hovedXmlRes = await tlFetch(`/ejdsummarisk/${hovedUuid}`);
+              if (hovedXmlRes.status === 200) {
+                const hovedXml = hovedXmlRes.body;
+                const hovedServitutEntries = [
+                  ...hovedXml.matchAll(
+                    /<ns:ServitutSummarisk>([\s\S]*?)<\/ns:ServitutSummarisk>/g
+                  ),
+                ];
+                for (const [, entry] of hovedServitutEntries) {
+                  const type = entry.match(/ServitutType[^>]*>([^<]+)/)?.[1] ?? null;
+                  const dato =
+                    entry.match(/TinglysningsDato[^>]*>([^<]+)/)?.[1]?.split('+')[0] ?? null;
+                  const tekst = entry.match(/ServitutTekstSummarisk[^>]*>([^<]+)/)?.[1] ?? null;
+                  const prioritet = entry.match(/PrioritetNummer[^>]*>([^<]+)/)?.[1] ?? null;
+                  const dokumentId =
+                    entry.match(/DokumentIdentifikator[^>]*>([^<]+)/)?.[1] ?? null;
+                  // Marker som fra hovedejendom
+                  servitutter.push({
+                    type: type ?? '',
+                    dato,
+                    tekst,
+                    prioritet: prioritet ? parseInt(prioritet, 10) : null,
+                    dokumentId,
+                    dokumentAlias: null,
+                    tillaegsTekst: null,
+                    indholdKoder: [],
+                    paataleberettiget: null,
+                    paataleberettigetCvr: null,
+                    harBetydningForVaerdi: false,
+                    tinglysningsafgift: null,
+                    bilagRefs: [],
+                    ogsaaLystPaa: null,
+                    fraHovedejendom: true,
+                  });
+                }
+              }
+            }
+          }
+        } catch (err) {
+          logger.warn('[tinglysning/summarisk] Hovedejendom servitut-hentning fejlede:', err);
+        }
+      }
       return NextResponse.json(
         { servitutter, indskannedeAkterNavne, fejl: null },
         {

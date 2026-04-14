@@ -853,11 +853,11 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
   const [visVurderingHistorik, setVisVurderingHistorik] = useState(false);
 
   /** Ejere fra Ejerfortegnelsen (Datafordeler) */
-  const [_ejere, setEjere] = useState<EjerData[] | null>(null);
-  /** True mens ejerdata hentes (bruges kun internt i fetch-effekt) */
-  const [_ejereLoader, setEjereLoader] = useState(false);
+  const [ejereEjf, setEjere] = useState<EjerData[] | null>(null);
+  /** True mens ejerdata hentes */
+  const [ejereLoader, setEjereLoader] = useState(false);
   /** True hvis Datafordeler returnerer 403 — Dataadgang-ansøgning mangler for EJF */
-  const [_manglerEjereAdgang, setManglerEjereAdgang] = useState(false);
+  const [manglerEjereAdgang, setManglerEjereAdgang] = useState(false);
 
   /** BBR-tab: ID'er på bygningsrækker der er foldet ud */
   const [expandedBygninger, setExpandedBygninger] = useState<Set<string>>(new Set());
@@ -3243,6 +3243,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                       null
                     }
                     lang={lang}
+                    moderBfe={bbrData?.moderBfe ?? null}
                   />
                 );
               })()}
@@ -5319,6 +5320,15 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
           ══════════════════════════════════════════ */}
             {aktivTab === 'ejerforhold' && (
               <div className="space-y-6">
+                {/* Loading state for ejerskab */}
+                {ejereLoader && (
+                  <div className="flex items-center justify-center py-16">
+                    <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
+                    <span className="ml-2 text-slate-400 text-sm">
+                      {lang === 'da' ? 'Henter ejerskabsdata…' : 'Loading ownership data…'}
+                    </span>
+                  </div>
+                )}
                 {/* Ejer-kort */}
                 {ejendom.ejerDetaljer && (
                   <div>
@@ -6465,11 +6475,14 @@ function PropertyOwnerDiagram({
  * Tinglysning-tab — viser tingbogsattest-data: ejere, hæftelser, servitutter.
  * Data hentes fra /api/tinglysning (søgning) + /api/tinglysning/summarisk (detaljer).
  */
-function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }) {
+function TinglysningTab({ bfe, lang, moderBfe }: { bfe: number | null; lang: 'da' | 'en'; moderBfe?: number | null }) {
   const da = lang === 'da';
   const router = useRouter();
 
   const [loading, setLoading] = useState(true);
+  const [ejereLoading, setEjereLoading] = useState(true);
+  const [haeftelserLoading, setHaeftelserLoading] = useState(true);
+  const [servituterLoading, setServituterLoading] = useState(true);
   interface TLUnderpant {
     prioritet: number | null;
     beloeb: number | null;
@@ -6530,6 +6543,9 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
 
     // Nulstil state ved ny fetch (fx BFE skifter)
     setLoading(true);
+    setEjereLoading(true);
+    setHaeftelserLoading(true);
+    setServituterLoading(true);
     setFejl(null);
     setEjere([]);
     setHaeftelser([]);
@@ -6568,26 +6584,41 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
         }
         setTlUuid(tlData.uuid);
         // Trin 2: Hent summariske data i 3 parallelle sektions-kald
-        // (reducerer response-størrelse pr. kald for store ejendomme)
+        // Progressiv loading — hver sektion vises straks den er klar
         const base = `/api/tinglysning/summarisk?uuid=${tlData.uuid}`;
+        const erEjerlejlighed = moderBfe && moderBfe !== bfe;
+        const servituterUrl = erEjerlejlighed
+          ? `${base}&section=servitutter&hovedBfe=${moderBfe}`
+          : `${base}&section=servitutter`;
         return Promise.all([
-          fetch(`${base}&section=ejere`, { signal }).then((r) => (r.ok ? r.json() : null)),
-          fetch(`${base}&section=haeftelser`, { signal }).then((r) => (r.ok ? r.json() : null)),
-          fetch(`${base}&section=servitutter`, { signal }).then((r) => (r.ok ? r.json() : null)),
-        ]).then(([ejereRes, haeftelserRes, servituterRes]) => {
-          if (ejereRes) {
-            setEjere(ejereRes.ejere ?? []);
-            setTingbogsattest(ejereRes.tingbogsattest ?? null);
-          }
-          if (haeftelserRes) {
-            setHaeftelser(haeftelserRes.haeftelser ?? []);
-            setBilagRefs(haeftelserRes.bilagRefs ?? []);
-          }
-          if (servituterRes) {
-            setServitutter(servituterRes.servitutter ?? []);
-            setIndskannedeAkterNavne(servituterRes.indskannedeAkterNavne ?? []);
-          }
-        });
+          fetch(`${base}&section=ejere`, { signal })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((res) => {
+              if (res) {
+                setEjere(res.ejere ?? []);
+                setTingbogsattest(res.tingbogsattest ?? null);
+              }
+              setEjereLoading(false);
+            }),
+          fetch(`${base}&section=haeftelser`, { signal })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((res) => {
+              if (res) {
+                setHaeftelser(res.haeftelser ?? []);
+                setBilagRefs(res.bilagRefs ?? []);
+              }
+              setHaeftelserLoading(false);
+            }),
+          fetch(servituterUrl, { signal })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((res) => {
+              if (res) {
+                setServitutter(res.servitutter ?? []);
+                setIndskannedeAkterNavne(res.indskannedeAkterNavne ?? []);
+              }
+              setServituterLoading(false);
+            }),
+        ]);
       })
       .catch((err) => {
         if (err.name !== 'AbortError')
@@ -6653,7 +6684,16 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
     Anden: da ? 'Andet' : 'Other',
   };
 
-  if (loading)
+  /** Per-sektion loading spinner */
+  const SectionSpinner = ({ text }: { text: string }) => (
+    <div className="flex items-center justify-center py-8">
+      <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
+      <span className="ml-2 text-slate-400 text-sm">{text}</span>
+    </div>
+  );
+
+  // Initial loading — vent kun på UUID-søgning, ikke alle sektioner
+  if (loading && ejereLoading && haeftelserLoading && servituterLoading && ejere.length === 0)
     return (
       <div className="flex items-center justify-center py-16">
         <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
@@ -7138,6 +7178,9 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
         )}
 
         {/* ── HÆFTELSER ── */}
+        {haeftelserLoading && (
+          <SectionSpinner text={da ? 'Henter hæftelser…' : 'Loading charges…'} />
+        )}
         {haeftelser.length > 0 && (
           <>
             <div className="px-4 py-1.5 bg-amber-500/5 border-b border-slate-700/20">
@@ -7484,6 +7527,9 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
         )}
 
         {/* ── SERVITUTTER ── */}
+        {servituterLoading && (
+          <SectionSpinner text={da ? 'Henter servitutter…' : 'Loading easements…'} />
+        )}
         {servitutter.length > 0 && (
           <>
             <div className="px-4 py-1.5 bg-teal-500/5 border-b border-slate-700/20">

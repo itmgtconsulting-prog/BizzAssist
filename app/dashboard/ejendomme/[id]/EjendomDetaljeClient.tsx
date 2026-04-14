@@ -2023,7 +2023,8 @@ export default function EjendomDetaljeClient({
 
                   {/* Matrikel / Lejlighedsinfo */}
                   {(() => {
-                    const erLejlighed = !!bbrData?.ejerlejlighedBfe;
+                    const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
+                    const erLejlighed = !!bbrData?.ejerlejlighedBfe && !erModer;
                     const enhed = erLejlighed ? (bbrData?.enheder ?? [])[0] : null;
                     // Grundareal: brug DAWA jordstykke → VUR vurderet areal som fallback
                     const grundareal =

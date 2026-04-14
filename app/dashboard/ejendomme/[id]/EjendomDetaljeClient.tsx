@@ -3225,8 +3225,8 @@ export default function EjendomDetaljeClient({
             {/* ══ EJERFORHOLD ══ */}
             {aktivTab === 'ejerforhold' && (
               <div className="space-y-4">
-                {/* Loading state for ejerskab */}
-                {ejereLoader && (
+                {/* Loading state — vis spinner mens BBR eller ejerskab data hentes */}
+                {(ejereLoader || bbrLoader || !bbrData) && (
                   <div className="flex items-center justify-center py-16">
                     <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
                     <span className="ml-2 text-slate-400 text-sm">
@@ -3236,6 +3236,8 @@ export default function EjendomDetaljeClient({
                 )}
                 {/* ── Ejerskabsdiagram / Relationsdiagram (fra Tinglysning + EJF kæde) ── */}
                 {!ejereLoader &&
+                  !bbrLoader &&
+                  bbrData &&
                   (() => {
                     const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
                     const bfeForDiagram =

@@ -2185,9 +2185,7 @@ export default function EjendomDetaljeClient({
                               )}
                             </p>
                             <p className="text-white text-base font-bold">
-                              {vurdering.ejendomsvaerdi
-                                ? formatDKK(vurdering.ejendomsvaerdi)
-                                : t.notAssessed}
+                              {vurdering.ejendomsvaerdi ? formatDKK(vurdering.ejendomsvaerdi) : '–'}
                             </p>
                             {vurdering.afgiftspligtigEjendomsvaerdi !== null &&
                               vurdering.afgiftspligtigEjendomsvaerdi !==
@@ -2304,7 +2302,7 @@ export default function EjendomDetaljeClient({
                               <p className="text-amber-200 text-sm font-medium">
                                 {nyesteForelobig.ejendomsvaerdi
                                   ? formatDKK(nyesteForelobig.ejendomsvaerdi)
-                                  : t.notAssessed}
+                                  : '–'}
                               </p>
                             </div>
                             <div>
@@ -3397,9 +3395,7 @@ export default function EjendomDetaljeClient({
                             )}
                           </p>
                           <p className="text-white text-lg font-bold">
-                            {vurdering.ejendomsvaerdi
-                              ? formatDKK(vurdering.ejendomsvaerdi)
-                              : t.notAssessed}
+                            {vurdering.ejendomsvaerdi ? formatDKK(vurdering.ejendomsvaerdi) : '–'}
                           </p>
                         </div>
                         <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
@@ -3464,9 +3460,7 @@ export default function EjendomDetaljeClient({
                                     </span>
                                   </div>
                                   <span className="text-amber-200/80">
-                                    {fv.ejendomsvaerdi
-                                      ? formatDKK(fv.ejendomsvaerdi)
-                                      : t.notAssessed}
+                                    {fv.ejendomsvaerdi ? formatDKK(fv.ejendomsvaerdi) : '–'}
                                   </span>
                                   <span className="text-amber-200/80">
                                     {fv.grundvaerdi ? formatDKK(fv.grundvaerdi) : '0 DKK'}
@@ -3493,9 +3487,7 @@ export default function EjendomDetaljeClient({
                                       )}
                                     </div>
                                     <span className="text-slate-300">
-                                      {v.ejendomsvaerdi != null
-                                        ? formatDKK(v.ejendomsvaerdi)
-                                        : t.notAssessed}
+                                      {v.ejendomsvaerdi != null ? formatDKK(v.ejendomsvaerdi) : '–'}
                                     </span>
                                     <span className="text-slate-300">
                                       {v.grundvaerdi != null ? formatDKK(v.grundvaerdi) : '0 DKK'}

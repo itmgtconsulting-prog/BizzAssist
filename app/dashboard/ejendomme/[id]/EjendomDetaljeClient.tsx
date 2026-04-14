@@ -3253,8 +3253,34 @@ export default function EjendomDetaljeClient({
                 {/* ── Ejerskabsdiagram / Relationsdiagram (fra Tinglysning + EJF kæde) ── */}
                 {!ejereLoader &&
                   (() => {
+                    const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
                     const bfeForDiagram =
                       bbrData?.ejerlejlighedBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer;
+
+                    // Hovedejendom opdelt i EL — vis info i stedet for ejerskabsdiagram
+                    if (erModer) {
+                      return (
+                        <div>
+                          <SectionTitle title={t.ownershipStructure} />
+                          <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-6 text-center space-y-3">
+                            <div className="w-12 h-12 bg-amber-500/10 rounded-xl flex items-center justify-center mx-auto">
+                              <Building2 size={22} className="text-amber-400" />
+                            </div>
+                            <p className="text-slate-300 text-sm font-medium">
+                              {da
+                                ? 'Ejendommen er opdelt i ejerlejligheder'
+                                : 'Property is divided into condominiums'}
+                            </p>
+                            <p className="text-slate-500 text-xs max-w-md mx-auto">
+                              {da
+                                ? 'Ejerskab er registreret på de enkelte ejerlejligheder. Se lejlighedslisten på Oversigt-fanen for at finde ejere.'
+                                : 'Ownership is registered on individual condominium units. See the apartment list on the Overview tab to find owners.'}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    }
+
                     if (!bfeForDiagram) return null;
                     return (
                       <div>

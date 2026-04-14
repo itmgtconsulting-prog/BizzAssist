@@ -1212,9 +1212,10 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
    * AbortController sikrer at forældede svar ignoreres ved hurtig navigation.
    */
   useEffect(() => {
-    if (!erDAWA || dawaStatus !== 'ok' || !dawaAdresse) return;
-    // Kun hent for adresser uden etage/dør (dvs. potentielle moderejendomme)
-    if (dawaAdresse.etage) return;
+    // BIZZ-241: Hent lejligheder for hovedejendomme (ingen etage + har ejerlejlighedBfe)
+    // Også hent hvis dawaAdresse er tilgængelig og viser en moderejendom
+    const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
+    if (!erModer) return;
     // Kræver matrikeldata fra BBR ejendomsrelationer
     const rel = bbrData?.ejendomsrelationer?.[0];
     if (!rel?.ejerlavKode || !rel?.matrikelnr) return;
@@ -3211,14 +3212,40 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
             )}
 
             {/* ══ TINGLYSNING ══ */}
-            {aktivTab === 'tinglysning' && (
-              <TinglysningTab
-                bfe={
-                  bbrData?.ejerlejlighedBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer ?? null
+            {aktivTab === 'tinglysning' &&
+              (() => {
+                const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
+                // BIZZ-242: Hovedejendom opdelt i EL — vis besked i stedet for lejligheds-dokumenter
+                if (erModer) {
+                  return (
+                    <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-6 text-center space-y-3">
+                      <div className="w-12 h-12 bg-amber-500/10 rounded-xl flex items-center justify-center mx-auto">
+                        <Building2 size={22} className="text-amber-400" />
+                      </div>
+                      <p className="text-slate-300 text-sm font-medium">
+                        {lang === 'da'
+                          ? 'Ejendommen er opdelt i ejerlejligheder'
+                          : 'Property is divided into condominiums'}
+                      </p>
+                      <p className="text-slate-500 text-xs max-w-md mx-auto">
+                        {lang === 'da'
+                          ? 'Tinglyste dokumenter (skøder, pantebreve, servitutter) er registreret på de enkelte ejerlejligheder. Klik på en lejlighed i Oversigt-fanen for at se dens tinglysningsdata.'
+                          : 'Land registry documents (deeds, mortgages, easements) are registered on individual condominium units. Click on an apartment in the Overview tab to view its registry data.'}
+                      </p>
+                    </div>
+                  );
                 }
-                lang={lang}
-              />
-            )}
+                return (
+                  <TinglysningTab
+                    bfe={
+                      bbrData?.ejerlejlighedBfe ??
+                      bbrData?.ejendomsrelationer?.[0]?.bfeNummer ??
+                      null
+                    }
+                    lang={lang}
+                  />
+                );
+              })()}
 
             {/* ══ ØKONOMI ══ */}
             {aktivTab === 'oekonomi' && (
@@ -5374,9 +5401,35 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
 
                 {/* Ejerstruktur — relationsdiagram */}
                 {(() => {
+                  const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
                   const bfe =
                     bbrData?.ejerlejlighedBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer;
                   if (!bfe) return null;
+
+                  // BIZZ-241: Hovedejendom opdelt i EL/andel — vis info i stedet for forkerte ejere
+                  if (erModer) {
+                    return (
+                      <div>
+                        <SectionTitle title={t.ownershipStructure} />
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-6 text-center space-y-3">
+                          <div className="w-12 h-12 bg-amber-500/10 rounded-xl flex items-center justify-center mx-auto">
+                            <Building2 size={22} className="text-amber-400" />
+                          </div>
+                          <p className="text-slate-300 text-sm font-medium">
+                            {da
+                              ? 'Ejendommen er opdelt i ejerlejligheder'
+                              : 'Property is divided into condominiums'}
+                          </p>
+                          <p className="text-slate-500 text-xs max-w-md mx-auto">
+                            {da
+                              ? 'Ejerskab er registreret på de enkelte ejerlejligheder. Se lejlighedslisten på Oversigt-fanen for at finde ejere.'
+                              : 'Ownership is registered on individual condominium units. See the apartment list on the Overview tab to find owners.'}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  }
+
                   return (
                     <div>
                       <SectionTitle title={t.ownershipStructure} />

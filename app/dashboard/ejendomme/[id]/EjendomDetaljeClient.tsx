@@ -853,11 +853,11 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
   const [visVurderingHistorik, setVisVurderingHistorik] = useState(false);
 
   /** Ejere fra Ejerfortegnelsen (Datafordeler) */
-  const [ejereEjf, setEjere] = useState<EjerData[] | null>(null);
+  const [_ejereEjf, setEjere] = useState<EjerData[] | null>(null);
   /** True mens ejerdata hentes */
   const [ejereLoader, setEjereLoader] = useState(false);
   /** True hvis Datafordeler returnerer 403 — Dataadgang-ansøgning mangler for EJF */
-  const [manglerEjereAdgang, setManglerEjereAdgang] = useState(false);
+  const [_manglerEjereAdgang, setManglerEjereAdgang] = useState(false);
 
   /** BBR-tab: ID'er på bygningsrækker der er foldet ud */
   const [expandedBygninger, setExpandedBygninger] = useState<Set<string>>(new Set());
@@ -6475,7 +6475,15 @@ function PropertyOwnerDiagram({
  * Tinglysning-tab — viser tingbogsattest-data: ejere, hæftelser, servitutter.
  * Data hentes fra /api/tinglysning (søgning) + /api/tinglysning/summarisk (detaljer).
  */
-function TinglysningTab({ bfe, lang, moderBfe }: { bfe: number | null; lang: 'da' | 'en'; moderBfe?: number | null }) {
+function TinglysningTab({
+  bfe,
+  lang,
+  moderBfe,
+}: {
+  bfe: number | null;
+  lang: 'da' | 'en';
+  moderBfe?: number | null;
+}) {
   const da = lang === 'da';
   const router = useRouter();
 
@@ -6627,7 +6635,7 @@ function TinglysningTab({ bfe, lang, moderBfe }: { bfe: number | null; lang: 'da
       .finally(() => setLoading(false));
 
     return () => controller.abort();
-  }, [bfe, da]);
+  }, [bfe, da, moderBfe]);
 
   const formatDato = (iso: string | null) => {
     if (!iso) return '–';
@@ -6683,14 +6691,6 @@ function TinglysningTab({ bfe, lang, moderBfe }: { bfe: number | null; lang: 'da
     Indekslaan: da ? 'Indekslån' : 'Index loan',
     Anden: da ? 'Andet' : 'Other',
   };
-
-  /** Per-sektion loading spinner */
-  const SectionSpinner = ({ text }: { text: string }) => (
-    <div className="flex items-center justify-center py-8">
-      <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
-      <span className="ml-2 text-slate-400 text-sm">{text}</span>
-    </div>
-  );
 
   // Initial loading — vent kun på UUID-søgning, ikke alle sektioner
   if (loading && ejereLoading && haeftelserLoading && servituterLoading && ejere.length === 0)
@@ -7179,7 +7179,12 @@ function TinglysningTab({ bfe, lang, moderBfe }: { bfe: number | null; lang: 'da
 
         {/* ── HÆFTELSER ── */}
         {haeftelserLoading && (
-          <SectionSpinner text={da ? 'Henter hæftelser…' : 'Loading charges…'} />
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
+            <span className="ml-2 text-slate-400 text-sm">
+              {da ? 'Henter hæftelser…' : 'Loading charges…'}
+            </span>
+          </div>
         )}
         {haeftelser.length > 0 && (
           <>
@@ -7528,7 +7533,12 @@ function TinglysningTab({ bfe, lang, moderBfe }: { bfe: number | null; lang: 'da
 
         {/* ── SERVITUTTER ── */}
         {servituterLoading && (
-          <SectionSpinner text={da ? 'Henter servitutter…' : 'Loading easements…'} />
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
+            <span className="ml-2 text-slate-400 text-sm">
+              {da ? 'Henter servitutter…' : 'Loading easements…'}
+            </span>
+          </div>
         )}
         {servitutter.length > 0 && (
           <>

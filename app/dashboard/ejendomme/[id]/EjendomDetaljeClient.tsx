@@ -3301,21 +3301,20 @@ export default function EjendomDetaljeClient({
               </div>
             )}
 
-            {/* ══ TINGLYSNING ══ */}
-            {aktivTab === 'tinglysning' &&
-              (() => {
-                const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
-                // Hovedejendom: brug moderBfe (jord-BFE) — tinglysning gælder hele matriklen
-                // Ejerlejlighed: brug ejerlejlighedBfe
-                const bfeForTl = erModer
-                  ? (bbrData?.moderBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer ?? null)
-                  : (bbrData?.ejerlejlighedBfe ??
-                    bbrData?.ejendomsrelationer?.[0]?.bfeNummer ??
-                    null);
-                return (
+            {/* ══ TINGLYSNING ══ — altid mounted (hidden) så data ikke mistes ved tab-skift */}
+            {(() => {
+              const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
+              const bfeForTl = erModer
+                ? (bbrData?.moderBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer ?? null)
+                : (bbrData?.ejerlejlighedBfe ??
+                  bbrData?.ejendomsrelationer?.[0]?.bfeNummer ??
+                  null);
+              return (
+                <div className={aktivTab === 'tinglysning' ? '' : 'hidden'}>
                   <TinglysningTab bfe={bfeForTl} lang={lang} moderBfe={bbrData?.moderBfe ?? null} />
-                );
-              })()}
+                </div>
+              );
+            })()}
 
             {/* ══ ØKONOMI ══ */}
             {aktivTab === 'oekonomi' && (

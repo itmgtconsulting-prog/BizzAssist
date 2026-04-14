@@ -2402,10 +2402,55 @@ export default function EjendomDetaljeClient({
 
                   {/* Enheder */}
                   {(() => {
+                    const erModerHer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
                     const enheder = bbrData?.enheder ?? [];
                     const boligEnh = enheder.filter((e) => (e.arealBolig ?? 0) > 0).length;
                     const erhvEnh = enheder.filter((e) => (e.arealErhverv ?? 0) > 0).length;
                     const totAreal = enheder.reduce((s, e) => s + (e.areal ?? 0), 0);
+
+                    // Hovedejendom: vis antal lejligheder i stedet for tom enheder-boks
+                    if (erModerHer) {
+                      const antalLej = lejligheder?.length ?? 0;
+                      return (
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-2.5 self-start">
+                          <div className="flex items-baseline gap-1 mb-1.5">
+                            <span className="text-white font-bold text-lg">
+                              {lejlighederLoader ? '…' : antalLej || '–'}
+                            </span>
+                            <span className="text-slate-400 text-xs">
+                              {da ? 'ejerlejligheder' : 'condominiums'}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+                            <div>
+                              <p className="text-slate-500 text-xs leading-none mb-0.5">
+                                {t.residentialUnits}
+                              </p>
+                              <p className="text-white text-sm font-medium">
+                                {lejlighederLoader ? '…' : antalLej}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-slate-500 text-xs leading-none mb-0.5">
+                                {t.commercialUnits}
+                              </p>
+                              <p className="text-white text-sm font-medium">0</p>
+                            </div>
+                            <div className="col-span-2">
+                              <p className="text-slate-500 text-xs leading-none mb-0.5">
+                                {t.totalUnitArea}
+                              </p>
+                              <p className="text-white text-sm font-medium">
+                                {lejligheder && antalLej > 0
+                                  ? `${lejligheder.reduce((s, l) => s + (l.areal ?? 0), 0).toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
+                                  : '–'}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    }
+
                     return (
                       <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-2.5 self-start">
                         <div className="flex items-baseline gap-1 mb-1.5">

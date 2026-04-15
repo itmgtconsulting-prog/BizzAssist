@@ -13,6 +13,7 @@
 import { useState, useRef, useEffect, useCallback, memo } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { Send, Bot, Sparkles, Square, Maximize2, X, Plus } from 'lucide-react';
+import MarkdownContent from '@/app/components/MarkdownContent';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';
 import { resolvePlan, isSubscriptionFunctional, formatTokens } from '@/app/lib/subscriptions';
@@ -679,13 +680,18 @@ function AIChatPanel() {
                     className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
                   >
                     <div
-                      className={`max-w-[88%] rounded-xl px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap ${
+                      className={`max-w-[88%] rounded-xl px-3 py-2 text-xs leading-relaxed ${
                         msg.role === 'user'
-                          ? 'bg-blue-600 text-white'
+                          ? 'bg-blue-600 text-white whitespace-pre-wrap'
                           : 'bg-slate-800/80 text-slate-300 border border-slate-700/40'
                       }`}
                     >
-                      {msg.content}
+                      {/* BIZZ-223: Use MarkdownContent for assistant, plain text for user */}
+                      {msg.role === 'assistant' ? (
+                        <MarkdownContent text={msg.content} />
+                      ) : (
+                        msg.content
+                      )}
                     </div>
                   </div>
                 ))}
@@ -693,8 +699,8 @@ function AIChatPanel() {
                 {/* Live streaming-tekst */}
                 {streamText && (
                   <div className="flex justify-start">
-                    <div className="max-w-[88%] rounded-xl px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap bg-slate-800/80 text-slate-300 border border-slate-700/40">
-                      {streamText}
+                    <div className="max-w-[88%] rounded-xl px-3 py-2 text-xs leading-relaxed bg-slate-800/80 text-slate-300 border border-slate-700/40">
+                      <MarkdownContent text={streamText} />
                       <span className="inline-block w-1.5 h-3.5 bg-blue-400/70 ml-0.5 animate-pulse rounded-sm" />
                     </div>
                   </div>

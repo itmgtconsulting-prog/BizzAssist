@@ -32,8 +32,8 @@ const NODE_W = 320;
 const NODE_H = 64;
 const NODE_H_EXPAND = 78;
 const NODE_H_PERSON = 34;
-/** Property node height — 3 text lines (address + BFE + ejendomstype) */
-const NODE_H_PROPERTY = 72;
+/** BIZZ-352: Reduced from 72 — property nodes should be compact like person nodes */
+const NODE_H_PROPERTY = 48;
 
 /** Extra height per noeglePerson row inside a company box */
 const PERSON_ROW_H = 14;

@@ -41,9 +41,23 @@ Sentry.init({
     if (event.request?.url) {
       try {
         const url = new URL(event.request.url);
-        ['search', 'query', 'q', 'cvr', 'bfe', 'adresse', 'id'].forEach((p) =>
-          url.searchParams.delete(p)
-        );
+        // BIZZ-298: Strip all PII-bearing query params from Sentry events
+        [
+          'search',
+          'query',
+          'q',
+          'cvr',
+          'bfe',
+          'adresse',
+          'id',
+          'email',
+          'phone',
+          'enhedsNummer',
+          'vejnavn',
+          'husnr',
+          'postnr',
+          'navn',
+        ].forEach((p) => url.searchParams.delete(p));
         event.request.url = url.toString();
       } catch {
         // Malformed URL — leave as-is rather than dropping the event

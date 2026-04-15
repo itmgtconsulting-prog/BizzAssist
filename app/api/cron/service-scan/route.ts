@@ -606,7 +606,7 @@ async function sendAlertEmail(
       const body = await res.text();
       logger.error('[service-scan] Resend API fejl:', res.status, body);
     } else {
-      logger.log('[service-scan] Alert-email sendt til', TO_ADDRESS);
+      logger.log('[service-scan] Alert-email sendt');
     }
   } catch (err) {
     logger.error('[service-scan] Kunne ikke sende alert-email:', err);

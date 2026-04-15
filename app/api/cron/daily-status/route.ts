@@ -457,7 +457,7 @@ async function sendStatusEmail(html: string, subject: string): Promise<boolean> 
       return false;
     }
 
-    logger.log('[daily-status] Status report dispatched to', TO_ADDRESS);
+    logger.log('[daily-status] Status report dispatched');
     return true;
   } catch (err) {
     logger.error('[daily-status] Failed to send status email:', err);

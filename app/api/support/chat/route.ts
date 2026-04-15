@@ -33,12 +33,18 @@ import { logger } from '@/app/lib/logger';
 import { parseBody } from '@/app/lib/validate';
 
 /** Zod schema for POST /api/support/chat request body */
-const supportChatSchema = z.object({
-  messages: z.array(z.object({
-    role: z.enum(['user', 'assistant']),
-    content: z.string(),
-  })).min(1),
-}).passthrough();
+const supportChatSchema = z
+  .object({
+    messages: z
+      .array(
+        z.object({
+          role: z.enum(['user', 'assistant']),
+          content: z.string(),
+        })
+      )
+      .min(1),
+  })
+  .passthrough();
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -62,7 +68,7 @@ interface ChatMessage {
   content: string;
 }
 
-interface ChatRequestBody {
+interface _ChatRequestBody {
   messages: ChatMessage[];
 }
 

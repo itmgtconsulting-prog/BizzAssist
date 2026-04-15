@@ -22,14 +22,16 @@ import { logger } from '@/app/lib/logger';
 import { parseBody } from '@/app/lib/validate';
 
 /** Zod schema for PATCH /api/tenants/update request body */
-const tenantUpdateSchema = z.object({
-  name: z.string().min(1),
-}).passthrough();
+const tenantUpdateSchema = z
+  .object({
+    name: z.string().min(1),
+  })
+  .passthrough();
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 /** Expected PATCH request body */
-interface UpdateTenantBody {
+interface _UpdateTenantBody {
   name: string;
 }
 

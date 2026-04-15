@@ -27,10 +27,12 @@ import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { parseBody } from '@/app/lib/validate';
 
 /** Zod schema for POST /api/integrations/linkedin/enrich request body */
-const linkedinEnrichSchema = z.object({
-  enhedsNummer: z.string().min(1),
-  personName: z.string().optional(),
-}).passthrough();
+const linkedinEnrichSchema = z
+  .object({
+    enhedsNummer: z.string().min(1),
+    personName: z.string().optional(),
+  })
+  .passthrough();
 
 /** Request body for the enrich endpoint */
 interface EnrichRequest {
@@ -51,7 +53,7 @@ interface EnrichUnavailableResponse {
 }
 
 /** Validates that the parsed body matches EnrichRequest */
-function isEnrichRequest(value: unknown): value is EnrichRequest {
+function _isEnrichRequest(value: unknown): value is EnrichRequest {
   return (
     typeof value === 'object' &&
     value !== null &&
@@ -82,7 +84,8 @@ export async function POST(
 
   // Parse and validate request body
   const parsed = await parseBody(request, linkedinEnrichSchema);
-  if (!parsed.success) return parsed.response as NextResponse<EnrichUnavailableResponse | { error: string }>;
+  if (!parsed.success)
+    return parsed.response as NextResponse<EnrichUnavailableResponse | { error: string }>;
   const body = parsed.data;
 
   const { tenantId, userId } = auth;

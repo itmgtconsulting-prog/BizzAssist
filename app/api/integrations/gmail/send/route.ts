@@ -18,15 +18,17 @@ import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { parseBody } from '@/app/lib/validate';
 
 /** Zod schema for POST /api/integrations/gmail/send request body */
-const gmailSendSchema = z.object({
-  to: z.string().min(1),
-  subject: z.string().min(1),
-  body: z.string().min(1),
-  isHtml: z.boolean().optional(),
-}).passthrough();
+const gmailSendSchema = z
+  .object({
+    to: z.string().min(1),
+    subject: z.string().min(1),
+    body: z.string().min(1),
+    isHtml: z.boolean().optional(),
+  })
+  .passthrough();
 
 /** Request body for sending a Gmail message */
-interface SendEmailBody {
+interface _SendEmailBody {
   to: string;
   subject: string;
   body: string;

@@ -25,11 +25,13 @@ import { logger } from '@/app/lib/logger';
 import { parseBody } from '@/app/lib/validate';
 
 /** Zod schema for POST /api/knowledge request body */
-const knowledgePostSchema = z.object({
-  title: z.string().trim().min(1),
-  content: z.string().trim().min(1),
-  source_type: z.enum(['manual', 'upload', 'url']).optional().default('manual'),
-}).passthrough();
+const knowledgePostSchema = z
+  .object({
+    title: z.string().trim().min(1),
+    content: z.string().trim().min(1),
+    source_type: z.enum(['manual', 'upload', 'url']).optional().default('manual'),
+  })
+  .passthrough();
 
 /** Maximum characters allowed in a knowledge item's content field. */
 const MAX_CONTENT_CHARS = 50_000;
@@ -55,7 +57,7 @@ export interface KnowledgeItem {
 }
 
 /** Shape of the POST request body. */
-interface CreateKnowledgeBody {
+interface _CreateKnowledgeBody {
   title: string;
   content: string;
   source_type?: 'manual' | 'upload' | 'url';

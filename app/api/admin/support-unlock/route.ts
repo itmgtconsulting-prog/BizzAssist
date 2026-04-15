@@ -26,11 +26,13 @@ import { logger } from '@/app/lib/logger';
 import { parseBody } from '@/app/lib/validate';
 
 /** Zod schema for POST /api/admin/support-unlock request body */
-const supportUnlockSchema = z.object({
-  userId: z.string().min(1),
-}).passthrough();
+const supportUnlockSchema = z
+  .object({
+    userId: z.string().min(1),
+  })
+  .passthrough();
 
-interface UnlockRequestBody {
+interface _UnlockRequestBody {
   userId: string;
 }
 

@@ -413,7 +413,11 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
       return;
     }
 
+    // BIZZ-253: Pre-seed cache with the current company's data to avoid re-fetching
     const fetchedCache = new Map<number, { deltagere: CVRPublicData['deltagere']; cvr: number }>();
+    if (data.vat) {
+      fetchedCache.set(data.vat, { deltagere: data.deltagere ?? [], cvr: data.vat });
+    }
 
     async function resolveChainTop(
       ownerList: ReturnType<typeof extractOwners>,

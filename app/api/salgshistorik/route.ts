@@ -20,6 +20,7 @@ import { z } from 'zod';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { logger } from '@/app/lib/logger';
+import { getSharedOAuthToken } from '@/app/lib/dfTokenCache';
 import { resolveTenantId } from '@/lib/api/auth';
 import { parseQuery } from '@/app/lib/validate';
 
@@ -211,7 +212,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
 
   const { bfeNummer } = parsed.data;
 
-  const token = await getOAuthToken();
+  const token = await getSharedOAuthToken();
   if (!token) {
     return NextResponse.json(
       {

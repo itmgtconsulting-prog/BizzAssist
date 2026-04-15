@@ -28,6 +28,7 @@ import { getCertOAuthToken, isCertAuthConfigured } from '@/app/lib/dfCertAuth';
 import { resolveTenantId } from '@/lib/api/auth';
 import { parseQuery } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
+import { getSharedOAuthToken } from '@/app/lib/dfTokenCache';
 
 /** Zod schema for /api/ejerskab query parameters */
 const ejerskabQuerySchema = z.object({
@@ -278,7 +279,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjerskabRe
   let result: EJFQueryResult | null = null;
 
   if (hasSharedSecret) {
-    const token = await getOAuthToken();
+    const token = await getSharedOAuthToken();
     if (token) {
       try {
         result = await queryEJF(bfeNummer, token);

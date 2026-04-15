@@ -25,6 +25,7 @@ import { parseQuery } from '@/app/lib/validate';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { getCertOAuthToken, isCertAuthConfigured } from '@/app/lib/dfCertAuth';
 import { logger } from '@/app/lib/logger';
+import { getSharedOAuthToken } from '@/app/lib/dfTokenCache';
 import { resolveTenantId } from '@/lib/api/auth';
 
 /** Zod schema for /api/ejendomme-by-owner query params */
@@ -527,7 +528,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
   let token: string | null = null;
 
   if (hasSharedSecret) {
-    token = await getOAuthToken();
+    token = await getSharedOAuthToken();
   }
 
   /* Fallback: mTLS certifikat */

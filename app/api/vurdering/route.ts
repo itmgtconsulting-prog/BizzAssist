@@ -23,6 +23,7 @@ import { z } from 'zod';
 import { checkRateLimit, heavyRateLimit } from '@/app/lib/rateLimit';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { logger } from '@/app/lib/logger';
+import { getSharedOAuthToken } from '@/app/lib/dfTokenCache';
 import { resolveTenantId } from '@/lib/api/auth';
 import { parseQuery } from '@/app/lib/validate';
 
@@ -563,7 +564,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<VurderingR
   const kommunekode = parsed.data.kommunekode ? parseInt(parsed.data.kommunekode, 10) : null;
   const promille = (kommunekode && GRUNDSKYLDSPROMILLE[kommunekode]) ?? null;
 
-  const token = await getOAuthToken();
+  const token = await getSharedOAuthToken();
   if (!token) {
     logger.error(
       '[vurdering] OAuth token kunne ikke hentes — tjek DATAFORDELER_OAUTH_CLIENT_ID og _SECRET'

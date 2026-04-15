@@ -16,6 +16,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { logger } from '@/app/lib/logger';
+import { getSharedOAuthToken } from '@/app/lib/dfTokenCache';
 import { resolveTenantId } from '@/lib/api/auth';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -245,7 +246,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<CvrSalgshi
     );
   }
 
-  const token = await getOAuthToken();
+  const token = await getSharedOAuthToken();
   if (!token) {
     return NextResponse.json(
       { cvr, handler: [], fejl: 'OAuth token fejl', manglerNoegle: false, manglerAdgang: false },

@@ -1552,14 +1552,31 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
     </div>
   ) : null;
 
-  // ── Fullscreen overlay ──
+  // ── Fullscreen overlay (BIZZ-248: topbar with close button) ──
   if (isFullscreen) {
     return (
-      <div className="fixed inset-0 z-50 bg-slate-950/95 flex flex-col p-4 gap-3">
-        {toolbar}
-        <div className="relative flex-1">
-          {canvasEl}
-          {hiddenWarning}
+      <div className="fixed inset-0 z-50 bg-slate-950/95 flex flex-col">
+        {/* Topbar with title + close button */}
+        <div className="flex items-center justify-between px-5 py-3 border-b border-slate-700/40 shrink-0">
+          <h2 className="text-white text-sm font-medium">
+            {lang === 'da' ? 'Relationsdiagram' : 'Relationship diagram'}
+          </h2>
+          <button
+            onClick={() => setIsFullscreen(false)}
+            className="flex items-center gap-2 px-3 py-1.5 text-xs text-slate-400 hover:text-white bg-slate-800/50 hover:bg-slate-700/50 border border-slate-700/40 rounded-lg transition-colors"
+            aria-label={lang === 'da' ? 'Luk fuldskærm' : 'Close fullscreen'}
+          >
+            <Minimize2 size={12} />
+            {lang === 'da' ? 'Luk' : 'Close'}
+            <kbd className="ml-1 text-[10px] text-slate-600 bg-slate-800 px-1 rounded">ESC</kbd>
+          </button>
+        </div>
+        <div className="p-4 gap-3 flex flex-col flex-1 min-h-0">
+          {toolbar}
+          <div className="relative flex-1">
+            {canvasEl}
+            {hiddenWarning}
+          </div>
         </div>
       </div>
     );

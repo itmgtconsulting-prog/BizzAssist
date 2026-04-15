@@ -14,7 +14,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/app/lib/logger';
-import { proxyUrl, proxyHeaders } from '@/app/lib/dfProxy';
+import { proxyUrl } from '@/app/lib/dfProxy';
 import { resolveTenantId } from '@/lib/api/auth';
 
 // ─── Types ────────────────────────────────────────────────────────────────────

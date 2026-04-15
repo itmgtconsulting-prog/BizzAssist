@@ -21,11 +21,14 @@ import { resolveTenantId } from '@/lib/api/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { logActivity } from '@/app/lib/activityLog';
 import { logger } from '@/app/lib/logger';
-import { proxyUrl, proxyHeaders } from '@/app/lib/dfProxy';
+import { proxyUrl } from '@/app/lib/dfProxy';
 
 /** Zod schema for /api/cvr-public query params */
 const querySchema = z.object({
-  vat: z.string().regex(/^\d{8}$/).optional(),
+  vat: z
+    .string()
+    .regex(/^\d{8}$/)
+    .optional(),
   name: z.string().optional(),
   enhedsNummer: z.string().regex(/^\d+$/).optional(),
 });

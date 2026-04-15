@@ -1165,6 +1165,11 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
               style={{ cursor: 'grab' }}
               onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
             >
+              {/* BIZZ-354: Tooltip for readability at low zoom */}
+              <title>
+                {node.label}
+                {node.sublabel ? ` — ${node.sublabel}` : ''}
+              </title>
               <rect
                 x={x}
                 y={y}
@@ -1254,6 +1259,10 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
               }
             }}
           >
+            <title>
+              {node.label}
+              {node.sublabel ? ` — ${node.sublabel}` : ''}
+            </title>
             <rect
               x={x}
               y={y}

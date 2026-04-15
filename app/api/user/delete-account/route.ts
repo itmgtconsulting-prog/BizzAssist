@@ -10,7 +10,10 @@
  *   1. Authenticate via Supabase session
  *   2. Require body: { confirm: "SLET MIN KONTO" } to prevent accidental deletion
  *   3. Resolve the user's tenant and schema
- *   4. Delete tenant-scoped personal data (recent_entities, saved_entities, notifications)
+ *   4. Delete tenant-scoped personal data:
+ *      - recent_entities, saved_entities, notifications, recent_searches, activity_log
+ *      - ai_messages, ai_conversations (BIZZ-288: GDPR Art. 17 immediate erasure)
+ *      - document_embeddings, ai_token_usage, support_chat_sessions
  *   5. Write an audit log entry before account is removed
  *   6. Delete the Supabase Auth user (cascades sessions, MFA factors)
  *
@@ -110,12 +113,32 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
 
         // Delete personal data from all tenant-schema tables.
         // Errors are non-fatal: the auth deletion below is the definitive erasure.
-        // BIZZ-128: all tables must be covered to satisfy GDPR Art. 17 right to erasure.
+        // BIZZ-128/BIZZ-288: all tables must be covered to satisfy GDPR Art. 17.
         await db.from('recent_entities').delete().eq('user_id', user.id);
         await db.from('saved_entities').delete().eq('user_id', user.id);
         await db.from('notifications').delete().eq('user_id', user.id);
         await db.from('recent_searches').delete().eq('user_id', user.id);
         await db.from('activity_log').delete().eq('user_id', user.id);
+
+        // BIZZ-288: Delete AI conversation history (messages first, then conversations)
+        const { data: convos } = await db
+          .from('ai_conversations')
+          .select('id')
+          .eq('user_id', user.id);
+        if (convos && convos.length > 0) {
+          const convoIds = convos.map((c: { id: string }) => c.id);
+          await db.from('ai_messages').delete().in('conversation_id', convoIds);
+          await db.from('ai_conversations').delete().eq('user_id', user.id);
+        }
+
+        // BIZZ-288: Delete user-uploaded knowledge embeddings
+        await db.from('document_embeddings').delete().eq('uploaded_by', user.id);
+
+        // BIZZ-288: Delete AI token usage records
+        await db.from('ai_token_usage').delete().eq('user_id', user.id);
+
+        // BIZZ-288: Delete support chat sessions
+        await db.from('support_chat_sessions').delete().eq('user_id', user.id);
 
         // Drop the now-empty schema so re-registration with the same email is clean.
         try {

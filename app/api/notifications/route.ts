@@ -13,6 +13,7 @@
  * @module api/notifications
  */
 import { NextRequest, NextResponse } from 'next/server';
+import { writeAuditLog } from '@/app/lib/auditLog';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { getTenantContext } from '@/lib/db/tenant';
 import { createClient } from '@/lib/supabase/server';
@@ -115,6 +116,13 @@ export async function POST(request: NextRequest) {
       default:
         return NextResponse.json({ error: `Ukendt action: ${action}` }, { status: 400 });
     }
+
+    // BIZZ-289: Audit log for notification write operations
+    writeAuditLog({
+      action: `notification.${action}`,
+      resource_type: 'notification',
+      resource_id: body.id ?? 'all',
+    });
 
     return NextResponse.json({ ok: true });
   } catch (err) {

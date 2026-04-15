@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantId } from '@/lib/api/auth';
 import { getTenantContext } from '@/lib/db/tenant';
 import { logger } from '@/app/lib/logger';
+import { writeAuditLog } from '@/app/lib/auditLog';
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -59,6 +60,11 @@ export async function DELETE(
   try {
     const db = await getTenantContext(auth.tenantId);
     await db.aiConversations.delete(id);
+    writeAuditLog({
+      action: 'ai_conversation.delete',
+      resource_type: 'ai_conversation',
+      resource_id: id,
+    });
     return NextResponse.json({ ok: true });
   } catch (err) {
     logger.error('[ai/conversations/[id]] DELETE error:', err);

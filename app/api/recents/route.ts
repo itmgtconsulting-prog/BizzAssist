@@ -15,6 +15,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantId } from '@/lib/api/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { logger } from '@/app/lib/logger';
+import { writeAuditLog } from '@/app/lib/auditLog';
 
 /** Max recent entities per type per user */
 const MAX_RECENTS: Record<string, number> = {
@@ -125,6 +126,13 @@ export async function POST(request: NextRequest) {
       await admin.from(TABLE).delete().in('id', idsToDelete);
     }
 
+    // BIZZ-289: Audit log for recent entity tracking
+    writeAuditLog({
+      action: 'recent_entity.upsert',
+      resource_type: body.entity_type,
+      resource_id: body.entity_id ?? 'unknown',
+    });
+
     return NextResponse.json({ ok: true });
   } catch (err) {
     logger.error('[recents POST]', err);
@@ -157,6 +165,12 @@ export async function DELETE(request: NextRequest) {
       .eq('tenant_id', auth.tenantId)
       .eq('user_id', auth.userId)
       .eq('entity_type', entityType);
+
+    writeAuditLog({
+      action: 'recent_entity.delete',
+      resource_type: entityType,
+      resource_id: 'all',
+    });
 
     return NextResponse.json({ ok: true });
   } catch (err) {

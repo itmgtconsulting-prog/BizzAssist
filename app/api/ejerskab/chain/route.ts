@@ -29,6 +29,8 @@ interface ChainNode {
   enhedsNummer?: number;
   ejerandel?: string;
   link?: string;
+  /** True when the company has a slutdato / sammensatStatus "Ophørt" — shown greyed out in diagrams */
+  isCeased?: boolean;
 }
 
 /** Status-tekster fra Tinglysning der ikke er faktiske ejere */
@@ -93,17 +95,30 @@ function mapEjerandel(val: number): string {
   return '<5%';
 }
 
-/** Henter ejere af en virksomhed fra CVR ES */
+/**
+ * Henter ejere og ophørsstatus af en virksomhed fra CVR ES.
+ *
+ * @param cvr - CVR-nummer at slå op
+ * @returns Virksomhedsnavn, ejere og om virksomheden er ophørt
+ */
 async function fetchCompanyOwners(cvr: number): Promise<{
   companyName: string;
+  isCeased: boolean;
   owners: { navn: string; enhedsNummer: number; erVirksomhed: boolean; ejerandel: string | null }[];
 }> {
-  if (!CVR_ES_USER || !CVR_ES_PASS) return { companyName: `CVR ${cvr}`, owners: [] };
+  if (!CVR_ES_USER || !CVR_ES_PASS)
+    return { companyName: `CVR ${cvr}`, isCeased: false, owners: [] };
 
   const auth = Buffer.from(`${CVR_ES_USER}:${CVR_ES_PASS}`).toString('base64');
   const query = {
     query: { term: { 'Vrvirksomhed.cvrNummer': cvr } },
-    _source: ['Vrvirksomhed.navne', 'Vrvirksomhed.deltagerRelation'],
+    _source: [
+      'Vrvirksomhed.navne',
+      'Vrvirksomhed.deltagerRelation',
+      // BIZZ-357: Fetch status fields to detect ceased companies
+      'Vrvirksomhed.livsforloeb',
+      'Vrvirksomhed.virksomhedMetadata',
+    ],
     size: 1,
   };
 
@@ -114,15 +129,23 @@ async function fetchCompanyOwners(cvr: number): Promise<{
       body: JSON.stringify(query),
       signal: AbortSignal.timeout(8000),
     });
-    if (!res.ok) return { companyName: `CVR ${cvr}`, owners: [] };
+    if (!res.ok) return { companyName: `CVR ${cvr}`, isCeased: false, owners: [] };
 
     const data = await res.json();
     const hit = data?.hits?.hits?.[0]?._source?.Vrvirksomhed;
-    if (!hit) return { companyName: `CVR ${cvr}`, owners: [] };
+    if (!hit) return { companyName: `CVR ${cvr}`, isCeased: false, owners: [] };
 
     // Virksomhedsnavn
     const navne = Array.isArray(hit.navne) ? (hit.navne as (Periodic & { navn?: string })[]) : [];
     const companyName = gyldigNu(navne)?.navn ?? `CVR ${cvr}`;
+
+    // BIZZ-357: Detect ceased companies via livsforloeb slutdato or sammensatStatus "Ophørt"
+    // Mirrors the logic in /api/cvr-public/related/route.ts mapHitToVirksomhed
+    const livsforloeb = Array.isArray(hit.livsforloeb) ? (hit.livsforloeb as Periodic[]) : [];
+    const harSlutdato = livsforloeb.some((l) => l.periode?.gyldigTil != null);
+    const meta = hit.virksomhedMetadata as Record<string, unknown> | undefined;
+    const sammensatStatus = typeof meta?.sammensatStatus === 'string' ? meta.sammensatStatus : '';
+    const isCeased = harSlutdato || sammensatStatus === 'Ophørt';
 
     // Ejere fra deltagerRelation
     const owners: {
@@ -201,9 +224,9 @@ async function fetchCompanyOwners(cvr: number): Promise<{
       }
     }
 
-    return { companyName, owners };
+    return { companyName, isCeased, owners };
   } catch {
-    return { companyName: `CVR ${cvr}`, owners: [] };
+    return { companyName: `CVR ${cvr}`, isCeased: false, owners: [] };
   }
 }
 
@@ -557,12 +580,16 @@ export async function GET(req: NextRequest) {
     const { nodeId, cvr, depth } = companyOwnersToResolve.shift()!;
     if (depth >= MAX_DEPTH) continue;
 
-    const { companyName, owners } = await fetchCompanyOwners(cvr);
+    const { companyName, isCeased, owners } = await fetchCompanyOwners(cvr);
 
-    // Opdater virksomhedsnode med navn
+    // Opdater virksomhedsnode med navn og ophørsstatus (BIZZ-357)
     const companyNode = nodes.find((n) => n.id === nodeId);
-    if (companyNode && companyNode.label.startsWith('CVR ')) {
-      companyNode.label = companyName;
+    if (companyNode) {
+      if (companyNode.label.startsWith('CVR ')) {
+        companyNode.label = companyName;
+      }
+      // Mark as ceased so diagrams can render it visually distinct
+      if (isCeased) companyNode.isCeased = true;
     }
 
     for (const owner of owners) {

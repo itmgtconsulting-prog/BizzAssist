@@ -1271,13 +1271,14 @@ function KortInner() {
       setMarkeret(-1);
       let lng = r.adresse.x;
       let lat = r.adresse.y;
-      // darAutocomplete returnerer x=0, y=0 — hent koordinater via separat opslag
-      if (!lng || !lat) {
+      // darAutocomplete kan returnere x=0, y=0 (falsy) for visse adresser —
+      // brug != null så 0 ikke fejlagtigt trigger fallback-opslaget (BIZZ-370)
+      if (lng == null || lat == null) {
         try {
           const res = await fetch(`/api/adresse/lookup?id=${encodeURIComponent(r.adresse.id)}`);
           if (res.ok) {
             const data: { x?: number; y?: number } | null = await res.json();
-            if (data?.x && data?.y) {
+            if (data?.x != null && data?.y != null) {
               lng = data.x;
               lat = data.y;
             }
@@ -1286,7 +1287,7 @@ function KortInner() {
           /* ignorer netværksfejl */
         }
       }
-      if (lng && lat) {
+      if (lng != null && lat != null) {
         mapRef.current?.flyTo({ center: [lng, lat], zoom: 17, duration: 1000 });
         setSøgtMarkør({ lng, lat });
         setPopup(null);

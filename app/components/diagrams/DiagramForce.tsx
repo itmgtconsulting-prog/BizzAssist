@@ -86,6 +86,10 @@ const PROPERTY_STROKE = 'rgba(52,211,153,0.5)';
 const COOWNER_FILL = 'rgba(30,41,59,0.5)';
 const COOWNER_STROKE = 'rgba(71,85,105,0.4)';
 
+/** BIZZ-357: Ceased company — grey wash so historical owners remain visible but clearly distinct */
+const CEASED_FILL = 'rgba(30,30,35,0.55)';
+const CEASED_STROKE = 'rgba(100,110,130,0.35)';
+
 // ─── Force Types ────────────────────────────────────────────────────────────
 
 /** Force node with position */
@@ -109,9 +113,9 @@ interface ForceLink extends SimulationLinkDatum<ForceNode> {
  * Persons rendered in purple, companies in slate, main in blue.
  * Click the expand badge on a subsidiary to show/hide its co-owners.
  *
- * @param props - graph + lang
+ * @param props - graph + lang + optional onNodeClick override
  */
-export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
+export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVariantProps) {
   const _router = useRouter();
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -840,7 +844,10 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
   }, [isFullscreen]);
 
   // ── Re-fit and center when entering/exiting fullscreen (container size changes) ──
+  // BIZZ-365: Reset initialFitDone so the auto-center effect actually runs after the
+  // container has resized. Without this, the guard on line ~639 skips the fit.
   useEffect(() => {
+    initialFitDone.current = false;
     const timer = setTimeout(() => setFitTrigger((t) => t + 1), 150);
     return () => clearTimeout(timer);
   }, [isFullscreen]);
@@ -1105,6 +1112,8 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
         const isProperty = node.type === 'property';
         const isStatus = node.type === 'status';
         const isCoOwner = node.isCoOwner;
+        // BIZZ-357: Detect ceased companies for distinct greyed-out rendering
+        const isCeased = node.isCeased === true;
         const hasExpandable = (node.expandableChildren ?? 0) > 0;
         const h = getNodeH(node, expandedOverflow);
         const isExpanded = expandedNodes.has(node.id);
@@ -1130,6 +1139,12 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
           stroke = PERSON_STROKE;
           textFill = PERSON_TEXT;
           iconStroke = PERSON_ICON;
+        } else if (isCeased) {
+          // BIZZ-357: Ceased companies get a grey wash with dashed border
+          fill = CEASED_FILL;
+          stroke = CEASED_STROKE;
+          textFill = 'rgba(160,165,175,0.75)';
+          iconStroke = 'rgba(120,130,145,0.5)';
         } else if (isCoOwner) {
           fill = COOWNER_FILL;
           stroke = COOWNER_STROKE;
@@ -1254,13 +1269,19 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
             style={{ cursor: node.link ? 'pointer' : 'grab' }}
             onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
             onClick={() => {
-              if (node.link && !dragRef.current.didMove) {
-                window.location.href = node.link;
+              if (!dragRef.current.didMove) {
+                if (onNodeClick) {
+                  // BIZZ-368: caller-controlled navigation (e.g. switch tab instead of navigate)
+                  onNodeClick(node);
+                } else if (node.link) {
+                  window.location.href = node.link;
+                }
               }
             }}
           >
             <title>
               {node.label}
+              {isCeased ? ' (Ophørt)' : ''}
               {node.sublabel ? ` — ${node.sublabel}` : ''}
             </title>
             <rect
@@ -1272,8 +1293,35 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
               fill={fill}
               stroke={stroke}
               strokeWidth={isMain ? 2 : 1}
-              strokeDasharray={isCoOwner ? '4 3' : undefined}
+              // BIZZ-357: Ceased companies get a dashed border; co-owners also dashed
+              strokeDasharray={isCeased || isCoOwner ? '4 3' : undefined}
             />
+            {/* BIZZ-357: "Ophørt" badge in top-right corner of ceased company nodes */}
+            {isCeased && (
+              <>
+                <rect
+                  x={x + NODE_W - 56}
+                  y={y + 6}
+                  width={50}
+                  height={13}
+                  rx={4}
+                  fill="rgba(75,80,95,0.7)"
+                  stroke="rgba(100,110,130,0.4)"
+                  strokeWidth={0.75}
+                />
+                <text
+                  x={x + NODE_W - 31}
+                  y={y + 15.5}
+                  fill="rgba(180,185,195,0.85)"
+                  fontSize="7.5"
+                  fontWeight="500"
+                  textAnchor="middle"
+                  className="pointer-events-none"
+                >
+                  Ophørt
+                </text>
+              </>
+            )}
             {(() => {
               // Top-aligned text positioning — all content starts from top of box
               const topY = y + 12; // 12px padding from top

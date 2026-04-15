@@ -73,8 +73,13 @@ interface ServiceDef {
   staticStatus?: ServiceStatus;
   /** Optional static note shown beneath the status badge */
   note?: string;
-  /** URL to fetch Statuspage v2 JSON from (when live === true) */
+  /** URL to fetch Statuspage v2 JSON from (when live === true, mutually exclusive with pingUrl) */
   statusUrl?: string;
+  /**
+   * URL to HTTP-probe via the ping endpoint (when live === true, mutually exclusive with statusUrl).
+   * Used for services that do not have a Statuspage API (e.g. Datafordeleren).
+   */
+  pingUrl?: string;
 }
 
 /** Shape of a Atlassian Statuspage v2 /api/v2/status.json response */
@@ -174,9 +179,12 @@ const SERVICES: ServiceDef[] = [
     role: 'BBR / MAT / DAR / VUR',
     icon: Server,
     link: 'https://datafordeler.dk',
-    live: false,
-    staticStatus: 'unknown',
-    note: 'No status API — verify manually at datafordeler.dk/driftsstatus',
+    // BIZZ-377: Use a live HTTP ping probe against the public API gateway.
+    // Datafordeleren has no Statuspage API, so we HEAD-probe the root
+    // endpoint and interpret a successful HTTP response as operational.
+    live: true,
+    pingUrl: 'https://api.datafordeler.dk',
+    note: 'No Statuspage API — probed via HTTP HEAD',
   },
   {
     id: 'cvr',
@@ -257,6 +265,50 @@ async function fetchStatuspageStatus(url: string): Promise<ServiceState> {
     description: data.status.description,
     checkedAt: new Date().toISOString(),
   };
+}
+
+/**
+ * Performs an HTTP HEAD probe for services without a Statuspage API
+ * (e.g. Datafordeleren) via the server-side ping proxy.
+ *
+ * Interprets a successful HTTP response (2xx/3xx) as operational, and
+ * a failed probe or network error as unknown.
+ *
+ * BIZZ-377: Used so Datafordeleren shows a live status rather than the
+ * static "Ukendt" placeholder it previously had.
+ *
+ * @param pingUrl - The URL to HEAD-probe (must be in the server-side whitelist)
+ * @returns Resolved ServiceState based on the probe result
+ */
+async function fetchPingStatus(pingUrl: string): Promise<ServiceState> {
+  const proxyUrl = `/api/admin/service-status?ping=${encodeURIComponent(pingUrl)}`;
+  try {
+    const resp = await fetch(proxyUrl, {
+      signal: AbortSignal.timeout(10000),
+      cache: 'no-store',
+    });
+    if (!resp.ok) {
+      return {
+        status: 'unknown',
+        description: 'HTTP fejl ved statushentning',
+        checkedAt: new Date().toISOString(),
+      };
+    }
+    const result = (await resp.json()) as { ok: boolean; httpStatus: number };
+    return {
+      status: result.ok ? 'operational' : 'unknown',
+      description: result.ok
+        ? `HTTP ${result.httpStatus}`
+        : `HTTP ${result.httpStatus} — kan ikke nås`,
+      checkedAt: new Date().toISOString(),
+    };
+  } catch {
+    return {
+      status: 'unknown',
+      description: 'Probe fejlede — netværksfejl',
+      checkedAt: new Date().toISOString(),
+    };
+  }
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -441,7 +493,9 @@ export default function ServiceManagementClient() {
 
   /**
    * Runs all live health checks in parallel with 5 s timeouts.
-   * Updates the states map for each service individually as results arrive.
+   * Handles both Statuspage v2 checks (statusUrl) and HTTP ping probes
+   * (pingUrl) so services without a Statuspage API still get a live check.
+   * BIZZ-377: pingUrl support added for Datafordeleren.
    */
   const runChecks = useCallback(async () => {
     setIsRefreshing(true);
@@ -457,10 +511,13 @@ export default function ServiceManagementClient() {
       return next;
     });
 
-    const liveServices = SERVICES.filter((s) => s.live && s.statusUrl);
+    // Collect all live services that have either a Statuspage URL or a ping URL
+    const liveServices = SERVICES.filter((s) => s.live && (s.statusUrl ?? s.pingUrl));
 
     const results = await Promise.allSettled(
-      liveServices.map((svc) => fetchStatuspageStatus(svc.statusUrl!))
+      liveServices.map((svc) =>
+        svc.statusUrl ? fetchStatuspageStatus(svc.statusUrl) : fetchPingStatus(svc.pingUrl!)
+      )
     );
 
     setStates((prev) => {

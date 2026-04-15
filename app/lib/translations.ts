@@ -275,6 +275,57 @@ export const translations = {
       contextPage: 'Side: {path}',
     },
 
+    /* ─── AI Analyse page ──────────────────────────────────────────── */
+    analysisPage: {
+      title: 'AI Analyse',
+      subtitle: 'Vælg en analysetype og angiv et CVR-nummer, BFE-nummer eller område',
+      chooseArea: 'Vælg analyseområde',
+      backToAreas: 'Tilbage til analysetyper',
+      targetLabel: 'Hvad vil du analysere?',
+      targetPlaceholder: 'CVR-nummer, BFE-nummer eller adresse…',
+      targetPlaceholderArea: 'By, postnummer eller område…',
+      targetPlaceholderPortfolio: 'CVR-nummer eller navn på ejer…',
+      orSearch: 'Eller søg:',
+      searchPlaceholder: 'Søg virksomhed, adresse eller CVR…',
+      runAnalysis: 'Kør analyse',
+      runningAnalysis: 'Analyserer…',
+      newAnalysis: 'Ny analyse',
+      result: 'Analyseresultat',
+      errorOccurred: 'Der opstod en fejl',
+      tryAgain: 'Prøv igen',
+      fetchingData: 'Henter data fra registre…',
+      entitySelected: 'Valgt entitet',
+      clearEntity: 'Fjern valgt entitet',
+      emptyHint: 'AI-drevet analyse med rigtige data fra offentlige registre',
+      emptyHintSub: 'Henter automatisk CVR, regnskaber, BBR, vurdering, ejerskab og meget mere.',
+      areas: {
+        virksomhed: {
+          title: 'Virksomhedsanalyse',
+          desc: 'Regnskab, ejerskab og risikoprofil',
+        },
+        ejendom: {
+          title: 'Ejendomsanalyse',
+          desc: 'Vurdering vs. markedspris, skatteoptimering',
+        },
+        ejerskab: {
+          title: 'Ejerskabsanalyse',
+          desc: 'Koncernstruktur, ultimativ ejer, krydsejerskab',
+        },
+        omraade: {
+          title: 'Områdeanalyse',
+          desc: 'Ejendomspriser og virksomhedstæthed',
+        },
+        due_diligence: {
+          title: 'Due Diligence',
+          desc: 'Samlet rapport til opkøb eller investering',
+        },
+        portefolje: {
+          title: 'Porteføljeanalyse',
+          desc: 'Overblik over ejendomme og virksomheder for én ejer',
+        },
+      },
+    },
+
     /* ─── Company page ─────────────────────────────────────────────── */
     company: {
       title: 'Virksomheder',
@@ -432,6 +483,8 @@ export const translations = {
       loadingTinglysning: 'Henter personbogsdata for tilknyttede virksomheder...',
       tinglysningError: 'Kunne ikke hente personbogsdata',
       tinglysningEmpty: 'Ingen registreringer i Personbogen for tilknyttede virksomheder',
+      tinglysningIngenVirksomheder:
+        'Personbogsdata hentes via tilknyttede virksomheders CVR-numre. Denne person har ingen tilknyttede virksomheder, og Tinglysningsrettens API understøtter ikke direkte personsøgning uden CVR.',
       tinglysningForCompany: 'Hæftelser via virksomhed',
       loading: 'Indlæser persondata...',
       error: 'Kunne ikke hente persondata',
@@ -778,6 +831,57 @@ export const translations = {
       contextPage: 'Page: {path}',
     },
 
+    /* ─── AI Analysis page ─────────────────────────────────────────── */
+    analysisPage: {
+      title: 'AI Analysis',
+      subtitle: 'Choose an analysis type and specify a CVR number, BFE number or area',
+      chooseArea: 'Choose analysis area',
+      backToAreas: 'Back to analysis types',
+      targetLabel: 'What do you want to analyse?',
+      targetPlaceholder: 'CVR number, BFE number or address…',
+      targetPlaceholderArea: 'City, postcode or area…',
+      targetPlaceholderPortfolio: 'CVR number or owner name…',
+      orSearch: 'Or search:',
+      searchPlaceholder: 'Search company, address or CVR…',
+      runAnalysis: 'Run analysis',
+      runningAnalysis: 'Analysing…',
+      newAnalysis: 'New analysis',
+      result: 'Analysis result',
+      errorOccurred: 'An error occurred',
+      tryAgain: 'Try again',
+      fetchingData: 'Fetching data from registers…',
+      entitySelected: 'Selected entity',
+      clearEntity: 'Remove selected entity',
+      emptyHint: 'AI-powered analysis with real data from public registers',
+      emptyHintSub: 'Automatically fetches CVR, financials, BBR, valuations, ownership and more.',
+      areas: {
+        virksomhed: {
+          title: 'Company Analysis',
+          desc: 'Financials, ownership and risk profile',
+        },
+        ejendom: {
+          title: 'Property Analysis',
+          desc: 'Valuation vs. market price, tax optimisation',
+        },
+        ejerskab: {
+          title: 'Ownership Analysis',
+          desc: 'Group structure, ultimate owner, cross-ownership',
+        },
+        omraade: {
+          title: 'Area Analysis',
+          desc: 'Property prices and business density',
+        },
+        due_diligence: {
+          title: 'Due Diligence',
+          desc: 'Full report for acquisition or investment',
+        },
+        portefolje: {
+          title: 'Portfolio Analysis',
+          desc: 'Overview of properties and companies for one owner',
+        },
+      },
+    },
+
     /* ─── Company page ─────────────────────────────────────────────── */
     company: {
       title: 'Companies',
@@ -935,6 +1039,8 @@ export const translations = {
       loadingTinglysning: 'Loading personal register data for affiliated companies...',
       tinglysningError: 'Could not fetch personal register data',
       tinglysningEmpty: 'No registrations in the Personal Register for affiliated companies',
+      tinglysningIngenVirksomheder:
+        "Personal register data is fetched via affiliated companies' CVR numbers. This person has no affiliated companies, and the Land Registry API does not support direct person lookup without a CVR number.",
       tinglysningForCompany: 'Charges via company',
       loading: 'Loading person data...',
       error: 'Could not load person data',

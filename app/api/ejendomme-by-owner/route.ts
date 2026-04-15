@@ -188,7 +188,10 @@ async function hentBfeByCvr(
       },
       body: JSON.stringify({ query }),
       signal: AbortSignal.timeout(proxyTimeout()),
-      next: { revalidate: 3600 },
+      // BIZZ-367: Revalidate frequently so a fixed auth credential is picked up within
+      // minutes rather than the previous 3600s window. EJF ownership data changes slowly
+      // so 300s is still cache-friendly for normal use.
+      next: { revalidate: 300 },
     });
 
     if (res.status === 403) return { bfeNumre: [], authError: true };
@@ -252,7 +255,9 @@ async function hentBfeByPerson(
       },
       body: JSON.stringify({ query }),
       signal: AbortSignal.timeout(proxyTimeout()),
-      next: { revalidate: 3600 },
+      // BIZZ-369: Same short revalidation as hentBfeByCvr — ensures a fixed EJF
+      // credential is reflected within ~5 minutes rather than 1 hour.
+      next: { revalidate: 300 },
     });
 
     if (res.status === 403) return { bfeNumre: [], authError: true };

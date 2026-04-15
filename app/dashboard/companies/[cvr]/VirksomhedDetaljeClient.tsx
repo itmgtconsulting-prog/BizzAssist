@@ -242,6 +242,8 @@ interface OwnerChainNode {
   erVirksomhed: boolean;
   /** Ejerandel */
   ejerandel: string | null;
+  /** Whether this company is ceased/ophørt (BIZZ-357) */
+  isCeased?: boolean;
   /** Ejere af denne node (rekursivt) */
   parents: OwnerChainNode[];
 }
@@ -414,9 +416,17 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
     }
 
     // BIZZ-253: Pre-seed cache with the current company's data to avoid re-fetching
-    const fetchedCache = new Map<number, { deltagere: CVRPublicData['deltagere']; cvr: number }>();
+    // BIZZ-357: Also cache enddate so ceased status propagates into the owner chain
+    const fetchedCache = new Map<
+      number,
+      { deltagere: CVRPublicData['deltagere']; cvr: number; enddate: string | null }
+    >();
     if (data.vat) {
-      fetchedCache.set(data.vat, { deltagere: data.deltagere ?? [], cvr: data.vat });
+      fetchedCache.set(data.vat, {
+        deltagere: data.deltagere ?? [],
+        cvr: data.vat,
+        enddate: data.enddate ?? null,
+      });
     }
 
     async function resolveChainTop(
@@ -436,7 +446,12 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
               if (res.ok) {
                 const json = await res.json();
                 if (!json.error && json.vat) {
-                  cached = { deltagere: json.deltagere ?? [], cvr: json.vat };
+                  // BIZZ-357: Store enddate alongside deltagere so ceased status is known
+                  cached = {
+                    deltagere: json.deltagere ?? [],
+                    cvr: json.vat,
+                    enddate: json.enddate ?? null,
+                  };
                   fetchedCache.set(o.enhedsNummer, cached);
                 }
               }
@@ -444,7 +459,13 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
             if (!cached) return { ...o, cvr: null, parents: [] };
             const parentOwners = extractOwners(cached.deltagere);
             const resolvedParents = await resolveChainTop(parentOwners, depth + 1, maxDepth);
-            return { ...o, cvr: cached.cvr, parents: resolvedParents };
+            // BIZZ-357: Mark ceased companies so the diagram can render them visually distinct
+            return {
+              ...o,
+              cvr: cached.cvr,
+              isCeased: cached.enddate != null,
+              parents: resolvedParents,
+            };
           } catch {
             return { ...o, cvr: null, parents: [] };
           }

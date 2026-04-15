@@ -768,6 +768,37 @@ const ENHED_QUERY = `
 `;
 
 /**
+ * BIZZ-360: Query der henter alle BBR_Enhed for en given bygning UUID.
+ * Bruges til at finde enheder (ejerlejligheder) på en hovedejendom, hvor
+ * enhederne har individuelle adresse-UUIDs og ikke kan slås op via
+ * adresseIdentificerer på adgangsadressen.
+ *
+ * @param bygningId - BBR Bygning id_lokalId UUID
+ */
+const ENHED_BY_BYGNING_QUERY = `
+  query($vt: DafDateTime!, $id: String!) {
+    BBR_Enhed(first: 200, virkningstid: $vt, where: { bygning: { eq: $id } }) {
+      nodes {
+        id_lokalId
+        adresseIdentificerer
+        enh020EnhedensAnvendelse
+        enh023Boligtype
+        enh026EnhedensSamledeAreal
+        enh027ArealTilBeboelse
+        enh028ArealTilErhverv
+        enh031AntalVaerelser
+        enh035Energiforsyning
+        enh051Varmeinstallation
+        enh052Opvarmningsmiddel
+        bygning
+        etage
+        status
+      }
+    }
+  }
+`;
+
+/**
  * Batch-henter DAWA-adressedata for en liste af adresse-UUIDs.
  * Returnerer et map fra UUID → { etage, doer, adressebetegnelse }.
  * Bruger DAWA's bulk-endpoint (kommaseparerede IDs) for effektivitet.
@@ -888,17 +919,34 @@ export async function fetchBbrForAddress(
         }
       }
 
-      // Trin 3: Har grund → hent bygninger via grund UUID
+      // Trin 3: Har grund → hent bygninger og alle enheder via grund UUID
       if (grundId) {
         const grundBygQuery = BYGNING_QUERY.replace('husnummer: { eq: $id }', 'grund: { eq: $id }');
         const grundBygninger = await fetchBBRGraphQL(grundBygQuery, { vt, id: grundId });
         if (grundBygninger && grundBygninger.length > 0) {
-          // Sæt fraEnheder fra bygnings-ID'er så den eksisterende dedup-logik virker
+          // Udtræk bygnings-UUID'er til WFS-punktopslag
           fraEnheder = (grundBygninger as RawBBRBygning[])
             .map((b) => b.id_lokalId)
             .filter((id): id is string => typeof id === 'string');
-          // Override rawBygninger via effectiveRawBygninger nedenfor
-          effectiveRawEnheder = rawEnheder; // behold tomme enheder
+
+          // BIZZ-360: Hent alle enheder (ejerlejligheder) for hver bygning.
+          // ENHED_QUERY filtrerer på adresseIdentificerer (lejlighedens adresse-UUID),
+          // som ikke matcher adgangsadressen for moderejedommen. Vi bruger i stedet
+          // ENHED_BY_BYGNING_QUERY der filtrerer direkte på bygnings-UUID'en.
+          const enhedResultater = await Promise.all(
+            fraEnheder.map((bygId) => fetchBBRGraphQL(ENHED_BY_BYGNING_QUERY, { vt, id: bygId }))
+          );
+          const kombineredeEnheder = enhedResultater.flatMap((r) => r ?? []);
+          if (kombineredeEnheder.length > 0) {
+            effectiveRawEnheder = kombineredeEnheder;
+            logger.log(
+              `[fetchBBR] Hovedejendom: fandt ${kombineredeEnheder.length} enheder via bygning(er) under BBR_Grund ${grundId}`
+            );
+          } else {
+            // Ingen enheder fra bygning-opslag — behold tomme enheder
+            effectiveRawEnheder = rawEnheder;
+          }
+
           logger.log(
             `[fetchBBR] Hovedejendom: fandt ${grundBygninger.length} bygning(er) via BBR_Grund ${grundId}`
           );

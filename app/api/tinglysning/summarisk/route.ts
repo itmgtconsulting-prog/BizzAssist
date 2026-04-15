@@ -381,6 +381,12 @@ export async function GET(req: NextRequest) {
 
       const prioritetStr = entry.match(/PrioritetNummer[^>]*>([^<]+)/)?.[1];
       const prioritet = prioritetStr ? parseInt(prioritetStr, 10) : null;
+      // BIZZ-330: Prioritetsnumre er løbende sequence-numre på tværs af ejendommens
+      // HELE tinglysningshistorik — aflyste/slettede hæftelser tæller med.
+      // Et prioritetsnummer på f.eks. 24 eller 25 betyder blot, at der tidligere
+      // har eksisteret 23 hæftelser (nu aflyste), ikke at der mangler data.
+      // Tingbogsattesten returnerer kun AKTUELLE (ikke-aflyste) hæftelser, så
+      // "huller" i prioritetsrækkefølgen er forventet og korrekt adfærd.
       // Debitor(er) — XML-strukturen er:
       // <ns:DebitorInformationSamling>
       //   <ns7:RolleInformation>
@@ -966,55 +972,140 @@ export async function GET(req: NextRequest) {
       );
     }
     if (section === 'servitutter') {
-      // Hent servitutter fra hovedejendom hvis hovedBfe er angivet (ejerlejligheder)
+      // BIZZ-358: Hent servitutter fra moderBFE (hovedejendom) for ejerlejligheder.
+      // Servitutter tinglyses typisk på grunden (moderejendommen), ikke på de enkelte
+      // ejerlejligheder. Uden dette vises 0 servitutter på ejerlejligheds-sider.
       if (hovedBfe && /^\d+$/.test(hovedBfe)) {
         try {
-          // BIZZ-331: Shorter timeout for hovedejendom lookup (prevents Vercel 10s gateway timeout)
           const hovedSearchRes = await tlFetch(
             `/ejendom/hovednoteringsnummer?hovednoteringsnummer=${hovedBfe}`
           );
           if (hovedSearchRes.status === 200) {
             const hovedData = JSON.parse(hovedSearchRes.body);
             const hovedItems = hovedData?.items ?? [];
+            // Kun hent hvis det er en anden ejendom end den vi allerede har
             if (hovedItems.length > 0 && hovedItems[0].uuid !== uuid) {
               const hovedUuid = hovedItems[0].uuid;
               const hovedXmlRes = await tlFetch(`/ejdsummarisk/${hovedUuid}`);
               if (hovedXmlRes.status === 200) {
                 const hovedXml = hovedXmlRes.body;
+
+                // ── Fuld parsing af servitutter fra moderejendommen ──
+                // Spejler den eksisterende parsing-logik for lejlighedens egne servitutter,
+                // men markerer hver post med fraHovedejendom: true.
                 const hovedServitutEntries = [
                   ...hovedXml.matchAll(/<ns:ServitutSummarisk>([\s\S]*?)<\/ns:ServitutSummarisk>/g),
                 ];
+                const servitutterFraHoved: TLServitut[] = [];
                 for (const [, entry] of hovedServitutEntries) {
-                  const type = entry.match(/ServitutType[^>]*>([^<]+)/)?.[1] ?? null;
+                  const type = entry.match(/ServitutType[^>]*>([^<]+)/)?.[1] ?? 'ukendt';
                   const dato =
-                    entry.match(/TinglysningsDato[^>]*>([^<]+)/)?.[1]?.split('+')[0] ?? null;
+                    entry.match(/TinglysningsDato[^>]*>([^<]+)/)?.[1]?.split('T')[0] ?? null;
                   const tekst = entry.match(/ServitutTekstSummarisk[^>]*>([^<]+)/)?.[1] ?? null;
-                  const prioritet = entry.match(/PrioritetNummer[^>]*>([^<]+)/)?.[1] ?? null;
                   const dokumentId = entry.match(/DokumentIdentifikator[^>]*>([^<]+)/)?.[1] ?? null;
-                  // Marker som fra hovedejendom
-                  servitutter.push({
-                    type: type ?? '',
+                  const dokumentAlias =
+                    entry.match(/DokumentAliasIdentifikator[^>]*>([^<]+)/)?.[1] ??
+                    entry.match(/AktHistoriskIdentifikator[^>]*>([^<]+)/)?.[1] ??
+                    null;
+                  const ogsaaLystPaaStr = entry.match(/OgsaaLystPaaAntal[^>]*>([^<]+)/)?.[1];
+                  const ogsaaLystPaa = ogsaaLystPaaStr ? parseInt(ogsaaLystPaaStr, 10) : null;
+                  const prioritetStr = entry.match(/PrioritetNummer[^>]*>([^<]+)/)?.[1];
+                  const prioritet = prioritetStr ? parseInt(prioritetStr, 10) : null;
+                  // Indhold-koder
+                  const indholdKoder = [
+                    ...entry.matchAll(
+                      /ServitutIndholdAndetKode[^>]*>([^<]+)|ServitutIndholdLedningerKode[^>]*>([^<]+)|ServitutIndholdAnvendelseKode[^>]*>([^<]+)/g
+                    ),
+                  ]
+                    .map((m) => (m[1] || m[2] || m[3]).trim())
+                    .filter((k) => k.length > 1);
+                  // Tillægstekst fra summarisk
+                  const tillaegsTekstAfsnit = [...entry.matchAll(/Afsnit[^>]*>([^<]{3,})/g)]
+                    .map((m) => m[1].trim())
+                    .filter((v) => v.length > 0);
+                  const tillaegsTekst =
+                    tillaegsTekstAfsnit.length > 0 ? tillaegsTekstAfsnit.join('\n') : null;
+                  // Påtaleberettiget
+                  const paataleberettiget =
+                    entry.match(
+                      /PaataleberettigetSamling[\s\S]*?LegalUnitName[^>]*>([^<]+)/
+                    )?.[1] ?? null;
+                  const paataleberettigetCvr =
+                    entry.match(
+                      /PaataleberettigetSamling[\s\S]*?CVRnumberIdentifier[^>]*>([^<]+)/
+                    )?.[1] ?? null;
+                  // Har betydning for værdi
+                  const harBetydning =
+                    entry.match(
+                      /ServitutHarBetydningForEjendommensVaerdiIndikator[^>]*>([^<]+)/
+                    )?.[1] === 'true';
+                  // Afgift
+                  const afgiftStr = entry.match(/TinglysningAfgiftBetalt[^>]*>([^<]+)/)?.[1];
+                  const tinglysningsafgift = afgiftStr ? parseInt(afgiftStr, 10) : null;
+                  // Bilagsreferencer
+                  const bilagRefs = [
+                    ...entry.matchAll(
+                      /Bilagsreference[^>]*>([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/g
+                    ),
+                  ].map((m) => m[1]);
+                  const afsnittBilag = [
+                    ...entry.matchAll(
+                      /Afsnit[^>]*>([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/g
+                    ),
+                  ].map((m) => m[1]);
+                  const allBilag = [...new Set([...bilagRefs, ...afsnittBilag])];
+
+                  servitutterFraHoved.push({
+                    type,
                     dato,
                     tekst,
-                    prioritet: prioritet ? parseInt(prioritet, 10) : null,
+                    prioritet,
+                    indholdKoder,
+                    tillaegsTekst,
+                    paataleberettiget,
+                    paataleberettigetCvr,
+                    harBetydningForVaerdi: harBetydning,
+                    tinglysningsafgift,
                     dokumentId,
-                    dokumentAlias: null,
-                    tillaegsTekst: null,
-                    indholdKoder: [],
-                    paataleberettiget: null,
-                    paataleberettigetCvr: null,
-                    harBetydningForVaerdi: false,
-                    tinglysningsafgift: null,
-                    bilagRefs: [],
-                    ogsaaLystPaa: null,
+                    dokumentAlias,
+                    bilagRefs: allBilag,
+                    ogsaaLystPaa,
                     fraHovedejendom: true,
                   });
                 }
+
+                // ── Berig moderejendommens servitutter med tillægstekst fra dokumenter ──
+                // Spejler den eksisterende dokument-berigelse for lejlighedens servitutter.
+                await batchParallel(
+                  servitutterFraHoved.filter((s) => s.dokumentId),
+                  async (s) => {
+                    try {
+                      const dokRes = await tlFetch(`/dokaktuel/uuid/${s.dokumentId}`);
+                      if (dokRes.status === 200) {
+                        const dok = dokRes.body;
+                        const dokAfsnit = [...dok.matchAll(/Afsnit[^>]*>([^<]{3,})/g)]
+                          .map((m) => m[1].trim())
+                          .filter((v) => v.length > 0 && !v.match(/^[0-9a-f-]{36}$/));
+                        if (dokAfsnit.length > 0) {
+                          const dokTekst = dokAfsnit.join('\n');
+                          if (!s.tillaegsTekst || dokTekst.length > s.tillaegsTekst.length) {
+                            s.tillaegsTekst = dokTekst;
+                          }
+                        }
+                      }
+                    } catch {
+                      /* ignore — tillaegstekst fra dokument er valgfri */
+                    }
+                  }
+                );
+
+                // Tilføj moderejendommens servitutter til svaret
+                servitutter.push(...servitutterFraHoved);
               }
             }
           }
         } catch (err) {
-          logger.warn('[tinglysning/summarisk] Hovedejendom servitut-hentning fejlede:', err);
+          logger.warn('[tinglysning/summarisk] Moderejendommens servitut-hentning fejlede:', err);
         }
       }
       // BIZZ-244: Extended cache for servitutter (rarely change, expensive to fetch)

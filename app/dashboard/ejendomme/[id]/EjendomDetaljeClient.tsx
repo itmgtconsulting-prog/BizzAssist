@@ -21,7 +21,6 @@ import {
   ArrowLeft,
   Download,
   Bell,
-  List,
   X,
   MapPin,
   Building2,
@@ -551,6 +550,9 @@ export default function EjendomDetaljeClient({
     deedType: da ? 'Adkomst' : 'Deed type',
     registrationDate: da ? 'Tinglyst' : 'Registered',
     registrationFee: da ? 'Tinglysningsafgift' : 'Registration fee',
+    loesoereSum: da ? 'Løsøre' : 'Movables',
+    entrepriseSum: da ? 'Entreprise' : 'Construction',
+    overtagelsesdato: da ? 'Overtagelse' : 'Possession',
     mortgages: da ? 'Hæftelser & Pantebreve' : 'Mortgages & Charges',
     noMortgages: da ? 'Ingen hæftelser tinglyst' : 'No mortgages registered',
     principalAmount: da ? 'Hovedstol' : 'Principal',
@@ -926,6 +928,8 @@ export default function EjendomDetaljeClient({
 
   /** Om ejendommen er fulgt af brugeren — synkroniseret med localStorage */
   const [erFulgt, setErFulgt] = useState(false);
+  /** True mens Følg/Følger-toggle-request er i gang — forhindrer dobbeltklik */
+  const [foelgToggling, setFoelgToggling] = useState(false);
   /** Vis Følg-tooltip med info om overvåget data */
   const [visFoelgTooltip, setVisFoelgTooltip] = useState(false);
 
@@ -1457,46 +1461,43 @@ export default function EjendomDetaljeClient({
   }, [id, erDAWA, dawaAdresse, bbrData]);
 
   /**
-   * Henter energimærkerapporter via /api/energimaerke når BFE-nummer er tilgængeligt.
+   * BIZZ-332: Henter energimærkerapporter via /api/energimaerke når BFE-nummer er tilgængeligt.
+   *
+   * Energimærker registreres på bygningsniveau (moderejendommen), ikke på den
+   * individuelle ejerlejlighed. Opslag-BFE bestemmes efter følgende prioritering:
+   *   1. Moderejendom (ingen etage + ejerlejlighedBfe sat): brug moderBfe direkte.
+   *   2. Ejerlejlighed (har etage + moderBfe sat): brug moderBfe direkte — undgår
+   *      et forgæves opslag på ejerlejlighedens egen BFE, som aldrig har et mærke.
+   *   3. Normal ejendom (ingen ejerlejlighedBfe): brug ejendomsrelationernes BFE.
+   *
    * Kræver EMO_USERNAME/PASSWORD i .env.local — fejler stille med manglerAdgang-flag.
    * AbortController sikrer at forældede svar ignoreres ved hurtig navigation.
    */
   useEffect(() => {
     if (!erDAWA || !bbrData?.ejendomsrelationer?.length || !dawaAdresse) return;
-    // Hovedejendom: brug moderBfe (energimærke gælder hele bygningen)
-    const erModerEnergi = !dawaAdresse.etage && !!bbrData.ejerlejlighedBfe;
-    const bfeNummer = erModerEnergi
-      ? (bbrData.moderBfe ?? bbrData.ejendomsrelationer[0]?.bfeNummer)
-      : bbrData.ejendomsrelationer[0]?.bfeNummer;
+
+    // Bestem det korrekte BFE til energimærke-opslag.
+    // Moderejendom: ingen etage OG har ejerlejlighedBfe (VP fandt en child-BFE).
+    const erModerEjendom = !dawaAdresse.etage && !!bbrData.ejerlejlighedBfe;
+    // Ejerlejlighed: har etage OG moderBfe er sat (= jordBFE / bygnings-BFE).
+    const erEjerlejlighed = !!dawaAdresse.etage && !!bbrData.moderBfe;
+
+    let bfeNummer: number | null | undefined;
+    if (erModerEjendom || erEjerlejlighed) {
+      // For begge cases: energimærket hænger på moderejendommens BFE (jordBFE).
+      bfeNummer = bbrData.moderBfe ?? bbrData.ejendomsrelationer[0]?.bfeNummer;
+    } else {
+      // Normal ejendom uden ejerlejligheder.
+      bfeNummer = bbrData.ejendomsrelationer[0]?.bfeNummer;
+    }
     if (!bfeNummer) return;
 
     const controller = new AbortController();
     setEnergiLoader(true);
     fetch(`/api/energimaerke?bfeNummer=${bfeNummer}`, { signal: controller.signal })
       .then((r) => (r.ok ? r.json() : null))
-      .then(async (data: EnergimaerkeResponse | null) => {
+      .then((data: EnergimaerkeResponse | null) => {
         if (controller.signal.aborted) return;
-
-        // BIZZ-332: If no energy labels found and we have a moderBfe, try that
-        if (
-          (!data?.maerker || data.maerker.length === 0) &&
-          bbrData?.moderBfe &&
-          bfeNummer !== bbrData.moderBfe
-        ) {
-          const fallbackRes = await fetch(`/api/energimaerke?bfeNummer=${bbrData.moderBfe}`, {
-            signal: controller.signal,
-          });
-          if (fallbackRes.ok) {
-            const fallback = (await fallbackRes.json()) as EnergimaerkeResponse | null;
-            if (fallback?.maerker && fallback.maerker.length > 0) {
-              setEnergimaerker(fallback.maerker);
-              setEnergiManglerAdgang(false);
-              setEnergiFejl(null);
-              return;
-            }
-          }
-        }
-
         setEnergimaerker(data?.maerker ?? null);
         setEnergiManglerAdgang(data?.manglerAdgang ?? false);
         setEnergiFejl(data?.fejl ?? null);
@@ -1512,7 +1513,7 @@ export default function EjendomDetaljeClient({
         if (!controller.signal.aborted) setEnergiLoader(false);
       });
     return () => controller.abort();
-  }, [id, erDAWA, bbrData]);
+  }, [id, erDAWA, bbrData, dawaAdresse]);
 
   /**
    * Henter jordforureningsstatus fra DkJord API når ejerlavKode + matrikelnr er tilgængelige.
@@ -1710,6 +1711,10 @@ export default function EjendomDetaljeClient({
   interface MergedHandel {
     kontantKoebesum: number | null;
     samletKoebesum: number | null;
+    /** Løsøreværdi fra EJF (inventar, maskiner m.m. der ikke er fast ejendom) */
+    loesoeresum: number | null;
+    /** Entreprisesum fra EJF (nybyggeri/ombygning inkluderet i købet) */
+    entreprisesum: number | null;
     koebsaftaleDato: string | null;
     overtagelsesdato: string | null;
     overdragelsesmaade: string | null;
@@ -1755,6 +1760,8 @@ export default function EjendomDetaljeClient({
       merged.push({
         kontantKoebesum: h.kontantKoebesum,
         samletKoebesum: h.samletKoebesum,
+        loesoeresum: h.loesoeresum,
+        entreprisesum: h.entreprisesum,
         koebsaftaleDato: h.koebsaftaleDato,
         overtagelsesdato: h.overtagelsesdato,
         overdragelsesmaade: h.overdragelsesmaade,
@@ -1775,6 +1782,9 @@ export default function EjendomDetaljeClient({
       merged.push({
         kontantKoebesum: e.kontantKoebesum ?? e.koebesum,
         samletKoebesum: e.iAltKoebesum ?? e.koebesum,
+        // Løsøre/entreprise comes only from EJF — not available in tinglysning records
+        loesoeresum: null,
+        entreprisesum: null,
         koebsaftaleDato: e.koebsaftaledato,
         overtagelsesdato: e.overtagelsesdato,
         overdragelsesmaade: e.adkomstType,
@@ -1899,29 +1909,54 @@ export default function EjendomDetaljeClient({
                   onMouseLeave={() => setVisFoelgTooltip(false)}
                 >
                   <button
+                    disabled={foelgToggling}
                     onClick={async () => {
+                      if (foelgToggling) return;
                       setVisFoelgTooltip(false);
-                      const postnr = dawaAdresse?.postnr ?? '';
-                      const by = dawaAdresse?.postnrnavn ?? '';
-                      const kommune =
-                        dawaAdresse?.kommunenavn ?? dawaJordstykke?.kommune.navn ?? '';
-                      const anvendelse = bbrData?.bbr?.[0]?.anvendelse ?? null;
-                      const nyTilstand = await toggleTrackEjendom({
-                        id,
-                        adresse: adresseStreng,
-                        postnr,
-                        by,
-                        kommune,
-                        anvendelse,
-                      });
-                      setErFulgt(nyTilstand);
-                      window.dispatchEvent(new Event('ba-tracked-changed'));
+                      // Optimistic update — toggle colour immediately so the user
+                      // sees instant feedback before the Supabase write completes.
+                      const optimisticState = !erFulgt;
+                      setErFulgt(optimisticState);
+                      setFoelgToggling(true);
+                      try {
+                        const postnr = dawaAdresse?.postnr ?? '';
+                        const by = dawaAdresse?.postnrnavn ?? '';
+                        const kommune =
+                          dawaAdresse?.kommunenavn ?? dawaJordstykke?.kommune.navn ?? '';
+                        const anvendelse = bbrData?.bbr?.[0]?.anvendelse ?? null;
+                        const nyTilstand = await toggleTrackEjendom({
+                          id,
+                          adresse: adresseStreng,
+                          postnr,
+                          by,
+                          kommune,
+                          anvendelse,
+                        });
+                        // Confirm with authoritative result from the toggle function
+                        setErFulgt(nyTilstand);
+                        window.dispatchEvent(new Event('ba-tracked-changed'));
+                      } catch {
+                        // Revert optimistic update on error
+                        setErFulgt(!optimisticState);
+                      } finally {
+                        setFoelgToggling(false);
+                      }
                     }}
-                    className={`flex items-center gap-2 px-3 py-1.5 border rounded-lg text-sm transition-all ${
+                    className={`flex items-center gap-2 px-3 py-1.5 border rounded-lg text-sm transition-all disabled:opacity-60 disabled:cursor-not-allowed ${
                       erFulgt
                         ? 'bg-blue-600/20 hover:bg-blue-600/30 border-blue-500/40 text-blue-300'
                         : 'bg-slate-800 hover:bg-slate-700 border-slate-700/60 text-slate-300'
                     }`}
+                    aria-label={
+                      erFulgt
+                        ? da
+                          ? 'Stop med at følge ejendom'
+                          : 'Unfollow property'
+                        : da
+                          ? 'Følg ejendom'
+                          : 'Follow property'
+                    }
+                    aria-pressed={erFulgt}
                   >
                     <Bell size={14} className={erFulgt ? 'fill-blue-400 text-blue-400' : ''} />
                     {erFulgt ? t.following : t.follow}
@@ -3572,7 +3607,8 @@ export default function EjendomDetaljeClient({
                     <SektionLoader label={t.loadingSalesHistory} rows={4} />
                   ) : mergedSalgshistorik.length > 0 ? (
                     <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl overflow-hidden overflow-x-auto">
-                      <table className="w-full text-sm min-w-[700px]">
+                      {/* BIZZ-324: table expanded with tinglysningsdato, tinglysningsafgift, loesoeresum and entreprisesum */}
+                      <table className="w-full text-sm min-w-[900px]">
                         <thead>
                           <tr className="border-b border-slate-700/30 text-slate-500 text-xs uppercase tracking-wider">
                             <th className="text-left px-4 py-2.5 font-medium">{t.date}</th>
@@ -3582,11 +3618,22 @@ export default function EjendomDetaljeClient({
                               {t.purchasePrice}
                             </th>
                             <th className="text-right px-4 py-2.5 font-medium">{t.cashPrice}</th>
+                            <th className="text-right px-4 py-2.5 font-medium">{t.loesoereSum}</th>
+                            <th className="text-right px-4 py-2.5 font-medium">
+                              {t.entrepriseSum}
+                            </th>
+                            <th className="text-right px-4 py-2.5 font-medium">
+                              {t.registrationDate}
+                            </th>
+                            <th className="text-right px-4 py-2.5 font-medium">
+                              {t.registrationFee}
+                            </th>
                             <th className="text-right px-4 py-2.5 font-medium">{t.share}</th>
                           </tr>
                         </thead>
                         <tbody>
                           {mergedSalgshistorik.map((h, i) => {
+                            /** Primær dato: købsaftaledato foretrukkes, ellers overtagelsesdato */
                             const dato = h.koebsaftaleDato ?? h.overtagelsesdato;
                             const overdragelse = h.overdragelsesmaade ?? h.adkomstType;
                             return (
@@ -3602,6 +3649,22 @@ export default function EjendomDetaljeClient({
                                         day: 'numeric',
                                       })
                                     : '—'}
+                                  {/* Show overtagelsesdato as secondary line when different from koebsaftaleDato */}
+                                  {h.koebsaftaleDato &&
+                                    h.overtagelsesdato &&
+                                    h.koebsaftaleDato !== h.overtagelsesdato && (
+                                      <p className="text-slate-600 text-[10px] mt-0.5">
+                                        {t.overtagelsesdato}:{' '}
+                                        {new Date(h.overtagelsesdato).toLocaleDateString(
+                                          da ? 'da-DK' : 'en-GB',
+                                          {
+                                            year: 'numeric',
+                                            month: 'short',
+                                            day: 'numeric',
+                                          }
+                                        )}
+                                      </p>
+                                    )}
                                 </td>
                                 <td className="px-4 py-2.5">
                                   {h.koeber ? (
@@ -3652,6 +3715,33 @@ export default function EjendomDetaljeClient({
                                     : '—'}
                                 </td>
                                 <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums text-xs">
+                                  {h.loesoeresum != null
+                                    ? `${h.loesoeresum.toLocaleString(da ? 'da-DK' : 'en-GB')} kr.`
+                                    : '—'}
+                                </td>
+                                <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums text-xs">
+                                  {h.entreprisesum != null
+                                    ? `${h.entreprisesum.toLocaleString(da ? 'da-DK' : 'en-GB')} kr.`
+                                    : '—'}
+                                </td>
+                                <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums text-xs whitespace-nowrap">
+                                  {h.tinglysningsdato
+                                    ? new Date(h.tinglysningsdato).toLocaleDateString(
+                                        da ? 'da-DK' : 'en-GB',
+                                        {
+                                          year: 'numeric',
+                                          month: 'short',
+                                          day: 'numeric',
+                                        }
+                                      )
+                                    : '—'}
+                                </td>
+                                <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums text-xs">
+                                  {h.tinglysningsafgift != null
+                                    ? `${h.tinglysningsafgift.toLocaleString(da ? 'da-DK' : 'en-GB')} kr.`
+                                    : '—'}
+                                </td>
+                                <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums text-xs">
                                   {h.andel ?? '—'}
                                 </td>
                               </tr>
@@ -3674,30 +3764,7 @@ export default function EjendomDetaljeClient({
                 </div>
 
                 {/* Hæftelser fjernet — vises nu under Tinglysning-tab */}
-
-                {/* ── Udbudshistorik — coming soon ── */}
-                <div>
-                  <SectionTitle title={t.listingHistory} />
-                  <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl p-5 text-center space-y-2">
-                    <List size={22} className="text-slate-600 mx-auto" />
-                    <p className="text-slate-400 text-sm font-medium">{t.listingPricesAndStatus}</p>
-                    <p className="text-slate-500 text-xs max-w-sm mx-auto leading-relaxed">
-                      {t.listingHistoryDesc}
-                    </p>
-                  </div>
-                </div>
-
-                {/* ── Lignende handler — coming soon ── */}
-                <div>
-                  <SectionTitle title={t.comparableSales} />
-                  <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl p-5 text-center space-y-2">
-                    <MapPin size={22} className="text-slate-600 mx-auto" />
-                    <p className="text-slate-400 text-sm font-medium">{t.comparableSalesInArea}</p>
-                    <p className="text-slate-500 text-xs max-w-sm mx-auto leading-relaxed">
-                      {t.comparableSalesDesc}
-                    </p>
-                  </div>
-                </div>
+                {/* BIZZ-325: Udbudshistorik og Lignende handler fjernet — ingen datakilde tilgængelig endnu */}
               </div>
             )}
 
@@ -3823,62 +3890,160 @@ export default function EjendomDetaljeClient({
                   })()}
                 </div>
 
-                {/* BIZZ-269: Skattehistorik — grundskyld over tid */}
-                {alleVurderinger.length > 1 && (
-                  <div>
-                    <SectionTitle title={da ? 'Skattehistorik' : 'Tax history'} />
-                    <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden overflow-x-auto">
-                      <table className="w-full text-xs">
-                        <thead>
-                          <tr className="border-b border-slate-700/40">
-                            <th className="px-4 py-2.5 text-left text-slate-500 font-medium">
-                              {da ? 'År' : 'Year'}
-                            </th>
-                            <th className="px-4 py-2.5 text-right text-slate-500 font-medium">
-                              {da ? 'Ejendomsværdi' : 'Property value'}
-                            </th>
-                            <th className="px-4 py-2.5 text-right text-slate-500 font-medium">
-                              {da ? 'Grundværdi' : 'Land value'}
-                            </th>
-                            <th className="px-4 py-2.5 text-right text-slate-500 font-medium">
-                              {da ? 'Est. grundskyld' : 'Est. land tax'}
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {alleVurderinger.slice(0, 10).map((v, i) => (
-                            <tr
-                              key={v.aar ?? i}
-                              className="border-b border-slate-700/20 last:border-0 hover:bg-slate-800/30"
-                            >
-                              <td className="px-4 py-2 text-slate-300 font-medium">
-                                {v.aar ?? '–'}
-                              </td>
-                              <td className="px-4 py-2 text-right text-slate-300">
-                                {v.ejendomsvaerdi ? formatDKK(v.ejendomsvaerdi) : '–'}
-                              </td>
-                              <td className="px-4 py-2 text-right text-slate-300">
-                                {v.grundvaerdi ? formatDKK(v.grundvaerdi) : '–'}
-                              </td>
-                              <td className="px-4 py-2 text-right font-medium text-blue-400">
-                                {v.estimereretGrundskyld
-                                  ? `${formatDKK(v.estimereretGrundskyld)} kr/år`
-                                  : '–'}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                    {vurdering?.grundskyldspromille && (
-                      <p className="text-slate-600 text-[10px] mt-2">
-                        {da
-                          ? `Estimeret med kommunens grundskyldspromille: ${vurdering.grundskyldspromille}‰ (2025-sats anvendt for alle år)`
-                          : `Estimated using municipality land tax rate: ${vurdering.grundskyldspromille}‰ (2025 rate applied to all years)`}
-                      </p>
-                    )}
-                  </div>
-                )}
+                {/* BIZZ-269 / BIZZ-355: Skattehistorik — faktiske skatter fra Vurderingsportalen + estimater fra Datafordeler */}
+                {(forelobige.length > 0 || alleVurderinger.length > 1) &&
+                  (() => {
+                    /**
+                     * Byg en samlet skattehistorik-tabel.
+                     * Forelobige rækker (fra Vurderingsportalen) har faktiske grundskyld/ejendomsskat-beløb.
+                     * Historiske vurderingsrækker (fra Datafordeler) har estimeret grundskyld beregnet med promille.
+                     * Forelobige præpends og markeres tydeligt som faktiske værdier — ikke estimater.
+                     */
+                    type SkatRaekke = {
+                      aar: number;
+                      ejendomsvaerdi: number | null;
+                      grundvaerdi: number | null;
+                      /** Faktisk grundskyld fra Vurderingsportalen (kun forelobige rækker) */
+                      grundskyldAktuel: number | null;
+                      /** Faktisk ejendomsskat fra Vurderingsportalen (kun forelobige rækker) */
+                      ejendomsskatAktuel: number | null;
+                      /** Estimeret grundskyld beregnet med kommunepromille (kun historiske rækker) */
+                      grundskyldEstimeret: number | null;
+                      /** true = faktisk beregnet af Vurderingsportalen; false = estimat med promille */
+                      erAktuel: boolean;
+                    };
+
+                    // Faktiske rækker fra Vurderingsportalen
+                    const aktuelleRaekker: SkatRaekke[] = forelobige.map((fv) => ({
+                      aar: fv.vurderingsaar,
+                      ejendomsvaerdi: fv.ejendomsvaerdi,
+                      grundvaerdi: fv.grundvaerdi,
+                      grundskyldAktuel: fv.grundskyld,
+                      ejendomsskatAktuel: fv.ejendomsskat,
+                      grundskyldEstimeret: null,
+                      erAktuel: true,
+                    }));
+
+                    // Historiske rækker fra Datafordeler (filtrer år der allerede dækkes af forelobige)
+                    const forelobigAar = new Set(forelobige.map((fv) => fv.vurderingsaar));
+                    const historiskeRaekker: SkatRaekke[] = alleVurderinger
+                      .filter((v) => v.aar != null && !forelobigAar.has(v.aar))
+                      .slice(0, 10)
+                      .map((v) => ({
+                        aar: v.aar!,
+                        ejendomsvaerdi: v.ejendomsvaerdi ?? null,
+                        grundvaerdi: v.grundvaerdi ?? null,
+                        grundskyldAktuel: null,
+                        ejendomsskatAktuel: null,
+                        grundskyldEstimeret: v.estimereretGrundskyld ?? null,
+                        erAktuel: false,
+                      }));
+
+                    const alleRaekker = [...aktuelleRaekker, ...historiskeRaekker].sort(
+                      (a, b) => b.aar - a.aar
+                    );
+
+                    if (alleRaekker.length === 0) return null;
+
+                    const harEstimater =
+                      historiskeRaekker.length > 0 && !!vurdering?.grundskyldspromille;
+
+                    return (
+                      <div>
+                        <SectionTitle title={da ? 'Skattehistorik' : 'Tax history'} />
+                        <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden overflow-x-auto">
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="border-b border-slate-700/40">
+                                <th className="px-4 py-2.5 text-left text-slate-500 font-medium">
+                                  {da ? 'År' : 'Year'}
+                                </th>
+                                <th className="px-4 py-2.5 text-right text-slate-500 font-medium">
+                                  {da ? 'Ejendomsværdi' : 'Property value'}
+                                </th>
+                                <th className="px-4 py-2.5 text-right text-slate-500 font-medium">
+                                  {da ? 'Grundværdi' : 'Land value'}
+                                </th>
+                                <th className="px-4 py-2.5 text-right text-slate-500 font-medium">
+                                  {da ? 'Grundskyld' : 'Land tax'}
+                                </th>
+                                <th className="px-4 py-2.5 text-right text-slate-500 font-medium">
+                                  {da ? 'Ejendomsværdiskat' : 'Property value tax'}
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {alleRaekker.map((r) => (
+                                <tr
+                                  key={r.aar}
+                                  className="border-b border-slate-700/20 last:border-0 hover:bg-slate-800/30"
+                                >
+                                  <td className="px-4 py-2 text-slate-300 font-medium">
+                                    {r.aar}
+                                    {/* Badge indicating data provenance */}
+                                    {r.erAktuel ? (
+                                      <span className="ml-1.5 px-1 py-0.5 bg-emerald-500/10 border border-emerald-500/20 rounded text-[9px] text-emerald-400 font-medium">
+                                        {da ? 'faktisk' : 'actual'}
+                                      </span>
+                                    ) : (
+                                      <span className="ml-1.5 px-1 py-0.5 bg-slate-700/40 border border-slate-600/30 rounded text-[9px] text-slate-500 font-medium">
+                                        {da ? 'est.' : 'est.'}
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-2 text-right text-slate-300">
+                                    {r.ejendomsvaerdi ? formatDKK(r.ejendomsvaerdi) : '–'}
+                                  </td>
+                                  <td className="px-4 py-2 text-right text-slate-300">
+                                    {r.grundvaerdi ? formatDKK(r.grundvaerdi) : '–'}
+                                  </td>
+                                  <td className="px-4 py-2 text-right font-medium tabular-nums">
+                                    {r.erAktuel ? (
+                                      r.grundskyldAktuel != null ? (
+                                        <span className="text-emerald-400">
+                                          {formatDKK(r.grundskyldAktuel)} kr/år
+                                        </span>
+                                      ) : (
+                                        '–'
+                                      )
+                                    ) : r.grundskyldEstimeret != null ? (
+                                      <span className="text-blue-400">
+                                        {formatDKK(r.grundskyldEstimeret)} kr/år
+                                      </span>
+                                    ) : (
+                                      '–'
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-2 text-right tabular-nums">
+                                    {r.erAktuel ? (
+                                      r.ejendomsskatAktuel != null ? (
+                                        <span className="text-emerald-400 font-medium">
+                                          {formatDKK(r.ejendomsskatAktuel)} kr/år
+                                        </span>
+                                      ) : (
+                                        <span className="text-slate-600 text-[10px]">
+                                          {da ? 'ikke opkrævet' : 'not charged'}
+                                        </span>
+                                      )
+                                    ) : (
+                                      <span className="text-slate-600">–</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        {harEstimater && (
+                          <p className="text-slate-600 text-[10px] mt-2">
+                            {da
+                              ? `Historiske rækker (est.) beregnet med kommunens grundskyldspromille: ${vurdering!.grundskyldspromille}‰ — faktiske rækker stammer direkte fra Vurderingsportalen.`
+                              : `Historical rows (est.) calculated using municipality land tax rate: ${vurdering!.grundskyldspromille}‰ — actual rows sourced directly from Vurderingsportalen.`}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })()}
               </div>
             )}
 
@@ -4502,6 +4667,16 @@ export default function EjendomDetaljeClient({
                       </span>
                     </div>
 
+                    {/* BIZZ-332: For ejerlejligheder vises energimærker fra moderejendommen,
+                        da mærker registreres på bygningsniveau — ikke på den individuelle lejlighed. */}
+                    {!!dawaAdresse?.etage && !!bbrData?.moderBfe && (
+                      <div className="px-4 pb-2 text-xs text-slate-500 italic">
+                        {da
+                          ? `Energimærker hentes fra moderejendommen (BFE ${bbrData.moderBfe}) — mærker registreres på bygningsniveau.`
+                          : `Energy labels are fetched from the parent property (BFE ${bbrData.moderBfe}) — labels are registered at building level.`}
+                      </div>
+                    )}
+
                     {energiManglerAdgang && (
                       <div className="px-4 pb-2 text-xs text-amber-400">
                         EMO_USERNAME / EMO_PASSWORD ikke sat i .env.local
@@ -4803,26 +4978,51 @@ export default function EjendomDetaljeClient({
               onMouseLeave={() => setVisFoelgTooltip(false)}
             >
               <button
+                disabled={foelgToggling}
                 onClick={async () => {
+                  if (foelgToggling) return;
                   setVisFoelgTooltip(false);
                   if (!ejendom) return;
-                  const adresse = `${ejendom.adresse}, ${ejendom.postnummer} ${ejendom.by}`;
-                  const nyTilstand = await toggleTrackEjendom({
-                    id,
-                    adresse,
-                    postnr: ejendom.postnummer,
-                    by: ejendom.by,
-                    kommune: ejendom.kommune,
-                    anvendelse: null,
-                  });
-                  setErFulgt(nyTilstand);
-                  window.dispatchEvent(new Event('ba-tracked-changed'));
+                  // Optimistic update — toggle colour immediately so the user
+                  // sees instant feedback before the Supabase write completes.
+                  const optimisticState = !erFulgt;
+                  setErFulgt(optimisticState);
+                  setFoelgToggling(true);
+                  try {
+                    const adresse = `${ejendom.adresse}, ${ejendom.postnummer} ${ejendom.by}`;
+                    const nyTilstand = await toggleTrackEjendom({
+                      id,
+                      adresse,
+                      postnr: ejendom.postnummer,
+                      by: ejendom.by,
+                      kommune: ejendom.kommune,
+                      anvendelse: null,
+                    });
+                    // Confirm with authoritative result from the toggle function
+                    setErFulgt(nyTilstand);
+                    window.dispatchEvent(new Event('ba-tracked-changed'));
+                  } catch {
+                    // Revert optimistic update on error
+                    setErFulgt(!optimisticState);
+                  } finally {
+                    setFoelgToggling(false);
+                  }
                 }}
-                className={`flex items-center gap-2 px-3 py-1.5 border rounded-lg text-sm transition-all ${
+                className={`flex items-center gap-2 px-3 py-1.5 border rounded-lg text-sm transition-all disabled:opacity-60 disabled:cursor-not-allowed ${
                   erFulgt
                     ? 'bg-blue-600/20 hover:bg-blue-600/30 border-blue-500/40 text-blue-300'
                     : 'bg-slate-800 hover:bg-slate-700 border-slate-700/60 text-slate-300'
                 }`}
+                aria-label={
+                  erFulgt
+                    ? da
+                      ? 'Stop med at følge ejendom'
+                      : 'Unfollow property'
+                    : da
+                      ? 'Følg ejendom'
+                      : 'Follow property'
+                }
+                aria-pressed={erFulgt}
               >
                 <Bell size={14} className={erFulgt ? 'fill-blue-400 text-blue-400' : ''} />
                 {erFulgt ? t.following : t.follow}

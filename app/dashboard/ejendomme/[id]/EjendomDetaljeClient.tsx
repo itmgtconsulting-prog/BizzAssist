@@ -6755,12 +6755,21 @@ function TinglysningTab({
               }
               setHaeftelserLoading(false);
             }),
-          fetch(servituterUrl, { signal })
+          // BIZZ-331: Servitutter for ejerlejligheder can be slow (fetches
+          // from hovedejendom). Use separate timeout + error handling so other
+          // sections still display even if servitutter times out.
+          fetch(servituterUrl, { signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]) })
             .then((r) => (r.ok ? r.json() : null))
             .then((res) => {
               if (res) {
                 setServitutter(res.servitutter ?? []);
                 setIndskannedeAkterNavne(res.indskannedeAkterNavne ?? []);
+              }
+              setServituterLoading(false);
+            })
+            .catch((err) => {
+              if (err.name !== 'AbortError') {
+                logger.error('[tinglysning] Servitut fetch fejlede:', err);
               }
               setServituterLoading(false);
             }),

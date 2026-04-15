@@ -969,6 +969,7 @@ export async function GET(req: NextRequest) {
       // Hent servitutter fra hovedejendom hvis hovedBfe er angivet (ejerlejligheder)
       if (hovedBfe && /^\d+$/.test(hovedBfe)) {
         try {
+          // BIZZ-331: Shorter timeout for hovedejendom lookup (prevents Vercel 10s gateway timeout)
           const hovedSearchRes = await tlFetch(
             `/ejendom/hovednoteringsnummer?hovednoteringsnummer=${hovedBfe}`
           );

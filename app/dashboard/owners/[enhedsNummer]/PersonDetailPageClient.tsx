@@ -1149,71 +1149,87 @@ export default function PersonDetailPageClient({
    * efterfølgende batches tilføjes automatisk i baggrunden.
    * Bruger AbortController til at annullere igangværende hentning ved CVR-ændring.
    */
-  const fetchEjendommeProgressively = useCallback(async (uniqueCvrs: string[]) => {
-    ejendomAbortRef.current?.abort();
-    const controller = new AbortController();
-    ejendomAbortRef.current = controller;
+  /**
+   * BIZZ-264: Extended to support both CVR (company) and enhedsNummer (person) lookups.
+   * Builds query params with cvr= and/or enhedsNummer= as appropriate.
+   */
+  const fetchEjendommeProgressively = useCallback(
+    async (uniqueCvrs: string[], personEnhedsNumre?: string[]) => {
+      ejendomAbortRef.current?.abort();
+      const controller = new AbortController();
+      ejendomAbortRef.current = controller;
 
-    const FIRST_BATCH = 5;
-    const REST_BATCH = 10;
+      const FIRST_BATCH = 5;
+      const REST_BATCH = 10;
 
-    setEjendommeData([]);
-    setEjendommeFetchComplete(false);
-    setEjendommeLoadingMore(false);
-    setEjendommeLoading(true);
-    setEjendommeManglerNoegle(false);
-    setEjendommeManglerAdgang(false);
-
-    try {
-      const url = `/api/ejendomme-by-owner?cvr=${uniqueCvrs.join(',')}&offset=0&limit=${FIRST_BATCH}`;
-      const res = await fetch(url, { signal: controller.signal });
-      if (!res.ok) throw new Error(`${res.status}`);
-      const json = (await res.json()) as {
-        ejendomme: EjendomSummary[];
-        totalBfe: number;
-        manglerNoegle: boolean;
-        manglerAdgang: boolean;
-      };
-
-      if (controller.signal.aborted) return;
-
-      setEjendommeData(json.ejendomme ?? []);
-      setEjendommeTotalBfe(json.totalBfe ?? 0);
-      setEjendommeManglerNoegle(json.manglerNoegle === true);
-      setEjendommeManglerAdgang(json.manglerAdgang === true);
-      setEjendommeLoading(false);
-
-      let offset = FIRST_BATCH;
-      const total = json.totalBfe ?? 0;
-
-      if (offset < total) setEjendommeLoadingMore(true);
-
-      while (offset < total) {
-        if (controller.signal.aborted) return;
-
-        const res2 = await fetch(
-          `/api/ejendomme-by-owner?cvr=${uniqueCvrs.join(',')}&offset=${offset}&limit=${REST_BATCH}`,
-          { signal: controller.signal }
-        );
-        if (!res2.ok) break;
-        const json2 = (await res2.json()) as { ejendomme: EjendomSummary[] };
-
-        if (controller.signal.aborted) return;
-
-        setEjendommeData((prev) => [...prev, ...(json2.ejendomme ?? [])]);
-        offset += REST_BATCH;
-      }
-    } catch (e) {
-      if ((e as Error).name === 'AbortError') return;
       setEjendommeData([]);
-    } finally {
-      if (!controller.signal.aborted) {
+      setEjendommeFetchComplete(false);
+      setEjendommeLoadingMore(false);
+      setEjendommeLoading(true);
+      setEjendommeManglerNoegle(false);
+      setEjendommeManglerAdgang(false);
+
+      // Build query params — support both CVR and enhedsNummer
+      const params = new URLSearchParams();
+      if (uniqueCvrs.length > 0) params.set('cvr', uniqueCvrs.join(','));
+      if (personEnhedsNumre && personEnhedsNumre.length > 0)
+        params.set('enhedsNummer', personEnhedsNumre.join(','));
+      params.set('offset', '0');
+      params.set('limit', String(FIRST_BATCH));
+
+      try {
+        const url = `/api/ejendomme-by-owner?${params}`;
+        const res = await fetch(url, { signal: controller.signal });
+        if (!res.ok) throw new Error(`${res.status}`);
+        const json = (await res.json()) as {
+          ejendomme: EjendomSummary[];
+          totalBfe: number;
+          manglerNoegle: boolean;
+          manglerAdgang: boolean;
+        };
+
+        if (controller.signal.aborted) return;
+
+        setEjendommeData(json.ejendomme ?? []);
+        setEjendommeTotalBfe(json.totalBfe ?? 0);
+        setEjendommeManglerNoegle(json.manglerNoegle === true);
+        setEjendommeManglerAdgang(json.manglerAdgang === true);
         setEjendommeLoading(false);
-        setEjendommeLoadingMore(false);
-        setEjendommeFetchComplete(true);
+
+        let offset = FIRST_BATCH;
+        const total = json.totalBfe ?? 0;
+
+        if (offset < total) setEjendommeLoadingMore(true);
+
+        while (offset < total) {
+          if (controller.signal.aborted) return;
+
+          params.set('offset', String(offset));
+          params.set('limit', String(REST_BATCH));
+          const res2 = await fetch(`/api/ejendomme-by-owner?${params}`, {
+            signal: controller.signal,
+          });
+          if (!res2.ok) break;
+          const json2 = (await res2.json()) as { ejendomme: EjendomSummary[] };
+
+          if (controller.signal.aborted) return;
+
+          setEjendommeData((prev) => [...prev, ...(json2.ejendomme ?? [])]);
+          offset += REST_BATCH;
+        }
+      } catch (e) {
+        if ((e as Error).name === 'AbortError') return;
+        setEjendommeData([]);
+      } finally {
+        if (!controller.signal.aborted) {
+          setEjendommeLoading(false);
+          setEjendommeLoadingMore(false);
+          setEjendommeFetchComplete(true);
+        }
       }
-    }
-  }, []);
+    },
+    []
+  );
 
   /**
    * Trigger progressiv ejendomshentning når properties-tab aktiveres eller CVR-sæt ændres.
@@ -1235,19 +1251,21 @@ export default function PersonDetailPageClient({
 
     const uniqueCvrs = [...new Set([...ejerCvrs, ...subsidieCvrs])].slice(0, 30);
 
-    if (uniqueCvrs.length === 0) {
-      /* Personen ejer ingen virksomheder — intet at hente */
+    // BIZZ-264: Also fetch person's directly owned properties via enhedsNummer
+    const personEnhedsNumre = data?.enhedsNummer ? [String(data.enhedsNummer)] : [];
+
+    const fetchKey = [...uniqueCvrs, ...personEnhedsNumre].sort().join(',');
+    if (ejendomFetchKeyRef.current === fetchKey) return;
+    ejendomFetchKeyRef.current = fetchKey;
+
+    if (uniqueCvrs.length === 0 && personEnhedsNumre.length === 0) {
       setEjendommeData([]);
       setEjendommeTotalBfe(0);
       setEjendommeFetchComplete(true);
       return;
     }
 
-    const fetchKey = [...uniqueCvrs].sort().join(',');
-    if (ejendomFetchKeyRef.current === fetchKey) return;
-    ejendomFetchKeyRef.current = fetchKey;
-
-    void fetchEjendommeProgressively(uniqueCvrs);
+    void fetchEjendommeProgressively(uniqueCvrs, personEnhedsNumre);
   }, [aktivTab, derived, relatedCompanies, fetchEjendommeProgressively]);
 
   /**

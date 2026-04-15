@@ -1,19 +1,21 @@
 /**
  * GET /api/ejendomme-by-owner
  *
- * Finder alle ejendomme ejet af en eller flere virksomheder (CVR-numre).
- * Bruges til at vise ejendomsportefølje på virksomheds- og ejersider.
+ * Finder alle ejendomme ejet af virksomheder (CVR) eller personer (enhedsNummer).
+ * Bruges til at vise ejendomsportefølje på virksomheds-, person- og ejersider.
  *
  * Flow:
- *   1. For hvert CVR: forespørg EJF_Ejerskab GraphQL med ejendeVirksomhedCVRNr filter
- *      og virkningstid=nu for at finde aktuelt ejede BFE-numre
+ *   1a. For hvert CVR: forespørg EJF_Ejerskab GraphQL med ejendeVirksomhedCVRNr filter
+ *   1b. For hvert enhedsNummer: forespørg EJF_Ejerskab med ejendePersonEnhedsNummer filter
  *   2. For hvert unikt BFE: hent adressedata via DAWA /bfe/{bfe} endpoint
  *   3. Returner beriget liste med adresse, ejendomstype og DAWA-id til detaljeside-link
  *
  * Autentificering: OAuth Shared Secret (primær) + mTLS Certifikat (fallback).
- * Kræver: DATAFORDELER_OAUTH_CLIENT_ID + DATAFORDELER_OAUTH_CLIENT_SECRET
  *
- * @param cvr - Kommasepareret liste af CVR-numre (maks. 30)
+ * BIZZ-264: Added enhedsNummer parameter for direct person-owned properties.
+ *
+ * @param cvr - Kommasepareret liste af CVR-numre (maks. 30) — optional if enhedsNummer provided
+ * @param enhedsNummer - Kommasepareret liste af person enhedsNummer (maks. 10) — optional if cvr provided
  * @returns { ejendomme: EjendomSummary[], totalBfe: number, manglerNoegle: boolean, manglerAdgang: boolean, fejl: string | null }
  */
 
@@ -170,6 +172,70 @@ async function hentBfeByCvr(
       nodes {
         bestemtFastEjendomBFENr
         ejendeVirksomhedCVRNr
+        virkningFra
+      }
+    }
+  }`;
+
+  try {
+    const res = await fetch(proxyUrl(EJF_GQL_URL), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        ...proxyHeaders(),
+      },
+      body: JSON.stringify({ query }),
+      signal: AbortSignal.timeout(proxyTimeout()),
+      next: { revalidate: 3600 },
+    });
+
+    if (res.status === 403) return { bfeNumre: [], authError: true };
+    if (!res.ok) return null;
+
+    const json = (await res.json()) as GqlResult<RawEjerskab>;
+
+    const authError =
+      json.errors?.some(
+        (e) => e.extensions?.code === 'DAF-AUTH-0001' || e.message?.includes('not authorized')
+      ) ?? false;
+    if (authError) return { bfeNumre: [], authError: true };
+
+    const nodes = json.data?.EJF_Ejerskab?.nodes ?? [];
+    const bfeNumre = nodes
+      .map((n) => n.bestemtFastEjendomBFENr)
+      .filter((b): b is number => b != null);
+
+    return { bfeNumre, authError: false };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Sender EJF GraphQL forespørgsel for ét person enhedsNummer og returnerer aktuelle BFE-numre.
+ * BIZZ-264: Direkte personejede ejendomme via EJF.
+ *
+ * @param enhedsNummer - Person enhedsNummer at forespørge
+ * @param token - OAuth Bearer token
+ * @returns { bfeNumre: number[]; authError: boolean } eller null ved netværksfejl
+ */
+async function hentBfeByPerson(
+  enhedsNummer: number,
+  token: string
+): Promise<{ bfeNumre: number[]; authError: boolean } | null> {
+  const virkningstid = new Date().toISOString();
+
+  const query = `{
+    EJF_Ejerskab(
+      first: 500
+      virkningstid: "${virkningstid}"
+      where: {
+        ejendePersonEnhedsNummer: { eq: ${enhedsNummer} }
+      }
+    ) {
+      nodes {
+        bestemtFastEjendomBFENr
         virkningFra
       }
     }
@@ -405,8 +471,9 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
   }
 
   const cvrParam = searchParams.get('cvr') ?? '';
+  const enhedsNummerParam = searchParams.get('enhedsNummer') ?? '';
 
-  if (!cvrParam) {
+  if (!cvrParam && !enhedsNummerParam) {
     return NextResponse.json(
       {
         ejendomme: [],
@@ -415,7 +482,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
         limit,
         manglerNoegle: false,
         manglerAdgang: false,
-        fejl: 'cvr parameter er påkrævet',
+        fejl: 'cvr eller enhedsNummer parameter er påkrævet',
       },
       { status: 400 }
     );
@@ -423,11 +490,25 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
 
   /* Parsér og validér CVR-numre */
   const rawCvrs = cvrParam
-    .split(',')
-    .map((s) => s.trim().replace(/\D/g, ''))
-    .filter((s) => s.length >= 7 && s.length <= 8);
+    ? cvrParam
+        .split(',')
+        .map((s) => s.trim().replace(/\D/g, ''))
+        .filter((s) => s.length >= 7 && s.length <= 8)
+    : [];
 
-  if (rawCvrs.length === 0) {
+  const cvrNumre = [...new Set(rawCvrs.map((s) => parseInt(s, 10)))].slice(0, MAX_CVR);
+
+  /* BIZZ-264: Parsér og validér person enhedsNummer */
+  const rawEnheder = enhedsNummerParam
+    ? enhedsNummerParam
+        .split(',')
+        .map((s) => s.trim().replace(/\D/g, ''))
+        .filter((s) => s.length >= 1 && s.length <= 15)
+    : [];
+
+  const enhedsNumre = [...new Set(rawEnheder.map((s) => parseInt(s, 10)))].slice(0, 10);
+
+  if (cvrNumre.length === 0 && enhedsNumre.length === 0) {
     return NextResponse.json(
       {
         ejendomme: [],
@@ -436,13 +517,11 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
         limit,
         manglerNoegle: false,
         manglerAdgang: false,
-        fejl: 'Ingen gyldige CVR-numre angivet',
+        fejl: 'Ingen gyldige CVR-numre eller enhedsNumre angivet',
       },
       { status: 400 }
     );
   }
-
-  const cvrNumre = [...new Set(rawCvrs.map((s) => parseInt(s, 10)))].slice(0, MAX_CVR);
 
   /* Hent OAuth token */
   let token: string | null = null;
@@ -469,26 +548,36 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
   }
 
   try {
-    /* ── Trin 1: Find alle BFE-numre ejet af de angivne CVR-numre (parallelt) ── */
-    // Use Promise.allSettled so a single failing CVR lookup doesn't abort the whole request.
-    // Failed lookups are logged and skipped; fulfilled results are processed normally.
-    const ejerskabSettled = await Promise.allSettled(
-      cvrNumre.map((cvr) => hentBfeByCvr(cvr, token!))
-    );
+    /* ── Trin 1: Find alle BFE-numre (CVR + person lookups parallelt) ── */
+    const cvrSettled = cvrNumre.length > 0
+      ? await Promise.allSettled(cvrNumre.map((cvr) => hentBfeByCvr(cvr, token!)))
+      : [];
 
-    const ejerskabResults = ejerskabSettled.map((settled, i) => {
+    // BIZZ-264: Person lookups via enhedsNummer
+    const personSettled = enhedsNumre.length > 0
+      ? await Promise.allSettled(enhedsNumre.map((en) => hentBfeByPerson(en, token!)))
+      : [];
+
+    const cvrResults = cvrSettled.map((settled, i) => {
       if (settled.status === 'rejected') {
-        logger.error(
-          `[ejendomme-by-owner] EJF CVR lookup failed for CVR ${cvrNumre[i]}:`,
-          settled.reason
-        );
+        logger.error(`[ejendomme-by-owner] EJF CVR lookup failed for CVR ${cvrNumre[i]}:`, settled.reason);
+        return null;
+      }
+      return settled.value;
+    });
+
+    const personResults = personSettled.map((settled, i) => {
+      if (settled.status === 'rejected') {
+        logger.error(`[ejendomme-by-owner] EJF person lookup failed for ${enhedsNumre[i]}:`, settled.reason);
         return null;
       }
       return settled.value;
     });
 
     /* Tjek om nogen returnerede auth-fejl */
-    const harAuthFejl = ejerskabResults.some((r) => r?.authError === true);
+    const harAuthFejl =
+      cvrResults.some((r) => r?.authError === true) ||
+      personResults.some((r) => r?.authError === true);
     if (harAuthFejl) {
       return NextResponse.json({
         ejendomme: [],
@@ -501,14 +590,24 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
       });
     }
 
-    /* Saml unikke BFE-numre med tilhørende ejer-CVR */
+    /* Saml unikke BFE-numre med tilhørende ejer-ID */
     const bfeTilCvr = new Map<number, string>();
     for (let i = 0; i < cvrNumre.length; i++) {
-      const result = ejerskabResults[i];
+      const result = cvrResults[i];
       if (!result) continue;
       for (const bfe of result.bfeNumre) {
         if (!bfeTilCvr.has(bfe)) {
           bfeTilCvr.set(bfe, String(cvrNumre[i]).padStart(8, '0'));
+        }
+      }
+    }
+    // BIZZ-264: Add person-owned BFEs (use enhedsNummer as ownerCvr placeholder)
+    for (let i = 0; i < enhedsNumre.length; i++) {
+      const result = personResults[i];
+      if (!result) continue;
+      for (const bfe of result.bfeNumre) {
+        if (!bfeTilCvr.has(bfe)) {
+          bfeTilCvr.set(bfe, `person-${enhedsNumre[i]}`);
         }
       }
     }

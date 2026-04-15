@@ -454,16 +454,18 @@ async function fetchBFENummer(dawaId: string): Promise<{
       };
     }
 
+    // BIZZ-254: Trin 2 + 3 kører parallelt (uafhængige af hinanden)
     // Trin 2: Hent BFEnummer fra jordstykker-endpoint (= moderejendommens BFE)
-    const jsRes = await fetch(`${DAWA_BASE}/jordstykker/${ejerlavKode}/${matrikelnr}`, {
+    const jordBfePromise = fetch(`${DAWA_BASE}/jordstykker/${ejerlavKode}/${matrikelnr}`, {
       signal: AbortSignal.timeout(5000),
       next: { revalidate: 3600 },
-    });
-    let jordBfe: number | null = null;
-    if (jsRes.ok) {
-      const js = (await jsRes.json()) as { bfenummer?: number };
-      jordBfe = js?.bfenummer ?? null;
-    }
+    })
+      .then(async (jsRes) => {
+        if (!jsRes.ok) return null;
+        const js = (await jsRes.json()) as { bfenummer?: number };
+        return js?.bfenummer ?? null;
+      })
+      .catch(() => null);
 
     // Trin 3: Find ejerlejlighedens BFE via Vurderingsportalen ES.
     // Kører ALTID når adresseTekst er tilgængeligt — ikke kun for adresser med etage/dør.
@@ -472,6 +474,9 @@ async function fetchBFENummer(dawaId: string): Promise<{
     // Validering: uden harEtage accepteres kun en kandidat der er FORSKELLIG fra jordBfe
     // — det udelukker normale enfamiliehuse hvor Vurderingsportalen returnerer grundstykke-BFE.
     let ejerlejlighedBfe: number | null = null;
+    // BIZZ-254: Start ES fetch in parallel with jordstykke fetch (Trin 2)
+    // jordBfe promise is awaited inside the loop when needed for validation
+    const jordBfe = await jordBfePromise;
     if (adresseTekst) {
       try {
         const esUrl = 'https://api-fs.vurderingsportalen.dk/preliminaryproperties/_search';

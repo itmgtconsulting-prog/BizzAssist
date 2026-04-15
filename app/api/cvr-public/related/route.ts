@@ -653,7 +653,11 @@ export async function GET(req: NextRequest) {
       return v;
     });
 
-    return NextResponse.json({ virksomheder: cleaned, parentEnhedsNummer: enhedsNr });
+    // BIZZ-252: Cache for 30 min — related companies change infrequently
+    return NextResponse.json(
+      { virksomheder: cleaned, parentEnhedsNummer: enhedsNr },
+      { headers: { 'Cache-Control': 'public, s-maxage=1800, stale-while-revalidate=300' } }
+    );
   } catch (err) {
     logger.error('[cvr-public/related] Fejl:', err instanceof Error ? err.message : String(err));
     return NextResponse.json(

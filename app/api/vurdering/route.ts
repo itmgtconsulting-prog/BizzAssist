@@ -315,7 +315,7 @@ let _cachedToken: { token: string; expiresAt: number } | null = null;
  *
  * @returns Bearer token som streng, eller null hvis auth-miljøvariabler mangler
  */
-async function getOAuthToken(): Promise<string | null> {
+async function _getOAuthToken(): Promise<string | null> {
   if (_cachedToken && Date.now() < _cachedToken.expiresAt - 60_000) {
     return _cachedToken.token;
   }

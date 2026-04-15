@@ -21,7 +21,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { parseQuery } from '@/app/lib/validate';
+import { parseQuery as _parseQuery } from '@/app/lib/validate';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { getCertOAuthToken, isCertAuthConfigured } from '@/app/lib/dfCertAuth';
 import { logger } from '@/app/lib/logger';
@@ -29,7 +29,7 @@ import { getSharedOAuthToken } from '@/app/lib/dfTokenCache';
 import { resolveTenantId } from '@/lib/api/auth';
 
 /** Zod schema for /api/ejendomme-by-owner query params */
-const querySchema = z.object({
+const _querySchema = z.object({
   cvr: z.string().min(1),
   offset: z.coerce.number().int().min(0).default(0),
   limit: z.coerce.number().int().min(1).max(50).default(5),
@@ -105,7 +105,7 @@ let _cachedToken: { token: string; expiresAt: number } | null = null;
  *
  * @returns Bearer token som streng, eller null hvis credentials mangler
  */
-async function getOAuthToken(): Promise<string | null> {
+async function _getOAuthToken(): Promise<string | null> {
   if (_cachedToken && Date.now() < _cachedToken.expiresAt - 60_000) {
     return _cachedToken.token;
   }
@@ -550,18 +550,23 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
 
   try {
     /* ── Trin 1: Find alle BFE-numre (CVR + person lookups parallelt) ── */
-    const cvrSettled = cvrNumre.length > 0
-      ? await Promise.allSettled(cvrNumre.map((cvr) => hentBfeByCvr(cvr, token!)))
-      : [];
+    const cvrSettled =
+      cvrNumre.length > 0
+        ? await Promise.allSettled(cvrNumre.map((cvr) => hentBfeByCvr(cvr, token!)))
+        : [];
 
     // BIZZ-264: Person lookups via enhedsNummer
-    const personSettled = enhedsNumre.length > 0
-      ? await Promise.allSettled(enhedsNumre.map((en) => hentBfeByPerson(en, token!)))
-      : [];
+    const personSettled =
+      enhedsNumre.length > 0
+        ? await Promise.allSettled(enhedsNumre.map((en) => hentBfeByPerson(en, token!)))
+        : [];
 
     const cvrResults = cvrSettled.map((settled, i) => {
       if (settled.status === 'rejected') {
-        logger.error(`[ejendomme-by-owner] EJF CVR lookup failed for CVR ${cvrNumre[i]}:`, settled.reason);
+        logger.error(
+          `[ejendomme-by-owner] EJF CVR lookup failed for CVR ${cvrNumre[i]}:`,
+          settled.reason
+        );
         return null;
       }
       return settled.value;
@@ -569,7 +574,10 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
 
     const personResults = personSettled.map((settled, i) => {
       if (settled.status === 'rejected') {
-        logger.error(`[ejendomme-by-owner] EJF person lookup failed for ${enhedsNumre[i]}:`, settled.reason);
+        logger.error(
+          `[ejendomme-by-owner] EJF person lookup failed for ${enhedsNumre[i]}:`,
+          settled.reason
+        );
         return null;
       }
       return settled.value;

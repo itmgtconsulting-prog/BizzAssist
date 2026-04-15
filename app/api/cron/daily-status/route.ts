@@ -53,6 +53,8 @@ interface StatusStats {
   aiChatCalls24h: number | null;
   /** Whether a simple DB ping query succeeded. */
   dbHealthy: boolean;
+  /** BIZZ-309: Whether Upstash Redis PING succeeded */
+  redisHealthy: boolean;
   /**
    * Sentry recent error count — placeholder until SENTRY_AUTH_TOKEN is
    * added to env and Sentry Issues API is wired up.
@@ -318,11 +320,32 @@ async function collectStats(since: Date): Promise<StatusStats> {
     /* pg_database_size may not be available via RPC — non-fatal */
   }
 
+  // BIZZ-309: Redis health check
+  let redisHealthy = true;
+  try {
+    const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
+    const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
+    if (redisUrl && redisToken) {
+      const r = await fetch(`${redisUrl}/ping`, {
+        headers: { Authorization: `Bearer ${redisToken}` },
+        signal: AbortSignal.timeout(3000),
+      });
+      if (!r.ok) redisHealthy = false;
+      else {
+        const d = await r.json();
+        if (d?.result !== 'PONG') redisHealthy = false;
+      }
+    }
+  } catch {
+    redisHealthy = false;
+  }
+
   return {
     tenantCount,
     newSignups24h,
     aiChatCalls24h,
     dbHealthy,
+    redisHealthy,
     sentryErrors24h: 'N/A',
     certificates,
     aiTokens24h,
@@ -440,10 +463,35 @@ function buildEmailHtml(stats: StatusStats, reportDate: Date): string {
     <!-- DB health -->
     <div style="margin-bottom: 28px;">
       <h3 style="margin: 0 0 12px 0; color: #94a3b8; font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 600;">Infrastruktur</h3>
-      <div style="display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; background: #1e293b; border-radius: 8px;">
+      <div style="display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; background: #1e293b; border-radius: 8px; margin-bottom: 8px;">
         <span style="color: #94a3b8; font-size: 13px;">Supabase DB (ping)</span>
         <span style="font-size: 13px; font-weight: 700; padding: 3px 10px; border-radius: 4px; background: ${stats.dbHealthy ? '#14532d' : '#450a0a'}; color: ${dbStatusColor};">${dbStatusText}</span>
       </div>
+      <!-- BIZZ-309: Redis health -->
+      <div style="display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; background: #1e293b; border-radius: 8px; margin-bottom: 8px;">
+        <span style="color: #94a3b8; font-size: 13px;">Upstash Redis (ping)</span>
+        <span style="font-size: 13px; font-weight: 700; padding: 3px 10px; border-radius: 4px; background: ${stats.redisHealthy ? '#14532d' : '#450a0a'}; color: ${stats.redisHealthy ? '#22c55e' : '#ef4444'};">${stats.redisHealthy ? 'OK' : 'FEJL'}</span>
+      </div>
+      ${
+        stats.aiTokens24h !== null
+          ? `
+      <!-- BIZZ-307: AI token usage -->
+      <div style="display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; background: #1e293b; border-radius: 8px; margin-bottom: 8px;">
+        <span style="color: #94a3b8; font-size: 13px;">AI tokens (24h)</span>
+        <span style="font-size: 13px; font-weight: 700; color: ${stats.aiTokens24h > 4000000 ? '#f59e0b' : '#22c55e'};">${stats.aiTokens24h.toLocaleString('da-DK')}</span>
+      </div>`
+          : ''
+      }
+      ${
+        stats.dbSizeMb !== null
+          ? `
+      <!-- BIZZ-308: DB size -->
+      <div style="display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; background: #1e293b; border-radius: 8px; margin-bottom: 8px;">
+        <span style="color: #94a3b8; font-size: 13px;">Database st&oslash;rrelse</span>
+        <span style="font-size: 13px; font-weight: 700; color: ${stats.dbSizeMb > 7000 ? '#ef4444' : stats.dbSizeMb > 5000 ? '#f59e0b' : '#22c55e'};">${stats.dbSizeMb.toLocaleString('da-DK')} MB</span>
+      </div>`
+          : ''
+      }
     </div>
 
     <!-- BIZZ-304: Certificate expiry status -->

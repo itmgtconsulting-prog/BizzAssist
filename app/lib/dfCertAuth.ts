@@ -86,13 +86,39 @@ export async function getCertOAuthToken(): Promise<string | null> {
   const pfx = getPfxBuffer();
   if (!pfx) return null;
 
-  // Hvis proxy er aktiv, kan vi ikke bruge mTLS direkte
-  // (proxyen skal håndtere certifikatet)
+  // When proxy is enabled, try routing the cert OAuth request through the proxy.
+  // The Hetzner proxy can present the mTLS certificate for auth.datafordeler.dk.
+  // If proxy cert auth fails (e.g. proxy not yet configured for DF mTLS),
+  // fall through to direct mTLS below (works when this server's IP is whitelisted).
   if (isProxyEnabled()) {
-    logger.warn(
-      '[dfCertAuth] mTLS via proxy er ikke understøttet endnu — brug direkte forbindelse'
-    );
-    return null;
+    try {
+      const { proxyUrl, proxyHeaders } = await import('./dfProxy');
+      const proxiedTokenUrl = proxyUrl(TOKEN_URL);
+      const tokenBody = `grant_type=client_credentials&client_id=${encodeURIComponent(CERT_CLIENT_ID)}`;
+      const res = await fetch(proxiedTokenUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          ...proxyHeaders(),
+          'X-Proxy-Cert-Auth': 'true',
+        },
+        body: tokenBody,
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (res.ok) {
+        const json = (await res.json()) as { access_token: string; expires_in: number };
+        _cachedCertToken = {
+          token: json.access_token,
+          expiresAt: Date.now() + json.expires_in * 1000,
+        };
+        return json.access_token;
+      }
+      logger.warn(
+        `[dfCertAuth] Proxy cert token failed (${res.status}), falling back to direct mTLS`
+      );
+    } catch (err) {
+      logger.warn('[dfCertAuth] Proxy cert token error, falling back to direct mTLS:', err);
+    }
   }
 
   try {

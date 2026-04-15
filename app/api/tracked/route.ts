@@ -26,6 +26,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { fetchBbrForAddress } from '@/app/lib/fetchBbrData';
 import { logger } from '@/app/lib/logger';
+import { writeAuditLog } from '@/app/lib/auditLog';
 
 /**
  * Udfylder public.bbr_tracked_objects med BBR bygning-UUIDs for en fulgt ejendom.
@@ -271,6 +272,7 @@ export async function DELETE(request: NextRequest) {
       ).catch(() => {});
     }
 
+    writeAuditLog({ action: 'tracked_property.toggle', resource_type: 'property', resource_id: 'unknown' });
     return NextResponse.json({ ok: true });
   } catch (err) {
     logger.error('[tracked DELETE]', err);

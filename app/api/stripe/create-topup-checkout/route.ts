@@ -15,6 +15,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { stripe } from '@/app/lib/stripe';
 import { logger } from '@/app/lib/logger';
+import { writeAuditLog } from '@/app/lib/auditLog';
 
 /** Row shape from token_packs table. */
 interface TokenPackRow {
@@ -104,6 +105,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     const session = await stripe.checkout.sessions.create(sessionParams);
 
+    writeAuditLog({ action: 'stripe.topup_checkout', resource_type: 'payment', resource_id: session.id ?? 'unknown' });
     return NextResponse.json({ url: session.url });
   } catch (err) {
     logger.error('[stripe/create-topup-checkout] Error:', err);

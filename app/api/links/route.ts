@@ -12,6 +12,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { writeAuditLog } from '@/app/lib/auditLog';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
@@ -298,6 +299,7 @@ export async function POST(req: NextRequest) {
       .update({ verify_count: countData?.length ?? 1, updated_at: new Date().toISOString() })
       .eq('id', linkIdToVerify);
 
+    writeAuditLog({ action: 'link.create', resource_type: 'link', resource_id: linkIdToVerify ?? 'unknown' });
     return NextResponse.json({ success: true, linkId: linkIdToVerify });
   }
 

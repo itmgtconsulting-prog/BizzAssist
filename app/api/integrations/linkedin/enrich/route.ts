@@ -23,6 +23,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantId } from '@/lib/api/auth';
 import { tenantDb } from '@/lib/supabase/admin';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
+import { writeAuditLog } from '@/app/lib/auditLog';
 
 /** Request body for the enrich endpoint */
 interface EnrichRequest {
@@ -107,6 +108,7 @@ export async function POST(
   const personName = body.personName ?? '';
   const linkedinSearchUrl = `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(personName)}`;
 
+  writeAuditLog({ action: 'linkedin.enrich', resource_type: 'linkedin', resource_id: String(body?.enhedsNummer ?? 'unknown') });
   return NextResponse.json({
     available: false,
     message:

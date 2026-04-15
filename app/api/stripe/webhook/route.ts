@@ -23,6 +23,7 @@ import { stripe } from '@/app/lib/stripe';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { sendRecurringPaymentEmail } from '@/app/lib/email';
 import { logger } from '@/app/lib/logger';
+import { writeAuditLog } from '@/app/lib/auditLog';
 
 /**
  * Disable Next.js body parsing — Stripe signature verification

@@ -34,6 +34,7 @@ import { Ratelimit } from '@upstash/ratelimit';
 import { Redis } from '@upstash/redis';
 import { resolveTenantId } from '@/lib/api/auth';
 import { fetchBbrForAddress } from '@/app/lib/fetchBbrData';
+import { writeAuditLog } from '@/app/lib/auditLog';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;

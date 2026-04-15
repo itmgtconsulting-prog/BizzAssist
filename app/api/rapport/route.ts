@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { createClient } from '@/lib/supabase/server';
 import { sanitise } from '@/app/lib/pdfSanitise';
+import { writeAuditLog } from '@/app/lib/auditLog';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;

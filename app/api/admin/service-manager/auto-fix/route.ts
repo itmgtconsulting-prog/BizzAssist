@@ -45,6 +45,7 @@ import type { ServiceManagerFix, ServiceManagerScan } from '@/lib/supabase/types
 import type { ScanIssue } from '../route';
 import { evaluateAutoApproval, logAutoApproval } from '@/lib/service-manager-rules';
 import { logger } from '@/app/lib/logger';
+import { writeAuditLog } from '@/app/lib/auditLog';
 
 /**
  * Returns the admin client cast to `any` for tables that are not yet in the

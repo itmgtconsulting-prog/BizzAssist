@@ -28,6 +28,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import type { ServiceManagerScan } from '@/lib/supabase/types';
 import { logger } from '@/app/lib/logger';
+import { writeAuditLog } from '@/app/lib/auditLog';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 

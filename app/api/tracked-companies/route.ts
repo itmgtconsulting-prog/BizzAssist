@@ -15,6 +15,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantId } from '@/lib/api/auth';
 import { getTenantContext } from '@/lib/db/tenant';
 import { logger } from '@/app/lib/logger';
+import { writeAuditLog } from '@/app/lib/auditLog';
 
 /**
  * GET /api/tracked-companies
@@ -127,6 +128,7 @@ export async function DELETE(request: NextRequest) {
       });
     }
 
+    writeAuditLog({ action: 'tracked_company.toggle', resource_type: 'company', resource_id: 'unknown' });
     return NextResponse.json({ ok: true });
   } catch (err) {
     logger.error('[tracked-companies DELETE]', err);

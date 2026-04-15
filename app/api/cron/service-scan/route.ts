@@ -40,6 +40,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { sendCriticalAlert, isCriticalIssue } from '@/lib/service-manager-alerts';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
+import { recordHeartbeat } from '@/app/lib/cronHeartbeat';
 
 /** Vercel Cron max duration (seconds) — Hobby plan limit */
 export const maxDuration = 30;
@@ -819,6 +820,10 @@ export async function GET(request: NextRequest) {
   logger.log(
     `[service-scan] Done: ${issues.length} issues, ${errorIssues.length} errors, ${proposedFixCount} fixes proposed`
   );
+
+  // BIZZ-305: Record heartbeat for watchdog monitoring
+  const durationMs = Date.now() - now.getTime();
+  recordHeartbeat('service-scan', 'success', durationMs, 60);
 
   return NextResponse.json({
     ok: true,

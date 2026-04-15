@@ -30,6 +30,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 import { checkAllCertificates, type CertExpiryInfo } from '@/app/lib/certExpiry';
+import { recordHeartbeat } from '@/app/lib/cronHeartbeat';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -535,6 +536,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   const html = buildEmailHtml(stats, now);
   const sent = await sendStatusEmail(html, subject);
+
+  // BIZZ-305: Record heartbeat for watchdog monitoring
+  recordHeartbeat('daily-status', sent ? 'success' : 'error', Date.now() - now.getTime(), 1440);
 
   return NextResponse.json({
     sent,

@@ -3822,6 +3822,63 @@ export default function EjendomDetaljeClient({
                     );
                   })()}
                 </div>
+
+                {/* BIZZ-269: Skattehistorik — grundskyld over tid */}
+                {alleVurderinger.length > 1 && (
+                  <div>
+                    <SectionTitle title={da ? 'Skattehistorik' : 'Tax history'} />
+                    <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="border-b border-slate-700/40">
+                            <th className="px-4 py-2.5 text-left text-slate-500 font-medium">
+                              {da ? 'År' : 'Year'}
+                            </th>
+                            <th className="px-4 py-2.5 text-right text-slate-500 font-medium">
+                              {da ? 'Ejendomsværdi' : 'Property value'}
+                            </th>
+                            <th className="px-4 py-2.5 text-right text-slate-500 font-medium">
+                              {da ? 'Grundværdi' : 'Land value'}
+                            </th>
+                            <th className="px-4 py-2.5 text-right text-slate-500 font-medium">
+                              {da ? 'Est. grundskyld' : 'Est. land tax'}
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {alleVurderinger.slice(0, 10).map((v, i) => (
+                            <tr
+                              key={v.aar ?? i}
+                              className="border-b border-slate-700/20 last:border-0 hover:bg-slate-800/30"
+                            >
+                              <td className="px-4 py-2 text-slate-300 font-medium">
+                                {v.aar ?? '–'}
+                              </td>
+                              <td className="px-4 py-2 text-right text-slate-300">
+                                {v.ejendomsvaerdi ? formatDKK(v.ejendomsvaerdi) : '–'}
+                              </td>
+                              <td className="px-4 py-2 text-right text-slate-300">
+                                {v.grundvaerdi ? formatDKK(v.grundvaerdi) : '–'}
+                              </td>
+                              <td className="px-4 py-2 text-right font-medium text-blue-400">
+                                {v.estimereretGrundskyld
+                                  ? `${formatDKK(v.estimereretGrundskyld)} kr/år`
+                                  : '–'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    {vurdering?.grundskyldspromille && (
+                      <p className="text-slate-600 text-[10px] mt-2">
+                        {da
+                          ? `Estimeret med kommunens grundskyldspromille: ${vurdering.grundskyldspromille}‰ (2025-sats anvendt for alle år)`
+                          : `Estimated using municipality land tax rate: ${vurdering.grundskyldspromille}‰ (2025 rate applied to all years)`}
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 

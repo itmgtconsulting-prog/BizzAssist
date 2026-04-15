@@ -60,6 +60,10 @@ interface StatusStats {
   sentryErrors24h: 'N/A';
   /** BIZZ-304: mTLS certificate expiry status */
   certificates: CertExpiryInfo[];
+  /** BIZZ-307: AI tokens consumed in last 24h across all tenants */
+  aiTokens24h: number | null;
+  /** BIZZ-308: Database size in MB */
+  dbSizeMb: number | null;
 }
 
 /** Minimal shape of a row from public.tenants needed by this route. */
@@ -281,15 +285,48 @@ async function collectStats(since: Date): Promise<StatusStats> {
   // BIZZ-304: Check mTLS certificate expiry dates
   const certificates = checkAllCertificates();
 
+  // BIZZ-307: AI token usage (last 24h across all tenants)
+  let aiTokens24h: number | null = null;
+  try {
+    const { data: tenants } = await admin.from('tenants').select('schema_name');
+    let totalTokens = 0;
+    for (const t of tenants ?? []) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: usage } = await (admin as any)
+        .schema(t.schema_name)
+        .from('ai_token_usage')
+        .select('tokens_used')
+        .gte('created_at', sinceIso);
+      if (usage) {
+        for (const row of usage) totalTokens += row.tokens_used ?? 0;
+      }
+    }
+    aiTokens24h = totalTokens;
+  } catch {
+    /* non-fatal */
+  }
+
+  // BIZZ-308: Database size estimate
+  let dbSizeMb: number | null = null;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: sizeResult } = await (admin as any).rpc('pg_database_size', {
+      db_name: 'postgres',
+    });
+    if (typeof sizeResult === 'number') dbSizeMb = Math.round(sizeResult / 1024 / 1024);
+  } catch {
+    /* pg_database_size may not be available via RPC — non-fatal */
+  }
+
   return {
     tenantCount,
     newSignups24h,
     aiChatCalls24h,
     dbHealthy,
-    // Sentry integration placeholder — wire up when SENTRY_AUTH_TOKEN is available.
-    // See: https://docs.sentry.io/api/events/list-a-projects-issues/
     sentryErrors24h: 'N/A',
     certificates,
+    aiTokens24h,
+    dbSizeMb,
   };
 }
 

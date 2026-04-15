@@ -30,10 +30,10 @@ import { logger } from '@/app/lib/logger';
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 /** Maximum requests per window for unauthenticated (IP-keyed) traffic. */
-export const ANON_LIMIT = 100;
+export const ANON_LIMIT = 200;
 
 /** Maximum requests per window for authenticated (user-ID-keyed) traffic. */
-export const AUTH_LIMIT = 200;
+export const AUTH_LIMIT = 500;
 
 /** Sliding window duration in seconds. */
 export const WINDOW_SECONDS = 10;

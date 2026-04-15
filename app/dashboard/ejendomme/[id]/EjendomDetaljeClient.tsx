@@ -1250,7 +1250,11 @@ export default function EjendomDetaljeClient({
         setCvrVirksomheder([]);
       });
     return () => controller.abort();
-  }, [id, erDAWA, dawaStatus, dawaAdresse]);
+    // BIZZ-333: Use stable address components as deps instead of full dawaAdresse object
+    // to avoid re-triggering (and aborting) the CVR fetch when BBR prefetch updates
+    // dawaAdresse reference without changing the actual address values.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, erDAWA, dawaStatus, dawaAdresse?.vejnavn, dawaAdresse?.husnr, dawaAdresse?.postnr]);
 
   /**
    * Henter alle ejerlejligheder for ejendommen fra /api/ejerlejligheder.

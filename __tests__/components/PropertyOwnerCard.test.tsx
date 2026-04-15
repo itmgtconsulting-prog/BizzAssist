@@ -90,7 +90,8 @@ describe('PropertyOwnerCard', () => {
 
   it('falls back to kommune when postnr/by are absent', () => {
     render(<PropertyOwnerCard ejendom={ejendomNoAdresse} lang="da" />);
-    expect(screen.getByText('København')).toBeInTheDocument();
+    // Kommune appears in both postal fallback line and badge — check at least one exists
+    expect(screen.getAllByText('København').length).toBeGreaterThanOrEqual(1);
   });
 
   it('falls back to "BFE {bfeNummer}" as adresselinje when adresse is null', () => {

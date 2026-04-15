@@ -238,9 +238,10 @@ function indicatorToStatus(indicator: StatuspageResponse['status']['indicator'])
  * @returns Resolved ServiceState or error state on failure
  */
 async function fetchStatuspageStatus(url: string): Promise<ServiceState> {
-  const resp = await fetch(url, {
-    signal: AbortSignal.timeout(5000),
-    // No-cors mode not needed here — these are public CORS-enabled APIs
+  // BIZZ-347: Route via server-side proxy to avoid CORS blocking
+  const proxyUrl = `/api/admin/service-status?url=${encodeURIComponent(url)}`;
+  const resp = await fetch(proxyUrl, {
+    signal: AbortSignal.timeout(10000),
     cache: 'no-store',
   });
   if (!resp.ok) {

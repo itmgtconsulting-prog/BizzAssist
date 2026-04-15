@@ -29,6 +29,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
+import { checkAllCertificates, type CertExpiryInfo } from '@/app/lib/certExpiry';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -56,6 +57,8 @@ interface StatusStats {
    * added to env and Sentry Issues API is wired up.
    */
   sentryErrors24h: 'N/A';
+  /** BIZZ-304: mTLS certificate expiry status */
+  certificates: CertExpiryInfo[];
 }
 
 /** Minimal shape of a row from public.tenants needed by this route. */
@@ -274,6 +277,9 @@ async function collectStats(since: Date): Promise<StatusStats> {
     countAiChatCalls(admin, sinceIso),
   ]);
 
+  // BIZZ-304: Check mTLS certificate expiry dates
+  const certificates = checkAllCertificates();
+
   return {
     tenantCount,
     newSignups24h,
@@ -282,6 +288,7 @@ async function collectStats(since: Date): Promise<StatusStats> {
     // Sentry integration placeholder — wire up when SENTRY_AUTH_TOKEN is available.
     // See: https://docs.sentry.io/api/events/list-a-projects-issues/
     sentryErrors24h: 'N/A',
+    certificates,
   };
 }
 
@@ -400,6 +407,33 @@ function buildEmailHtml(stats: StatusStats, reportDate: Date): string {
         <span style="font-size: 13px; font-weight: 700; padding: 3px 10px; border-radius: 4px; background: ${stats.dbHealthy ? '#14532d' : '#450a0a'}; color: ${dbStatusColor};">${dbStatusText}</span>
       </div>
     </div>
+
+    <!-- BIZZ-304: Certificate expiry status -->
+    ${
+      stats.certificates.length > 0
+        ? `<div style="margin-bottom: 28px;">
+      <h3 style="margin: 0 0 12px 0; color: #94a3b8; font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 600;">Certifikater (mTLS)</h3>
+      ${stats.certificates
+        .map((c) => {
+          const color =
+            c.status === 'ok'
+              ? '#22c55e'
+              : c.status === 'warning'
+                ? '#f59e0b'
+                : c.status === 'critical' || c.status === 'expired'
+                  ? '#ef4444'
+                  : '#475569';
+          const label =
+            c.daysRemaining !== null ? `${c.daysRemaining} dage` : (c.error ?? 'Ukendt');
+          return `<div style="display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; background: #1e293b; border-radius: 8px; margin-bottom: 8px;">
+        <span style="color: #94a3b8; font-size: 13px;">${c.name}</span>
+        <span style="font-size: 13px; font-weight: 700; padding: 3px 10px; border-radius: 4px; background: ${color}22; color: ${color};">${label}</span>
+      </div>`;
+        })
+        .join('\n')}
+    </div>`
+        : ''
+    }
 
     <!-- Footer -->
     <hr style="border: none; border-top: 1px solid #1e293b; margin: 0 0 16px 0;" />

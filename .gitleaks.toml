@@ -1,0 +1,15 @@
+# Gitleaks configuration — secret scanning for BizzAssist
+# Runs on pre-commit to prevent accidental secret commits.
+
+title = "BizzAssist secret scanning"
+
+[allowlist]
+  # Files that legitimately reference secret patterns (docs, examples, mock data)
+  paths = [
+    '''.env\.example''',
+    '''.env\.local\.example''',
+    '''docs/''',
+    '''scripts/jira-tickets/''',
+    '''__tests__/''',
+    '''\.gitleaks\.toml''',
+  ]

@@ -1,6 +1,14 @@
 #!/bin/sh
 # BizzAssist — Husky pre-commit hook
-# Runs lint-staged (ESLint + Prettier on staged files) then unit tests.
+# 1. Secret scanning (gitleaks) — blocks commit if secrets detected
+# 2. Lint-staged (ESLint + Prettier on staged files)
+# 3. Unit tests
 # Implements ISO 27001 A.14: quality gate in the SDLC.
+
+# BIZZ-291: Scan staged files for secrets before allowing commit
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks protect --staged --config .gitleaks.toml --verbose
+fi
+
 npx lint-staged
 npm test

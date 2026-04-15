@@ -1832,8 +1832,70 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                       ) : null;
                     })()}
 
-                  {/* Gruppeøkonomi — hidden, aktiveres senere */}
-                  {/* TODO: Genaktiver Gruppeøkonomi sektion */}
+                  {/* BIZZ-277: Gruppeøkonomi — aggregerede nøgletal for koncernen */}
+                  {(oversigtFilter === null || oversigtFilter === 'gruppe') &&
+                    gruppeFinans.size > 1 &&
+                    (() => {
+                      let totalBrutto = 0;
+                      let totalBalance = 0;
+                      let totalEgenkapital = 0;
+                      let count = 0;
+                      for (const [, fin] of gruppeFinans) {
+                        if (fin.brutto !== null) totalBrutto += fin.brutto;
+                        if (fin.balance !== null) totalBalance += fin.balance;
+                        if (fin.egenkapital !== null) totalEgenkapital += fin.egenkapital;
+                        count++;
+                      }
+                      if (count < 2) return null;
+                      const isDa = lang === 'da';
+                      const fmtDKK = (v: number) =>
+                        v.toLocaleString('da-DK', { maximumFractionDigits: 0 });
+                      return (
+                        <section className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-5">
+                          <h3 className="text-white font-semibold text-sm mb-3">
+                            {isDa ? 'Gruppeøkonomi' : 'Group Economics'}
+                            <span className="text-slate-500 text-xs font-normal ml-2">
+                              ({count} {isDa ? 'selskaber' : 'companies'})
+                            </span>
+                          </h3>
+                          <p className="text-slate-500 text-[10px] mb-3">
+                            {isDa
+                              ? 'Sum af individuelle regnskaber — ikke konsolideret'
+                              : 'Sum of individual accounts — not consolidated'}
+                          </p>
+                          <div className="grid grid-cols-3 gap-3">
+                            <div>
+                              <p className="text-slate-500 text-xs">
+                                {isDa ? 'Bruttofortjeneste' : 'Gross profit'}
+                              </p>
+                              <p
+                                className={`text-sm font-semibold ${totalBrutto >= 0 ? 'text-green-400' : 'text-red-400'}`}
+                              >
+                                {fmtDKK(totalBrutto)} kr
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-slate-500 text-xs">
+                                {isDa ? 'Aktiver i alt' : 'Total assets'}
+                              </p>
+                              <p className="text-slate-200 text-sm font-semibold">
+                                {fmtDKK(totalBalance)} kr
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-slate-500 text-xs">
+                                {isDa ? 'Egenkapital' : 'Equity'}
+                              </p>
+                              <p
+                                className={`text-sm font-semibold ${totalEgenkapital >= 0 ? 'text-green-400' : 'text-red-400'}`}
+                              >
+                                {fmtDKK(totalEgenkapital)} kr
+                              </p>
+                            </div>
+                          </div>
+                        </section>
+                      );
+                    })()}
                 </div>
               </div>
 

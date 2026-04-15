@@ -74,9 +74,9 @@ const PERSON_ICON = 'rgba(167,139,250,0.7)';
 const MAIN_FILL = 'rgba(37,99,235,0.18)';
 const MAIN_STROKE = 'rgba(59,130,246,0.55)';
 
-/** Slate palette for company nodes */
-const COMPANY_FILL = 'rgba(30,41,59,0.8)';
-const COMPANY_STROKE = 'rgba(51,65,85,0.5)';
+/** BIZZ-353: Blue palette for company nodes (matches BizzAssist brand) */
+const COMPANY_FILL = 'rgba(30,58,138,0.6)';
+const COMPANY_STROKE = 'rgba(59,130,246,0.5)';
 
 /** Green palette for property nodes */
 const PROPERTY_FILL = 'rgba(16,185,129,0.15)';

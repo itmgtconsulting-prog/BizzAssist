@@ -10,12 +10,19 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { createClient } from '@supabase/supabase-js';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
-import { writeAuditLog } from '@/app/lib/auditLog';
+import { parseBody } from '@/app/lib/validate';
+
+/** Zod schema for PUT /api/link-alternatives request body */
+const linkAlternativesPutSchema = z.object({
+  cvr: z.string().min(1),
+  alternatives: z.record(z.string(), z.array(z.string())),
+}).passthrough();
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
@@ -116,15 +123,9 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: 'Ikke autoriseret' }, { status: 401 });
     }
 
-    const body = await req.json();
-    const { cvr, alternatives } = body as {
-      cvr?: string;
-      alternatives?: Record<string, string[]>;
-    };
-
-    if (!cvr || !alternatives || typeof alternatives !== 'object') {
-      return NextResponse.json({ error: 'cvr og alternatives er påkrævet' }, { status: 400 });
-    }
+    const parsed = await parseBody(req, linkAlternativesPutSchema);
+    if (!parsed.success) return parsed.response;
+    const { cvr, alternatives } = parsed.data;
 
     const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 

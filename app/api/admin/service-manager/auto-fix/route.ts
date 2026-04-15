@@ -38,6 +38,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { z } from 'zod';
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
@@ -45,7 +46,20 @@ import type { ServiceManagerFix, ServiceManagerScan } from '@/lib/supabase/types
 import type { ScanIssue } from '../route';
 import { evaluateAutoApproval, logAutoApproval } from '@/lib/service-manager-rules';
 import { logger } from '@/app/lib/logger';
-import { writeAuditLog } from '@/app/lib/auditLog';
+import { parseBody } from '@/app/lib/validate';
+
+/** Zod schema for POST /api/admin/service-manager/auto-fix request body */
+const autoFixPostSchema = z.object({
+  scanId: z.string().min(1),
+  issueIndex: z.number().int().min(0).optional().default(0),
+}).passthrough();
+
+/** Zod schema for PATCH /api/admin/service-manager/auto-fix request body */
+const autoFixPatchSchema = z.object({
+  fixId: z.string().min(1),
+  action: z.enum(['approve', 'reject']),
+  reason: z.string().optional(),
+}).passthrough();
 
 /**
  * Returns the admin client cast to `any` for tables that are not yet in the
@@ -477,13 +491,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    const body = await request.json();
-    const scanId = body?.scanId as string | undefined;
-    const issueIndex = typeof body?.issueIndex === 'number' ? body.issueIndex : 0;
-
-    if (!scanId) {
-      return NextResponse.json({ error: 'scanId påkrævet' }, { status: 400 });
-    }
+    const parsed = await parseBody(request, autoFixPostSchema);
+    if (!parsed.success) return parsed.response;
+    const { scanId, issueIndex } = parsed.data;
 
     // ── Load the scan record ───────────────────────────────────────────────
     const db = adminDb();
@@ -692,14 +702,9 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    const body = await request.json();
-    const fixId = body?.fixId as string | undefined;
-    const action = body?.action as 'approve' | 'reject' | undefined;
-    const reason = body?.reason as string | undefined;
-
-    if (!fixId || !action || !['approve', 'reject'].includes(action)) {
-      return NextResponse.json({ error: 'fixId og action påkrævet' }, { status: 400 });
-    }
+    const parsed = await parseBody(request, autoFixPatchSchema);
+    if (!parsed.success) return parsed.response;
+    const { fixId, action, reason } = parsed.data;
 
     const db = adminDb();
 

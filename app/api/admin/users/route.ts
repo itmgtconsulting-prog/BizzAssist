@@ -14,9 +14,24 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { logger } from '@/app/lib/logger';
+import { parseBody } from '@/app/lib/validate';
+
+/** Zod schema for POST /api/admin/users request body */
+const usersPostSchema = z.object({
+  email: z.string().min(1),
+  password: z.string().min(1),
+  fullName: z.string().optional(),
+  subscription: z.object({}).passthrough().optional(),
+}).passthrough();
+
+/** Zod schema for DELETE /api/admin/users request body */
+const usersDeleteSchema = z.object({
+  email: z.string().min(1),
+}).passthrough();
 
 /**
  * Inserts a row into audit_log using an untyped client cast.
@@ -142,10 +157,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    const { email, password, fullName, subscription } = await req.json();
-    if (!email || !password) {
-      return NextResponse.json({ error: 'Email and password required' }, { status: 400 });
-    }
+    const parsed = await parseBody(req, usersPostSchema);
+    if (!parsed.success) return parsed.response;
+    const { email, password, fullName, subscription } = parsed.data;
 
     const admin = createAdminClient();
 
@@ -204,10 +218,9 @@ export async function DELETE(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    const { email } = await req.json();
-    if (!email) {
-      return NextResponse.json({ error: 'Email required' }, { status: 400 });
-    }
+    const parsedDelete = await parseBody(req, usersDeleteSchema);
+    if (!parsedDelete.success) return parsedDelete.response;
+    const { email } = parsedDelete.data;
 
     // Find user by email
     const admin = createAdminClient();

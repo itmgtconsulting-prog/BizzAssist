@@ -29,12 +29,25 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import Anthropic from '@anthropic-ai/sdk';
 import { Ratelimit } from '@upstash/ratelimit';
 import { Redis } from '@upstash/redis';
 import { resolveTenantId } from '@/lib/api/auth';
 import { fetchBbrForAddress } from '@/app/lib/fetchBbrData';
-import { writeAuditLog } from '@/app/lib/auditLog';
+import { parseBody } from '@/app/lib/validate';
+
+/** Zod schema for POST /api/analysis/run request body */
+const analysisRunSchema = z.object({
+  type: z.enum(['due_diligence', 'konkurrent', 'investering', 'marked']),
+  entity: z.object({
+    id: z.string().min(1),
+    title: z.string(),
+    subtitle: z.string().optional(),
+    type: z.enum(['address', 'company', 'person']),
+    meta: z.record(z.string(), z.string()).optional(),
+  }),
+}).passthrough();
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -932,23 +945,9 @@ export async function POST(request: NextRequest): Promise<Response> {
     return NextResponse.json({ error: 'BIZZASSIST_CLAUDE_KEY ikke konfigureret' }, { status: 500 });
 
   // ── Parse + validate body ────────────────────────────────────────────────────
-  let body: AnalysisRequestBody;
-  try {
-    body = (await request.json()) as AnalysisRequestBody;
-  } catch {
-    return NextResponse.json({ error: 'Ugyldig JSON' }, { status: 400 });
-  }
-
-  const VALID_TYPES: AnalysisType[] = ['due_diligence', 'konkurrent', 'investering', 'marked'];
-  if (!body.type || !VALID_TYPES.includes(body.type)) {
-    return NextResponse.json({ error: `Ugyldig analysetype` }, { status: 400 });
-  }
-  if (!body.entity?.id || !body.entity?.type) {
-    return NextResponse.json(
-      { error: 'Ugyldig entitet — id og type er påkrævet' },
-      { status: 400 }
-    );
-  }
+  const parsed = await parseBody(request, analysisRunSchema);
+  if (!parsed.success) return parsed.response;
+  const body = parsed.data as unknown as AnalysisRequestBody;
 
   // ── Determine base URL for internal API self-calls ───────────────────────────
   const host = request.headers.get('host') ?? 'localhost:3000';

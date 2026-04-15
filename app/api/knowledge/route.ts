@@ -17,10 +17,19 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { logger } from '@/app/lib/logger';
+import { parseBody } from '@/app/lib/validate';
+
+/** Zod schema for POST /api/knowledge request body */
+const knowledgePostSchema = z.object({
+  title: z.string().trim().min(1),
+  content: z.string().trim().min(1),
+  source_type: z.enum(['manual', 'upload', 'url']).optional().default('manual'),
+}).passthrough();
 
 /** Maximum characters allowed in a knowledge item's content field. */
 const MAX_CONTENT_CHARS = 50_000;
@@ -157,42 +166,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     );
   }
 
-  let body: CreateKnowledgeBody;
-  try {
-    body = (await request.json()) as CreateKnowledgeBody;
-  } catch {
-    return NextResponse.json({ error: 'Ugyldig JSON' }, { status: 400 });
-  }
+  const parsed = await parseBody(request, knowledgePostSchema);
+  if (!parsed.success) return parsed.response;
+  const { title, content, source_type } = parsed.data;
 
-  const { title, content, source_type = 'manual' } = body;
-
-  // Validate title
-  if (typeof title !== 'string' || title.trim().length === 0) {
-    return NextResponse.json({ error: 'title er påkrævet' }, { status: 400 });
-  }
+  // Keep existing length checks for user-facing error messages
   if (title.length > MAX_TITLE_CHARS) {
     return NextResponse.json(
       { error: `title må maks være ${MAX_TITLE_CHARS} tegn` },
       { status: 400 }
     );
   }
-
-  // Validate content
-  if (typeof content !== 'string' || content.trim().length === 0) {
-    return NextResponse.json({ error: 'content er påkrævet' }, { status: 400 });
-  }
   if (content.length > MAX_CONTENT_CHARS) {
     return NextResponse.json(
       { error: `content må maks være ${MAX_CONTENT_CHARS} tegn` },
-      { status: 400 }
-    );
-  }
-
-  // Validate source_type
-  const validSourceTypes = ['manual', 'upload', 'url'] as const;
-  if (!validSourceTypes.includes(source_type as (typeof validSourceTypes)[number])) {
-    return NextResponse.json(
-      { error: `source_type skal være: ${validSourceTypes.join(', ')}` },
       { status: 400 }
     );
   }

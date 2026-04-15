@@ -24,11 +24,17 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import type { ServiceManagerScan } from '@/lib/supabase/types';
 import { logger } from '@/app/lib/logger';
-import { writeAuditLog } from '@/app/lib/auditLog';
+import { parseBody } from '@/app/lib/validate';
+
+/** Zod schema for POST /api/admin/service-manager request body */
+const serviceManagerPostSchema = z.object({
+  action: z.literal('scan'),
+}).passthrough();
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -181,10 +187,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    const body = await request.json();
-    if (body?.action !== 'scan') {
-      return NextResponse.json({ error: 'Ukendt action' }, { status: 400 });
-    }
+    const parsed = await parseBody(request, serviceManagerPostSchema);
+    if (!parsed.success) return parsed.response;
+    // action is guaranteed to be 'scan' by the schema
 
     // Create the scan record in state 'running'.
     const admin = createAdminClient();

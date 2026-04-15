@@ -20,8 +20,27 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createClient } from '@supabase/supabase-js';
 import { logger } from '@/app/lib/logger';
+import { parseBody } from '@/app/lib/validate';
+
+/** Zod schema for POST /api/support request body */
+const supportPostSchema = z.object({
+  message: z.string().optional(),
+  lang: z.enum(['da', 'en']).optional().default('da'),
+  context: z.object({
+    page: z.string().optional(),
+    subscription: z.string().optional(),
+  }).optional(),
+  action: z.literal('create_ticket').optional(),
+  ticketData: z.object({
+    title: z.string(),
+    description: z.string(),
+    page: z.string().optional(),
+    email: z.string().optional(),
+  }).optional(),
+}).passthrough();
 
 // ─── Knowledge Base ──────────────────────────────────────────────────────────
 
@@ -247,19 +266,9 @@ async function logSupportQuestion(
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const {
-      message,
-      lang = 'da',
-      action,
-      ticketData,
-    } = body as {
-      message: string;
-      lang: 'da' | 'en';
-      context?: { page?: string; subscription?: string };
-      action?: 'create_ticket';
-      ticketData?: { title: string; description: string; page?: string; email?: string };
-    };
+    const parsed = await parseBody(request, supportPostSchema);
+    if (!parsed.success) return parsed.response;
+    const { message, lang, action, ticketData } = parsed.data;
 
     // ── Action: Create JIRA ticket ──
     if (action === 'create_ticket' && ticketData) {
@@ -311,8 +320,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Log question for analytics (non-blocking)
-    const context = body.context as { page?: string } | undefined;
-    logSupportQuestion(message, reply, !!kbEntry, lang, context?.page).catch(() => {});
+    const context = parsed.data.context as { page?: string } | undefined;
+    logSupportQuestion(message ?? '', reply, !!kbEntry, lang, context?.page).catch(() => {});
 
     return NextResponse.json({ reply, suggestTicket });
   } catch (err) {

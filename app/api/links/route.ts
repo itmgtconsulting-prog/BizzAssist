@@ -11,8 +11,15 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createClient } from '@supabase/supabase-js';
-import { writeAuditLog } from '@/app/lib/auditLog';
+import { parseBody } from '@/app/lib/validate';
+
+/** Zod schema for POST /api/links request body */
+const linksPostSchema = z.object({
+  action: z.string().optional(),
+  userId: z.string().min(1),
+}).passthrough();
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
@@ -196,12 +203,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Supabase ikke konfigureret' }, { status: 503 });
   }
 
-  const body = await req.json();
-  const { action, entityType, entityId, entityName, platform, url, linkId, userId } = body;
-
-  if (!userId) {
-    return NextResponse.json({ error: 'userId er påkrævet' }, { status: 400 });
-  }
+  const parsed = await parseBody(req, linksPostSchema);
+  if (!parsed.success) return parsed.response;
+  const { action, userId } = parsed.data;
+  const { entityType, entityId, entityName, platform, url, linkId } = parsed.data as Record<string, string | undefined>;
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
@@ -299,7 +304,6 @@ export async function POST(req: NextRequest) {
       .update({ verify_count: countData?.length ?? 1, updated_at: new Date().toISOString() })
       .eq('id', linkIdToVerify);
 
-    writeAuditLog({ action: 'link.create', resource_type: 'link', resource_id: linkIdToVerify ?? 'unknown' });
     return NextResponse.json({ success: true, linkId: linkIdToVerify });
   }
 

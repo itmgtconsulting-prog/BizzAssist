@@ -19,9 +19,16 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { logger } from '@/app/lib/logger';
+import { parseBody } from '@/app/lib/validate';
+
+/** Zod schema for POST /api/admin/support-unlock request body */
+const supportUnlockSchema = z.object({
+  userId: z.string().min(1),
+}).passthrough();
 
 interface UnlockRequestBody {
   userId: string;
@@ -47,17 +54,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   // ── Parse body ──
-  let body: UnlockRequestBody;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: 'Ugyldig JSON' }, { status: 400 });
-  }
-
-  const { userId } = body;
-  if (!userId || typeof userId !== 'string') {
-    return NextResponse.json({ error: 'userId er påkrævet' }, { status: 400 });
-  }
+  const parsed = await parseBody(request, supportUnlockSchema);
+  if (!parsed.success) return parsed.response;
+  const { userId } = parsed.data;
 
   // ── Verify target user exists ──
   const { data: targetUser } = await adminClient.auth.admin.getUserById(userId);

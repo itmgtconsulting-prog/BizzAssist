@@ -20,10 +20,18 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { sendApprovalEmail } from '@/app/lib/email';
 import { logger } from '@/app/lib/logger';
+import { parseBody } from '@/app/lib/validate';
+
+/** Zod schema for POST /api/admin/subscription request body */
+const subscriptionPostSchema = z.object({
+  email: z.string().min(1),
+  action: z.string().optional().default('set'),
+}).passthrough();
 
 /**
  * Inserts a row into audit_log using an untyped client cast.
@@ -138,12 +146,25 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    const body = await req.json();
-    const { email, action = 'set', ...rest } = body;
-
-    if (!email) {
-      return NextResponse.json({ error: 'Email required' }, { status: 400 });
+    const parsed = await parseBody(req, subscriptionPostSchema);
+    if (!parsed.success) return parsed.response;
+    const { email, action } = parsed.data;
+    // Action-dependent fields vary by action type — the passthrough schema preserves
+    // arbitrary extra fields. We use a typed interface matching the union of all
+    // possible action payloads so downstream switch cases remain type-safe.
+    interface ActionPayload {
+      planId?: string;
+      status?: string;
+      createdAt?: string;
+      approvedAt?: string | null;
+      tokensUsedThisMonth?: number;
+      periodStart?: string;
+      bonusTokens?: number;
+      isPaid?: boolean;
+      isAdmin?: boolean;
+      tokens?: string;
     }
+    const rest = parsed.data as unknown as ActionPayload;
 
     const admin = adminClient;
     const targetUser = await findUserByEmail(admin, email);
@@ -226,7 +247,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         break;
 
       case 'addTokens': {
-        const tokens = parseInt(rest.tokens, 10);
+        const tokens = parseInt(rest.tokens ?? '', 10);
         if (!tokens || tokens <= 0) {
           return NextResponse.json({ error: 'Valid token amount required' }, { status: 400 });
         }

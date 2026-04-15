@@ -13,13 +13,23 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
+import { parseBody } from '@/app/lib/validate';
+
+/** Zod schema for POST /api/admin/bootstrap request body */
+const bootstrapPostSchema = z.object({
+  email: z.string().min(1),
+  secret: z.string().min(1),
+}).passthrough();
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
-    const { email, secret } = await req.json();
+    const parsed = await parseBody(req, bootstrapPostSchema);
+    if (!parsed.success) return parsed.response;
+    const { email, secret } = parsed.data;
 
     // Require a dedicated bootstrap secret — never compare against the service role key,
     // which is a database credential and must never travel over the wire.
@@ -27,12 +37,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     if (!bootstrapSecret) {
       return NextResponse.json({ error: 'Bootstrap not configured' }, { status: 503 });
     }
-    if (!safeCompare(secret ?? '', bootstrapSecret)) {
+    if (!safeCompare(secret, bootstrapSecret)) {
       return NextResponse.json({ error: 'Invalid secret' }, { status: 403 });
-    }
-
-    if (!email) {
-      return NextResponse.json({ error: 'Email required' }, { status: 400 });
     }
 
     const admin = createAdminClient();

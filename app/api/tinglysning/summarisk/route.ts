@@ -1017,10 +1017,11 @@ export async function GET(req: NextRequest) {
           logger.warn('[tinglysning/summarisk] Hovedejendom servitut-hentning fejlede:', err);
         }
       }
+      // BIZZ-244: Extended cache for servitutter (rarely change, expensive to fetch)
       return NextResponse.json(
         { servitutter, indskannedeAkterNavne, fejl: null },
         {
-          headers: { 'Cache-Control': 'public, s-maxage=3600' },
+          headers: { 'Cache-Control': 'public, s-maxage=86400, stale-while-revalidate=3600' },
         }
       );
     }

@@ -33,12 +33,17 @@ import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { parseBody } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
+import { sendWelcomeEmail } from '@/app/lib/email';
 
 /** BIZZ-210: Zod schema for onboarding save body */
 const onboardingSchema = z.object({
   tenantId: z.string().uuid(),
   companyName: z.string().trim().max(200).default(''),
-  companyCvr: z.string().regex(/^\d{8}$/).nullable().optional(),
+  companyCvr: z
+    .string()
+    .regex(/^\d{8}$/)
+    .nullable()
+    .optional(),
   industry: z.string().max(100).nullable().optional(),
   headcount: z.string().max(50).nullable().optional(),
   plan: z.string().min(1).max(50),
@@ -119,6 +124,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         }),
       });
     }
+
+    // BIZZ-272: Send welcome email after successful onboarding (fire-and-forget)
+    sendWelcomeEmail(user.email ?? '', user.user_metadata?.full_name as string | undefined);
 
     return NextResponse.json({ ok: true });
   } catch (err) {

@@ -27,6 +27,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { logger } from '@/app/lib/logger';
+import { sendAccountDeletionEmail } from '@/app/lib/email';
 
 /** The exact phrase the user must type to confirm account deletion. */
 const CONFIRM_PHRASE = 'SLET MIN KONTO';
@@ -174,7 +175,13 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
       metadata: JSON.stringify({ tenantId }),
     });
 
-    // ── Step 6: Delete auth user (cascades sessions, MFA, tokens) ─────────
+    // ── Step 6: Send deletion confirmation BEFORE auth deletion ────────────
+    // BIZZ-272: Email must be sent while user record still exists
+    if (user.email) {
+      sendAccountDeletionEmail(user.email);
+    }
+
+    // ── Step 7: Delete auth user (cascades sessions, MFA, tokens) ─────────
     const { error: deleteError } = await admin.auth.admin.deleteUser(user.id);
     if (deleteError) {
       logger.error('[delete-account] Auth deletion error:', deleteError.code ?? '[DB error]');

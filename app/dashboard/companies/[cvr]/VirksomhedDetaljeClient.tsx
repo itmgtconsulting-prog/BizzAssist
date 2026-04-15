@@ -849,71 +849,86 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
    * efterfølgende batches tilføjes automatisk i baggrunden.
    * Bruger AbortController til at annullere igangværende hentning ved CVR-ændring.
    */
-  const fetchEjendommeProgressively = useCallback(async (uniqueCvrs: string[]) => {
-    ejendomAbortRef.current?.abort();
-    const controller = new AbortController();
-    ejendomAbortRef.current = controller;
+  /**
+   * BIZZ-265: Extended to support enhedsNummer for ENK owner-owned properties.
+   */
+  const fetchEjendommeProgressively = useCallback(
+    async (uniqueCvrs: string[], ownerEnhedsNumre?: string[]) => {
+      ejendomAbortRef.current?.abort();
+      const controller = new AbortController();
+      ejendomAbortRef.current = controller;
 
-    const FIRST_BATCH = 5;
-    const REST_BATCH = 10;
+      const FIRST_BATCH = 5;
+      const REST_BATCH = 10;
 
-    setEjendommeData([]);
-    setEjendommeFetchComplete(false);
-    setEjendommeLoadingMore(false);
-    setEjendommeLoading(true);
-    setEjendommeManglerNoegle(false);
-    setEjendommeManglerAdgang(false);
-
-    try {
-      const url = `/api/ejendomme-by-owner?cvr=${uniqueCvrs.join(',')}&offset=0&limit=${FIRST_BATCH}`;
-      const res = await fetch(url, { signal: controller.signal });
-      if (!res.ok) throw new Error(`${res.status}`);
-      const json = (await res.json()) as {
-        ejendomme: EjendomSummary[];
-        totalBfe: number;
-        manglerNoegle: boolean;
-        manglerAdgang: boolean;
-      };
-
-      if (controller.signal.aborted) return;
-
-      setEjendommeData(json.ejendomme ?? []);
-      setEjendommeTotalBfe(json.totalBfe ?? 0);
-      setEjendommeManglerNoegle(json.manglerNoegle === true);
-      setEjendommeManglerAdgang(json.manglerAdgang === true);
-      setEjendommeLoading(false);
-
-      let offset = FIRST_BATCH;
-      const total = json.totalBfe ?? 0;
-
-      if (offset < total) setEjendommeLoadingMore(true);
-
-      while (offset < total) {
-        if (controller.signal.aborted) return;
-
-        const res2 = await fetch(
-          `/api/ejendomme-by-owner?cvr=${uniqueCvrs.join(',')}&offset=${offset}&limit=${REST_BATCH}`,
-          { signal: controller.signal }
-        );
-        if (!res2.ok) break;
-        const json2 = (await res2.json()) as { ejendomme: EjendomSummary[] };
-
-        if (controller.signal.aborted) return;
-
-        setEjendommeData((prev) => [...prev, ...(json2.ejendomme ?? [])]);
-        offset += REST_BATCH;
-      }
-    } catch (e) {
-      if ((e as Error).name === 'AbortError') return;
       setEjendommeData([]);
-    } finally {
-      if (!controller.signal.aborted) {
+      setEjendommeFetchComplete(false);
+      setEjendommeLoadingMore(false);
+      setEjendommeLoading(true);
+      setEjendommeManglerNoegle(false);
+      setEjendommeManglerAdgang(false);
+
+      const params = new URLSearchParams();
+      if (uniqueCvrs.length > 0) params.set('cvr', uniqueCvrs.join(','));
+      if (ownerEnhedsNumre && ownerEnhedsNumre.length > 0)
+        params.set('enhedsNummer', ownerEnhedsNumre.join(','));
+      params.set('offset', '0');
+      params.set('limit', String(FIRST_BATCH));
+
+      try {
+        const res = await fetch(`/api/ejendomme-by-owner?${params}`, {
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error(`${res.status}`);
+        const json = (await res.json()) as {
+          ejendomme: EjendomSummary[];
+          totalBfe: number;
+          manglerNoegle: boolean;
+          manglerAdgang: boolean;
+        };
+
+        if (controller.signal.aborted) return;
+
+        setEjendommeData(json.ejendomme ?? []);
+        setEjendommeTotalBfe(json.totalBfe ?? 0);
+        setEjendommeManglerNoegle(json.manglerNoegle === true);
+        setEjendommeManglerAdgang(json.manglerAdgang === true);
         setEjendommeLoading(false);
-        setEjendommeLoadingMore(false);
-        setEjendommeFetchComplete(true);
+
+        let offset = FIRST_BATCH;
+        const total = json.totalBfe ?? 0;
+
+        if (offset < total) setEjendommeLoadingMore(true);
+
+        while (offset < total) {
+          if (controller.signal.aborted) return;
+
+          params.set('offset', String(offset));
+          params.set('limit', String(REST_BATCH));
+          const res2 = await fetch(`/api/ejendomme-by-owner?${params}`, {
+            signal: controller.signal,
+          });
+          if (!res2.ok) break;
+          const json2 = (await res2.json()) as { ejendomme: EjendomSummary[] };
+
+          if (controller.signal.aborted) return;
+
+          setEjendommeData((prev) => [...prev, ...(json2.ejendomme ?? [])]);
+          offset += REST_BATCH;
+        }
+      } catch (e) {
+        if ((e as Error).name === 'AbortError') return;
+        setEjendommeData([]);
+      } finally {
+        if (!controller.signal.aborted) {
+          setEjendommeLoading(false);
+          setEjendommeLoadingMore(false);
+          setEjendommeFetchComplete(true);
+        }
       }
-    }
-  }, []);
+    },
+    []
+  );
 
   /**
    * Trigger progressiv ejendomshentning når properties-tab aktiveres eller CVR-sæt ændres.
@@ -928,13 +943,30 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
       ...relatedCompanies.filter((v) => v.aktiv).map((v) => String(v.cvr).padStart(8, '0')),
     ];
     const uniqueCvrs = [...new Set(cvrList)].slice(0, 30);
-    const fetchKey = [...uniqueCvrs].sort().join(',');
+
+    /* BIZZ-265: For ENK virksomheder — find ejerens enhedsNummer for personligt ejede ejendomme */
+    const ownerEnhedsNumre: string[] = [];
+    const isEnk =
+      data?.companydesc?.toUpperCase()?.includes('ENKELTMANDSVIRKSOMHED') ||
+      data?.companydesc?.toUpperCase()?.includes('ENK');
+    if (isEnk && ownerChainShared.length > 0) {
+      for (const owner of ownerChainShared) {
+        if (!owner.erVirksomhed && owner.enhedsNummer) {
+          ownerEnhedsNumre.push(String(owner.enhedsNummer));
+        }
+      }
+    }
+
+    const fetchKey = [...uniqueCvrs, ...ownerEnhedsNumre].sort().join(',');
 
     /* Spring over hvis vi allerede henter for nøjagtigt dette sæt */
     if (ejendomFetchKeyRef.current === fetchKey) return;
     ejendomFetchKeyRef.current = fetchKey;
 
-    void fetchEjendommeProgressively(uniqueCvrs);
+    void fetchEjendommeProgressively(
+      uniqueCvrs,
+      ownerEnhedsNumre.length > 0 ? ownerEnhedsNumre : undefined
+    );
   }, [aktivTab, cvr, relatedCompanies, fetchEjendommeProgressively]);
 
   /** Lazy-load regnskabstal for alle relaterede virksomheder (parallelt) */

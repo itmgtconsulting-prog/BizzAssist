@@ -881,6 +881,80 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         return NextResponse.json({ ok: true, merged: result.merged, sha: result.sha });
       }
 
+      // ── rollback (BIZZ-310) ──────────────────────────────────────────────
+      case 'rollback': {
+        const confirmationToken = body?.confirmationToken as string | undefined;
+        if (!confirmationToken) {
+          return NextResponse.json(
+            { error: 'confirmationToken er påkrævet for rollback' },
+            { status: 400 }
+          );
+        }
+
+        const CONFIRM = process.env.RELEASE_CONFIRMATION_TOKEN;
+        if (!CONFIRM || confirmationToken !== CONFIRM) {
+          return NextResponse.json({ error: 'Forkert confirmationToken' }, { status: 403 });
+        }
+
+        const targetSha = body?.targetSha as string | undefined;
+        if (!targetSha) {
+          return NextResponse.json({ error: 'targetSha er påkrævet' }, { status: 400 });
+        }
+
+        try {
+          // Revert main branch to target SHA using GitHub merge API
+          const ghRes = await fetch(
+            `https://api.github.com/repos/${process.env.GITHUB_REPO}/git/refs/heads/main`,
+            {
+              method: 'PATCH',
+              headers: {
+                Authorization: `token ${process.env.GITHUB_TOKEN}`,
+                Accept: 'application/vnd.github.v3+json',
+              },
+              body: JSON.stringify({ sha: targetSha, force: true }),
+              signal: AbortSignal.timeout(15000),
+            }
+          );
+
+          if (!ghRes.ok) {
+            const ghBody = await ghRes.text();
+            throw new Error(`GitHub API: ${ghRes.status} ${ghBody}`);
+          }
+
+          await logActivity('rollback_executed', { targetSha, triggeredBy: userId }, userId);
+
+          // Send alert notification
+          try {
+            const alertBody = `BizzAssist ROLLBACK udført — main reset til ${targetSha.slice(0, 7)}. Verificer deployment.`;
+            const resendKey = process.env.RESEND_API_KEY;
+            if (resendKey) {
+              await fetch('https://api.resend.com/emails', {
+                method: 'POST',
+                headers: {
+                  Authorization: `Bearer ${resendKey}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  from: 'BizzAssist <noreply@bizzassist.dk>',
+                  to: process.env.SUPPORT_NOTIFICATION_EMAIL ?? 'support@pecuniait.com',
+                  subject: 'ROLLBACK udført — BizzAssist',
+                  text: alertBody,
+                }),
+              });
+            }
+          } catch {
+            /* alert non-fatal */
+          }
+
+          return NextResponse.json({ ok: true, rolledBackTo: targetSha });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          logger.error('[release-agent] rollback error:', msg);
+          await logActivity('rollback_error', { error: msg, targetSha }, userId);
+          return NextResponse.json({ error: msg }, { status: 422 });
+        }
+      }
+
       default:
         return NextResponse.json({ error: `Ukendt action: ${action}` }, { status: 400 });
     }

@@ -38,7 +38,8 @@ export default defineConfig({
   reporter: [['html', { outputFolder: 'playwright-report' }], ['list']],
 
   use: {
-    baseURL: 'http://localhost:3000',
+    // Use E2E_BASE_URL to test against live server, fallback to localhost
+    baseURL: process.env.E2E_BASE_URL || 'http://localhost:3000',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
   },

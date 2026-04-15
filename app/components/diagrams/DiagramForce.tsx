@@ -573,8 +573,10 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
       .alpha(1)
       .alphaDecay(0.03);
 
-    // Run simulation synchronously
-    simulation.tick(300);
+    // BIZZ-320: Reduced from 300 to 120 ticks — 300 ticks blocked main thread
+    // for ~500ms on large diagrams, preventing Next.js navigation transitions.
+    // 120 ticks is enough for convergence with alphaDecay=0.03.
+    simulation.tick(120);
 
     // Final pass: hard-snap Y to exact pre-computed position
     for (const node of forceNodes) {

@@ -384,7 +384,68 @@ export async function GET(req: NextRequest) {
   // korrekte ejere for den specifikke BFE.
   const harFaktiskeEjere = nodes.some((n) => n.type === 'company' || n.type === 'person');
 
-  if (!harFaktiskeEjere) {
+  // BIZZ-329: Cross-reference with EJF to remove historical owners that Tinglysning
+  // still reports. EJF uses virkningstid=nu so only has current owners.
+  if (harFaktiskeEjere) {
+    try {
+      const ejfData = await ejfPromise;
+      if (ejfData?.ejere?.length > 0) {
+        const ejfCvrs = new Set(
+          ejfData.ejere
+            .filter((e: { cvr: string | null }) => e.cvr)
+            .map((e: { cvr: string }) => e.cvr)
+        );
+        const ejfNames = new Set(
+          ejfData.ejere
+            .filter((e: { personNavn: string | null }) => e.personNavn)
+            .map((e: { personNavn: string }) => e.personNavn.toLowerCase())
+        );
+
+        // Remove nodes that are NOT in EJF's current owner list
+        const toRemove = new Set<string>();
+        for (const node of nodes) {
+          if (
+            node.type === 'company' &&
+            node.cvr &&
+            !ejfCvrs.has(String(node.cvr).padStart(8, '0')) &&
+            !ejfCvrs.has(String(node.cvr))
+          ) {
+            toRemove.add(node.id);
+          } else if (node.type === 'person' && !node.cvr) {
+            const nameMatch = ejfNames.has(node.label.toLowerCase());
+            if (!nameMatch && ejfNames.size > 0) {
+              toRemove.add(node.id);
+            }
+          }
+        }
+
+        if (toRemove.size > 0) {
+          // Remove stale nodes and their edges
+          const filtered = nodes.filter((n) => !toRemove.has(n.id));
+          nodes.length = 0;
+          nodes.push(...filtered);
+          const filteredEdges = edges.filter((e) => !toRemove.has(e.from) && !toRemove.has(e.to));
+          edges.length = 0;
+          edges.push(...filteredEdges);
+          // Also clean ejerDetaljer
+          const cleanedDetaljer = ejerDetaljer.filter((d) => {
+            if (d.cvr && !ejfCvrs.has(d.cvr) && !ejfCvrs.has(d.cvr.replace(/^0+/, '')))
+              return false;
+            return true;
+          });
+          ejerDetaljer.length = 0;
+          ejerDetaljer.push(...cleanedDetaljer);
+        }
+      }
+    } catch {
+      /* EJF cross-reference non-fatal */
+    }
+  }
+
+  if (
+    !harFaktiskeEjere ||
+    nodes.filter((n) => n.type === 'company' || n.type === 'person').length === 0
+  ) {
     try {
       // BIZZ-328: Use pre-fetched EJF promise (started in parallel with Tinglysning)
       const ejfData = await ejfPromise;

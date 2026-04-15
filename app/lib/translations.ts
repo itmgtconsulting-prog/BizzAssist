@@ -200,7 +200,7 @@ export const translations = {
       manage: 'Administrer',
       emptyProperties: 'Ingen seneste ejendomme — søg efter en adresse for at komme i gang.',
       emptyCompanies: 'Ingen seneste virksomheder — søg efter et CVR-nummer eller virksomhedsnavn.',
-      emptyOwners: 'Personsøgning er under udvikling — her vil dine seneste personer blive vist.',
+      emptyOwners: 'Ingen seneste personer — søg efter et navn for at komme i gang.',
       emptyTracked:
         'Du følger ingenting endnu — tryk "Følg" på en ejendoms- eller virksomhedsside.',
       compare: 'Sammenlign',
@@ -703,7 +703,7 @@ export const translations = {
       manage: 'Manage',
       emptyProperties: 'No recent properties — search for an address to get started.',
       emptyCompanies: 'No recent companies — search for a CVR number or company name.',
-      emptyOwners: 'Person search is under development — your recent persons will appear here.',
+      emptyOwners: 'No recent persons — search for a name to get started.',
       emptyTracked:
         'You are not tracking anything yet — click "Follow" on a property or company page.',
       compare: 'Compare',

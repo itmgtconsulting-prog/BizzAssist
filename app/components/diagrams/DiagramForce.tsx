@@ -1586,7 +1586,8 @@ export default function DiagramForce({ graph, lang }: DiagramVariantProps) {
 
   // ── Normal inline mode ──
   return (
-    <div className="space-y-3">
+    {/* BIZZ-351: Reduced gap between toolbar and diagram */}
+    <div className="space-y-1">
       {toolbar}
       <div className="relative">
         {canvasEl}

@@ -14,6 +14,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { logger } from '@/app/lib/logger';
+import { proxyUrl, proxyHeaders } from '@/app/lib/dfProxy';
 import { resolveTenantId } from '@/lib/api/auth';
 
 /** Zod schema for the [cvr] dynamic param — 8-digit string */
@@ -218,7 +219,7 @@ export async function GET(
   };
 
   try {
-    const res = await fetch(CVR_ES_BASE, {
+    const res = await fetch(proxyUrl(CVR_ES_BASE), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

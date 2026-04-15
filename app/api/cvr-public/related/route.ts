@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { parseQuery } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
+import { proxyUrl, proxyHeaders } from '@/app/lib/dfProxy';
 import { resolveTenantId } from '@/lib/api/auth';
 
 /** Zod schema for /api/cvr-public/related query params */
@@ -170,7 +171,7 @@ export async function GET(req: NextRequest) {
       enhedsNummere.length === 1
         ? { term: { 'Vrvirksomhed.deltagerRelation.deltager.enhedsNummer': enhedsNummere[0] } }
         : { terms: { 'Vrvirksomhed.deltagerRelation.deltager.enhedsNummer': enhedsNummere } };
-    const res = await fetch(`${CVR_ES_BASE}/virksomhed/_search`, {
+    const res = await fetch(`${proxyUrl(CVR_ES_BASE)}/virksomhed/_search`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Basic ${auth}` },
       body: JSON.stringify({
@@ -419,7 +420,7 @@ export async function GET(req: NextRequest) {
       size: 1,
     };
 
-    const enhedsRes = await fetch(`${CVR_ES_BASE}/virksomhed/_search`, {
+    const enhedsRes = await fetch(`${proxyUrl(CVR_ES_BASE)}/virksomhed/_search`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Basic ${auth}` },
       body: JSON.stringify(enhedsQuery),
@@ -611,7 +612,7 @@ export async function GET(req: NextRequest) {
           query: { terms: { 'Vrvirksomhed.enhedsNummer': [...ejerEnhedsNummere] } },
           size: ejerEnhedsNummere.size,
         };
-        const ejerRes = await fetch(`${CVR_ES_BASE}/virksomhed/_search`, {
+        const ejerRes = await fetch(`${proxyUrl(CVR_ES_BASE)}/virksomhed/_search`, {
           method: 'POST',
           headers: {
             Authorization:

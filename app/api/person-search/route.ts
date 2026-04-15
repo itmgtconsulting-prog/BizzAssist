@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { parseQuery } from '@/app/lib/validate';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { logger } from '@/app/lib/logger';
+import { proxyUrl, proxyHeaders } from '@/app/lib/dfProxy';
 import { resolveTenantId } from '@/lib/api/auth';
 
 /** Zod schema for /api/person-search query params */
@@ -230,7 +231,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
     const auth = Buffer.from(`${CVR_ES_USER}:${CVR_ES_PASS}`).toString('base64');
 
-    const res = await fetch(CVR_ES_BASE, {
+    const res = await fetch(proxyUrl(CVR_ES_BASE), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

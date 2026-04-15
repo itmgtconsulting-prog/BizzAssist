@@ -79,7 +79,10 @@ export function proxyUrl(url: string): string {
 
   const DF_PROXY_URL = process.env.DF_PROXY_URL ?? '';
   if (!DF_PROXY_URL) return url;
-  return url.replace('https://', `${DF_PROXY_URL}/proxy/`);
+  // BIZZ-203: Support both HTTPS and HTTP URLs (CVR ES only supports HTTP)
+  return url
+    .replace('https://', `${DF_PROXY_URL}/proxy/`)
+    .replace('http://', `${DF_PROXY_URL}/proxy/`);
 }
 
 /**

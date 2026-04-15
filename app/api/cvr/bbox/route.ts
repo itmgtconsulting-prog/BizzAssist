@@ -27,6 +27,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { gyldigNu } from '@/app/api/cvr/route';
 import { logger } from '@/app/lib/logger';
+import { proxyUrl, proxyHeaders } from '@/app/lib/dfProxy';
 import { resolveTenantId } from '@/lib/api/auth';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -215,7 +216,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<CVRBboxRespons
   const esQuery = byggGeoQuery(lat, lng, radius);
 
   try {
-    const res = await fetch(CVR_ES_BASE, {
+    const res = await fetch(proxyUrl(CVR_ES_BASE), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

@@ -73,7 +73,11 @@ const navItems = [
   { icon: Briefcase, key: 'companies' as const, href: '/dashboard/companies', adminOnly: false },
   { icon: Users, key: 'owners' as const, href: '/dashboard/owners', adminOnly: false },
   { icon: Map, key: 'map' as const, href: '/dashboard/kort', adminOnly: false },
-  { icon: BarChart2, key: 'analysis' as const, href: '/dashboard/analysis', adminOnly: false },
+  // BIZZ-341: AI Analyse only visible in dev/test — not ready for production
+  ...(process.env.NEXT_PUBLIC_APP_URL?.includes('test.bizzassist.dk') ||
+  process.env.NODE_ENV === 'development'
+    ? [{ icon: BarChart2, key: 'analysis' as const, href: '/dashboard/analysis', adminOnly: false }]
+    : []),
   { icon: MessageSquare, key: 'chat' as const, href: '/dashboard/chat', adminOnly: false },
   { icon: Shield, key: 'admin' as const, href: '/dashboard/admin/users', adminOnly: true },
 ];

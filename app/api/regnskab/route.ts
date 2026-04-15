@@ -141,7 +141,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
     const auth = Buffer.from(`${CVR_ES_USER}:${CVR_ES_PASS}`).toString('base64');
 
-    const res = await fetch(proxyUrl(ES_BASE), {
+    const res = await fetch(ES_BASE, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

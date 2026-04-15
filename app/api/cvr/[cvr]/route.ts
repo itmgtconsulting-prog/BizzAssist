@@ -219,7 +219,7 @@ export async function GET(
   };
 
   try {
-    const res = await fetch(proxyUrl(CVR_ES_BASE), {
+    const res = await fetch(CVR_ES_BASE, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

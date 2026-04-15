@@ -758,7 +758,7 @@ async function fetchProduktionsenheder(
       size: 100,
     };
 
-    const res = await fetch(`${proxyUrl(CVR_ES_BASE)}/produktionsenhed/_search`, {
+    const res = await fetch(`${CVR_ES_BASE}/produktionsenhed/_search`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -969,7 +969,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<CVRPublicData 
   try {
     const auth = Buffer.from(`${CVR_ES_USER}:${CVR_ES_PASS}`).toString('base64');
 
-    const res = await fetch(`${proxyUrl(CVR_ES_BASE)}/virksomhed/_search`, {
+    const res = await fetch(`${CVR_ES_BASE}/virksomhed/_search`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

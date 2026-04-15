@@ -170,7 +170,7 @@ export async function GET(
       size: 200,
     };
 
-    const res = await fetch(`${proxyUrl(CVR_ES_BASE)}/virksomhed/_search`, {
+    const res = await fetch(`${CVR_ES_BASE}/virksomhed/_search`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

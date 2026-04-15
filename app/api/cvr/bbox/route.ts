@@ -216,7 +216,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<CVRBboxRespons
   const esQuery = byggGeoQuery(lat, lng, radius);
 
   try {
-    const res = await fetch(proxyUrl(CVR_ES_BASE), {
+    const res = await fetch(CVR_ES_BASE, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

@@ -373,6 +373,18 @@ export function buildDiagramGraph(
         });
         edges.push({ from: companyNode.id, to: propId });
       }
+
+      // BIZZ-268: Overflow node when more properties exist than shown
+      if (props.length > MAX_PROPS_PER_COMPANY) {
+        const overflowId = `props-overflow-${cvr}`;
+        const remaining = props.length - MAX_PROPS_PER_COMPANY;
+        nodes.push({
+          id: overflowId,
+          label: `+${remaining} ejendomme`,
+          type: 'property',
+        });
+        edges.push({ from: companyNode.id, to: overflowId });
+      }
     }
   }
 
@@ -681,6 +693,18 @@ export function buildPersonDiagramGraph(
           link,
         });
         edges.push({ from: companyNode.id, to: propId });
+      }
+
+      // BIZZ-268: Overflow node when more properties exist than shown
+      if (props.length > MAX_PROPS_PER_COMPANY) {
+        const overflowId = `props-overflow-${cvr}`;
+        const remaining = props.length - MAX_PROPS_PER_COMPANY;
+        nodes.push({
+          id: overflowId,
+          label: `+${remaining} ejendomme`,
+          type: 'property',
+        });
+        edges.push({ from: companyNode.id, to: overflowId });
       }
     }
   }

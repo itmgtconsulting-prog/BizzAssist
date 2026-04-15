@@ -1474,8 +1474,29 @@ export default function EjendomDetaljeClient({
     setEnergiLoader(true);
     fetch(`/api/energimaerke?bfeNummer=${bfeNummer}`, { signal: controller.signal })
       .then((r) => (r.ok ? r.json() : null))
-      .then((data: EnergimaerkeResponse | null) => {
+      .then(async (data: EnergimaerkeResponse | null) => {
         if (controller.signal.aborted) return;
+
+        // BIZZ-332: If no energy labels found and we have a moderBfe, try that
+        if (
+          (!data?.maerker || data.maerker.length === 0) &&
+          bbrData?.moderBfe &&
+          bfeNummer !== bbrData.moderBfe
+        ) {
+          const fallbackRes = await fetch(`/api/energimaerke?bfeNummer=${bbrData.moderBfe}`, {
+            signal: controller.signal,
+          });
+          if (fallbackRes.ok) {
+            const fallback = (await fallbackRes.json()) as EnergimaerkeResponse | null;
+            if (fallback?.maerker && fallback.maerker.length > 0) {
+              setEnergimaerker(fallback.maerker);
+              setEnergiManglerAdgang(false);
+              setEnergiFejl(null);
+              return;
+            }
+          }
+        }
+
         setEnergimaerker(data?.maerker ?? null);
         setEnergiManglerAdgang(data?.manglerAdgang ?? false);
         setEnergiFejl(data?.fejl ?? null);

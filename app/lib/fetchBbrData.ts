@@ -994,10 +994,35 @@ export async function fetchBbrForAddress(
     });
   }
 
+  // BIZZ-321: Fallback BFE lookup if fetchBFENummer returned null but we have matrikel info
+  let effectiveBfe = bfeNummer;
+  if (!effectiveBfe && ejerlavKode && matrikelnr) {
+    try {
+      const jsRes = await fetch(
+        `https://api.dataforsyningen.dk/jordstykker/${ejerlavKode}/${matrikelnr}`,
+        { signal: AbortSignal.timeout(5000) }
+      );
+      if (jsRes.ok) {
+        const js = (await jsRes.json()) as { bfenummer?: number };
+        effectiveBfe = js?.bfenummer ?? null;
+      }
+    } catch {
+      /* fallback non-fatal */
+    }
+  }
+
   // Map DAWA BFEnummer + matrikelinfo → BBREjendomsrelation shape
   const ejendomsrelationer: BBREjendomsrelation[] | null =
-    bfeNummer != null
-      ? [{ bfeNummer, ejendomsnummer: null, ejendomstype: null, ejerlavKode, matrikelnr }]
+    effectiveBfe != null
+      ? [
+          {
+            bfeNummer: effectiveBfe,
+            ejendomsnummer: null,
+            ejendomstype: null,
+            ejerlavKode,
+            matrikelnr,
+          },
+        ]
       : null;
 
   const bbrFejl = !(process.env.DATAFORDELER_API_KEY ?? '')

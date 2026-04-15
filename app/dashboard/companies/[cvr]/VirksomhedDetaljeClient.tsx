@@ -720,9 +720,20 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
         return;
       }
 
-      // ── Cache miss — hent resten progressivt ──
+      // ── Cache miss — hent resten progressivt + trigger cache-write parallelt ──
       if (total > FIRST_BATCH) {
         setXbrlLoadingMore(true);
+
+        // BIZZ-255: Start server-side cache-write in parallel with progressive fetch.
+        // Previously this ran AFTER progressive fetch completed, causing redundant
+        // re-parsing of all XBRL docs. Starting in parallel means the cache is ready
+        // sooner for subsequent visits while the user sees progressive results.
+        fetch(`/api/regnskab/xbrl?cvr=${cvr}&offset=0&limit=${total}`, {
+          signal: controller.signal,
+        }).catch(() => {
+          /* cache-write non-fatal */
+        });
+
         let offset = FIRST_BATCH;
         while (offset < total) {
           if (controller.signal.aborted) break;
@@ -736,16 +747,6 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
           setXbrlData((prev) => mergeYears(prev ?? [], moreYears));
           offset += REST_BATCH;
         }
-      }
-
-      // Trigger server-side cache-write: hent alle data i ét kald (baggrund)
-      // Serveren gemmer automatisk i Supabase når offset=0 og limit>=total
-      if (!controller.signal.aborted && total > FIRST_BATCH) {
-        fetch(`/api/regnskab/xbrl?cvr=${cvr}&offset=0&limit=${total}`, {
-          signal: controller.signal,
-        }).catch(() => {
-          /* Cache-write fejl — ignorer */
-        });
       }
     } catch {
       if (!controller.signal.aborted) {

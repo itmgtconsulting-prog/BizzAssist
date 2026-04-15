@@ -10,6 +10,7 @@
 import https from 'https';
 import fs from 'fs';
 import path from 'path';
+import { logger } from '@/app/lib/logger';
 
 /** Cert config — læses fra env ved kald-tid (undgå Turbopack build-time inlining) */
 function getCertConfig() {
@@ -32,7 +33,7 @@ function getCertConfig() {
  * @param options - Valgfri: timeout, Accept header, apiPath (/tinglysning/ssl eller /tinglysning/unsecuressl)
  * @returns { status, body } fra Tinglysning
  */
-export function tlFetch(
+export async function tlFetch(
   urlPath: string,
   options?: { timeout?: number; accept?: string; apiPath?: string }
 ): Promise<{ status: number; body: string }> {
@@ -42,24 +43,31 @@ export function tlFetch(
   const tlApiPath = options?.apiPath ?? '/tinglysning/ssl';
 
   // ── Proxy-path: Vercel → Hetzner proxy → Tinglysning (mTLS på proxy) ──
+  // Prøv proxy først; fald tilbage til direkte mTLS hvis proxy fejler.
   if (proxyUrl) {
     const targetUrl = `${tlBase}${tlApiPath}${urlPath}`;
     const proxied = targetUrl.replace('https://', `${proxyUrl}/proxy/`);
 
-    return fetch(proxied, {
-      method: 'GET',
-      headers: {
-        Accept: accept,
-        ...(proxySecret ? { 'X-Proxy-Secret': proxySecret } : {}),
-      },
-      signal: AbortSignal.timeout(timeout),
-    }).then(async (res) => ({
-      status: res.status,
-      body: await res.text(),
-    }));
+    try {
+      const proxyRes = await fetch(proxied, {
+        method: 'GET',
+        headers: {
+          Accept: accept,
+          ...(proxySecret ? { 'X-Proxy-Secret': proxySecret } : {}),
+        },
+        signal: AbortSignal.timeout(timeout),
+      });
+      return { status: proxyRes.status, body: await proxyRes.text() };
+    } catch (err) {
+      logger.warn(
+        '[tlFetch] Proxy failed, falling back to direct mTLS:',
+        err instanceof Error ? err.message : err
+      );
+      // Fall through to direct mTLS below
+    }
   }
 
-  // ── Direkte mTLS-path: lokal dev med certifikat ──
+  // ── Direkte mTLS-path: lokal dev med certifikat (eller proxy fallback) ──
   return new Promise((resolve, reject) => {
     let pfx: Buffer;
     if (certB64) {

@@ -175,13 +175,14 @@ function AIChatPanel() {
     return () => clearTimeout(timerId);
   }, []);
 
-  /** BIZZ-228: Navigate to full-page chat instead of opening portal modal */
+  /** BIZZ-222: Navigate to full-page chat with current conversation */
   const openFullPageChat = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
-      router.push('/dashboard/chat');
+      const convId = chatCtx.activeId;
+      router.push(convId ? `/dashboard/chat?conversationId=${convId}` : '/dashboard/chat');
     },
-    [router]
+    [router, chatCtx.activeId]
   );
 
   /** Stop streaming */

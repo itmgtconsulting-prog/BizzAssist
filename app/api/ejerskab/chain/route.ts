@@ -238,6 +238,16 @@ export async function GET(req: NextRequest) {
   // Forward the caller's session cookie so internal API routes can authenticate.
   const cookieHeader = req.headers.get('cookie') ?? '';
 
+  // BIZZ-328: Start EJF lookup in parallel with Tinglysning — used as fallback
+  // if Tinglysning doesn't return real owners (common for ejerlejligheder).
+  // Starting early saves ~200ms by overlapping with the Tinglysning round-trip.
+  const ejfPromise = fetch(`${req.nextUrl.origin}/api/ejerskab?bfeNummer=${bfe}`, {
+    headers: { cookie: cookieHeader },
+    signal: AbortSignal.timeout(15000),
+  })
+    .then((r) => (r.ok ? r.json() : null))
+    .catch(() => null);
+
   // Trin 1: Prøv Tinglysning API — har navne, adkomsttype, evt. CVR
   try {
     const tlRes = await fetch(`${req.nextUrl.origin}/api/tinglysning?bfe=${bfe}`, {
@@ -376,12 +386,9 @@ export async function GET(req: NextRequest) {
 
   if (!harFaktiskeEjere) {
     try {
-      const ejfRes = await fetch(`${req.nextUrl.origin}/api/ejerskab?bfeNummer=${bfe}`, {
-        headers: { cookie: cookieHeader },
-        signal: AbortSignal.timeout(15000),
-      });
-      if (ejfRes.ok) {
-        const ejfData = await ejfRes.json();
+      // BIZZ-328: Use pre-fetched EJF promise (started in parallel with Tinglysning)
+      const ejfData = await ejfPromise;
+      if (ejfData) {
         const ejere = ejfData.ejere ?? [];
 
         for (const ejer of ejere) {

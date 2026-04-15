@@ -61,9 +61,16 @@ setup('authenticate', async ({ page }) => {
         data: { users },
       } = await admin.auth.admin.listUsers();
       const user = users?.find((u) => u.email === email);
-      if (user && !user.user_metadata?.onboarding_complete) {
+      if (
+        user &&
+        (!user.user_metadata?.onboarding_complete || !user.user_metadata?.onboarding_done)
+      ) {
         await admin.auth.admin.updateUserById(user.id, {
-          user_metadata: { ...user.user_metadata, onboarding_complete: true },
+          user_metadata: {
+            ...user.user_metadata,
+            onboarding_complete: true,
+            onboarding_done: Date.now(),
+          },
         });
       }
     } catch {

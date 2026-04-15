@@ -16,10 +16,17 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import * as Sentry from '@sentry/nextjs';
+import { z } from 'zod';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
+import { parseQuery } from '@/app/lib/validate';
+
+/** Zod schema for /api/salgshistorik query parameters */
+const salgshistorikQuerySchema = z.object({
+  bfeNummer: z.coerce.number().int().positive(),
+});
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -198,23 +205,11 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
     );
   }
 
-  const { searchParams } = request.nextUrl;
-  const bfeStr = searchParams.get('bfeNummer');
+  // Validate query params with Zod schema
+  const parsed = parseQuery(request, salgshistorikQuerySchema);
+  if (!parsed.success) return parsed.response as NextResponse<SalgshistorikResponse>;
 
-  if (!bfeStr || !/^\d+$/.test(bfeStr)) {
-    return NextResponse.json(
-      {
-        bfeNummer: null,
-        handler: [],
-        fejl: 'Ugyldigt eller manglende bfeNummer',
-        manglerNoegle: false,
-        manglerAdgang: false,
-      },
-      { status: 400 }
-    );
-  }
-
-  const bfeNummer = parseInt(bfeStr, 10);
+  const { bfeNummer } = parsed.data;
 
   const token = await getOAuthToken();
   if (!token) {

@@ -21,11 +21,18 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import * as Sentry from '@sentry/nextjs';
+import { z } from 'zod';
 import { checkRateLimit, heavyRateLimit } from '@/app/lib/rateLimit';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { getCertOAuthToken, isCertAuthConfigured } from '@/app/lib/dfCertAuth';
 import { resolveTenantId } from '@/lib/api/auth';
+import { parseQuery } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
+
+/** Zod schema for /api/ejerskab query parameters */
+const ejerskabQuerySchema = z.object({
+  bfeNummer: z.coerce.number().int().positive(),
+});
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -261,23 +268,11 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjerskabRe
     );
   }
 
-  const { searchParams } = request.nextUrl;
-  const bfeNummerStr = searchParams.get('bfeNummer');
+  // Validate query params with Zod schema
+  const parsed = parseQuery(request, ejerskabQuerySchema);
+  if (!parsed.success) return parsed.response as NextResponse<EjerskabResponse>;
 
-  if (!bfeNummerStr || !/^\d+$/.test(bfeNummerStr)) {
-    return NextResponse.json(
-      {
-        bfeNummer: null,
-        ejere: [],
-        fejl: 'Ugyldigt eller manglende bfeNummer',
-        manglerNoegle: false,
-        manglerAdgang: false,
-      },
-      { status: 400 }
-    );
-  }
-
-  const bfeNummer = parseInt(bfeNummerStr, 10);
+  const { bfeNummer } = parsed.data;
 
   // ── Forsøg 1: OAuth Shared Secret ──
   let result: EJFQueryResult | null = null;

@@ -18,10 +18,17 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { resolveTenantId } from '@/lib/api/auth';
+import { parseQuery } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
+
+/** Zod schema for /api/matrikel query parameters */
+const matrikelQuerySchema = z.object({
+  bfeNummer: z.string().regex(/^\d+$/),
+});
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -320,17 +327,11 @@ export async function GET(request: NextRequest): Promise<NextResponse<MatrikelRe
     );
   }
 
-  const { searchParams } = request.nextUrl;
-  const bfeNummerStr = searchParams.get('bfeNummer');
+  // Validate query params with Zod schema
+  const parsed = parseQuery(request, matrikelQuerySchema);
+  if (!parsed.success) return parsed.response as NextResponse<MatrikelResponse>;
 
-  if (!bfeNummerStr || !/^\d+$/.test(bfeNummerStr)) {
-    return NextResponse.json(
-      { matrikel: null, fejl: 'Ugyldigt eller manglende bfeNummer' },
-      { status: 400 }
-    );
-  }
-
-  const bfeNummer = parseInt(bfeNummerStr, 10);
+  const bfeNummer = parseInt(parsed.data.bfeNummer, 10);
   const now = nowISOTimestamp();
 
   try {

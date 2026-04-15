@@ -11,10 +11,18 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createServerClient } from '@supabase/ssr';
 import { createClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
 import { logger } from '@/app/lib/logger';
+import { parseBody } from '@/app/lib/validate';
+
+/** Zod schema for PUT /api/admin/ai-settings body */
+const aiSettingsPutSchema = z.object({
+  key: z.string().min(1),
+  value: z.unknown(),
+});
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
@@ -112,17 +120,11 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: 'Ikke autoriseret' }, { status: 401 });
   }
 
-  let body: { key?: string; value?: unknown };
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: 'Ugyldig JSON' }, { status: 400 });
-  }
+  // Validate request body with Zod schema
+  const parsed = await parseBody(req, aiSettingsPutSchema);
+  if (!parsed.success) return parsed.response;
 
-  const { key, value } = body;
-  if (!key || value === undefined) {
-    return NextResponse.json({ error: 'key og value er påkrævet' }, { status: 400 });
-  }
+  const { key, value } = parsed.data;
 
   // Tillad kun kendte nøgler for at forhindre utilsigtede indstillinger
   const ALLOWED_KEYS = [

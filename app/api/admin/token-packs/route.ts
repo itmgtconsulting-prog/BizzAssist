@@ -8,9 +8,16 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { logger } from '@/app/lib/logger';
+import { parseBody } from '@/app/lib/validate';
+
+/** Zod schema for POST /api/admin/token-packs body */
+const tokenPacksPostSchema = z.object({
+  action: z.string(),
+}).passthrough();
 
 /** Row shape from token_packs table. */
 interface TokenPackRow {
@@ -110,8 +117,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    const body = await req.json();
-    const { action, ...data } = body;
+    // Validate request body with Zod schema
+    const parsed = await parseBody(req, tokenPacksPostSchema);
+    if (!parsed.success) return parsed.response;
+
+    const { action, ...data } = parsed.data;
     const admin = createAdminClient();
 
     switch (action) {
@@ -133,7 +143,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         insertAuditLog(admin, {
           action: 'admin.token_pack.create',
           resource_type: 'token_pack',
-          resource_id: data.nameDa ?? 'unknown',
+          resource_id: String(data.nameDa ?? 'unknown'),
           metadata: JSON.stringify({ data }),
         }).catch(() => {});
         return NextResponse.json({ ok: true });

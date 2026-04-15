@@ -11,8 +11,13 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
+import { parseQuery } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
+
+/** Zod schema for /api/cvr-public/related query params */
+const querySchema = z.object({ cvr: z.string().regex(/^\d{8}$/, 'CVR skal være 8 cifre') });
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -122,10 +127,11 @@ function mapEjerandelInterval(val: number): string {
 export async function GET(req: NextRequest) {
   const session = await resolveTenantId();
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  const cvr = req.nextUrl.searchParams.get('cvr')?.replace(/\D/g, '');
-  if (!cvr || cvr.length !== 8) {
+  const parsed = parseQuery(req, querySchema);
+  if (!parsed.success) {
     return NextResponse.json({ virksomheder: [], error: 'Ugyldigt CVR-nummer' }, { status: 400 });
   }
+  const { cvr } = parsed.data;
 
   if (!CVR_ES_USER || !CVR_ES_PASS) {
     return NextResponse.json(
@@ -245,28 +251,14 @@ export async function GET(req: NextRequest) {
       (statusVal === 'NORMAL' || statusVal === 'AKTIV' || statusVal === '') &&
       sammensatStatus !== 'Ophørt' &&
       !harSlutdato;
-    // Ansatte: nyeste af kvartal- og månedsmetadata
-    const nyesteKvartalMeta = meta?.nyesteKvartalsbeskaeftigelse as
-      | Record<string, unknown>
-      | undefined;
     const maanedsBeskæf = meta?.nyesteErstMaanedsbeskaeftigelse as
       | Record<string, unknown>
       | undefined;
-    const kvartalUpd =
-      typeof nyesteKvartalMeta?.sidstOpdateret === 'string' ? nyesteKvartalMeta.sidstOpdateret : '';
-    const maanedUpd =
-      typeof maanedsBeskæf?.sidstOpdateret === 'string' ? maanedsBeskæf.sidstOpdateret : '';
-    const besteMeta =
-      nyesteKvartalMeta && maanedsBeskæf
-        ? maanedUpd > kvartalUpd
-          ? maanedsBeskæf
-          : nyesteKvartalMeta
-        : (maanedsBeskæf ?? nyesteKvartalMeta ?? null);
     const ansatte =
-      besteMeta?.antalAnsatte != null
-        ? String(besteMeta.antalAnsatte)
-        : besteMeta?.intervalKodeAntalAnsatte
-          ? (intervalKodeMap[besteMeta.intervalKodeAntalAnsatte as string] ?? null)
+      maanedsBeskæf?.antalAnsatte != null
+        ? String(maanedsBeskæf.antalAnsatte)
+        : maanedsBeskæf?.intervalKodeAntalAnsatte
+          ? (intervalKodeMap[maanedsBeskæf.intervalKodeAntalAnsatte as string] ?? null)
           : null;
 
     // Stiftet

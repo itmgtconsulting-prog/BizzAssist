@@ -18,10 +18,19 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
+import { parseQuery } from '@/app/lib/validate';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { getCertOAuthToken, isCertAuthConfigured } from '@/app/lib/dfCertAuth';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
+
+/** Zod schema for /api/ejendomme-by-owner query params */
+const querySchema = z.object({
+  cvr: z.string().min(1),
+  offset: z.coerce.number().int().min(0).default(0),
+  limit: z.coerce.number().int().min(1).max(50).default(5),
+});
 
 /** Forlæng Vercel serverless timeout til 30 sek. (kræver Pro-plan) */
 export const maxDuration = 30;
@@ -70,7 +79,7 @@ export interface EjendommeByOwnerResponse {
 
 // ─── Konstanter ─────────────────────────────────────────────────────────────
 
-const EJF_GQL_URL = 'https://graphql.datafordeler.dk/flexibleCurrent/v1/';
+const EJF_GQL_URL = 'https://graphql.datafordeler.dk/EJF/v1';
 const TOKEN_URL = 'https://auth.datafordeler.dk/realms/distribution/protocol/openid-connect/token';
 
 /** Maks antal CVR-numre der accepteres per kald */
@@ -151,7 +160,7 @@ async function hentBfeByCvr(
   const virkningstid = new Date().toISOString();
 
   const query = `{
-    EJFCustom_EjerskabBegraenset(
+    EJF_Ejerskab(
       first: 500
       virkningstid: "${virkningstid}"
       where: {
@@ -190,7 +199,7 @@ async function hentBfeByCvr(
       ) ?? false;
     if (authError) return { bfeNumre: [], authError: true };
 
-    const nodes = json.data?.EJFCustom_EjerskabBegraenset?.nodes ?? [];
+    const nodes = json.data?.EJF_Ejerskab?.nodes ?? [];
     const bfeNumre = nodes
       .map((n) => n.bestemtFastEjendomBFENr)
       .filter((b): b is number => b != null);

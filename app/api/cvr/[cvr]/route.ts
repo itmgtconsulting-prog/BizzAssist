@@ -12,8 +12,12 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
+
+/** Zod schema for the [cvr] dynamic param — 8-digit string */
+const cvrParamSchema = z.object({ cvr: z.string().regex(/^\d{8}$/, 'CVR skal være 8 cifre') });
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -135,31 +139,12 @@ function mapESHit(hit: Record<string, unknown>): CVRSelskab | null {
   const slutdato =
     livsforloeb.find((l) => l.periode?.gyldigTil != null)?.periode?.gyldigTil ?? null;
 
-  // ── Ansatte (nyeste af metadata kvartal/måned → gyldigNu(kvartalsbeskaeftigelse)) ──
-  const metaTemp = src.virksomhedMetadata as Record<string, unknown> | undefined;
-  const nyesteKvartalMeta = metaTemp?.nyesteKvartalsbeskaeftigelse as
-    | Record<string, unknown>
-    | undefined;
-  const maanedsMeta = metaTemp?.nyesteErstMaanedsbeskaeftigelse as
-    | Record<string, unknown>
-    | undefined;
-  const kvartalUpd =
-    typeof nyesteKvartalMeta?.sidstOpdateret === 'string' ? nyesteKvartalMeta.sidstOpdateret : '';
-  const maanedUpd =
-    typeof maanedsMeta?.sidstOpdateret === 'string' ? maanedsMeta.sidstOpdateret : '';
-  const metaAnsatte =
-    nyesteKvartalMeta?.antalAnsatte != null && maanedsMeta?.antalAnsatte != null
-      ? maanedUpd > kvartalUpd
-        ? (maanedsMeta.antalAnsatte as number)
-        : (nyesteKvartalMeta.antalAnsatte as number)
-      : ((nyesteKvartalMeta?.antalAnsatte as number | undefined) ??
-        (maanedsMeta?.antalAnsatte as number | undefined) ??
-        null);
+  // ── Ansatte (seneste kvartal) ──
   const kvartal = Array.isArray(src.kvartalsbeskaeftigelse)
     ? (src.kvartalsbeskaeftigelse as (Periodic & { antalAnsatte?: number })[])
     : [];
-  const senestKvartal = gyldigNu(kvartal);
-  const ansatte = metaAnsatte ?? senestKvartal?.antalAnsatte ?? null;
+  const senestKvartal = kvartal.length > 0 ? kvartal[kvartal.length - 1] : null;
+  const ansatte = senestKvartal?.antalAnsatte ?? null;
 
   // ── Reklamebeskyttelse ──
   const reklamebeskyttet = Boolean(src.reklamebeskyttet);
@@ -198,12 +183,12 @@ export async function GET(
 ): Promise<NextResponse> {
   const session = await resolveTenantId();
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  const { cvr } = await context.params;
-
-  // Valider: CVR skal være 8 cifre
-  if (!/^\d{8}$/.test(cvr)) {
+  const rawParams = await context.params;
+  const paramResult = cvrParamSchema.safeParse(rawParams);
+  if (!paramResult.success) {
     return NextResponse.json({ error: 'Ugyldigt CVR-nummer' }, { status: 400 });
   }
+  const { cvr } = paramResult.data;
 
   if (!CVR_ES_USER || !CVR_ES_PASS) {
     return NextResponse.json(

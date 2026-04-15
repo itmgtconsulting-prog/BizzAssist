@@ -19,10 +19,18 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import * as Sentry from '@sentry/nextjs';
+import { z } from 'zod';
 import { checkRateLimit, heavyRateLimit } from '@/app/lib/rateLimit';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
+import { parseQuery } from '@/app/lib/validate';
+
+/** Zod schema for /api/vurdering query parameters */
+const vurderingQuerySchema = z.object({
+  bfeNummer: z.string().regex(/^\d+$/),
+  kommunekode: z.string().regex(/^\d+$/).optional(),
+});
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -547,25 +555,12 @@ export async function GET(request: NextRequest): Promise<NextResponse<VurderingR
     );
   }
 
-  const { searchParams } = request.nextUrl;
-  const bfeNummerStr = searchParams.get('bfeNummer');
-  const kommunekodeStr = searchParams.get('kommunekode');
+  // Validate query params with Zod schema
+  const parsed = parseQuery(request, vurderingQuerySchema);
+  if (!parsed.success) return parsed.response as NextResponse<VurderingResponse>;
 
-  if (!bfeNummerStr || !/^\d+$/.test(bfeNummerStr)) {
-    return NextResponse.json(
-      {
-        vurdering: null,
-        alle: [],
-        ...emptyExtended,
-        fejl: 'Ugyldigt eller manglende bfeNummer',
-        manglerNoegle: false,
-      },
-      { status: 400 }
-    );
-  }
-
-  const bfeNummer = parseInt(bfeNummerStr, 10);
-  const kommunekode = kommunekodeStr ? parseInt(kommunekodeStr, 10) : null;
+  const bfeNummer = parseInt(parsed.data.bfeNummer, 10);
+  const kommunekode = parsed.data.kommunekode ? parseInt(parsed.data.kommunekode, 10) : null;
   const promille = (kommunekode && GRUNDSKYLDSPROMILLE[kommunekode]) ?? null;
 
   const token = await getOAuthToken();

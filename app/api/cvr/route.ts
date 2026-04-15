@@ -15,8 +15,19 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
+import { parseQuery } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
+
+/** Zod schema for /api/cvr query params */
+const querySchema = z.object({
+  vejnavn: z.string().min(1),
+  husnr: z.string().optional(),
+  postnr: z.string().optional(),
+  etage: z.string().optional(),
+  doer: z.string().optional(),
+});
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -186,31 +197,12 @@ function mapESHit(hit: Record<string, unknown>): CVRVirksomhed | null {
     !harSlutdato;
   const aktivFra = typeof aktuelStatus?.gyldigFra === 'string' ? aktuelStatus.gyldigFra : null;
 
-  // ── Ansatte (nyeste af metadata kvartal/måned → gyldigNu(kvartalsbeskaeftigelse)) ──
-  const metaTemp = src.virksomhedMetadata as Record<string, unknown> | undefined;
-  const nyesteKvartalMeta = metaTemp?.nyesteKvartalsbeskaeftigelse as
-    | Record<string, unknown>
-    | undefined;
-  const maanedsMeta = metaTemp?.nyesteErstMaanedsbeskaeftigelse as
-    | Record<string, unknown>
-    | undefined;
-  const kvartalUpd =
-    typeof nyesteKvartalMeta?.sidstOpdateret === 'string' ? nyesteKvartalMeta.sidstOpdateret : '';
-  const maanedUpd =
-    typeof maanedsMeta?.sidstOpdateret === 'string' ? maanedsMeta.sidstOpdateret : '';
-  const metaAnsatte =
-    nyesteKvartalMeta?.antalAnsatte != null && maanedsMeta?.antalAnsatte != null
-      ? maanedUpd > kvartalUpd
-        ? (maanedsMeta.antalAnsatte as number)
-        : (nyesteKvartalMeta.antalAnsatte as number)
-      : ((nyesteKvartalMeta?.antalAnsatte as number | undefined) ??
-        (maanedsMeta?.antalAnsatte as number | undefined) ??
-        null);
+  // ── Ansatte (seneste kvartal) ──
   const kvartal = Array.isArray(src.kvartalsbeskaeftigelse)
     ? (src.kvartalsbeskaeftigelse as (Periodic & { antalAnsatte?: number })[])
     : [];
-  const senestKvartal = gyldigNu(kvartal);
-  const ansatte = metaAnsatte ?? senestKvartal?.antalAnsatte ?? null;
+  const senestKvartal = kvartal.length > 0 ? kvartal[kvartal.length - 1] : null;
+  const ansatte = senestKvartal?.antalAnsatte ?? null;
 
   return {
     cvr,
@@ -237,16 +229,12 @@ function mapESHit(hit: Record<string, unknown>): CVRVirksomhed | null {
 export async function GET(req: NextRequest): Promise<NextResponse> {
   const auth = await resolveTenantId();
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  const { searchParams } = req.nextUrl;
-  const vejnavn = searchParams.get('vejnavn') ?? '';
-  const husnr = searchParams.get('husnr') ?? '';
-  const postnr = searchParams.get('postnr') ?? '';
-  const etage = searchParams.get('etage') ?? '';
-  const doer = searchParams.get('doer') ?? '';
-
-  if (!vejnavn) {
+  const parsed = parseQuery(req, querySchema);
+  if (!parsed.success) {
+    // Missing vejnavn → empty result (backwards compatible)
     return NextResponse.json({ virksomheder: [], tokenMangler: false }, { status: 200 });
   }
+  const { vejnavn, husnr = '', postnr = '', etage = '', doer = '' } = parsed.data;
 
   // Returner tokenMangler-flag hvis credentials ikke er sat
   if (!CVR_ES_USER || !CVR_ES_PASS) {

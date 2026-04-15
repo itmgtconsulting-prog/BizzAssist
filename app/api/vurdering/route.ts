@@ -192,13 +192,93 @@ interface RawFradragPost {
   fkFradragForForbedringOverordnetID: number;
 }
 
-// ─── Grundskyldspromiller 2025 (Indenrigs- og Sundhedsministeriet) ───────────
+// ─── Grundskyldspromiller (Indenrigs- og Sundhedsministeriet) ────────────────
+
+/**
+ * BIZZ-269: Historiske grundskyldspromiller per år.
+ * Bruges til at estimere grundskyld for historiske vurderinger.
+ *
+ * 2021-2024: Satserne var fastfrosne for de fleste kommuner (uændrede).
+ * 2025: Nye satser efter ejendomsvurderingsreformen.
+ *
+ * Kilde: Indenrigs- og Sundhedsministeriets kommunale nøgletal.
+ * Fallback: 2025-satser bruges hvis historisk promille ikke er tilgængelig.
+ */
+const GRUNDSKYLDSPROMILLE_2024: Record<number, number> = {
+  101: 34.0,
+  147: 23.0,
+  151: 23.0,
+  153: 26.74,
+  155: 23.0,
+  157: 16.0,
+  159: 23.4,
+  161: 25.74,
+  163: 24.0,
+  165: 26.0,
+  167: 23.4,
+  169: 23.0,
+  173: 18.5,
+  175: 24.0,
+  183: 28.0,
+  185: 24.0,
+  187: 21.0,
+  190: 22.0,
+  201: 22.0,
+  210: 22.44,
+  217: 24.8,
+  219: 21.68,
+  223: 16.0,
+  230: 16.0,
+  240: 21.0,
+  250: 22.0,
+  253: 22.0,
+  259: 22.22,
+  260: 24.0,
+  265: 21.71,
+  269: 20.0,
+  270: 22.5,
+  306: 27.0,
+  316: 23.0,
+  320: 24.0,
+  326: 24.68,
+  329: 22.0,
+  330: 25.0,
+  336: 21.0,
+  340: 21.68,
+  350: 21.0,
+  360: 26.0,
+  370: 23.0,
+  376: 26.0,
+  390: 26.0,
+  400: 24.68,
+  410: 22.0,
+  420: 23.0,
+  430: 22.0,
+  440: 22.0,
+  450: 23.0,
+  461: 24.68,
+  479: 24.0,
+  480: 22.0,
+  482: 26.0,
+  492: 26.0,
+  510: 22.68,
+  530: 18.0,
+  540: 22.68,
+};
+
+/**
+ * Henter grundskyldspromille for et givet år og kommunekode.
+ * Bruger 2024-satser for 2020-2024 og 2025-satser for 2025+.
+ */
+function getPromille(kommunekode: number, aar: number | null): number | null {
+  if (aar != null && aar <= 2024) {
+    return GRUNDSKYLDSPROMILLE_2024[kommunekode] ?? GRUNDSKYLDSPROMILLE[kommunekode] ?? null;
+  }
+  return GRUNDSKYLDSPROMILLE[kommunekode] ?? null;
+}
 
 /**
  * Grundskyldspromiller (‰) pr. kommunekode, 2025-satser.
- * Bruges til at estimere den årlige grundskyld:
- *   grundskyld ≈ afgiftspligtig grundværdi × (promille / 1000)
- *
  * Kilde: Indenrigs- og Sundhedsministeriets kommunale nøgletal 2025.
  */
 const GRUNDSKYLDSPROMILLE: Record<number, number> = {
@@ -685,9 +765,11 @@ export async function GET(request: NextRequest): Promise<NextResponse<VurderingR
         : null;
 
       const grundskyldGrundlag = afgiftspligtigGrundvaerdi ?? n.grundvaerdiBeloeb ?? null;
+      // BIZZ-269: Use year-specific promille for historical accuracy
+      const yearPromille = kommunekode ? getPromille(kommunekode, n.aar ?? null) : promille;
       const estimereretGrundskyld =
-        grundskyldGrundlag !== null && promille !== null
-          ? Math.round(grundskyldGrundlag * (promille / 1000))
+        grundskyldGrundlag !== null && yearPromille !== null
+          ? Math.round(grundskyldGrundlag * (yearPromille / 1000))
           : null;
 
       return {
@@ -697,7 +779,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<VurderingR
         afgiftspligtigEjendomsvaerdi,
         afgiftspligtigGrundvaerdi,
         estimereretGrundskyld,
-        grundskyldspromille: promille,
+        grundskyldspromille: yearPromille,
         aar: n.aar ?? null,
         bebyggelsesprocent: null,
         vurderetAreal: n.vurderetAreal ?? null,

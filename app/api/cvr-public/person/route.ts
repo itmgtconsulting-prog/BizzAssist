@@ -12,10 +12,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { parseQuery } from '@/app/lib/validate';
 import { resolveTenantId } from '@/lib/api/auth';
-import { proxyUrl } from '@/app/lib/dfProxy';
 
 /** Zod schema for /api/cvr-public/person query params */
-const querySchema = z.object({ enhedsNummer: z.string().regex(/^\d+$/, 'enhedsNummer skal være numerisk') });
+const querySchema = z.object({
+  enhedsNummer: z.string().regex(/^\d+$/, 'enhedsNummer skal være numerisk'),
+});
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 

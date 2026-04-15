@@ -21,7 +21,6 @@ import { resolveTenantId } from '@/lib/api/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { logActivity } from '@/app/lib/activityLog';
 import { logger } from '@/app/lib/logger';
-import { proxyUrl } from '@/app/lib/dfProxy';
 
 /** Zod schema for /api/cvr-public query params */
 const querySchema = z.object({

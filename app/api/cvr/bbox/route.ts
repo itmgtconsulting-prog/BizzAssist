@@ -27,7 +27,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { gyldigNu } from '@/app/api/cvr/route';
 import { logger } from '@/app/lib/logger';
-import { proxyUrl } from '@/app/lib/dfProxy';
 import { resolveTenantId } from '@/lib/api/auth';
 
 // ─── Types ────────────────────────────────────────────────────────────────────

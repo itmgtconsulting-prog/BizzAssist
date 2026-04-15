@@ -18,7 +18,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { parseQuery } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
-import { proxyUrl } from '@/app/lib/dfProxy';
 import { resolveTenantId } from '@/lib/api/auth';
 
 /** Zod schema for /api/cvr query params */

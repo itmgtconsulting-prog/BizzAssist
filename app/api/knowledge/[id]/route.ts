@@ -20,11 +20,13 @@ import { logger } from '@/app/lib/logger';
 import { parseBody } from '@/app/lib/validate';
 
 /** Zod schema for PATCH /api/knowledge/[id] request body */
-const knowledgePatchSchema = z.object({
-  title: z.string().optional(),
-  content: z.string().optional(),
-  source_type: z.enum(['manual', 'upload', 'url']).optional(),
-}).passthrough();
+const knowledgePatchSchema = z
+  .object({
+    title: z.string().optional(),
+    content: z.string().optional(),
+    source_type: z.enum(['manual', 'upload', 'url']).optional(),
+  })
+  .passthrough();
 /** Maximum characters allowed in a knowledge item's content field. */
 const MAX_CONTENT_CHARS = 50_000;
 

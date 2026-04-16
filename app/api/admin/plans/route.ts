@@ -18,10 +18,12 @@ import { logger } from '@/app/lib/logger';
 import { parseBody } from '@/app/lib/validate';
 
 /** Zod schema for POST /api/admin/plans body */
-const plansPostSchema = z.object({
-  action: z.string().optional(),
-  planId: z.string().optional(),
-}).passthrough();
+const plansPostSchema = z
+  .object({
+    action: z.string().optional(),
+    planId: z.string().optional(),
+  })
+  .passthrough();
 
 const LEGACY_PLAN_IDS: PlanId[] = ['demo', 'basis', 'professionel', 'enterprise'];
 

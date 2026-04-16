@@ -49,17 +49,21 @@ import { logger } from '@/app/lib/logger';
 import { parseBody } from '@/app/lib/validate';
 
 /** Zod schema for POST /api/admin/service-manager/auto-fix request body */
-const autoFixPostSchema = z.object({
-  scanId: z.string().min(1),
-  issueIndex: z.number().int().min(0).optional().default(0),
-}).passthrough();
+const autoFixPostSchema = z
+  .object({
+    scanId: z.string().min(1),
+    issueIndex: z.number().int().min(0).optional().default(0),
+  })
+  .passthrough();
 
 /** Zod schema for PATCH /api/admin/service-manager/auto-fix request body */
-const autoFixPatchSchema = z.object({
-  fixId: z.string().min(1),
-  action: z.enum(['approve', 'reject']),
-  reason: z.string().optional(),
-}).passthrough();
+const autoFixPatchSchema = z
+  .object({
+    fixId: z.string().min(1),
+    action: z.enum(['approve', 'reject']),
+    reason: z.string().optional(),
+  })
+  .passthrough();
 
 /**
  * Returns the admin client cast to `any` for tables that are not yet in the

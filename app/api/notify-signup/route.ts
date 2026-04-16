@@ -16,12 +16,14 @@ import { logger } from '@/app/lib/logger';
 import { parseBody } from '@/app/lib/validate';
 
 /** Zod schema for POST /api/notify-signup request body */
-const notifySignupSchema = z.object({
-  email: z.string().min(1),
-  fullName: z.string().optional(),
-  planId: z.string().optional(),
-  status: z.string().optional(),
-}).passthrough();
+const notifySignupSchema = z
+  .object({
+    email: z.string().min(1),
+    fullName: z.string().optional(),
+    planId: z.string().optional(),
+    status: z.string().optional(),
+  })
+  .passthrough();
 
 const NOTIFY_EMAIL = process.env.SUPPORT_NOTIFICATION_EMAIL || 'support@pecuniait.com';
 const RESEND_API_KEY = process.env.RESEND_API_KEY;

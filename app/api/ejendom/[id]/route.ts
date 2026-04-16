@@ -24,7 +24,12 @@ import { resolveTenantId } from '@/lib/api/auth';
 
 /** Zod schema for the [id] dynamic param — UUID format */
 const idParamSchema = z.object({
-  id: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, 'Ugyldigt adresse-id'),
+  id: z
+    .string()
+    .regex(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+      'Ugyldigt adresse-id'
+    ),
 });
 
 // Re-export all types so existing importers (dashboard page etc.) keep working

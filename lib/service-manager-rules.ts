@@ -246,17 +246,19 @@ export async function logAutoApproval(
   metadata: Record<string, unknown>
 ): Promise<void> {
   try {
-    await createAdminClient().from('service_manager_activity').insert({
-      action: 'auto_approval_triggered',
-      details: {
-        fix_id: fixId,
-        scan_id: scanId,
-        rule_name: ruleName,
-        rule_description: ruleDescription,
-        ...metadata,
-      },
-      created_by: null, // System action — no user session
-    });
+    await createAdminClient()
+      .from('service_manager_activity')
+      .insert({
+        action: 'auto_approval_triggered',
+        details: {
+          fix_id: fixId,
+          scan_id: scanId,
+          rule_name: ruleName,
+          rule_description: ruleDescription,
+          ...metadata,
+        },
+        created_by: null, // System action — no user session
+      });
   } catch (err) {
     console.error('[service-manager-rules] logAutoApproval error:', err);
   }

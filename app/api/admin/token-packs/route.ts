@@ -15,9 +15,11 @@ import { logger } from '@/app/lib/logger';
 import { parseBody } from '@/app/lib/validate';
 
 /** Zod schema for POST /api/admin/token-packs body */
-const tokenPacksPostSchema = z.object({
-  action: z.string(),
-}).passthrough();
+const tokenPacksPostSchema = z
+  .object({
+    action: z.string(),
+  })
+  .passthrough();
 
 /** Row shape from token_packs table. */
 interface TokenPackRow {

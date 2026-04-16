@@ -62,9 +62,11 @@ import { logger } from '@/app/lib/logger';
 import { parseBody } from '@/app/lib/validate';
 
 /** Zod schema for POST /api/admin/release-agent request body */
-const releaseAgentPostSchema = z.object({
-  action: z.string().min(1),
-}).passthrough();
+const releaseAgentPostSchema = z
+  .object({
+    action: z.string().min(1),
+  })
+  .passthrough();
 
 /**
  * Returns the admin client for operations on service_manager tables.

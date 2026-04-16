@@ -383,6 +383,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
   const [relatedCompanies, setRelatedCompanies] = useState<RelateretVirksomhed[]>([]);
   const [relatedLoading, setRelatedLoading] = useState(false);
   const relatedFetchedRef = useRef(false);
+  const relatedAbortRef = useRef<AbortController | null>(null);
 
   /** Ejerkæde opad (fra RelationsDiagram) — deles mellem diagram og Gruppe-tab */
   const [ownerChainShared, setOwnerChainShared] = useState<OwnerChainNode[]>([]);
@@ -779,18 +780,32 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
     }
   }, [cvr]);
 
+  /** Reset related-fetch guard when CVR changes to prevent stale ref blocking re-fetch */
+  useEffect(() => {
+    relatedFetchedRef.current = false;
+    relatedAbortRef.current?.abort();
+    relatedAbortRef.current = null;
+  }, [cvr]);
+
   /** Henter relaterede virksomheder (gruppe) fra /api/cvr-public/related */
   const fetchRelated = useCallback(async () => {
     if (relatedFetchedRef.current) return;
     relatedFetchedRef.current = true;
+    relatedAbortRef.current?.abort();
+    const controller = new AbortController();
+    relatedAbortRef.current = controller;
     setRelatedLoading(true);
     try {
-      const res = await fetch(`/api/cvr-public/related?cvr=${encodeURIComponent(cvr)}`);
+      const res = await fetch(`/api/cvr-public/related?cvr=${encodeURIComponent(cvr)}`, {
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted) return;
       const json = await res.json();
       setRelatedCompanies(json.virksomheder ?? []);
       if (typeof json.parentEnhedsNummer === 'number')
         setParentEnhedsNummer(json.parentEnhedsNummer);
-    } catch {
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
       setRelatedCompanies([]);
     } finally {
       setRelatedLoading(false);

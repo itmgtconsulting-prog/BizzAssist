@@ -1831,14 +1831,37 @@ export default function EjendomDetaljeClient({
       });
     }
 
+    // BIZZ-444: Saml handler med samme dato + samme købesum til én linje
+    // (f.eks. 50%/50% ejere der køber sammen vises som én handel)
+    const grouped: MergedHandel[] = [];
+    for (const h of merged) {
+      const dato = h.overtagelsesdato ?? h.koebsaftaleDato ?? '';
+      const sum = h.kontantKoebesum ?? h.samletKoebesum ?? 0;
+      const existing = grouped.find((g) => {
+        const gDato = g.overtagelsesdato ?? g.koebsaftaleDato ?? '';
+        const gSum = g.kontantKoebesum ?? g.samletKoebesum ?? 0;
+        return gDato === dato && gSum === sum && dato !== '';
+      });
+      if (existing && h.koeber) {
+        // Append buyer name and combine shares
+        existing.koeber = existing.koeber
+          ? `${existing.koeber}, ${h.koeber}${h.andel ? ` (${h.andel})` : ''}`
+          : h.koeber;
+        if (!existing.andel && h.andel) existing.andel = h.andel;
+        else if (existing.andel && h.andel) existing.andel = null; // Multiple shares — don't show individual
+      } else {
+        grouped.push({ ...h });
+      }
+    }
+
     // Sortér nyeste først
-    merged.sort((a, b) => {
+    grouped.sort((a, b) => {
       const da2 = a.overtagelsesdato ?? a.koebsaftaleDato ?? '';
       const db = b.overtagelsesdato ?? b.koebsaftaleDato ?? '';
       return db.localeCompare(da2);
     });
 
-    return merged;
+    return grouped;
   })();
 
   /** Samlet pantegæld fra tinglysning-hæftelser (DKK) */

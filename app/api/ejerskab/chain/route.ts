@@ -575,53 +575,76 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // Resolver virksomhedsejere rekursivt (BFS)
-  while (companyOwnersToResolve.length > 0) {
-    const { nodeId, cvr, depth } = companyOwnersToResolve.shift()!;
-    if (depth >= MAX_DEPTH) continue;
+  // Resolver virksomhedsejere rekursivt (BFS, niveau-for-niveau parallelt — BIZZ-356)
+  // Items at the same depth are fetched in parallel via Promise.allSettled to avoid
+  // serialising independent network calls (common for ejerlejligheder with many owners).
+  let currentLevel = companyOwnersToResolve.splice(0);
+  while (currentLevel.length > 0) {
+    // Filter out items that have already hit MAX_DEPTH before firing requests
+    const eligible = currentLevel.filter(({ depth }) => depth < MAX_DEPTH);
+    if (eligible.length === 0) break;
 
-    const { companyName, isCeased, owners } = await fetchCompanyOwners(cvr);
+    // Fire all fetchCompanyOwners calls at this depth level in parallel
+    const results = await Promise.allSettled(eligible.map(({ cvr }) => fetchCompanyOwners(cvr)));
 
-    // Opdater virksomhedsnode med navn og ophørsstatus (BIZZ-357)
-    const companyNode = nodes.find((n) => n.id === nodeId);
-    if (companyNode) {
-      if (companyNode.label.startsWith('CVR ')) {
-        companyNode.label = companyName;
-      }
-      // Mark as ceased so diagrams can render it visually distinct
-      if (isCeased) companyNode.isCeased = true;
-    }
+    // Items to resolve at the next depth level, collected during this pass
+    const nextLevel: { nodeId: string; cvr: number; depth: number }[] = [];
 
-    for (const owner of owners) {
-      const ownerId = owner.erVirksomhed ? `cvr-${owner.enhedsNummer}` : `en-${owner.enhedsNummer}`;
+    for (let i = 0; i < eligible.length; i++) {
+      const { nodeId, depth } = eligible[i];
+      const result = results[i];
 
-      if (!seenIds.has(ownerId)) {
-        seenIds.add(ownerId);
-        if (owner.erVirksomhed) {
-          nodes.push({
-            id: ownerId,
-            label: owner.navn,
-            type: 'company',
-            cvr: owner.enhedsNummer,
-            link: `/dashboard/companies/${owner.enhedsNummer}`,
-          });
-          companyOwnersToResolve.push({
-            nodeId: ownerId,
-            cvr: owner.enhedsNummer,
-            depth: depth + 1,
-          });
-        } else {
-          nodes.push({
-            id: ownerId,
-            label: owner.navn,
-            type: 'person',
-            enhedsNummer: owner.enhedsNummer,
-            link: `/dashboard/owners/${owner.enhedsNummer}`,
-          });
+      // fetchCompanyOwners already handles its own errors and returns a safe default,
+      // but guard against unexpected rejections just in case.
+      if (result.status === 'rejected') continue;
+
+      const { companyName, isCeased, owners } = result.value;
+
+      // Opdater virksomhedsnode med navn og ophørsstatus (BIZZ-357)
+      const companyNode = nodes.find((n) => n.id === nodeId);
+      if (companyNode) {
+        if (companyNode.label.startsWith('CVR ')) {
+          companyNode.label = companyName;
         }
+        // Mark as ceased so diagrams can render it visually distinct
+        if (isCeased) companyNode.isCeased = true;
       }
-      edges.push({ from: ownerId, to: nodeId, ejerandel: owner.ejerandel ?? undefined });
+
+      for (const owner of owners) {
+        const ownerId = owner.erVirksomhed
+          ? `cvr-${owner.enhedsNummer}`
+          : `en-${owner.enhedsNummer}`;
+
+        if (!seenIds.has(ownerId)) {
+          seenIds.add(ownerId);
+          if (owner.erVirksomhed) {
+            nodes.push({
+              id: ownerId,
+              label: owner.navn,
+              type: 'company',
+              cvr: owner.enhedsNummer,
+              link: `/dashboard/companies/${owner.enhedsNummer}`,
+            });
+            nextLevel.push({
+              nodeId: ownerId,
+              cvr: owner.enhedsNummer,
+              depth: depth + 1,
+            });
+          } else {
+            nodes.push({
+              id: ownerId,
+              label: owner.navn,
+              type: 'person',
+              enhedsNummer: owner.enhedsNummer,
+              link: `/dashboard/owners/${owner.enhedsNummer}`,
+            });
+          }
+        }
+        edges.push({ from: ownerId, to: nodeId, ejerandel: owner.ejerandel ?? undefined });
+      }
     }
+
+    currentLevel = nextLevel;
   }
 
   const fejl: string | null = null;

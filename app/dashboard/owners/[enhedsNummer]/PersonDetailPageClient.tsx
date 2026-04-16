@@ -34,6 +34,7 @@ import {
   Lock,
   FileText,
   Download,
+  Bell,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useLanguage } from '@/app/context/LanguageContext';
@@ -794,6 +795,29 @@ export default function PersonDetailPageClient({
   /** Styrer om mobil nyheder-overlay er åbent. */
   const [mobilNyhederAaben, setMobilNyhederAaben] = useState(false);
 
+  /** BIZZ-374: Følg-knap state — synced med Supabase saved_entities */
+  const [erFulgt, setErFulgt] = useState(false);
+  const [foelgToggling, setFoelgToggling] = useState(false);
+
+  /** Sync følg-tilstand fra Supabase ved mount */
+  useEffect(() => {
+    let ignore = false;
+    fetch(`/api/tracked-person`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (ignore || !data?.persons) return;
+        setErFulgt(
+          data.persons.some(
+            (p: { enhedsNummer: string }) => p.enhedsNummer === String(enhedsNummer)
+          )
+        );
+      })
+      .catch(() => {});
+    return () => {
+      ignore = true;
+    };
+  }, [enhedsNummer]);
+
   /** AI-fundne sociale medier-URLs med confidence — udfyldes efter artikel-søgning */
   const [aiSocials, setAiSocials] = useState<
     Record<string, { url: string; confidence: number; reason?: string }>
@@ -1478,6 +1502,45 @@ export default function PersonDetailPageClient({
               >
                 <Newspaper size={14} />
                 {lang === 'da' ? 'Medier' : 'Media'}
+              </button>
+              <button
+                disabled={foelgToggling}
+                onClick={async () => {
+                  setFoelgToggling(true);
+                  const nyTilstand = !erFulgt;
+                  setErFulgt(nyTilstand);
+                  try {
+                    if (nyTilstand) {
+                      await fetch('/api/tracked-person', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ enhedsNummer: String(enhedsNummer) }),
+                      });
+                    } else {
+                      await fetch(`/api/tracked-person?enhedsNummer=${enhedsNummer}`, {
+                        method: 'DELETE',
+                      });
+                    }
+                  } catch {
+                    setErFulgt(!nyTilstand);
+                  } finally {
+                    setFoelgToggling(false);
+                  }
+                }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-sm transition-all ${
+                  erFulgt
+                    ? 'bg-blue-600/20 hover:bg-blue-600/30 border-blue-500/40 text-blue-300'
+                    : 'bg-slate-800 hover:bg-slate-700 border-slate-700/60 text-slate-300'
+                }`}
+              >
+                <Bell size={14} className={erFulgt ? 'fill-blue-400 text-blue-400' : ''} />
+                {erFulgt
+                  ? lang === 'da'
+                    ? 'Følger'
+                    : 'Following'
+                  : lang === 'da'
+                    ? 'Følg'
+                    : 'Follow'}
               </button>
             </div>
           </div>

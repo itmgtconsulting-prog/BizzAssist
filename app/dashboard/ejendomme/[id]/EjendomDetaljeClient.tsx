@@ -3288,7 +3288,7 @@ export default function EjendomDetaljeClient({
 
             {/* ══ EJERFORHOLD ══ */}
             {aktivTab === 'ejerforhold' && (
-              <div className="space-y-4">
+              <div className="space-y-2">
                 {/* Loading state — vis spinner mens BBR eller ejerskab data hentes */}
                 {(ejereLoader || bbrLoader || !bbrData) && (
                   <div className="flex items-center justify-center py-16">
@@ -3407,7 +3407,6 @@ export default function EjendomDetaljeClient({
                     if (!bfeForDiagram) return null;
                     return (
                       <div>
-                        <SectionTitle title={t.ownershipStructure} />
                         <PropertyOwnerDiagram
                           bfe={bfeForDiagram}
                           adresse={
@@ -4068,7 +4067,7 @@ export default function EjendomDetaljeClient({
             {aktivTab === 'dokumenter' && (
               <div className="space-y-2">
                 {/* ── Dokumenter (samlet kort) ── */}
-                <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden overflow-x-auto">
+                <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-x-auto">
                   {/* Kort-header */}
                   <div className="px-4 py-2.5 border-b border-slate-700/30 flex items-center gap-2">
                     <FileText size={15} className="text-slate-400" />
@@ -6794,7 +6793,7 @@ function PropertyOwnerDiagram({
   };
 
   return (
-    <div className="space-y-2.5">
+    <div className="space-y-2">
       {/* Ejer info-bokse */}
       {ejerDetaljer.map((ejer, i) => (
         <div key={i} className="bg-slate-800/40 border border-slate-700/40 rounded-xl px-3 py-2.5">

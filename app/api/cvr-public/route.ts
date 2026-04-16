@@ -651,18 +651,32 @@ function mapESHit(hit: Record<string, unknown>): CVRPublicData | null {
     }
   }
 
-  // BIZZ-403: Tilføj ejerskabs-ændringer til historik-tidslinje
-  for (const d of deltagere) {
-    for (const rolle of d.roller) {
-      const upper = rolle.rolle.toUpperCase();
-      if (upper.includes('EJER') || upper.includes('LEGALE') || upper.includes('REEL')) {
-        historik.push({
-          type: 'ejerskab',
-          fra: rolle.fra ?? '',
-          til: rolle.til,
-          vaerdi: `${d.navn}${rolle.ejerandel ? ` (${rolle.ejerandel})` : ''}`,
-        });
+  // BIZZ-403 + BIZZ-424: Tilføj ejerskabs-ændringer til historik-tidslinje.
+  // Gruppér ejere med samme startdato på én linje for overskuelighed.
+  {
+    const ejerskabByDate = new Map<string, { fra: string; til: string | null; navne: string[] }>();
+    for (const d of deltagere) {
+      for (const rolle of d.roller) {
+        const upper = rolle.rolle.toUpperCase();
+        if (upper.includes('EJER') || upper.includes('LEGALE') || upper.includes('REEL')) {
+          const key = `${rolle.fra ?? ''}_${rolle.til ?? ''}`;
+          const label = `${d.navn}${rolle.ejerandel ? ` (${rolle.ejerandel})` : ''}`;
+          const existing = ejerskabByDate.get(key);
+          if (existing) {
+            existing.navne.push(label);
+          } else {
+            ejerskabByDate.set(key, { fra: rolle.fra ?? '', til: rolle.til, navne: [label] });
+          }
+        }
       }
+    }
+    for (const entry of ejerskabByDate.values()) {
+      historik.push({
+        type: 'ejerskab',
+        fra: entry.fra,
+        til: entry.til,
+        vaerdi: entry.navne.join(', '),
+      });
     }
   }
 

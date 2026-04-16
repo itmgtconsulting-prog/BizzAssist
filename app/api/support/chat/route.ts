@@ -32,6 +32,7 @@ import { checkRateLimit, aiRateLimit } from '@/app/lib/rateLimit';
 import { logger } from '@/app/lib/logger';
 import { parseBody } from '@/app/lib/validate';
 import { writeAuditLog } from '@/app/lib/auditLog';
+import { companyInfo } from '@/app/lib/companyInfo';
 
 /** Zod schema for POST /api/support/chat request body */
 const supportChatSchema = z
@@ -166,7 +167,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   if (abuseRow?.permanently_locked) {
     return Response.json(
       {
-        error: 'Din adgang til support-chat er spærret. Kontakt admin@bizzassist.dk.',
+        error: `Din adgang til support-chat er spærret. Kontakt ${companyInfo.adminEmail}.`,
       },
       { status: 403 }
     );

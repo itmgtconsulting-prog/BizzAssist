@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { createClient } from '@/lib/supabase/client';
+import { companyInfo } from '@/app/lib/companyInfo';
 
 /** localStorage key to track onboarding completion */
 const ONBOARDING_KEY = 'ba-onboarding-done';
@@ -317,8 +318,11 @@ export default function OnboardingModal() {
                 {da
                   ? 'Som beta-bruger er din feedback uvurderlig. Klik på 💬-ikonet i nederste højre hjørne, beskriv fejlen kort — hvad skete der og hvad forventede du? Du kan også sende feedback direkte til '
                   : 'As a beta user your feedback is invaluable. Click the 💬 icon in the bottom-right corner, briefly describe the issue — what happened and what did you expect? You can also send feedback directly to '}
-                <a href="mailto:support@bizzassist.dk" className="text-blue-400 hover:underline">
-                  support@bizzassist.dk
+                <a
+                  href={`mailto:${companyInfo.supportEmail}`}
+                  className="text-blue-400 hover:underline"
+                >
+                  {companyInfo.supportEmail}
                 </a>
               </p>
             </div>

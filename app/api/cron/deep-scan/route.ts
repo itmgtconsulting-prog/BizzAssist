@@ -33,6 +33,7 @@ import { join } from 'path';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
+import { companyInfo } from '@/app/lib/companyInfo';
 
 /** Vercel Pro function timeout (seconds) — uses full near-limit duration */
 export const maxDuration = 55;
@@ -41,8 +42,8 @@ export const runtime = 'nodejs';
 
 /** Resend API endpoint */
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';
-const FROM_ADDRESS = 'BizzAssist <noreply@bizzassist.dk>';
-const TO_ADDRESS = 'support@pecuniait.com';
+const FROM_ADDRESS = `BizzAssist <${companyInfo.noreplyEmail}>`;
+const TO_ADDRESS = companyInfo.supportEmail;
 
 /** Vercel REST API base URL */
 const VERCEL_API = 'https://api.vercel.com';

@@ -865,7 +865,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
       fetchRegnskaber();
       fetchXbrl();
     }
-    if (aktivTab === 'companies' || aktivTab === 'overview') {
+    if (aktivTab === 'companies' || aktivTab === 'overview' || aktivTab === 'diagram') {
       fetchRelated();
     }
     if (aktivTab === 'overview') {

@@ -26,11 +26,8 @@ import { logger } from '@/app/lib/logger';
 /** Antal URL-entries pr. sitemap-fil (Next.js max er 50.000) */
 const PAGE_SIZE = 50_000;
 
-/** Basis-URL til alle sitemap-entries.
- *  Hardkodet til produktions-URL for at undgå at NEXT_PUBLIC_APP_URL
- *  (som kan pege på test.bizzassist.dk) forurener sitemap-URLs i produktion.
- */
-const BASE_URL = 'https://bizzassist.dk';
+/** Basis-URL til alle sitemap-entries — bruger env var med production fallback. */
+const BASE_URL = (process.env.NEXT_PUBLIC_APP_URL ?? 'https://bizzassist.dk').replace(/\/$/, '');
 
 // ─── Statiske sider ────────────────────────────────────────────────────────────
 

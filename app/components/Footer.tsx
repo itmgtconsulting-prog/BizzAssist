@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';
+import { companyInfo } from '@/app/lib/companyInfo';
 
 export default function Footer() {
   const { lang } = useLanguage();
@@ -64,10 +65,10 @@ export default function Footer() {
               <li>
                 <span className="text-slate-500 block text-xs mb-0.5">{footer.links.support}</span>
                 <a
-                  href="mailto:support@pecuniait.com"
+                  href={`mailto:${companyInfo.supportEmail}`}
                   className="hover:text-white transition-colors"
                 >
-                  support@pecuniait.com
+                  {companyInfo.supportEmail}
                 </a>
               </li>
             </ul>

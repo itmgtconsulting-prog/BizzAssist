@@ -23,13 +23,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
+import { companyInfo } from '@/app/lib/companyInfo';
 
 /** Max Vercel Hobby plan funktionsvarighed i sekunder */
 export const maxDuration = 30;
 
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';
-const FROM_ADDRESS = 'BizzAssist <noreply@bizzassist.dk>';
-const TO_ADDRESS = 'support@pecuniait.com';
+const FROM_ADDRESS = `BizzAssist <${companyInfo.noreplyEmail}>`;
+const TO_ADDRESS = companyInfo.supportEmail;
 
 /**
  * Verificerer CRON_SECRET fra Authorization-header (Vercel Cron).

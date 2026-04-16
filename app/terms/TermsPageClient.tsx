@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
+import { companyInfo } from '@/app/lib/companyInfo';
 import Navbar from '@/app/components/Navbar';
 import Footer from '@/app/components/Footer';
 
@@ -49,8 +50,8 @@ function DanishTerms() {
         <h2 className="text-xl font-semibold text-white mb-3">1. Generelt</h2>
         <p>
           Disse vilkår og betingelser gælder for din brug af BizzAssist-platformen, som drives af
-          Pecunia IT ApS (CVR: 44718502), Søbyvej 11, 2650 Hvidovre (&quot;vi&quot;, &quot;os&quot;,
-          &quot;vores&quot;).
+          {companyInfo.name} (CVR: {companyInfo.cvr}), {companyInfo.fullAddress} (&quot;vi&quot;,
+          &quot;os&quot;, &quot;vores&quot;).
         </p>
         <p>
           Ved at oprette en konto eller bruge BizzAssist accepterer du disse vilkår. Hvis du ikke er
@@ -179,8 +180,8 @@ function DanishTerms() {
           Ved at bruge BizzAssist accepterer du, at platformen leveres &quot;som den er&quot; (as
           is), og at der kan forekomme fejl, nedetid og ændringer. Vi opfordrer til at rapportere
           fejl til{' '}
-          <a href="mailto:support@pecuniait.com" className="text-blue-400 hover:underline">
-            support@pecuniait.com
+          <a href={`mailto:${companyInfo.supportEmail}`} className="text-blue-400 hover:underline">
+            {companyInfo.supportEmail}
           </a>
           , så vi kan forbedre tjenesten.
         </p>
@@ -228,7 +229,7 @@ function DanishTerms() {
 
       <section>
         <h2 className="text-xl font-semibold text-white mb-3">10. Ansvarsbegrænsning</h2>
-        <p>I det omfang det er tilladt ved lov, er Pecunia IT ApS ikke ansvarlig for:</p>
+        <p>I det omfang det er tilladt ved lov, er {companyInfo.name} ikke ansvarlig for:</p>
         <ul className="list-disc pl-6 space-y-1">
           <li>Tab opstået som følge af unøjagtige data eller AI-analyser.</li>
           <li>Indirekte tab, herunder tabt fortjeneste, driftstab eller datatab.</li>
@@ -300,8 +301,8 @@ function DanishTerms() {
         <h2 className="text-xl font-semibold text-white mb-3">16. Kontakt</h2>
         <p>
           Ved spørgsmål om disse vilkår, kontakt os på{' '}
-          <a href="mailto:support@pecuniait.com" className="text-blue-400 hover:underline">
-            support@pecuniait.com
+          <a href={`mailto:${companyInfo.supportEmail}`} className="text-blue-400 hover:underline">
+            {companyInfo.supportEmail}
           </a>
           .
         </p>
@@ -317,8 +318,8 @@ function EnglishTerms() {
         <h2 className="text-xl font-semibold text-white mb-3">1. General</h2>
         <p>
           These terms and conditions apply to your use of the BizzAssist platform, operated by
-          Pecunia IT ApS (CVR: 44718502), Soebyvej 11, 2650 Hvidovre, Denmark (&quot;we&quot;,
-          &quot;us&quot;, &quot;our&quot;).
+          {companyInfo.name} (CVR: {companyInfo.cvr}), {companyInfo.fullAddress},{' '}
+          {companyInfo.country} (&quot;we&quot;, &quot;us&quot;, &quot;our&quot;).
         </p>
         <p>
           By creating an account or using BizzAssist, you accept these terms. If you do not agree,
@@ -444,8 +445,8 @@ function EnglishTerms() {
         <p>
           By using BizzAssist, you accept that the platform is provided &quot;as is&quot; and that
           errors, downtime and changes may occur. We encourage you to report issues to{' '}
-          <a href="mailto:support@pecuniait.com" className="text-blue-400 hover:underline">
-            support@pecuniait.com
+          <a href={`mailto:${companyInfo.supportEmail}`} className="text-blue-400 hover:underline">
+            {companyInfo.supportEmail}
           </a>{' '}
           so we can improve the service.
         </p>
@@ -568,8 +569,8 @@ function EnglishTerms() {
         <h2 className="text-xl font-semibold text-white mb-3">16. Contact</h2>
         <p>
           For questions about these terms, contact us at{' '}
-          <a href="mailto:support@pecuniait.com" className="text-blue-400 hover:underline">
-            support@pecuniait.com
+          <a href={`mailto:${companyInfo.supportEmail}`} className="text-blue-400 hover:underline">
+            {companyInfo.supportEmail}
           </a>
           .
         </p>

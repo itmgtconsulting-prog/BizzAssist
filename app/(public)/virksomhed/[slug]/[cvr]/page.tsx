@@ -15,6 +15,7 @@
 
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { getAppUrl } from '@/app/lib/appUrl';
 import JsonLdScript from '@/app/components/JsonLd';
 import {
   Building2,
@@ -198,7 +199,7 @@ export async function generateMetadata({
     `${adresseStr}. Se bestyrelse, ejere, ejendomme og regnskaber på BizzAssist.`;
 
   const canonicalSlug = generateVirksomhedSlug(v.navn);
-  const canonicalUrl = `https://bizzassist.dk/virksomhed/${canonicalSlug}/${cvr}`;
+  const canonicalUrl = `${getAppUrl()}/virksomhed/${canonicalSlug}/${cvr}`;
 
   return {
     title: `${v.navn} — CVR ${cvr} — BizzAssist`,
@@ -337,7 +338,7 @@ function LoginCTA({ navn }: { navn: string }) {
  */
 function JsonLd({ v, slug }: { v: VirksomhedPublicData; slug: string }) {
   /** Kanonisk URL for virksomhedssiden */
-  const canonicalUrl = `https://bizzassist.dk/virksomhed/${slug}/${v.cvr}`;
+  const canonicalUrl = `${getAppUrl()}/virksomhed/${slug}/${v.cvr}`;
 
   /** Brug LocalBusiness når adresse er tilgængelig — giver rigere schema-support */
   const hasAddress = Boolean(v.adresse || v.postnr || v.by);
@@ -370,18 +371,18 @@ function JsonLd({ v, slug }: { v: VirksomhedPublicData; slug: string }) {
     '@context': 'https://schema.org',
     '@type': 'BreadcrumbList',
     itemListElement: [
-      { '@type': 'ListItem', position: 1, name: 'Hjem', item: 'https://bizzassist.dk' },
+      { '@type': 'ListItem', position: 1, name: 'Hjem', item: getAppUrl() },
       {
         '@type': 'ListItem',
         position: 2,
         name: 'Virksomheder',
-        item: 'https://bizzassist.dk/virksomheder',
+        item: `${getAppUrl()}/virksomheder`,
       },
       {
         '@type': 'ListItem',
         position: 3,
         name: v.navn,
-        item: `https://bizzassist.dk/virksomhed/${slug}/${v.cvr}`,
+        item: `${getAppUrl()}/virksomhed/${slug}/${v.cvr}`,
       },
     ],
   };

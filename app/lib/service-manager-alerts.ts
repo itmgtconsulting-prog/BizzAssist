@@ -1,4 +1,5 @@
 import { logger } from '@/app/lib/logger';
+import { companyInfo } from '@/app/lib/companyInfo';
 
 /**
  * Service Manager Critical Alerts — app/lib/service-manager-alerts.ts
@@ -18,8 +19,8 @@ import { logger } from '@/app/lib/logger';
 
 /** Resend API endpoint */
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';
-const FROM_ADDRESS = 'BizzAssist <noreply@bizzassist.dk>';
-const TO_ADDRESS = 'support@pecuniait.com';
+const FROM_ADDRESS = `BizzAssist <${companyInfo.noreplyEmail}>`;
+const TO_ADDRESS = companyInfo.supportEmail;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -158,7 +159,7 @@ function buildCriticalAlertHtml(params: CriticalAlertParams): string {
   <!-- Footer -->
   <hr style="border: none; border-top: 1px solid #1e293b; margin: 0 0 16px 0;" />
   <p style="color: #475569; font-size: 11px; margin: 0; line-height: 1.6;">
-    BizzAssist &mdash; Pecunia IT ApS &mdash; S&oslash;byvej 11, 2650 Hvidovre &mdash; CVR 44718502<br/>
+    ${companyInfo.legalLineHtml}<br/>
     Kritisk alert fra Service Manager Agent &mdash; m&aring; ikke videresendes
   </p>
 

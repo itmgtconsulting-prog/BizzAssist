@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { logger } from '@/app/lib/logger';
 import { parseBody } from '@/app/lib/validate';
+import { companyInfo } from '@/app/lib/companyInfo';
 
 /** Zod schema for POST /api/notify-signup request body */
 const notifySignupSchema = z
@@ -25,7 +26,7 @@ const notifySignupSchema = z
   })
   .passthrough();
 
-const NOTIFY_EMAIL = process.env.SUPPORT_NOTIFICATION_EMAIL || 'support@pecuniait.com';
+const NOTIFY_EMAIL = process.env.SUPPORT_NOTIFICATION_EMAIL || companyInfo.supportEmail;
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 
 /**
@@ -151,7 +152,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: 'BizzAssist <noreply@bizzassist.dk>',
+        from: `BizzAssist <${companyInfo.noreplyEmail}>`,
         to: [NOTIFY_EMAIL],
         subject,
         html: htmlBody,

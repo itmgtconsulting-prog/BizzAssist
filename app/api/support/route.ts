@@ -25,6 +25,7 @@ import { createClient } from '@supabase/supabase-js';
 import { logger } from '@/app/lib/logger';
 import { parseBody } from '@/app/lib/validate';
 import { writeAuditLog } from '@/app/lib/auditLog';
+import { companyInfo } from '@/app/lib/companyInfo';
 
 /** Zod schema for POST /api/support request body */
 const supportPostSchema = z
@@ -70,8 +71,8 @@ const KNOWLEDGE_BASE: KBEntry[] = [
   },
   {
     keywords: ['opgradere', 'upgrade', 'skift', 'switch', 'ændr', 'change'],
-    da: 'For at opgradere eller ændre dit abonnement, kontakt vores team via e-mail på support@bizzassist.dk eller kontakt din administrator.',
-    en: 'To upgrade or change your subscription, contact our team via email at support@bizzassist.dk or contact your administrator.',
+    da: `For at opgradere eller ændre dit abonnement, kontakt vores team via e-mail på ${companyInfo.supportEmail} eller kontakt din administrator.`,
+    en: `To upgrade or change your subscription, contact our team via email at ${companyInfo.supportEmail} or contact your administrator.`,
   },
   {
     keywords: ['ejendom', 'property', 'adresse', 'address', 'bbr', 'bygning', 'building'],
@@ -115,8 +116,8 @@ const KNOWLEDGE_BASE: KBEntry[] = [
   },
   {
     keywords: ['kontakt', 'contact', 'support', 'hjælp', 'help', 'mail'],
-    da: 'Du kan kontakte vores support via support@bizzassist.dk. For tekniske problemer kan du oprette en fejlrapport direkte herfra.',
-    en: 'You can contact our support at support@bizzassist.dk. For technical issues, you can create a bug report directly from here.',
+    da: `Du kan kontakte vores support via ${companyInfo.supportEmail}. For tekniske problemer kan du oprette en fejlrapport direkte herfra.`,
+    en: `You can contact our support at ${companyInfo.supportEmail}. For technical issues, you can create a bug report directly from here.`,
   },
   {
     keywords: ['rapport', 'report', 'pdf'],
@@ -291,8 +292,8 @@ export async function POST(request: NextRequest) {
           ? `Din fejlrapport er oprettet som ${issueKey}. Vi kigger på det hurtigst muligt.`
           : `Your bug report has been created as ${issueKey}. We will look into it as soon as possible.`
         : lang === 'da'
-          ? 'Fejlrapporten kunne ikke oprettes. Kontakt support@bizzassist.dk i stedet.'
-          : 'The bug report could not be created. Please contact support@bizzassist.dk instead.';
+          ? `Fejlrapporten kunne ikke oprettes. Kontakt ${companyInfo.supportEmail} i stedet.`
+          : `The bug report could not be created. Please contact ${companyInfo.supportEmail} instead.`;
 
       // Audit: support question created via ticket action (fire-and-forget — ISO 27001 A.12.4)
       void writeAuditLog({

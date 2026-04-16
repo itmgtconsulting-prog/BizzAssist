@@ -145,13 +145,16 @@ export async function GET(): Promise<NextResponse> {
     const { data: freshUser, error } = await admin.auth.admin.getUserById(user.id);
 
     if (error || !freshUser?.user) {
-      // Fallback to JWT data if admin lookup fails
+      // BIZZ-431: Fail-closed — explicitly set isFunctional=false and isAdmin=false
+      // when admin lookup fails, so the dashboard gate blocks access by default.
       logger.warn('[subscription] Admin getUserById failed, using JWT data:', error?.message);
       const subscription = user.app_metadata?.subscription ?? null;
       return NextResponse.json({
         email: user.email,
         fullName: (user.user_metadata?.full_name as string) ?? '',
         subscription,
+        isFunctional: false,
+        isAdmin: false,
       });
     }
 

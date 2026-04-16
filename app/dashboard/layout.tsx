@@ -47,6 +47,7 @@ import { useSessionTimeout } from '@/app/hooks/useSessionTimeout';
 import OnboardingModal from '@/app/components/OnboardingModal';
 import FeedbackButton from '@/app/components/FeedbackButton';
 import SubscriptionGate from '@/app/components/SubscriptionGate';
+import { companyInfo } from '@/app/lib/companyInfo';
 import { cachePlans, type UserSubscription, type PlanDef } from '@/app/lib/subscriptions';
 import { SubscriptionProvider, useSubscription } from '@/app/context/SubscriptionContext';
 import { AIPageProvider } from '@/app/context/AIPageContext';
@@ -186,7 +187,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
     /** Redirect to login if subscription check fails, or grant access. */
     const gateAccess = async (
       status: 'ok' | 'pending' | 'cancelled' | 'no_subscription',
-      functional = true,
+      functional = false,
       sub: UserSubscription | null = null,
       admin = false
     ) => {
@@ -321,7 +322,8 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                 json.isAdmin
               );
               // Admin users always have functional access; otherwise use server-computed flag
-              const functional = json.isAdmin ? true : (json.isFunctional ?? true);
+              // BIZZ-431: fail-closed — default to false if isFunctional is missing
+              const functional = json.isAdmin ? true : (json.isFunctional ?? false);
               gateAccess(checkSub(sub), functional, sub, !!json.isAdmin);
               return;
             }
@@ -1387,7 +1389,7 @@ function PlanSelectionOverlay({
 
             {/* Support link */}
             <a
-              href="mailto:support@bizzassist.dk"
+              href={`mailto:${companyInfo.supportEmail}`}
               className="inline-flex items-center gap-2 text-blue-400 hover:text-blue-300 text-sm transition-colors mb-6"
             >
               {da ? 'Kontakt support' : 'Contact support'}

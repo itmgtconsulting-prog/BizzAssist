@@ -1,4 +1,5 @@
 import { logger } from '@/app/lib/logger';
+import { companyInfo } from '@/app/lib/companyInfo';
 
 /**
  * Email helper — app/lib/email.ts
@@ -95,7 +96,7 @@ export async function sendPaymentConfirmationEmail(
       </a>
 
       <hr style="border: none; border-top: 1px solid #1e293b; margin: 30px 0;" />
-      <p style="color: #475569; font-size: 11px; margin: 0;">BizzAssist &mdash; Pecunia IT ApS &mdash; S&oslash;byvej 11, 2650 Hvidovre &mdash; CVR 44718502</p>
+      <p style="color: #475569; font-size: 11px; margin: 0;">${companyInfo.legalLineHtml}</p>
     </div>
   `;
 
@@ -157,9 +158,7 @@ export async function sendApprovalEmail(params: SubscriptionApprovalParams): Pro
     to,
     fullName,
     planName,
-    loginUrl = process.env.NEXT_PUBLIC_APP_URL
-      ? `${process.env.NEXT_PUBLIC_APP_URL}/login`
-      : 'https://bizzassist.dk/login',
+    loginUrl = `${(process.env.NEXT_PUBLIC_APP_URL ?? 'https://bizzassist.dk').replace(/\/$/, '')}/login`,
   } = params;
 
   const greeting = fullName ? `Hej ${fullName}` : 'Hej';
@@ -198,7 +197,7 @@ export async function sendApprovalEmail(params: SubscriptionApprovalParams): Pro
       </p>
 
       <hr style="border: none; border-top: 1px solid #1e293b; margin: 30px 0;" />
-      <p style="color: #475569; font-size: 11px; margin: 0;">BizzAssist &mdash; Pecunia IT ApS &mdash; S&oslash;byvej 11, 2650 Hvidovre &mdash; CVR 44718502</p>
+      <p style="color: #475569; font-size: 11px; margin: 0;">${companyInfo.legalLineHtml}</p>
     </div>
   `;
 
@@ -316,7 +315,7 @@ export async function sendRecurringPaymentEmail(params: RecurringPaymentParams):
       </a>
 
       <hr style="border: none; border-top: 1px solid #1e293b; margin: 30px 0;" />
-      <p style="color: #475569; font-size: 11px; margin: 0;">BizzAssist &mdash; Pecunia IT ApS &mdash; S&oslash;byvej 11, 2650 Hvidovre &mdash; CVR 44718502</p>
+      <p style="color: #475569; font-size: 11px; margin: 0;">${companyInfo.legalLineHtml}</p>
     </div>
   `;
 
@@ -389,7 +388,7 @@ export async function sendWelcomeEmail(to: string, fullName?: string): Promise<v
       </a>
 
       <hr style="border: none; border-top: 1px solid #1e293b; margin: 30px 0;" />
-      <p style="color: #475569; font-size: 11px; margin: 0;">BizzAssist &mdash; Pecunia IT ApS &mdash; S&oslash;byvej 11, 2650 Hvidovre &mdash; CVR 44718502</p>
+      <p style="color: #475569; font-size: 11px; margin: 0;">${companyInfo.legalLineHtml}</p>
     </div>
   `;
 
@@ -445,7 +444,7 @@ export async function sendAccountDeletionEmail(to: string): Promise<void> {
       </p>
 
       <hr style="border: none; border-top: 1px solid #1e293b; margin: 30px 0;" />
-      <p style="color: #475569; font-size: 11px; margin: 0;">BizzAssist &mdash; Pecunia IT ApS &mdash; S&oslash;byvej 11, 2650 Hvidovre &mdash; CVR 44718502</p>
+      <p style="color: #475569; font-size: 11px; margin: 0;">${companyInfo.legalLineHtml}</p>
     </div>
   `;
 

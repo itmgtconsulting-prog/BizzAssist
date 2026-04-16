@@ -39,6 +39,7 @@ import {
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useLanguage } from '@/app/context/LanguageContext';
+import { useSubscription } from '@/app/context/SubscriptionContext';
 import { translations } from '@/app/lib/translations';
 import { selectFreePlan } from '@/app/auth/actions';
 import { logger } from '@/app/lib/logger';
@@ -160,6 +161,7 @@ export default function OnboardingClient() {
   const router = useRouter();
   const { lang } = useLanguage();
   const da = lang === 'da';
+  const { subscription: userSub } = useSubscription();
 
   // ── Auth state ─────────────────────────────────────────────────────────────
   const [userName, setUserName] = useState('');
@@ -807,21 +809,23 @@ export default function OnboardingClient() {
             <ArrowLeft size={15} />
             {da ? 'Tilbage' : 'Back'}
           </button>
-          <button
-            onClick={handlePlanNext}
-            disabled={planSubmitting || plansLoading || !selectedPlan}
-            className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-sm px-5 py-2.5 rounded-xl transition-colors"
-          >
-            {planSubmitting && <Loader2 size={14} className="animate-spin" />}
-            {isPaid
-              ? da
-                ? `Gå til betaling — ${selectedPlanObj?.priceDkk} kr/md`
-                : `Go to payment — ${selectedPlanObj?.priceDkk} kr/mo`
-              : da
-                ? 'Fortsæt gratis'
-                : 'Continue free'}
-            {!planSubmitting && <ArrowRight size={16} />}
-          </button>
+          {!userSub?.isPaid && (
+            <button
+              onClick={handlePlanNext}
+              disabled={planSubmitting || plansLoading || !selectedPlan}
+              className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-sm px-5 py-2.5 rounded-xl transition-colors"
+            >
+              {planSubmitting && <Loader2 size={14} className="animate-spin" />}
+              {isPaid
+                ? da
+                  ? `Gå til betaling — ${selectedPlanObj?.priceDkk} kr/md`
+                  : `Go to payment — ${selectedPlanObj?.priceDkk} kr/mo`
+                : da
+                  ? 'Fortsæt gratis'
+                  : 'Continue free'}
+              {!planSubmitting && <ArrowRight size={16} />}
+            </button>
+          )}
         </div>
       </div>
     );

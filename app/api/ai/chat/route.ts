@@ -339,7 +339,7 @@ VIGTIGT: Kald så mange tools som muligt i SAMME runde for at spare tid. Vent ik
 - Marker tydeligt hvad der er fakta (fra registre) vs. din vurdering
 - Hvis et tool returnerer fejl eller manglende data, nævn det kort og fortsæt med de øvrige data
 - Kald gerne flere tools for at give et komplet billede
-- BFE-nummer findes typisk i jordstykke-objektet fra dawa_adresse_detaljer (feltet "bfenummer" eller i ejendomsrelationer fra BBR)
+- BFE-nummer findes i resultatet fra hent_bbr_data (feltet "bfeNummer" i ejendomsrelationer). Kald altid hent_bbr_data efter dawa_adresse_detaljer for at få BFE-nummeret.
 
 ## Workflow ved formueanalyse for en person
 
@@ -518,6 +518,22 @@ async function executeTool(
           break;
         }
         const d = (await res.json()) as Record<string, unknown>;
+        // Enrich with BFE-nummer from jordstykke lookup (coordinates → matrikel → BFE)
+        let bfeNummer: number | null = null;
+        if (d.x != null && d.y != null) {
+          try {
+            const jsRes = await fetch(
+              `${baseUrl}/api/adresse/jordstykke?lng=${d.x}&lat=${d.y}`,
+              internalFetchOpts
+            );
+            if (jsRes.ok) {
+              const js = (await jsRes.json()) as Record<string, unknown>;
+              if (typeof js?.bfenummer === 'number') bfeNummer = js.bfenummer;
+            }
+          } catch {
+            // Non-fatal — BFE can still be obtained from hent_bbr_data
+          }
+        }
         result = {
           id: d.id,
           vejnavn: d.vejnavn,
@@ -530,6 +546,7 @@ async function executeTool(
           matrikelnr: d.matrikelnr,
           ejerlavkode: d.ejerlavskode,
           ejerlavnavn: d.ejerlavsnavn,
+          bfeNummer,
         };
         break;
       }

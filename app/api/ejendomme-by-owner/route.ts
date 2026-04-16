@@ -370,44 +370,46 @@ async function _hentDawaBfeDataImpl(bfe: number): Promise<DawaBfeAdresse> {
       };
     }
 
-    /* Fallback: query /adresser?bfenummer={bfe} for samlet ejendomme without single address */
-    try {
-      const addrRes = await fetch(
-        `${DAWA_BASE_URL}/adresser?bfenummer=${bfe}&per_side=1&struktur=mini`,
-        {
-          signal: AbortSignal.timeout(5000),
-          next: { revalidate: 86400 },
-        }
-      );
-      if (addrRes.ok) {
-        const addrList = (await addrRes.json()) as Array<{
-          id?: string;
-          vejnavn?: string;
-          husnr?: string;
-          postnr?: string;
-          postnrnavn?: string;
-          kommunekode?: string;
-          kommunenavn?: string;
-        }>;
-        const first = addrList[0];
-        if (first?.vejnavn) {
-          return {
-            adresse: `${first.vejnavn} ${first.husnr ?? ''}`.trim(),
-            postnr: first.postnr ?? null,
-            by: first.postnrnavn ?? null,
-            kommune: first.kommunenavn ?? null,
-            kommuneKode: first.kommunekode ?? null,
-            ejendomstype: json.ejendomstype ?? null,
-            dawaId: first.id ?? null,
+    /* Fallback: resolve address from jordstykker → husnumre → adgangsadresse.
+     * Samlet ejendomme without beliggenhedsadresse often have jordstykker with
+     * husnumre UUIDs that point to actual street addresses in DAWA. */
+    const js = json.jordstykker?.[0];
+    const husnumreId = js?.husnumre?.[0]?.id as string | undefined;
+
+    if (husnumreId) {
+      try {
+        const addrRes = await fetch(
+          `${DAWA_BASE_URL}/adgangsadresser/${husnumreId}?struktur=mini`,
+          { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } }
+        );
+        if (addrRes.ok) {
+          const addr = (await addrRes.json()) as {
+            id?: string;
+            vejnavn?: string;
+            husnr?: string;
+            postnr?: string;
+            postnrnavn?: string;
+            kommunekode?: string;
+            kommunenavn?: string;
           };
+          if (addr.vejnavn) {
+            return {
+              adresse: `${addr.vejnavn} ${addr.husnr ?? ''}`.trim(),
+              postnr: addr.postnr ?? null,
+              by: addr.postnrnavn ?? null,
+              kommune: addr.kommunenavn ?? null,
+              kommuneKode: addr.kommunekode ?? null,
+              ejendomstype: json.ejendomstype ?? null,
+              dawaId: addr.id ?? husnumreId,
+            };
+          }
         }
+      } catch {
+        /* ignore — fallback to ejerlav below */
       }
-    } catch {
-      /* ignore fallback errors */
     }
 
-    /* Fallback: jordstykker → ejerlav */
-    const js = json.jordstykker?.[0];
+    /* Last resort: use ejerlav name (cadastral district) as address */
     if (js?.ejerlav?.navn) {
       return {
         adresse: js.ejerlav.navn,
@@ -416,7 +418,7 @@ async function _hentDawaBfeDataImpl(bfe: number): Promise<DawaBfeAdresse> {
         kommune: js.kommune?.navn ?? null,
         kommuneKode: js.kommune?.kode ?? null,
         ejendomstype: json.ejendomstype ?? null,
-        dawaId: js.husnumre?.[0]?.id ?? null,
+        dawaId: husnumreId ?? null,
       };
     }
 

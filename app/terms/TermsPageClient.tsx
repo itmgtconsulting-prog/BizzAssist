@@ -180,8 +180,8 @@ function DanishTerms() {
           Ved at bruge BizzAssist accepterer du, at platformen leveres &quot;som den er&quot; (as
           is), og at der kan forekomme fejl, nedetid og ændringer. Vi opfordrer til at rapportere
           fejl til{' '}
-          <a href="mailto:support@pecuniait.com" className="text-blue-400 hover:underline">
-            support@pecuniait.com
+          <a href={`mailto:${companyInfo.supportEmail}`} className="text-blue-400 hover:underline">
+            {companyInfo.supportEmail}
           </a>
           , så vi kan forbedre tjenesten.
         </p>
@@ -301,8 +301,8 @@ function DanishTerms() {
         <h2 className="text-xl font-semibold text-white mb-3">16. Kontakt</h2>
         <p>
           Ved spørgsmål om disse vilkår, kontakt os på{' '}
-          <a href="mailto:support@pecuniait.com" className="text-blue-400 hover:underline">
-            support@pecuniait.com
+          <a href={`mailto:${companyInfo.supportEmail}`} className="text-blue-400 hover:underline">
+            {companyInfo.supportEmail}
           </a>
           .
         </p>
@@ -445,8 +445,8 @@ function EnglishTerms() {
         <p>
           By using BizzAssist, you accept that the platform is provided &quot;as is&quot; and that
           errors, downtime and changes may occur. We encourage you to report issues to{' '}
-          <a href="mailto:support@pecuniait.com" className="text-blue-400 hover:underline">
-            support@pecuniait.com
+          <a href={`mailto:${companyInfo.supportEmail}`} className="text-blue-400 hover:underline">
+            {companyInfo.supportEmail}
           </a>{' '}
           so we can improve the service.
         </p>
@@ -569,8 +569,8 @@ function EnglishTerms() {
         <h2 className="text-xl font-semibold text-white mb-3">16. Contact</h2>
         <p>
           For questions about these terms, contact us at{' '}
-          <a href="mailto:support@pecuniait.com" className="text-blue-400 hover:underline">
-            support@pecuniait.com
+          <a href={`mailto:${companyInfo.supportEmail}`} className="text-blue-400 hover:underline">
+            {companyInfo.supportEmail}
           </a>
           .
         </p>

@@ -16,8 +16,8 @@ import { sendCriticalSms } from '@/lib/sms';
 
 /** Resend API endpoint */
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';
-const FROM_ADDRESS = 'BizzAssist <noreply@bizzassist.dk>';
-const TO_ADDRESS = 'support@pecuniait.com';
+const FROM_ADDRESS = `BizzAssist <${companyInfo.noreplyEmail}>`;
+const TO_ADDRESS = companyInfo.supportEmail;
 
 // ─── Critical issue classification ───────────────────────────────────────────
 

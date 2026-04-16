@@ -5,6 +5,7 @@ import { ArrowLeft } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import Navbar from '@/app/components/Navbar';
 import Footer from '@/app/components/Footer';
+import { companyInfo } from '@/app/lib/companyInfo';
 
 /**
  * Cookie Policy page — /cookies
@@ -136,8 +137,8 @@ function DanishCookies() {
         <h2 className="text-xl font-semibold text-white mb-3">5. Kontakt</h2>
         <p>
           Har du spørgsmål om vores brug af cookies, kontakt os på{' '}
-          <a href="mailto:support@pecuniait.com" className="text-blue-400 hover:underline">
-            support@pecuniait.com
+          <a href={`mailto:${companyInfo.supportEmail}`} className="text-blue-400 hover:underline">
+            {companyInfo.supportEmail}
           </a>
           .
         </p>
@@ -237,8 +238,8 @@ function EnglishCookies() {
         <h2 className="text-xl font-semibold text-white mb-3">5. Contact</h2>
         <p>
           If you have questions about our use of cookies, contact us at{' '}
-          <a href="mailto:support@pecuniait.com" className="text-blue-400 hover:underline">
-            support@pecuniait.com
+          <a href={`mailto:${companyInfo.supportEmail}`} className="text-blue-400 hover:underline">
+            {companyInfo.supportEmail}
           </a>
           .
         </p>

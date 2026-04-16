@@ -41,14 +41,15 @@ import { sendCriticalAlert, isCriticalIssue } from '@/lib/service-manager-alerts
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 import { recordHeartbeat } from '@/app/lib/cronHeartbeat';
+import { companyInfo } from '@/app/lib/companyInfo';
 
 /** Vercel Cron max duration (seconds) — Hobby plan limit */
 export const maxDuration = 30;
 
 /** Resend API endpoint */
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';
-const FROM_ADDRESS = 'BizzAssist <noreply@bizzassist.dk>';
-const TO_ADDRESS = 'support@pecuniait.com';
+const FROM_ADDRESS = `BizzAssist <${companyInfo.noreplyEmail}>`;
+const TO_ADDRESS = companyInfo.supportEmail;
 
 /** Base URL for the Vercel REST API */
 const VERCEL_API = 'https://api.vercel.com';

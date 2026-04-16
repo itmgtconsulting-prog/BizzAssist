@@ -31,6 +31,7 @@ import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 import { checkAllCertificates, type CertExpiryInfo } from '@/app/lib/certExpiry';
 import { recordHeartbeat } from '@/app/lib/cronHeartbeat';
+import { companyInfo } from '@/app/lib/companyInfo';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -38,8 +39,8 @@ import { recordHeartbeat } from '@/app/lib/cronHeartbeat';
 export const maxDuration = 30;
 
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';
-const FROM_ADDRESS = 'BizzAssist Status <noreply@bizzassist.dk>';
-const TO_ADDRESS = 'support@pecuniait.com';
+const FROM_ADDRESS = `BizzAssist Status <${companyInfo.noreplyEmail}>`;
+const TO_ADDRESS = companyInfo.supportEmail;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

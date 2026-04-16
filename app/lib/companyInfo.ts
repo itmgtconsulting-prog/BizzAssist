@@ -13,6 +13,12 @@ export const companyInfo = {
   postalCode: '2650',
   city: 'Hvidovre',
   country: 'Denmark',
+  /** Support email — vist i juridiske sider, footer, onboarding */
+  supportEmail: 'support@pecuniait.com',
+  /** Noreply afsender-email til transaktionelle mails */
+  noreplyEmail: 'noreply@bizzassist.dk',
+  /** Admin-email til interne notifikationer */
+  adminEmail: 'admin@bizzassist.dk',
 
   /** Fuld adressestreng */
   get fullAddress(): string {

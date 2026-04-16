@@ -47,6 +47,7 @@ import { useSessionTimeout } from '@/app/hooks/useSessionTimeout';
 import OnboardingModal from '@/app/components/OnboardingModal';
 import FeedbackButton from '@/app/components/FeedbackButton';
 import SubscriptionGate from '@/app/components/SubscriptionGate';
+import { companyInfo } from '@/app/lib/companyInfo';
 import { cachePlans, type UserSubscription, type PlanDef } from '@/app/lib/subscriptions';
 import { SubscriptionProvider, useSubscription } from '@/app/context/SubscriptionContext';
 import { AIPageProvider } from '@/app/context/AIPageContext';
@@ -1387,7 +1388,7 @@ function PlanSelectionOverlay({
 
             {/* Support link */}
             <a
-              href="mailto:support@bizzassist.dk"
+              href={`mailto:${companyInfo.supportEmail}`}
               className="inline-flex items-center gap-2 text-blue-400 hover:text-blue-300 text-sm transition-colors mb-6"
             >
               {da ? 'Kontakt support' : 'Contact support'}

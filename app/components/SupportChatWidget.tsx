@@ -21,6 +21,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { MessageCircle, X, Send, Loader2, Bot, Bug, ArrowLeft } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { usePathname } from 'next/navigation';
+import { companyInfo } from '@/app/lib/companyInfo';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -54,7 +55,7 @@ const TRANSLATIONS = {
     bugCancel: 'Annuller',
     sending: 'Sender…',
     error: 'Noget gik galt. Prøv igen.',
-    permanentLock: 'Din adgang til support-chat er spærret. Kontakt admin@bizzassist.dk.',
+    permanentLock: `Din adgang til support-chat er spærret. Kontakt ${companyInfo.adminEmail}.`,
     tempLock: (mins: number) =>
       `For mange henvendelser. Prøv igen om ${mins} ${mins === 1 ? 'minut' : 'minutter'}.`,
   },
@@ -73,7 +74,7 @@ const TRANSLATIONS = {
     bugCancel: 'Cancel',
     sending: 'Sending…',
     error: 'Something went wrong. Please try again.',
-    permanentLock: 'Your support chat access is blocked. Contact admin@bizzassist.dk.',
+    permanentLock: `Your support chat access is blocked. Contact ${companyInfo.adminEmail}.`,
     tempLock: (mins: number) =>
       `Too many requests. Try again in ${mins} ${mins === 1 ? 'minute' : 'minutes'}.`,
   },

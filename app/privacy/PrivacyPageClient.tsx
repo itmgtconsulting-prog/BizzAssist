@@ -53,7 +53,7 @@ function DanishPrivacy() {
           {companyInfo.name} (CVR: {companyInfo.cvr}), {companyInfo.fullAddress} er dataansvarlig
           for behandling af personoplysninger i forbindelse med BizzAssist.
         </p>
-        <p>Kontakt: support@pecuniait.com</p>
+        <p>Kontakt: {companyInfo.supportEmail}</p>
       </section>
 
       <section>
@@ -201,8 +201,8 @@ function DanishPrivacy() {
         </ul>
         <p className="mt-3">
           Henvendelser om dine rettigheder rettes til{' '}
-          <a href="mailto:support@pecuniait.com" className="text-blue-400 hover:underline">
-            support@pecuniait.com
+          <a href={`mailto:${companyInfo.supportEmail}`} className="text-blue-400 hover:underline">
+            {companyInfo.supportEmail}
           </a>
           . Vi svarer inden for 30 dage.
         </p>
@@ -257,7 +257,7 @@ function EnglishPrivacy() {
           {companyInfo.country} is the data controller for the processing of personal data in
           connection with BizzAssist.
         </p>
-        <p>Contact: support@pecuniait.com</p>
+        <p>Contact: {companyInfo.supportEmail}</p>
       </section>
 
       <section>
@@ -396,8 +396,8 @@ function EnglishPrivacy() {
         </ul>
         <p className="mt-3">
           Requests regarding your rights should be directed to{' '}
-          <a href="mailto:support@pecuniait.com" className="text-blue-400 hover:underline">
-            support@pecuniait.com
+          <a href={`mailto:${companyInfo.supportEmail}`} className="text-blue-400 hover:underline">
+            {companyInfo.supportEmail}
           </a>
           . We will respond within 30 days.
         </p>

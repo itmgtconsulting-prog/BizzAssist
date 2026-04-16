@@ -14,6 +14,7 @@
 
 import Link from 'next/link';
 import { CheckCircle2, ArrowRight, Mail } from 'lucide-react';
+import { companyInfo } from '@/app/lib/companyInfo';
 
 export default function VerifiedPageClient() {
   return (
@@ -68,7 +69,7 @@ export default function VerifiedPageClient() {
           <p className="text-slate-600 text-xs mt-4">
             Har du problemer med at logge ind?{' '}
             <a
-              href="mailto:support@bizzassist.dk"
+              href={`mailto:${companyInfo.supportEmail}`}
               className="text-slate-500 hover:text-slate-300 underline underline-offset-2 transition-colors"
             >
               Kontakt support

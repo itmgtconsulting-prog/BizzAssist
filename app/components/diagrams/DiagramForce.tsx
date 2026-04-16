@@ -805,7 +805,7 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
     };
     el.addEventListener('wheel', handler, { passive: false });
     return () => el.removeEventListener('wheel', handler);
-  }, []);
+  }, [isFullscreen]);
 
   // ── Double-click on background to zoom in, centered on click position ──
   const handleDoubleClick = useCallback((e: React.MouseEvent) => {

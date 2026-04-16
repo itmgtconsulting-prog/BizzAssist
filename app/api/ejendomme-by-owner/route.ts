@@ -450,14 +450,14 @@ async function _hentVPAdresseForBfe(bfe: number): Promise<DawaBfeAdresse> {
   };
 
   try {
-    const vpUrl = 'https://api-fs.vurderingsportalen.dk/preliminaryproperties/_search';
-    const res = await fetch(proxyUrl(vpUrl), {
+    // Call VP directly (not via proxy) — VP works from Vercel with browser User-Agent.
+    // The proxy server doesn't whitelist api-fs.vurderingsportalen.dk.
+    const res = await fetch('https://api-fs.vurderingsportalen.dk/preliminaryproperties/_search', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'User-Agent':
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
-        ...proxyHeaders(),
       },
       body: JSON.stringify({
         query: { term: { bfeNumbers: bfe } },
@@ -753,6 +753,57 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
       for (const bfe of result.bfeNumre) {
         if (!bfeTilCvr.has(bfe)) {
           bfeTilCvr.set(bfe, `person-${enhedsNumre[i]}`);
+        }
+      }
+    }
+
+    /* ── Verificér aktivt ejerskab — fjern solgte ejendomme ──
+     * EJF flexibleCurrent returnerer historiske ejerskaber. For hvert BFE tjekker vi
+     * om den seneste ejerpost stadig matcher den forespurgte CVR. Hvis en nyere post
+     * med en anden ejer (eller null = privat person) findes, er ejendommen solgt. */
+    if (cvrNumre.length > 0) {
+      const bfeList = [...bfeTilCvr.keys()];
+      // Batch-verify in chunks of 20 BFEs
+      const VERIFY_BATCH = 20;
+      for (let i = 0; i < bfeList.length; i += VERIFY_BATCH) {
+        const chunk = bfeList.slice(i, i + VERIFY_BATCH);
+        const verifyResults = await Promise.allSettled(
+          chunk.map(async (bfe) => {
+            const ownerCvr = bfeTilCvr.get(bfe);
+            if (!ownerCvr || ownerCvr.startsWith('person-')) return true; // skip person-owned
+            const cvrNum = parseInt(ownerCvr, 10);
+            const vt = new Date().toISOString();
+            const query = `{ EJFCustom_EjerskabBegraenset(first: 5, virkningstid: "${vt}", where: { bestemtFastEjendomBFENr: { eq: ${bfe} } }) { nodes { ejendeVirksomhedCVRNr virkningFra } } }`;
+            const res = await fetch(proxyUrl(EJF_GQL_ENDPOINT), {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`,
+                ...proxyHeaders(),
+              },
+              body: JSON.stringify({ query }),
+              signal: AbortSignal.timeout(proxyTimeout()),
+            });
+            if (!res.ok) return true; // keep on error
+            const data = (await res.json()) as GqlResult<{
+              ejendeVirksomhedCVRNr: number | null;
+              virkningFra: string | null;
+            }>;
+            const nodes = Object.values(data.data ?? {})[0]?.nodes ?? [];
+            if (nodes.length === 0) return true;
+            // Sort by virkningFra descending — newest first
+            const sorted = [...nodes].sort(
+              (a, b) =>
+                new Date(b.virkningFra ?? 0).getTime() - new Date(a.virkningFra ?? 0).getTime()
+            );
+            // Check if the newest owner is still this CVR
+            return sorted[0].ejendeVirksomhedCVRNr === cvrNum;
+          })
+        );
+        for (let j = 0; j < chunk.length; j++) {
+          const result = verifyResults[j];
+          const stillOwned = result.status === 'fulfilled' ? result.value : true;
+          if (!stillOwned) bfeTilCvr.delete(chunk[j]);
         }
       }
     }

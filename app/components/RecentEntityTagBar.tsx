@@ -93,8 +93,8 @@ async function loadAllTags(): Promise<RecentTag[]> {
   function addTag(type: RecentTag['type'], href: string, label: string, suffix: string): void {
     if (byType[type].length >= TAGS_PER_TYPE) return;
     const key = `${type}::${suffix}`;
-    // Avoid duplicates (same href already present from another source)
-    if (byType[type].some((t) => t.href === href)) return;
+    // Avoid duplicates — same href OR same display label from another source
+    if (byType[type].some((t) => t.href === href || t.label === label)) return;
     byType[type].push({ type, key, href, label });
   }
 
@@ -257,14 +257,21 @@ const RecentEntityTagBar = React.memo(function RecentEntityTagBar({
 
   // ---- inline variant: flat one-row list (legacy/compact usage) ----
   if (variant === 'inline') {
-    // Show at most one tag per type to keep topbar compact
-    const seenTypes = new Set<RecentTag['type']>();
-    const inlineTags = visibleTags.filter((t) => {
-      if (seenTypes.has(t.type)) return false;
-      seenTypes.add(t.type);
-      return true;
-    });
-    return <div className="flex items-center gap-1.5">{inlineTags.map(renderTag)}</div>;
+    // BIZZ-434: 3 columns (green/blue/purple), each stacked vertically
+    const ORDER: RecentTag['type'][] = ['property', 'company', 'person'];
+    return (
+      <div className="flex items-start gap-2 overflow-x-auto scrollbar-hide">
+        {ORDER.map((type) => {
+          const typeTags = visibleTags.filter((t) => t.type === type).slice(0, 3);
+          if (typeTags.length === 0) return null;
+          return (
+            <div key={type} className="flex flex-col gap-0.5 shrink-0">
+              {typeTags.map(renderTag)}
+            </div>
+          );
+        })}
+      </div>
+    );
   }
 
   // ---- bar variant: 3 rows, one per entity type ----

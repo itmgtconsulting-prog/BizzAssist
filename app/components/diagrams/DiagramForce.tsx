@@ -232,13 +232,18 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
     }
 
     // BFS upward (skip co-owners — they get special depth later)
+    // BIZZ-426: Use shallowest (closest to root) depth when a node is reachable via multiple paths
     const upQueue = [graph.mainId];
     while (upQueue.length > 0) {
       const current = upQueue.shift()!;
       const d = depths.get(current) ?? 0;
       for (const p of parentEdges.get(current) ?? []) {
-        if (!depths.has(p) && !coOwnerIds.has(p)) {
-          depths.set(p, d - 1);
+        if (coOwnerIds.has(p)) continue;
+        const newDepth = d - 1;
+        const existing = depths.get(p);
+        if (existing === undefined || newDepth > existing) {
+          // Use the shallowest depth (closest to 0 = main node)
+          depths.set(p, newDepth);
           upQueue.push(p);
         }
       }
@@ -679,7 +684,8 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
       const scaledW = viewBox.w * z + 32;
       const scaledH = viewBox.h * z + 32;
       const panX = Math.round((cW - scaledW) / 2);
-      const panY = Math.round((cH - scaledH) / 2);
+      // Align to top with small padding instead of vertical centering
+      const panY = Math.min(8, Math.round((cH - scaledH) / 2));
       setZoom(z);
       setPanOffset({ x: panX, y: panY });
       initialFitDone.current = true;

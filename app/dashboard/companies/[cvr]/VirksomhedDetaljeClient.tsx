@@ -2367,6 +2367,52 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                   ) : null}
                 </div>
               )}
+
+              {/* BIZZ-409: Historiske ejendomme (solgte) — fra ejendomshandler med rolle=Sælger */}
+              {(ejendommeFilter === null || ejendommeFilter === 'handler') &&
+                !handlerLoading &&
+                (() => {
+                  const solgte = ejendomshandler.filter((h) => h.rolle === 'saelger' && h.adresse);
+                  if (solgte.length === 0) return null;
+                  const da = lang === 'da';
+                  return (
+                    <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
+                      <div className="px-4 py-2.5 border-b border-slate-700/40">
+                        <p className="text-slate-200 text-xs font-semibold">
+                          {da ? 'Historiske ejendomme (solgte)' : 'Historical properties (sold)'}
+                          <span className="text-slate-500 font-normal ml-2">({solgte.length})</span>
+                        </p>
+                      </div>
+                      <div className="divide-y divide-slate-700/20">
+                        {solgte.slice(0, 20).map((h, i) => (
+                          <div
+                            key={`sold-${h.bfeNummer ?? i}`}
+                            className="px-4 py-2 flex items-center justify-between text-sm"
+                          >
+                            <div>
+                              <p className="text-slate-300 text-xs">{h.adresse}</p>
+                              <p className="text-slate-500 text-[10px]">
+                                {h.overtagelsesdato
+                                  ? new Date(h.overtagelsesdato).toLocaleDateString('da-DK', {
+                                      day: 'numeric',
+                                      month: 'short',
+                                      year: 'numeric',
+                                    })
+                                  : '–'}
+                                {h.overdragelsesmaade ? ` · ${h.overdragelsesmaade}` : ''}
+                              </p>
+                            </div>
+                            {h.kontantKoebesum != null && h.kontantKoebesum > 0 && (
+                              <span className="text-slate-400 text-xs font-medium">
+                                {h.kontantKoebesum.toLocaleString('da-DK')} DKK
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
             </div>
           )}
 

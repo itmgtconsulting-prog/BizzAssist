@@ -41,6 +41,7 @@ interface TenantPurgeResult {
   recentSearchesDeleted: number;
   activityLogDeleted: number;
   aiTokenUsageDeleted: number;
+  embeddingsDeleted: number;
   error?: string;
 }
 
@@ -226,6 +227,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       recentSearchesDeleted: 0,
       activityLogDeleted: 0,
       aiTokenUsageDeleted: 0,
+      embeddingsDeleted: 0,
     };
 
     try {
@@ -340,6 +342,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
         result.aiTokenUsageDeleted = tokenUsageCount ?? 0;
 
+        // 7. document_embeddings: purge rows older than 12 months (BIZZ-299 — GDPR).
+        //    Knowledge embeddings are derivative data linked to uploaded documents.
+        //    Tenant closure drops the entire schema, but for active tenants we must
+        //    enforce retention to comply with GDPR data minimization.
+        const { count: embeddingsCount } = await db
+          .from('document_embeddings')
+          .delete({ count: 'exact' })
+          .lt('created_at', twelveMonthsAgo);
+
+        result.embeddingsDeleted = embeddingsCount ?? 0;
+
         // Write audit log only if something was actually purged
         if (
           result.recentEntitiesDeleted > 0 ||
@@ -347,7 +360,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           result.aiConversationsDeleted > 0 ||
           result.recentSearchesDeleted > 0 ||
           result.activityLogDeleted > 0 ||
-          result.aiTokenUsageDeleted > 0
+          result.aiTokenUsageDeleted > 0 ||
+          result.embeddingsDeleted > 0
         ) {
           await writeAuditLog(admin, tenant.schema_name, tenant.id, {
             event: 'ttl_purge',
@@ -357,6 +371,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
             recentSearchesDeleted: result.recentSearchesDeleted,
             activityLogDeleted: result.activityLogDeleted,
             aiTokenUsageDeleted: result.aiTokenUsageDeleted,
+            embeddingsDeleted: result.embeddingsDeleted,
           });
         }
       }

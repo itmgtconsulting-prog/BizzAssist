@@ -18,10 +18,9 @@ import https from 'node:https';
 import fs from 'node:fs';
 import { isProxyEnabled } from './dfProxy';
 import { logger } from '@/app/lib/logger';
+import { DATAFORDELER_TOKEN_URL } from '@/app/lib/serviceEndpoints';
 
 // ─── Config ──────────────────────────────────────────────────────────────────
-
-const TOKEN_URL = 'https://auth.datafordeler.dk/realms/distribution/protocol/openid-connect/token';
 const CERT_CLIENT_ID = process.env.DATAFORDELER_CERT_CLIENT_ID ?? '';
 const CERT_PFX_PATH = process.env.DATAFORDELER_CERT_PATH ?? '';
 const CERT_PFX_BASE64 = process.env.DATAFORDELER_CERT_PFX_BASE64 ?? '';
@@ -93,7 +92,7 @@ export async function getCertOAuthToken(): Promise<string | null> {
   if (isProxyEnabled()) {
     try {
       const { proxyUrl, proxyHeaders } = await import('./dfProxy');
-      const proxiedTokenUrl = proxyUrl(TOKEN_URL);
+      const proxiedTokenUrl = proxyUrl(DATAFORDELER_TOKEN_URL);
       const tokenBody = `grant_type=client_credentials&client_id=${encodeURIComponent(CERT_CLIENT_ID)}`;
       const res = await fetch(proxiedTokenUrl, {
         method: 'POST',
@@ -125,7 +124,7 @@ export async function getCertOAuthToken(): Promise<string | null> {
     const tokenBody = `grant_type=client_credentials&client_id=${encodeURIComponent(CERT_CLIENT_ID)}`;
 
     const token = await new Promise<string | null>((resolve) => {
-      const url = new URL(TOKEN_URL);
+      const url = new URL(DATAFORDELER_TOKEN_URL);
 
       const agent = new https.Agent({
         pfx,

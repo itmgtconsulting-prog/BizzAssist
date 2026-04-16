@@ -31,12 +31,11 @@ export type { DawaAutocompleteResult, DawaAdresse, DawaJordstykke } from './dawa
 
 import type { DawaAutocompleteResult, DawaAdresse, DawaJordstykke } from './dawa';
 import { logger } from '@/app/lib/logger';
+import { DAR_ENDPOINT } from '@/app/lib/serviceEndpoints';
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  * Constants
  * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
-
-const DAR_ENDPOINT = 'https://graphql.datafordeler.dk/DAR/v1';
 const MAT_WFS_ENDPOINT = 'https://services.datafordeler.dk/Matrikel/MatGaeld662/1/WFS';
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

@@ -12,8 +12,7 @@
  */
 
 import { logger } from '@/app/lib/logger';
-
-const TOKEN_URL = 'https://auth.datafordeler.dk/realms/distribution/protocol/openid-connect/token';
+import { DATAFORDELER_TOKEN_URL } from '@/app/lib/serviceEndpoints';
 
 /** Cached token with expiry timestamp */
 let _cachedToken: { token: string; expiresAt: number } | null = null;
@@ -45,7 +44,7 @@ export async function getSharedOAuthToken(): Promise<string | null> {
   // Start new token request with mutex
   _tokenPromise = (async () => {
     try {
-      const res = await fetch(TOKEN_URL, {
+      const res = await fetch(DATAFORDELER_TOKEN_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({

@@ -42,12 +42,10 @@ import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 import { recordHeartbeat } from '@/app/lib/cronHeartbeat';
 import { companyInfo } from '@/app/lib/companyInfo';
+import { RESEND_ENDPOINT } from '@/app/lib/serviceEndpoints';
 
 /** Vercel Cron max duration (seconds) — Hobby plan limit */
 export const maxDuration = 30;
-
-/** Resend API endpoint */
-const RESEND_ENDPOINT = 'https://api.resend.com/emails';
 const FROM_ADDRESS = `BizzAssist <${companyInfo.noreplyEmail}>`;
 const TO_ADDRESS = companyInfo.supportEmail;
 

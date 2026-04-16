@@ -12,6 +12,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { resolveTenantId } from '@/lib/api/auth';
 import { parseQuery } from '@/app/lib/validate';
+import { DAWA_BASE_URL } from '@/app/lib/serviceEndpoints';
 
 const emptyFc: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
 
@@ -67,7 +68,7 @@ export async function GET(request: NextRequest) {
       ])
     );
     const res = await fetch(
-      `https://api.dataforsyningen.dk/adgangsadresser?polygon=${poly}&srid=4326&struktur=mini&per_side=1000`,
+      `${DAWA_BASE_URL}/adgangsadresser?polygon=${poly}&srid=4326&struktur=mini&per_side=1000`,
       { signal: AbortSignal.timeout(8000) }
     );
     if (!res.ok) return NextResponse.json(emptyFc);

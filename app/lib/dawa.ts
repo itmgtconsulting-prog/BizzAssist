@@ -8,6 +8,7 @@
  */
 
 import { kommunenavnFraKode } from './kommuner';
+import { DAWA_BASE_URL } from '@/app/lib/serviceEndpoints';
 
 /**
  * Et autocomplete-resultat fra DAWA — normaliseret fra alle 3 DAWA-typer:
@@ -68,8 +69,6 @@ export interface DawaJordstykke {
   kommune: { navn: string; kode: number };
   visueltcenter?: [number, number];
 }
-
-const BASE = 'https://api.dataforsyningen.dk';
 
 /**
  * Fjerner dobbelt-komma fra adressestrenge.
@@ -165,7 +164,7 @@ export async function dawaAutocomplete(q: string): Promise<DawaAutocompleteResul
   if (!q || q.trim().length < 2) return [];
   try {
     // Ingen type-begrænsning — returnerer adresse, adgangsadresse OG vejnavn-resultater
-    const url = `${BASE}/autocomplete?q=${encodeURIComponent(q)}&per_side=8&caretpos=${q.length}`;
+    const url = `${DAWA_BASE_URL}/autocomplete?q=${encodeURIComponent(q)}&per_side=8&caretpos=${q.length}`;
     const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
     if (!res.ok) return [];
     const raw: unknown = await res.json();
@@ -185,7 +184,7 @@ export async function dawaAutocomplete(q: string): Promise<DawaAutocompleteResul
  */
 async function hentZone(agId: string): Promise<string | undefined> {
   try {
-    const res = await fetch(`${BASE}/adgangsadresser/${agId}`, {
+    const res = await fetch(`${DAWA_BASE_URL}/adgangsadresser/${agId}`, {
       signal: AbortSignal.timeout(3000),
     });
     if (!res.ok) return undefined;
@@ -244,7 +243,7 @@ export async function dawaHentAdresse(id: string): Promise<DawaAdresse | null> {
 
   try {
     // Forsøg 1: fuld adresse (UUID er adresse-UUID)
-    const res1 = await fetch(`${BASE}/adresser/${id}?struktur=mini`, {
+    const res1 = await fetch(`${DAWA_BASE_URL}/adresser/${id}?struktur=mini`, {
       signal: AbortSignal.timeout(5000),
     });
     if (res1.ok) {
@@ -258,7 +257,7 @@ export async function dawaHentAdresse(id: string): Promise<DawaAdresse | null> {
     // Forsøg 2: adgangspunkt (UUID er adgangsadresse-UUID fra autocomplete)
     // Hent mini-data og zone parallelt for at spare tid
     const [res2, zone2] = await Promise.all([
-      fetch(`${BASE}/adgangsadresser/${id}?struktur=mini`, {
+      fetch(`${DAWA_BASE_URL}/adgangsadresser/${id}?struktur=mini`, {
         signal: AbortSignal.timeout(5000),
       }),
       hentZone(id),
@@ -280,7 +279,7 @@ export async function dawaHentAdresse(id: string): Promise<DawaAdresse | null> {
  */
 export async function dawaHentJordstykke(lng: number, lat: number): Promise<DawaJordstykke | null> {
   try {
-    const res = await fetch(`${BASE}/jordstykker?x=${lng}&y=${lat}&srid=4326`, {
+    const res = await fetch(`${DAWA_BASE_URL}/jordstykker?x=${lng}&y=${lat}&srid=4326`, {
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return null;

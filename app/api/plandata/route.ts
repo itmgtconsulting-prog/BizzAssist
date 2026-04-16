@@ -23,9 +23,9 @@ import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { resolveTenantId } from '@/lib/api/auth';
 import { logger } from '@/app/lib/logger';
 import { parseQuery } from '@/app/lib/validate';
+import { DAWA_BASE_URL } from '@/app/lib/serviceEndpoints';
 
 const PLANDATA_WFS = 'https://geoserver.plandata.dk/geoserver/wfs';
-const DAWA_BASE = 'https://api.dataforsyningen.dk';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -348,8 +348,8 @@ export async function GET(request: NextRequest): Promise<NextResponse<PlandataRe
     let x: number, y: number;
     try {
       const tryUrls = [
-        `${DAWA_BASE}/adresser/${adresseId}?struktur=mini`,
-        `${DAWA_BASE}/adgangsadresser/${adresseId}?struktur=mini`,
+        `${DAWA_BASE_URL}/adresser/${adresseId}?struktur=mini`,
+        `${DAWA_BASE_URL}/adgangsadresser/${adresseId}?struktur=mini`,
       ];
 
       let coords: { x?: number; y?: number } | null = null;

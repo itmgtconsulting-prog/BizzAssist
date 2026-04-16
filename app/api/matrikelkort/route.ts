@@ -23,6 +23,7 @@ import { z } from 'zod';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
 import { parseQuery } from '@/app/lib/validate';
+import { DAWA_BASE_URL } from '@/app/lib/serviceEndpoints';
 
 // pdfkit bruger Node.js streams — tving Node.js runtime (ikke Edge)
 export const runtime = 'nodejs';
@@ -35,8 +36,6 @@ const matrikelkortQuerySchema = z.object({
   ejerlavKode: z.string().regex(/^\d+$/, 'ejerlavKode skal være et heltal'),
   matrikelnr: z.string().min(1, 'matrikelnr er påkrævet'),
 });
-
-const DAWA_BASE = 'https://api.dataforsyningen.dk';
 
 /** PDF-side i portrait A4 (pt) */
 const PAGE_W = 595.28;
@@ -660,8 +659,8 @@ export async function GET(request: NextRequest): Promise<Response> {
 
     // Trin 1: Hent primær matrikel — flat JSON for metadata
     const [flatRes, geoRes] = await Promise.all([
-      fetch(`${DAWA_BASE}/jordstykker/${path}`, { signal: AbortSignal.timeout(8000) }),
-      fetch(`${DAWA_BASE}/jordstykker/${path}?format=geojson`, {
+      fetch(`${DAWA_BASE_URL}/jordstykker/${path}`, { signal: AbortSignal.timeout(8000) }),
+      fetch(`${DAWA_BASE_URL}/jordstykker/${path}?format=geojson`, {
         signal: AbortSignal.timeout(8000),
       }),
     ]);
@@ -712,7 +711,7 @@ export async function GET(request: NextRequest): Promise<Response> {
       const cirkelCx = hoved.visueltcenter?.[0] ?? (primærBounds.xMin + primærBounds.xMax) / 2;
       const cirkelCy = hoved.visueltcenter?.[1] ?? (primærBounds.yMin + primærBounds.yMax) / 2;
       const naboListRes = await fetch(
-        `${DAWA_BASE}/jordstykker?cirkel=${cirkelCx.toFixed(7)},${cirkelCy.toFixed(7)},200&per_side=40`,
+        `${DAWA_BASE_URL}/jordstykker?cirkel=${cirkelCx.toFixed(7)},${cirkelCy.toFixed(7)},200&per_side=40`,
         { signal: AbortSignal.timeout(8000) }
       );
       if (naboListRes.ok) {
@@ -746,7 +745,7 @@ export async function GET(request: NextRequest): Promise<Response> {
               const eKode = n.ejerlav?.kode;
               if (!eKode) return Promise.resolve(null);
               return fetch(
-                `${DAWA_BASE}/jordstykker/${eKode}/${encodeURIComponent(n.matrikelnr)}?format=geojson`,
+                `${DAWA_BASE_URL}/jordstykker/${eKode}/${encodeURIComponent(n.matrikelnr)}?format=geojson`,
                 { signal: AbortSignal.timeout(5000) }
               ).then((r) => (r.ok ? (r.json() as Promise<DawaGeoJsonFeature>) : null));
             })

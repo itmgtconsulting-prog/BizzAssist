@@ -15,6 +15,7 @@ import { z } from 'zod';
 import { logger } from '@/app/lib/logger';
 import { parseBody } from '@/app/lib/validate';
 import { companyInfo } from '@/app/lib/companyInfo';
+import { RESEND_ENDPOINT } from '@/app/lib/serviceEndpoints';
 
 /** Zod schema for POST /api/notify-signup request body */
 const notifySignupSchema = z
@@ -145,7 +146,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     `;
 
     // Send email via Resend API
-    const res = await fetch('https://api.resend.com/emails', {
+    const res = await fetch(RESEND_ENDPOINT, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${RESEND_API_KEY}`,

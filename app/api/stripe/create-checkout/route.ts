@@ -99,7 +99,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const existingCustomerId =
       (freshUser?.user?.app_metadata?.stripe_customer_id as string) ?? null;
 
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    // BIZZ-429: Use NEXT_PUBLIC_APP_URL with request origin fallback (never localhost in prod)
+    const appUrl =
+      process.env.NEXT_PUBLIC_APP_URL || req.headers.get('origin') || 'http://localhost:3000';
 
     // ── 4. Create Checkout session ──
     const sessionConfig: Stripe.Checkout.SessionCreateParams = {

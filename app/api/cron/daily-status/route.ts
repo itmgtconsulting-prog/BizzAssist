@@ -32,13 +32,12 @@ import { logger } from '@/app/lib/logger';
 import { checkAllCertificates, type CertExpiryInfo } from '@/app/lib/certExpiry';
 import { recordHeartbeat } from '@/app/lib/cronHeartbeat';
 import { companyInfo } from '@/app/lib/companyInfo';
+import { RESEND_ENDPOINT } from '@/app/lib/serviceEndpoints';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 /** Vercel function max duration (seconds) — stays within Hobby plan limits. */
 export const maxDuration = 30;
-
-const RESEND_ENDPOINT = 'https://api.resend.com/emails';
 const FROM_ADDRESS = `BizzAssist Status <${companyInfo.noreplyEmail}>`;
 const TO_ADDRESS = companyInfo.supportEmail;
 

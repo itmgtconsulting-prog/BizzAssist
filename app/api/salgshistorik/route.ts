@@ -23,6 +23,7 @@ import { logger } from '@/app/lib/logger';
 import { getSharedOAuthToken } from '@/app/lib/dfTokenCache';
 import { resolveTenantId } from '@/lib/api/auth';
 import { parseQuery } from '@/app/lib/validate';
+import { EJF_GQL_ENDPOINT, DATAFORDELER_TOKEN_URL } from '@/app/lib/serviceEndpoints';
 
 /** Zod schema for /api/salgshistorik query parameters */
 const salgshistorikQuerySchema = z.object({
@@ -62,9 +63,6 @@ export interface SalgshistorikResponse {
 
 // ─── Datafordeler EJF GraphQL ────────────────────────────────────────────────
 
-const EJF_GQL_URL = 'https://graphql.datafordeler.dk/flexibleCurrent/v1/';
-const TOKEN_URL = 'https://auth.datafordeler.dk/realms/distribution/protocol/openid-connect/token';
-
 /** OAuth token cache */
 let _cachedToken: { token: string; expiresAt: number } | null = null;
 
@@ -84,7 +82,7 @@ async function _getOAuthToken(): Promise<string | null> {
   if (!clientId || !clientSecret) return null;
 
   try {
-    const res = await fetch(proxyUrl(TOKEN_URL), {
+    const res = await fetch(proxyUrl(DATAFORDELER_TOKEN_URL), {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...proxyHeaders() },
       body: `grant_type=client_credentials&client_id=${clientId}&client_secret=${encodeURIComponent(clientSecret)}`,
@@ -145,7 +143,7 @@ async function queryEJF<T>(
   token: string
 ): Promise<{ nodes: T[]; authError: boolean } | null> {
   try {
-    const res = await fetch(proxyUrl(EJF_GQL_URL), {
+    const res = await fetch(proxyUrl(EJF_GQL_ENDPOINT), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

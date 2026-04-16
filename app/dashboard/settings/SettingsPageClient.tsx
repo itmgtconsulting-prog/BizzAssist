@@ -491,6 +491,8 @@ export default function SettingsPageClient() {
   const { subscription: ctxSub, isAdmin: ctxIsAdmin } = useSubscription();
   const [subscription, setSubscription] = useState<UserSubscription | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  /** True only for enterprise plan — gates Organisation and Videnbase tabs */
+  const isEnterprise = subscription?.planId === 'enterprise';
 
   /** Seed local state from context on mount */
   useEffect(() => {
@@ -995,24 +997,28 @@ export default function SettingsPageClient() {
               {item.label}
             </button>
           ))}
-          {/* Organisation tab — navigates to sub-route */}
-          <button
-            role="tab"
-            aria-selected={false}
-            onClick={() => router.push('/dashboard/settings/organisation')}
-            className="flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-all whitespace-nowrap"
-          >
-            <Building2 size={14} />
-            {orgTabLabel}
-          </button>
-          {/* Videnbase tab — navigates to sub-route */}
-          <button
-            onClick={() => router.push('/dashboard/settings/knowledge')}
-            className="flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-all whitespace-nowrap"
-          >
-            <BookOpen size={14} />
-            {da ? 'Videnbase' : 'Knowledge base'}
-          </button>
+          {/* Organisation tab — enterprise only */}
+          {isEnterprise && (
+            <button
+              role="tab"
+              aria-selected={false}
+              onClick={() => router.push('/dashboard/settings/organisation')}
+              className="flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-all whitespace-nowrap"
+            >
+              <Building2 size={14} />
+              {orgTabLabel}
+            </button>
+          )}
+          {/* Videnbase tab — enterprise only */}
+          {isEnterprise && (
+            <button
+              onClick={() => router.push('/dashboard/settings/knowledge')}
+              className="flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-all whitespace-nowrap"
+            >
+              <BookOpen size={14} />
+              {da ? 'Videnbase' : 'Knowledge base'}
+            </button>
+          )}
         </div>
       </div>
 

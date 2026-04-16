@@ -9,10 +9,17 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { darHentAdresse } from '@/app/lib/dar';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
+import { parseQuery } from '@/app/lib/validate';
+
+/** Zod schema for lookup query params */
+const lookupSchema = z.object({
+  id: z.string().min(1, 'id er påkrævet'),
+});
 
 export async function GET(request: NextRequest) {
   const limited = await checkRateLimit(request, rateLimit);
@@ -20,11 +27,9 @@ export async function GET(request: NextRequest) {
   const auth = await resolveTenantId();
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const id = request.nextUrl.searchParams.get('id') ?? '';
-
-  if (!id) {
-    return NextResponse.json(null, { status: 400 });
-  }
+  const parsed = parseQuery(request, lookupSchema);
+  if (!parsed.success) return NextResponse.json(null, { status: 400 });
+  const { id } = parsed.data;
 
   try {
     const adresse = await darHentAdresse(id);

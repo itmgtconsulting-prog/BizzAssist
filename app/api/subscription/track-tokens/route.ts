@@ -8,6 +8,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
+import { parseBody } from '@/app/lib/validate';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { logger } from '@/app/lib/logger';
@@ -30,22 +32,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const body = await req.json();
-    const { tokensUsed } = body as { tokensUsed: unknown };
+    /** Zod schema for track-tokens request body. */
+    const trackTokensSchema = z.object({
+      tokensUsed: z.number().int().min(1).max(10_000),
+    });
 
-    // Validate: must be a positive integer no greater than 10 000 (one API call max).
-    // This prevents a compromised browser from inflating token counts arbitrarily.
-    if (
-      typeof tokensUsed !== 'number' ||
-      !Number.isInteger(tokensUsed) ||
-      tokensUsed <= 0 ||
-      tokensUsed > 10_000
-    ) {
-      return NextResponse.json(
-        { error: 'tokensUsed skal være et positivt heltal ≤ 10000' },
-        { status: 400 }
-      );
-    }
+    const parsed = await parseBody(req, trackTokensSchema);
+    if (!parsed.success) return parsed.response;
+    const { tokensUsed } = parsed.data;
 
     // Get fresh user data to read current token count
     const admin = createAdminClient();
@@ -76,7 +70,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Failed to update' }, { status: 500 });
     }
 
-    writeAuditLog({ action: 'ai_token.track', resource_type: 'ai_token_usage', resource_id: 'unknown' });
+    writeAuditLog({
+      action: 'ai_token.track',
+      resource_type: 'ai_token_usage',
+      resource_id: 'unknown',
+    });
     return NextResponse.json({ ok: true, total: currentTokens + tokensUsed });
   } catch (err) {
     logger.error('[track-tokens] Unexpected error:', err);

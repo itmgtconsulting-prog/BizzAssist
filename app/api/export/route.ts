@@ -11,10 +11,18 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import ExcelJS from 'exceljs';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { resolveTenantId } from '@/lib/api/auth';
 import { logger } from '@/app/lib/logger';
+import { parseBody } from '@/app/lib/validate';
+
+/** Zod schema for POST body */
+const exportBodySchema = z.object({
+  type: z.enum(['property', 'company']),
+  data: z.record(z.string(), z.unknown()),
+});
 
 /** Header style for the worksheet */
 const HEADER_FILL: ExcelJS.Fill = {
@@ -257,15 +265,9 @@ export async function POST(request: NextRequest) {
   if (limited) return limited;
 
   try {
-    const body = await request.json();
-    const { type, data } = body as {
-      type: 'property' | 'company';
-      data: Record<string, unknown>;
-    };
-
-    if (!type || !data) {
-      return NextResponse.json({ error: 'Missing type or data' }, { status: 400 });
-    }
+    const parsed = await parseBody(request, exportBodySchema);
+    if (!parsed.success) return parsed.response;
+    const { type, data } = parsed.data;
 
     const wb = type === 'property' ? buildPropertyWorkbook(data) : buildCompanyWorkbook(data);
 

@@ -13,9 +13,11 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import * as Sentry from '@sentry/nextjs';
 import { checkRateLimit, heavyRateLimit } from '@/app/lib/rateLimit';
 import { resolveTenantId } from '@/lib/api/auth';
+import { parseQuery } from '@/app/lib/validate';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -98,11 +100,16 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const bfe = req.nextUrl.searchParams.get('bfe');
+  /** Zod schema for tinglysning query params */
+  const tinglysningSchema = z.object({
+    bfe: z.string().regex(/^\d+$/, 'bfe parameter er påkrævet (numerisk)'),
+  });
 
-  if (!bfe || !/^\d+$/.test(bfe)) {
+  const parsed = parseQuery(req, tinglysningSchema);
+  if (!parsed.success) {
     return NextResponse.json({ error: 'bfe parameter er påkrævet (numerisk)' }, { status: 400 });
   }
+  const { bfe } = parsed.data;
 
   const hasCert = !!(
     process.env.TINGLYSNING_CERT_PATH ||

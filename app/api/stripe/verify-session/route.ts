@@ -10,12 +10,19 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
+import { parseBody } from '@/app/lib/validate';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { stripe } from '@/app/lib/stripe';
 import { resolvePlan } from '@/app/lib/subscriptions';
 import { sendPaymentConfirmationEmail } from '@/app/lib/email';
 import { logger } from '@/app/lib/logger';
+
+/** Zod schema for verify-session request body. */
+const verifySessionSchema = z.object({
+  sessionId: z.string().min(1, 'sessionId required'),
+});
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   if (!stripe) {
@@ -34,10 +41,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     }
 
     // 2. Get session ID from body
-    const { sessionId } = await req.json();
-    if (!sessionId || typeof sessionId !== 'string') {
-      return NextResponse.json({ error: 'sessionId required' }, { status: 400 });
-    }
+    const parsed = await parseBody(req, verifySessionSchema);
+    if (!parsed.success) return parsed.response;
+    const { sessionId } = parsed.data;
 
     // 3. Verify with Stripe
     const session = await stripe.checkout.sessions.retrieve(sessionId);

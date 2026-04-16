@@ -9,9 +9,11 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
 import { tlFetch as tlFetchBase } from '@/app/lib/tlFetch';
+import { parseQuery } from '@/app/lib/validate';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -161,22 +163,22 @@ export interface TLServitut {
   fraHovedejendom?: boolean;
 }
 
+/** Zod schema for summarisk query params */
+const summariskSchema = z.object({
+  uuid: z.string().min(1, 'uuid parameter er påkrævet'),
+  section: z.enum(['ejere', 'haeftelser', 'servitutter']).optional(),
+  hovedBfe: z.string().regex(/^\d+$/).optional(),
+});
+
 export async function GET(req: NextRequest) {
   const auth = await resolveTenantId();
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  const uuid = req.nextUrl.searchParams.get('uuid');
-  if (!uuid) {
+
+  const parsed = parseQuery(req, summariskSchema);
+  if (!parsed.success) {
     return NextResponse.json({ error: 'uuid parameter er påkrævet' }, { status: 400 });
   }
-  /**
-   * Optional section filter: ?section=ejere|haeftelser|servitutter
-   * When set, only that section is parsed and returned — reduces processing
-   * time for large XML responses. Klienten kalder 3 gange i stedet for 1.
-   * Uden section returneres alt (bagudkompatibelt).
-   */
-  const section = req.nextUrl.searchParams.get('section');
-  /** Valgfri: BFE for hovedejendom — henter servitutter for BÅDE lejlighed og hovedejendom */
-  const hovedBfe = req.nextUrl.searchParams.get('hovedBfe');
+  const { uuid, section, hovedBfe } = parsed.data;
 
   const hasCert = !!(
     process.env.TINGLYSNING_CERT_PATH ||

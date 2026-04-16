@@ -14,9 +14,11 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { resolveTenantId } from '@/lib/api/auth';
 import { logger } from '@/app/lib/logger';
+import { parseQuery } from '@/app/lib/validate';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -98,6 +100,12 @@ const NUANCE_TEKST: Record<string, string> = {
 
 // ─── Route handler ────────────────────────────────────────────────────────────
 
+/** Zod schema for jord query params */
+const jordSchema = z.object({
+  ejerlavKode: z.coerce.number().int({ message: 'ejerlavKode skal være et heltal' }),
+  matrikelnr: z.string().min(1, 'matrikelnr er påkrævet'),
+});
+
 export async function GET(request: NextRequest): Promise<NextResponse<JordResponse>> {
   const limited = await checkRateLimit(request, rateLimit);
   if (limited) return limited as NextResponse<JordResponse>;
@@ -110,24 +118,18 @@ export async function GET(request: NextRequest): Promise<NextResponse<JordRespon
     );
   }
 
-  const { searchParams } = request.nextUrl;
-  const ejerlavKodeStr = searchParams.get('ejerlavKode');
-  const matrikelnr = searchParams.get('matrikelnr');
-
-  if (!ejerlavKodeStr || !matrikelnr) {
+  const parsed = parseQuery(request, jordSchema);
+  if (!parsed.success) {
     return NextResponse.json(
-      { items: [], fejl: 'Mangler ejerlavKode eller matrikelnr', ingenData: false },
+      {
+        items: [],
+        fejl: 'Ugyldige parametre — ejerlavKode (heltal) og matrikelnr er påkrævet',
+        ingenData: false,
+      },
       { status: 400 }
     );
   }
-
-  const ejerlavKode = parseInt(ejerlavKodeStr, 10);
-  if (isNaN(ejerlavKode)) {
-    return NextResponse.json(
-      { items: [], fejl: 'Ugyldigt ejerlavKode — skal være et heltal', ingenData: false },
-      { status: 400 }
-    );
-  }
+  const { ejerlavKode, matrikelnr } = parsed.data;
 
   try {
     // DkJord public API bruger GET med query-parametre (ikke POST med body)

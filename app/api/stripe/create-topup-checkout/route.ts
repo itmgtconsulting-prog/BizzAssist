@@ -10,6 +10,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
+import { parseBody } from '@/app/lib/validate';
 import Stripe from 'stripe';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
@@ -45,10 +47,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { packId } = await req.json();
-    if (!packId) {
-      return NextResponse.json({ error: 'packId required' }, { status: 400 });
-    }
+    const parsed = await parseBody(req, z.object({ packId: z.string().min(1, 'packId required') }));
+    if (!parsed.success) return parsed.response;
+    const { packId } = parsed.data;
 
     // Look up the token pack
     const admin = createAdminClient();
@@ -105,7 +106,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     const session = await stripe.checkout.sessions.create(sessionParams);
 
-    writeAuditLog({ action: 'stripe.topup_checkout', resource_type: 'payment', resource_id: session.id ?? 'unknown' });
+    writeAuditLog({
+      action: 'stripe.topup_checkout',
+      resource_type: 'payment',
+      resource_id: session.id ?? 'unknown',
+    });
     return NextResponse.json({ url: session.url });
   } catch (err) {
     logger.error('[stripe/create-topup-checkout] Error:', err);

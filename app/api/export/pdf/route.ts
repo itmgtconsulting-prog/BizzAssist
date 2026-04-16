@@ -13,11 +13,20 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import PDFDocument from 'pdfkit';
 import { checkRateLimit, heavyRateLimit } from '@/app/lib/rateLimit';
 import { resolveTenantId } from '@/lib/api/auth';
 import { logger } from '@/app/lib/logger';
 import { writeAuditLog } from '@/app/lib/auditLog';
+import { parseBody } from '@/app/lib/validate';
+
+/** Zod schema for POST body */
+const pdfExportBodySchema = z.object({
+  type: z.enum(['property', 'company']),
+  data: z.record(z.string(), z.unknown()),
+  title: z.string().optional(),
+});
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -62,17 +71,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const auth = await resolveTenantId();
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  let body: { type: string; data: Record<string, unknown>; title?: string };
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
-  }
-
-  const { type, data, title } = body;
-  if (!type || !data) {
-    return NextResponse.json({ error: 'type and data are required' }, { status: 400 });
-  }
+  const parsed = await parseBody(request, pdfExportBodySchema);
+  if (!parsed.success) return parsed.response;
+  const { type, data, title } = parsed.data;
 
   try {
     const doc = new PDFDocument({

@@ -11,15 +11,21 @@
 
 import { createClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
+import { parseBody } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
+
+/** Zod schema for resend-verification request body. */
+const resendVerificationSchema = z.object({
+  email: z.string().email('Ugyldig email'),
+});
 
 export async function POST(request: NextRequest) {
   try {
-    const { email } = await request.json();
+    const parsed = await parseBody(request, resendVerificationSchema);
+    if (!parsed.success) return parsed.response;
 
-    if (!email || typeof email !== 'string') {
-      return NextResponse.json({ error: 'Email is required' }, { status: 400 });
-    }
+    const { email } = parsed.data;
 
     // Use a standalone client with the anon key — auth.resend() is a public
     // endpoint that doesn't require a session or admin privileges.

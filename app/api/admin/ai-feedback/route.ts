@@ -16,9 +16,19 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { resolveTenantId } from '@/lib/api/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { logger } from '@/app/lib/logger';
+import { parseQuery } from '@/app/lib/validate';
+
+/** Zod schema for GET query parameters */
+const querySchema = z.object({
+  type: z
+    .enum(['tool_failure', 'no_data', 'user_thumbs_down', 'missing_capability', 'all'])
+    .optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+});
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const auth = await resolveTenantId();
@@ -37,11 +47,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  const typeFilter = request.nextUrl.searchParams.get('type');
-  const limit = Math.min(
-    parseInt(request.nextUrl.searchParams.get('limit') ?? '50', 10) || 50,
-    200
-  );
+  const parsed = parseQuery(request, querySchema);
+  if (!parsed.success) return parsed.response;
+  const { type: typeFilter, limit } = parsed.data;
 
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- tenant schema not in typed client

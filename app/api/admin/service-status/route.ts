@@ -25,9 +25,19 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { logger } from '@/app/lib/logger';
+import { parseQuery } from '@/app/lib/validate';
+
+/** Zod schema for GET query parameters — exactly one of url or ping required */
+const querySchema = z
+  .object({
+    url: z.string().url().optional(),
+    ping: z.string().url().optional(),
+  })
+  .refine((d) => d.url || d.ping, { message: 'url or ping parameter required' });
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   // Admin-only endpoint
@@ -43,12 +53,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  const url = request.nextUrl.searchParams.get('url');
-  const ping = request.nextUrl.searchParams.get('ping');
-
-  if (!url && !ping) {
-    return NextResponse.json({ error: 'url or ping parameter required' }, { status: 400 });
-  }
+  const parsed = parseQuery(request, querySchema);
+  if (!parsed.success) return parsed.response;
+  const { url, ping } = parsed.data;
 
   // ── Statuspage v2 proxy mode ─────────────────────────────────────────────────
   if (url) {

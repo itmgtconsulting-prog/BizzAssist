@@ -10,9 +10,11 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
 import { tlFetch as tlFetchShared } from '@/app/lib/tlFetch';
+import { parseQuery } from '@/app/lib/validate';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -275,11 +277,16 @@ function normalizeType(raw: string): string {
 export async function GET(req: NextRequest) {
   const auth = await resolveTenantId();
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  const cvr = req.nextUrl.searchParams.get('cvr');
+  /** Zod schema for personbog query params */
+  const personbogSchema = z.object({
+    cvr: z.string().regex(/^\d{8}$/, 'cvr parameter er påkrævet (8 cifre)'),
+  });
 
-  if (!cvr || !/^\d{8}$/.test(cvr)) {
+  const parsed = parseQuery(req, personbogSchema);
+  if (!parsed.success) {
     return NextResponse.json({ error: 'cvr parameter er påkrævet (8 cifre)' }, { status: 400 });
   }
+  const { cvr } = parsed.data;
 
   if ((!CERT_PATH && !CERT_B64) || !CERT_PASSWORD) {
     return NextResponse.json({

@@ -14,12 +14,22 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { createClient } from '@supabase/supabase-js';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
 import { writeAuditLog } from '@/app/lib/auditLog';
+
+/** Zod schema for POST /api/link-verification body */
+const LinkVerificationPostSchema = z.object({
+  cvr: z.string().min(1),
+  link_url: z.string().url(),
+  link_type: z.string().optional(),
+  platform: z.string().optional(),
+  verdict: z.enum(['verified', 'rejected']),
+});
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
@@ -126,7 +136,7 @@ export async function GET(req: NextRequest) {
     user_verdict: userVerdicts.get(c.link_url) ?? null,
   }));
 
-    writeAuditLog({ action: 'link.verify', resource_type: 'link', resource_id: 'unknown' });
+  writeAuditLog({ action: 'link.verify', resource_type: 'link', resource_id: 'unknown' });
   return NextResponse.json(result);
 }
 
@@ -148,24 +158,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Ikke autoriseret' }, { status: 401 });
   }
 
-  const body = await req.json();
-  const { cvr, link_url, link_type, platform, verdict } = body as {
-    cvr?: string;
-    link_url?: string;
-    link_type?: string;
-    platform?: string;
-    verdict?: string;
-  };
-
-  if (!cvr || !link_url || !verdict) {
-    return NextResponse.json({ error: 'cvr, link_url og verdict er påkrævet' }, { status: 400 });
+  const parsed = LinkVerificationPostSchema.safeParse(await req.json());
+  if (!parsed.success) {
+    return NextResponse.json({ error: 'Ugyldigt input' }, { status: 400 });
   }
-  if (verdict !== 'verified' && verdict !== 'rejected') {
-    return NextResponse.json(
-      { error: 'verdict skal være "verified" eller "rejected"' },
-      { status: 400 }
-    );
-  }
+  const { cvr, link_url, link_type, platform, verdict } = parsed.data;
 
   const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 

@@ -12,10 +12,19 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { resolveTenantId } from '@/lib/api/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { logger } from '@/app/lib/logger';
 import { writeAuditLog } from '@/app/lib/auditLog';
+
+/** Zod schema for POST /api/recents body */
+const RecentsPostSchema = z.object({
+  entity_type: z.enum(['property', 'company', 'person', 'search']),
+  entity_id: z.string().min(1),
+  display_name: z.string().min(1),
+  entity_data: z.record(z.string(), z.unknown()).optional(),
+});
 
 /** Max recent entities per type per user */
 const MAX_RECENTS: Record<string, number> = {
@@ -83,10 +92,11 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const body = await request.json();
-    if (!body?.entity_type || !body?.entity_id || !body?.display_name) {
-      return NextResponse.json({ error: 'Mangler påkrævede felter' }, { status: 400 });
+    const parsed = RecentsPostSchema.safeParse(await request.json());
+    if (!parsed.success) {
+      return NextResponse.json({ error: 'Ugyldigt input' }, { status: 400 });
     }
+    const body = parsed.data;
 
     const admin = createAdminClient();
 

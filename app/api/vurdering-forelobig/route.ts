@@ -18,9 +18,11 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { checkRateLimit, heavyRateLimit } from '@/app/lib/rateLimit';
 import { resolveTenantId } from '@/lib/api/auth';
 import { logger } from '@/app/lib/logger';
+import { parseQuery } from '@/app/lib/validate';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -97,6 +99,16 @@ interface ESSearchResponse {
     hits?: Array<{ _source: RawPreliminaryProperty }>;
   };
 }
+
+// ─── Query param validation ─────────────────────────────────────────────────
+
+const forelobigQuerySchema = z.object({
+  adresseId: z.string().uuid().optional(),
+  kommunenr: z.string().regex(/^\d+$/).optional(),
+  vejnavn: z.string().optional(),
+  husnr: z.string().optional(),
+  bfeNummer: z.string().regex(/^\d+$/).optional(),
+});
 
 // ─── Elasticsearch URL ───────────────────────────────────────────────────────
 
@@ -264,18 +276,14 @@ export async function GET(request: NextRequest): Promise<NextResponse<ForelobigV
     );
   }
 
-  const { searchParams } = request.nextUrl;
-
-  const adresseId = searchParams.get('adresseId');
-  const kommunenr = searchParams.get('kommunenr');
-  const vejnavn = searchParams.get('vejnavn');
-  const husnr = searchParams.get('husnr');
-  const bfeNummer = searchParams.get('bfeNummer');
+  const parsed = parseQuery(request, forelobigQuerySchema);
+  if (!parsed.success) return parsed.response as NextResponse<ForelobigVurderingResponse>;
+  const { adresseId, kommunenr, vejnavn, husnr, bfeNummer } = parsed.data;
 
   // Valider at mindst ét soegekriterie er angivet
   const harAdresseId = adresseId && adresseId.length > 10;
   const harAdresseSoeg = kommunenr && vejnavn && husnr;
-  const harBfe = bfeNummer && /^\d+$/.test(bfeNummer);
+  const harBfe = !!bfeNummer;
 
   if (!harAdresseId && !harAdresseSoeg && !harBfe) {
     return NextResponse.json(

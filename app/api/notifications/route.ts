@@ -13,11 +13,18 @@
  * @module api/notifications
  */
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { writeAuditLog } from '@/app/lib/auditLog';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { getTenantContext } from '@/lib/db/tenant';
 import { createClient } from '@/lib/supabase/server';
 import { logger } from '@/app/lib/logger';
+
+/** Zod schema for POST /api/notifications body */
+const NotificationActionSchema = z.object({
+  action: z.enum(['mark_read', 'mark_all_read', 'delete_read']),
+  id: z.string().uuid().optional(),
+});
 
 /**
  * Resolver tenant ID fra den autentificerede brugers session.
@@ -99,8 +106,12 @@ export async function POST(request: NextRequest) {
 
   try {
     const ctx = await getTenantContext(tenantId);
-    const body = await request.json();
-    const action = body?.action;
+    const parsed = NotificationActionSchema.safeParse(await request.json());
+    if (!parsed.success) {
+      return NextResponse.json({ error: 'Ugyldigt input' }, { status: 400 });
+    }
+    const body = parsed.data;
+    const action = body.action;
 
     switch (action) {
       case 'mark_read':

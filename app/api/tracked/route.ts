@@ -20,6 +20,7 @@
  * @module api/tracked
  */
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { getTenantContext } from '@/lib/db/tenant';
 import { createClient } from '@/lib/supabase/server';
@@ -27,6 +28,13 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { fetchBbrForAddress } from '@/app/lib/fetchBbrData';
 import { logger } from '@/app/lib/logger';
 import { writeAuditLog } from '@/app/lib/auditLog';
+
+/** Zod schema for POST /api/tracked body */
+const TrackedPostSchema = z.object({
+  entity_id: z.string().min(1),
+  label: z.string().nullish(),
+  entity_data: z.record(z.string(), z.unknown()).optional(),
+});
 
 /**
  * Udfylder public.bbr_tracked_objects med BBR bygning-UUIDs for en fulgt ejendom.
@@ -186,11 +194,11 @@ export async function POST(request: NextRequest) {
 
   try {
     const ctx = await getTenantContext(auth.tenantId);
-    const body = await request.json();
-
-    if (!body?.entity_id) {
-      return NextResponse.json({ error: 'Mangler entity_id' }, { status: 400 });
+    const parsed = TrackedPostSchema.safeParse(await request.json());
+    if (!parsed.success) {
+      return NextResponse.json({ error: 'Ugyldigt input' }, { status: 400 });
     }
+    const body = parsed.data;
 
     const entity = await ctx.savedEntities.upsert({
       entity_type: 'property',
@@ -272,7 +280,11 @@ export async function DELETE(request: NextRequest) {
       ).catch(() => {});
     }
 
-    writeAuditLog({ action: 'tracked_property.toggle', resource_type: 'property', resource_id: 'unknown' });
+    writeAuditLog({
+      action: 'tracked_property.toggle',
+      resource_type: 'property',
+      resource_id: 'unknown',
+    });
     return NextResponse.json({ ok: true });
   } catch (err) {
     logger.error('[tracked DELETE]', err);

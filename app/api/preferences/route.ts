@@ -11,9 +11,17 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { resolveUserId } from '@/lib/api/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { logger } from '@/app/lib/logger';
+
+/** Zod schema for PUT /api/preferences body */
+const PreferencesUpdateSchema = z.object({
+  language: z.enum(['da', 'en']).optional(),
+  mapStyle: z.string().optional(),
+  preferences: z.record(z.string(), z.unknown()).optional(),
+});
 
 /**
  * Inserts a row into the public audit_log table (non-tenant-scoped).
@@ -83,14 +91,18 @@ export async function PUT(request: NextRequest) {
   }
 
   try {
-    const body = await request.json();
+    const parsed = PreferencesUpdateSchema.safeParse(await request.json());
+    if (!parsed.success) {
+      return NextResponse.json({ error: 'Ugyldigt input' }, { status: 400 });
+    }
+    const body = parsed.data;
     const admin = createAdminClient();
 
     // Build update object
     const updates: Record<string, unknown> = {};
 
     // Language goes in its own column
-    if (body.language && (body.language === 'da' || body.language === 'en')) {
+    if (body.language) {
       updates.preferred_language = body.language;
     }
 

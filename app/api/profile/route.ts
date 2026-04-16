@@ -10,9 +10,21 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { logger } from '@/app/lib/logger';
+
+/** Zod schema for PUT /api/profile body */
+const ProfileUpdateSchema = z.object({
+  fullName: z.string().min(1).max(200),
+});
+
+/** Zod schema for POST /api/profile (password change) body */
+const PasswordChangeSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(6).max(200),
+});
 
 /**
  * Inserts a row into audit_log using the admin client.
@@ -50,11 +62,11 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
     }
 
-    const { fullName } = await req.json();
-
-    if (typeof fullName !== 'string' || fullName.trim().length === 0) {
-      return NextResponse.json({ error: 'Name is required' }, { status: 400 });
+    const parsed = ProfileUpdateSchema.safeParse(await req.json());
+    if (!parsed.success) {
+      return NextResponse.json({ error: 'Invalid input' }, { status: 400 });
     }
+    const { fullName } = parsed.data;
 
     const { error } = await supabase.auth.updateUser({
       data: { full_name: fullName.trim() },
@@ -98,15 +110,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
     }
 
-    const { currentPassword, newPassword } = await req.json();
-
-    if (!currentPassword || !newPassword) {
-      return NextResponse.json({ error: 'Both passwords required' }, { status: 400 });
+    const parsed = PasswordChangeSchema.safeParse(await req.json());
+    if (!parsed.success) {
+      return NextResponse.json({ error: 'Invalid input' }, { status: 400 });
     }
-
-    if (newPassword.length < 6) {
-      return NextResponse.json({ error: 'password_too_short' }, { status: 400 });
-    }
+    const { currentPassword, newPassword } = parsed.data;
 
     // Verify current password by re-authenticating
     const { error: signInError } = await supabase.auth.signInWithPassword({

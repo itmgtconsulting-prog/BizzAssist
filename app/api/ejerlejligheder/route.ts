@@ -14,9 +14,18 @@ import { NextRequest, NextResponse } from 'next/server';
 import https from 'https';
 import fs from 'fs';
 import path from 'path';
+import { z } from 'zod';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
+import { parseQuery } from '@/app/lib/validate';
 // EJF/Datafordeler er ikke nødvendig — alt data hentes fra tinglysning summarisk XML
+
+// ─── Query param validation ─────────────────────────────────────────────────
+
+const ejerlejlighederQuerySchema = z.object({
+  ejerlavKode: z.string().regex(/^\d+$/, 'ejerlavKode skal være et heltal'),
+  matrikelnr: z.string().min(1, 'matrikelnr er påkrævet'),
+});
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -182,16 +191,10 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
     return NextResponse.json({ error: 'Unauthorized' } as unknown as EjerlejlighederResponse, {
       status: 401,
     });
-  const { searchParams } = request.nextUrl;
-  const ejerlavKode = searchParams.get('ejerlavKode');
-  const matrikelnr = searchParams.get('matrikelnr');
 
-  if (!ejerlavKode || !matrikelnr) {
-    return NextResponse.json(
-      { lejligheder: [], fejl: 'Manglende ejerlavKode eller matrikelnr' },
-      { status: 400 }
-    );
-  }
+  const parsed = parseQuery(request, ejerlejlighederQuerySchema);
+  if (!parsed.success) return parsed.response as NextResponse<EjerlejlighederResponse>;
+  const { ejerlavKode, matrikelnr } = parsed.data;
 
   if ((!CERT_PATH && !CERT_B64) || !CERT_PASSWORD) {
     return NextResponse.json(

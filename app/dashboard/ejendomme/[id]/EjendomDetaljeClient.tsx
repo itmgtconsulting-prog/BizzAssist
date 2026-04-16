@@ -916,7 +916,7 @@ export default function EjendomDetaljeClient({
   /** Forelobige vurderinger fra Vurderingsportalen — separat fra Datafordeler-vurderinger */
   const [forelobige, setForelobige] = useState<ForelobigVurdering[]>([]);
   /** True mens forelobige vurderinger hentes */
-  const [, setForelobigLoader] = useState(false);
+  const [forelobigLoader, setForelobigLoader] = useState(false);
   /** Matrikeldata fra Datafordeler MAT-registret */
   const [matrikelData, setMatrikelData] = useState<MatrikelEjendom | null>(null);
   /** True mens matrikeldata hentes */
@@ -3814,6 +3814,16 @@ export default function EjendomDetaljeClient({
                   <SectionTitle title={t.propertyTaxes} />
 
                   {(() => {
+                    // BIZZ-319: Show loader while tax data is being fetched
+                    if (forelobigLoader || vurderingLoader) {
+                      return (
+                        <SektionLoader
+                          label={da ? 'Henter skattedata…' : 'Loading tax data…'}
+                          rows={3}
+                        />
+                      );
+                    }
+
                     /** Nyeste foreløbig vurdering (typisk 2024) */
                     const nyeste = forelobige.length > 0 ? forelobige[0] : null;
 

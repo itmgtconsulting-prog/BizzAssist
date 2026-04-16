@@ -34,6 +34,7 @@ import {
   Lock,
   FileText,
   Download,
+  Bell,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useLanguage } from '@/app/context/LanguageContext';
@@ -778,6 +779,22 @@ export default function PersonDetailPageClient({
   /** AbortController for igangværende progressiv ejendomshentning */
   const ejendomAbortRef = useRef<AbortController | null>(null);
 
+  /** BIZZ-399: Ejendomshandler (salgshistorik) — lazy-loaded fra /api/salgshistorik/cvr */
+  const [ejendommeFilter, setEjendommeFilter] = useState<string | null>(null);
+  const [ejendomshandler, setEjendomshandler] = useState<
+    Array<{
+      dato: string;
+      type: string;
+      rolle: string;
+      adresse: string;
+      kontantpris: number | null;
+      samletPris: number | null;
+      bfe: number | null;
+    }>
+  >([]);
+  const [handlerLoading, setHandlerLoading] = useState(false);
+  const handlerFetchedRef = useRef(false);
+
   /** Detekterer desktop vs. mobil — nyheder-panel vises som sidebar på desktop, overlay på mobil */
   const [isDesktop, setIsDesktop] = useState(true);
   useEffect(() => {
@@ -793,6 +810,29 @@ export default function PersonDetailPageClient({
 
   /** Styrer om mobil nyheder-overlay er åbent. */
   const [mobilNyhederAaben, setMobilNyhederAaben] = useState(false);
+
+  /** BIZZ-374: Følg-knap state — synced med Supabase saved_entities */
+  const [erFulgt, setErFulgt] = useState(false);
+  const [foelgToggling, setFoelgToggling] = useState(false);
+
+  /** Sync følg-tilstand fra Supabase ved mount */
+  useEffect(() => {
+    let ignore = false;
+    fetch(`/api/tracked-person`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (ignore || !data?.persons) return;
+        setErFulgt(
+          data.persons.some(
+            (p: { enhedsNummer: string }) => p.enhedsNummer === String(enhedsNummer)
+          )
+        );
+      })
+      .catch(() => {});
+    return () => {
+      ignore = true;
+    };
+  }, [enhedsNummer]);
 
   /** AI-fundne sociale medier-URLs med confidence — udfyldes efter artikel-søgning */
   const [aiSocials, setAiSocials] = useState<
@@ -1306,6 +1346,31 @@ export default function PersonDetailPageClient({
     }
 
     void fetchEjendommeProgressively(uniqueCvrs, personEnhedsNumre);
+
+    // BIZZ-399: Fetch ejendomshandler for all owner CVRs
+    if (!handlerFetchedRef.current && uniqueCvrs.length > 0) {
+      handlerFetchedRef.current = true;
+      setHandlerLoading(true);
+      Promise.allSettled(
+        uniqueCvrs.slice(0, 10).map((cvr) =>
+          fetch(`/api/salgshistorik/cvr?cvr=${cvr}`)
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => d?.handler ?? [])
+        )
+      )
+        .then((results) => {
+          const all: typeof ejendomshandler = [];
+          for (const r of results) {
+            if (r.status === 'fulfilled' && Array.isArray(r.value)) {
+              all.push(...r.value);
+            }
+          }
+          all.sort((a, b) => (b.dato ?? '').localeCompare(a.dato ?? ''));
+          setEjendomshandler(all);
+        })
+        .catch(() => {})
+        .finally(() => setHandlerLoading(false));
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aktivTab, derived, relatedCompanies, fetchEjendommeProgressively]);
 
@@ -1478,6 +1543,45 @@ export default function PersonDetailPageClient({
               >
                 <Newspaper size={14} />
                 {lang === 'da' ? 'Medier' : 'Media'}
+              </button>
+              <button
+                disabled={foelgToggling}
+                onClick={async () => {
+                  setFoelgToggling(true);
+                  const nyTilstand = !erFulgt;
+                  setErFulgt(nyTilstand);
+                  try {
+                    if (nyTilstand) {
+                      await fetch('/api/tracked-person', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ enhedsNummer: String(enhedsNummer) }),
+                      });
+                    } else {
+                      await fetch(`/api/tracked-person?enhedsNummer=${enhedsNummer}`, {
+                        method: 'DELETE',
+                      });
+                    }
+                  } catch {
+                    setErFulgt(!nyTilstand);
+                  } finally {
+                    setFoelgToggling(false);
+                  }
+                }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-sm transition-all ${
+                  erFulgt
+                    ? 'bg-blue-600/20 hover:bg-blue-600/30 border-blue-500/40 text-blue-300'
+                    : 'bg-slate-800 hover:bg-slate-700 border-slate-700/60 text-slate-300'
+                }`}
+              >
+                <Bell size={14} className={erFulgt ? 'fill-blue-400 text-blue-400' : ''} />
+                {erFulgt
+                  ? lang === 'da'
+                    ? 'Følger'
+                    : 'Following'
+                  : lang === 'da'
+                    ? 'Følg'
+                    : 'Follow'}
               </button>
             </div>
           </div>
@@ -1906,6 +2010,48 @@ export default function PersonDetailPageClient({
           {/* ══ EJENDOMME ══ */}
           {aktivTab === 'properties' && (
             <div className="space-y-4">
+              {/* BIZZ-399: Filter chips — Alle / Ejendomme / Ejendomshandler */}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => setEjendommeFilter(null)}
+                  className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                    ejendommeFilter === null
+                      ? 'bg-white/10 border-white/30 text-white'
+                      : 'bg-slate-800 border-slate-700/50 text-slate-400 hover:text-slate-300'
+                  }`}
+                >
+                  {lang === 'da' ? 'Alle' : 'All'}
+                </button>
+                <button
+                  onClick={() =>
+                    setEjendommeFilter(ejendommeFilter === 'portefolje' ? null : 'portefolje')
+                  }
+                  className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                    ejendommeFilter === 'portefolje'
+                      ? 'bg-blue-600/30 border-blue-500/50 text-blue-300'
+                      : 'bg-slate-800 border-slate-700/50 text-slate-400 hover:text-slate-300'
+                  }`}
+                >
+                  {lang === 'da' ? 'Ejendomme' : 'Properties'}
+                </button>
+                <button
+                  onClick={() =>
+                    setEjendommeFilter(ejendommeFilter === 'handler' ? null : 'handler')
+                  }
+                  className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                    ejendommeFilter === 'handler'
+                      ? 'bg-emerald-600/30 border-emerald-500/50 text-emerald-300'
+                      : 'bg-slate-800 border-slate-700/50 text-slate-400 hover:text-slate-300'
+                  }`}
+                >
+                  {lang === 'da' ? 'Ejendomshandler' : 'Property trades'}
+                  {ejendomshandler.length > 0 && (
+                    <span className="ml-1.5 text-[10px] opacity-70">
+                      ({ejendomshandler.length})
+                    </span>
+                  )}
+                </button>
+              </div>
               {/* BIZZ-338: Ingen tilknyttede virksomheder — hverken ejede eller andre roller */}
               {ejendommeFetchComplete &&
                 !ejendommeManglerNoegle &&
@@ -2010,6 +2156,69 @@ export default function PersonDetailPageClient({
                     </p>
                   </div>
                 )}
+
+              {/* BIZZ-399: Ejendomshandler sektion */}
+              {(ejendommeFilter === null || ejendommeFilter === 'handler') && (
+                <>
+                  {handlerLoading && (
+                    <div className="flex items-center justify-center py-8 gap-2">
+                      <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />
+                      <span className="text-slate-400 text-sm">
+                        {lang === 'da' ? 'Henter ejendomshandler…' : 'Loading property trades…'}
+                      </span>
+                    </div>
+                  )}
+                  {!handlerLoading && ejendomshandler.length > 0 && (
+                    <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden overflow-x-auto">
+                      <div className="px-3 py-2.5 border-b border-slate-700/40">
+                        <p className="text-slate-200 text-xs font-semibold">
+                          {lang === 'da' ? 'Ejendomshandler' : 'Property Trades'}
+                          <span className="text-slate-500 font-normal ml-2">
+                            ({ejendomshandler.length})
+                          </span>
+                        </p>
+                      </div>
+                      <div className="min-w-[600px] grid grid-cols-[80px_60px_1fr_100px] px-3 py-1.5 text-slate-500 text-[10px] font-medium border-b border-slate-700/30">
+                        <span>{lang === 'da' ? 'Dato' : 'Date'}</span>
+                        <span>{lang === 'da' ? 'Rolle' : 'Role'}</span>
+                        <span>{lang === 'da' ? 'Adresse' : 'Address'}</span>
+                        <span className="text-right">
+                          {lang === 'da' ? 'Kontantpris' : 'Cash price'}
+                        </span>
+                      </div>
+                      <div className="divide-y divide-slate-700/20">
+                        {ejendomshandler.slice(0, 50).map((h, i) => (
+                          <div
+                            key={`${h.dato}-${h.bfe}-${i}`}
+                            className="min-w-[600px] grid grid-cols-[80px_60px_1fr_100px] px-3 py-1.5 items-center text-[11px]"
+                          >
+                            <span className="text-slate-400">
+                              {h.dato
+                                ? new Date(h.dato).toLocaleDateString('da-DK', {
+                                    day: 'numeric',
+                                    month: 'short',
+                                    year: 'numeric',
+                                  })
+                                : '–'}
+                            </span>
+                            <span
+                              className={`text-[10px] font-medium ${h.rolle === 'Køber' ? 'text-green-400' : h.rolle === 'Sælger' ? 'text-red-400' : 'text-slate-400'}`}
+                            >
+                              {h.rolle}
+                            </span>
+                            <span className="text-slate-200 truncate" title={h.adresse}>
+                              {h.adresse}
+                            </span>
+                            <span className="text-slate-300 text-right font-medium">
+                              {h.kontantpris ? `${h.kontantpris.toLocaleString('da-DK')} kr` : '–'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           )}
 

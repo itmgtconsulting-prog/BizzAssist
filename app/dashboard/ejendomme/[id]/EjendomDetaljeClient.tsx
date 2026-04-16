@@ -916,7 +916,7 @@ export default function EjendomDetaljeClient({
   /** Forelobige vurderinger fra Vurderingsportalen — separat fra Datafordeler-vurderinger */
   const [forelobige, setForelobige] = useState<ForelobigVurdering[]>([]);
   /** True mens forelobige vurderinger hentes */
-  const [, setForelobigLoader] = useState(false);
+  const [forelobigLoader, setForelobigLoader] = useState(false);
   /** Matrikeldata fra Datafordeler MAT-registret */
   const [matrikelData, setMatrikelData] = useState<MatrikelEjendom | null>(null);
   /** True mens matrikeldata hentes */
@@ -936,24 +936,32 @@ export default function EjendomDetaljeClient({
   /** Indlaes tracking-tilstand ved mount og lyt efter aendringer.
    *  Viser cached vaerdi med det samme, derefter opdaterer fra Supabase. */
   useEffect(() => {
+    let ignore = false;
     // Instant render from cache
     setErFulgt(erTracked(id));
-    // Then verify against Supabase
+    // Then verify against Supabase — skip update if component unmounted or toggle in progress
     fetchErTracked(id)
-      .then(setErFulgt)
+      .then((v) => {
+        if (!ignore && !foelgToggling) setErFulgt(v);
+      })
       .catch(() => {});
     const handler = () => {
+      if (ignore || foelgToggling) return;
       setErFulgt(erTracked(id));
       fetchErTracked(id)
-        .then(setErFulgt)
+        .then((v) => {
+          if (!ignore && !foelgToggling) setErFulgt(v);
+        })
         .catch(() => {});
     };
     window.addEventListener('ba-tracked-changed', handler);
     window.addEventListener('storage', handler);
     return () => {
+      ignore = true;
       window.removeEventListener('ba-tracked-changed', handler);
       window.removeEventListener('storage', handler);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   /**
@@ -3312,8 +3320,8 @@ export default function EjendomDetaljeClient({
               </div>
             )}
 
-            {/* ══ EJERFORHOLD ══ */}
-            {aktivTab === 'ejerforhold' && (
+            {/* ══ EJERFORHOLD — always mounted for prefetch (BIZZ-410), hidden when not active ══ */}
+            <div className={aktivTab === 'ejerforhold' ? '' : 'hidden'}>
               <div className="space-y-2">
                 {/* Loading state — vis spinner mens BBR eller ejerskab data hentes */}
                 {(ejereLoader || bbrLoader || !bbrData) && (
@@ -3446,7 +3454,7 @@ export default function EjendomDetaljeClient({
                     );
                   })()}
               </div>
-            )}
+            </div>
 
             {/* ══ TINGLYSNING ══ — altid mounted (hidden) så data ikke mistes ved tab-skift */}
             {(() => {
@@ -3806,6 +3814,16 @@ export default function EjendomDetaljeClient({
                   <SectionTitle title={t.propertyTaxes} />
 
                   {(() => {
+                    // BIZZ-319: Show loader while tax data is being fetched
+                    if (forelobigLoader || vurderingLoader) {
+                      return (
+                        <SektionLoader
+                          label={da ? 'Henter skattedata…' : 'Loading tax data…'}
+                          rows={3}
+                        />
+                      );
+                    }
+
                     /** Nyeste foreløbig vurdering (typisk 2024) */
                     const nyeste = forelobige.length > 0 ? forelobige[0] : null;
 
@@ -5922,10 +5940,10 @@ export default function EjendomDetaljeClient({
                     bbrData?.ejerlejlighedBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer;
                   if (!bfe) return null;
 
-                  // BIZZ-241: Hovedejendom opdelt i EL/andel — vis info i stedet for forkerte ejere
+                  // BIZZ-362: Hovedejendom — vis info + lejlighedsliste med ejere
                   if (erModer) {
                     return (
-                      <div>
+                      <div className="space-y-4">
                         <SectionTitle title={t.ownershipStructure} />
                         <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-6 text-center space-y-3">
                           <div className="w-12 h-12 bg-amber-500/10 rounded-xl flex items-center justify-center mx-auto">
@@ -5938,10 +5956,79 @@ export default function EjendomDetaljeClient({
                           </p>
                           <p className="text-slate-500 text-xs max-w-md mx-auto">
                             {da
-                              ? 'Ejerskab er registreret på de enkelte ejerlejligheder. Se lejlighedslisten på Oversigt-fanen for at finde ejere.'
-                              : 'Ownership is registered on individual condominium units. See the apartment list on the Overview tab to find owners.'}
+                              ? 'Ejerskab er registreret på de enkelte ejerlejligheder.'
+                              : 'Ownership is registered on individual condominium units.'}
                           </p>
                         </div>
+                        {lejlighederLoader && (
+                          <div className="flex items-center justify-center py-8">
+                            <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
+                            <span className="ml-2 text-slate-400 text-sm">
+                              {da ? 'Henter lejlighedsdata…' : 'Loading apartment data…'}
+                            </span>
+                          </div>
+                        )}
+                        {lejligheder !== null && lejligheder.length > 0 && (
+                          <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden overflow-x-auto">
+                            <div className="px-3 py-2.5 border-b border-slate-700/40 flex items-center justify-between">
+                              <p className="text-slate-200 text-xs font-semibold">{t.apartments}</p>
+                              <span className="text-slate-500 text-[10px]">
+                                {lejligheder.length} {da ? 'lejligheder' : 'apartments'}
+                              </span>
+                            </div>
+                            <div className="min-w-[720px] grid grid-cols-[1fr_120px_60px_100px_80px] px-3 py-1.5 text-slate-500 text-[10px] font-medium border-b border-slate-700/30">
+                              <span>{t.apartmentAddress}</span>
+                              <span>{t.apartmentOwner}</span>
+                              <span className="text-right">{t.apartmentArea}</span>
+                              <span className="text-right">{t.apartmentPrice}</span>
+                              <span className="text-right">{t.apartmentDate}</span>
+                            </div>
+                            <div className="divide-y divide-slate-700/20">
+                              {lejligheder.map((lej) => (
+                                <Link
+                                  key={lej.bfe}
+                                  href={lej.dawaId ? `/dashboard/ejendomme/${lej.dawaId}` : '#'}
+                                  onClick={
+                                    lej.dawaId
+                                      ? undefined
+                                      : (e: React.MouseEvent) => e.preventDefault()
+                                  }
+                                  className={`min-w-[720px] grid grid-cols-[1fr_120px_60px_100px_80px] px-3 py-1.5 items-center gap-1 hover:bg-slate-700/15 transition-colors block ${lej.dawaId ? 'cursor-pointer' : 'cursor-default'}`}
+                                >
+                                  <span
+                                    className="text-slate-200 text-[11px] font-medium truncate"
+                                    title={lej.adresse}
+                                  >
+                                    {lej.adresse.split(',').slice(0, 2).join(',')}
+                                  </span>
+                                  <span
+                                    className="text-slate-400 text-[10px] truncate"
+                                    title={lej.ejer}
+                                  >
+                                    {lej.ejer}
+                                  </span>
+                                  <span className="text-slate-300 text-[10px] text-right">
+                                    {lej.areal ? `${lej.areal} m²` : '–'}
+                                  </span>
+                                  <span className="text-slate-300 text-[10px] text-right font-medium">
+                                    {lej.koebspris
+                                      ? `${lej.koebspris.toLocaleString('da-DK')} DKK`
+                                      : '–'}
+                                  </span>
+                                  <span className="text-slate-400 text-[10px] text-right">
+                                    {lej.koebsdato
+                                      ? new Date(lej.koebsdato).toLocaleDateString('da-DK', {
+                                          day: 'numeric',
+                                          month: 'short',
+                                          year: 'numeric',
+                                        })
+                                      : '–'}
+                                  </span>
+                                </Link>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     );
                   }
@@ -6399,61 +6486,63 @@ export default function EjendomDetaljeClient({
                   </div>
                 </div>
 
-                {/* Udbudshistorik */}
-                <div>
-                  <SectionTitle title={t.listingHistory} />
-                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
-                    <table className="w-full">
-                      <thead>
-                        <tr className="text-slate-500 text-xs border-b border-slate-700/30">
-                          <th className="px-4 py-2 text-left font-medium">{t.status}</th>
-                          <th className="px-4 py-2 text-right font-medium">{t.priceChange}</th>
-                          <th className="px-4 py-2 text-right font-medium">{t.price}</th>
-                          <th className="px-4 py-2 text-right font-medium">{t.date}</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {ejendom.udbudshistorik && ejendom.udbudshistorik.length > 0 ? (
-                          ejendom.udbudshistorik.map((u, i) => (
-                            <tr
-                              key={i}
-                              className="border-t border-slate-700/30 hover:bg-slate-700/20 transition-colors"
-                            >
-                              <td className="px-4 py-3 text-slate-200 text-sm">{u.status}</td>
-                              <td className="px-4 py-3 text-right">
-                                {u.prisaendring !== undefined ? (
-                                  <span
-                                    className={`text-sm font-medium ${u.prisaendring >= 0 ? 'text-green-400' : 'text-red-400'}`}
-                                  >
-                                    {u.prisaendring >= 0 ? '+' : ''}
-                                    {u.prisaendring.toLocaleString(da ? 'da-DK' : 'en-GB')} DKK
-                                  </span>
-                                ) : (
-                                  <span className="text-slate-500 text-sm">—</span>
-                                )}
-                              </td>
-                              <td className="px-4 py-3 text-white text-sm font-semibold text-right">
-                                {formatDKK(u.pris)}
-                              </td>
-                              <td className="px-4 py-3 text-slate-400 text-sm text-right">
-                                {formatDato(u.dato)}
+                {/* Udbudshistorik — only rendered when data exists (BIZZ-363) */}
+                {ejendom.udbudshistorik && ejendom.udbudshistorik.length > 0 && (
+                  <div>
+                    <SectionTitle title={t.listingHistory} />
+                    <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
+                      <table className="w-full">
+                        <thead>
+                          <tr className="text-slate-500 text-xs border-b border-slate-700/30">
+                            <th className="px-4 py-2 text-left font-medium">{t.status}</th>
+                            <th className="px-4 py-2 text-right font-medium">{t.priceChange}</th>
+                            <th className="px-4 py-2 text-right font-medium">{t.price}</th>
+                            <th className="px-4 py-2 text-right font-medium">{t.date}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {ejendom.udbudshistorik && ejendom.udbudshistorik.length > 0 ? (
+                            ejendom.udbudshistorik.map((u, i) => (
+                              <tr
+                                key={i}
+                                className="border-t border-slate-700/30 hover:bg-slate-700/20 transition-colors"
+                              >
+                                <td className="px-4 py-3 text-slate-200 text-sm">{u.status}</td>
+                                <td className="px-4 py-3 text-right">
+                                  {u.prisaendring !== undefined ? (
+                                    <span
+                                      className={`text-sm font-medium ${u.prisaendring >= 0 ? 'text-green-400' : 'text-red-400'}`}
+                                    >
+                                      {u.prisaendring >= 0 ? '+' : ''}
+                                      {u.prisaendring.toLocaleString(da ? 'da-DK' : 'en-GB')} DKK
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-500 text-sm">—</span>
+                                  )}
+                                </td>
+                                <td className="px-4 py-3 text-white text-sm font-semibold text-right">
+                                  {formatDKK(u.pris)}
+                                </td>
+                                <td className="px-4 py-3 text-slate-400 text-sm text-right">
+                                  {formatDato(u.dato)}
+                                </td>
+                              </tr>
+                            ))
+                          ) : (
+                            <tr>
+                              <td
+                                colSpan={4}
+                                className="px-4 py-6 text-center text-slate-500 text-sm"
+                              >
+                                {t.noListingHistory}
                               </td>
                             </tr>
-                          ))
-                        ) : (
-                          <tr>
-                            <td
-                              colSpan={4}
-                              className="px-4 py-6 text-center text-slate-500 text-sm"
-                            >
-                              {t.noListingHistory}
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             )}
 

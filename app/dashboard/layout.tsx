@@ -644,7 +644,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                 return (
                   <Link
                     key={item.href}
-                    href={locked ? '/dashboard/settings' : item.href}
+                    href={locked ? '/dashboard/settings?tab=abonnement' : item.href}
                     prefetch={false}
                     onClick={(e) => {
                       setSidebarOpen(false);

@@ -13,6 +13,7 @@
 
 import { logger } from '@/app/lib/logger';
 import { DATAFORDELER_TOKEN_URL } from '@/app/lib/serviceEndpoints';
+import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 
 /** Cached token with expiry timestamp */
 let _cachedToken: { token: string; expiresAt: number } | null = null;
@@ -44,15 +45,18 @@ export async function getSharedOAuthToken(): Promise<string | null> {
   // Start new token request with mutex
   _tokenPromise = (async () => {
     try {
-      const res = await fetch(DATAFORDELER_TOKEN_URL, {
+      const res = await fetch(proxyUrl(DATAFORDELER_TOKEN_URL), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          ...proxyHeaders(),
+        },
         body: new URLSearchParams({
           grant_type: 'client_credentials',
           client_id: clientId,
           client_secret: clientSecret,
         }),
-        signal: AbortSignal.timeout(10_000),
+        signal: AbortSignal.timeout(proxyTimeout()),
       });
 
       if (!res.ok) {

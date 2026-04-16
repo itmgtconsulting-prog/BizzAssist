@@ -2357,7 +2357,7 @@ export default function EjendomDetaljeClient({
                           })()}
                         </div>
                       </div>
-                    ) : (
+                    ) : forelobige.length === 0 ? (
                       <p className="text-slate-500 text-xs">
                         {bbrLoader || !bbrData
                           ? t.awaitingBBR
@@ -2365,7 +2365,7 @@ export default function EjendomDetaljeClient({
                             ? t.bfeNotFound
                             : 'Ingen vurderingsdata'}
                       </p>
-                    )}
+                    ) : null}
 
                     {/* ── Forelobig vurdering — vises hvis nyere end nuvaerende vurdering ── */}
                     {(() => {
@@ -2417,83 +2417,79 @@ export default function EjendomDetaljeClient({
                   {/* ─── Rad 2: Bygninger (v) + Enheder (h)
                        self-start: boksene strækkes ikke til at matche hinanden ─── */}
 
-                  {/* Bygninger — skjul for ejerlejligheder, ekskluder nedrevne/historiske */}
-                  {!bbrData?.ejerlejlighedBfe &&
-                    (() => {
-                      const bygninger = (bbrData?.bbr ?? [])
-                        .filter(
-                          (b) =>
-                            b.status !== 'Nedrevet/slettet' &&
-                            b.status !== 'Bygning nedrevet' &&
-                            b.status !== 'Bygning bortfaldet'
-                        )
-                        .sort((a, b) => (a.bygningsnr ?? 9999) - (b.bygningsnr ?? 9999));
-                      const totAreal = bygninger.reduce(
-                        (s, b) => s + (b.samletBygningsareal ?? 0),
-                        0
-                      );
-                      const boligAreal = bygninger.reduce(
-                        (s, b) => s + (b.samletBoligareal ?? 0),
-                        0
-                      );
-                      const erhvAreal = bygninger.reduce(
-                        (s, b) => s + (b.samletErhvervsareal ?? 0),
-                        0
-                      );
-                      const kaelder = bygninger.reduce((s, b) => s + (b.kaelder ?? 0), 0);
-                      return (
-                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-2.5 self-start">
-                          <div className="flex items-baseline gap-1 mb-1.5">
-                            <span className="text-white font-bold text-lg">
-                              {bbrLoader ? '…' : bygninger.length || '–'}
-                            </span>
-                            <span className="text-slate-400 text-xs">{t.buildings}</span>
+                  {/* Bygninger — vis for alle ejendomstyper, ekskluder nedrevne/historiske */}
+                  {(() => {
+                    const bygninger = (bbrData?.bbr ?? [])
+                      .filter(
+                        (b) =>
+                          b.status !== 'Nedrevet/slettet' &&
+                          b.status !== 'Bygning nedrevet' &&
+                          b.status !== 'Bygning bortfaldet'
+                      )
+                      .sort((a, b) => (a.bygningsnr ?? 9999) - (b.bygningsnr ?? 9999));
+                    const totAreal = bygninger.reduce(
+                      (s, b) => s + (b.samletBygningsareal ?? 0),
+                      0
+                    );
+                    const boligAreal = bygninger.reduce((s, b) => s + (b.samletBoligareal ?? 0), 0);
+                    const erhvAreal = bygninger.reduce(
+                      (s, b) => s + (b.samletErhvervsareal ?? 0),
+                      0
+                    );
+                    const kaelder = bygninger.reduce((s, b) => s + (b.kaelder ?? 0), 0);
+                    return (
+                      <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-2.5 self-start">
+                        <div className="flex items-baseline gap-1 mb-1.5">
+                          <span className="text-white font-bold text-lg">
+                            {bbrLoader ? '…' : bygninger.length || '–'}
+                          </span>
+                          <span className="text-slate-400 text-xs">{t.buildings}</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+                          <div>
+                            <p className="text-slate-500 text-xs leading-none mb-0.5">
+                              {t.buildingArea}
+                            </p>
+                            <p className="text-white text-sm font-medium">
+                              {totAreal
+                                ? `${totAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
+                                : formatDKK(0)}
+                            </p>
                           </div>
-                          <div className="grid grid-cols-2 gap-x-2 gap-y-1">
-                            <div>
-                              <p className="text-slate-500 text-xs leading-none mb-0.5">
-                                {t.buildingArea}
-                              </p>
-                              <p className="text-white text-sm font-medium">
-                                {totAreal
-                                  ? `${totAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                  : formatDKK(0)}
-                              </p>
-                            </div>
-                            <div>
-                              <p className="text-slate-500 text-xs leading-none mb-0.5">
-                                {t.residentialArea}
-                              </p>
-                              <p className="text-white text-sm font-medium">
-                                {boligAreal
-                                  ? `${boligAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                  : '0 m²'}
-                              </p>
-                            </div>
-                            <div>
-                              <p className="text-slate-500 text-xs leading-none mb-0.5">
-                                {t.commercialArea}
-                              </p>
-                              <p className="text-white text-sm font-medium">
-                                {erhvAreal
-                                  ? `${erhvAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                  : formatDKK(0)}
-                              </p>
-                            </div>
-                            <div>
-                              <p className="text-slate-500 text-xs leading-none mb-0.5">
-                                {t.basement}
-                              </p>
-                              <p className="text-white text-sm font-medium">
-                                {kaelder
-                                  ? `${kaelder.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                  : '0 m²'}
-                              </p>
-                            </div>
+                          <div>
+                            <p className="text-slate-500 text-xs leading-none mb-0.5">
+                              {t.residentialArea}
+                            </p>
+                            <p className="text-white text-sm font-medium">
+                              {boligAreal
+                                ? `${boligAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
+                                : '0 m²'}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-slate-500 text-xs leading-none mb-0.5">
+                              {t.commercialArea}
+                            </p>
+                            <p className="text-white text-sm font-medium">
+                              {erhvAreal
+                                ? `${erhvAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
+                                : formatDKK(0)}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-slate-500 text-xs leading-none mb-0.5">
+                              {t.basement}
+                            </p>
+                            <p className="text-white text-sm font-medium">
+                              {kaelder
+                                ? `${kaelder.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
+                                : '0 m²'}
+                            </p>
                           </div>
                         </div>
-                      );
-                    })()}
+                      </div>
+                    );
+                  })()}
 
                   {/* Enheder */}
                   {(() => {

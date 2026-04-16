@@ -109,12 +109,15 @@ function codeBlock(text, language = '') {
 const tickets = [
   // ── EPIC ─────────────────────────────────────────────────────────────────
   {
-    summary: 'EPIC: Missing data features — ejendomme tabs, udbudshistorik, skat historik, diagrammer',
+    summary:
+      'EPIC: Missing data features — ejendomme tabs, udbudshistorik, skat historik, diagrammer',
     issueType: 'Epic',
     priority: 'High',
     labels: ['feature', 'data-gaps', 'ejendomme'],
     description: [
-      p('This epic covers missing data integrations and UI features identified during the data source audit (April 2026).'),
+      p(
+        'This epic covers missing data integrations and UI features identified during the data source audit (April 2026).'
+      ),
       heading('Features'),
       bulletList([
         'Ejendomme tab på virksomhedsordningen (enkeltmandsvirksomhed/personligt ejede selskaber) — personsiden mangler direkte ejendomsopslag',
@@ -124,7 +127,9 @@ const tickets = [
         'Historisk ejendomsskat og grundskyld — kun nuværende år vises, historik mangler',
       ]),
       heading('Design Princip'),
-      p('Alle nye ejendomme-tabs skal følge det eksisterende design fra virksomheds-tab (Virksomheder-tabben) med 3-sektions cards, badges, og hierarkisk layout. PropertyOwnerCard-komponenten genbruges.'),
+      p(
+        'Alle nye ejendomme-tabs skal følge det eksisterende design fra virksomheds-tab (Virksomheder-tabben) med 3-sektions cards, badges, og hierarkisk layout. PropertyOwnerCard-komponenten genbruges.'
+      ),
     ],
   },
 
@@ -136,7 +141,9 @@ const tickets = [
     labels: ['feature', 'ejendomme', 'person-page', 'p1'],
     description: [
       heading('Nuværende tilstand'),
-      p('Personsiden (app/dashboard/owners/[enhedsNummer]/PersonDetailPageClient.tsx) har allerede en "Ejendomme" tab (aktivTab === "properties", linje 1832-1932), men den viser KUN ejendomme ejet via virksomheder (CVR-opslag). Den henter ejendomme ved at samle CVR-numre fra personens ejede virksomheder og kalde /api/ejendomme-by-owner?cvr=<cvrs>.'),
+      p(
+        'Personsiden (app/dashboard/owners/[enhedsNummer]/PersonDetailPageClient.tsx) har allerede en "Ejendomme" tab (aktivTab === "properties", linje 1832-1932), men den viser KUN ejendomme ejet via virksomheder (CVR-opslag). Den henter ejendomme ved at samle CVR-numre fra personens ejede virksomheder og kalde /api/ejendomme-by-owner?cvr=<cvrs>.'
+      ),
       heading('Hvad mangler'),
       bulletList([
         'Direkte personejede ejendomme (uden virksomhed) — kræver EJF opslag med personens enhedsNummer i stedet for CVR',
@@ -151,7 +158,9 @@ const tickets = [
         'Begge sektioner bruger PropertyOwnerCard-komponenten (allerede importeret)',
       ]),
       heading('Design — skal matche Virksomheder-tab'),
-      p('Brug SAMME design som virksomheds-tab (Virksomheder-tabben) på både person- og virksomhedssiden:'),
+      p(
+        'Brug SAMME design som virksomheds-tab (Virksomheder-tabben) på både person- og virksomhedssiden:'
+      ),
       bulletList([
         'Grid layout: grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 (allerede brugt)',
         'PropertyOwnerCard med showOwner=true for ejendomme ejet via virksomheder',
@@ -178,7 +187,10 @@ GET /api/ejendomme-by-owner?enhedsNummer=4000012345&offset=0&limit=5
         'Eventuelt: app/lib/dfCertAuth.ts — sikr at person-EJF query bruger korrekt grant',
       ]),
       labelValue('Effort', 'M (3-5 dage)'),
-      labelValue('Risk', 'Medium — EJF person-query er ikke testet endnu; kræver DataAccessGrant for persondata'),
+      labelValue(
+        'Risk',
+        'Medium — EJF person-query er ikke testet endnu; kræver DataAccessGrant for persondata'
+      ),
     ],
   },
 
@@ -190,7 +202,9 @@ GET /api/ejendomme-by-owner?enhedsNummer=4000012345&offset=0&limit=5
     labels: ['feature', 'ejendomme', 'company-page', 'virksomhedsordning', 'p1'],
     description: [
       heading('Nuværende tilstand'),
-      p('Virksomhedssiden (VirksomhedDetaljeClient.tsx) har en fungerende "Ejendomme" tab med PropertyOwnerCard-grid, filter chips (Alle/Ejendomme/Ejendomshandler), og progressive loading. Den bruger /api/ejendomme-by-owner?cvr=<cvrs> til at finde ejendomme.'),
+      p(
+        'Virksomhedssiden (VirksomhedDetaljeClient.tsx) har en fungerende "Ejendomme" tab med PropertyOwnerCard-grid, filter chips (Alle/Ejendomme/Ejendomshandler), og progressive loading. Den bruger /api/ejendomme-by-owner?cvr=<cvrs> til at finde ejendomme.'
+      ),
       heading('Hvad mangler'),
       bulletList([
         'For enkeltmandsvirksomheder (virksomhedsordningen) ejes ejendomme ofte af PERSONEN bag virksomheden, ikke af CVR-nummeret',
@@ -224,13 +238,16 @@ GET /api/ejendomme-by-owner?enhedsNummer=4000012345&offset=0&limit=5
 
   // ── TICKET 3: Konsistent design mellem ejendomme-tabs ─────────────────
   {
-    summary: '[P2] Ensret ejendomme-tab design på person- og virksomhedssiden med virksomheds-tab design',
+    summary:
+      '[P2] Ensret ejendomme-tab design på person- og virksomhedssiden med virksomheds-tab design',
     issueType: 'Story',
     priority: 'Medium',
     labels: ['feature', 'design', 'ejendomme', 'consistency', 'p2'],
     description: [
       heading('Kontekst'),
-      p('Virksomheds-tabben ("Virksomheder") på både virksomheds- og personsiden bruger et rigt 3-sektions card-design med stamdata, organisation, og regnskab. Ejendomme-tabben bruger det simplere PropertyOwnerCard (kun adresse + type + BFE badge).'),
+      p(
+        'Virksomheds-tabben ("Virksomheder") på både virksomheds- og personsiden bruger et rigt 3-sektions card-design med stamdata, organisation, og regnskab. Ejendomme-tabben bruger det simplere PropertyOwnerCard (kun adresse + type + BFE badge).'
+      ),
       heading('Mål'),
       p('Opgradér PropertyOwnerCard til et rigere format der matcher virksomheds-tab designet:'),
       heading('Nuværende PropertyOwnerCard indhold'),
@@ -280,7 +297,10 @@ GET /api/ejendomme-by-owner?enhedsNummer=4000012345&offset=0&limit=5
         'app/dashboard/owners/[enhedsNummer]/PersonDetailPageClient.tsx — brug nyt card',
       ]),
       labelValue('Effort', 'M (3-5 dage)'),
-      labelValue('Risk', 'Medium — lazy-loading af vurderingsdata per card kan generere mange API-kald for ejere med mange ejendomme. Overvej batch-endpoint.'),
+      labelValue(
+        'Risk',
+        'Medium — lazy-loading af vurderingsdata per card kan generere mange API-kald for ejere med mange ejendomme. Overvej batch-endpoint.'
+      ),
     ],
   },
 
@@ -292,7 +312,9 @@ GET /api/ejendomme-by-owner?enhedsNummer=4000012345&offset=0&limit=5
     labels: ['feature', 'ejendomme', 'udbudshistorik', 'markedsdata', 'p2'],
     description: [
       heading('Nuværende tilstand'),
-      p('Salgshistorik (EJF_Ejerskifte + EJF_Handelsoplysninger) er LIVE og fungerer på både ejendoms- og virksomhedssider. Udbudshistorik (listing history) er kun en placeholder med teksten: "Udbudshistorik med prisændringer og handelstyper kræver markedsdata-integration (backlog)."'),
+      p(
+        'Salgshistorik (EJF_Ejerskifte + EJF_Handelsoplysninger) er LIVE og fungerer på både ejendoms- og virksomhedssider. Udbudshistorik (listing history) er kun en placeholder med teksten: "Udbudshistorik med prisændringer og handelstyper kræver markedsdata-integration (backlog)."'
+      ),
       heading('Hvad eksisterer allerede'),
       bulletList([
         'Mock interface defineret: UdbudsHistorikRaekke med status, prisaendring, pris, dato (app/lib/mock/ejendomme.ts linjer 146-153)',
@@ -398,7 +420,10 @@ if (props.length > MAX_PROPS_PER_COMPANY) {
         'app/api/ejerskab/chain/route.ts — tilføj andre ejendomme for ejere',
       ]),
       labelValue('Effort', 'M (3-5 dage)'),
-      labelValue('Risk', 'Lav — bygger på eksisterende implementering; primært data-timing og enrichment'),
+      labelValue(
+        'Risk',
+        'Lav — bygger på eksisterende implementering; primært data-timing og enrichment'
+      ),
     ],
   },
 
@@ -410,7 +435,9 @@ if (props.length > MAX_PROPS_PER_COMPANY) {
     labels: ['feature', 'ejendomme', 'skat', 'grundskyld', 'historik', 'p2'],
     description: [
       heading('Nuværende tilstand'),
-      p('SKAT-tabben på ejendomssiden (EjendomDetaljeClient.tsx, aktivTab === "skatter") viser KUN nuværende beskatning:'),
+      p(
+        'SKAT-tabben på ejendomssiden (EjendomDetaljeClient.tsx, aktivTab === "skatter") viser KUN nuværende beskatning:'
+      ),
       bulletList([
         'Grundskyld til kommunen (fra foreløbig vurdering eller estimeret)',
         'Ejendomsværdiskat (fra foreløbig vurdering)',
@@ -487,7 +514,10 @@ if (props.length > MAX_PROPS_PER_COMPANY) {
         'Kommunale grundskyldspromiller fastsættes årligt — historiske satser skal researches',
       ]),
       labelValue('Effort', 'L (1-2 uger) — inkluderer research af historiske skattesatser'),
-      labelValue('Risk', 'Medium — historiske grundskyldspromiller skal indsamles manuelt; estimerede beregninger kan afvige fra faktiske skatteberegninger'),
+      labelValue(
+        'Risk',
+        'Medium — historiske grundskyldspromiller skal indsamles manuelt; estimerede beregninger kan afvige fra faktiske skatteberegninger'
+      ),
     ],
   },
 ];

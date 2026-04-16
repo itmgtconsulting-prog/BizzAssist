@@ -85,7 +85,9 @@ const tickets = [
     priority: 'Highest',
     labels: ['go-live', 'security', 'compliance', 'audit'],
     description: [
-      p('Enterprise readiness audit gennemført 14. april 2026. Dækker OWASP, ISO 27001, GDPR, infrastruktur, test coverage og dependency security. Alle findings er prioriteret efter go-live impact.'),
+      p(
+        'Enterprise readiness audit gennemført 14. april 2026. Dækker OWASP, ISO 27001, GDPR, infrastruktur, test coverage og dependency security. Alle findings er prioriteret efter go-live impact.'
+      ),
       heading('Audit-områder'),
       bulletList([
         'P0 (BLOCKER) — Skal fixes FØR go-live: 7 tickets',
@@ -120,9 +122,13 @@ const tickets = [
     labels: ['go-live', 'security', 'vulnerability', 'p0', 'blocker'],
     description: [
       heading('Sårbarhed'),
-      p('Next.js 16.0.0-16.2.2 har en HIGH severity Denial of Service sårbarhed med Server Components (GHSA-q4gf-8mx6-v5v3). BizzAssist kører pt. en sårbar version.'),
+      p(
+        'Next.js 16.0.0-16.2.2 har en HIGH severity Denial of Service sårbarhed med Server Components (GHSA-q4gf-8mx6-v5v3). BizzAssist kører pt. en sårbar version.'
+      ),
       heading('Også fundet'),
-      p('follow-redirects: Moderate — lækker Custom Auth Headers til Cross-Domain Redirects (GHSA-r4q5-vmmm-2653).'),
+      p(
+        'follow-redirects: Moderate — lækker Custom Auth Headers til Cross-Domain Redirects (GHSA-r4q5-vmmm-2653).'
+      ),
       heading('Fix'),
       codeBlock('npm audit fix --force\n# Verificer: npm audit', 'bash'),
       heading('Verifikation'),
@@ -144,7 +150,9 @@ const tickets = [
     labels: ['go-live', 'security', 'auth', 'p0', 'blocker'],
     description: [
       heading('Finding'),
-      p('7 kerne-data API routes er tilgængelige UDEN authentication. Ejendomsdata, vurderinger, ejerskab og tinglysning kan hentes af enhver der kender URL-formatet.'),
+      p(
+        '7 kerne-data API routes er tilgængelige UDEN authentication. Ejendomsdata, vurderinger, ejerskab og tinglysning kan hentes af enhver der kender URL-formatet.'
+      ),
       heading('Uautoriserede routes'),
       bulletList([
         '/api/tinglysning — mTLS til ekstern service, men ingen bruger-auth check',
@@ -162,7 +170,9 @@ const tickets = [
         'Alternativt: Opret global middleware.ts med auth check for /api/* (undtagen /api/auth/*, /api/public/*, /api/health, /api/ping)',
       ]),
       heading('Bemærk'),
-      p('Disse routes bruger allerede rate limiting — men rate limiting erstatter IKKE authentication. En uautoriseret bruger kan stadig hente 60 requests/minut af ejendomsdata.'),
+      p(
+        'Disse routes bruger allerede rate limiting — men rate limiting erstatter IKKE authentication. En uautoriseret bruger kan stadig hente 60 requests/minut af ejendomsdata.'
+      ),
       labelValue('Effort', 'S (1-2 dage)'),
       labelValue('Risk', 'KRITISK — produktionsdata tilgængelig uden login'),
     ],
@@ -175,9 +185,13 @@ const tickets = [
     labels: ['go-live', 'gdpr', 'compliance', 'p0', 'blocker'],
     description: [
       heading('Finding'),
-      p('Når en bruger sletter sin konto via /api/user/delete-account, slettes recent_entities, saved_entities, notifications, recent_searches, activity_log korrekt. MEN ai_conversations og ai_messages slettes IKKE — de forbliver i databasen i op til 12 måneder (purge-old-data cron).'),
+      p(
+        'Når en bruger sletter sin konto via /api/user/delete-account, slettes recent_entities, saved_entities, notifications, recent_searches, activity_log korrekt. MEN ai_conversations og ai_messages slettes IKKE — de forbliver i databasen i op til 12 måneder (purge-old-data cron).'
+      ),
       heading('GDPR violation'),
-      p('Article 17(1) kræver at persondata slettes "without undue delay" ved anmodning. 12 måneders forsinkelse er en klar overtrædelse.'),
+      p(
+        'Article 17(1) kræver at persondata slettes "without undue delay" ved anmodning. 12 måneders forsinkelse er en klar overtrædelse.'
+      ),
       heading('Berørte tabeller'),
       bulletList([
         'ai_conversations — brugerens chat-historik med AI',
@@ -206,7 +220,9 @@ await supabase.from('document_embeddings').delete().eq('uploaded_by', userId);`,
     labels: ['go-live', 'compliance', 'audit-log', 'iso27001', 'p0', 'blocker'],
     description: [
       heading('Finding'),
-      p('CLAUDE.md kræver: "All writes log to tenant.audit_log". ISO 27001 A.12.4 kræver logging af alle sikkerhedsrelevante hændelser. 40+ write operations logger IKKE til audit_log.'),
+      p(
+        'CLAUDE.md kræver: "All writes log to tenant.audit_log". ISO 27001 A.12.4 kræver logging af alle sikkerhedsrelevante hændelser. 40+ write operations logger IKKE til audit_log.'
+      ),
       heading('Routes uden audit logging (udvalg)'),
       bulletList([
         '/api/tracked — POST/DELETE (follow/unfollow ejendomme, virksomheder, personer)',
@@ -238,7 +254,9 @@ await supabase.from('document_embeddings').delete().eq('uploaded_by', userId);`,
     labels: ['go-live', 'security', 'validation', 'zod', 'p0', 'blocker'],
     description: [
       heading('Finding'),
-      p('Kun 7 af 136 API routes bruger Zod schema validation. De resterende 129 routes parser JSON input med req.json() og manual destructuring — ingen type- eller range-validering.'),
+      p(
+        'Kun 7 af 136 API routes bruger Zod schema validation. De resterende 129 routes parser JSON input med req.json() og manual destructuring — ingen type- eller range-validering.'
+      ),
       heading('Routes med Zod (7)'),
       bulletList([
         '/api/tokens — ✓',
@@ -292,9 +310,13 @@ export async function POST(req: Request) {
     labels: ['go-live', 'security', 'secrets', 'p0', 'blocker'],
     description: [
       heading('Finding'),
-      p('Ingen pre-commit secret scanning tool er installeret. .husky/pre-commit kører lint-staged + npm test, men scanner IKKE for accidentally staged secrets, API keys, eller certifikater.'),
+      p(
+        'Ingen pre-commit secret scanning tool er installeret. .husky/pre-commit kører lint-staged + npm test, men scanner IKKE for accidentally staged secrets, API keys, eller certifikater.'
+      ),
       heading('Risiko'),
-      p('Alle secrets i .env.local (30+ keys inkl. Stripe live key, Supabase service role, Anthropic API key) kan ved en fejl committes til git. Når det sker, er secret rotation nødvendig for ALLE berørte services.'),
+      p(
+        'Alle secrets i .env.local (30+ keys inkl. Stripe live key, Supabase service role, Anthropic API key) kan ved en fejl committes til git. Når det sker, er secret rotation nødvendig for ALLE berørte services.'
+      ),
       heading('Fix'),
       codeBlock(
         `# Installér gitleaks
@@ -309,7 +331,9 @@ paths = [".env.example", "docs/"]`,
         'bash'
       ),
       heading('Alternativ'),
-      p('trufflehog eller detect-secrets er også acceptable. GitHub Advanced Security (GHAS) scanner automatisk men fanger kun EFTER push — pre-commit er bedre.'),
+      p(
+        'trufflehog eller detect-secrets er også acceptable. GitHub Advanced Security (GHAS) scanner automatisk men fanger kun EFTER push — pre-commit er bedre.'
+      ),
       labelValue('Effort', 'XS (< 1 dag)'),
       labelValue('Risk', 'Kritisk hvis et secret committes — kræver rotation af alle berørte keys'),
     ],
@@ -322,9 +346,13 @@ paths = [".env.example", "docs/"]`,
     labels: ['go-live', 'gdpr', 'privacy', 'dpa', 'p0', 'blocker'],
     description: [
       heading('Finding 1: Mapbox mangler i privacy policy'),
-      p('Mapbox bruges til ejendomskort (PropertyMap.tsx) og modtager ejendomskoordinater og brugerens viewport. Mapbox er IKKE opført som sub-processor i app/privacy/PrivacyPageClient.tsx trods at DATA_CLASSIFICATION.md dokumenterer det som dataleverandør.'),
+      p(
+        'Mapbox bruges til ejendomskort (PropertyMap.tsx) og modtager ejendomskoordinater og brugerens viewport. Mapbox er IKKE opført som sub-processor i app/privacy/PrivacyPageClient.tsx trods at DATA_CLASSIFICATION.md dokumenterer det som dataleverandør.'
+      ),
       heading('Finding 2: Anthropic DPA ikke verificeret'),
-      p('AI chat (/api/ai/chat) sender bruger-beskeder, virksomhedsnavne, person-navne, ejendomsadresser og tool-resultater til Claude API. ISMS.md nævner "DPA required before go-live" men ingen verificering er fundet i kode eller docs.'),
+      p(
+        'AI chat (/api/ai/chat) sender bruger-beskeder, virksomhedsnavne, person-navne, ejendomsadresser og tool-resultater til Claude API. ISMS.md nævner "DPA required before go-live" men ingen verificering er fundet i kode eller docs.'
+      ),
       heading('Fix'),
       bulletList([
         'Tilføj Mapbox Inc. (USA) til processor-listen i app/privacy/PrivacyPageClient.tsx',
@@ -334,7 +362,9 @@ paths = [".env.example", "docs/"]`,
         'Opdater privacy policy "Sidst opdateret" dato',
       ]),
       heading('GDPR reference'),
-      p('Article 28(3): "Processing by a processor shall be governed by a contract... that sets out the subject-matter and duration of the processing." Manglende DPA = GDPR violation.'),
+      p(
+        'Article 28(3): "Processing by a processor shall be governed by a contract... that sets out the subject-matter and duration of the processing." Manglende DPA = GDPR violation.'
+      ),
       labelValue('Effort', 'XS (< 1 dag for kode-ændringer; DPA er legal proces)'),
       labelValue('Risk', 'GDPR bøde-risiko — manglende processor i privacy policy + manglende DPA'),
     ],
@@ -351,7 +381,9 @@ paths = [".env.example", "docs/"]`,
     labels: ['go-live', 'security', 'admin', 'auth', 'p1'],
     description: [
       heading('Finding'),
-      p('Admin-sider (/dashboard/admin/*) bruger force-dynamic rendering men validerer IKKE admin-rolle server-side. Admin-check sker kun client-side via API kald efter render. En bruger kan se page source/layout før auth-check.'),
+      p(
+        'Admin-sider (/dashboard/admin/*) bruger force-dynamic rendering men validerer IKKE admin-rolle server-side. Admin-check sker kun client-side via API kald efter render. En bruger kan se page source/layout før auth-check.'
+      ),
       heading('Berørte sider'),
       bulletList([
         '/dashboard/admin/users',
@@ -382,7 +414,9 @@ paths = [".env.example", "docs/"]`,
     labels: ['go-live', 'compliance', 'pii', 'logging', 'p1'],
     description: [
       heading('Finding'),
-      p('app/api/cron/service-scan/route.ts linje 606 logger admin email-adresse: console.log("[service-scan] Alert-email sendt til", TO_ADDRESS). Dette overtræder ISO 27001 A.12.4 og CLAUDE.md reglen "No PII in logs".'),
+      p(
+        'app/api/cron/service-scan/route.ts linje 606 logger admin email-adresse: console.log("[service-scan] Alert-email sendt til", TO_ADDRESS). Dette overtræder ISO 27001 A.12.4 og CLAUDE.md reglen "No PII in logs".'
+      ),
       heading('Fix'),
       codeBlock(
         `// Erstat:
@@ -403,9 +437,13 @@ console.log('[service-scan] Alert-email sendt');`,
     labels: ['go-live', 'ops', 'secrets', 'documentation', 'p1'],
     description: [
       heading('Finding 1'),
-      p('Ingen .env.local.example template eksisterer. Nye udviklere har ingen reference for hvilke env vars der kræves. 30+ secrets skal konfigureres korrekt.'),
+      p(
+        'Ingen .env.local.example template eksisterer. Nye udviklere har ingen reference for hvilke env vars der kræves. 30+ secrets skal konfigureres korrekt.'
+      ),
       heading('Finding 2'),
-      p('Ingen dokumenteret secret rotation procedure. ISMS.md nævner rotation men ingen specifik tidsplan eller procedure.'),
+      p(
+        'Ingen dokumenteret secret rotation procedure. ISMS.md nævner rotation men ingen specifik tidsplan eller procedure.'
+      ),
       heading('Fix'),
       bulletList([
         'Opret .env.local.example med alle variable og dummy/placeholder værdier',
@@ -428,7 +466,9 @@ console.log('[service-scan] Alert-email sendt');`,
     labels: ['go-live', 'ops', 'disaster-recovery', 'runbook', 'p1'],
     description: [
       heading('Finding'),
-      p('ISMS.md dokumenterer RTO=4 timer og RPO=24 timer. Supabase daglige backups + 7-dages PITR er konfigureret. Men der er ingen dokumenteret restore-procedure og ingen testet DR drill.'),
+      p(
+        'ISMS.md dokumenterer RTO=4 timer og RPO=24 timer. Supabase daglige backups + 7-dages PITR er konfigureret. Men der er ingen dokumenteret restore-procedure og ingen testet DR drill.'
+      ),
       heading('Hvad mangler'),
       bulletList([
         'Runbook: Step-by-step database restore fra Supabase backup',
@@ -439,7 +479,9 @@ console.log('[service-scan] Alert-email sendt');`,
         'Alarm: Monitor backup-jobs status (Supabase webhook eller health check)',
       ]),
       heading('Verifikation'),
-      p('Kør en fuld restore-drill inden go-live. Mål faktisk RTO og sammenlign med 4-timers target.'),
+      p(
+        'Kør en fuld restore-drill inden go-live. Mål faktisk RTO og sammenlign med 4-timers target.'
+      ),
       labelValue('Effort', 'M (3-5 dage inkl. drill)'),
       labelValue('Risk', 'Høj hvis data-tab opstår uden testet restore-procedure'),
     ],
@@ -452,9 +494,13 @@ console.log('[service-scan] Alert-email sendt');`,
     labels: ['go-live', 'security', 'ci', 'p1'],
     description: [
       heading('Finding'),
-      p('npm audit kører som separat ugentlig workflow (security.yml) men er IKKE en gate i hoved-CI pipeline (ci.yml). En PR med en ny kritisk sårbarhed kan merges uden at npm audit blokerer.'),
+      p(
+        'npm audit kører som separat ugentlig workflow (security.yml) men er IKKE en gate i hoved-CI pipeline (ci.yml). En PR med en ny kritisk sårbarhed kan merges uden at npm audit blokerer.'
+      ),
       heading('Også fundet'),
-      p('OWASP ZAP DAST scanner kører ugentligt (dast.yml) men resultater er ikke integreret som quality gate. Findings rapporteres men blokerer ikke deploy.'),
+      p(
+        'OWASP ZAP DAST scanner kører ugentligt (dast.yml) men resultater er ikke integreret som quality gate. Findings rapporteres men blokerer ikke deploy.'
+      ),
       heading('Fix'),
       bulletList([
         'Tilføj "npm audit --audit-level=high" som step i ci.yml (efter install, før build)',
@@ -478,7 +524,9 @@ console.log('[service-scan] Alert-email sendt');`,
     labels: ['go-live', 'security', 'sentry', 'pii', 'p2'],
     description: [
       heading('Finding'),
-      p('Sentry beforeSend hook (sentry.client.config.ts) stripper: search, query, q, cvr, bfe, adresse, id. Men andre PII-felter der bruges i URL query params mangler.'),
+      p(
+        'Sentry beforeSend hook (sentry.client.config.ts) stripper: search, query, q, cvr, bfe, adresse, id. Men andre PII-felter der bruges i URL query params mangler.'
+      ),
       heading('Manglende params'),
       bulletList([
         'email — bruges i /api/admin/users?email=...',
@@ -501,7 +549,9 @@ console.log('[service-scan] Alert-email sendt');`,
     labels: ['go-live', 'gdpr', 'embeddings', 'purge', 'p2'],
     description: [
       heading('Finding'),
-      p('Purge-old-data cron (/api/cron/purge-old-data) sletter 7 datatyper men document_embeddings (pgvector) er IKKE inkluderet. Ved tenant closure droppes hele schema (inkl. embeddings), men for aktive tenants slettes uploadede knowledge-embeddings aldrig automatisk.'),
+      p(
+        'Purge-old-data cron (/api/cron/purge-old-data) sletter 7 datatyper men document_embeddings (pgvector) er IKKE inkluderet. Ved tenant closure droppes hele schema (inkl. embeddings), men for aktive tenants slettes uploadede knowledge-embeddings aldrig automatisk.'
+      ),
       heading('Fix'),
       bulletList([
         'Tilføj document_embeddings cleanup til purge-old-data cron',
@@ -509,7 +559,10 @@ console.log('[service-scan] Alert-email sendt');`,
         'Verificer at DELETE /api/knowledge også sletter tilhørende embedding',
       ]),
       labelValue('Effort', 'XS (< 1 dag)'),
-      labelValue('Risk', 'Lav — embeddings er derivative data, men GDPR kræver konsistent sletning'),
+      labelValue(
+        'Risk',
+        'Lav — embeddings er derivative data, men GDPR kræver konsistent sletning'
+      ),
     ],
   },
 
@@ -520,7 +573,9 @@ console.log('[service-scan] Alert-email sendt');`,
     labels: ['go-live', 'ops', 'monitoring', 'apm', 'p2'],
     description: [
       heading('Finding'),
-      p('Sentry giver error tracking og basic performance monitoring (Core Web Vitals, transaction sampling). Men der er ingen dedikeret APM med: distributed tracing på tværs af API routes, database query performance monitoring, external API latency dashboards, eller resource utilization alerts.'),
+      p(
+        'Sentry giver error tracking og basic performance monitoring (Core Web Vitals, transaction sampling). Men der er ingen dedikeret APM med: distributed tracing på tværs af API routes, database query performance monitoring, external API latency dashboards, eller resource utilization alerts.'
+      ),
       heading('Nuværende monitoring'),
       bulletList([
         '✅ Sentry: Errors, replays, performance transactions (10% sampling)',
@@ -539,7 +594,10 @@ console.log('[service-scan] Alert-email sendt');`,
         'Nice-to-have: Database query performance, serverless function metrics',
       ]),
       labelValue('Effort', 'M (3-5 dage evaluation + setup)'),
-      labelValue('Risk', 'Lav umiddelbart — men vigtig for at opdage performance-problemer proaktivt'),
+      labelValue(
+        'Risk',
+        'Lav umiddelbart — men vigtig for at opdage performance-problemer proaktivt'
+      ),
     ],
   },
 
@@ -550,7 +608,9 @@ console.log('[service-scan] Alert-email sendt');`,
     labels: ['go-live', 'security', 'secrets', 'rotation', 'p2'],
     description: [
       heading('Finding'),
-      p('30+ secrets i .env.local har ingen rotation schedule eller reminder system. ISMS.md nævner rotation som princip men der er ingen teknisk enforcement.'),
+      p(
+        '30+ secrets i .env.local har ingen rotation schedule eller reminder system. ISMS.md nævner rotation som princip men der er ingen teknisk enforcement.'
+      ),
       heading('Secrets der kræver rotation'),
       bulletList([
         'API keys: Anthropic, Brave Search, Mapbox, Mediastack, Resend (anbefalet: 90 dage)',

@@ -85,7 +85,9 @@ const tickets = [
     priority: 'High',
     labels: ['audit', 'missing-features', 'platform'],
     description: [
-      p('Comprehensive audit of all missing functionality in BizzAssist identified during April 2026 codebase review. Covers email, team management, notifications, exports, GDPR, security, UI skeletons, and disabled features.'),
+      p(
+        'Comprehensive audit of all missing functionality in BizzAssist identified during April 2026 codebase review. Covers email, team management, notifications, exports, GDPR, security, UI skeletons, and disabled features.'
+      ),
       heading('Categories'),
       bulletList([
         'Email notifications — welcome, password reset, digests missing',
@@ -110,7 +112,9 @@ const tickets = [
     labels: ['feature', 'team-management', 'tenant', 'p1'],
     description: [
       heading('Nuværende tilstand'),
-      p('Brugeradministration eksisterer KUN via admin-endpoints (/api/admin/users). Der er ingen mulighed for tenant-ejere/admins at invitere, administrere roller, eller fjerne teammedlemmer selv.'),
+      p(
+        'Brugeradministration eksisterer KUN via admin-endpoints (/api/admin/users). Der er ingen mulighed for tenant-ejere/admins at invitere, administrere roller, eller fjerne teammedlemmer selv.'
+      ),
       heading('Database — allerede klar'),
       bulletList([
         'tenant_memberships tabel eksisterer med user_id, tenant_id, role',
@@ -131,7 +135,9 @@ const tickets = [
         'Email: Invitation email via Resend med accept-link',
       ]),
       heading('Design'),
-      p('Brug eksisterende dark theme cards med tabel-layout. Roller vises som badges (owner=amber, admin=blue, member=slate). Handlinger i dropdown-menu per medlem.'),
+      p(
+        'Brug eksisterende dark theme cards med tabel-layout. Roller vises som badges (owner=amber, admin=blue, member=slate). Handlinger i dropdown-menu per medlem.'
+      ),
       labelValue('Effort', 'L (1-2 uger)'),
       labelValue('Risk', 'Medium — kræver invitation token system + email flow'),
     ],
@@ -181,7 +187,9 @@ const tickets = [
     labels: ['feature', 'notifications', 'real-time', 'p2'],
     description: [
       heading('Nuværende tilstand'),
-      p('Notifications API (/api/notifications) kan KUN læse og slette notifikationer. Selve notifikations-tabellen eksisterer i tenant schema (migration 004). NotifikationsDropdown.tsx viser notifikationer i UI med Supabase + localStorage fallback.'),
+      p(
+        'Notifications API (/api/notifications) kan KUN læse og slette notifikationer. Selve notifikations-tabellen eksisterer i tenant schema (migration 004). NotifikationsDropdown.tsx viser notifikationer i UI med Supabase + localStorage fallback.'
+      ),
       heading('Hvad virker'),
       bulletList([
         '✓ GET /api/notifications — hent notifikationer (pagineret, unread filter)',
@@ -212,7 +220,10 @@ const tickets = [
         'UI: Settings → Notifikationer side med toggles per type og kanal',
       ]),
       labelValue('Effort', 'L (1-2 uger)'),
-      labelValue('Risk', 'Medium — Supabase Realtime kræver korrekt RLS setup for tenant isolation'),
+      labelValue(
+        'Risk',
+        'Medium — Supabase Realtime kræver korrekt RLS setup for tenant isolation'
+      ),
     ],
   },
 
@@ -224,7 +235,9 @@ const tickets = [
     labels: ['feature', 'export', 'pdf', 'p2'],
     description: [
       heading('Nuværende tilstand'),
-      p('Excel export er fuldt implementeret (/api/export) med ejendoms- og virksomhedsdata. PDF export eksisterer IKKE.'),
+      p(
+        'Excel export er fuldt implementeret (/api/export) med ejendoms- og virksomhedsdata. PDF export eksisterer IKKE.'
+      ),
       heading('Hvad der allerede eksisterer'),
       bulletList([
         '✓ Excel export med overview, buildings, units, valuations sheets',
@@ -247,7 +260,9 @@ const tickets = [
         'Anbefaling: @react-pdf/renderer — passer godt med eksisterende React stack',
       ]),
       heading('Design'),
-      p('PDF skal have BizzAssist branding (logo, dark blue header), dato, bruger/tenant info, og struktureret data matching det eksisterende UI layout.'),
+      p(
+        'PDF skal have BizzAssist branding (logo, dark blue header), dato, bruger/tenant info, og struktureret data matching det eksisterende UI layout.'
+      ),
       labelValue('Effort', 'M (3-5 dage)'),
       labelValue('Risk', 'Lav — ingen eksisterende funktionalitet påvirkes'),
     ],
@@ -261,7 +276,9 @@ const tickets = [
     labels: ['feature', 'gdpr', 'compliance', 'cookies', 'p1'],
     description: [
       heading('Nuværende tilstand'),
-      p('CookieBanner.tsx eksisterer som UI-komponent, men der er INGEN backend-tracking af samtykke. Samtykke gemmes sandsynligvis kun i en cookie/localStorage — ikke i databasen.'),
+      p(
+        'CookieBanner.tsx eksisterer som UI-komponent, men der er INGEN backend-tracking af samtykke. Samtykke gemmes sandsynligvis kun i en cookie/localStorage — ikke i databasen.'
+      ),
       heading('GDPR krav (ikke-forhandlingsbart)'),
       bulletList([
         'Samtykke skal logges med tidsstempel, IP (hashed), og valgte kategorier',
@@ -292,13 +309,16 @@ const tickets = [
 
   // ── 6: Tingbogsattest PDF download ────────────────────────────────────
   {
-    summary: '[P2] Tingbogsattest PDF download — aktiver når REST API er tilgængeligt (1. maj 2026)',
+    summary:
+      '[P2] Tingbogsattest PDF download — aktiver når REST API er tilgængeligt (1. maj 2026)',
     issueType: 'Story',
     priority: 'Medium',
     labels: ['feature', 'tinglysning', 'pdf', 'deadline', 'p2'],
     description: [
       heading('Nuværende tilstand'),
-      p('Download-knappen for tingbogsattest er disabled i UI med tooltip: "PDF-download kræver REST API (tilgængeligt 1. maj 2026)". Se EjendomDetaljeClient.tsx linje 5687-5726.'),
+      p(
+        'Download-knappen for tingbogsattest er disabled i UI med tooltip: "PDF-download kræver REST API (tilgængeligt 1. maj 2026)". Se EjendomDetaljeClient.tsx linje 5687-5726.'
+      ),
       heading('TODOs i koden'),
       bulletList([
         'BIZZ-195: onDownload skjult indtil korrekte eTL PDF-URLer er implementeret (linje 5687)',
@@ -313,7 +333,9 @@ const tickets = [
         'Test med mTLS certifikat mod produktions-endpoint',
       ]),
       heading('Relateret'),
-      p('Tinglysning dokument-endpoints (/hentakt, /dokument, /akt, /bilag) returnerer pt. 404 fra servicen. Disse skal også testes når REST API frigives.'),
+      p(
+        'Tinglysning dokument-endpoints (/hentakt, /dokument, /akt, /bilag) returnerer pt. 404 fra servicen. Disse skal også testes når REST API frigives.'
+      ),
       labelValue('Effort', 'S (1-2 dage) — når API er tilgængeligt'),
       labelValue('Deadline', '1. maj 2026 — REST API forventet release'),
       labelValue('Risk', 'Lav — koden er forberedt; kun endpoint-integration mangler'),
@@ -328,7 +350,9 @@ const tickets = [
     labels: ['feature', 'company-page', 'financials', 'p2'],
     description: [
       heading('Nuværende tilstand'),
-      p('Gruppeøkonomi-sektionen er kommenteret ud i VirksomhedDetaljeClient.tsx (linje 1803-1804) med kommentaren: "Gruppeøkonomi — hidden, aktiveres senere". Financials data (gruppeFinans Map) hentes allerede for relaterede virksomheder.'),
+      p(
+        'Gruppeøkonomi-sektionen er kommenteret ud i VirksomhedDetaljeClient.tsx (linje 1803-1804) med kommentaren: "Gruppeøkonomi — hidden, aktiveres senere". Financials data (gruppeFinans Map) hentes allerede for relaterede virksomheder.'
+      ),
       heading('Hvad eksisterer'),
       bulletList([
         'gruppeFinans Map<CVR, {brutto, balance, egenkapital}> — hentes allerede via /api/regnskab/xbrl',
@@ -364,7 +388,9 @@ const tickets = [
     labels: ['feature', 'ejendomme', 'markedsdata', 'p3'],
     description: [
       heading('Nuværende tilstand'),
-      p('Placeholder i Økonomi-tab på ejendomssiden med tekst: "Kvadratmeterpriser og handler for lignende ejendomme kræver markedsdata-integration (backlog)." (EjendomDetaljeClient.tsx)'),
+      p(
+        'Placeholder i Økonomi-tab på ejendomssiden med tekst: "Kvadratmeterpriser og handler for lignende ejendomme kræver markedsdata-integration (backlog)." (EjendomDetaljeClient.tsx)'
+      ),
       heading('Hvad der kræves'),
       bulletList([
         'Find sammenlignelige ejendomme baseret på: ejendomstype, areal, beliggenhed, byggeår',
@@ -388,7 +414,10 @@ const tickets = [
         '4. UI: Tabel med adresse, areal, salgspris, m²-pris, dato + gennemsnits-kort',
       ]),
       labelValue('Effort', 'L (1-2 uger)'),
-      labelValue('Risk', 'Medium — mange API-kald for at finde sammenlignelige; kræver smart caching'),
+      labelValue(
+        'Risk',
+        'Medium — mange API-kald for at finde sammenlignelige; kræver smart caching'
+      ),
     ],
   },
 
@@ -400,7 +429,9 @@ const tickets = [
     labels: ['ui', 'loading', 'skeleton', 'performance', 'p3'],
     description: [
       heading('Manglende loading.tsx filer'),
-      p('Per CLAUDE.md krav: "Every dashboard route MUST have a loading.tsx skeleton screen." Følgende routes mangler:'),
+      p(
+        'Per CLAUDE.md krav: "Every dashboard route MUST have a loading.tsx skeleton screen." Følgende routes mangler:'
+      ),
       bulletList([
         'app/dashboard/settings/integrations/loading.tsx',
         'app/dashboard/settings/knowledge/loading.tsx',
@@ -409,7 +440,9 @@ const tickets = [
         'app/dashboard/admin/release-manager/loading.tsx',
       ]),
       heading('Implementering'),
-      p('Opret loading.tsx med skeleton-pulse layout matchende sidens content structure. Brug eksisterende patterns fra f.eks. app/dashboard/settings/security/loading.tsx som template.'),
+      p(
+        'Opret loading.tsx med skeleton-pulse layout matchende sidens content structure. Brug eksisterende patterns fra f.eks. app/dashboard/settings/security/loading.tsx som template.'
+      ),
       labelValue('Effort', 'XS (< 1 dag)'),
       labelValue('Risk', 'Ingen'),
     ],
@@ -423,7 +456,9 @@ const tickets = [
     labels: ['feature', 'integration', 'outlook', 'p3'],
     description: [
       heading('Nuværende tilstand'),
-      p('Database schema tillader allerede Outlook som provider (CHECK constraint: provider IN ("gmail", "outlook") i email_integrations tabel). Gmail integration er fuldt implementeret med OAuth, token refresh, og send. Outlook har 0% implementering.'),
+      p(
+        'Database schema tillader allerede Outlook som provider (CHECK constraint: provider IN ("gmail", "outlook") i email_integrations tabel). Gmail integration er fuldt implementeret med OAuth, token refresh, og send. Outlook har 0% implementering.'
+      ),
       heading('Hvad eksisterer'),
       bulletList([
         '✓ DB: email_integrations tabel med provider="outlook" support',
@@ -469,7 +504,9 @@ Content-Type: application/json
     labels: ['tech-debt', 'refactor', 'ai', 'p3'],
     description: [
       heading('Problem'),
-      p('AI tool definitions og executeTool-logik er duplikeret mellem to API routes (TODO i app/api/analysis/run/route.ts linje 28):'),
+      p(
+        'AI tool definitions og executeTool-logik er duplikeret mellem to API routes (TODO i app/api/analysis/run/route.ts linje 28):'
+      ),
       codeBlock(
         'TODO(tech-debt): Udtræk TOOLS + executeTool til app/lib/aiTools.ts og del med /api/ai/chat',
         'text'
@@ -501,7 +538,9 @@ Content-Type: application/json
     labels: ['feature', 'search', 'person', 'dashboard', 'p2'],
     description: [
       heading('Nuværende tilstand'),
-      p('Dashboard viser placeholder-tekst: "Personsøgning er under udvikling — her vil dine seneste personer blive vist." (EmptyOwners state i DashboardPageClient.tsx). Personsøgning via den universelle søgning (/dashboard/search og /api/search) virker, men dashboard-sektionen for seneste personer er ikke implementeret.'),
+      p(
+        'Dashboard viser placeholder-tekst: "Personsøgning er under udvikling — her vil dine seneste personer blive vist." (EmptyOwners state i DashboardPageClient.tsx). Personsøgning via den universelle søgning (/dashboard/search og /api/search) virker, men dashboard-sektionen for seneste personer er ikke implementeret.'
+      ),
       heading('Hvad virker'),
       bulletList([
         '✓ /api/search — unified search inkluderer personer fra CVR ElasticSearch',
@@ -535,7 +574,9 @@ Content-Type: application/json
     labels: ['feature', 'auth', 'google', 'oauth', 'p2'],
     description: [
       heading('Kontekst'),
-      p('LinkedIn OAuth login eksisterer. Google OAuth er specificeret i backlog (Phase 1.5) men status er uklart. Supabase Auth understøtter Google provider out-of-the-box.'),
+      p(
+        'LinkedIn OAuth login eksisterer. Google OAuth er specificeret i backlog (Phase 1.5) men status er uklart. Supabase Auth understøtter Google provider out-of-the-box.'
+      ),
       heading('Hvad der kræves'),
       bulletList([
         'Opret Google OAuth app i Google Cloud Console',
@@ -546,7 +587,9 @@ Content-Type: application/json
         'Auto-provision tenant ved første Google login',
       ]),
       heading('Vigtighed'),
-      p('Google login er den mest efterspurgte OAuth-metode for B2B SaaS. Reducerer friktion ved onboarding markant.'),
+      p(
+        'Google login er den mest efterspurgte OAuth-metode for B2B SaaS. Reducerer friktion ved onboarding markant.'
+      ),
       labelValue('Effort', 'S (1-2 dage)'),
       labelValue('Risk', 'Lav — Supabase har native Google OAuth support'),
     ],
@@ -560,7 +603,9 @@ Content-Type: application/json
     labels: ['bug', 'tinglysning', 'investigation', 'p2'],
     description: [
       heading('Problem'),
-      p('Tinglysning dokument-endpoints returnerer 404 fra den eksterne service. Noteret i koden (app/api/tinglysning/dokument/route.ts, 2026-04-09): "/hentakt, /dokument, /akt, /bilag return 404 from the service."'),
+      p(
+        'Tinglysning dokument-endpoints returnerer 404 fra den eksterne service. Noteret i koden (app/api/tinglysning/dokument/route.ts, 2026-04-09): "/hentakt, /dokument, /akt, /bilag return 404 from the service."'
+      ),
       heading('Berørte endpoints'),
       bulletList([
         '/api/tinglysning/dokument — hent specifikt tinglysningsdokument',

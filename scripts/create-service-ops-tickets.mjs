@@ -51,12 +51,20 @@ async function createIssue({ summary, description, issueType, priority, labels }
 }
 
 const p = (t) => ({ type: 'paragraph', content: [{ type: 'text', text: t }] });
-const h = (t, l = 3) => ({ type: 'heading', attrs: { level: l }, content: [{ type: 'text', text: t }] });
+const h = (t, l = 3) => ({
+  type: 'heading',
+  attrs: { level: l },
+  content: [{ type: 'text', text: t }],
+});
 const bl = (items) => ({
   type: 'bulletList',
   content: items.map((i) => ({ type: 'listItem', content: [p(i)] })),
 });
-const cb = (t, lang = '') => ({ type: 'codeBlock', attrs: { language: lang }, content: [{ type: 'text', text: t }] });
+const cb = (t, lang = '') => ({
+  type: 'codeBlock',
+  attrs: { language: lang },
+  content: [{ type: 'text', text: t }],
+});
 const lv = (label, value) => ({
   type: 'paragraph',
   content: [
@@ -73,7 +81,9 @@ const tickets = [
     priority: 'Highest',
     labels: ['ops', 'monitoring', 'service-manager', 'infrastructure'],
     description: [
-      p('Operations review af BizzAssist infrastruktur, monitoring og ressource-styring. Integreret med eksisterende Service Manager Agent og Release Agent.'),
+      p(
+        'Operations review af BizzAssist infrastruktur, monitoring og ressource-styring. Integreret med eksisterende Service Manager Agent og Release Agent.'
+      ),
       h('Nuværende styrker'),
       bl([
         '✅ Service Manager: Hourly scan af Vercel builds + runtime errors',
@@ -89,7 +99,7 @@ const tickets = [
         '❌ Supabase database: størrelse, connections, performance — ikke monitoreret',
         '❌ Upstash Redis: memory, eviction, latency — ikke monitoreret',
         '❌ mTLS certifikater: udløbsdato ikke tracket — Tinglysning + Datafordeler',
-        '❌ Eksterne API\'er: Datafordeler, CVR ES, Tinglysning tilgængelighed — ikke checket',
+        "❌ Eksterne API'er: Datafordeler, CVR ES, Tinglysning tilgængelighed — ikke checket",
         '❌ Cron job failures: ingen alert hvis et job fejler eller ikke kører',
         '❌ Claude API token budget: forbrug trackes men ingen budget-alerts',
         '❌ Automatisk rollback: ingen revert ved fejlslået deploy',
@@ -104,13 +114,16 @@ const tickets = [
   // ═══════════════════════════════════════════════════════════════════════
 
   {
-    summary: '[P0][OPS] Udvid /api/health med deep infrastructure checks (DB, Redis, eksterne API\'er)',
+    summary:
+      "[P0][OPS] Udvid /api/health med deep infrastructure checks (DB, Redis, eksterne API'er)",
     issueType: 'Story',
     priority: 'Highest',
     labels: ['ops', 'monitoring', 'health-check', 'service-manager', 'p0'],
     description: [
       h('Nuværende tilstand'),
-      p('/api/health eksisterer med basic checks (API alive + Supabase getSession probe). Det er utilstrækkeligt til at opdage reelle infrastruktur-problemer.'),
+      p(
+        '/api/health eksisterer med basic checks (API alive + Supabase getSession probe). Det er utilstrækkeligt til at opdage reelle infrastruktur-problemer.'
+      ),
       h('Ønskede checks'),
       cb(
         `GET /api/health?deep=true
@@ -194,7 +207,9 @@ const tickets = [
     labels: ['ops', 'certificates', 'tinglysning', 'datafordeler', 'service-manager', 'p0'],
     description: [
       h('Problem'),
-      p('BizzAssist bruger mTLS certifikater til Tinglysning og Datafordeler. Certifikat-udløb monitoreres IKKE. Når et certifikat udløber, stopper alle relaterede API-kald øjeblikkeligt — tinglysning, ejerskab, vurdering, og salgshistorik bliver utilgængelige.'),
+      p(
+        'BizzAssist bruger mTLS certifikater til Tinglysning og Datafordeler. Certifikat-udløb monitoreres IKKE. Når et certifikat udløber, stopper alle relaterede API-kald øjeblikkeligt — tinglysning, ejerskab, vurdering, og salgshistorik bliver utilgængelige.'
+      ),
       h('Certifikater i brug'),
       bl([
         'Tinglysning mTLS: TINGLYSNING_CERT_B64 / TINGLYSNING_CERT_PATH (password: TINGLYSNING_CERT_PASSWORD)',
@@ -235,7 +250,10 @@ function getCertExpiry(pfxBase64: string, password: string): Date {
         'app/lib/service-manager-alerts.ts — tilføj cert expiry til critical criteria',
       ]),
       lv('Effort', 'S (1-2 dage)'),
-      lv('Risk', 'KRITISK hvis ikke implementeret — cert udløb = total service outage for tinglysning/ejerskab'),
+      lv(
+        'Risk',
+        'KRITISK hvis ikke implementeret — cert udløb = total service outage for tinglysning/ejerskab'
+      ),
     ],
   },
 
@@ -250,7 +268,9 @@ function getCertExpiry(pfxBase64: string, password: string): Date {
     labels: ['ops', 'monitoring', 'cron', 'heartbeat', 'service-manager', 'p0'],
     description: [
       h('Problem'),
-      p('11 cron jobs kører i produktion. Hvis et job fejler (500 error) eller ikke triggerer (Vercel cron issue), er der INGEN alert. Fejlede cron jobs logges til console men monitoreres ikke. Vigtige processer (BBR events, property polling, purge-old-data) kan stå stille i dage uden at nogen opdager det.'),
+      p(
+        '11 cron jobs kører i produktion. Hvis et job fejler (500 error) eller ikke triggerer (Vercel cron issue), er der INGEN alert. Fejlede cron jobs logges til console men monitoreres ikke. Vigtige processer (BBR events, property polling, purge-old-data) kan stå stille i dage uden at nogen opdager det.'
+      ),
       h('Nuværende cron jobs'),
       bl([
         'service-scan (hourly) — kritisk for hele monitoring-pipeline',
@@ -304,7 +324,10 @@ ON CONFLICT (job_name) DO UPDATE SET
         'Integrer med /api/health?deep=true (vis cron status)',
       ]),
       lv('Effort', 'M (3-5 dage)'),
-      lv('Risk', 'Høj uden — stille cron-fejl kan betyde GDPR non-compliance (purge), manglende BBR events, eller dødt monitoring'),
+      lv(
+        'Risk',
+        'Høj uden — stille cron-fejl kan betyde GDPR non-compliance (purge), manglende BBR events, eller dødt monitoring'
+      ),
     ],
   },
 
@@ -319,8 +342,10 @@ ON CONFLICT (job_name) DO UPDATE SET
     labels: ['ops', 'monitoring', 'external-api', 'service-manager', 'p1'],
     description: [
       h('Problem'),
-      p('BizzAssist afhænger af 8+ eksterne API\'er. Ingen af dem monitoreres for tilgængelighed eller performance. Hvis Datafordeler eller CVR ES er nede, får brugere fejl uden at operations-teamet advares.'),
-      h('Eksterne API\'er der skal monitoreres'),
+      p(
+        "BizzAssist afhænger af 8+ eksterne API'er. Ingen af dem monitoreres for tilgængelighed eller performance. Hvis Datafordeler eller CVR ES er nede, får brugere fejl uden at operations-teamet advares."
+      ),
+      h("Eksterne API'er der skal monitoreres"),
       bl([
         'Datafordeler GraphQL (graphql.datafordeler.dk) — BBR, MAT, DAR, VUR, EJF',
         'Datafordeler Auth (auth.datafordeler.dk) — OAuth token endpoint',
@@ -372,9 +397,14 @@ async function probeDatafordeler(): Promise<ApiProbeResult> {
         'typescript'
       ),
       h('Service Manager dashboard'),
-      p('Vis external API status som dedikeret sektion i /dashboard/admin/service-manager med trafiklysindikatorer (grøn/gul/rød) per API.'),
+      p(
+        'Vis external API status som dedikeret sektion i /dashboard/admin/service-manager med trafiklysindikatorer (grøn/gul/rød) per API.'
+      ),
       lv('Effort', 'M (3-5 dage)'),
-      lv('Risk', 'Medium — probes kan give false positives ved transient errors; brug 2/3 failures som threshold'),
+      lv(
+        'Risk',
+        'Medium — probes kan give false positives ved transient errors; brug 2/3 failures som threshold'
+      ),
     ],
   },
 
@@ -389,7 +419,9 @@ async function probeDatafordeler(): Promise<ApiProbeResult> {
     labels: ['ops', 'monitoring', 'ai', 'budget', 'claude', 'p1'],
     description: [
       h('Problem'),
-      p('Claude API tokens trackes i ai_token_usage tabellen per tenant, men der er INGEN budget-alerts. En runaway-prompt, fejlagtig loop, eller høj brugeraktivitet kan brænde hele API-budgettet uden advarsel.'),
+      p(
+        'Claude API tokens trackes i ai_token_usage tabellen per tenant, men der er INGEN budget-alerts. En runaway-prompt, fejlagtig loop, eller høj brugeraktivitet kan brænde hele API-budgettet uden advarsel.'
+      ),
       h('Nuværende tilstand'),
       bl([
         '✅ ai_token_usage tabel logger: tenant_id, user_id, tokens_input, tokens_output, model, created_at',
@@ -435,13 +467,16 @@ async function probeDatafordeler(): Promise<ApiProbeResult> {
   // ═══════════════════════════════════════════════════════════════════════
 
   {
-    summary: '[P1][OPS] Supabase database resource monitoring (størrelse, connections, performance)',
+    summary:
+      '[P1][OPS] Supabase database resource monitoring (størrelse, connections, performance)',
     issueType: 'Story',
     priority: 'High',
     labels: ['ops', 'monitoring', 'database', 'supabase', 'service-manager', 'p1'],
     description: [
       h('Problem'),
-      p('Supabase database monitoreres KUN med et simpelt count(*) ping i daily-status. Kritiske metrics som storage-forbrug, connection pool, slow queries, og tabel-vækst trackes ikke.'),
+      p(
+        'Supabase database monitoreres KUN med et simpelt count(*) ping i daily-status. Kritiske metrics som storage-forbrug, connection pool, slow queries, og tabel-vækst trackes ikke.'
+      ),
       h('Hvad der skal monitoreres'),
       bl([
         'Database størrelse (MB) vs. plan limit — alert ved 80%',
@@ -507,7 +542,9 @@ ORDER BY n_dead_tup DESC;`,
     labels: ['ops', 'monitoring', 'redis', 'upstash', 'p1'],
     description: [
       h('Problem'),
-      p('Redis bruges til rate limiting (global + per-endpoint) og search caching. Hvis Redis løber tør for memory, evictes rate limit keys → rate limiting stopper → API kan overbelastes.'),
+      p(
+        'Redis bruges til rate limiting (global + per-endpoint) og search caching. Hvis Redis løber tør for memory, evictes rate limit keys → rate limiting stopper → API kan overbelastes.'
+      ),
       h('Hvad der skal monitoreres'),
       bl([
         'Memory brugt vs. plan limit (Upstash free: 256MB)',
@@ -539,7 +576,9 @@ ORDER BY n_dead_tup DESC;`,
     labels: ['ops', 'release-agent', 'rollback', 'service-manager', 'p1'],
     description: [
       h('Problem'),
-      p('Release Agent kan create-hotfix, deploy-to-test, og promote-to-prod. Men der er INGEN rollback-funktion. Hvis en deploy introducerer fejl, kræves manuelt revert via GitHub/Vercel.'),
+      p(
+        'Release Agent kan create-hotfix, deploy-to-test, og promote-to-prod. Men der er INGEN rollback-funktion. Hvis en deploy introducerer fejl, kræves manuelt revert via GitHub/Vercel.'
+      ),
       h('Nuværende flow'),
       cb(
         `Hotfix approved → Release Agent creates branch + PR → PR merged → Vercel deploys
@@ -578,7 +617,10 @@ If new errors > previous baseline → AUTOMATIC ROLLBACK:
         'app/dashboard/admin/release-manager/ReleaseManagerClient.tsx — rollback knap',
       ]),
       lv('Effort', 'L (1-2 uger)'),
-      lv('Risk', 'Medium — automatisk rollback kræver robust baseline comparison for at undgå false positives'),
+      lv(
+        'Risk',
+        'Medium — automatisk rollback kræver robust baseline comparison for at undgå false positives'
+      ),
     ],
   },
 
@@ -593,7 +635,9 @@ If new errors > previous baseline → AUTOMATIC ROLLBACK:
     labels: ['ops', 'monitoring', 'checkly', 'synthetic', 'p1'],
     description: [
       h('Problem'),
-      p('Checkly er konfigureret (checkly.config.ts) med EU regions og check-discovery (__checks__/**/*.check.ts), men der er INGEN faktiske check-filer implementeret. Synthetic monitoring kører ikke.'),
+      p(
+        'Checkly er konfigureret (checkly.config.ts) med EU regions og check-discovery (__checks__/**/*.check.ts), men der er INGEN faktiske check-filer implementeret. Synthetic monitoring kører ikke.'
+      ),
       h('Checks der skal oprettes'),
       bl([
         '__checks__/health.check.ts — /api/health endpoint (hver 5. min)',
@@ -628,7 +672,9 @@ If new errors > previous baseline → AUTOMATIC ROLLBACK:
     labels: ['ops', 'logging', 'observability', 'p2'],
     description: [
       h('Problem'),
-      p('Server-side logs eksisterer kun som ephemere Vercel runtime logs. Når en serverless function afslutter, forsvinder loggen. Der er ingen mulighed for at søge i historiske logs, correlere requests, eller analysere patterns.'),
+      p(
+        'Server-side logs eksisterer kun som ephemere Vercel runtime logs. Når en serverless function afslutter, forsvinder loggen. Der er ingen mulighed for at søge i historiske logs, correlere requests, eller analysere patterns.'
+      ),
       h('Nuværende tilstand'),
       bl([
         '✅ app/lib/logger.ts — structured logger (suppresses non-errors i prod)',
@@ -670,7 +716,9 @@ If new errors > previous baseline → AUTOMATIC ROLLBACK:
     labels: ['ops', 'service-manager', 'monitoring', 'expansion', 'p2'],
     description: [
       h('Kontekst'),
-      p('Service Manager scanner pt. KUN Vercel deployment status + runtime error events. Med de nye health checks (BIZZ tickets ovenfor) kan Service Manager udvides til at scanne hele infrastrukturen og oprette issues for alle anomalier.'),
+      p(
+        'Service Manager scanner pt. KUN Vercel deployment status + runtime error events. Med de nye health checks (BIZZ tickets ovenfor) kan Service Manager udvides til at scanne hele infrastrukturen og oprette issues for alle anomalier.'
+      ),
       h('Nye issue types for Service Manager'),
       cb(
         `// Eksisterende (4):
@@ -710,7 +758,9 @@ type: 'resource_exhaustion'      // Storage, connections, rate limits near capac
         'Quick actions: "Trigger manual scan", "Force cert check", "Probe APIs now"',
       ]),
       h('Auto-fix integration'),
-      p('Infrastructure issues kan typisk IKKE auto-fixes af Claude (de kræver operational actions, ikke kode-ændringer). Men Service Manager kan:'),
+      p(
+        'Infrastructure issues kan typisk IKKE auto-fixes af Claude (de kræver operational actions, ikke kode-ændringer). Men Service Manager kan:'
+      ),
       bl([
         'Oprette JIRA tickets automatisk for infrastructure issues',
         'Eskalere via SMS for critical issues',
@@ -741,7 +791,9 @@ type: 'resource_exhaustion'      // Storage, connections, rate limits near capac
     labels: ['ops', 'monitoring', 'stripe', 'payments', 'p2'],
     description: [
       h('Problem'),
-      p('Stripe webhooks er implementeret med signatur-verifikation, men der er ingen monitoring af: webhook delivery failures (Stripe sender men BizzAssist svarer ikke), payment failure rate trending, eller subscription churn alerts.'),
+      p(
+        'Stripe webhooks er implementeret med signatur-verifikation, men der er ingen monitoring af: webhook delivery failures (Stripe sender men BizzAssist svarer ikke), payment failure rate trending, eller subscription churn alerts.'
+      ),
       h('Hvad der mangler'),
       bl([
         'Webhook delivery failure tracking — Stripe retrier automatisk, men BizzAssist ved ikke om webhooks misses',
@@ -768,13 +820,16 @@ type: 'resource_exhaustion'      // Storage, connections, rate limits near capac
   // ═══════════════════════════════════════════════════════════════════════
 
   {
-    summary: '[P2][OPS] Vercel resource usage monitoring (function duration, bandwidth, build minutes)',
+    summary:
+      '[P2][OPS] Vercel resource usage monitoring (function duration, bandwidth, build minutes)',
     issueType: 'Task',
     priority: 'Medium',
     labels: ['ops', 'monitoring', 'vercel', 'resources', 'p2'],
     description: [
       h('Problem'),
-      p('Vercel har plan-baserede limits for serverless function duration, bandwidth, og build minutes. BizzAssist monitorerer deployment status men IKKE resource usage. Overskridelse kan betyde throttling eller ekstra-fakturering.'),
+      p(
+        'Vercel har plan-baserede limits for serverless function duration, bandwidth, og build minutes. BizzAssist monitorerer deployment status men IKKE resource usage. Overskridelse kan betyde throttling eller ekstra-fakturering.'
+      ),
       h('Hvad der skal monitoreres'),
       bl([
         'Function Execution Duration — slow functions kan timeout (10s hobby, 60s pro)',
@@ -808,7 +863,9 @@ type: 'resource_exhaustion'      // Storage, connections, rate limits near capac
     labels: ['ops', 'alerting', 'escalation', 'on-call', 'p2'],
     description: [
       h('Problem'),
-      p('Alle alerts sendes til en enkelt email (support@pecuniait.com). Der er ingen eskalering, ingen on-call rotation, og ingen garanti for at alerts læses inden for SLA.'),
+      p(
+        'Alle alerts sendes til en enkelt email (support@pecuniait.com). Der er ingen eskalering, ingen on-call rotation, og ingen garanti for at alerts læses inden for SLA.'
+      ),
       h('Nuværende alert-kanaler'),
       bl([
         'Email: support@pecuniait.com (alle alerts)',
@@ -868,7 +925,9 @@ async function main() {
               inwardIssue: { key },
               outwardIssue: { key: epicKey },
             });
-          } catch { /* silently skip */ }
+          } catch {
+            /* silently skip */
+          }
         }
       }
       await new Promise((r) => setTimeout(r, 300));

@@ -60,12 +60,6 @@ const DiagramForce = dynamic(() => import('@/app/components/diagrams/DiagramForc
   loading: () => <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />,
 });
 
-/** BIZZ-337: Simple static diagram variant — konsistent med virksomhedssiden */
-const DiagramSimple = dynamic(() => import('@/app/components/diagrams/DiagramSimple'), {
-  ssr: false,
-  loading: () => <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />,
-});
-
 // ─── Tab Types ──────────────────────────────────────────────────────────────
 
 type TabId = 'overview' | 'relations' | 'properties' | 'group' | 'chronology' | 'liens';
@@ -764,12 +758,6 @@ export default function PersonDetailPageClient({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [aktivTab, setAktivTab] = useState<TabId>('overview');
-
-  /**
-   * BIZZ-337: Diagram variant — 'force' for D3 force-graph, 'simple' for clean static layout.
-   * Matcher designvalget fra virksomhedssiden.
-   */
-  const [diagramVariant, setDiagramVariant] = useState<'force' | 'simple'>('force');
 
   const [relatedCompanies, setRelatedCompanies] = useState<Map<number, RelateretVirksomhed[]>>(
     new Map()
@@ -1896,51 +1884,21 @@ export default function PersonDetailPageClient({
                 propertiesByCvr
               );
               return (
-                <div className="space-y-3">
-                  {/* Variant-toggle — Force graph vs. statisk diagram */}
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => setDiagramVariant('force')}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
-                        diagramVariant === 'force'
-                          ? 'bg-blue-600/20 border-blue-500/40 text-blue-300'
-                          : 'bg-slate-800/50 border-slate-700/40 text-slate-400 hover:text-slate-200 hover:border-slate-600'
-                      }`}
-                    >
-                      {lang === 'da' ? 'Kraft-diagram' : 'Force graph'}
-                    </button>
-                    <button
-                      onClick={() => setDiagramVariant('simple')}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
-                        diagramVariant === 'simple'
-                          ? 'bg-blue-600/20 border-blue-500/40 text-blue-300'
-                          : 'bg-slate-800/50 border-slate-700/40 text-slate-400 hover:text-slate-200 hover:border-slate-600'
-                      }`}
-                    >
-                      {lang === 'da' ? 'Statisk diagram' : 'Static diagram'}
-                    </button>
-                  </div>
-
-                  {diagramVariant === 'force' ? (
-                    <DiagramForce
-                      graph={diagramGraph}
-                      lang={lang}
-                      onNodeClick={(node) => {
-                        // BIZZ-368: clicking a company node in the person diagram should switch to
-                        // the overview tab (staying on this page) rather than navigating to the
-                        // company page. Property and person nodes without a meaningful tab target
-                        // fall back to normal navigation.
-                        if (node.type === 'company' || node.type === 'main') {
-                          setAktivTab('overview');
-                        } else if (node.link) {
-                          window.location.href = node.link;
-                        }
-                      }}
-                    />
-                  ) : (
-                    <DiagramSimple graph={diagramGraph} lang={lang} />
-                  )}
-                </div>
+                <DiagramForce
+                  graph={diagramGraph}
+                  lang={lang}
+                  onNodeClick={(node) => {
+                    // BIZZ-368: clicking a company node in the person diagram should switch to
+                    // the overview tab (staying on this page) rather than navigating to the
+                    // company page. Property and person nodes without a meaningful tab target
+                    // fall back to normal navigation.
+                    if (node.type === 'company' || node.type === 'main') {
+                      setAktivTab('overview');
+                    } else if (node.link) {
+                      window.location.href = node.link;
+                    }
+                  }}
+                />
               );
             })()}
 

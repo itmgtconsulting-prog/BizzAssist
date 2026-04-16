@@ -81,10 +81,6 @@ const DiagramForce = dynamic(() => import('@/app/components/diagrams/DiagramForc
   ssr: false,
   loading: () => <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />,
 });
-const DiagramSimple = dynamic(() => import('@/app/components/diagrams/DiagramSimple'), {
-  ssr: false,
-  loading: () => <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />,
-});
 
 // ─── Tracked Companies (localStorage) ────────────────────────────────────────
 
@@ -176,7 +172,6 @@ function formatDatoKort(iso: string): string {
 type TabId =
   | 'overview'
   | 'diagram'
-  | 'diagram2'
   | 'tradeHistory'
   | 'properties'
   | 'companies'
@@ -189,7 +184,6 @@ type TabId =
 const tabIcons: Record<TabId, React.ReactNode> = {
   overview: <LayoutDashboard size={12} />,
   diagram: <Briefcase size={12} />,
-  diagram2: <Briefcase size={12} />,
   tradeHistory: <ArrowRightLeft size={12} />,
   properties: <Home size={12} />,
   companies: <Building2 size={12} />,
@@ -318,7 +312,6 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
   const tabLabelMap: Record<TabId, string> = {
     overview: c.tabs.overview,
     diagram: lang === 'da' ? 'Diagram' : 'Diagram',
-    diagram2: lang === 'da' ? 'Diagram' : 'Diagram',
     tradeHistory: c.tabs.tradeHistory,
     properties: c.tabs.properties,
     companies: c.tabs.companies,
@@ -976,7 +969,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
    * Kører igen når relatedCompanies ændres (datterselskaber loader ind).
    */
   useEffect(() => {
-    if (aktivTab !== 'properties' && aktivTab !== 'diagram' && aktivTab !== 'diagram2') return;
+    if (aktivTab !== 'properties' && aktivTab !== 'diagram') return;
 
     /* Saml CVR-numre: hovedvirksomhed + aktive datterselskaber */
     const cvrList = [
@@ -1957,30 +1950,6 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                 propertiesByCvr
               );
               return <DiagramForce graph={diagramGraph} lang={lang} />;
-            })()}
-
-          {/* ══ DIAGRAM (Simpelt — nyt) ══ */}
-          {aktivTab === 'diagram2' &&
-            (() => {
-              const propertiesByCvr =
-                ejendommeData.length > 0
-                  ? ejendommeData.reduce((map, p) => {
-                      const cvrNum = parseInt(p.ownerCvr, 10);
-                      if (!map.has(cvrNum)) map.set(cvrNum, []);
-                      map.get(cvrNum)!.push(p as DiagramPropertySummary);
-                      return map;
-                    }, new Map<number, DiagramPropertySummary[]>())
-                  : undefined;
-              const diagramGraph = buildDiagramGraph(
-                data.name,
-                data.vat,
-                data.companydesc ?? null,
-                ownerChainShared,
-                relatedCompanies,
-                data.industrydesc ?? null,
-                propertiesByCvr
-              );
-              return <DiagramSimple graph={diagramGraph} lang={lang} />;
             })()}
 
           {/* ══ EJENDOMME (inkl. ejendomshandler) ══ */}

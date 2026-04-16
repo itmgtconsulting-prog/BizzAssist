@@ -1445,14 +1445,16 @@ export default function EjendomDetaljeClient({
       if (!moderBfe) return;
       params.set('bfeNummer', String(moderBfe));
     } else {
-      // Byg søgeparametre — VP bruger adgangsAdresseID (ikke adresse med etage/dør).
-      // For ejerlejligheder (har etage) er dawaAdresse.id et adresse-ID med etage
-      // som VP ikke matcher — brug BFE i stedet.
+      // Always use BFE as primary — most reliable for VP matching.
+      // adresseId as fallback only when BFE unavailable.
       const bfeNummer = bbrData?.ejendomsrelationer?.[0]?.bfeNummer;
-      const adresseId = dawaAdresse?.etage ? null : dawaAdresse?.id; // Kun for parcelhuse
-      if (!adresseId && !bfeNummer) return;
-      if (bfeNummer) params.set('bfeNummer', String(bfeNummer));
-      if (adresseId) params.set('adresseId', adresseId);
+      if (bfeNummer) {
+        params.set('bfeNummer', String(bfeNummer));
+      } else if (dawaAdresse?.id) {
+        params.set('adresseId', dawaAdresse.id);
+      } else {
+        return;
+      }
     }
 
     const controller = new AbortController();
@@ -1829,14 +1831,37 @@ export default function EjendomDetaljeClient({
       });
     }
 
+    // BIZZ-444: Saml handler med samme dato + samme købesum til én linje
+    // (f.eks. 50%/50% ejere der køber sammen vises som én handel)
+    const grouped: MergedHandel[] = [];
+    for (const h of merged) {
+      const dato = h.overtagelsesdato ?? h.koebsaftaleDato ?? '';
+      const sum = h.kontantKoebesum ?? h.samletKoebesum ?? 0;
+      const existing = grouped.find((g) => {
+        const gDato = g.overtagelsesdato ?? g.koebsaftaleDato ?? '';
+        const gSum = g.kontantKoebesum ?? g.samletKoebesum ?? 0;
+        return gDato === dato && gSum === sum && dato !== '';
+      });
+      if (existing && h.koeber) {
+        // Append buyer name and combine shares
+        existing.koeber = existing.koeber
+          ? `${existing.koeber}, ${h.koeber}${h.andel ? ` (${h.andel})` : ''}`
+          : h.koeber;
+        if (!existing.andel && h.andel) existing.andel = h.andel;
+        else if (existing.andel && h.andel) existing.andel = null; // Multiple shares — don't show individual
+      } else {
+        grouped.push({ ...h });
+      }
+    }
+
     // Sortér nyeste først
-    merged.sort((a, b) => {
+    grouped.sort((a, b) => {
       const da2 = a.overtagelsesdato ?? a.koebsaftaleDato ?? '';
       const db = b.overtagelsesdato ?? b.koebsaftaleDato ?? '';
       return db.localeCompare(da2);
     });
 
-    return merged;
+    return grouped;
   })();
 
   /** Samlet pantegæld fra tinglysning-hæftelser (DKK) */

@@ -280,8 +280,8 @@ function extractValue(xml: string, tagNames: string[], validCtxIds?: Set<string>
             // Standard XBRL: tal er i hele DKK (f.eks. 101933000000)
             dkkValue = num;
           }
-          // Konverter til DKK tusinder (÷ 1000) — vores standard visningsenhed
-          return Math.round(dkkValue / 1000);
+          // BIZZ-435: Return hele DKK — UI formatter selv med toLocaleString
+          return Math.round(dkkValue);
         }
       }
     }

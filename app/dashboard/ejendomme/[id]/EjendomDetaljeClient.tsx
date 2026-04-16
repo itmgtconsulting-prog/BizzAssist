@@ -78,6 +78,7 @@ import { recordRecentVisit } from '@/app/lib/recordRecentVisit';
 import { erTracked, toggleTrackEjendom, fetchErTracked } from '@/app/lib/trackedEjendomme';
 import FoelgTooltip from '@/app/components/FoelgTooltip';
 import SektionLoader from '@/app/components/SektionLoader';
+import TabLoadingSpinner from '@/app/components/TabLoadingSpinner';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { useSetAIPageContext } from '@/app/context/AIPageContext';
 import dynamic from 'next/dynamic';
@@ -2773,6 +2774,7 @@ export default function EjendomDetaljeClient({
             {/* ══ BBR ══ — Live data, collapsible rækker */}
             {aktivTab === 'bbr' && (
               <div className="space-y-3">
+                {bbrLoader && <TabLoadingSpinner label={t.loading} />}
                 {bbrData?.bbrFejl && (
                   <div className="p-3 bg-orange-500/10 border border-orange-500/20 rounded-lg">
                     <p className="text-orange-300 text-sm">BBR: {bbrData.bbrFejl}</p>
@@ -3321,12 +3323,9 @@ export default function EjendomDetaljeClient({
               <div className="space-y-2">
                 {/* Loading state — vis spinner mens BBR eller ejerskab data hentes */}
                 {(ejereLoader || bbrLoader || !bbrData) && (
-                  <div className="flex items-center justify-center py-16">
-                    <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
-                    <span className="ml-2 text-slate-400 text-sm">
-                      {lang === 'da' ? 'Henter ejerskabsdata…' : 'Loading ownership data…'}
-                    </span>
-                  </div>
+                  <TabLoadingSpinner
+                    label={da ? 'Henter ejerskabsdata…' : 'Loading ownership data…'}
+                  />
                 )}
                 {/* ── Ejerskabsdiagram / Relationsdiagram (fra Tinglysning + EJF kæde) ── */}
                 {!ejereLoader &&
@@ -5401,6 +5400,7 @@ export default function EjendomDetaljeClient({
           ══════════════════════════════════════════ */}
             {aktivTab === 'bbr' && (
               <div className="space-y-3">
+                {bbrLoader && <TabLoadingSpinner label={t.loading} />}
                 {/* BBR-fejlbesked */}
                 {bbrData?.bbrFejl && (
                   <div className="p-3 bg-orange-500/10 border border-orange-500/20 rounded-lg">
@@ -5842,12 +5842,9 @@ export default function EjendomDetaljeClient({
               <div className="space-y-6">
                 {/* Loading state for ejerskab */}
                 {ejereLoader && (
-                  <div className="flex items-center justify-center py-16">
-                    <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
-                    <span className="ml-2 text-slate-400 text-sm">
-                      {lang === 'da' ? 'Henter ejerskabsdata…' : 'Loading ownership data…'}
-                    </span>
-                  </div>
+                  <TabLoadingSpinner
+                    label={da ? 'Henter ejerskabsdata…' : 'Loading ownership data…'}
+                  />
                 )}
                 {/* Ejer-kort */}
                 {ejendom.ejerDetaljer && (

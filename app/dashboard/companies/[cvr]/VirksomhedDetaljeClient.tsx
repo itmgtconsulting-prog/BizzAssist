@@ -73,6 +73,7 @@ import { buildDiagramGraph } from '@/app/components/diagrams/DiagramData';
 import type { DiagramPropertySummary } from '@/app/components/diagrams/DiagramData';
 import dynamic from 'next/dynamic';
 import VerifiedLinks from '@/app/components/VerifiedLinks';
+import TabLoadingSpinner from '@/app/components/TabLoadingSpinner';
 /** Recharts — single dynamic import keeps recharts in one chunk */
 const RegnskabChart = dynamic(() => import('./RegnskabChart'), { ssr: false });
 
@@ -2066,6 +2067,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
           {/* ══ EJENDOMME (inkl. ejendomshandler) ══ */}
           {aktivTab === 'properties' && (
             <div className="space-y-4">
+              {(ejendommeLoading || ejendommeLoadingMore) && <TabLoadingSpinner />}
               {/* ── Filter chips ── */}
               <div className="flex flex-wrap gap-2">
                 <button
@@ -2420,12 +2422,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
           {aktivTab === 'companies' && (
             <div className="space-y-4">
               {/* Loading */}
-              {relatedLoading && (
-                <div className="flex items-center justify-center py-12">
-                  <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
-                  <span className="ml-2 text-slate-400 text-sm">Henter gruppevirksomheder…</span>
-                </div>
-              )}
+              {relatedLoading && <TabLoadingSpinner />}
 
               {/* Gruppe-hierarki */}
               {!relatedLoading &&
@@ -2931,12 +2928,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
           {aktivTab === 'financials' && (
             <div className="space-y-4">
               {/* Første batch loader */}
-              {xbrlLoading && (
-                <div className="flex items-center justify-center py-16">
-                  <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
-                  <span className="ml-3 text-slate-400 text-sm">{c.loading}</span>
-                </div>
-              )}
+              {(xbrlLoading || xbrlLoadingMore || regnskabLoading) && <TabLoadingSpinner />}
 
               {/* Data — vises så snart første batch er klar */}
               {!xbrlLoading && xbrlData && xbrlData.length > 0 && (
@@ -3493,6 +3485,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
           {/* ══ TINGLYSNING ══ */}
           {aktivTab === 'liens' && (
             <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden">
+              {personbogLoading && <TabLoadingSpinner />}
               <div className="px-4 py-2.5 border-b border-slate-700/30 flex items-center gap-2">
                 <Scale size={15} className="text-slate-400" />
                 <span className="text-sm font-semibold text-slate-200">

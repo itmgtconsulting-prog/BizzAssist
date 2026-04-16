@@ -75,22 +75,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   try {
     const admin = createAdminClient();
-    await (
-      admin as unknown as {
-        from: (t: string) => {
-          insert: (v: Record<string, unknown>) => Promise<{ error: unknown }>;
-        };
-      }
-    )
-      .from('consent_log')
-      .insert({
-        user_id: userId,
-        session_id: ipHash,
-        consent_value: consent,
-        categories: JSON.stringify(categories),
-        ip_hash: ipHash,
-        user_agent: userAgent,
-      });
+    await admin.from('consent_log').insert({
+      user_id: userId,
+      session_id: ipHash,
+      consent_value: consent,
+      categories: JSON.stringify(categories),
+      ip_hash: ipHash,
+      user_agent: userAgent,
+    });
 
     return NextResponse.json({ ok: true });
   } catch (err) {
@@ -121,9 +113,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
 
     const admin = createAdminClient();
-    // consent_log is not in generated Supabase types — use untyped query
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data } = await (admin as any)
+    const { data } = await admin
       .from('consent_log')
       .select('consent_value, categories, created_at')
       .eq('user_id', user.id)

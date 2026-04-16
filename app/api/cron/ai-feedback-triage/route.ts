@@ -15,7 +15,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { tenantDb } from '@/lib/supabase/admin';
 import { logger } from '@/app/lib/logger';
 
 const MIN_OCCURRENCES = 3;
@@ -88,12 +88,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const admin = createAdminClient();
     const since = new Date(Date.now() - LOOKBACK_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
     // Fetch recent feedback entries without JIRA tickets
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- tenant schema not in typed client
-    const { data: entries, error } = await (admin.schema('tenant') as any)
+    const { data: entries, error } = await tenantDb('tenant')
       .from('ai_feedback_log')
       .select('id, question_text, feedback_type')
       .is('jira_ticket_id', null)
@@ -134,8 +132,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       if (ticketKey) {
         // Update feedback entries with the JIRA ticket ID
         for (const id of pattern.ids) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          await (admin.schema('tenant') as any)
+          await tenantDb('tenant')
             .from('ai_feedback_log')
             .update({ jira_ticket_id: ticketKey })
             .eq('id', id);

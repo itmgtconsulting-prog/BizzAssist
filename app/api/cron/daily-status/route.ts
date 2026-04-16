@@ -26,7 +26,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 import { checkAllCertificates, type CertExpiryInfo } from '@/app/lib/certExpiry';
@@ -293,9 +293,7 @@ async function collectStats(since: Date): Promise<StatusStats> {
     const { data: tenants } = await admin.from('tenants').select('schema_name');
     let totalTokens = 0;
     for (const t of tenants ?? []) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: usage } = await (admin as any)
-        .schema(t.schema_name)
+      const { data: usage } = await tenantDb(t.schema_name)
         .from('ai_token_usage')
         .select('tokens_used')
         .gte('created_at', sinceIso);

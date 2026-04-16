@@ -1471,7 +1471,7 @@ function KortInner() {
 
       {/* ── Søgebar ───────────────────────────────────────────────────────── */}
       {/* top-16 på mobil — undgår overlap med stil-toggle (left-4) og lag-knap (right-4) */}
-      <div className="absolute top-16 sm:top-4 left-1/2 -translate-x-1/2 z-20 w-full max-w-lg px-4">
+      <div className="absolute top-16 sm:top-14 left-1/2 -translate-x-1/2 z-30 w-full max-w-lg px-4">
         <div className="relative">
           <div className="flex items-center gap-2 bg-[#0f172a]/95 border border-white/10 rounded-2xl shadow-2xl px-4 py-3 backdrop-blur-sm">
             {søger ? (
@@ -1504,7 +1504,7 @@ function KortInner() {
           {forslag.length > 0 && (
             <div
               ref={dropdownRef}
-              className="absolute top-full mt-2 w-full bg-[#0f172a]/98 border border-white/10 rounded-2xl shadow-2xl overflow-hidden backdrop-blur-sm"
+              className="absolute top-full mt-2 w-full bg-[#0f172a]/98 border border-white/10 rounded-2xl shadow-2xl overflow-hidden backdrop-blur-sm z-50"
             >
               {forslag.map((r, i) => (
                 <button

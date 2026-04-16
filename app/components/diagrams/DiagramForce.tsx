@@ -232,13 +232,18 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
     }
 
     // BFS upward (skip co-owners — they get special depth later)
+    // BIZZ-426: Use shallowest (closest to root) depth when a node is reachable via multiple paths
     const upQueue = [graph.mainId];
     while (upQueue.length > 0) {
       const current = upQueue.shift()!;
       const d = depths.get(current) ?? 0;
       for (const p of parentEdges.get(current) ?? []) {
-        if (!depths.has(p) && !coOwnerIds.has(p)) {
-          depths.set(p, d - 1);
+        if (coOwnerIds.has(p)) continue;
+        const newDepth = d - 1;
+        const existing = depths.get(p);
+        if (existing === undefined || newDepth > existing) {
+          // Use the shallowest depth (closest to 0 = main node)
+          depths.set(p, newDepth);
           upQueue.push(p);
         }
       }

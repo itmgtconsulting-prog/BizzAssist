@@ -26,10 +26,20 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import type { ScanIssue, VercelDeployment } from '../route';
 import { logger } from '@/app/lib/logger';
+import { parseBody } from '@/app/lib/validate';
+import { writeAuditLog } from '@/app/lib/auditLog';
+
+/** Zod schema for POST /api/admin/service-manager/scan request body */
+const scanBodySchema = z
+  .object({
+    scanId: z.string().min(1),
+  })
+  .passthrough();
 
 // ─── Vercel API helpers ───────────────────────────────────────────────────────
 
@@ -258,12 +268,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    const body = await request.json();
-    const scanId = body?.scanId as string | undefined;
-
-    if (!scanId) {
-      return NextResponse.json({ error: 'scanId påkrævet' }, { status: 400 });
-    }
+    const parsed = await parseBody(request, scanBodySchema);
+    if (!parsed.success) return parsed.response;
+    const scanId = parsed.data.scanId;
 
     const admin = createAdminClient();
 
@@ -308,6 +315,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (updateErr) {
       logger.error('[service-manager/scan] update error:', updateErr.code ?? '[DB error]');
     }
+
+    // Audit: service scan updated with results (fire-and-forget — ISO 27001 A.12.4)
+    void writeAuditLog({
+      action: 'service_scan_updated',
+      resource_type: 'service_manager',
+      resource_id: scanId,
+      metadata: JSON.stringify({
+        triggered_by: user.id,
+        status: finalStatus,
+        issue_count: issues.length,
+      }),
+    });
 
     return NextResponse.json({
       ok: true,

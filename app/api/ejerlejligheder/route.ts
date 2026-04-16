@@ -14,9 +14,18 @@ import { NextRequest, NextResponse } from 'next/server';
 import https from 'https';
 import fs from 'fs';
 import path from 'path';
+import { z } from 'zod';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
+import { parseQuery } from '@/app/lib/validate';
 // EJF/Datafordeler er ikke nødvendig — alt data hentes fra tinglysning summarisk XML
+
+// ─── Query param validation ─────────────────────────────────────────────────
+
+const ejerlejlighederQuerySchema = z.object({
+  ejerlavKode: z.string().regex(/^\d+$/, 'ejerlavKode skal være et heltal'),
+  matrikelnr: z.string().min(1, 'matrikelnr er påkrævet'),
+});
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -44,8 +53,11 @@ export interface EjerlejlighederResponse {
 
 // ─── Tinglysning mTLS ───────────────────────────────────────────────────────
 
-const CERT_PATH = process.env.NEMLOGIN_DEVTEST4_CERT_PATH ?? '';
-const CERT_PASSWORD = process.env.NEMLOGIN_DEVTEST4_CERT_PASSWORD ?? '';
+const CERT_PATH =
+  process.env.TINGLYSNING_CERT_PATH ?? process.env.NEMLOGIN_DEVTEST4_CERT_PATH ?? '';
+const CERT_PASSWORD =
+  process.env.TINGLYSNING_CERT_PASSWORD ?? process.env.NEMLOGIN_DEVTEST4_CERT_PASSWORD ?? '';
+const CERT_B64 = process.env.TINGLYSNING_CERT_B64 ?? process.env.NEMLOGIN_DEVTEST4_CERT_B64 ?? '';
 const TL_BASE = process.env.TINGLYSNING_BASE_URL ?? 'https://test.tinglysning.dk';
 const TL_API_PATH = '/tinglysning/ssl';
 
@@ -73,13 +85,17 @@ interface TLSearchResponse {
  */
 function tlFetch(urlPath: string): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
-    const certAbsPath = path.resolve(CERT_PATH);
-    if (!fs.existsSync(certAbsPath)) {
-      reject(new Error('Certifikat ikke fundet: ' + certAbsPath));
-      return;
+    let pfx: Buffer;
+    if (CERT_B64) {
+      pfx = Buffer.from(CERT_B64, 'base64');
+    } else {
+      const certAbsPath = path.resolve(CERT_PATH);
+      if (!fs.existsSync(certAbsPath)) {
+        reject(new Error('Certifikat ikke fundet: ' + certAbsPath));
+        return;
+      }
+      pfx = fs.readFileSync(certAbsPath);
     }
-
-    const pfx = fs.readFileSync(certAbsPath);
     const url = new URL(TL_BASE + TL_API_PATH + urlPath);
 
     const req = https.request(
@@ -175,18 +191,12 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
     return NextResponse.json({ error: 'Unauthorized' } as unknown as EjerlejlighederResponse, {
       status: 401,
     });
-  const { searchParams } = request.nextUrl;
-  const ejerlavKode = searchParams.get('ejerlavKode');
-  const matrikelnr = searchParams.get('matrikelnr');
 
-  if (!ejerlavKode || !matrikelnr) {
-    return NextResponse.json(
-      { lejligheder: [], fejl: 'Manglende ejerlavKode eller matrikelnr' },
-      { status: 400 }
-    );
-  }
+  const parsed = parseQuery(request, ejerlejlighederQuerySchema);
+  if (!parsed.success) return parsed.response as NextResponse<EjerlejlighederResponse>;
+  const { ejerlavKode, matrikelnr } = parsed.data;
 
-  if (!CERT_PATH || !CERT_PASSWORD) {
+  if ((!CERT_PATH && !CERT_B64) || !CERT_PASSWORD) {
     return NextResponse.json(
       { lejligheder: [], fejl: 'Tinglysning certifikat ikke konfigureret' },
       { status: 200 }

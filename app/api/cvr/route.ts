@@ -15,8 +15,19 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
+import { parseQuery } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
+
+/** Zod schema for /api/cvr query params */
+const querySchema = z.object({
+  vejnavn: z.string().min(1),
+  husnr: z.string().optional(),
+  postnr: z.string().optional(),
+  etage: z.string().optional(),
+  doer: z.string().optional(),
+});
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -218,16 +229,12 @@ function mapESHit(hit: Record<string, unknown>): CVRVirksomhed | null {
 export async function GET(req: NextRequest): Promise<NextResponse> {
   const auth = await resolveTenantId();
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  const { searchParams } = req.nextUrl;
-  const vejnavn = searchParams.get('vejnavn') ?? '';
-  const husnr = searchParams.get('husnr') ?? '';
-  const postnr = searchParams.get('postnr') ?? '';
-  const etage = searchParams.get('etage') ?? '';
-  const doer = searchParams.get('doer') ?? '';
-
-  if (!vejnavn) {
+  const parsed = parseQuery(req, querySchema);
+  if (!parsed.success) {
+    // Missing vejnavn → empty result (backwards compatible)
     return NextResponse.json({ virksomheder: [], tokenMangler: false }, { status: 200 });
   }
+  const { vejnavn, husnr = '', postnr = '', etage = '', doer = '' } = parsed.data;
 
   // Returner tokenMangler-flag hvis credentials ikke er sat
   if (!CVR_ES_USER || !CVR_ES_PASS) {
@@ -267,6 +274,14 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       match: { 'Vrvirksomhed.beliggenhedsadresse.sidedoer': doer },
     });
   }
+  // Hovedejendom: exclude companies with specific apartment address (etage/dør)
+  if (!etage && !doer) {
+    beligFiltre.push({
+      bool: {
+        must_not: [{ exists: { field: 'Vrvirksomhed.beliggenhedsadresse.etage' } }],
+      },
+    });
+  }
 
   // ── Byg adressefiltre for P-enheder (produktionsenhed-adresser) ──
   const penhedFiltre: unknown[] = [
@@ -295,6 +310,14 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   if (doer) {
     penhedFiltre.push({
       match: { 'Vrvirksomhed.penheder.beliggenhedsadresse.sidedoer': doer },
+    });
+  }
+  // Hovedejendom: exclude P-enheder with specific apartment address (etage/dør)
+  if (!etage && !doer) {
+    penhedFiltre.push({
+      bool: {
+        must_not: [{ exists: { field: 'Vrvirksomhed.penheder.beliggenhedsadresse.etage' } }],
+      },
     });
   }
 

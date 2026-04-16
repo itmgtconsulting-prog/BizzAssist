@@ -248,13 +248,18 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           .delete({ count: 'exact' })
           .not('id', 'is', null);
 
-        // Also purge snapshots, saved_entities, ai_conversations, recent_searches,
-        // and activity_log — no count needed for these (BIZZ-133: search history retention).
+        // Also purge all remaining tenant-scoped personal data tables.
+        // No count needed for these (BIZZ-133: search history retention).
+        await db.from('ai_messages').delete().not('id', 'is', null);
+        await db.from('ai_conversations').delete().not('id', 'is', null);
         await db.from('property_snapshots').delete().not('id', 'is', null);
         await db.from('saved_entities').delete().not('id', 'is', null);
-        await db.from('ai_conversations').delete().not('id', 'is', null);
         await db.from('recent_searches').delete().not('id', 'is', null);
         await db.from('activity_log').delete().not('id', 'is', null);
+        // BIZZ-299: Delete embeddings and remaining user data on tenant closure
+        await db.from('document_embeddings').delete().not('id', 'is', null);
+        await db.from('ai_token_usage').delete().not('id', 'is', null);
+        await db.from('support_chat_sessions').delete().not('id', 'is', null);
 
         result.recentEntitiesDeleted = recentCount ?? 0;
         result.notificationsDeleted = notifCount ?? 0;

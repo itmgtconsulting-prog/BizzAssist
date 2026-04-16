@@ -11,51 +11,45 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerClient } from '@supabase/ssr';
-import { createClient } from '@supabase/supabase-js';
-import { cookies } from 'next/headers';
+import { z } from 'zod';
+import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { logger } from '@/app/lib/logger';
+import { parseBody } from '@/app/lib/validate';
+
+/** Zod schema for PUT /api/admin/ai-settings body */
+const aiSettingsPutSchema = z.object({
+  key: z.string().min(1),
+  value: z.unknown(),
+});
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
-const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '';
 
 /**
- * Returnerer Supabase server-client med cookie-baseret session (bruger-auth).
- */
-async function getSessionClient() {
-  const cookieStore = await cookies();
-  return createServerClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    cookies: {
-      getAll: () => cookieStore.getAll(),
-      setAll: () => {
-        /* read-only i route handlers */
-      },
-    },
-  });
-}
-
-/**
- * Validerer at den autentificerede bruger har admin-rolle.
- * Admin defineres som rollen 'admin' i user_metadata eller app_metadata.
+ * Validates that the authenticated caller is an admin user.
  *
- * @returns user-objekt hvis admin, null ellers
+ * Uses the anon client to resolve the caller's user.id from the session cookie,
+ * then re-fetches the user via the service-role admin client so that
+ * app_metadata is read from Supabase's authoritative store rather than the
+ * JWT claim embedded in the session token (which could be stale).
+ * Admin status is determined solely by `app_metadata.isAdmin` (camelCase boolean)
+ * — the canonical field written by the bootstrap route.
+ *
+ * @returns The authenticated user object if the caller is admin, otherwise null.
  */
 async function requireAdmin() {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) return null;
-  const sessionClient = await getSessionClient();
+  const supabase = await createClient();
   const {
     data: { user },
-  } = await sessionClient.auth.getUser();
+  } = await supabase.auth.getUser();
   if (!user) return null;
 
-  // Tjek admin-rolle i metadata
-  const isAdmin =
-    user.app_metadata?.role === 'admin' ||
-    user.user_metadata?.role === 'admin' ||
-    user.app_metadata?.is_admin === true;
-
-  return isAdmin ? user : null;
+  const admin = createAdminClient();
+  const { data: freshUser } = await admin.auth.admin.getUserById(user.id);
+  if (freshUser?.user?.app_metadata?.isAdmin) return user;
+  return null;
 }
 
 // ─── GET ─────────────────────────────────────────────────────────────────────
@@ -78,7 +72,7 @@ export async function GET(_req: NextRequest) {
     return NextResponse.json({ error: 'Ikke autoriseret' }, { status: 401 });
   }
 
-  const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+  const serviceClient = createAdminClient();
   const { data, error } = await serviceClient.from('ai_settings').select('key, value');
 
   if (error) {
@@ -112,17 +106,11 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: 'Ikke autoriseret' }, { status: 401 });
   }
 
-  let body: { key?: string; value?: unknown };
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: 'Ugyldig JSON' }, { status: 400 });
-  }
+  // Validate request body with Zod schema
+  const parsed = await parseBody(req, aiSettingsPutSchema);
+  if (!parsed.success) return parsed.response;
 
-  const { key, value } = body;
-  if (!key || value === undefined) {
-    return NextResponse.json({ error: 'key og value er påkrævet' }, { status: 400 });
-  }
+  const { key, value } = parsed.data;
 
   // Tillad kun kendte nøgler for at forhindre utilsigtede indstillinger
   const ALLOWED_KEYS = [
@@ -151,7 +139,7 @@ export async function PUT(req: NextRequest) {
     );
   }
 
-  const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+  const serviceClient = createAdminClient();
   const { error } = await serviceClient
     .from('ai_settings')
     .upsert({ key, value }, { onConflict: 'key' });

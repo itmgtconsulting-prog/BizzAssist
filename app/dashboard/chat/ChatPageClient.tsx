@@ -29,23 +29,6 @@ import { useAIPageContext } from '@/app/context/AIPageContext';
 import { useAIChatContext } from '@/app/context/AIChatContext';
 import { resolvePlan, isSubscriptionFunctional, formatTokens } from '@/app/lib/subscriptions';
 
-// ─── Token sync helper ──────────────────────────────────────────────────────
-
-/** Fire-and-forget token sync with 3 retries and exponential backoff */
-function syncTokenUsageToServer(tokensUsed: number): void {
-  if (tokensUsed <= 0) return;
-  const attempt = (retries: number) => {
-    fetch('/api/subscription/track-tokens', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tokensUsed }),
-    }).catch(() => {
-      if (retries > 0) setTimeout(() => attempt(retries - 1), 2000);
-    });
-  };
-  attempt(2);
-}
-
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 /** A single chat message */
@@ -419,6 +402,7 @@ export default function ChatPageClient() {
     const updated = freshConvs.map((c) => (c.id === id ? { ...c, messages: updatedMessages } : c));
     saveConversations(updated);
     setConversations(updated);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /**
@@ -456,6 +440,7 @@ export default function ChatPageClient() {
       setStreamText('');
       setToolStatus('');
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [conversations]
   );
 
@@ -480,6 +465,7 @@ export default function ChatPageClient() {
         }
       }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [conversations, activeId]
   );
 
@@ -663,7 +649,8 @@ export default function ChatPageClient() {
                 }
               } else if (parsed.usage) {
                 addTokenUsage(parsed.usage.totalTokens);
-                syncTokenUsageToServer(parsed.usage.totalTokens);
+                // Server already persists tokens — removed to prevent double-counting (BIZZ-343)
+                // syncTokenUsageToServer(parsed.usage.totalTokens);
               } else if (parsed.status) {
                 if (isActive) {
                   setToolStatus(parsed.status);
@@ -726,6 +713,7 @@ export default function ChatPageClient() {
       chatCtx.setIsStreaming(false);
       abortRef.current = null;
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     input,
     isLoading,
@@ -763,7 +751,9 @@ export default function ChatPageClient() {
       <aside className="w-64 shrink-0 flex flex-col border-r border-white/8 bg-[#0f172a]">
         {/* Header */}
         <div className="px-4 pt-5 pb-3 border-b border-white/8">
-          <h1 className="text-white font-bold text-base mb-3">{da ? 'AI Chat' : 'AI Chat'}</h1>
+          <h1 className="text-white font-bold text-base mb-3">
+            {da ? 'AI Assistent' : 'AI Assistant'}
+          </h1>
           <button
             onClick={handleNewConversation}
             className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"

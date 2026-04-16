@@ -18,8 +18,19 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { fetchBbrForAddress } from '@/app/lib/fetchBbrData';
 import { resolveTenantId } from '@/lib/api/auth';
+
+/** Zod schema for the [id] dynamic param — UUID format */
+const idParamSchema = z.object({
+  id: z
+    .string()
+    .regex(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+      'Ugyldigt adresse-id'
+    ),
+});
 
 // Re-export all types so existing importers (dashboard page etc.) keep working
 export type {
@@ -48,14 +59,12 @@ export async function GET(
 ): Promise<NextResponse> {
   const auth = await resolveTenantId();
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  const { id } = await context.params;
-
-  // UUID validation
-  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  if (!uuidPattern.test(id)) {
+  const rawParams = await context.params;
+  const paramResult = idParamSchema.safeParse(rawParams);
+  if (!paramResult.success) {
     return NextResponse.json(
       {
-        dawaId: id,
+        dawaId: rawParams.id,
         bbr: null,
         enheder: null,
         bygningPunkter: null,
@@ -67,6 +76,7 @@ export async function GET(
       { status: 400 }
     );
   }
+  const { id } = paramResult.data;
 
   const result = await fetchBbrForAddress(id);
 

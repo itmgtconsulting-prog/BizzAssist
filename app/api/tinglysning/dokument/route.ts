@@ -11,25 +11,28 @@
 import { NextRequest, NextResponse } from 'next/server';
 import https from 'https';
 import fs from 'fs';
-import path from 'path';
 import PDFDocument from 'pdfkit';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
+import { tlFetch as tlFetchShared } from '@/app/lib/tlFetch';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
+// ─── Cert config — same pattern as app/lib/tlFetch.ts ──────────────────────
+
 const CERT_PATH =
   process.env.TINGLYSNING_CERT_PATH ?? process.env.NEMLOGIN_DEVTEST4_CERT_PATH ?? '';
+const CERT_B64 = process.env.TINGLYSNING_CERT_B64 ?? process.env.NEMLOGIN_DEVTEST4_CERT_B64 ?? '';
 const CERT_PASSWORD =
   process.env.TINGLYSNING_CERT_PASSWORD ?? process.env.NEMLOGIN_DEVTEST4_CERT_PASSWORD ?? '';
-const CERT_B64 = process.env.TINGLYSNING_CERT_B64 ?? process.env.NEMLOGIN_DEVTEST4_CERT_B64 ?? '';
 const TL_BASE = process.env.TINGLYSNING_BASE_URL ?? 'https://test.tinglysning.dk';
 
-/** Loader certifikat som Buffer — foretrækker base64 env var over filsti */
+/** Loads PFX certificate from file path or base64 env var. */
 function loadCert(): Buffer {
   if (CERT_B64) return Buffer.from(CERT_B64, 'base64');
-  return fs.readFileSync(path.resolve(CERT_PATH));
+  if (CERT_PATH) return fs.readFileSync(CERT_PATH);
+  throw new Error('No Tinglysning certificate configured');
 }
 
 // ─── XML field labels (DA) ──────────────────────────────────────────────────
@@ -78,37 +81,11 @@ const _FIELD_LABELS: Record<string, string> = {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function tlFetch(urlPath: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const pfx = loadCert();
-    const url = new URL(TL_BASE + '/tinglysning/ssl' + urlPath);
-    const req = https.request(
-      {
-        hostname: url.hostname,
-        port: 443,
-        path: url.pathname,
-        method: 'GET',
-        pfx,
-        passphrase: CERT_PASSWORD,
-        rejectUnauthorized: false,
-        timeout: 55000, // Turbopack dev + test mTLS
-        headers: { Accept: 'application/xml' },
-      },
-      (res) => {
-        let data = '';
-        res.on('data', (d) => (data += d));
-        res.on('end', () =>
-          res.statusCode === 200 ? resolve(data) : reject(new Error(`HTTP ${res.statusCode}`))
-        );
-      }
-    );
-    req.on('error', reject);
-    req.on('timeout', () => {
-      req.destroy();
-      reject(new Error('Timeout'));
-    });
-    req.end();
-  });
+/** Henter dokument-XML fra Tinglysning. Kaster fejl ved ikke-200. */
+async function tlFetch(urlPath: string): Promise<string> {
+  const result = await tlFetchShared(urlPath, { accept: 'application/xml' });
+  if (result.status !== 200) throw new Error(`HTTP ${result.status}`);
+  return result.body;
 }
 
 /** Parser XML og udtrækker alle felter med læsbare labels */

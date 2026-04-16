@@ -91,20 +91,22 @@ export default function PropertyOwnerCard({
           </div>
         </div>
 
-        {/* Meta-rækker */}
-        <div className="flex flex-wrap gap-2">
-          {/* Ejendomstype badge */}
+        {/* BIZZ-266: Enhanced meta section with badges + kommune */}
+        <div className="flex flex-wrap gap-1.5">
           <span
-            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${typeColor}`}
+            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${typeColor}`}
           >
-            <Home size={10} />
+            <Home size={9} />
             {typeLabel}
           </span>
-
-          {/* BFE-nummer */}
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs text-slate-400 bg-slate-900/60">
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] text-slate-400 bg-slate-900/60 font-mono">
             BFE {formatBfe(ejendom.bfeNummer)}
           </span>
+          {ejendom.kommune && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] text-slate-500 bg-slate-900/40">
+              {ejendom.kommune}
+            </span>
+          )}
         </div>
 
         {/* Ejer-CVR (vises kun i gruppe-mode) */}

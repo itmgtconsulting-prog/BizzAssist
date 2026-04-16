@@ -1,14 +1,14 @@
 /**
  * GET /api/salgshistorik
  *
- * Henter historiske salgsoplysninger fra Datafordeler EJF GraphQL v1.
+ * Henter historiske salgsoplysninger fra Datafordeler FlexibleCurrent custom tjeneste.
  * Bruger samme OAuth-flow som /api/ejerskab.
  *
- * Endpoint: https://graphql.datafordeler.dk/EJF/v1
+ * Endpoint: https://graphql.datafordeler.dk/flexibleCurrent/v1/
  *
- * Schema (verificeret via EJF.graphql 2026-03-27):
- *   Trin 1: EJF_Ejerskifte  → filtrér på bestemtFastEjendomBFENr → hent handelsoplysningerLokalId
- *   Trin 2: EJF_Handelsoplysninger → filtrér på id_lokalId ∈ [ids] → hent prisdata
+ * Trin 1: EJF_Ejerskifte  → filtrér på bestemtFastEjendomBFENr → hent handelsoplysningerLokalId
+ * Trin 2: EJF_Handelsoplysninger → filtrér på id_lokalId ∈ [ids] → hent prisdata
+ * NB: Ejerskifte/Handelsoplysninger kan kræve custom query-navne — testes efter deploy.
  *
  * @param request - Next.js request med ?bfeNummer=xxx
  * @returns { handler: HandelData[], fejl, manglerNoegle, manglerAdgang }
@@ -16,10 +16,18 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import * as Sentry from '@sentry/nextjs';
+import { z } from 'zod';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { logger } from '@/app/lib/logger';
+import { getSharedOAuthToken } from '@/app/lib/dfTokenCache';
 import { resolveTenantId } from '@/lib/api/auth';
+import { parseQuery } from '@/app/lib/validate';
+
+/** Zod schema for /api/salgshistorik query parameters */
+const salgshistorikQuerySchema = z.object({
+  bfeNummer: z.coerce.number().int().positive(),
+});
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -54,7 +62,7 @@ export interface SalgshistorikResponse {
 
 // ─── Datafordeler EJF GraphQL ────────────────────────────────────────────────
 
-const EJF_GQL_URL = 'https://graphql.datafordeler.dk/EJF/v1';
+const EJF_GQL_URL = 'https://graphql.datafordeler.dk/flexibleCurrent/v1/';
 const TOKEN_URL = 'https://auth.datafordeler.dk/realms/distribution/protocol/openid-connect/token';
 
 /** OAuth token cache */
@@ -66,7 +74,7 @@ let _cachedToken: { token: string; expiresAt: number } | null = null;
  *
  * @returns Bearer token som streng, eller null hvis auth-miljøvariabler mangler
  */
-async function getOAuthToken(): Promise<string | null> {
+async function _getOAuthToken(): Promise<string | null> {
   if (_cachedToken && Date.now() < _cachedToken.expiresAt - 60_000) {
     return _cachedToken.token;
   }
@@ -198,25 +206,13 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
     );
   }
 
-  const { searchParams } = request.nextUrl;
-  const bfeStr = searchParams.get('bfeNummer');
+  // Validate query params with Zod schema
+  const parsed = parseQuery(request, salgshistorikQuerySchema);
+  if (!parsed.success) return parsed.response as NextResponse<SalgshistorikResponse>;
 
-  if (!bfeStr || !/^\d+$/.test(bfeStr)) {
-    return NextResponse.json(
-      {
-        bfeNummer: null,
-        handler: [],
-        fejl: 'Ugyldigt eller manglende bfeNummer',
-        manglerNoegle: false,
-        manglerAdgang: false,
-      },
-      { status: 400 }
-    );
-  }
+  const { bfeNummer } = parsed.data;
 
-  const bfeNummer = parseInt(bfeStr, 10);
-
-  const token = await getOAuthToken();
+  const token = await getSharedOAuthToken();
   if (!token) {
     return NextResponse.json(
       {
@@ -394,15 +390,23 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
   } catch (err) {
     Sentry.captureException(err);
     const msg = err instanceof Error ? err.message : 'Ukendt fejl';
-    return NextResponse.json(
-      {
-        bfeNummer,
-        handler: [],
-        fejl: `Netværksfejl: ${msg}`,
-        manglerNoegle: false,
-        manglerAdgang: false,
-      },
-      { status: 200 }
-    );
+    const body =
+      process.env.NODE_ENV === 'development'
+        ? {
+            bfeNummer,
+            handler: [],
+            fejl: 'Ekstern API fejl',
+            dev_detail: msg,
+            manglerNoegle: false,
+            manglerAdgang: false,
+          }
+        : {
+            bfeNummer,
+            handler: [],
+            fejl: 'Ekstern API fejl',
+            manglerNoegle: false,
+            manglerAdgang: false,
+          };
+    return NextResponse.json(body, { status: 200 });
   }
 }

@@ -72,6 +72,7 @@ export default function Hero() {
             </div>
             {/* Screenshot with bottom fade */}
             <div className="relative">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src="/images/dashboard-preview.png"
                 alt="BizzAssist Dashboard"

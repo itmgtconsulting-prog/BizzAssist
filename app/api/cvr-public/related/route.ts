@@ -11,8 +11,16 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
+import { parseQuery } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
+
+export const runtime = 'nodejs';
+export const maxDuration = 30;
+
+/** Zod schema for /api/cvr-public/related query params */
+const querySchema = z.object({ cvr: z.string().regex(/^\d{8}$/, 'CVR skal være 8 cifre') });
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -122,10 +130,11 @@ function mapEjerandelInterval(val: number): string {
 export async function GET(req: NextRequest) {
   const session = await resolveTenantId();
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  const cvr = req.nextUrl.searchParams.get('cvr')?.replace(/\D/g, '');
-  if (!cvr || cvr.length !== 8) {
+  const parsed = parseQuery(req, querySchema);
+  if (!parsed.success) {
     return NextResponse.json({ virksomheder: [], error: 'Ugyldigt CVR-nummer' }, { status: 400 });
   }
+  const { cvr } = parsed.data;
 
   if (!CVR_ES_USER || !CVR_ES_PASS) {
     return NextResponse.json(
@@ -647,7 +656,11 @@ export async function GET(req: NextRequest) {
       return v;
     });
 
-    return NextResponse.json({ virksomheder: cleaned, parentEnhedsNummer: enhedsNr });
+    // BIZZ-252: Cache for 30 min — related companies change infrequently
+    return NextResponse.json(
+      { virksomheder: cleaned, parentEnhedsNummer: enhedsNr },
+      { headers: { 'Cache-Control': 'public, s-maxage=1800, stale-while-revalidate=300' } }
+    );
   } catch (err) {
     logger.error('[cvr-public/related] Fejl:', err instanceof Error ? err.message : String(err));
     return NextResponse.json(

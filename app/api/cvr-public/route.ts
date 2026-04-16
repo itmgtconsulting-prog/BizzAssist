@@ -15,10 +15,25 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
+import { parseQuery } from '@/app/lib/validate';
 import { resolveTenantId } from '@/lib/api/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { logActivity } from '@/app/lib/activityLog';
 import { logger } from '@/app/lib/logger';
+
+export const runtime = 'nodejs';
+export const maxDuration = 30;
+
+/** Zod schema for /api/cvr-public query params */
+const querySchema = z.object({
+  vat: z
+    .string()
+    .regex(/^\d{8}$/)
+    .optional(),
+  name: z.string().optional(),
+  enhedsNummer: z.string().regex(/^\d+$/).optional(),
+});
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -844,9 +859,9 @@ async function fetchProduktionsenheder(
  * @returns CVRPublicData eller fejlbesked
  */
 export async function GET(req: NextRequest): Promise<NextResponse<CVRPublicData | CVRPublicError>> {
-  const vat = req.nextUrl.searchParams.get('vat') ?? '';
-  const name = req.nextUrl.searchParams.get('name') ?? '';
-  const enhedsNr = req.nextUrl.searchParams.get('enhedsNummer') ?? '';
+  const parsed = parseQuery(req, querySchema);
+  if (!parsed.success) return parsed.response as NextResponse<CVRPublicError>;
+  const { vat = '', name = '', enhedsNummer: enhedsNr = '' } = parsed.data;
 
   if (!vat && !name && !enhedsNr) {
     return NextResponse.json(

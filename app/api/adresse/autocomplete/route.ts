@@ -13,18 +13,27 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { darAutocomplete } from '@/app/lib/dar';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { resolveTenantId } from '@/lib/api/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { logActivity } from '@/app/lib/activityLog';
 import { logger } from '@/app/lib/logger';
+import { parseQuery } from '@/app/lib/validate';
+
+/** Zod schema for autocomplete query params */
+const autocompleteSchema = z.object({
+  q: z.string().default(''),
+});
 
 export async function GET(request: NextRequest) {
   const limited = await checkRateLimit(request, rateLimit);
   if (limited) return limited;
 
-  const q = request.nextUrl.searchParams.get('q') ?? '';
+  const parsed = parseQuery(request, autocompleteSchema);
+  if (!parsed.success) return parsed.response;
+  const { q } = parsed.data;
 
   if (q.trim().length < 2) {
     return NextResponse.json([]);

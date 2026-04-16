@@ -40,6 +40,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { sendCriticalAlert, isCriticalIssue } from '@/lib/service-manager-alerts';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
+import { recordHeartbeat } from '@/app/lib/cronHeartbeat';
 
 /** Vercel Cron max duration (seconds) — Hobby plan limit */
 export const maxDuration = 30;
@@ -606,7 +607,7 @@ async function sendAlertEmail(
       const body = await res.text();
       logger.error('[service-scan] Resend API fejl:', res.status, body);
     } else {
-      logger.log('[service-scan] Alert-email sendt til', TO_ADDRESS);
+      logger.log('[service-scan] Alert-email sendt');
     }
   } catch (err) {
     logger.error('[service-scan] Kunne ikke sende alert-email:', err);
@@ -657,6 +658,86 @@ export async function GET(request: NextRequest) {
     ];
     summary = 'Scan mislykkedes pga. intern fejl.';
     scanStatus = 'failed';
+  }
+
+  // ── 1b. BIZZ-306: External API + infrastructure health checks ─────────────
+  try {
+    const healthRes = await fetch(`${request.nextUrl.origin}/api/health?deep=true`, {
+      headers: { cookie: request.headers.get('cookie') ?? '' },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (healthRes.ok) {
+      const health = await healthRes.json();
+
+      // Check external APIs
+      const apis = health.checks?.external_apis ?? {};
+      for (const [name, info] of Object.entries(apis) as [
+        string,
+        { status: string; latency_ms: number },
+      ][]) {
+        if (info.status === 'down') {
+          issues.push({
+            type: 'config_error',
+            severity: 'error',
+            message: `Ekstern API nede: ${name}`,
+            source: 'static',
+            context: `Latency: ${info.latency_ms}ms`,
+          });
+        } else if (info.status === 'slow') {
+          issues.push({
+            type: 'config_error',
+            severity: 'warning',
+            message: `Ekstern API langsom: ${name} (${info.latency_ms}ms)`,
+            source: 'static',
+          });
+        }
+      }
+
+      // Check certificates
+      const certs = health.checks?.certificates ?? [];
+      for (const cert of certs as {
+        name: string;
+        status: string;
+        daysRemaining: number | null;
+      }[]) {
+        if (cert.status === 'expired' || cert.status === 'critical') {
+          issues.push({
+            type: 'config_error',
+            severity: 'error',
+            message: `Certifikat ${cert.status}: ${cert.name} (${cert.daysRemaining ?? 0} dage)`,
+            source: 'static',
+            context: 'certificate_expiry',
+          });
+        } else if (cert.status === 'warning') {
+          issues.push({
+            type: 'config_error',
+            severity: 'warning',
+            message: `Certifikat udløber snart: ${cert.name} (${cert.daysRemaining} dage)`,
+            source: 'static',
+            context: 'certificate_expiry',
+          });
+        }
+      }
+
+      // Check Redis
+      if (health.checks?.redis === 'error') {
+        issues.push({
+          type: 'config_error',
+          severity: 'error',
+          message: 'Upstash Redis ikke tilgængelig',
+          source: 'static',
+        });
+      }
+
+      // Update summary if new issues found
+      const infraIssues = issues.filter((i) => i.source === 'static' && i.message.includes('API'));
+      if (infraIssues.length > 0) {
+        summary += ` | Infrastruktur: ${infraIssues.length} problemer fundet.`;
+      }
+    }
+  } catch {
+    // Health check failure is non-fatal
+    logger.error('[service-scan] Deep health check failed (non-fatal)');
   }
 
   // ── 2. Persist scan record ────────────────────────────────────────────────
@@ -819,6 +900,10 @@ export async function GET(request: NextRequest) {
   logger.log(
     `[service-scan] Done: ${issues.length} issues, ${errorIssues.length} errors, ${proposedFixCount} fixes proposed`
   );
+
+  // BIZZ-305: Record heartbeat for watchdog monitoring
+  const durationMs = Date.now() - now.getTime();
+  recordHeartbeat('service-scan', 'success', durationMs, 60);
 
   return NextResponse.json({
     ok: true,

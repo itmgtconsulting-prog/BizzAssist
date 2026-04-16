@@ -106,9 +106,10 @@ export async function GET(request: NextRequest): Promise<Response> {
   } catch (err) {
     const besked = err instanceof Error ? err.message : String(err);
     logger.error('[jord/pdf] Fetch fejlede:', besked);
-    return NextResponse.json(
-      { fejl: `Kunne ikke hente PDF fra Miljøportalen: ${besked}` },
-      { status: 502 }
-    );
+    const body =
+      process.env.NODE_ENV === 'development'
+        ? { fejl: 'Ekstern API fejl', dev_detail: besked }
+        : { fejl: 'Ekstern API fejl' };
+    return NextResponse.json(body, { status: 502 });
   }
 }

@@ -13,6 +13,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { writeAuditLog } from '@/app/lib/auditLog';
 import { z } from 'zod';
 import { resolveTenantId } from '@/lib/api/auth';
 import { getTenantContext } from '@/lib/db/tenant';
@@ -56,6 +57,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const db = await getTenantContext(auth.tenantId);
     const conversation = await db.aiConversations.create({
       title: parsed.data.title || undefined,
+    });
+    writeAuditLog({
+      action: 'ai_conversation.create',
+      resource_type: 'ai_conversation',
+      resource_id: conversation.id,
     });
     return NextResponse.json(conversation, { status: 201 });
   } catch (err) {

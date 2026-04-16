@@ -16,10 +16,20 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
+import { parseQuery } from '@/app/lib/validate';
 
 export const runtime = 'nodejs';
+
+// ─── Query param validation ─────────────────────────────────────────────────
+
+const wmsQuerySchema = z.object({
+  service: z.enum(['plandata', 'miljo'], {
+    error: 'service skal være plandata eller miljo',
+  }),
+});
 
 /**
  * Whitelistede WMS-services med verificerede endpoints.
@@ -32,7 +42,8 @@ const WMS_BASES = {
   miljo: 'https://arealeditering-dist-geo.miljoeportal.dk/geoserver/ows',
 } as const;
 
-type ServiceKey = keyof typeof WMS_BASES;
+/** @internal Used by Zod schema enum — kept for type documentation */
+type _ServiceKey = keyof typeof WMS_BASES;
 
 /**
  * Proxy-handler — henter én WMS-tile server-side og returnerer den til klienten.
@@ -43,23 +54,18 @@ type ServiceKey = keyof typeof WMS_BASES;
 export async function GET(request: NextRequest): Promise<Response> {
   const auth = await resolveTenantId();
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  const { searchParams } = request.nextUrl;
-  const service = searchParams.get('service');
 
-  if (!service || !(service in WMS_BASES)) {
-    return NextResponse.json(
-      { fejl: 'Ukendt service — brug service=plandata eller service=miljo' },
-      { status: 400 }
-    );
-  }
+  const parsed = parseQuery(request, wmsQuerySchema);
+  if (!parsed.success) return parsed.response;
+  const { service } = parsed.data;
 
   // Byg WMS-URL — videresend alle parametre undtagen vores 'service'-nøgle
   const wmsParams = new URLSearchParams();
-  for (const [key, value] of searchParams.entries()) {
+  for (const [key, value] of request.nextUrl.searchParams.entries()) {
     if (key !== 'service') wmsParams.set(key, value);
   }
 
-  const url = `${WMS_BASES[service as ServiceKey]}?${wmsParams.toString()}`;
+  const url = `${WMS_BASES[service]}?${wmsParams.toString()}`;
 
   try {
     const res = await fetch(url, {

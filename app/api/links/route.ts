@@ -11,7 +11,18 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createClient } from '@supabase/supabase-js';
+import { parseBody } from '@/app/lib/validate';
+import { writeAuditLog } from '@/app/lib/auditLog';
+
+/** Zod schema for POST /api/links request body */
+const linksPostSchema = z
+  .object({
+    action: z.string().optional(),
+    userId: z.string().min(1),
+  })
+  .passthrough();
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
@@ -195,12 +206,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Supabase ikke konfigureret' }, { status: 503 });
   }
 
-  const body = await req.json();
-  const { action, entityType, entityId, entityName, platform, url, linkId, userId } = body;
-
-  if (!userId) {
-    return NextResponse.json({ error: 'userId er påkrævet' }, { status: 400 });
-  }
+  const parsed = await parseBody(req, linksPostSchema);
+  if (!parsed.success) return parsed.response;
+  const { action, userId } = parsed.data;
+  const { entityType, entityId, entityName, platform, url, linkId } = parsed.data as Record<
+    string,
+    string | undefined
+  >;
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
@@ -224,7 +236,12 @@ export async function POST(req: NextRequest) {
       .insert({ link_id: linkId, user_id: userId });
 
     if (insertErr) {
-      return NextResponse.json({ error: insertErr.message }, { status: 500 });
+      console.error('[links] insert link_verifications fejl:', insertErr.message);
+      const body =
+        process.env.NODE_ENV === 'development'
+          ? { error: 'Intern serverfejl', dev_detail: insertErr.message }
+          : { error: 'Intern serverfejl' };
+      return NextResponse.json(body, { status: 500 });
     }
 
     // Opdater verify_count
@@ -241,6 +258,14 @@ export async function POST(req: NextRequest) {
         })
         .eq('id', linkId);
     }
+
+    // Audit: link verified (fire-and-forget — ISO 27001 A.12.4)
+    void writeAuditLog({
+      action: 'link_verified',
+      resource_type: 'link',
+      resource_id: linkId,
+      metadata: JSON.stringify({ user_id: userId }),
+    });
 
     return NextResponse.json({ success: true });
   }
@@ -276,7 +301,12 @@ export async function POST(req: NextRequest) {
         .single();
 
       if (insertErr || !inserted) {
-        return NextResponse.json({ error: insertErr?.message ?? 'Insert failed' }, { status: 500 });
+        console.error('[links] insert verified_links fejl:', insertErr?.message ?? 'Insert failed');
+        const body =
+          process.env.NODE_ENV === 'development'
+            ? { error: 'Intern serverfejl', dev_detail: insertErr?.message ?? 'Insert failed' }
+            : { error: 'Intern serverfejl' };
+        return NextResponse.json(body, { status: 500 });
       }
       linkIdToVerify = inserted.id;
     }
@@ -297,6 +327,19 @@ export async function POST(req: NextRequest) {
       .from('verified_links')
       .update({ verify_count: countData?.length ?? 1, updated_at: new Date().toISOString() })
       .eq('id', linkIdToVerify);
+
+    // Audit: link verified after add (fire-and-forget — ISO 27001 A.12.4)
+    void writeAuditLog({
+      action: 'link_verified',
+      resource_type: 'link',
+      resource_id: linkIdToVerify,
+      metadata: JSON.stringify({
+        user_id: userId,
+        platform,
+        entity_type: entityType,
+        entity_id: entityId,
+      }),
+    });
 
     return NextResponse.json({ success: true, linkId: linkIdToVerify });
   }

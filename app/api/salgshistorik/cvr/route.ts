@@ -16,6 +16,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { logger } from '@/app/lib/logger';
+import { getSharedOAuthToken } from '@/app/lib/dfTokenCache';
 import { resolveTenantId } from '@/lib/api/auth';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -59,7 +60,7 @@ export interface CvrSalgshistorikResponse {
 
 // ─── Datafordeler EJF GraphQL ────────────────────────────────────────────────
 
-const EJF_GQL_URL = 'https://graphql.datafordeler.dk/EJF/v1';
+const EJF_GQL_URL = 'https://graphql.datafordeler.dk/flexibleCurrent/v1/';
 const TOKEN_URL = 'https://auth.datafordeler.dk/realms/distribution/protocol/openid-connect/token';
 
 let _cachedToken: { token: string; expiresAt: number } | null = null;
@@ -69,7 +70,7 @@ let _cachedToken: { token: string; expiresAt: number } | null = null;
  *
  * @returns Bearer token eller null
  */
-async function getOAuthToken(): Promise<string | null> {
+async function _getOAuthToken(): Promise<string | null> {
   if (_cachedToken && Date.now() < _cachedToken.expiresAt - 60_000) {
     return _cachedToken.token;
   }
@@ -230,6 +231,8 @@ export async function GET(request: NextRequest): Promise<NextResponse<CvrSalgshi
 
   const { searchParams } = request.nextUrl;
   const cvr = searchParams.get('cvr') ?? '';
+  // BIZZ-256: Optional pre-fetched BFE numbers — skips EJF lookup if provided
+  const preFetchedBfe = searchParams.get('bfeNumre');
 
   if (!cvr || !/^\d{8}$/.test(cvr)) {
     return NextResponse.json(
@@ -245,7 +248,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<CvrSalgshi
     );
   }
 
-  const token = await getOAuthToken();
+  const token = await getSharedOAuthToken();
   if (!token) {
     return NextResponse.json(
       { cvr, handler: [], fejl: 'OAuth token fejl', manglerNoegle: false, manglerAdgang: false },
@@ -254,46 +257,63 @@ export async function GET(request: NextRequest): Promise<NextResponse<CvrSalgshi
   }
 
   try {
-    // ── Trin 1: Find alle BFE-numre ejet af CVR (nuværende + historiske) ──
-    const ejerskabQuery = `{
-      EJF_Ejerskab(
-        first: 500
-        where: {
-          ejendeVirksomhedCVRNr: { eq: ${parseInt(cvr, 10)} }
+    // ── Trin 1: Find alle BFE-numre ejet af CVR ──
+    let bfeNumre: number[];
+
+    // BIZZ-256: Skip EJF lookup if BFE numbers are pre-fetched (from ejendomme-by-owner)
+    if (preFetchedBfe) {
+      bfeNumre = preFetchedBfe
+        .split(',')
+        .map(Number)
+        .filter((n) => !isNaN(n) && n > 0);
+    } else {
+      const ejerskabQuery = `{
+        EJFCustom_EjerskabBegraenset(
+          first: 500
+          where: {
+            ejendeVirksomhedCVRNr: { eq: ${parseInt(cvr, 10)} }
+          }
+        ) {
+          nodes {
+            bestemtFastEjendomBFENr
+            ejendeVirksomhedCVRNr
+            virkningFra
+          }
         }
-      ) {
-        nodes {
-          bestemtFastEjendomBFENr
-          ejendeVirksomhedCVRNr
-          virkningFra
-        }
+      }`;
+
+      const ejerskabResult = await queryEJF<RawEjerskab>(
+        ejerskabQuery,
+        'EJFCustom_EjerskabBegraenset',
+        token
+      );
+      if (ejerskabResult?.authError) {
+        return NextResponse.json(
+          { cvr, handler: [], fejl: null, manglerNoegle: false, manglerAdgang: true },
+          { status: 200 }
+        );
       }
-    }`;
+      if (!ejerskabResult) {
+        return NextResponse.json(
+          {
+            cvr,
+            handler: [],
+            fejl: 'EJF_Ejerskab query fejlede',
+            manglerNoegle: false,
+            manglerAdgang: false,
+          },
+          { status: 200 }
+        );
+      }
 
-    const ejerskabResult = await queryEJF<RawEjerskab>(ejerskabQuery, 'EJF_Ejerskab', token);
-    if (ejerskabResult?.authError) {
-      return NextResponse.json(
-        { cvr, handler: [], fejl: null, manglerNoegle: false, manglerAdgang: true },
-        { status: 200 }
-      );
-    }
-    if (!ejerskabResult) {
-      return NextResponse.json(
-        {
-          cvr,
-          handler: [],
-          fejl: 'EJF_Ejerskab query fejlede',
-          manglerNoegle: false,
-          manglerAdgang: false,
-        },
-        { status: 200 }
-      );
+      const bfeFromEjf = new Set<number>();
+      for (const e of ejerskabResult.nodes) {
+        if (e.bestemtFastEjendomBFENr != null) bfeFromEjf.add(e.bestemtFastEjendomBFENr);
+      }
+      bfeNumre = [...bfeFromEjf];
     }
 
-    const bfeNrSet = new Set<number>();
-    for (const e of ejerskabResult.nodes) {
-      if (e.bestemtFastEjendomBFENr != null) bfeNrSet.add(e.bestemtFastEjendomBFENr);
-    }
+    const bfeNrSet = new Set(bfeNumre);
 
     if (bfeNrSet.size === 0) {
       return NextResponse.json(
@@ -386,11 +406,10 @@ export async function GET(request: NextRequest): Promise<NextResponse<CvrSalgshi
     await Promise.allSettled(adressePromises);
 
     // ── Trin 5: Byg ejerskab-set for CVR (hvornår CVR ejede hver BFE) ──
+    // BIZZ-256: When BFEs were pre-fetched, virkningFra is not available
     const cvrEjerskabMap = new Map<number, string | null>();
-    for (const e of ejerskabResult.nodes) {
-      if (e.bestemtFastEjendomBFENr != null) {
-        cvrEjerskabMap.set(e.bestemtFastEjendomBFENr, e.virkningFra);
-      }
+    for (const bfe of bfeNumre) {
+      cvrEjerskabMap.set(bfe, null);
     }
 
     // ── Sammenkobl data ──
@@ -459,15 +478,23 @@ export async function GET(request: NextRequest): Promise<NextResponse<CvrSalgshi
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Ukendt fejl';
-    return NextResponse.json(
-      {
-        cvr,
-        handler: [],
-        fejl: `Netværksfejl: ${msg}`,
-        manglerNoegle: false,
-        manglerAdgang: false,
-      },
-      { status: 200 }
-    );
+    const body =
+      process.env.NODE_ENV === 'development'
+        ? {
+            cvr,
+            handler: [],
+            fejl: 'Ekstern API fejl',
+            dev_detail: msg,
+            manglerNoegle: false,
+            manglerAdgang: false,
+          }
+        : {
+            cvr,
+            handler: [],
+            fejl: 'Ekstern API fejl',
+            manglerNoegle: false,
+            manglerAdgang: false,
+          };
+    return NextResponse.json(body, { status: 200 });
   }
 }

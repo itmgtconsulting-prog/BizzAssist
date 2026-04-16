@@ -98,6 +98,7 @@ export default function DiagramDagre({ graph, lang: _lang }: DiagramVariantProps
           <button
             onClick={() => setZoom((z) => Math.min(z + 0.15, 2))}
             className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-white bg-slate-800 border border-slate-700/50 rounded-lg text-xs transition"
+            aria-label="Zoom ind"
           >
             +
           </button>
@@ -107,6 +108,7 @@ export default function DiagramDagre({ graph, lang: _lang }: DiagramVariantProps
           <button
             onClick={() => setZoom((z) => Math.max(z - 0.15, 0.15))}
             className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-white bg-slate-800 border border-slate-700/50 rounded-lg text-xs transition"
+            aria-label="Zoom ud"
           >
             &minus;
           </button>
@@ -188,6 +190,19 @@ export default function DiagramDagre({ graph, lang: _lang }: DiagramVariantProps
               if (!pos) return null;
               const isMain = node.type === 'main';
               const isPerson = node.type === 'person';
+              // BIZZ-357: Detect ceased companies for greyed-out rendering
+              const isCeased = node.isCeased === true;
+
+              const boxFill = isMain
+                ? 'rgba(37,99,235,0.15)'
+                : isCeased
+                  ? 'rgba(30,30,35,0.55)'
+                  : 'rgba(30,41,59,0.7)';
+              const boxStroke = isMain
+                ? 'rgba(59,130,246,0.5)'
+                : isCeased
+                  ? 'rgba(100,110,130,0.35)'
+                  : 'rgba(51,65,85,0.5)';
 
               return (
                 <g
@@ -202,10 +217,37 @@ export default function DiagramDagre({ graph, lang: _lang }: DiagramVariantProps
                     width={pos.w}
                     height={pos.h}
                     rx={isPerson ? pos.h / 2 : 12}
-                    fill={isMain ? 'rgba(37,99,235,0.15)' : 'rgba(30,41,59,0.7)'}
-                    stroke={isMain ? 'rgba(59,130,246,0.5)' : 'rgba(51,65,85,0.5)'}
+                    fill={boxFill}
+                    stroke={boxStroke}
                     strokeWidth={isMain ? 2 : 1}
+                    // BIZZ-357: Dashed border for ceased companies
+                    strokeDasharray={isCeased ? '4 3' : undefined}
                   />
+                  {/* BIZZ-357: "Ophørt" badge for ceased companies */}
+                  {isCeased && (
+                    <>
+                      <rect
+                        x={pos.x + pos.w - 50}
+                        y={pos.y + 5}
+                        width={44}
+                        height={12}
+                        rx={3}
+                        fill="rgba(75,80,95,0.7)"
+                        stroke="rgba(100,110,130,0.4)"
+                        strokeWidth={0.75}
+                      />
+                      <text
+                        x={pos.x + pos.w - 28}
+                        y={pos.y + 14}
+                        fill="rgba(180,185,195,0.85)"
+                        fontSize="7"
+                        fontWeight="500"
+                        textAnchor="middle"
+                      >
+                        Ophørt
+                      </text>
+                    </>
+                  )}
                   {/* Icon */}
                   {isPerson ? (
                     <circle
@@ -232,7 +274,13 @@ export default function DiagramDagre({ graph, lang: _lang }: DiagramVariantProps
                   <text
                     x={pos.x + 36}
                     y={node.sublabel ? pos.y + pos.h / 2 - 3 : pos.y + pos.h / 2 + 4}
-                    fill={isMain ? '#ffffff' : 'rgba(226,232,240,0.9)'}
+                    fill={
+                      isMain
+                        ? '#ffffff'
+                        : isCeased
+                          ? 'rgba(160,165,175,0.75)'
+                          : 'rgba(226,232,240,0.9)'
+                    }
                     fontSize="11"
                     fontWeight={isMain ? '600' : '500'}
                   >

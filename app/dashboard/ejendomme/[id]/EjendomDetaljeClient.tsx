@@ -21,7 +21,6 @@ import {
   ArrowLeft,
   Download,
   Bell,
-  List,
   X,
   MapPin,
   Building2,
@@ -297,8 +296,16 @@ function _EjerstrukturTrae({ noder }: { noder: EjerstrukturNode[] }) {
 /**
  * Ejendomsdetaljeside med tabs og kortvisning.
  * @param params - URL params med ejendoms-id (Promise i React 19)
+ * @param prefetched - Optional server-side prefetched DAWA + BBR data (eliminerer klient-side waterfall)
  */
-export default function EjendomDetaljeClient({ params }: { params: Promise<{ id: string }> }) {
+export default function EjendomDetaljeClient({
+  params,
+  prefetched,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams?: Promise<Record<string, string | string[]>>;
+  prefetched?: import('./page').PrefetchedPropertyData;
+}) {
   const { id } = use(params);
   const router = useRouter();
   const { lang } = useLanguage();
@@ -543,6 +550,9 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
     deedType: da ? 'Adkomst' : 'Deed type',
     registrationDate: da ? 'Tinglyst' : 'Registered',
     registrationFee: da ? 'Tinglysningsafgift' : 'Registration fee',
+    loesoereSum: da ? 'Løsøre' : 'Movables',
+    entrepriseSum: da ? 'Entreprise' : 'Construction',
+    overtagelsesdato: da ? 'Overtagelse' : 'Possession',
     mortgages: da ? 'Hæftelser & Pantebreve' : 'Mortgages & Charges',
     noMortgages: da ? 'Ingen hæftelser tinglyst' : 'No mortgages registered',
     principalAmount: da ? 'Hovedstol' : 'Principal',
@@ -798,13 +808,18 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
   }, [trækker]);
 
   // DAWA-tilstand — kun aktiv når id er et DAWA UUID
-  const [dawaAdresse, setDawaAdresse] = useState<DawaAdresse | null>(null);
+  // Hvis server-side prefetch leverede data, brug det som initial state
+  const [dawaAdresse, setDawaAdresse] = useState<DawaAdresse | null>(
+    prefetched?.dawaAdresse ?? null
+  );
   const [dawaJordstykke, setDawaJordstykke] = useState<DawaJordstykke | null>(null);
   // true = loader, false = fejl, null = idle/done
-  const [dawaStatus, setDawaStatus] = useState<'loader' | 'fejl' | 'ok' | 'idle'>('idle');
+  const [dawaStatus, setDawaStatus] = useState<'loader' | 'fejl' | 'ok' | 'idle'>(
+    prefetched?.dawaAdresse ? 'ok' : 'idle'
+  );
 
   /** BBR data fra server-side API-route — null = ikke hentet / ikke tilgængeligt */
-  const [bbrData, setBbrData] = useState<EjendomApiResponse | null>(null);
+  const [bbrData, setBbrData] = useState<EjendomApiResponse | null>(prefetched?.bbrData ?? null);
   /** True mens BBR-data hentes */
   const [bbrLoader, setBbrLoader] = useState(false);
 
@@ -841,21 +856,21 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
     import('@/app/api/ejerlejligheder/route').Ejerlejlighed[] | null
   >(null);
   /** True mens lejlighedsdata hentes */
-  const [_lejlighederLoader, setLejlighederLoader] = useState(false);
+  const [lejlighederLoader, setLejlighederLoader] = useState(false);
 
   /** Ejendomsvurderingsdata fra Datafordeler — null = ikke hentet endnu */
   const [vurdering, setVurdering] = useState<VurderingData | null>(null);
   /** Alle vurderinger fra Datafordeler — bruges til historiktabel */
   const [alleVurderinger, setAlleVurderinger] = useState<VurderingData[]>([]);
-  /** True mens vurderingsdata hentes */
-  const [vurderingLoader, setVurderingLoader] = useState(false);
+  /** True mens vurderingsdata hentes — starter som true når prefetch giver BBR data med det samme */
+  const [vurderingLoader, setVurderingLoader] = useState(!!prefetched?.bbrData);
   /** True = vis fuld vurderingshistorik-tabel */
   const [visVurderingHistorik, setVisVurderingHistorik] = useState(false);
 
   /** Ejere fra Ejerfortegnelsen (Datafordeler) */
-  const [_ejere, setEjere] = useState<EjerData[] | null>(null);
-  /** True mens ejerdata hentes (bruges kun internt i fetch-effekt) */
-  const [_ejereLoader, setEjereLoader] = useState(false);
+  const [_ejereEjf, setEjere] = useState<EjerData[] | null>(null);
+  /** True mens ejerdata hentes — starter som true når prefetched data medfører at ejerskab-fetch kører med det samme */
+  const [ejereLoader, setEjereLoader] = useState(!!prefetched?.bbrData);
   /** True hvis Datafordeler returnerer 403 — Dataadgang-ansøgning mangler for EJF */
   const [_manglerEjereAdgang, setManglerEjereAdgang] = useState(false);
 
@@ -913,6 +928,8 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
 
   /** Om ejendommen er fulgt af brugeren — synkroniseret med localStorage */
   const [erFulgt, setErFulgt] = useState(false);
+  /** True mens Følg/Følger-toggle-request er i gang — forhindrer dobbeltklik */
+  const [foelgToggling, setFoelgToggling] = useState(false);
   /** Vis Følg-tooltip med info om overvåget data */
   const [visFoelgTooltip, setVisFoelgTooltip] = useState(false);
 
@@ -1030,11 +1047,40 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
 
   /**
    * Henter DAWA-adresse og jordstykke.
+   * Skippes hvis server-side prefetch allerede leverede data (dawaAdresse er sat).
    * Al setState sker i async then-callback — ikke synkront.
    * AbortController sikrer at forældede svar fra tidligere navigation ignoreres.
    */
   useEffect(() => {
     if (!erDAWA) return;
+    // Skip DAWA fetch hvis server-side prefetch allerede leverede adressen
+    if (prefetched?.dawaAdresse) {
+      // Stadig hent jordstykke (ikke prefetched) og gem besøg
+      const adr = prefetched.dawaAdresse;
+      const adresseLabel = adr.etage
+        ? `${adr.vejnavn} ${adr.husnr}, ${adr.etage}.${adr.dør ? ` ${adr.dør}` : ''}`
+        : adr.adressebetegnelse.split(',')[0];
+      gemRecentEjendom({
+        id,
+        adresse: adresseLabel,
+        postnr: adr.postnr,
+        by: adr.postnrnavn,
+        kommune: adr.kommunenavn,
+        anvendelse: null,
+      });
+      recordRecentVisit('property', id, adresseLabel, `/dashboard/ejendomme/${id}`, {
+        postnr: adr.postnr,
+        by: adr.postnrnavn,
+      });
+      // Hent jordstykke asynkront (billigt kald)
+      fetch(`/api/adresse/jordstykke?lng=${adr.x}&lat=${adr.y}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((jord: DawaJordstykke | null) => setDawaJordstykke(jord))
+        .catch(() => {
+          /* ignore */
+        });
+      return;
+    }
     const controller = new AbortController();
     const signal = controller.signal;
     setDawaStatus('loader');
@@ -1080,15 +1126,19 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
         setDawaStatus('fejl');
       });
     return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, erDAWA]);
 
   /**
    * Henter BBR-data fra server-side API-route når DAWA-adressen er klar.
+   * Skippes hvis server-side prefetch allerede leverede BBR-data.
    * Fejler stille — bbrData.bbrFejl beskriver årsagen hvis data mangler.
    * AbortController sikrer at forældede svar ignoreres ved hurtig navigation.
    */
   useEffect(() => {
     if (!erDAWA || dawaStatus !== 'ok') return;
+    // Skip BBR fetch hvis server-side prefetch allerede leverede data
+    if (prefetched?.bbrData) return;
     const controller = new AbortController();
     setBbrLoader(true);
     fetch(`/api/ejendom/${id}`, { signal: controller.signal })
@@ -1106,6 +1156,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
         if (!controller.signal.aborted) setBbrLoader(false);
       });
     return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, erDAWA, dawaStatus]);
 
   /**
@@ -1115,7 +1166,10 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
    * AbortController sikrer at forældede svar ignoreres ved hurtig navigation.
    */
   useEffect(() => {
-    const bfe = bbrData?.ejerlejlighedBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer;
+    const erModerTl = dawaAdresse && !dawaAdresse.etage && !!bbrData?.ejerlejlighedBfe;
+    const bfe = erModerTl
+      ? (bbrData?.moderBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer)
+      : (bbrData?.ejerlejlighedBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer);
     if (!bfe) return;
     const controller = new AbortController();
     const signal = controller.signal;
@@ -1170,7 +1224,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
         setTlSumLoader(false);
       });
     return () => controller.abort();
-  }, [bbrData]);
+  }, [bbrData, dawaAdresse]);
 
   /**
    * Henter CVR-virksomheder på adressen via /api/cvr når DAWA-adressen er klar.
@@ -1202,7 +1256,11 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
         setCvrVirksomheder([]);
       });
     return () => controller.abort();
-  }, [id, erDAWA, dawaStatus, dawaAdresse]);
+    // BIZZ-333: Use stable address components as deps instead of full dawaAdresse object
+    // to avoid re-triggering (and aborting) the CVR fetch when BBR prefetch updates
+    // dawaAdresse reference without changing the actual address values.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, erDAWA, dawaStatus, dawaAdresse?.vejnavn, dawaAdresse?.husnr, dawaAdresse?.postnr]);
 
   /**
    * Henter alle ejerlejligheder for ejendommen fra /api/ejerlejligheder.
@@ -1212,9 +1270,10 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
    * AbortController sikrer at forældede svar ignoreres ved hurtig navigation.
    */
   useEffect(() => {
-    if (!erDAWA || dawaStatus !== 'ok' || !dawaAdresse) return;
-    // Kun hent for adresser uden etage/dør (dvs. potentielle moderejendomme)
-    if (dawaAdresse.etage) return;
+    // BIZZ-241: Hent lejligheder for hovedejendomme (ingen etage + har ejerlejlighedBfe)
+    // Også hent hvis dawaAdresse er tilgængelig og viser en moderejendom
+    const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
+    if (!erModer) return;
     // Kræver matrikeldata fra BBR ejendomsrelationer
     const rel = bbrData?.ejendomsrelationer?.[0];
     if (!rel?.ejerlavKode || !rel?.matrikelnr) return;
@@ -1324,6 +1383,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
       });
 
     return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, erDAWA, bbrData, dawaAdresse]);
 
   /**
@@ -1404,13 +1464,35 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
   }, [id, erDAWA, dawaAdresse, bbrData]);
 
   /**
-   * Henter energimærkerapporter via /api/energimaerke når BFE-nummer er tilgængeligt.
+   * BIZZ-332: Henter energimærkerapporter via /api/energimaerke når BFE-nummer er tilgængeligt.
+   *
+   * Energimærker registreres på bygningsniveau (moderejendommen), ikke på den
+   * individuelle ejerlejlighed. Opslag-BFE bestemmes efter følgende prioritering:
+   *   1. Moderejendom (ingen etage + ejerlejlighedBfe sat): brug moderBfe direkte.
+   *   2. Ejerlejlighed (har etage + moderBfe sat): brug moderBfe direkte — undgår
+   *      et forgæves opslag på ejerlejlighedens egen BFE, som aldrig har et mærke.
+   *   3. Normal ejendom (ingen ejerlejlighedBfe): brug ejendomsrelationernes BFE.
+   *
    * Kræver EMO_USERNAME/PASSWORD i .env.local — fejler stille med manglerAdgang-flag.
    * AbortController sikrer at forældede svar ignoreres ved hurtig navigation.
    */
   useEffect(() => {
-    if (!erDAWA || !bbrData?.ejendomsrelationer?.length) return;
-    const bfeNummer = bbrData.ejendomsrelationer[0]?.bfeNummer;
+    if (!erDAWA || !bbrData?.ejendomsrelationer?.length || !dawaAdresse) return;
+
+    // Bestem det korrekte BFE til energimærke-opslag.
+    // Moderejendom: ingen etage OG har ejerlejlighedBfe (VP fandt en child-BFE).
+    const erModerEjendom = !dawaAdresse.etage && !!bbrData.ejerlejlighedBfe;
+    // Ejerlejlighed: har etage OG moderBfe er sat (= jordBFE / bygnings-BFE).
+    const erEjerlejlighed = !!dawaAdresse.etage && !!bbrData.moderBfe;
+
+    let bfeNummer: number | null | undefined;
+    if (erModerEjendom || erEjerlejlighed) {
+      // For begge cases: energimærket hænger på moderejendommens BFE (jordBFE).
+      bfeNummer = bbrData.moderBfe ?? bbrData.ejendomsrelationer[0]?.bfeNummer;
+    } else {
+      // Normal ejendom uden ejerlejligheder.
+      bfeNummer = bbrData.ejendomsrelationer[0]?.bfeNummer;
+    }
     if (!bfeNummer) return;
 
     const controller = new AbortController();
@@ -1434,7 +1516,8 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
         if (!controller.signal.aborted) setEnergiLoader(false);
       });
     return () => controller.abort();
-  }, [id, erDAWA, bbrData]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, erDAWA, bbrData, dawaAdresse]);
 
   /**
    * Henter jordforureningsstatus fra DkJord API når ejerlavKode + matrikelnr er tilgængelige.
@@ -1476,6 +1559,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
         if (!controller.signal.aborted) setJordLoader(false);
       });
     return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, erDAWA, bbrData]);
 
   /**
@@ -1506,6 +1590,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
         if (!controller.signal.aborted) setPlandataLoader(false);
       });
     return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, erDAWA, dawaStatus]);
 
   /**
@@ -1575,6 +1660,18 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
       }
     }
 
+    // Energimærkerapporter — proxy URL åbnes direkte fra cachet state
+    if (energimaerker) {
+      for (const m of energimaerker) {
+        if (m.pdfUrl && valgteDoc.has(`energi-${m.serialId}`)) {
+          docs.push({
+            filename: `Energimaerke_${m.serialId}.pdf`,
+            url: m.pdfUrl,
+          });
+        }
+      }
+    }
+
     if (docs.length === 0) {
       alert(t.noDirectPdfLinks);
       return;
@@ -1632,6 +1729,10 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
   interface MergedHandel {
     kontantKoebesum: number | null;
     samletKoebesum: number | null;
+    /** Løsøreværdi fra EJF (inventar, maskiner m.m. der ikke er fast ejendom) */
+    loesoeresum: number | null;
+    /** Entreprisesum fra EJF (nybyggeri/ombygning inkluderet i købet) */
+    entreprisesum: number | null;
     koebsaftaleDato: string | null;
     overtagelsesdato: string | null;
     overdragelsesmaade: string | null;
@@ -1677,6 +1778,8 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
       merged.push({
         kontantKoebesum: h.kontantKoebesum,
         samletKoebesum: h.samletKoebesum,
+        loesoeresum: h.loesoeresum,
+        entreprisesum: h.entreprisesum,
         koebsaftaleDato: h.koebsaftaleDato,
         overtagelsesdato: h.overtagelsesdato,
         overdragelsesmaade: h.overdragelsesmaade,
@@ -1697,6 +1800,9 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
       merged.push({
         kontantKoebesum: e.kontantKoebesum ?? e.koebesum,
         samletKoebesum: e.iAltKoebesum ?? e.koebesum,
+        // Løsøre/entreprise comes only from EJF — not available in tinglysning records
+        loesoeresum: null,
+        entreprisesum: null,
         koebsaftaleDato: e.koebsaftaledato,
         overtagelsesdato: e.overtagelsesdato,
         overdragelsesmaade: e.adkomstType,
@@ -1821,29 +1927,54 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                   onMouseLeave={() => setVisFoelgTooltip(false)}
                 >
                   <button
+                    disabled={foelgToggling}
                     onClick={async () => {
+                      if (foelgToggling) return;
                       setVisFoelgTooltip(false);
-                      const postnr = dawaAdresse?.postnr ?? '';
-                      const by = dawaAdresse?.postnrnavn ?? '';
-                      const kommune =
-                        dawaAdresse?.kommunenavn ?? dawaJordstykke?.kommune.navn ?? '';
-                      const anvendelse = bbrData?.bbr?.[0]?.anvendelse ?? null;
-                      const nyTilstand = await toggleTrackEjendom({
-                        id,
-                        adresse: adresseStreng,
-                        postnr,
-                        by,
-                        kommune,
-                        anvendelse,
-                      });
-                      setErFulgt(nyTilstand);
-                      window.dispatchEvent(new Event('ba-tracked-changed'));
+                      // Optimistic update — toggle colour immediately so the user
+                      // sees instant feedback before the Supabase write completes.
+                      const optimisticState = !erFulgt;
+                      setErFulgt(optimisticState);
+                      setFoelgToggling(true);
+                      try {
+                        const postnr = dawaAdresse?.postnr ?? '';
+                        const by = dawaAdresse?.postnrnavn ?? '';
+                        const kommune =
+                          dawaAdresse?.kommunenavn ?? dawaJordstykke?.kommune.navn ?? '';
+                        const anvendelse = bbrData?.bbr?.[0]?.anvendelse ?? null;
+                        const nyTilstand = await toggleTrackEjendom({
+                          id,
+                          adresse: adresseStreng,
+                          postnr,
+                          by,
+                          kommune,
+                          anvendelse,
+                        });
+                        // Confirm with authoritative result from the toggle function
+                        setErFulgt(nyTilstand);
+                        window.dispatchEvent(new Event('ba-tracked-changed'));
+                      } catch {
+                        // Revert optimistic update on error
+                        setErFulgt(!optimisticState);
+                      } finally {
+                        setFoelgToggling(false);
+                      }
                     }}
-                    className={`flex items-center gap-2 px-3 py-1.5 border rounded-lg text-sm transition-all ${
+                    className={`flex items-center gap-2 px-3 py-1.5 border rounded-lg text-sm transition-all disabled:opacity-60 disabled:cursor-not-allowed ${
                       erFulgt
                         ? 'bg-blue-600/20 hover:bg-blue-600/30 border-blue-500/40 text-blue-300'
                         : 'bg-slate-800 hover:bg-slate-700 border-slate-700/60 text-slate-300'
                     }`}
+                    aria-label={
+                      erFulgt
+                        ? da
+                          ? 'Stop med at følge ejendom'
+                          : 'Unfollow property'
+                        : da
+                          ? 'Følg ejendom'
+                          : 'Follow property'
+                    }
+                    aria-pressed={erFulgt}
                   >
                     <Bell size={14} className={erFulgt ? 'fill-blue-400 text-blue-400' : ''} />
                     {erFulgt ? t.following : t.follow}
@@ -1977,7 +2108,8 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
 
                   {/* Matrikel / Lejlighedsinfo */}
                   {(() => {
-                    const erLejlighed = !!bbrData?.ejerlejlighedBfe;
+                    const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
+                    const erLejlighed = !!bbrData?.ejerlejlighedBfe && !erModer;
                     const enhed = erLejlighed ? (bbrData?.enheder ?? [])[0] : null;
                     // Grundareal: brug DAWA jordstykke → VUR vurderet areal som fallback
                     const grundareal =
@@ -2027,7 +2159,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                                 <p className="text-white text-sm font-medium">
                                   {tinglysningData?.tinglystAreal
                                     ? `${tinglysningData.tinglystAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                    : '–'}
+                                    : formatDKK(0)}
                                 </p>
                               </div>
                               <div>
@@ -2063,7 +2195,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                                 <p className="text-white text-sm font-medium">
                                   {grundareal
                                     ? `${grundareal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                    : '–'}
+                                    : formatDKK(0)}
                                 </p>
                               </div>
                               <div>
@@ -2133,7 +2265,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                             <p className="text-white text-base font-bold">
                               {vurdering.ejendomsvaerdi
                                 ? formatDKK(vurdering.ejendomsvaerdi)
-                                : t.notAssessed}
+                                : formatDKK(0)}
                             </p>
                             {vurdering.afgiftspligtigEjendomsvaerdi !== null &&
                               vurdering.afgiftspligtigEjendomsvaerdi !==
@@ -2151,7 +2283,9 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                               )}
                             </p>
                             <p className="text-white text-sm font-medium">
-                              {vurdering.grundvaerdi ? formatDKK(vurdering.grundvaerdi) : '–'}
+                              {vurdering.grundvaerdi
+                                ? formatDKK(vurdering.grundvaerdi)
+                                : formatDKK(0)}
                             </p>
                             {vurdering.afgiftspligtigGrundvaerdi !== null &&
                               vurdering.afgiftspligtigGrundvaerdi !== vurdering.grundvaerdi && (
@@ -2170,7 +2304,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                             <p className="text-white text-sm font-medium">
                               {vurdering.vurderetAreal
                                 ? `${vurdering.vurderetAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                : '–'}
+                                : formatDKK(0)}
                             </p>
                           </div>
                           {/* Grundskyld — foretrækker faktisk fra Vurderingsportalen, falder tilbage til estimeret */}
@@ -2250,7 +2384,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                               <p className="text-amber-200 text-sm font-medium">
                                 {nyesteForelobig.ejendomsvaerdi
                                   ? formatDKK(nyesteForelobig.ejendomsvaerdi)
-                                  : t.notAssessed}
+                                  : formatDKK(0)}
                               </p>
                             </div>
                             <div>
@@ -2315,7 +2449,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                               <p className="text-white text-sm font-medium">
                                 {totAreal
                                   ? `${totAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                  : '–'}
+                                  : formatDKK(0)}
                               </p>
                             </div>
                             <div>
@@ -2335,7 +2469,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                               <p className="text-white text-sm font-medium">
                                 {erhvAreal
                                   ? `${erhvAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                  : '–'}
+                                  : formatDKK(0)}
                               </p>
                             </div>
                             <div>
@@ -2355,10 +2489,55 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
 
                   {/* Enheder */}
                   {(() => {
+                    const erModerHer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
                     const enheder = bbrData?.enheder ?? [];
                     const boligEnh = enheder.filter((e) => (e.arealBolig ?? 0) > 0).length;
                     const erhvEnh = enheder.filter((e) => (e.arealErhverv ?? 0) > 0).length;
                     const totAreal = enheder.reduce((s, e) => s + (e.areal ?? 0), 0);
+
+                    // Hovedejendom: vis antal lejligheder i stedet for tom enheder-boks
+                    if (erModerHer) {
+                      const antalLej = lejligheder?.length ?? 0;
+                      return (
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-2.5 self-start">
+                          <div className="flex items-baseline gap-1 mb-1.5">
+                            <span className="text-white font-bold text-lg">
+                              {lejlighederLoader ? '…' : antalLej || '–'}
+                            </span>
+                            <span className="text-slate-400 text-xs">
+                              {da ? 'ejerlejligheder' : 'condominiums'}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+                            <div>
+                              <p className="text-slate-500 text-xs leading-none mb-0.5">
+                                {t.residentialUnits}
+                              </p>
+                              <p className="text-white text-sm font-medium">
+                                {lejlighederLoader ? '…' : antalLej}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-slate-500 text-xs leading-none mb-0.5">
+                                {t.commercialUnits}
+                              </p>
+                              <p className="text-white text-sm font-medium">0</p>
+                            </div>
+                            <div className="col-span-2">
+                              <p className="text-slate-500 text-xs leading-none mb-0.5">
+                                {t.totalUnitArea}
+                              </p>
+                              <p className="text-white text-sm font-medium">
+                                {lejligheder && antalLej > 0
+                                  ? `${lejligheder.reduce((s, l) => s + (l.areal ?? 0), 0).toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
+                                  : formatDKK(0)}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    }
+
                     return (
                       <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-2.5 self-start">
                         <div className="flex items-baseline gap-1 mb-1.5">
@@ -2387,7 +2566,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                             <p className="text-white text-sm font-medium">
                               {totAreal
                                 ? `${totAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                : '–'}
+                                : formatDKK(0)}
                             </p>
                           </div>
                         </div>
@@ -2396,67 +2575,8 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                   })()}
                 </div>
 
-                {/* Lejligheder — vises i stedet for CVR når ejendommen er opdelt i ejerlejligheder */}
-                {lejligheder !== null && lejligheder.length > 0 ? (
-                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden overflow-x-auto">
-                    <div className="px-3 py-2.5 border-b border-slate-700/40 flex items-center justify-between">
-                      <p className="text-slate-200 text-xs font-semibold">{t.apartments}</p>
-                      <span className="text-slate-500 text-[10px]">
-                        {lejligheder.length} {da ? 'lejligheder' : 'apartments'}
-                      </span>
-                    </div>
-                    {/* Tabelheader */}
-                    <div className="min-w-[720px] grid grid-cols-[1fr_120px_60px_100px_80px] px-3 py-1.5 text-slate-500 text-[10px] font-medium border-b border-slate-700/30">
-                      <span>{t.apartmentAddress}</span>
-                      <span>{t.apartmentOwner}</span>
-                      <span className="text-right">{t.apartmentArea}</span>
-                      <span className="text-right">{t.apartmentPrice}</span>
-                      <span className="text-right">{t.apartmentDate}</span>
-                    </div>
-                    <div className="divide-y divide-slate-700/20">
-                      {lejligheder.map((lej) => (
-                        <Link
-                          key={lej.bfe}
-                          href={lej.dawaId ? `/dashboard/ejendomme/${lej.dawaId}` : '#'}
-                          onClick={
-                            lej.dawaId ? undefined : (e: React.MouseEvent) => e.preventDefault()
-                          }
-                          className={`min-w-[720px] grid grid-cols-[1fr_120px_60px_100px_80px] px-3 py-1.5 items-center gap-1 hover:bg-slate-700/15 transition-colors block ${lej.dawaId ? 'cursor-pointer' : 'cursor-default'}`}
-                        >
-                          {/* Adresse */}
-                          <span
-                            className="text-slate-200 text-[11px] font-medium truncate"
-                            title={lej.adresse}
-                          >
-                            {lej.adresse.split(',').slice(0, 2).join(',')}
-                          </span>
-                          {/* Ejer */}
-                          <span className="text-slate-400 text-[10px] truncate" title={lej.ejer}>
-                            {lej.ejer}
-                          </span>
-                          {/* Areal */}
-                          <span className="text-slate-300 text-[10px] text-right">
-                            {lej.areal ? `${lej.areal} m²` : '–'}
-                          </span>
-                          {/* Købspris */}
-                          <span className="text-slate-300 text-[10px] text-right font-medium">
-                            {lej.koebspris ? `${lej.koebspris.toLocaleString('da-DK')} DKK` : '–'}
-                          </span>
-                          {/* Købsdato */}
-                          <span className="text-slate-400 text-[10px] text-right">
-                            {lej.koebsdato
-                              ? new Date(lej.koebsdato).toLocaleDateString('da-DK', {
-                                  day: 'numeric',
-                                  month: 'short',
-                                  year: 'numeric',
-                                })
-                              : '–'}
-                          </span>
-                        </Link>
-                      ))}
-                    </div>
-                  </div>
-                ) : (
+                {/* Lejligheder er flyttet til ejerskabs-tab for hovedejendomme */}
+                {!(lejligheder !== null && lejligheder.length > 0) && (
                   <>
                     {/* Virksomheder på adressen — CVR OpenData (skjult for ejerlejlighedsejendomme) */}
                     {cvrTokenMangler ? (
@@ -2822,7 +2942,11 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                                   onClick={() =>
                                     setExpandedBygninger((prev) => {
                                       const next = new Set(prev);
-                                      aaben ? next.delete(rowId) : next.add(rowId);
+                                      if (aaben) {
+                                        next.delete(rowId);
+                                      } else {
+                                        next.add(rowId);
+                                      }
                                       return next;
                                     })
                                   }
@@ -2846,12 +2970,12 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                                   <span className="text-slate-300 text-right">
                                     {b.bebyggetAreal
                                       ? `${b.bebyggetAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                      : '–'}
+                                      : formatDKK(0)}
                                   </span>
                                   <span className="text-slate-300 text-right">
                                     {b.samletBygningsareal
                                       ? `${b.samletBygningsareal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                      : '–'}
+                                      : formatDKK(0)}
                                   </span>
                                   {/* Geodata-status: grøn ✓ hvis koordinater kendes, rød ✗ hvis mangler */}
                                   <span className="flex justify-center">
@@ -3004,7 +3128,11 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                                   onClick={() =>
                                     setExpandedEnheder((prev) => {
                                       const next = new Set(prev);
-                                      aaben ? next.delete(rowId) : next.add(rowId);
+                                      if (aaben) {
+                                        next.delete(rowId);
+                                      } else {
+                                        next.add(rowId);
+                                      }
                                       return next;
                                     })
                                   }
@@ -3032,7 +3160,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                                   <span className="text-slate-300 text-right">
                                     {e.areal
                                       ? `${e.areal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                      : '–'}
+                                      : formatDKK(0)}
                                   </span>
                                   <span className="text-slate-400 text-right">
                                     {e.vaerelser ?? '–'}
@@ -3140,7 +3268,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                                 <p className="text-slate-300 text-sm tabular-nums text-right">
                                   {js.registreretAreal != null
                                     ? `${js.registreretAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                    : '–'}
+                                    : formatDKK(0)}
                                 </p>
                                 <p className="text-slate-500 text-xs text-right">
                                   {js.vejareal != null && js.vejareal > 0
@@ -3186,39 +3314,154 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
 
             {/* ══ EJERFORHOLD ══ */}
             {aktivTab === 'ejerforhold' && (
-              <div className="space-y-4">
+              <div className="space-y-2">
+                {/* Loading state — vis spinner mens BBR eller ejerskab data hentes */}
+                {(ejereLoader || bbrLoader || !bbrData) && (
+                  <div className="flex items-center justify-center py-16">
+                    <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
+                    <span className="ml-2 text-slate-400 text-sm">
+                      {lang === 'da' ? 'Henter ejerskabsdata…' : 'Loading ownership data…'}
+                    </span>
+                  </div>
+                )}
                 {/* ── Ejerskabsdiagram / Relationsdiagram (fra Tinglysning + EJF kæde) ── */}
-                {(() => {
-                  const bfeForDiagram =
-                    bbrData?.ejerlejlighedBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer;
-                  if (!bfeForDiagram) return null;
-                  return (
-                    <div>
-                      <SectionTitle title={t.ownershipStructure} />
-                      <PropertyOwnerDiagram
-                        bfe={bfeForDiagram}
-                        adresse={
-                          dawaAdresse
-                            ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
-                            : `BFE ${bfeForDiagram}`
-                        }
-                        lang={lang}
-                      />
-                    </div>
-                  );
-                })()}
+                {!ejereLoader &&
+                  !bbrLoader &&
+                  bbrData &&
+                  (() => {
+                    const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
+                    const bfeForDiagram =
+                      bbrData?.ejerlejlighedBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer;
+
+                    // Hovedejendom opdelt i EL — vis info + lejlighedsliste
+                    if (erModer) {
+                      return (
+                        <div className="space-y-4">
+                          <SectionTitle title={t.ownershipStructure} />
+                          <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-6 text-center space-y-3">
+                            <div className="w-12 h-12 bg-amber-500/10 rounded-xl flex items-center justify-center mx-auto">
+                              <Building2 size={22} className="text-amber-400" />
+                            </div>
+                            <p className="text-slate-300 text-sm font-medium">
+                              {da
+                                ? 'Ejendommen er opdelt i ejerlejligheder'
+                                : 'Property is divided into condominiums'}
+                            </p>
+                            <p className="text-slate-500 text-xs max-w-md mx-auto">
+                              {da
+                                ? 'Ejerskab er registreret på de enkelte ejerlejligheder.'
+                                : 'Ownership is registered on individual condominium units.'}
+                            </p>
+                          </div>
+
+                          {/* Lejlighedsliste under info-boksen */}
+                          {lejlighederLoader && (
+                            <div className="flex items-center justify-center py-8">
+                              <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
+                              <span className="ml-2 text-slate-400 text-sm">
+                                {da ? 'Henter lejlighedsdata…' : 'Loading apartment data…'}
+                              </span>
+                            </div>
+                          )}
+                          {lejligheder !== null && lejligheder.length > 0 && (
+                            <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden overflow-x-auto">
+                              <div className="px-3 py-2.5 border-b border-slate-700/40 flex items-center justify-between">
+                                <p className="text-slate-200 text-xs font-semibold">
+                                  {t.apartments}
+                                </p>
+                                <span className="text-slate-500 text-[10px]">
+                                  {lejligheder.length} {da ? 'lejligheder' : 'apartments'}
+                                </span>
+                              </div>
+                              <div className="min-w-[720px] grid grid-cols-[1fr_120px_60px_100px_80px] px-3 py-1.5 text-slate-500 text-[10px] font-medium border-b border-slate-700/30">
+                                <span>{t.apartmentAddress}</span>
+                                <span>{t.apartmentOwner}</span>
+                                <span className="text-right">{t.apartmentArea}</span>
+                                <span className="text-right">{t.apartmentPrice}</span>
+                                <span className="text-right">{t.apartmentDate}</span>
+                              </div>
+                              <div className="divide-y divide-slate-700/20">
+                                {lejligheder.map((lej) => (
+                                  <Link
+                                    key={lej.bfe}
+                                    href={lej.dawaId ? `/dashboard/ejendomme/${lej.dawaId}` : '#'}
+                                    onClick={
+                                      lej.dawaId
+                                        ? undefined
+                                        : (e: React.MouseEvent) => e.preventDefault()
+                                    }
+                                    className={`min-w-[720px] grid grid-cols-[1fr_120px_60px_100px_80px] px-3 py-1.5 items-center gap-1 hover:bg-slate-700/15 transition-colors block ${lej.dawaId ? 'cursor-pointer' : 'cursor-default'}`}
+                                  >
+                                    <span
+                                      className="text-slate-200 text-[11px] font-medium truncate"
+                                      title={lej.adresse}
+                                    >
+                                      {lej.adresse.split(',').slice(0, 2).join(',')}
+                                    </span>
+                                    <span
+                                      className="text-slate-400 text-[10px] truncate"
+                                      title={lej.ejer}
+                                    >
+                                      {lej.ejer}
+                                    </span>
+                                    <span className="text-slate-300 text-[10px] text-right">
+                                      {lej.areal ? `${lej.areal} m²` : formatDKK(0)}
+                                    </span>
+                                    <span className="text-slate-300 text-[10px] text-right font-medium">
+                                      {lej.koebspris
+                                        ? `${lej.koebspris.toLocaleString('da-DK')} DKK`
+                                        : formatDKK(0)}
+                                    </span>
+                                    <span className="text-slate-400 text-[10px] text-right">
+                                      {lej.koebsdato
+                                        ? new Date(lej.koebsdato).toLocaleDateString('da-DK', {
+                                            day: 'numeric',
+                                            month: 'short',
+                                            year: 'numeric',
+                                          })
+                                        : formatDKK(0)}
+                                    </span>
+                                  </Link>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    }
+
+                    if (!bfeForDiagram) return null;
+                    return (
+                      <div>
+                        <PropertyOwnerDiagram
+                          bfe={bfeForDiagram}
+                          adresse={
+                            dawaAdresse
+                              ? `${dawaAdresse.vejnavn} ${dawaAdresse.husnr}${dawaAdresse.etage ? `, ${dawaAdresse.etage}.` : ''}${dawaAdresse.dør ? ` ${dawaAdresse.dør}` : ''}, ${dawaAdresse.postnr} ${dawaAdresse.postnrnavn}`
+                              : `BFE ${bfeForDiagram}`
+                          }
+                          lang={lang}
+                        />
+                      </div>
+                    );
+                  })()}
               </div>
             )}
 
-            {/* ══ TINGLYSNING ══ */}
-            {aktivTab === 'tinglysning' && (
-              <TinglysningTab
-                bfe={
-                  bbrData?.ejerlejlighedBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer ?? null
-                }
-                lang={lang}
-              />
-            )}
+            {/* ══ TINGLYSNING ══ — altid mounted (hidden) så data ikke mistes ved tab-skift */}
+            {(() => {
+              const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
+              const bfeForTl = erModer
+                ? (bbrData?.moderBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer ?? null)
+                : (bbrData?.ejerlejlighedBfe ??
+                  bbrData?.ejendomsrelationer?.[0]?.bfeNummer ??
+                  null);
+              return (
+                <div className={aktivTab === 'tinglysning' ? '' : 'hidden'}>
+                  <TinglysningTab bfe={bfeForTl} lang={lang} moderBfe={bbrData?.moderBfe ?? null} />
+                </div>
+              );
+            })()}
 
             {/* ══ ØKONOMI ══ */}
             {aktivTab === 'oekonomi' && (
@@ -3243,15 +3486,17 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                             )}
                           </p>
                           <p className="text-white text-lg font-bold">
-                            {vurdering.ejendomsvaerdi != null
+                            {vurdering.ejendomsvaerdi
                               ? formatDKK(vurdering.ejendomsvaerdi)
-                              : t.notAssessed}
+                              : formatDKK(0)}
                           </p>
                         </div>
                         <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
                           <p className="text-slate-400 text-xs mb-1">{t.landValue}</p>
                           <p className="text-white text-lg font-bold">
-                            {vurdering.grundvaerdi != null ? formatDKK(vurdering.grundvaerdi) : '–'}
+                            {vurdering.grundvaerdi
+                              ? formatDKK(vurdering.grundvaerdi)
+                              : formatDKK(0)}
                           </p>
                         </div>
                         <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
@@ -3259,7 +3504,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                           <p className="text-white text-lg font-bold">
                             {vurdering.vurderetAreal != null
                               ? `${vurdering.vurderetAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                              : '–'}
+                              : formatDKK(0)}
                           </p>
                         </div>
                       </div>
@@ -3312,7 +3557,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                                   <span className="text-amber-200/80">
                                     {fv.ejendomsvaerdi
                                       ? formatDKK(fv.ejendomsvaerdi)
-                                      : t.notAssessed}
+                                      : formatDKK(0)}
                                   </span>
                                   <span className="text-amber-200/80">
                                     {fv.grundvaerdi ? formatDKK(fv.grundvaerdi) : '0 DKK'}
@@ -3341,7 +3586,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                                     <span className="text-slate-300">
                                       {v.ejendomsvaerdi != null
                                         ? formatDKK(v.ejendomsvaerdi)
-                                        : t.notAssessed}
+                                        : formatDKK(0)}
                                     </span>
                                     <span className="text-slate-300">
                                       {v.grundvaerdi != null ? formatDKK(v.grundvaerdi) : '0 DKK'}
@@ -3349,7 +3594,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                                     <span className="text-slate-400 text-right">
                                       {v.vurderetAreal != null
                                         ? `${v.vurderetAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                        : '–'}
+                                        : formatDKK(0)}
                                     </span>
                                   </div>
                                 );
@@ -3374,145 +3619,182 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                 </div>
 
                 {/* ── Salgshistorik (EJF + Tinglysning) ── */}
-                <div>
-                  <div className="flex items-center gap-2 mb-1">
-                    <SectionTitle title={t.salesHistory} />
-                    {tlTestFallback && mergedSalgshistorik.length > 0 && (
-                      <span className="px-2 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded text-[10px] text-amber-400 font-medium">
-                        TESTDATA
-                      </span>
-                    )}
-                  </div>
-                  {salgshistorikLoader || tlSumLoader ? (
-                    <SektionLoader label={t.loadingSalesHistory} rows={4} />
-                  ) : mergedSalgshistorik.length > 0 ? (
-                    <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl overflow-hidden overflow-x-auto">
-                      <table className="w-full text-sm min-w-[700px]">
-                        <thead>
-                          <tr className="border-b border-slate-700/30 text-slate-500 text-xs uppercase tracking-wider">
-                            <th className="text-left px-4 py-2.5 font-medium">{t.date}</th>
-                            <th className="text-left px-4 py-2.5 font-medium">{t.buyerName}</th>
-                            <th className="text-left px-4 py-2.5 font-medium">{t.type}</th>
-                            <th className="text-right px-4 py-2.5 font-medium">
-                              {t.purchasePrice}
-                            </th>
-                            <th className="text-right px-4 py-2.5 font-medium">{t.cashPrice}</th>
-                            <th className="text-right px-4 py-2.5 font-medium">{t.share}</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {mergedSalgshistorik.map((h, i) => {
-                            const dato = h.koebsaftaleDato ?? h.overtagelsesdato;
-                            const overdragelse = h.overdragelsesmaade ?? h.adkomstType;
-                            return (
-                              <tr
-                                key={i}
-                                className="border-b border-slate-700/20 last:border-0 hover:bg-white/[0.02] transition-colors"
-                              >
-                                <td className="px-4 py-2.5 text-slate-300 tabular-nums whitespace-nowrap">
-                                  {dato
-                                    ? new Date(dato).toLocaleDateString(da ? 'da-DK' : 'en-GB', {
-                                        year: 'numeric',
-                                        month: 'short',
-                                        day: 'numeric',
-                                      })
-                                    : '—'}
-                                </td>
-                                <td className="px-4 py-2.5">
-                                  {h.koeber ? (
-                                    <div>
-                                      <p className="text-slate-200 text-sm leading-tight">
-                                        {h.koebercvr ? (
-                                          <Link
-                                            href={`/dashboard/companies/${h.koebercvr}`}
-                                            className="hover:text-blue-400 transition-colors"
-                                          >
-                                            {h.koeber}
-                                          </Link>
-                                        ) : (
-                                          h.koeber
-                                        )}
-                                      </p>
-                                      {h.koebercvr && (
-                                        <p className="text-slate-500 text-[10px]">
-                                          CVR {h.koebercvr}
-                                        </p>
-                                      )}
-                                    </div>
-                                  ) : (
-                                    <span className="text-slate-500 text-xs">—</span>
-                                  )}
-                                </td>
-                                <td className="px-4 py-2.5">
-                                  <span
-                                    className={`text-xs px-2 py-0.5 rounded-full ${
-                                      overdragelse?.toLowerCase().includes('frit')
-                                        ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20'
-                                        : overdragelse?.toLowerCase().includes('tvang')
-                                          ? 'text-red-400 bg-red-500/10 border border-red-500/20'
-                                          : 'text-slate-400 bg-slate-500/10 border border-slate-500/20'
-                                    }`}
-                                  >
-                                    {overdragelse ?? '—'}
-                                  </span>
-                                </td>
-                                <td className="px-4 py-2.5 text-right text-white font-medium tabular-nums">
-                                  {h.samletKoebesum != null
-                                    ? `${h.samletKoebesum.toLocaleString(da ? 'da-DK' : 'en-GB')} kr.`
-                                    : '—'}
-                                </td>
-                                <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums">
-                                  {h.kontantKoebesum != null
-                                    ? `${h.kontantKoebesum.toLocaleString(da ? 'da-DK' : 'en-GB')} kr.`
-                                    : '—'}
-                                </td>
-                                <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums text-xs">
-                                  {h.andel ?? '—'}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : (
-                    <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl p-5 text-center space-y-2">
-                      <TrendingUp size={22} className="text-slate-600 mx-auto" />
-                      <p className="text-slate-500 text-xs">{t.noTransactions}</p>
-                      {salgshistorikManglerAdgang && (
-                        <p className="text-slate-600 text-[10px] max-w-sm mx-auto leading-relaxed">
-                          {t.salesHistoryEJF}
-                        </p>
+                {/* BIZZ-402: only render when loading or when there is data to show */}
+                {(salgshistorikLoader || tlSumLoader || mergedSalgshistorik.length > 0) && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-1">
+                      <SectionTitle title={t.salesHistory} />
+                      {tlTestFallback && mergedSalgshistorik.length > 0 && (
+                        <span className="px-2 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded text-[10px] text-amber-400 font-medium">
+                          TESTDATA
+                        </span>
                       )}
                     </div>
-                  )}
-                </div>
+                    {salgshistorikLoader || tlSumLoader ? (
+                      <SektionLoader label={t.loadingSalesHistory} rows={4} />
+                    ) : mergedSalgshistorik.length > 0 ? (
+                      <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl overflow-hidden overflow-x-auto">
+                        {/* BIZZ-324: table expanded with tinglysningsdato, tinglysningsafgift, loesoeresum and entreprisesum */}
+                        <table className="w-full text-sm min-w-[900px]">
+                          <thead>
+                            <tr className="border-b border-slate-700/30 text-slate-500 text-xs uppercase tracking-wider">
+                              <th className="text-left px-4 py-2.5 font-medium">{t.date}</th>
+                              <th className="text-left px-4 py-2.5 font-medium">{t.buyerName}</th>
+                              <th className="text-left px-4 py-2.5 font-medium">{t.type}</th>
+                              <th className="text-right px-4 py-2.5 font-medium">
+                                {t.purchasePrice}
+                              </th>
+                              <th className="text-right px-4 py-2.5 font-medium">{t.cashPrice}</th>
+                              <th className="text-right px-4 py-2.5 font-medium">
+                                {t.loesoereSum}
+                              </th>
+                              <th className="text-right px-4 py-2.5 font-medium">
+                                {t.entrepriseSum}
+                              </th>
+                              <th className="text-right px-4 py-2.5 font-medium">
+                                {t.registrationDate}
+                              </th>
+                              <th className="text-right px-4 py-2.5 font-medium">
+                                {t.registrationFee}
+                              </th>
+                              <th className="text-right px-4 py-2.5 font-medium">{t.share}</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {mergedSalgshistorik.map((h, i) => {
+                              /** Primær dato: købsaftaledato foretrukkes, ellers overtagelsesdato */
+                              const dato = h.koebsaftaleDato ?? h.overtagelsesdato;
+                              const overdragelse = h.overdragelsesmaade ?? h.adkomstType;
+                              return (
+                                <tr
+                                  key={i}
+                                  className="border-b border-slate-700/20 last:border-0 hover:bg-white/[0.02] transition-colors"
+                                >
+                                  <td className="px-4 py-2.5 text-slate-300 tabular-nums whitespace-nowrap">
+                                    {dato
+                                      ? new Date(dato).toLocaleDateString(da ? 'da-DK' : 'en-GB', {
+                                          year: 'numeric',
+                                          month: 'short',
+                                          day: 'numeric',
+                                        })
+                                      : '—'}
+                                    {/* Show overtagelsesdato as secondary line when different from koebsaftaleDato */}
+                                    {h.koebsaftaleDato &&
+                                      h.overtagelsesdato &&
+                                      h.koebsaftaleDato !== h.overtagelsesdato && (
+                                        <p className="text-slate-600 text-[10px] mt-0.5">
+                                          {t.overtagelsesdato}:{' '}
+                                          {new Date(h.overtagelsesdato).toLocaleDateString(
+                                            da ? 'da-DK' : 'en-GB',
+                                            {
+                                              year: 'numeric',
+                                              month: 'short',
+                                              day: 'numeric',
+                                            }
+                                          )}
+                                        </p>
+                                      )}
+                                  </td>
+                                  <td className="px-4 py-2.5">
+                                    {h.koeber ? (
+                                      <div>
+                                        <p className="text-slate-200 text-sm leading-tight">
+                                          {h.koebercvr ? (
+                                            <Link
+                                              href={`/dashboard/companies/${h.koebercvr}`}
+                                              className="hover:text-blue-400 transition-colors"
+                                            >
+                                              {h.koeber}
+                                            </Link>
+                                          ) : (
+                                            h.koeber
+                                          )}
+                                        </p>
+                                        {h.koebercvr && (
+                                          <p className="text-slate-500 text-[10px]">
+                                            CVR {h.koebercvr}
+                                          </p>
+                                        )}
+                                      </div>
+                                    ) : (
+                                      <span className="text-slate-500 text-xs">—</span>
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-2.5">
+                                    <span
+                                      className={`text-xs px-2 py-0.5 rounded-full ${
+                                        overdragelse?.toLowerCase().includes('frit')
+                                          ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20'
+                                          : overdragelse?.toLowerCase().includes('tvang')
+                                            ? 'text-red-400 bg-red-500/10 border border-red-500/20'
+                                            : 'text-slate-400 bg-slate-500/10 border border-slate-500/20'
+                                      }`}
+                                    >
+                                      {overdragelse ?? '—'}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-2.5 text-right text-white font-medium tabular-nums">
+                                    {h.samletKoebesum != null
+                                      ? `${h.samletKoebesum.toLocaleString(da ? 'da-DK' : 'en-GB')} kr.`
+                                      : '—'}
+                                  </td>
+                                  <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums">
+                                    {h.kontantKoebesum != null
+                                      ? `${h.kontantKoebesum.toLocaleString(da ? 'da-DK' : 'en-GB')} kr.`
+                                      : '—'}
+                                  </td>
+                                  <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums text-xs">
+                                    {h.loesoeresum != null
+                                      ? `${h.loesoeresum.toLocaleString(da ? 'da-DK' : 'en-GB')} kr.`
+                                      : '—'}
+                                  </td>
+                                  <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums text-xs">
+                                    {h.entreprisesum != null
+                                      ? `${h.entreprisesum.toLocaleString(da ? 'da-DK' : 'en-GB')} kr.`
+                                      : '—'}
+                                  </td>
+                                  <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums text-xs whitespace-nowrap">
+                                    {h.tinglysningsdato
+                                      ? new Date(h.tinglysningsdato).toLocaleDateString(
+                                          da ? 'da-DK' : 'en-GB',
+                                          {
+                                            year: 'numeric',
+                                            month: 'short',
+                                            day: 'numeric',
+                                          }
+                                        )
+                                      : '—'}
+                                  </td>
+                                  <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums text-xs">
+                                    {h.tinglysningsafgift != null
+                                      ? `${h.tinglysningsafgift.toLocaleString(da ? 'da-DK' : 'en-GB')} kr.`
+                                      : '—'}
+                                  </td>
+                                  <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums text-xs">
+                                    {h.andel ?? '—'}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl p-5 text-center space-y-2">
+                        <TrendingUp size={22} className="text-slate-600 mx-auto" />
+                        <p className="text-slate-500 text-xs">{t.noTransactions}</p>
+                        {salgshistorikManglerAdgang && (
+                          <p className="text-slate-600 text-[10px] max-w-sm mx-auto leading-relaxed">
+                            {t.salesHistoryEJF}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Hæftelser fjernet — vises nu under Tinglysning-tab */}
-
-                {/* ── Udbudshistorik — coming soon ── */}
-                <div>
-                  <SectionTitle title={t.listingHistory} />
-                  <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl p-5 text-center space-y-2">
-                    <List size={22} className="text-slate-600 mx-auto" />
-                    <p className="text-slate-400 text-sm font-medium">{t.listingPricesAndStatus}</p>
-                    <p className="text-slate-500 text-xs max-w-sm mx-auto leading-relaxed">
-                      {t.listingHistoryDesc}
-                    </p>
-                  </div>
-                </div>
-
-                {/* ── Lignende handler — coming soon ── */}
-                <div>
-                  <SectionTitle title={t.comparableSales} />
-                  <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl p-5 text-center space-y-2">
-                    <MapPin size={22} className="text-slate-600 mx-auto" />
-                    <p className="text-slate-400 text-sm font-medium">{t.comparableSalesInArea}</p>
-                    <p className="text-slate-500 text-xs max-w-sm mx-auto leading-relaxed">
-                      {t.comparableSalesDesc}
-                    </p>
-                  </div>
-                </div>
+                {/* BIZZ-325: Udbudshistorik og Lignende handler fjernet — ingen datakilde tilgængelig endnu */}
               </div>
             )}
 
@@ -3553,7 +3835,9 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                               {/* Grundskyld */}
                               <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
                                 <p className="text-white text-lg font-bold flex items-center gap-1.5">
-                                  {effektivGrundskyld > 0 ? formatDKK(effektivGrundskyld) : '–'}
+                                  {effektivGrundskyld > 0
+                                    ? formatDKK(effektivGrundskyld)
+                                    : formatDKK(0)}
                                   <span className="text-slate-500 text-xs font-normal">DKK</span>
                                 </p>
                                 <p className="text-slate-500 text-xs mt-0.5">
@@ -3635,6 +3919,178 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                     );
                   })()}
                 </div>
+
+                {/* BIZZ-269 / BIZZ-355: Skattehistorik — faktiske skatter fra Vurderingsportalen + estimater fra Datafordeler */}
+                {(forelobige.length > 0 || alleVurderinger.length > 1) &&
+                  (() => {
+                    /**
+                     * Byg en samlet skattehistorik-tabel.
+                     * Forelobige rækker (fra Vurderingsportalen) har faktiske grundskyld/ejendomsskat-beløb.
+                     * Historiske vurderingsrækker (fra Datafordeler) har estimeret grundskyld beregnet med promille.
+                     * Forelobige præpends og markeres tydeligt som faktiske værdier — ikke estimater.
+                     */
+                    type SkatRaekke = {
+                      aar: number;
+                      ejendomsvaerdi: number | null;
+                      grundvaerdi: number | null;
+                      /** Faktisk grundskyld fra Vurderingsportalen (kun forelobige rækker) */
+                      grundskyldAktuel: number | null;
+                      /** Faktisk ejendomsskat fra Vurderingsportalen (kun forelobige rækker) */
+                      ejendomsskatAktuel: number | null;
+                      /** Estimeret grundskyld beregnet med kommunepromille (kun historiske rækker) */
+                      grundskyldEstimeret: number | null;
+                      /** true = faktisk beregnet af Vurderingsportalen; false = estimat med promille */
+                      erAktuel: boolean;
+                    };
+
+                    // Faktiske rækker fra Vurderingsportalen
+                    const aktuelleRaekker: SkatRaekke[] = forelobige.map((fv) => ({
+                      aar: fv.vurderingsaar,
+                      ejendomsvaerdi: fv.ejendomsvaerdi,
+                      grundvaerdi: fv.grundvaerdi,
+                      grundskyldAktuel: fv.grundskyld,
+                      ejendomsskatAktuel: fv.ejendomsskat,
+                      grundskyldEstimeret: null,
+                      erAktuel: true,
+                    }));
+
+                    // Historiske rækker fra Datafordeler (filtrer år der allerede dækkes af forelobige)
+                    const forelobigAar = new Set(forelobige.map((fv) => fv.vurderingsaar));
+                    // Deduplicate by year — alleVurderinger can contain multiple nodes for the
+                    // same year (e.g. revised assessments). Keep the entry with the highest
+                    // ejendomsvaerdi as it represents the most recent assessment for that year.
+                    const dedupedVurderinger = Array.from(
+                      alleVurderinger
+                        .filter((v) => v.aar != null && !forelobigAar.has(v.aar))
+                        .reduce((map, v) => {
+                          const existing = map.get(v.aar!);
+                          if (
+                            !existing ||
+                            (v.ejendomsvaerdi ?? 0) > (existing.ejendomsvaerdi ?? 0)
+                          ) {
+                            map.set(v.aar!, v);
+                          }
+                          return map;
+                        }, new Map<number, (typeof alleVurderinger)[number]>())
+                        .values()
+                    );
+                    const historiskeRaekker: SkatRaekke[] = dedupedVurderinger
+                      .slice(0, 10)
+                      .map((v) => ({
+                        aar: v.aar!,
+                        ejendomsvaerdi: v.ejendomsvaerdi ?? null,
+                        grundvaerdi: v.grundvaerdi ?? null,
+                        grundskyldAktuel: null,
+                        ejendomsskatAktuel: null,
+                        grundskyldEstimeret: v.estimereretGrundskyld ?? null,
+                        erAktuel: false,
+                      }));
+
+                    const alleRaekker = [...aktuelleRaekker, ...historiskeRaekker].sort(
+                      (a, b) => b.aar - a.aar
+                    );
+
+                    if (alleRaekker.length === 0) return null;
+
+                    const harEstimater =
+                      historiskeRaekker.length > 0 && !!vurdering?.grundskyldspromille;
+
+                    return (
+                      <div>
+                        <SectionTitle title={da ? 'Skattehistorik' : 'Tax history'} />
+                        <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden overflow-x-auto">
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="border-b border-slate-700/40">
+                                <th className="px-4 py-2.5 text-left text-slate-500 font-medium">
+                                  {da ? 'År' : 'Year'}
+                                </th>
+                                <th className="px-4 py-2.5 text-right text-slate-500 font-medium">
+                                  {da ? 'Ejendomsværdi' : 'Property value'}
+                                </th>
+                                <th className="px-4 py-2.5 text-right text-slate-500 font-medium">
+                                  {da ? 'Grundværdi' : 'Land value'}
+                                </th>
+                                <th className="px-4 py-2.5 text-right text-slate-500 font-medium">
+                                  {da ? 'Grundskyld' : 'Land tax'}
+                                </th>
+                                <th className="px-4 py-2.5 text-right text-slate-500 font-medium">
+                                  {da ? 'Ejendomsværdiskat' : 'Property value tax'}
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {alleRaekker.map((r, i) => (
+                                <tr
+                                  key={r.aar + '-' + i}
+                                  className="border-b border-slate-700/20 last:border-0 hover:bg-slate-800/30"
+                                >
+                                  <td className="px-4 py-2 text-slate-300 font-medium">
+                                    {r.aar}
+                                    {/* Badge indicating data provenance */}
+                                    {r.erAktuel ? (
+                                      <span className="ml-1.5 px-1 py-0.5 bg-emerald-500/10 border border-emerald-500/20 rounded text-[9px] text-emerald-400 font-medium">
+                                        {da ? 'faktisk' : 'actual'}
+                                      </span>
+                                    ) : (
+                                      <span className="ml-1.5 px-1 py-0.5 bg-slate-700/40 border border-slate-600/30 rounded text-[9px] text-slate-500 font-medium">
+                                        {da ? 'est.' : 'est.'}
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-2 text-right text-slate-300">
+                                    {r.ejendomsvaerdi ? formatDKK(r.ejendomsvaerdi) : '–'}
+                                  </td>
+                                  <td className="px-4 py-2 text-right text-slate-300">
+                                    {r.grundvaerdi ? formatDKK(r.grundvaerdi) : '–'}
+                                  </td>
+                                  <td className="px-4 py-2 text-right font-medium tabular-nums">
+                                    {r.erAktuel ? (
+                                      r.grundskyldAktuel != null ? (
+                                        <span className="text-emerald-400">
+                                          {formatDKK(r.grundskyldAktuel)} kr/år
+                                        </span>
+                                      ) : (
+                                        '–'
+                                      )
+                                    ) : r.grundskyldEstimeret != null ? (
+                                      <span className="text-blue-400">
+                                        {formatDKK(r.grundskyldEstimeret)} kr/år
+                                      </span>
+                                    ) : (
+                                      '–'
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-2 text-right tabular-nums">
+                                    {r.erAktuel ? (
+                                      r.ejendomsskatAktuel != null ? (
+                                        <span className="text-emerald-400 font-medium">
+                                          {formatDKK(r.ejendomsskatAktuel)} kr/år
+                                        </span>
+                                      ) : (
+                                        <span className="text-slate-600 text-[10px]">
+                                          {da ? 'ikke opkrævet' : 'not charged'}
+                                        </span>
+                                      )
+                                    ) : (
+                                      <span className="text-slate-600">–</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        {harEstimater && (
+                          <p className="text-slate-600 text-[10px] mt-2">
+                            {da
+                              ? `Historiske rækker (est.) beregnet med kommunens grundskyldspromille: ${vurdering!.grundskyldspromille}‰ — faktiske rækker stammer direkte fra Vurderingsportalen.`
+                              : `Historical rows (est.) calculated using municipality land tax rate: ${vurdering!.grundskyldspromille}‰ — actual rows sourced directly from Vurderingsportalen.`}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })()}
               </div>
             )}
 
@@ -3642,7 +4098,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
             {aktivTab === 'dokumenter' && (
               <div className="space-y-2">
                 {/* ── Dokumenter (samlet kort) ── */}
-                <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden overflow-x-auto">
+                <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-x-auto">
                   {/* Kort-header */}
                   <div className="px-4 py-2.5 border-b border-slate-700/30 flex items-center gap-2">
                     <FileText size={15} className="text-slate-400" />
@@ -4258,6 +4714,16 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                       </span>
                     </div>
 
+                    {/* BIZZ-332: For ejerlejligheder vises energimærker fra moderejendommen,
+                        da mærker registreres på bygningsniveau — ikke på den individuelle lejlighed. */}
+                    {!!dawaAdresse?.etage && !!bbrData?.moderBfe && (
+                      <div className="px-4 pb-2 text-xs text-slate-500 italic">
+                        {da
+                          ? `Energimærker hentes fra moderejendommen (BFE ${bbrData.moderBfe}) — mærker registreres på bygningsniveau.`
+                          : `Energy labels are fetched from the parent property (BFE ${bbrData.moderBfe}) — labels are registered at building level.`}
+                      </div>
+                    )}
+
                     {energiManglerAdgang && (
                       <div className="px-4 pb-2 text-xs text-amber-400">
                         EMO_USERNAME / EMO_PASSWORD ikke sat i .env.local
@@ -4279,7 +4745,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
 
                     {energimaerker && energimaerker.length > 0 && (
                       <div>
-                        <div className="min-w-[650px] grid grid-cols-[56px_1fr_100px_120px_120px_80px] gap-x-3 px-4 py-1.5 border-b border-slate-700/20">
+                        <div className="min-w-[680px] grid grid-cols-[56px_1fr_100px_120px_120px_80px_28px] gap-x-3 px-4 py-1.5 border-b border-slate-700/20">
                           <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
                             Klasse
                           </span>
@@ -4298,6 +4764,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                           <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
                             Rapport
                           </span>
+                          <span />
                         </div>
                         {energimaerker.map((m) => {
                           // Officielle EU energimærke farver (Building Energy Performance Directive)
@@ -4324,7 +4791,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                           return (
                             <div
                               key={m.serialId}
-                              className="min-w-[650px] grid grid-cols-[56px_1fr_100px_120px_120px_80px] gap-x-3 px-4 py-2 border-b border-slate-700/15 hover:bg-slate-700/10 transition-colors items-center"
+                              className="min-w-[680px] grid grid-cols-[56px_1fr_100px_120px_120px_80px_28px] gap-x-3 px-4 py-2 border-b border-slate-700/15 hover:bg-slate-700/10 transition-colors items-center"
                             >
                               <span
                                 style={klasseStyle}
@@ -4374,6 +4841,37 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                                   <span className="text-xs text-slate-600">—</span>
                                 )}
                               </div>
+                              {/* Bulk-download checkbox — uses valgteDoc shared with the rest of the Dokumenter tab */}
+                              {m.pdfUrl ? (
+                                <label
+                                  className="flex items-center cursor-pointer flex-shrink-0"
+                                  onClick={(ev) => ev.stopPropagation()}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    className="sr-only"
+                                    checked={valgteDoc.has(`energi-${m.serialId}`)}
+                                    onChange={() => toggleDoc(`energi-${m.serialId}`)}
+                                  />
+                                  <span
+                                    className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors ${valgteDoc.has(`energi-${m.serialId}`) ? 'bg-blue-500 border-blue-500' : 'bg-[#0a1020] border-slate-400'}`}
+                                  >
+                                    {valgteDoc.has(`energi-${m.serialId}`) && (
+                                      <svg
+                                        viewBox="0 0 10 10"
+                                        className="w-2 h-2 text-white"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        strokeWidth="2.5"
+                                      >
+                                        <path d="M1.5 5.5l2.5 2.5 4.5-4.5" />
+                                      </svg>
+                                    )}
+                                  </span>
+                                </label>
+                              ) : (
+                                <span />
+                              )}
                             </div>
                           );
                         })}
@@ -4522,9 +5020,9 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
   return (
     <div className={`flex-1 flex flex-col overflow-hidden${trækker ? ' select-none' : ''}`}>
       {/* ─── Header ─── */}
-      <div className="px-6 pt-5 pb-0 border-b border-slate-700/50 bg-slate-900/30">
+      <div className="px-6 pt-3 pb-0 border-b border-slate-700/50 bg-slate-900/30">
         {/* Tilbage + handlinger */}
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-2">
           <button
             onClick={() => router.back()}
             className="flex items-center gap-2 text-slate-400 hover:text-white text-sm transition-colors"
@@ -4559,26 +5057,51 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
               onMouseLeave={() => setVisFoelgTooltip(false)}
             >
               <button
+                disabled={foelgToggling}
                 onClick={async () => {
+                  if (foelgToggling) return;
                   setVisFoelgTooltip(false);
                   if (!ejendom) return;
-                  const adresse = `${ejendom.adresse}, ${ejendom.postnummer} ${ejendom.by}`;
-                  const nyTilstand = await toggleTrackEjendom({
-                    id,
-                    adresse,
-                    postnr: ejendom.postnummer,
-                    by: ejendom.by,
-                    kommune: ejendom.kommune,
-                    anvendelse: null,
-                  });
-                  setErFulgt(nyTilstand);
-                  window.dispatchEvent(new Event('ba-tracked-changed'));
+                  // Optimistic update — toggle colour immediately so the user
+                  // sees instant feedback before the Supabase write completes.
+                  const optimisticState = !erFulgt;
+                  setErFulgt(optimisticState);
+                  setFoelgToggling(true);
+                  try {
+                    const adresse = `${ejendom.adresse}, ${ejendom.postnummer} ${ejendom.by}`;
+                    const nyTilstand = await toggleTrackEjendom({
+                      id,
+                      adresse,
+                      postnr: ejendom.postnummer,
+                      by: ejendom.by,
+                      kommune: ejendom.kommune,
+                      anvendelse: null,
+                    });
+                    // Confirm with authoritative result from the toggle function
+                    setErFulgt(nyTilstand);
+                    window.dispatchEvent(new Event('ba-tracked-changed'));
+                  } catch {
+                    // Revert optimistic update on error
+                    setErFulgt(!optimisticState);
+                  } finally {
+                    setFoelgToggling(false);
+                  }
                 }}
-                className={`flex items-center gap-2 px-3 py-1.5 border rounded-lg text-sm transition-all ${
+                className={`flex items-center gap-2 px-3 py-1.5 border rounded-lg text-sm transition-all disabled:opacity-60 disabled:cursor-not-allowed ${
                   erFulgt
                     ? 'bg-blue-600/20 hover:bg-blue-600/30 border-blue-500/40 text-blue-300'
                     : 'bg-slate-800 hover:bg-slate-700 border-slate-700/60 text-slate-300'
                 }`}
+                aria-label={
+                  erFulgt
+                    ? da
+                      ? 'Stop med at følge ejendom'
+                      : 'Unfollow property'
+                    : da
+                      ? 'Følg ejendom'
+                      : 'Follow property'
+                }
+                aria-pressed={erFulgt}
               >
                 <Bell size={14} className={erFulgt ? 'fill-blue-400 text-blue-400' : ''} />
                 {erFulgt ? t.following : t.follow}
@@ -4589,8 +5112,8 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
         </div>
 
         {/* Adresse + meta */}
-        <div className="mb-3">
-          <h1 className="text-white text-xl font-bold">
+        <div className="mb-2">
+          <h1 className="text-white text-lg font-bold leading-tight">
             {ejendom.adresse}, {ejendom.postnummer} {ejendom.by}
           </h1>
           <div className="flex items-center gap-3 mt-1 text-slate-400 text-xs">
@@ -4598,7 +5121,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
             <span>·</span>
             <span>ESR: {ejendom.esr}</span>
           </div>
-          <div className="flex items-center gap-2 mt-2 flex-wrap">
+          <div className="flex items-center gap-2 mt-1 flex-wrap">
             <span className="flex items-center gap-1 px-2 py-0.5 bg-slate-800 border border-slate-700/50 rounded-full text-xs text-slate-300">
               <MapPin size={11} />
               {ejendom.kommune}
@@ -4846,7 +5369,10 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                             <p className="text-slate-400 text-xs">{m.beskrivelse}</p>
                           </div>
                         </div>
-                        <button className="text-slate-600 hover:text-slate-400 ml-2 flex-shrink-0">
+                        <button
+                          className="text-slate-600 hover:text-slate-400 ml-2 flex-shrink-0"
+                          aria-label="Vis på kort"
+                        >
                           <MapPin size={14} />
                         </button>
                       </div>
@@ -5005,7 +5531,11 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                                   onClick={() =>
                                     setExpandedBygninger((prev) => {
                                       const next = new Set(prev);
-                                      aaben ? next.delete(b.id) : next.add(b.id);
+                                      if (aaben) {
+                                        next.delete(b.id);
+                                      } else {
+                                        next.add(b.id);
+                                      }
                                       return next;
                                     })
                                   }
@@ -5020,12 +5550,12 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                                   <span className="text-slate-300 text-right">
                                     {b.bebyggetAreal
                                       ? `${b.bebyggetAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                      : '–'}
+                                      : formatDKK(0)}
                                   </span>
                                   <span className="text-slate-300 text-right">
                                     {b.samletBygningsareal
                                       ? `${b.samletBygningsareal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                      : '–'}
+                                      : formatDKK(0)}
                                   </span>
                                   <ChevronRight
                                     size={14}
@@ -5131,7 +5661,11 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                                   onClick={() =>
                                     setExpandedEnheder((prev) => {
                                       const next = new Set(prev);
-                                      aaben ? next.delete(e.id) : next.add(e.id);
+                                      if (aaben) {
+                                        next.delete(e.id);
+                                      } else {
+                                        next.add(e.id);
+                                      }
                                       return next;
                                     })
                                   }
@@ -5143,7 +5677,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                                   <span className="text-slate-300 text-right">
                                     {e.areal
                                       ? `${e.areal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                      : '–'}
+                                      : formatDKK(0)}
                                   </span>
                                   <span className="text-slate-400 text-right">
                                     {e.vaerelser ?? '–'}
@@ -5243,7 +5777,7 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                                 <p className="text-slate-300 text-sm tabular-nums text-right">
                                   {js.registreretAreal != null
                                     ? `${js.registreretAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                    : '–'}
+                                    : formatDKK(0)}
                                 </p>
                                 <p className="text-slate-500 text-xs text-right">
                                   {js.vejareal != null && js.vejareal > 0
@@ -5292,6 +5826,15 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
           ══════════════════════════════════════════ */}
             {aktivTab === 'ejerforhold' && (
               <div className="space-y-6">
+                {/* Loading state for ejerskab */}
+                {ejereLoader && (
+                  <div className="flex items-center justify-center py-16">
+                    <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
+                    <span className="ml-2 text-slate-400 text-sm">
+                      {lang === 'da' ? 'Henter ejerskabsdata…' : 'Loading ownership data…'}
+                    </span>
+                  </div>
+                )}
                 {/* Ejer-kort */}
                 {ejendom.ejerDetaljer && (
                   <div>
@@ -5374,9 +5917,35 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
 
                 {/* Ejerstruktur — relationsdiagram */}
                 {(() => {
+                  const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
                   const bfe =
                     bbrData?.ejerlejlighedBfe ?? bbrData?.ejendomsrelationer?.[0]?.bfeNummer;
                   if (!bfe) return null;
+
+                  // BIZZ-241: Hovedejendom opdelt i EL/andel — vis info i stedet for forkerte ejere
+                  if (erModer) {
+                    return (
+                      <div>
+                        <SectionTitle title={t.ownershipStructure} />
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-6 text-center space-y-3">
+                          <div className="w-12 h-12 bg-amber-500/10 rounded-xl flex items-center justify-center mx-auto">
+                            <Building2 size={22} className="text-amber-400" />
+                          </div>
+                          <p className="text-slate-300 text-sm font-medium">
+                            {da
+                              ? 'Ejendommen er opdelt i ejerlejligheder'
+                              : 'Property is divided into condominiums'}
+                          </p>
+                          <p className="text-slate-500 text-xs max-w-md mx-auto">
+                            {da
+                              ? 'Ejerskab er registreret på de enkelte ejerlejligheder. Se lejlighedslisten på Oversigt-fanen for at finde ejere.'
+                              : 'Ownership is registered on individual condominium units. See the apartment list on the Overview tab to find owners.'}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  }
+
                   return (
                     <div>
                       <SectionTitle title={t.ownershipStructure} />
@@ -5577,7 +6146,10 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                               {formatDato(ejendom.adkomsthaver.dato)}
                             </td>
                             <td className="px-2 py-3 text-right">
-                              <button className="text-slate-600 hover:text-slate-300 transition-colors">
+                              <button
+                                className="text-slate-600 hover:text-slate-300 transition-colors"
+                                aria-label="Vis dokument"
+                              >
                                 <FileText size={13} />
                               </button>
                             </td>
@@ -5629,7 +6201,10 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                                 {formatDato(ha.dato)}
                               </td>
                               <td className="px-2 py-3 text-right">
-                                <button className="text-slate-600 hover:text-slate-300 transition-colors">
+                                <button
+                                  className="text-slate-600 hover:text-slate-300 transition-colors"
+                                  aria-label="Vis dokument"
+                                >
                                   <FileText size={13} />
                                 </button>
                               </td>
@@ -5690,7 +6265,10 @@ export default function EjendomDetaljeClient({ params }: { params: Promise<{ id:
                               {formatDato(h.tinglysningsdato)}
                             </td>
                             <td className="px-2 py-3 text-right">
-                              <button className="text-slate-600 hover:text-slate-300 transition-colors">
+                              <button
+                                className="text-slate-600 hover:text-slate-300 transition-colors"
+                                aria-label="Vis dokument"
+                              >
                                 <FileText size={13} />
                               </button>
                             </td>
@@ -6198,6 +6776,7 @@ interface EjerDetalje {
   overtagelsesdato: string | null;
   adkomstType: string | null;
   koebesum: number | null;
+  isCeased?: boolean;
 }
 
 function PropertyOwnerDiagram({
@@ -6285,7 +6864,7 @@ function PropertyOwnerDiagram({
   };
 
   return (
-    <div className="space-y-2.5">
+    <div className="space-y-2">
       {/* Ejer info-bokse */}
       {ejerDetaljer.map((ejer, i) => (
         <div key={i} className="bg-slate-800/40 border border-slate-700/40 rounded-xl px-3 py-2.5">
@@ -6317,6 +6896,11 @@ function PropertyOwnerDiagram({
                     className="text-blue-300 font-semibold text-sm hover:text-blue-200 transition-colors flex items-center gap-1 underline decoration-blue-500/30 hover:decoration-blue-400/50"
                   >
                     {ejer.navn} {ejer.andel ? `(${ejer.andel})` : ''}
+                    {ejer.isCeased && (
+                      <span className="ml-1.5 text-[10px] font-medium text-red-400 bg-red-500/15 border border-red-500/30 rounded px-1.5 py-0.5">
+                        {da ? 'Ophørt' : 'Ceased'}
+                      </span>
+                    )}
                     <ChevronRight size={13} />
                   </Link>
                 ) : ejer.enhedsNummer ? (
@@ -6412,11 +6996,22 @@ function PropertyOwnerDiagram({
  * Tinglysning-tab — viser tingbogsattest-data: ejere, hæftelser, servitutter.
  * Data hentes fra /api/tinglysning (søgning) + /api/tinglysning/summarisk (detaljer).
  */
-function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }) {
+function TinglysningTab({
+  bfe,
+  lang,
+  moderBfe,
+}: {
+  bfe: number | null;
+  lang: 'da' | 'en';
+  moderBfe?: number | null;
+}) {
   const da = lang === 'da';
   const router = useRouter();
 
   const [loading, setLoading] = useState(true);
+  const [ejereLoading, setEjereLoading] = useState(true);
+  const [haeftelserLoading, setHaeftelserLoading] = useState(true);
+  const [servituterLoading, setServituterLoading] = useState(true);
   interface TLUnderpant {
     prioritet: number | null;
     beloeb: number | null;
@@ -6449,6 +7044,8 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
   /** Tinglysning ejendoms-UUID — bruges til PDF-download af tingbogsattest */
   const [tlUuid, setTlUuid] = useState<string | null>(null);
   const [showAllServitutter, setShowAllServitutter] = useState(false);
+  /** True when the servitut fetch was aborted by the 30 s timeout — used to show a timeout warning in the UI. */
+  const [servituterTimedOut, setServituterTimedOut] = useState(false);
   const [expandedAdkomst, setExpandedAdkomst] = useState<Set<number>>(new Set());
   const [expandedHaeftelser, setExpandedHaeftelser] = useState<Set<number>>(new Set());
   const [expandedServitutter, setExpandedServitutter] = useState<Set<number>>(new Set());
@@ -6477,6 +7074,9 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
 
     // Nulstil state ved ny fetch (fx BFE skifter)
     setLoading(true);
+    setEjereLoading(true);
+    setHaeftelserLoading(true);
+    setServituterLoading(true);
     setFejl(null);
     setEjere([]);
     setHaeftelser([]);
@@ -6515,26 +7115,53 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
         }
         setTlUuid(tlData.uuid);
         // Trin 2: Hent summariske data i 3 parallelle sektions-kald
-        // (reducerer response-størrelse pr. kald for store ejendomme)
+        // Progressiv loading — hver sektion vises straks den er klar
         const base = `/api/tinglysning/summarisk?uuid=${tlData.uuid}`;
+        const erEjerlejlighed = moderBfe && moderBfe !== bfe;
+        const servituterUrl = erEjerlejlighed
+          ? `${base}&section=servitutter&hovedBfe=${moderBfe}`
+          : `${base}&section=servitutter`;
         return Promise.all([
-          fetch(`${base}&section=ejere`, { signal }).then((r) => (r.ok ? r.json() : null)),
-          fetch(`${base}&section=haeftelser`, { signal }).then((r) => (r.ok ? r.json() : null)),
-          fetch(`${base}&section=servitutter`, { signal }).then((r) => (r.ok ? r.json() : null)),
-        ]).then(([ejereRes, haeftelserRes, servituterRes]) => {
-          if (ejereRes) {
-            setEjere(ejereRes.ejere ?? []);
-            setTingbogsattest(ejereRes.tingbogsattest ?? null);
-          }
-          if (haeftelserRes) {
-            setHaeftelser(haeftelserRes.haeftelser ?? []);
-            setBilagRefs(haeftelserRes.bilagRefs ?? []);
-          }
-          if (servituterRes) {
-            setServitutter(servituterRes.servitutter ?? []);
-            setIndskannedeAkterNavne(servituterRes.indskannedeAkterNavne ?? []);
-          }
-        });
+          fetch(`${base}&section=ejere`, { signal })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((res) => {
+              if (res) {
+                setEjere(res.ejere ?? []);
+                setTingbogsattest(res.tingbogsattest ?? null);
+              }
+              setEjereLoading(false);
+            }),
+          fetch(`${base}&section=haeftelser`, { signal })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((res) => {
+              if (res) {
+                setHaeftelser(res.haeftelser ?? []);
+                setBilagRefs(res.bilagRefs ?? []);
+              }
+              setHaeftelserLoading(false);
+            }),
+          // BIZZ-331: Servitutter for ejerlejligheder can be slow (fetches
+          // from hovedejendom). Use separate timeout + error handling so other
+          // sections still display even if servitutter times out.
+          fetch(servituterUrl, { signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]) })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((res) => {
+              if (res) {
+                setServitutter(res.servitutter ?? []);
+                setIndskannedeAkterNavne(res.indskannedeAkterNavne ?? []);
+              }
+              setServituterLoading(false);
+            })
+            .catch((err) => {
+              if (err.name === 'AbortError') {
+                // Timed out (30 s) — surface a warning so the user knows the list is incomplete.
+                setServituterTimedOut(true);
+              } else {
+                logger.error('[tinglysning] Servitut fetch fejlede:', err);
+              }
+              setServituterLoading(false);
+            }),
+        ]);
       })
       .catch((err) => {
         if (err.name !== 'AbortError')
@@ -6543,7 +7170,7 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
       .finally(() => setLoading(false));
 
     return () => controller.abort();
-  }, [bfe, da]);
+  }, [bfe, da, moderBfe]);
 
   const formatDato = (iso: string | null) => {
     if (!iso) return '–';
@@ -6600,7 +7227,8 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
     Anden: da ? 'Andet' : 'Other',
   };
 
-  if (loading)
+  // Initial loading — vent kun på UUID-søgning, ikke alle sektioner
+  if (loading && ejereLoading && haeftelserLoading && servituterLoading && ejere.length === 0)
     return (
       <div className="flex items-center justify-center py-16">
         <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
@@ -7085,6 +7713,14 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
         )}
 
         {/* ── HÆFTELSER ── */}
+        {haeftelserLoading && (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
+            <span className="ml-2 text-slate-400 text-sm">
+              {da ? 'Henter hæftelser…' : 'Loading charges…'}
+            </span>
+          </div>
+        )}
         {haeftelser.length > 0 && (
           <>
             <div className="px-4 py-1.5 bg-amber-500/5 border-b border-slate-700/20">
@@ -7431,6 +8067,24 @@ function TinglysningTab({ bfe, lang }: { bfe: number | null; lang: 'da' | 'en' }
         )}
 
         {/* ── SERVITUTTER ── */}
+        {servituterLoading && (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
+            <span className="ml-2 text-slate-400 text-sm">
+              {da ? 'Henter servitutter…' : 'Loading easements…'}
+            </span>
+          </div>
+        )}
+        {servituterTimedOut && servitutter.length === 0 && (
+          <div className="mx-4 my-3 flex items-start gap-2 rounded-md border border-yellow-500/40 bg-yellow-500/10 px-3 py-2">
+            <span className="mt-0.5 text-yellow-400 text-sm">⚠</span>
+            <span className="text-yellow-300 text-sm">
+              {da
+                ? 'Servitutter kunne ikke hentes inden for tidsgrænsen. Prøv at genindlæse siden.'
+                : 'Easements could not be loaded within the time limit. Please reload the page.'}
+            </span>
+          </div>
+        )}
         {servitutter.length > 0 && (
           <>
             <div className="px-4 py-1.5 bg-teal-500/5 border-b border-slate-700/20">

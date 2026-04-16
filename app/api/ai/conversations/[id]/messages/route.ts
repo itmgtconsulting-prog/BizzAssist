@@ -13,6 +13,7 @@ import { resolveTenantId } from '@/lib/api/auth';
 import { getTenantContext } from '@/lib/db/tenant';
 import { parseBody } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
+import { writeAuditLog } from '@/app/lib/auditLog';
 
 const messageSchema = z.object({
   role: z.enum(['user', 'assistant']),
@@ -53,6 +54,14 @@ export async function POST(request: NextRequest, { params }: RouteParams): Promi
       parsed.data.content,
       parsed.data.tokensUsed
     );
+
+    // Fire-and-forget: record the message write for the audit trail (ISO 27001 A.12.4).
+    void writeAuditLog({
+      action: 'ai_message_sent',
+      resource_type: 'ai_conversation',
+      resource_id: id,
+      metadata: JSON.stringify({ role: parsed.data.role, tenantId: auth.tenantId }),
+    });
 
     return NextResponse.json(message, { status: 201 });
   } catch (err) {

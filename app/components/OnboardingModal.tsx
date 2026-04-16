@@ -105,15 +105,19 @@ export default function OnboardingModal() {
       }
 
       // 2. Check Supabase user_metadata (cross-device source of truth)
+      // BIZZ-340: Also check onboarding_complete (set by onboarding page flow)
       try {
         const supabase = createClient();
         const {
           data: { user },
         } = await supabase.auth.getUser();
-        if (user?.user_metadata?.onboarding_done) {
+        if (user?.user_metadata?.onboarding_done || user?.user_metadata?.onboarding_complete) {
           // Sync to localStorage so we skip the async check next time
           try {
-            localStorage.setItem(ONBOARDING_KEY, String(user.user_metadata.onboarding_done));
+            localStorage.setItem(
+              ONBOARDING_KEY,
+              String(user.user_metadata.onboarding_done ?? Date.now())
+            );
           } catch {
             /* ignore */
           }
@@ -208,7 +212,11 @@ export default function OnboardingModal() {
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center">
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={complete} />
+      <div
+        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+        onClick={complete}
+        role="presentation"
+      />
 
       {/* Modal */}
       <div

@@ -14,6 +14,7 @@
  * Output: .playwright/auth.json (gitignored — never commit session state)
  */
 import { test as setup, expect } from '@playwright/test';
+import { createClient } from '@supabase/supabase-js';
 import { AUTH_STATE_PATH } from './helpers';
 
 setup('authenticate', async ({ page }) => {
@@ -44,23 +45,57 @@ setup('authenticate', async ({ page }) => {
   await page.getByPlaceholder('••••••••').fill(password);
   await page.getByRole('button', { name: /Log ind/i }).click();
 
-  // Wait for redirect to dashboard
-  await expect(page).toHaveURL(/\/dashboard/, { timeout: 30_000 });
+  // Wait for redirect — could be /dashboard or /onboarding
+  await expect(page).toHaveURL(/\/(dashboard|onboarding)/, { timeout: 30_000 });
   await page.waitForLoadState('domcontentloaded');
 
-  // Dismiss onboarding modal if it appears on first login
+  // Set onboarding_complete via Supabase admin client (Node.js, not browser).
+  // Uses service role key to bypass RLS and set user_metadata directly.
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (supabaseUrl && serviceRoleKey && email) {
+    try {
+      const admin = createClient(supabaseUrl, serviceRoleKey);
+      // Find user by email
+      const {
+        data: { users },
+      } = await admin.auth.admin.listUsers();
+      const user = users?.find((u) => u.email === email);
+      if (
+        user &&
+        (!user.user_metadata?.onboarding_complete || !user.user_metadata?.onboarding_done)
+      ) {
+        await admin.auth.admin.updateUserById(user.id, {
+          user_metadata: {
+            ...user.user_metadata,
+            onboarding_complete: true,
+            onboarding_done: Date.now(),
+          },
+        });
+      }
+    } catch {
+      /* non-fatal — onboarding page will handle */
+    }
+  }
+
+  // Handle onboarding PAGE redirect — navigate directly to dashboard
+  if (page.url().includes('/onboarding')) {
+    await page.goto('/dashboard');
+  }
+  await page.waitForLoadState('domcontentloaded');
+
+  // Handle onboarding MODAL (if it appears on the dashboard itself)
   const onboardingNext = page
-    .getByRole('button', { name: /Næste|Next|Kom i gang|Fortsæt|Skip/i })
+    .getByRole('button', { name: /Næste|Next|Kom i gang|Fortsæt/i })
     .first();
-  // Step through up to 5 onboarding screens
   for (let i = 0; i < 5; i++) {
     if (await onboardingNext.isVisible({ timeout: 2_000 }).catch(() => false)) {
       await onboardingNext.click();
+      await page.waitForTimeout(500);
     } else {
       break;
     }
   }
-  // Also try a close/X button if next is not visible
   const onboardingClose = page
     .locator(
       '[role="dialog"] button[aria-label*="Luk"], [role="dialog"] button[aria-label*="Close"]'

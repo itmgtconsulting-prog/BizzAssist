@@ -489,6 +489,7 @@ export type AiTokenUsageRow = {
   user_id: string;
   tokens_in: number;
   tokens_out: number;
+  tokens_used: number;
   model: string;
   created_at: string;
 };
@@ -560,7 +561,9 @@ type TenantSchemaShape = {
     };
     ai_token_usage: {
       Row: AiTokenUsageRow;
-      Insert: Omit<AiTokenUsageRow, 'id' | 'created_at'>;
+      Insert: Omit<AiTokenUsageRow, 'id' | 'created_at' | 'tokens_used'> & {
+        tokens_used?: number;
+      };
       Update: Partial<AiTokenUsageRow>;
       Relationships: [];
     };
@@ -698,6 +701,36 @@ type TenantSchemaShape = {
         ip_address?: string | null;
       };
       Update: Record<string, never>;
+      Relationships: [];
+    };
+    ai_feedback_log: {
+      Row: {
+        id: number;
+        tenant_id: string;
+        user_id: string;
+        conversation_id: string | null;
+        question_text: string;
+        feedback_type: string;
+        ai_response_snippet: string | null;
+        page_context: string | null;
+        metadata: Record<string, unknown>;
+        jira_ticket_id: string | null;
+        created_at: string;
+      };
+      Insert: {
+        tenant_id: string;
+        user_id: string;
+        conversation_id?: string | null;
+        question_text: string;
+        feedback_type: string;
+        ai_response_snippet?: string | null;
+        page_context?: string | null;
+        metadata?: Record<string, unknown>;
+        jira_ticket_id?: string | null;
+      };
+      Update: Partial<{
+        jira_ticket_id: string | null;
+      }>;
       Relationships: [];
     };
   };
@@ -903,6 +936,28 @@ export type Database = {
         Row: PlanConfigRow;
         Insert: PlanConfigRow;
         Update: Partial<PlanConfigRow>;
+        Relationships: [];
+      };
+      consent_log: {
+        Row: {
+          id: string;
+          user_id: string | null;
+          session_id: string | null;
+          consent_value: string;
+          categories: string | null;
+          ip_hash: string | null;
+          user_agent: string | null;
+          created_at: string;
+        };
+        Insert: {
+          user_id?: string | null;
+          session_id?: string | null;
+          consent_value: string;
+          categories?: string | null;
+          ip_hash?: string | null;
+          user_agent?: string | null;
+        };
+        Update: Record<string, never>;
         Relationships: [];
       };
     };

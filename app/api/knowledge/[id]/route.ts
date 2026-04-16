@@ -12,10 +12,21 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { logger } from '@/app/lib/logger';
+import { parseBody } from '@/app/lib/validate';
+
+/** Zod schema for PATCH /api/knowledge/[id] request body */
+const knowledgePatchSchema = z
+  .object({
+    title: z.string().optional(),
+    content: z.string().optional(),
+    source_type: z.enum(['manual', 'upload', 'url']).optional(),
+  })
+  .passthrough();
 /** Maximum characters allowed in a knowledge item's content field. */
 const MAX_CONTENT_CHARS = 50_000;
 
@@ -152,12 +163,9 @@ export async function PATCH(request: NextRequest, { params }: RouteParams): Prom
     return NextResponse.json({ error: 'Ugyldig id' }, { status: 400 });
   }
 
-  let body: PatchKnowledgeBody;
-  try {
-    body = (await request.json()) as PatchKnowledgeBody;
-  } catch {
-    return NextResponse.json({ error: 'Ugyldig JSON' }, { status: 400 });
-  }
+  const parsed = await parseBody(request, knowledgePatchSchema);
+  if (!parsed.success) return parsed.response;
+  const body: PatchKnowledgeBody = parsed.data;
 
   // Build the update patch — only include defined fields
   const patch: Record<string, string> = {};

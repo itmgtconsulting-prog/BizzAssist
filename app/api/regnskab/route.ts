@@ -13,8 +13,10 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
+import { parseQuery } from '@/app/lib/validate';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -43,6 +45,12 @@ export interface RegnskabResponse {
   regnskaber: Regnskab[];
   tokenMangler: boolean;
 }
+
+// ─── Query param validation ─────────────────────────────────────────────────
+
+const regnskabQuerySchema = z.object({
+  cvr: z.string().regex(/^\d{8}$/, 'CVR skal være 8 cifre'),
+});
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -110,13 +118,12 @@ function mapESHit(hit: Record<string, unknown>): Regnskab | null {
 export async function GET(req: NextRequest): Promise<NextResponse> {
   const auth = await resolveTenantId();
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  const { searchParams } = req.nextUrl;
-  const cvr = searchParams.get('cvr') ?? '';
 
-  // Valider CVR-format (8 cifre)
-  if (!cvr || !/^\d{8}$/.test(cvr)) {
+  const parsed = parseQuery(req, regnskabQuerySchema);
+  if (!parsed.success) {
     return NextResponse.json({ regnskaber: [], tokenMangler: false }, { status: 200 });
   }
+  const { cvr } = parsed.data;
 
   // Returner tokenMangler-flag hvis credentials ikke er sat
   if (!CVR_ES_USER || !CVR_ES_PASS) {

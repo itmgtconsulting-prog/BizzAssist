@@ -25,6 +25,7 @@ import * as Sentry from '@sentry/nextjs';
 import { checkRateLimit, heavyRateLimit } from '@/app/lib/rateLimit';
 import { resolveTenantId } from '@/lib/api/auth';
 import { logger } from '@/app/lib/logger';
+import { tlFetch as tlFetchShared } from '@/app/lib/tlFetch';
 import https from 'https';
 import fs from 'fs';
 import path from 'path';
@@ -32,7 +33,7 @@ import path from 'path';
 export const runtime = 'nodejs';
 export const maxDuration = 120;
 
-// ─── Config ──────────────────────────────────────────────────────────────────
+// ─── Config (kun for POST/binær — GET bruger delt lib) ──────────────────────
 
 const CERT_PATH =
   process.env.TINGLYSNING_CERT_PATH ?? process.env.NEMLOGIN_DEVTEST4_CERT_PATH ?? '';
@@ -43,60 +44,15 @@ const TL_BASE = process.env.TINGLYSNING_BASE_URL ?? 'https://test.tinglysning.dk
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-/**
- * Loader certifikat som Buffer — foretrækker base64 env var over filsti.
- */
+/** Loader certifikat som Buffer — bruges kun af POST-varianten */
 function loadCert(): Buffer {
   if (CERT_B64) return Buffer.from(CERT_B64, 'base64');
-  const certAbsPath = path.resolve(CERT_PATH);
-  if (!fs.existsSync(certAbsPath)) {
-    throw new Error('Certifikat ikke fundet: ' + certAbsPath);
-  }
-  return fs.readFileSync(certAbsPath);
+  return fs.readFileSync(path.resolve(CERT_PATH));
 }
 
-/**
- * Laver HTTPS GET request med mTLS og returnerer XML-body som tekst.
- * Bruges til at hente dokument-XML inden præsentation.
- */
+/** Henter dokument-XML fra Tinglysning via GET (delt lib med proxy-support) */
 function tlFetchXml(urlPath: string): Promise<{ status: number; body: string }> {
-  return new Promise((resolve, reject) => {
-    let pfx: Buffer;
-    try {
-      pfx = loadCert();
-    } catch (e) {
-      reject(e);
-      return;
-    }
-
-    const url = new URL(TL_BASE + '/tinglysning/ssl' + urlPath);
-
-    const req = https.request(
-      {
-        hostname: url.hostname,
-        port: 443,
-        path: url.pathname + url.search,
-        method: 'GET',
-        pfx,
-        passphrase: CERT_PASSWORD,
-        rejectUnauthorized: false,
-        timeout: 20000,
-        headers: { Accept: 'application/xml, */*' },
-      },
-      (res) => {
-        let body = '';
-        res.on('data', (d: Buffer) => (body += d.toString('utf-8')));
-        res.on('end', () => resolve({ status: res.statusCode ?? 500, body }));
-      }
-    );
-
-    req.on('error', reject);
-    req.on('timeout', () => {
-      req.destroy();
-      reject(new Error('Timeout'));
-    });
-    req.end();
-  });
+  return tlFetchShared(urlPath, { accept: 'application/xml, */*', timeout: 20000 });
 }
 
 /**

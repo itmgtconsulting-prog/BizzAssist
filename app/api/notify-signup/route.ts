@@ -11,7 +11,19 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { logger } from '@/app/lib/logger';
+import { parseBody } from '@/app/lib/validate';
+
+/** Zod schema for POST /api/notify-signup request body */
+const notifySignupSchema = z
+  .object({
+    email: z.string().min(1),
+    fullName: z.string().optional(),
+    planId: z.string().optional(),
+    status: z.string().optional(),
+  })
+  .passthrough();
 
 const NOTIFY_EMAIL = process.env.SUPPORT_NOTIFICATION_EMAIL || 'support@pecuniait.com';
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
@@ -46,12 +58,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ ok: true, skipped: true });
     }
 
-    const body = await req.json();
-    const { email, planId, status } = body;
-
-    if (!email) {
-      return NextResponse.json({ error: 'Email required' }, { status: 400 });
-    }
+    const parsed = await parseBody(req, notifySignupSchema);
+    if (!parsed.success) return parsed.response;
+    const { email, planId, status } = parsed.data;
 
     const environment = getEnvironment();
     const statusLabel =

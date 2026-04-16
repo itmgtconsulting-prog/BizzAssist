@@ -1,6 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { logger } from '@/app/lib/logger';
+
+/** Zod schema for POST /api/report-bug body */
+const BugReportSchema = z.object({
+  type: z.enum(['bug', 'feedback', 'feature']),
+  title: z.string().min(1).max(500),
+  description: z.string().min(1).max(5000),
+  severity: z.enum(['low', 'medium', 'high', 'critical']),
+  page: z.string().max(500).optional(),
+  userAgent: z.string().max(500).optional(),
+  sentryEventId: z.string().max(200).optional(),
+  email: z.string().email().optional(),
+  screenshotBase64: z.string().max(5_000_000).optional(),
+});
 
 export interface BugReportPayload {
   type: 'bug' | 'feedback' | 'feature';
@@ -160,15 +174,14 @@ export async function POST(req: NextRequest) {
   if (limited) return limited;
 
   try {
-    const payload: BugReportPayload = await req.json();
-
-    // Basic validation
-    if (!payload.title?.trim() || !payload.description?.trim()) {
-      return NextResponse.json({ error: 'Title and description are required' }, { status: 400 });
+    const parsed = BugReportSchema.safeParse(await req.json());
+    if (!parsed.success) {
+      return NextResponse.json({ error: 'Invalid input' }, { status: 400 });
     }
-
-    // Enrich with request metadata
-    payload.userAgent = req.headers.get('user-agent') ?? undefined;
+    const payload: BugReportPayload = {
+      ...parsed.data,
+      userAgent: req.headers.get('user-agent') ?? undefined,
+    };
 
     const issue = await createJiraIssue(payload);
 

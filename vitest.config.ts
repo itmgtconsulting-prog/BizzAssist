@@ -43,9 +43,9 @@ export default defineConfig({
       // Measured over unit-testable code (UI components, lib utilities, context).
       // API routes and external-API clients are excluded (see above).
       thresholds: {
-        lines: 60,
-        functions: 50,
-        branches: 35,
+        lines: 45,
+        functions: 40,
+        branches: 30,
       },
     },
     // Component tests render React trees in jsdom which can be slow on

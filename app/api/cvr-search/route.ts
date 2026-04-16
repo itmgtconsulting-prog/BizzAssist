@@ -13,9 +13,14 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
+import { parseQuery } from '@/app/lib/validate';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
+
+/** Zod schema for /api/cvr-search query params */
+const querySchema = z.object({ q: z.string().trim().min(2).max(500) });
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -147,11 +152,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const auth = await resolveTenantId();
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const q = req.nextUrl.searchParams.get('q')?.trim() ?? '';
-
-  if (q.length < 2) {
+  const parsed = parseQuery(req, querySchema);
+  if (!parsed.success) {
     return NextResponse.json({ results: [] });
   }
+  const { q } = parsed.data;
 
   if (!CVR_ES_USER || !CVR_ES_PASS) {
     return NextResponse.json({ results: [], error: 'CVR-adgang ikke konfigureret' });

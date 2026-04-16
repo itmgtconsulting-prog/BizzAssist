@@ -152,21 +152,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run npm audit (fail on critical)
-        # audit-level=critical: the 5 remaining high-severity vulns are all
-        # serialize-javascript <=7.0.4 pulled in transitively by next-pwa@5.x
-        # via workbox-webpack-plugin/rollup-plugin-terser.  Fixing requires
-        # downgrading next-pwa 5→2 (completely different API — breaks PWA).
-        # serialize-javascript is only executed during build with our OWN source
-        # code, not with user-supplied input, so the RCE vector does not apply
-        # to this project.  Tracked for remediation when next-pwa ships a patch.
-        run: npm audit --audit-level=critical
+      - name: Run npm audit (fail on high+critical)
+        # BIZZ-297: Upgraded to audit-level=high to catch more vulnerabilities.
+        # Previously critical-only due to serialize-javascript transitive vuln
+        # which has since been resolved by upgrading Next.js to 16.2.3.
+        run: npm audit --audit-level=high
 
   # ── 6. Build check ───────────────────────────────────────────────────────
   build:
     name: Production build check
     runs-on: ubuntu-latest
-    needs: [lint, typecheck, test-unit]
+    needs: [lint, typecheck, test-unit, security]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

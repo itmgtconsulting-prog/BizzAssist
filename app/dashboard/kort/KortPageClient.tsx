@@ -1271,13 +1271,14 @@ function KortInner() {
       setMarkeret(-1);
       let lng = r.adresse.x;
       let lat = r.adresse.y;
-      // darAutocomplete returnerer x=0, y=0 — hent koordinater via separat opslag
-      if (!lng || !lat) {
+      // darAutocomplete kan returnere x=0, y=0 (falsy) for visse adresser —
+      // brug != null så 0 ikke fejlagtigt trigger fallback-opslaget (BIZZ-370)
+      if (lng == null || lat == null) {
         try {
           const res = await fetch(`/api/adresse/lookup?id=${encodeURIComponent(r.adresse.id)}`);
           if (res.ok) {
             const data: { x?: number; y?: number } | null = await res.json();
-            if (data?.x && data?.y) {
+            if (data?.x != null && data?.y != null) {
               lng = data.x;
               lat = data.y;
             }
@@ -1286,7 +1287,7 @@ function KortInner() {
           /* ignorer netværksfejl */
         }
       }
-      if (lng && lat) {
+      if (lng != null && lat != null) {
         mapRef.current?.flyTo({ center: [lng, lat], zoom: 17, duration: 1000 });
         setSøgtMarkør({ lng, lat });
         setPopup(null);
@@ -1470,7 +1471,7 @@ function KortInner() {
 
       {/* ── Søgebar ───────────────────────────────────────────────────────── */}
       {/* top-16 på mobil — undgår overlap med stil-toggle (left-4) og lag-knap (right-4) */}
-      <div className="absolute top-16 sm:top-4 left-1/2 -translate-x-1/2 z-20 w-full max-w-lg px-4">
+      <div className="absolute top-16 sm:top-14 left-1/2 -translate-x-1/2 z-30 w-full max-w-lg px-4">
         <div className="relative">
           <div className="flex items-center gap-2 bg-[#0f172a]/95 border border-white/10 rounded-2xl shadow-2xl px-4 py-3 backdrop-blur-sm">
             {søger ? (
@@ -1503,7 +1504,7 @@ function KortInner() {
           {forslag.length > 0 && (
             <div
               ref={dropdownRef}
-              className="absolute top-full mt-2 w-full bg-[#0f172a]/98 border border-white/10 rounded-2xl shadow-2xl overflow-hidden backdrop-blur-sm"
+              className="absolute top-full mt-2 w-full bg-[#0f172a]/98 border border-white/10 rounded-2xl shadow-2xl overflow-hidden backdrop-blur-sm z-50"
             >
               {forslag.map((r, i) => (
                 <button

@@ -25,15 +25,31 @@ export default function CookieBanner() {
     if (!consent) setVisible(true);
   }, []);
 
-  /** Store 'accepted' consent in cookie + localStorage and hide the banner */
+  /**
+   * Logs consent to backend for GDPR Article 7(1) accountability.
+   * Fire-and-forget — cookie is the primary store, API is the audit trail.
+   */
+  const logConsentToBackend = (value: 'accepted' | 'declined', categories: string[]) => {
+    fetch('/api/consent', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ consent: value, categories }),
+    }).catch(() => {
+      /* silent — cookie consent is the primary store */
+    });
+  };
+
+  /** Store 'accepted' consent in cookie + localStorage + backend and hide the banner */
   const accept = () => {
     setConsent('accepted');
+    logConsentToBackend('accepted', ['necessary', 'functional', 'analytics']);
     setVisible(false);
   };
 
-  /** Store 'declined' consent in cookie + localStorage and hide the banner */
+  /** Store 'declined' consent in cookie + localStorage + backend and hide the banner */
   const decline = () => {
     setConsent('declined');
+    logConsentToBackend('declined', ['necessary']);
     setVisible(false);
   };
 

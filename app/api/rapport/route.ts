@@ -403,6 +403,10 @@ export async function POST(request: NextRequest) {
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Ukendt fejl';
-    return NextResponse.json({ fejl: message }, { status: 500 });
+    const body =
+      process.env.NODE_ENV === 'development'
+        ? { fejl: 'Intern serverfejl', dev_detail: message }
+        : { fejl: 'Intern serverfejl' };
+    return NextResponse.json(body, { status: 500 });
   }
 }

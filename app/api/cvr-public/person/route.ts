@@ -9,7 +9,17 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
+import { parseQuery } from '@/app/lib/validate';
 import { resolveTenantId } from '@/lib/api/auth';
+
+export const runtime = 'nodejs';
+export const maxDuration = 30;
+
+/** Zod schema for /api/cvr-public/person query params */
+const querySchema = z.object({
+  enhedsNummer: z.string().regex(/^\d+$/, 'enhedsNummer skal være numerisk'),
+});
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -126,7 +136,9 @@ export async function GET(
   const session = await resolveTenantId();
   if (!session)
     return NextResponse.json({ error: 'Unauthorized' } as PersonPublicError, { status: 401 });
-  const enhedsNummer = req.nextUrl.searchParams.get('enhedsNummer')?.replace(/\D/g, '');
+  const parsed = parseQuery(req, querySchema);
+  if (!parsed.success) return parsed.response as NextResponse<PersonPublicError>;
+  const { enhedsNummer } = parsed.data;
 
   if (!enhedsNummer) {
     return NextResponse.json({ error: 'Angiv ?enhedsNummer= parameter' }, { status: 400 });
@@ -370,6 +382,10 @@ export async function GET(
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Ukendt fejl';
-    return NextResponse.json({ error: `Netværksfejl: ${msg}` }, { status: 500 });
+    const body =
+      process.env.NODE_ENV === 'development'
+        ? { error: 'Ekstern API fejl', dev_detail: msg }
+        : { error: 'Ekstern API fejl' };
+    return NextResponse.json(body, { status: 500 });
   }
 }

@@ -10,10 +10,20 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { PLANS, type PlanId } from '@/app/lib/subscriptions';
 import { logger } from '@/app/lib/logger';
+import { parseBody } from '@/app/lib/validate';
+
+/** Zod schema for POST /api/admin/plans body */
+const plansPostSchema = z
+  .object({
+    action: z.string().optional(),
+    planId: z.string().optional(),
+  })
+  .passthrough();
 
 const LEGACY_PLAN_IDS: PlanId[] = ['demo', 'basis', 'professionel', 'enterprise'];
 
@@ -181,8 +191,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const user = await verifyAdmin();
     if (!user) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
-    const body = await req.json();
-    const { action, planId, ...updates } = body;
+    // Validate request body with Zod schema
+    const parsed = await parseBody(req, plansPostSchema);
+    if (!parsed.success) return parsed.response;
+
+    const { action, planId, ...updates } = parsed.data;
     const admin = createAdminClient();
 
     switch (action) {

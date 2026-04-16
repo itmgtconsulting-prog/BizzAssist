@@ -21,6 +21,11 @@ export interface OwnerChainNode {
   erVirksomhed: boolean;
   /** Ejerandel */
   ejerandel: string | null;
+  /**
+   * BIZZ-357: True when the company is dissolved/ceased (has a slutdato or sammensatStatus
+   * "Ophørt" in CVR). Passed through to DiagramNode.isCeased for visual distinction.
+   */
+  isCeased?: boolean;
   /** Ejere af denne node (rekursivt) */
   parents: OwnerChainNode[];
 }
@@ -73,6 +78,12 @@ export interface DiagramNode {
   collapseParent?: string;
   /** Whether this node is a co-owner (not on main path — collapsible) */
   isCoOwner?: boolean;
+  /**
+   * BIZZ-357: True when the company is dissolved/ceased (has a slutdato or sammensatStatus
+   * "Ophørt" in CVR). Diagram renders these greyed out with an "Ophørt" badge so historical
+   * ownership is still visible but clearly distinguished from active owners.
+   */
+  isCeased?: boolean;
   /** Role of the viewed person in this company (person diagram only) */
   personRolle?: string;
   /** Other persons with roles in this company (for rendering inside the box) */
@@ -108,6 +119,15 @@ export interface DiagramVariantProps {
   graph: DiagramGraph;
   /** Language for labels */
   lang: 'da' | 'en';
+  /**
+   * Optional callback fired when a diagram node is clicked.
+   * When provided, the default navigation (window.location.href) is suppressed
+   * and the parent component controls what happens. Useful on person pages where
+   * clicking a company node should switch tabs rather than navigate away.
+   *
+   * @param node - The clicked diagram node
+   */
+  onNodeClick?: (node: DiagramNode) => void;
 }
 
 /** Max children shown per parent node — overflow becomes an expandable list */
@@ -200,6 +220,8 @@ export function buildDiagramGraph(
         label: node.navn,
         type: node.erVirksomhed ? 'company' : 'person',
         cvr: node.cvr ?? undefined,
+        // BIZZ-357: Propagate ceased status from owner chain so diagram can render it visually
+        isCeased: node.isCeased ?? undefined,
         link,
       });
     }
@@ -372,6 +394,18 @@ export function buildDiagramGraph(
           link,
         });
         edges.push({ from: companyNode.id, to: propId });
+      }
+
+      // BIZZ-268: Overflow node when more properties exist than shown
+      if (props.length > MAX_PROPS_PER_COMPANY) {
+        const overflowId = `props-overflow-${cvr}`;
+        const remaining = props.length - MAX_PROPS_PER_COMPANY;
+        nodes.push({
+          id: overflowId,
+          label: `+${remaining} ejendomme`,
+          type: 'property',
+        });
+        edges.push({ from: companyNode.id, to: overflowId });
       }
     }
   }
@@ -681,6 +715,18 @@ export function buildPersonDiagramGraph(
           link,
         });
         edges.push({ from: companyNode.id, to: propId });
+      }
+
+      // BIZZ-268: Overflow node when more properties exist than shown
+      if (props.length > MAX_PROPS_PER_COMPANY) {
+        const overflowId = `props-overflow-${cvr}`;
+        const remaining = props.length - MAX_PROPS_PER_COMPANY;
+        nodes.push({
+          id: overflowId,
+          label: `+${remaining} ejendomme`,
+          type: 'property',
+        });
+        edges.push({ from: companyNode.id, to: overflowId });
       }
     }
   }

@@ -19,10 +19,19 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import * as Sentry from '@sentry/nextjs';
+import { z } from 'zod';
 import { checkRateLimit, heavyRateLimit } from '@/app/lib/rateLimit';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { logger } from '@/app/lib/logger';
+import { getSharedOAuthToken } from '@/app/lib/dfTokenCache';
 import { resolveTenantId } from '@/lib/api/auth';
+import { parseQuery } from '@/app/lib/validate';
+
+/** Zod schema for /api/vurdering query parameters */
+const vurderingQuerySchema = z.object({
+  bfeNummer: z.string().regex(/^\d+$/),
+  kommunekode: z.string().regex(/^\d+$/).optional(),
+});
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -183,13 +192,93 @@ interface RawFradragPost {
   fkFradragForForbedringOverordnetID: number;
 }
 
-// ─── Grundskyldspromiller 2025 (Indenrigs- og Sundhedsministeriet) ───────────
+// ─── Grundskyldspromiller (Indenrigs- og Sundhedsministeriet) ────────────────
+
+/**
+ * BIZZ-269: Historiske grundskyldspromiller per år.
+ * Bruges til at estimere grundskyld for historiske vurderinger.
+ *
+ * 2021-2024: Satserne var fastfrosne for de fleste kommuner (uændrede).
+ * 2025: Nye satser efter ejendomsvurderingsreformen.
+ *
+ * Kilde: Indenrigs- og Sundhedsministeriets kommunale nøgletal.
+ * Fallback: 2025-satser bruges hvis historisk promille ikke er tilgængelig.
+ */
+const GRUNDSKYLDSPROMILLE_2024: Record<number, number> = {
+  101: 34.0,
+  147: 23.0,
+  151: 23.0,
+  153: 26.74,
+  155: 23.0,
+  157: 16.0,
+  159: 23.4,
+  161: 25.74,
+  163: 24.0,
+  165: 26.0,
+  167: 23.4,
+  169: 23.0,
+  173: 18.5,
+  175: 24.0,
+  183: 28.0,
+  185: 24.0,
+  187: 21.0,
+  190: 22.0,
+  201: 22.0,
+  210: 22.44,
+  217: 24.8,
+  219: 21.68,
+  223: 16.0,
+  230: 16.0,
+  240: 21.0,
+  250: 22.0,
+  253: 22.0,
+  259: 22.22,
+  260: 24.0,
+  265: 21.71,
+  269: 20.0,
+  270: 22.5,
+  306: 27.0,
+  316: 23.0,
+  320: 24.0,
+  326: 24.68,
+  329: 22.0,
+  330: 25.0,
+  336: 21.0,
+  340: 21.68,
+  350: 21.0,
+  360: 26.0,
+  370: 23.0,
+  376: 26.0,
+  390: 26.0,
+  400: 24.68,
+  410: 22.0,
+  420: 23.0,
+  430: 22.0,
+  440: 22.0,
+  450: 23.0,
+  461: 24.68,
+  479: 24.0,
+  480: 22.0,
+  482: 26.0,
+  492: 26.0,
+  510: 22.68,
+  530: 18.0,
+  540: 22.68,
+};
+
+/**
+ * Henter grundskyldspromille for et givet år og kommunekode.
+ * Bruger 2024-satser for 2020-2024 og 2025-satser for 2025+.
+ */
+function getPromille(kommunekode: number, aar: number | null): number | null {
+  if (aar != null && aar <= 2024) {
+    return GRUNDSKYLDSPROMILLE_2024[kommunekode] ?? GRUNDSKYLDSPROMILLE[kommunekode] ?? null;
+  }
+  return GRUNDSKYLDSPROMILLE[kommunekode] ?? null;
+}
 
 /**
  * Grundskyldspromiller (‰) pr. kommunekode, 2025-satser.
- * Bruges til at estimere den årlige grundskyld:
- *   grundskyld ≈ afgiftspligtig grundværdi × (promille / 1000)
- *
  * Kilde: Indenrigs- og Sundhedsministeriets kommunale nøgletal 2025.
  */
 const GRUNDSKYLDSPROMILLE: Record<number, number> = {
@@ -306,7 +395,7 @@ let _cachedToken: { token: string; expiresAt: number } | null = null;
  *
  * @returns Bearer token som streng, eller null hvis auth-miljøvariabler mangler
  */
-async function getOAuthToken(): Promise<string | null> {
+async function _getOAuthToken(): Promise<string | null> {
   if (_cachedToken && Date.now() < _cachedToken.expiresAt - 60_000) {
     return _cachedToken.token;
   }
@@ -547,28 +636,15 @@ export async function GET(request: NextRequest): Promise<NextResponse<VurderingR
     );
   }
 
-  const { searchParams } = request.nextUrl;
-  const bfeNummerStr = searchParams.get('bfeNummer');
-  const kommunekodeStr = searchParams.get('kommunekode');
+  // Validate query params with Zod schema
+  const parsed = parseQuery(request, vurderingQuerySchema);
+  if (!parsed.success) return parsed.response as NextResponse<VurderingResponse>;
 
-  if (!bfeNummerStr || !/^\d+$/.test(bfeNummerStr)) {
-    return NextResponse.json(
-      {
-        vurdering: null,
-        alle: [],
-        ...emptyExtended,
-        fejl: 'Ugyldigt eller manglende bfeNummer',
-        manglerNoegle: false,
-      },
-      { status: 400 }
-    );
-  }
-
-  const bfeNummer = parseInt(bfeNummerStr, 10);
-  const kommunekode = kommunekodeStr ? parseInt(kommunekodeStr, 10) : null;
+  const bfeNummer = parseInt(parsed.data.bfeNummer, 10);
+  const kommunekode = parsed.data.kommunekode ? parseInt(parsed.data.kommunekode, 10) : null;
   const promille = (kommunekode && GRUNDSKYLDSPROMILLE[kommunekode]) ?? null;
 
-  const token = await getOAuthToken();
+  const token = await getSharedOAuthToken();
   if (!token) {
     logger.error(
       '[vurdering] OAuth token kunne ikke hentes — tjek DATAFORDELER_OAUTH_CLIENT_ID og _SECRET'
@@ -689,9 +765,11 @@ export async function GET(request: NextRequest): Promise<NextResponse<VurderingR
         : null;
 
       const grundskyldGrundlag = afgiftspligtigGrundvaerdi ?? n.grundvaerdiBeloeb ?? null;
+      // BIZZ-269: Use year-specific promille for historical accuracy
+      const yearPromille = kommunekode ? getPromille(kommunekode, n.aar ?? null) : promille;
       const estimereretGrundskyld =
-        grundskyldGrundlag !== null && promille !== null
-          ? Math.round(grundskyldGrundlag * (promille / 1000))
+        grundskyldGrundlag !== null && yearPromille !== null
+          ? Math.round(grundskyldGrundlag * (yearPromille / 1000))
           : null;
 
       return {
@@ -701,7 +779,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<VurderingR
         afgiftspligtigEjendomsvaerdi,
         afgiftspligtigGrundvaerdi,
         estimereretGrundskyld,
-        grundskyldspromille: promille,
+        grundskyldspromille: yearPromille,
         aar: n.aar ?? null,
         bebyggelsesprocent: null,
         vurderetAreal: n.vurderetAreal ?? null,

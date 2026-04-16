@@ -12,9 +12,18 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { resolveTenantId } from '@/lib/api/auth';
 import { getTenantContext } from '@/lib/db/tenant';
 import { logger } from '@/app/lib/logger';
+import { writeAuditLog } from '@/app/lib/auditLog';
+
+/** Zod schema for POST /api/tracked-companies body */
+const TrackedCompanyPostSchema = z.object({
+  entity_id: z.string().min(1),
+  label: z.string().nullish(),
+  entity_data: z.record(z.string(), z.unknown()).optional(),
+});
 
 /**
  * GET /api/tracked-companies
@@ -55,15 +64,15 @@ export async function POST(request: NextRequest) {
 
   try {
     const ctx = await getTenantContext(auth.tenantId);
-    const body = await request.json();
-
-    if (!body?.entity_id) {
-      return NextResponse.json({ error: 'Mangler entity_id (CVR)' }, { status: 400 });
+    const parsed = TrackedCompanyPostSchema.safeParse(await request.json());
+    if (!parsed.success) {
+      return NextResponse.json({ error: 'Ugyldigt input' }, { status: 400 });
     }
+    const body = parsed.data;
 
     const entity = await ctx.savedEntities.upsert({
       entity_type: 'company',
-      entity_id: String(body.entity_id),
+      entity_id: body.entity_id,
       entity_data: body.entity_data ?? {},
       is_monitored: true,
       label: body.label ?? null,
@@ -127,6 +136,11 @@ export async function DELETE(request: NextRequest) {
       });
     }
 
+    writeAuditLog({
+      action: 'tracked_company.toggle',
+      resource_type: 'company',
+      resource_id: 'unknown',
+    });
     return NextResponse.json({ ok: true });
   } catch (err) {
     logger.error('[tracked-companies DELETE]', err);

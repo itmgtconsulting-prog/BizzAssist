@@ -345,3 +345,124 @@ export async function sendRecurringPaymentEmail(params: RecurringPaymentParams):
     logger.error('[email] Failed to send recurring payment email:', err);
   }
 }
+
+// ─── Welcome email (BIZZ-272) ──────────────────────────────────────────────
+
+/**
+ * Send a welcome email to a new user after signup and onboarding.
+ * Silently skips if RESEND_API_KEY is not set.
+ *
+ * @param to - New user's email address
+ * @param fullName - User's display name (optional)
+ */
+export async function sendWelcomeEmail(to: string, fullName?: string): Promise<void> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) return;
+
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://bizzassist.dk';
+  const greeting = fullName ? `Hej ${fullName}` : 'Hej';
+
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; background: #0f172a; color: #e2e8f0; padding: 40px; border-radius: 12px;">
+      <h1 style="color: #ffffff; font-size: 24px; margin: 0 0 8px 0;">BizzAssist</h1>
+      <p style="color: #64748b; font-size: 12px; margin: 0 0 24px 0;">Danmarks forretningsintelligens platform</p>
+
+      <h2 style="color: #3b82f6; font-size: 18px; margin: 0 0 16px 0;">Velkommen til BizzAssist!</h2>
+
+      <p style="margin: 0 0 8px 0; font-size: 14px;">${greeting},</p>
+      <p style="margin: 0 0 16px 0; font-size: 14px;">
+        Din konto er oprettet og du kan nu s&oslash;ge i virksomheder, ejendomme og personer i hele Danmark.
+      </p>
+      <p style="margin: 0 0 24px 0; font-size: 13px; color: #94a3b8;">
+        Your account has been created. You can now search companies, properties and people across Denmark.
+      </p>
+
+      <p style="margin: 0 0 8px 0; font-size: 13px; color: #94a3b8;">Kom godt i gang:</p>
+      <ul style="margin: 0 0 24px 0; padding-left: 20px; font-size: 13px; color: #cbd5e1;">
+        <li style="margin-bottom: 6px;">S&oslash;g efter en virksomhed eller ejendom</li>
+        <li style="margin-bottom: 6px;">Brug AI-assistenten til at analysere data</li>
+        <li style="margin-bottom: 6px;">F&oslash;lg ejendomme og virksomheder for at f&aring; opdateringer</li>
+      </ul>
+
+      <a href="${appUrl}/dashboard" style="display: inline-block; background: #2563eb; color: #ffffff; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-size: 14px; font-weight: 600;">
+        G&aring; til dit dashboard &rarr;
+      </a>
+
+      <hr style="border: none; border-top: 1px solid #1e293b; margin: 30px 0;" />
+      <p style="color: #475569; font-size: 11px; margin: 0;">BizzAssist &mdash; Pecunia IT ApS &mdash; S&oslash;byvej 11, 2650 Hvidovre &mdash; CVR 44718502</p>
+    </div>
+  `;
+
+  try {
+    const res = await fetch(RESEND_ENDPOINT, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: FROM_ADDRESS, to, subject: 'Velkommen til BizzAssist', html }),
+    });
+    if (!res.ok) logger.error('[email] Welcome email error:', res.status);
+    else logger.log('[email] Welcome email sent');
+  } catch (err) {
+    logger.error('[email] Failed to send welcome email:', err);
+  }
+}
+
+// ─── Account deletion confirmation (BIZZ-272) ─────────────────────────────
+
+/**
+ * Send a confirmation email after account deletion (GDPR Art. 17).
+ * Silently skips if RESEND_API_KEY is not set.
+ *
+ * @param to - Deleted user's email address
+ */
+export async function sendAccountDeletionEmail(to: string): Promise<void> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) return;
+
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; background: #0f172a; color: #e2e8f0; padding: 40px; border-radius: 12px;">
+      <h1 style="color: #ffffff; font-size: 24px; margin: 0 0 8px 0;">BizzAssist</h1>
+      <p style="color: #64748b; font-size: 12px; margin: 0 0 24px 0;">Danmarks forretningsintelligens platform</p>
+
+      <h2 style="color: #ef4444; font-size: 18px; margin: 0 0 16px 0;">Konto slettet / Account deleted</h2>
+
+      <p style="margin: 0 0 16px 0; font-size: 14px;">
+        Din BizzAssist-konto og alle tilknyttede data er blevet permanent slettet som anmodet.
+      </p>
+      <p style="margin: 0 0 24px 0; font-size: 13px; color: #94a3b8;">
+        Your BizzAssist account and all associated data have been permanently deleted as requested.
+      </p>
+
+      <p style="margin: 0 0 8px 0; font-size: 13px; color: #94a3b8;">Hvad er slettet:</p>
+      <ul style="margin: 0 0 24px 0; padding-left: 20px; font-size: 13px; color: #cbd5e1;">
+        <li style="margin-bottom: 4px;">Profil og kontodata</li>
+        <li style="margin-bottom: 4px;">Gemte s&oslash;gninger og fulgte enheder</li>
+        <li style="margin-bottom: 4px;">AI-samtaler og uploadede dokumenter</li>
+        <li style="margin-bottom: 4px;">Notifikationer og aktivitetslog</li>
+      </ul>
+
+      <p style="margin: 0 0 8px 0; font-size: 13px; color: #64748b;">
+        Denne besked er den sidste du modtager fra os. Du er altid velkommen til at oprette en ny konto.
+      </p>
+
+      <hr style="border: none; border-top: 1px solid #1e293b; margin: 30px 0;" />
+      <p style="color: #475569; font-size: 11px; margin: 0;">BizzAssist &mdash; Pecunia IT ApS &mdash; S&oslash;byvej 11, 2650 Hvidovre &mdash; CVR 44718502</p>
+    </div>
+  `;
+
+  try {
+    const res = await fetch(RESEND_ENDPOINT, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: FROM_ADDRESS,
+        to,
+        subject: 'Din konto er slettet — BizzAssist',
+        html,
+      }),
+    });
+    if (!res.ok) logger.error('[email] Deletion confirmation error:', res.status);
+    else logger.log('[email] Deletion confirmation sent');
+  } catch (err) {
+    logger.error('[email] Failed to send deletion email:', err);
+  }
+}

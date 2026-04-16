@@ -24,9 +24,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { resolveTenantId } from '@/lib/api/auth';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { tenantDb } from '@/lib/supabase/admin';
 import { parseBody } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
+import { writeAuditLog } from '@/app/lib/auditLog';
 
 const feedbackSchema = z.object({
   questionText: z.string().min(1).max(5000),
@@ -49,25 +50,35 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (!parsed.success) return parsed.response;
 
   try {
-    const admin = createAdminClient();
-
-    // Insert into tenant-schema ai_feedback_log via admin client.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- tenant schema not in typed client
-    const { error } = await (admin.schema('tenant') as any).from('ai_feedback_log').insert({
-      tenant_id: auth.tenantId,
-      user_id: auth.userId,
-      conversation_id: parsed.data.conversationId ?? null,
-      question_text: parsed.data.questionText,
-      feedback_type: parsed.data.feedbackType,
-      ai_response_snippet: parsed.data.aiResponseSnippet ?? null,
-      page_context: parsed.data.pageContext ?? null,
-      metadata: parsed.data.metadata ?? {},
-    });
+    // Insert into tenant-schema ai_feedback_log via typed tenant helper.
+    const { error } = await tenantDb('tenant')
+      .from('ai_feedback_log')
+      .insert({
+        tenant_id: auth.tenantId,
+        user_id: auth.userId,
+        conversation_id: parsed.data.conversationId ?? null,
+        question_text: parsed.data.questionText,
+        feedback_type: parsed.data.feedbackType,
+        ai_response_snippet: parsed.data.aiResponseSnippet ?? null,
+        page_context: parsed.data.pageContext ?? null,
+        metadata: parsed.data.metadata ?? {},
+      });
 
     if (error) {
       logger.error('[ai/feedback] Insert error:', error);
       return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
     }
+
+    // Fire-and-forget: record the feedback submission for the audit trail (ISO 27001 A.12.4).
+    void writeAuditLog({
+      action: 'ai_feedback_submitted',
+      resource_type: 'ai_feedback',
+      resource_id: parsed.data.conversationId ?? auth.userId,
+      metadata: JSON.stringify({
+        feedbackType: parsed.data.feedbackType,
+        tenantId: auth.tenantId,
+      }),
+    });
 
     return NextResponse.json({ ok: true }, { status: 201 });
   } catch (err) {

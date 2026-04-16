@@ -18,9 +18,11 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { resolveTenantId } from '@/lib/api/auth';
 import { logger } from '@/app/lib/logger';
+import { parseQuery } from '@/app/lib/validate';
 
 const PLANDATA_WFS = 'https://geoserver.plandata.dk/geoserver/wfs';
 const DAWA_BASE = 'https://api.dataforsyningen.dk';
@@ -321,18 +323,24 @@ export async function GET(request: NextRequest): Promise<NextResponse<PlandataRe
     return NextResponse.json({ planer: null, fejl: 'Unauthorized' }, { status: 401 });
   }
 
-  const { searchParams } = new URL(request.url);
-  const adresseId = searchParams.get('adresseId');
+  /** Zod schema for plandata query params — UUID format validated inline */
+  const plandataSchema = z.object({
+    adresseId: z
+      .string()
+      .regex(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+        'adresseId skal være et gyldigt UUID'
+      ),
+  });
 
-  if (!adresseId) {
-    return NextResponse.json({ planer: null, fejl: 'Mangler adresseId parameter' });
+  const parsed = parseQuery(request, plandataSchema);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { planer: null, fejl: 'Ugyldigt eller manglende adresseId parameter' },
+      { status: 400 }
+    );
   }
-
-  // Validate UUID format to prevent path traversal / SSRF via DAWA URL construction
-  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  if (!UUID_RE.test(adresseId)) {
-    return NextResponse.json({ planer: null, fejl: 'Ugyldigt adresseId format' }, { status: 400 });
-  }
+  const { adresseId } = parsed.data;
 
   try {
     // ── Hent koordinater fra DAWA ──────────────────────────────────────────

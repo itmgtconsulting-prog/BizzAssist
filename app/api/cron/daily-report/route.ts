@@ -539,7 +539,7 @@ async function sendReport(html: string, subject: string): Promise<void> {
       const body = await res.text();
       logger.error('[daily-report] Resend API fejl:', res.status, body);
     } else {
-      logger.log('[daily-report] Statusrapport sendt til', TO_ADDRESS);
+      logger.log('[daily-report] Statusrapport sendt');
     }
   } catch (err) {
     logger.error('[daily-report] Kunne ikke sende rapport:', err);

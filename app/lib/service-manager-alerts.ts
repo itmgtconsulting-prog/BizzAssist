@@ -260,5 +260,10 @@ export function isCriticalIssue(issueType: string, message: string, context?: st
     /\/dashboard\/admin/i,
   ];
 
-  return CRITICAL_ROUTE_PATTERNS.some((pattern) => pattern.test(combined));
+  if (CRITICAL_ROUTE_PATTERNS.some((pattern) => pattern.test(combined))) return true;
+
+  // BIZZ-304: Certificate expiry is critical — service outage imminent
+  if (issueType === 'certificate_expiry') return true;
+
+  return false;
 }

@@ -266,7 +266,7 @@ const AlternativesPopup = memo(function AlternativesPopup({
   return (
     <>
       {/* Backdrop — lukker popup ved klik udenfor */}
-      <div className="fixed inset-0 z-40 bg-black/40" onClick={onClose} />
+      <div className="fixed inset-0 z-40 bg-black/40" onClick={onClose} role="presentation" />
       {/* Modal — centreret på skærmen, max 90vw på mobil */}
       <div
         ref={ref}

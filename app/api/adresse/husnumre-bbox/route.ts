@@ -9,9 +9,19 @@
  * @returns GeoJSON FeatureCollection med adressepunkter (Point geometry)
  */
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { resolveTenantId } from '@/lib/api/auth';
+import { parseQuery } from '@/app/lib/validate';
 
 const emptyFc: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
+
+/** Zod schema for husnumre-bbox query params */
+const bboxSchema = z.object({
+  w: z.coerce.number(),
+  s: z.coerce.number(),
+  e: z.coerce.number(),
+  n: z.coerce.number(),
+});
 
 /**
  * Henter husnumre i en bounding box som GeoJSON Point-features.
@@ -23,15 +33,10 @@ const emptyFc: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features
 export async function GET(request: NextRequest) {
   const auth = await resolveTenantId();
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  const { searchParams } = new URL(request.url);
-  const w = parseFloat(searchParams.get('w') ?? '');
-  const s = parseFloat(searchParams.get('s') ?? '');
-  const e = parseFloat(searchParams.get('e') ?? '');
-  const n = parseFloat(searchParams.get('n') ?? '');
 
-  if ([w, s, e, n].some(isNaN)) {
-    return NextResponse.json(emptyFc, { status: 400 });
-  }
+  const parsed = parseQuery(request, bboxSchema);
+  if (!parsed.success) return NextResponse.json(emptyFc, { status: 400 });
+  const { w, s, e, n } = parsed.data;
 
   // Guard: reject oversized bounding boxes — husnumre are dense and large areas
   // cause very slow DAWA responses or result sets that exceed the per_side limit

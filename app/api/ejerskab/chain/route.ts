@@ -6,8 +6,9 @@
  *   2. For virksomhedsejere med CVR → henter ejere fra CVR ES (rekursivt op til 3 niveauer)
  *   3. Returnerer en flad graf (nodes + edges) klar til DiagramForce
  *
- * EJF (Datafordeler Ejerfortegnelse) bruges IKKE — vi afventer godkendelse.
- * Tinglysning adkomst + CVR API er tilstrækkeligt til fuld ejerskabskæde.
+ * EJF (Datafordeler Ejerfortegnelse) bruges som fallback når Tinglysning
+ * ikke returnerer faktiske ejere (typisk for ejerlejligheder hvor
+ * Tinglysning kun viser "Opdelt i ejerlejligheder" som status).
  *
  * Node-typer: property (grøn), company (blå), person (lilla)
  *
@@ -28,6 +29,8 @@ interface ChainNode {
   enhedsNummer?: number;
   ejerandel?: string;
   link?: string;
+  /** True when the company has a slutdato / sammensatStatus "Ophørt" — shown greyed out in diagrams */
+  isCeased?: boolean;
 }
 
 /** Status-tekster fra Tinglysning der ikke er faktiske ejere */
@@ -54,6 +57,8 @@ export interface ChainEjerDetalje {
   overtagelsesdato: string | null;
   adkomstType: string | null;
   koebesum: number | null;
+  /** True when the owning company is ceased/dissolved — shown as warning in UI */
+  isCeased?: boolean;
 }
 
 export interface OwnershipChainResponse {
@@ -92,17 +97,30 @@ function mapEjerandel(val: number): string {
   return '<5%';
 }
 
-/** Henter ejere af en virksomhed fra CVR ES */
+/**
+ * Henter ejere og ophørsstatus af en virksomhed fra CVR ES.
+ *
+ * @param cvr - CVR-nummer at slå op
+ * @returns Virksomhedsnavn, ejere og om virksomheden er ophørt
+ */
 async function fetchCompanyOwners(cvr: number): Promise<{
   companyName: string;
+  isCeased: boolean;
   owners: { navn: string; enhedsNummer: number; erVirksomhed: boolean; ejerandel: string | null }[];
 }> {
-  if (!CVR_ES_USER || !CVR_ES_PASS) return { companyName: `CVR ${cvr}`, owners: [] };
+  if (!CVR_ES_USER || !CVR_ES_PASS)
+    return { companyName: `CVR ${cvr}`, isCeased: false, owners: [] };
 
   const auth = Buffer.from(`${CVR_ES_USER}:${CVR_ES_PASS}`).toString('base64');
   const query = {
     query: { term: { 'Vrvirksomhed.cvrNummer': cvr } },
-    _source: ['Vrvirksomhed.navne', 'Vrvirksomhed.deltagerRelation'],
+    _source: [
+      'Vrvirksomhed.navne',
+      'Vrvirksomhed.deltagerRelation',
+      // BIZZ-357: Fetch status fields to detect ceased companies
+      'Vrvirksomhed.livsforloeb',
+      'Vrvirksomhed.virksomhedMetadata',
+    ],
     size: 1,
   };
 
@@ -113,15 +131,23 @@ async function fetchCompanyOwners(cvr: number): Promise<{
       body: JSON.stringify(query),
       signal: AbortSignal.timeout(8000),
     });
-    if (!res.ok) return { companyName: `CVR ${cvr}`, owners: [] };
+    if (!res.ok) return { companyName: `CVR ${cvr}`, isCeased: false, owners: [] };
 
     const data = await res.json();
     const hit = data?.hits?.hits?.[0]?._source?.Vrvirksomhed;
-    if (!hit) return { companyName: `CVR ${cvr}`, owners: [] };
+    if (!hit) return { companyName: `CVR ${cvr}`, isCeased: false, owners: [] };
 
     // Virksomhedsnavn
     const navne = Array.isArray(hit.navne) ? (hit.navne as (Periodic & { navn?: string })[]) : [];
     const companyName = gyldigNu(navne)?.navn ?? `CVR ${cvr}`;
+
+    // BIZZ-357: Detect ceased companies via livsforloeb slutdato or sammensatStatus "Ophørt"
+    // Mirrors the logic in /api/cvr-public/related/route.ts mapHitToVirksomhed
+    const livsforloeb = Array.isArray(hit.livsforloeb) ? (hit.livsforloeb as Periodic[]) : [];
+    const harSlutdato = livsforloeb.some((l) => l.periode?.gyldigTil != null);
+    const meta = hit.virksomhedMetadata as Record<string, unknown> | undefined;
+    const sammensatStatus = typeof meta?.sammensatStatus === 'string' ? meta.sammensatStatus : '';
+    const isCeased = harSlutdato || sammensatStatus === 'Ophørt';
 
     // Ejere fra deltagerRelation
     const owners: {
@@ -200,9 +226,9 @@ async function fetchCompanyOwners(cvr: number): Promise<{
       }
     }
 
-    return { companyName, owners };
+    return { companyName, isCeased, owners };
   } catch {
-    return { companyName: `CVR ${cvr}`, owners: [] };
+    return { companyName: `CVR ${cvr}`, isCeased: false, owners: [] };
   }
 }
 
@@ -234,8 +260,23 @@ export async function GET(req: NextRequest) {
   const companyOwnersToResolve: { nodeId: string; cvr: number; depth: number }[] = [];
   const ejerDetaljer: ChainEjerDetalje[] = [];
 
+  // BIZZ-386: Accumulators for batched parallel enhedsNummer lookups (Tinglysning + EJF paths)
+  const tlPersonsToResolve: { navn: string | undefined; nodeIdx: number; detaljeIdx: number }[] =
+    [];
+  const ejfPersonsToResolve: { navn: string; nodeIdx: number; detaljeIdx: number }[] = [];
+
   // Forward the caller's session cookie so internal API routes can authenticate.
   const cookieHeader = req.headers.get('cookie') ?? '';
+
+  // BIZZ-328: Start EJF lookup in parallel with Tinglysning — used as fallback
+  // if Tinglysning doesn't return real owners (common for ejerlejligheder).
+  // Starting early saves ~200ms by overlapping with the Tinglysning round-trip.
+  const ejfPromise = fetch(`${req.nextUrl.origin}/api/ejerskab?bfeNummer=${bfe}`, {
+    headers: { cookie: cookieHeader },
+    signal: AbortSignal.timeout(15000),
+  })
+    .then((r) => (r.ok ? r.json() : null))
+    .catch(() => null);
 
   // Trin 1: Prøv Tinglysning API — har navne, adkomsttype, evt. CVR
   try {
@@ -306,44 +347,12 @@ export async function GET(req: NextRequest) {
                 });
               } else {
                 const id = `person-${nodes.length}`;
-                // Søg efter personens enhedsNummer i CVR ES via navn
-                let personLink: string | undefined;
-                let personEnhedsNummer: number | undefined;
-                if (ejer.navn && CVR_ES_USER && CVR_ES_PASS) {
-                  try {
-                    const auth = Buffer.from(`${CVR_ES_USER}:${CVR_ES_PASS}`).toString('base64');
-                    const pQuery = {
-                      query: { match: { 'Vrdeltagerperson.navne.navn': ejer.navn } },
-                      _source: ['Vrdeltagerperson.enhedsNummer'],
-                      size: 1,
-                    };
-                    const pRes = await fetch(`${CVR_ES_BASE}/deltager/_search`, {
-                      method: 'POST',
-                      headers: {
-                        'Content-Type': 'application/json',
-                        Authorization: `Basic ${auth}`,
-                      },
-                      body: JSON.stringify(pQuery),
-                      signal: AbortSignal.timeout(5000),
-                    });
-                    if (pRes.ok) {
-                      const pData = await pRes.json();
-                      const enr = pData?.hits?.hits?.[0]?._source?.Vrdeltagerperson?.enhedsNummer;
-                      if (typeof enr === 'number') {
-                        personEnhedsNummer = enr;
-                        personLink = `/dashboard/owners/${enr}`;
-                      }
-                    }
-                  } catch {
-                    /* ignore */
-                  }
-                }
+                // BIZZ-386: Push node immediately (without enhedsNummer) so id is stable,
+                // then batch-resolve enhedsNummer for all persons after the loop.
                 nodes.push({
                   id,
                   label: ejer.navn || 'Person',
                   type: 'person',
-                  enhedsNummer: personEnhedsNummer,
-                  link: personLink,
                 });
                 edges.push({ from: id, to: mainId, ejerandel: ejer.andel ?? undefined });
                 ejerDetaljer.push({
@@ -355,7 +364,13 @@ export async function GET(req: NextRequest) {
                   overtagelsesdato: ejer.overtagelsesdato ?? null,
                   adkomstType: ejer.adkomstType ?? null,
                   koebesum: ejer.koebesum ?? null,
-                  enhedsNummer: personEnhedsNummer ?? null,
+                  enhedsNummer: null,
+                });
+                // Track node/detaljer indices so we can patch them after batch lookup
+                tlPersonsToResolve.push({
+                  navn: ejer.navn,
+                  nodeIdx: nodes.length - 1,
+                  detaljeIdx: ejerDetaljer.length - 1,
                 });
               }
             }
@@ -363,52 +378,299 @@ export async function GET(req: NextRequest) {
         }
       }
     }
+
+    // BIZZ-386: Batch-resolve enhedsNummer for all Tinglysning person owners in parallel
+    if (tlPersonsToResolve.length > 0 && CVR_ES_USER && CVR_ES_PASS) {
+      const auth = Buffer.from(`${CVR_ES_USER}:${CVR_ES_PASS}`).toString('base64');
+      const results = await Promise.allSettled(
+        tlPersonsToResolve.map(({ navn }) =>
+          navn
+            ? fetch(`${CVR_ES_BASE}/deltager/_search`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Basic ${auth}` },
+                body: JSON.stringify({
+                  query: { match: { 'Vrdeltagerperson.navne.navn': navn } },
+                  _source: ['Vrdeltagerperson.enhedsNummer'],
+                  size: 1,
+                }),
+                signal: AbortSignal.timeout(5000),
+              })
+                .then((r) => (r.ok ? r.json() : null))
+                .catch(() => null)
+            : Promise.resolve(null)
+        )
+      );
+      for (let i = 0; i < tlPersonsToResolve.length; i++) {
+        const result = results[i];
+        if (result.status !== 'fulfilled' || !result.value) continue;
+        const enr = result.value?.hits?.hits?.[0]?._source?.Vrdeltagerperson?.enhedsNummer;
+        if (typeof enr !== 'number') continue;
+        const { nodeIdx, detaljeIdx } = tlPersonsToResolve[i];
+        nodes[nodeIdx].enhedsNummer = enr;
+        nodes[nodeIdx].link = `/dashboard/owners/${enr}`;
+        ejerDetaljer[detaljeIdx].enhedsNummer = enr;
+      }
+    }
   } catch {
     /* Tinglysning valgfri */
   }
 
-  // Resolver virksomhedsejere rekursivt (BFS)
-  while (companyOwnersToResolve.length > 0) {
-    const { nodeId, cvr, depth } = companyOwnersToResolve.shift()!;
-    if (depth >= MAX_DEPTH) continue;
+  // ── EJF fallback — bruges når Tinglysning ikke returnerer faktiske ejere ──
+  // For ejerlejligheder returnerer Tinglysning typisk kun "Opdelt i ejerlejlighed"
+  // som status-tekst, ikke de individuelle ejere. EJF (Ejerfortegnelsen) har de
+  // korrekte ejere for den specifikke BFE.
+  const harFaktiskeEjere = nodes.some((n) => n.type === 'company' || n.type === 'person');
 
-    const { companyName, owners } = await fetchCompanyOwners(cvr);
+  // BIZZ-329: Cross-reference with EJF to remove historical owners that Tinglysning
+  // still reports. EJF uses virkningstid=nu so only has current owners.
+  if (harFaktiskeEjere) {
+    try {
+      const ejfData = await ejfPromise;
+      if (ejfData?.ejere?.length > 0) {
+        const ejfCvrs = new Set(
+          ejfData.ejere
+            .filter((e: { cvr: string | null }) => e.cvr)
+            .map((e: { cvr: string }) => e.cvr)
+        );
+        const ejfNames = new Set(
+          ejfData.ejere
+            .filter((e: { personNavn: string | null }) => e.personNavn)
+            .map((e: { personNavn: string }) => e.personNavn.toLowerCase())
+        );
 
-    // Opdater virksomhedsnode med navn
-    const companyNode = nodes.find((n) => n.id === nodeId);
-    if (companyNode && companyNode.label.startsWith('CVR ')) {
-      companyNode.label = companyName;
-    }
+        // Remove nodes that are NOT in EJF's current owner list
+        const toRemove = new Set<string>();
+        for (const node of nodes) {
+          if (
+            node.type === 'company' &&
+            node.cvr &&
+            !ejfCvrs.has(String(node.cvr).padStart(8, '0')) &&
+            !ejfCvrs.has(String(node.cvr))
+          ) {
+            toRemove.add(node.id);
+          } else if (node.type === 'person' && !node.cvr) {
+            const nameMatch = ejfNames.has(node.label.toLowerCase());
+            if (!nameMatch && ejfNames.size > 0) {
+              toRemove.add(node.id);
+            }
+          }
+        }
 
-    for (const owner of owners) {
-      const ownerId = owner.erVirksomhed ? `cvr-${owner.enhedsNummer}` : `en-${owner.enhedsNummer}`;
-
-      if (!seenIds.has(ownerId)) {
-        seenIds.add(ownerId);
-        if (owner.erVirksomhed) {
-          nodes.push({
-            id: ownerId,
-            label: owner.navn,
-            type: 'company',
-            cvr: owner.enhedsNummer,
-            link: `/dashboard/companies/${owner.enhedsNummer}`,
+        if (toRemove.size > 0) {
+          // Remove stale nodes and their edges
+          const filtered = nodes.filter((n) => !toRemove.has(n.id));
+          nodes.length = 0;
+          nodes.push(...filtered);
+          const filteredEdges = edges.filter((e) => !toRemove.has(e.from) && !toRemove.has(e.to));
+          edges.length = 0;
+          edges.push(...filteredEdges);
+          // Also clean ejerDetaljer
+          const cleanedDetaljer = ejerDetaljer.filter((d) => {
+            if (d.cvr && !ejfCvrs.has(d.cvr) && !ejfCvrs.has(d.cvr.replace(/^0+/, '')))
+              return false;
+            return true;
           });
-          companyOwnersToResolve.push({
-            nodeId: ownerId,
-            cvr: owner.enhedsNummer,
-            depth: depth + 1,
-          });
-        } else {
-          nodes.push({
-            id: ownerId,
-            label: owner.navn,
-            type: 'person',
-            enhedsNummer: owner.enhedsNummer,
-            link: `/dashboard/owners/${owner.enhedsNummer}`,
-          });
+          ejerDetaljer.length = 0;
+          ejerDetaljer.push(...cleanedDetaljer);
         }
       }
-      edges.push({ from: ownerId, to: nodeId, ejerandel: owner.ejerandel ?? undefined });
+    } catch {
+      /* EJF cross-reference non-fatal */
+    }
+  }
+
+  if (
+    !harFaktiskeEjere ||
+    nodes.filter((n) => n.type === 'company' || n.type === 'person').length === 0
+  ) {
+    try {
+      // BIZZ-328: Use pre-fetched EJF promise (started in parallel with Tinglysning)
+      const ejfData = await ejfPromise;
+      if (ejfData) {
+        const ejere = ejfData.ejere ?? [];
+
+        for (const ejer of ejere) {
+          const andel =
+            ejer.ejerandel_taeller != null && ejer.ejerandel_naevner != null
+              ? `${Math.round((ejer.ejerandel_taeller / ejer.ejerandel_naevner) * 100)}%`
+              : undefined;
+
+          if (ejer.cvr) {
+            const id = `cvr-${ejer.cvr}`;
+            if (!seenIds.has(id)) {
+              seenIds.add(id);
+              nodes.push({
+                id,
+                label: ejer.personNavn || `CVR ${ejer.cvr}`,
+                type: 'company',
+                cvr: parseInt(ejer.cvr, 10),
+                link: `/dashboard/companies/${ejer.cvr}`,
+              });
+              companyOwnersToResolve.push({
+                nodeId: id,
+                cvr: parseInt(ejer.cvr, 10),
+                depth: 0,
+              });
+            }
+            edges.push({ from: id, to: mainId, ejerandel: andel });
+            ejerDetaljer.push({
+              navn: ejer.personNavn || `CVR ${ejer.cvr}`,
+              cvr: ejer.cvr,
+              enhedsNummer: null,
+              type: 'selskab',
+              andel: andel ?? null,
+              adresse: null,
+              overtagelsesdato: ejer.virkningFra ?? null,
+              adkomstType: null,
+              koebesum: null,
+            });
+          } else if (ejer.personNavn) {
+            const id = `person-ejf-${nodes.length}`;
+
+            // BIZZ-386: Push node immediately (without enhedsNummer) so id is stable,
+            // then batch-resolve enhedsNummer for all EJF persons after the loop.
+            if (!seenIds.has(id)) {
+              seenIds.add(id);
+              nodes.push({
+                id,
+                label: ejer.personNavn,
+                type: 'person',
+              });
+              // Only track for lookup when the node is newly added (deduplication guard)
+              ejfPersonsToResolve.push({
+                navn: ejer.personNavn,
+                nodeIdx: nodes.length - 1,
+                detaljeIdx: ejerDetaljer.length, // points to the entry we're about to push
+              });
+            }
+            edges.push({ from: id, to: mainId, ejerandel: andel });
+            ejerDetaljer.push({
+              navn: ejer.personNavn,
+              cvr: null,
+              enhedsNummer: null,
+              type: 'person',
+              andel: andel ?? null,
+              adresse: null,
+              overtagelsesdato: ejer.virkningFra ?? null,
+              adkomstType: null,
+              koebesum: null,
+            });
+          }
+        }
+      }
+
+      // BIZZ-386: Batch-resolve enhedsNummer for all EJF person owners in parallel
+      if (ejfPersonsToResolve.length > 0 && CVR_ES_USER && CVR_ES_PASS) {
+        const auth = Buffer.from(`${CVR_ES_USER}:${CVR_ES_PASS}`).toString('base64');
+        const results = await Promise.allSettled(
+          ejfPersonsToResolve.map(({ navn }) =>
+            fetch(`${CVR_ES_BASE}/deltager/_search`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Basic ${auth}` },
+              body: JSON.stringify({
+                query: { match: { 'Vrdeltagerperson.navne.navn': navn } },
+                _source: ['Vrdeltagerperson.enhedsNummer'],
+                size: 1,
+              }),
+              signal: AbortSignal.timeout(5000),
+            })
+              .then((r) => (r.ok ? r.json() : null))
+              .catch(() => null)
+          )
+        );
+        for (let i = 0; i < ejfPersonsToResolve.length; i++) {
+          const result = results[i];
+          if (result.status !== 'fulfilled' || !result.value) continue;
+          const enr = result.value?.hits?.hits?.[0]?._source?.Vrdeltagerperson?.enhedsNummer;
+          if (typeof enr !== 'number') continue;
+          const { nodeIdx, detaljeIdx } = ejfPersonsToResolve[i];
+          nodes[nodeIdx].enhedsNummer = enr;
+          nodes[nodeIdx].link = `/dashboard/owners/${enr}`;
+          ejerDetaljer[detaljeIdx].enhedsNummer = enr;
+        }
+      }
+    } catch {
+      /* EJF fallback valgfri */
+    }
+  }
+
+  // Resolver virksomhedsejere rekursivt (BFS, niveau-for-niveau parallelt — BIZZ-356)
+  // Items at the same depth are fetched in parallel via Promise.allSettled to avoid
+  // serialising independent network calls (common for ejerlejligheder with many owners).
+  let currentLevel = companyOwnersToResolve.splice(0);
+  while (currentLevel.length > 0) {
+    // Filter out items that have already hit MAX_DEPTH before firing requests
+    const eligible = currentLevel.filter(({ depth }) => depth < MAX_DEPTH);
+    if (eligible.length === 0) break;
+
+    // Fire all fetchCompanyOwners calls at this depth level in parallel
+    const results = await Promise.allSettled(eligible.map(({ cvr }) => fetchCompanyOwners(cvr)));
+
+    // Items to resolve at the next depth level, collected during this pass
+    const nextLevel: { nodeId: string; cvr: number; depth: number }[] = [];
+
+    for (let i = 0; i < eligible.length; i++) {
+      const { nodeId, depth } = eligible[i];
+      const result = results[i];
+
+      // fetchCompanyOwners already handles its own errors and returns a safe default,
+      // but guard against unexpected rejections just in case.
+      if (result.status === 'rejected') continue;
+
+      const { companyName, isCeased, owners } = result.value;
+
+      // Opdater virksomhedsnode med navn og ophørsstatus (BIZZ-357)
+      const companyNode = nodes.find((n) => n.id === nodeId);
+      if (companyNode) {
+        if (companyNode.label.startsWith('CVR ')) {
+          companyNode.label = companyName;
+        }
+        // Mark as ceased so diagrams can render it visually distinct
+        if (isCeased) companyNode.isCeased = true;
+      }
+
+      for (const owner of owners) {
+        const ownerId = owner.erVirksomhed
+          ? `cvr-${owner.enhedsNummer}`
+          : `en-${owner.enhedsNummer}`;
+
+        if (!seenIds.has(ownerId)) {
+          seenIds.add(ownerId);
+          if (owner.erVirksomhed) {
+            nodes.push({
+              id: ownerId,
+              label: owner.navn,
+              type: 'company',
+              cvr: owner.enhedsNummer,
+              link: `/dashboard/companies/${owner.enhedsNummer}`,
+            });
+            nextLevel.push({
+              nodeId: ownerId,
+              cvr: owner.enhedsNummer,
+              depth: depth + 1,
+            });
+          } else {
+            nodes.push({
+              id: ownerId,
+              label: owner.navn,
+              type: 'person',
+              enhedsNummer: owner.enhedsNummer,
+              link: `/dashboard/owners/${owner.enhedsNummer}`,
+            });
+          }
+        }
+        edges.push({ from: ownerId, to: nodeId, ejerandel: owner.ejerandel ?? undefined });
+      }
+    }
+
+    currentLevel = nextLevel;
+  }
+
+  // Propagate isCeased from resolved company nodes to ejerDetaljer entries
+  for (const d of ejerDetaljer) {
+    if (d.cvr && d.type === 'selskab') {
+      const node = nodes.find((n) => n.type === 'company' && n.cvr === parseInt(d.cvr!, 10));
+      if (node?.isCeased) d.isCeased = true;
     }
   }
 

@@ -198,6 +198,13 @@ interface PersonTinglysningTabProps {
   personbogMap: Record<string, { navn: string; haeftelser: PersonbogHaeftelse[] }>;
   loading: boolean;
   fejl: string | null;
+  /**
+   * BIZZ-339: True når personen har ingen tilknyttede virksomheder.
+   * Tinglysningsrettens API understøtter kun CVR-baseret søgning i Personbogen —
+   * der er ingen direkte søgning på fysiske personers CPR/enhedsNummer.
+   * Vises som en informationsboks i stedet for en tom liste.
+   */
+  ingenVirksomheder: boolean;
   c: (typeof translations)['da']['person'];
   da: boolean;
   expandedPant: Set<string>;
@@ -208,13 +215,27 @@ interface PersonTinglysningTabProps {
 
 /**
  * PersonTinglysningTab — Viser personbogshæftelser for alle virksomheder personen er tilknyttet.
+ *
+ * Tinglysningsrettens API (e-TL) understøtter kun søgning i Personbogen via CVR-nummer
+ * (endpoint: /soegpersonbogcvr). Der er ingen tilsvarende endpoint til at søge direkte
+ * på en fysisk persons enhedsNummer eller CPR — se http_api_beskrivelse v1.12, afsnit 4.4.
+ * Derfor vises kun virksomhedspant for de CVR-numre personen er registreret på.
+ *
  * Grupperet per virksomhed, med farvekodede sektioner per hæftelsestype.
  * Matcher designet fra virksomhedssiden og ejendomssiden.
+ *
+ * @param personbogMap - Map fra CVR til virksomhedsnavn + hæftelser
+ * @param loading - True mens data hentes
+ * @param fejl - Fejlbesked fra API
+ * @param ingenVirksomheder - True hvis personen har ingen tilknyttede virksomheder
+ * @param c - Oversættelser
+ * @param da - True for dansk, false for engelsk
  */
 function PersonTinglysningTab({
   personbogMap,
   loading,
   fejl,
+  ingenVirksomheder,
   c,
   da,
   expandedPant,
@@ -258,7 +279,14 @@ function PersonTinglysningTab({
           <p className="text-slate-400 text-xs">{fejl}</p>
         </div>
       )}
-      {!loading && !fejl && allHaeftelser.length === 0 && (
+      {/* BIZZ-339: Personen har ingen tilknyttede virksomheder — søgning ikke mulig via e-TL API */}
+      {!loading && !fejl && ingenVirksomheder && (
+        <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl flex items-start gap-3 px-4 py-3">
+          <AlertTriangle size={14} className="text-slate-500 flex-shrink-0 mt-0.5" />
+          <p className="text-slate-500 text-xs">{c.tinglysningIngenVirksomheder}</p>
+        </div>
+      )}
+      {!loading && !fejl && !ingenVirksomheder && allHaeftelser.length === 0 && (
         <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl px-4 py-3">
           <p className="text-slate-500 text-xs italic">{c.tinglysningEmpty}</p>
         </div>
@@ -1149,81 +1177,106 @@ export default function PersonDetailPageClient({
    * efterfølgende batches tilføjes automatisk i baggrunden.
    * Bruger AbortController til at annullere igangværende hentning ved CVR-ændring.
    */
-  const fetchEjendommeProgressively = useCallback(async (uniqueCvrs: string[]) => {
-    ejendomAbortRef.current?.abort();
-    const controller = new AbortController();
-    ejendomAbortRef.current = controller;
+  /**
+   * BIZZ-264: Extended to support both CVR (company) and enhedsNummer (person) lookups.
+   * Builds query params with cvr= and/or enhedsNummer= as appropriate.
+   */
+  const fetchEjendommeProgressively = useCallback(
+    async (uniqueCvrs: string[], personEnhedsNumre?: string[]) => {
+      ejendomAbortRef.current?.abort();
+      const controller = new AbortController();
+      ejendomAbortRef.current = controller;
 
-    const FIRST_BATCH = 5;
-    const REST_BATCH = 10;
+      const FIRST_BATCH = 5;
+      const REST_BATCH = 10;
 
-    setEjendommeData([]);
-    setEjendommeFetchComplete(false);
-    setEjendommeLoadingMore(false);
-    setEjendommeLoading(true);
-    setEjendommeManglerNoegle(false);
-    setEjendommeManglerAdgang(false);
-
-    try {
-      const url = `/api/ejendomme-by-owner?cvr=${uniqueCvrs.join(',')}&offset=0&limit=${FIRST_BATCH}`;
-      const res = await fetch(url, { signal: controller.signal });
-      if (!res.ok) throw new Error(`${res.status}`);
-      const json = (await res.json()) as {
-        ejendomme: EjendomSummary[];
-        totalBfe: number;
-        manglerNoegle: boolean;
-        manglerAdgang: boolean;
-      };
-
-      if (controller.signal.aborted) return;
-
-      setEjendommeData(json.ejendomme ?? []);
-      setEjendommeTotalBfe(json.totalBfe ?? 0);
-      setEjendommeManglerNoegle(json.manglerNoegle === true);
-      setEjendommeManglerAdgang(json.manglerAdgang === true);
-      setEjendommeLoading(false);
-
-      let offset = FIRST_BATCH;
-      const total = json.totalBfe ?? 0;
-
-      if (offset < total) setEjendommeLoadingMore(true);
-
-      while (offset < total) {
-        if (controller.signal.aborted) return;
-
-        const res2 = await fetch(
-          `/api/ejendomme-by-owner?cvr=${uniqueCvrs.join(',')}&offset=${offset}&limit=${REST_BATCH}`,
-          { signal: controller.signal }
-        );
-        if (!res2.ok) break;
-        const json2 = (await res2.json()) as { ejendomme: EjendomSummary[] };
-
-        if (controller.signal.aborted) return;
-
-        setEjendommeData((prev) => [...prev, ...(json2.ejendomme ?? [])]);
-        offset += REST_BATCH;
-      }
-    } catch (e) {
-      if ((e as Error).name === 'AbortError') return;
       setEjendommeData([]);
-    } finally {
-      if (!controller.signal.aborted) {
+      setEjendommeFetchComplete(false);
+      setEjendommeLoadingMore(false);
+      setEjendommeLoading(true);
+      setEjendommeManglerNoegle(false);
+      setEjendommeManglerAdgang(false);
+
+      // Build query params — support both CVR and enhedsNummer
+      const params = new URLSearchParams();
+      if (uniqueCvrs.length > 0) params.set('cvr', uniqueCvrs.join(','));
+      if (personEnhedsNumre && personEnhedsNumre.length > 0)
+        params.set('enhedsNummer', personEnhedsNumre.join(','));
+      params.set('offset', '0');
+      params.set('limit', String(FIRST_BATCH));
+
+      try {
+        const url = `/api/ejendomme-by-owner?${params}`;
+        const res = await fetch(url, { signal: controller.signal });
+        if (!res.ok) throw new Error(`${res.status}`);
+        const json = (await res.json()) as {
+          ejendomme: EjendomSummary[];
+          totalBfe: number;
+          manglerNoegle: boolean;
+          manglerAdgang: boolean;
+        };
+
+        if (controller.signal.aborted) return;
+
+        setEjendommeData(json.ejendomme ?? []);
+        setEjendommeTotalBfe(json.totalBfe ?? 0);
+        setEjendommeManglerNoegle(json.manglerNoegle === true);
+        setEjendommeManglerAdgang(json.manglerAdgang === true);
         setEjendommeLoading(false);
-        setEjendommeLoadingMore(false);
-        setEjendommeFetchComplete(true);
+
+        let offset = FIRST_BATCH;
+        const total = json.totalBfe ?? 0;
+
+        if (offset < total) setEjendommeLoadingMore(true);
+
+        while (offset < total) {
+          if (controller.signal.aborted) return;
+
+          params.set('offset', String(offset));
+          params.set('limit', String(REST_BATCH));
+          const res2 = await fetch(`/api/ejendomme-by-owner?${params}`, {
+            signal: controller.signal,
+          });
+          if (!res2.ok) break;
+          const json2 = (await res2.json()) as { ejendomme: EjendomSummary[] };
+
+          if (controller.signal.aborted) return;
+
+          setEjendommeData((prev) => [...prev, ...(json2.ejendomme ?? [])]);
+          offset += REST_BATCH;
+        }
+      } catch (e) {
+        if ((e as Error).name === 'AbortError') return;
+        setEjendommeData([]);
+      } finally {
+        if (!controller.signal.aborted) {
+          setEjendommeLoading(false);
+          setEjendommeLoadingMore(false);
+          setEjendommeFetchComplete(true);
+        }
       }
-    }
-  }, []);
+    },
+    []
+  );
 
   /**
    * Trigger progressiv ejendomshentning når properties-tab aktiveres eller CVR-sæt ændres.
    * Kører igen når relatedCompanies ændres (datterselskaber loader ind).
+   *
+   * BIZZ-338: Inkluderer nu også CVR-numre fra andreVirksomheder (virksomheder hvor personen
+   * har ikke-ejer roller som direktion/bestyrelse), så ejendomme ejet via disse virksomheder
+   * også vises i Ejendomme-tab.
    */
   useEffect(() => {
     if ((aktivTab !== 'properties' && aktivTab !== 'relations') || !derived) return;
 
     /* Saml CVR-numre for direkte ejede virksomheder */
     const ejerCvrs = derived.ejerVirksomheder.map((v) => String(v.cvr).padStart(8, '0'));
+
+    /* BIZZ-338: Tilføj CVR-numre fra virksomheder med andre roller (direktion/bestyrelse) */
+    const andreVirksomhedCvrs = derived.andreVirksomheder.map((v) =>
+      String(v.cvr).padStart(8, '0')
+    );
 
     /* Tilføj datterselskaber fra relatedCompanies */
     const subsidieCvrs: string[] = [];
@@ -1233,21 +1286,27 @@ export default function PersonDetailPageClient({
       }
     }
 
-    const uniqueCvrs = [...new Set([...ejerCvrs, ...subsidieCvrs])].slice(0, 30);
+    const uniqueCvrs = [...new Set([...ejerCvrs, ...andreVirksomhedCvrs, ...subsidieCvrs])].slice(
+      0,
+      30
+    );
 
-    if (uniqueCvrs.length === 0) {
-      /* Personen ejer ingen virksomheder — intet at hente */
+    // BIZZ-264: Also fetch person's directly owned properties via enhedsNummer
+    const personEnhedsNumre = data?.enhedsNummer ? [String(data.enhedsNummer)] : [];
+
+    const fetchKey = [...uniqueCvrs, ...personEnhedsNumre].sort().join(',');
+    if (ejendomFetchKeyRef.current === fetchKey) return;
+    ejendomFetchKeyRef.current = fetchKey;
+
+    if (uniqueCvrs.length === 0 && personEnhedsNumre.length === 0) {
       setEjendommeData([]);
       setEjendommeTotalBfe(0);
       setEjendommeFetchComplete(true);
       return;
     }
 
-    const fetchKey = [...uniqueCvrs].sort().join(',');
-    if (ejendomFetchKeyRef.current === fetchKey) return;
-    ejendomFetchKeyRef.current = fetchKey;
-
-    void fetchEjendommeProgressively(uniqueCvrs);
+    void fetchEjendommeProgressively(uniqueCvrs, personEnhedsNumre);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aktivTab, derived, relatedCompanies, fetchEjendommeProgressively]);
 
   /**
@@ -1804,7 +1863,7 @@ export default function PersonDetailPageClient({
             </div>
           )}
 
-          {/* ══ RELATIONSDIAGRAM (Force Graph — original) ══ */}
+          {/* ══ RELATIONSDIAGRAM — BIZZ-337: variant toggle matcher virksomhedssiden ══ */}
           {aktivTab === 'relations' &&
             (() => {
               const propertiesByCvr =
@@ -1825,23 +1884,40 @@ export default function PersonDetailPageClient({
                 andreVirksomheder,
                 propertiesByCvr
               );
-              return <DiagramForce graph={diagramGraph} lang={lang} />;
+              return (
+                <DiagramForce
+                  graph={diagramGraph}
+                  lang={lang}
+                  onNodeClick={(node) => {
+                    // BIZZ-368: clicking a company node in the person diagram should switch to
+                    // the overview tab (staying on this page) rather than navigating to the
+                    // company page. Property and person nodes without a meaningful tab target
+                    // fall back to normal navigation.
+                    if (node.type === 'company' || node.type === 'main') {
+                      setAktivTab('overview');
+                    } else if (node.link) {
+                      window.location.href = node.link;
+                    }
+                  }}
+                />
+              );
             })()}
 
           {/* ══ EJENDOMME ══ */}
           {aktivTab === 'properties' && (
             <div className="space-y-4">
-              {/* Ingen ejede virksomheder — personen ejer ingen virksomheder */}
+              {/* BIZZ-338: Ingen tilknyttede virksomheder — hverken ejede eller andre roller */}
               {ejendommeFetchComplete &&
                 !ejendommeManglerNoegle &&
                 !ejendommeManglerAdgang &&
-                derived?.ejerVirksomheder.length === 0 && (
+                (derived?.ejerVirksomheder.length ?? 0) === 0 &&
+                (derived?.andreVirksomheder.length ?? 0) === 0 && (
                   <div className="flex flex-col items-center justify-center py-12 text-center">
                     <Home size={36} className="text-slate-600 mb-3" />
                     <p className="text-slate-400 text-sm">
                       {lang === 'da'
-                        ? 'Ingen registrerede ejerskaber fundet — personen ejer ingen aktive virksomheder med ejerandel.'
-                        : 'No registered ownership found — the person does not own any active companies with an ownership stake.'}
+                        ? 'Ingen registrerede tilknytninger fundet — personen har ingen aktive virksomheder.'
+                        : 'No registered company links found — the person has no active companies.'}
                     </p>
                   </div>
                 )}
@@ -1891,10 +1967,16 @@ export default function PersonDetailPageClient({
                           ? `${ejendommeData.length} ejendom${ejendommeData.length !== 1 ? 'me' : ''} fundet`
                           : `${ejendommeData.length} propert${ejendommeData.length !== 1 ? 'ies' : 'y'} found`}
                     </p>
+                    {/* BIZZ-338: tæller inkluderer nu også andreVirksomheder */}
                     <span className="text-slate-500 text-xs">
-                      {lang === 'da'
-                        ? `Via ${derived?.ejerVirksomheder.length ?? 0} ejervirksomhed${(derived?.ejerVirksomheder.length ?? 0) !== 1 ? 'er' : ''}`
-                        : `Via ${derived?.ejerVirksomheder.length ?? 0} owned compan${(derived?.ejerVirksomheder.length ?? 0) !== 1 ? 'ies' : 'y'}`}
+                      {(() => {
+                        const total =
+                          (derived?.ejerVirksomheder.length ?? 0) +
+                          (derived?.andreVirksomheder.length ?? 0);
+                        return lang === 'da'
+                          ? `Via ${total} virksomhed${total !== 1 ? 'er' : ''}`
+                          : `Via ${total} compan${total !== 1 ? 'ies' : 'y'}`;
+                      })()}
                     </span>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
@@ -1953,6 +2035,8 @@ export default function PersonDetailPageClient({
               personbogMap={personbogMap}
               loading={personbogLoading}
               fejl={personbogFejl}
+              // BIZZ-339: Ingen CVR at slå op — e-TL personbog API kræver CVR-nummer
+              ingenVirksomheder={!personbogLoading && (data?.virksomheder.length ?? 0) === 0}
               c={c}
               da={lang === 'da'}
               expandedPant={expandedPant}

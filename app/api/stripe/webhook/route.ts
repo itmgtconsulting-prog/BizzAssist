@@ -23,6 +23,7 @@ import { stripe } from '@/app/lib/stripe';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { sendRecurringPaymentEmail } from '@/app/lib/email';
 import { logger } from '@/app/lib/logger';
+import { writeAuditLog } from '@/app/lib/auditLog';
 
 /**
  * Disable Next.js body parsing — Stripe signature verification
@@ -68,6 +69,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   // ── Handle events ──
+  const startMs = Date.now();
   try {
     switch (event.type) {
       case 'checkout.session.completed':
@@ -95,8 +97,24 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         logger.log(`[stripe/webhook] Unhandled event type: ${event.type}`);
     }
 
+    // BIZZ-314: Log webhook processing time for monitoring
+    const durationMs = Date.now() - startMs;
+    writeAuditLog({
+      action: 'stripe.webhook_processed',
+      resource_type: 'webhook',
+      resource_id: event.id,
+      metadata: JSON.stringify({ type: event.type, durationMs }),
+    });
+
     return NextResponse.json({ received: true });
   } catch (err) {
+    // BIZZ-314: Log failed webhook processing
+    writeAuditLog({
+      action: 'stripe.webhook_failed',
+      resource_type: 'webhook',
+      resource_id: event.id,
+      metadata: JSON.stringify({ type: event.type, error: String(err) }),
+    });
     logger.error('[stripe/webhook] Error processing event:', err);
     return NextResponse.json({ error: 'Webhook handler failed' }, { status: 500 });
   }

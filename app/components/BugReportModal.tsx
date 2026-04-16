@@ -277,7 +277,11 @@ const BugReportModal = React.memo(function BugReportModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={handleClose} />
+      <div
+        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+        onClick={handleClose}
+        role="presentation"
+      />
 
       {/* Modal */}
       <div
@@ -481,6 +485,7 @@ const BugReportModal = React.memo(function BugReportModal({
               )}
               {screenshot ? (
                 <div className="relative">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={screenshot}
                     alt="Screenshot preview"

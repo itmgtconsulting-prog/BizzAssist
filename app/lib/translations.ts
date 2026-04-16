@@ -200,7 +200,7 @@ export const translations = {
       manage: 'Administrer',
       emptyProperties: 'Ingen seneste ejendomme — søg efter en adresse for at komme i gang.',
       emptyCompanies: 'Ingen seneste virksomheder — søg efter et CVR-nummer eller virksomhedsnavn.',
-      emptyOwners: 'Personsøgning er under udvikling — her vil dine seneste personer blive vist.',
+      emptyOwners: 'Ingen seneste personer — søg efter et navn for at komme i gang.',
       emptyTracked:
         'Du følger ingenting endnu — tryk "Følg" på en ejendoms- eller virksomhedsside.',
       compare: 'Sammenlign',
@@ -215,7 +215,7 @@ export const translations = {
       map: 'Kort',
       search: 'Søg',
       analysis: 'AI Analyse',
-      chat: 'AI Chat',
+      chat: 'AI Assistent',
       admin: 'Admin',
       searchPlaceholder: 'Søg adresse, CVR, virksomhed…',
       settings: 'Indstillinger',
@@ -249,7 +249,7 @@ export const translations = {
 
     /* ─── AI Bizzness Assistent ─────────────────────────────────────── */
     ai: {
-      title: 'AI Chat',
+      title: 'AI Assistent',
       tokenStatus: 'Token status',
       emptyPrompt: 'Spørg om den ejendom, virksomhed eller person du kigger på.',
       inputPlaceholder: 'Stil et spørgsmål…',
@@ -273,6 +273,57 @@ export const translations = {
       contextOwners: 'Ejeroversigt',
       contextDashboard: 'Dashboard-oversigt',
       contextPage: 'Side: {path}',
+    },
+
+    /* ─── AI Analyse page ──────────────────────────────────────────── */
+    analysisPage: {
+      title: 'AI Analyse',
+      subtitle: 'Vælg en analysetype og angiv et CVR-nummer, BFE-nummer eller område',
+      chooseArea: 'Vælg analyseområde',
+      backToAreas: 'Tilbage til analysetyper',
+      targetLabel: 'Hvad vil du analysere?',
+      targetPlaceholder: 'CVR-nummer, BFE-nummer eller adresse…',
+      targetPlaceholderArea: 'By, postnummer eller område…',
+      targetPlaceholderPortfolio: 'CVR-nummer eller navn på ejer…',
+      orSearch: 'Eller søg:',
+      searchPlaceholder: 'Søg virksomhed, adresse eller CVR…',
+      runAnalysis: 'Kør analyse',
+      runningAnalysis: 'Analyserer…',
+      newAnalysis: 'Ny analyse',
+      result: 'Analyseresultat',
+      errorOccurred: 'Der opstod en fejl',
+      tryAgain: 'Prøv igen',
+      fetchingData: 'Henter data fra registre…',
+      entitySelected: 'Valgt entitet',
+      clearEntity: 'Fjern valgt entitet',
+      emptyHint: 'AI-drevet analyse med rigtige data fra offentlige registre',
+      emptyHintSub: 'Henter automatisk CVR, regnskaber, BBR, vurdering, ejerskab og meget mere.',
+      areas: {
+        virksomhed: {
+          title: 'Virksomhedsanalyse',
+          desc: 'Regnskab, ejerskab og risikoprofil',
+        },
+        ejendom: {
+          title: 'Ejendomsanalyse',
+          desc: 'Vurdering vs. markedspris, skatteoptimering',
+        },
+        ejerskab: {
+          title: 'Ejerskabsanalyse',
+          desc: 'Koncernstruktur, ultimativ ejer, krydsejerskab',
+        },
+        omraade: {
+          title: 'Områdeanalyse',
+          desc: 'Ejendomspriser og virksomhedstæthed',
+        },
+        due_diligence: {
+          title: 'Due Diligence',
+          desc: 'Samlet rapport til opkøb eller investering',
+        },
+        portefolje: {
+          title: 'Porteføljeanalyse',
+          desc: 'Overblik over ejendomme og virksomheder for én ejer',
+        },
+      },
     },
 
     /* ─── Company page ─────────────────────────────────────────────── */
@@ -432,6 +483,8 @@ export const translations = {
       loadingTinglysning: 'Henter personbogsdata for tilknyttede virksomheder...',
       tinglysningError: 'Kunne ikke hente personbogsdata',
       tinglysningEmpty: 'Ingen registreringer i Personbogen for tilknyttede virksomheder',
+      tinglysningIngenVirksomheder:
+        'Personbogsdata hentes via tilknyttede virksomheders CVR-numre. Denne person har ingen tilknyttede virksomheder, og Tinglysningsrettens API understøtter ikke direkte personsøgning uden CVR.',
       tinglysningForCompany: 'Hæftelser via virksomhed',
       loading: 'Indlæser persondata...',
       error: 'Kunne ikke hente persondata',
@@ -703,7 +756,7 @@ export const translations = {
       manage: 'Manage',
       emptyProperties: 'No recent properties — search for an address to get started.',
       emptyCompanies: 'No recent companies — search for a CVR number or company name.',
-      emptyOwners: 'Person search is under development — your recent persons will appear here.',
+      emptyOwners: 'No recent persons — search for a name to get started.',
       emptyTracked:
         'You are not tracking anything yet — click "Follow" on a property or company page.',
       compare: 'Compare',
@@ -718,7 +771,7 @@ export const translations = {
       map: 'Map',
       search: 'Search',
       analysis: 'AI Analysis',
-      chat: 'AI Chat',
+      chat: 'AI Assistent',
       admin: 'Admin',
       searchPlaceholder: 'Search address, CVR, company…',
       settings: 'Settings',
@@ -752,7 +805,7 @@ export const translations = {
 
     /* ─── AI Bizzness Assistent ─────────────────────────────────────── */
     ai: {
-      title: 'AI Chat',
+      title: 'AI Assistent',
       tokenStatus: 'Token status',
       emptyPrompt: 'Ask about the property, company or person you are looking at.',
       inputPlaceholder: 'Ask a question…',
@@ -776,6 +829,57 @@ export const translations = {
       contextOwners: 'Owner overview',
       contextDashboard: 'Dashboard overview',
       contextPage: 'Page: {path}',
+    },
+
+    /* ─── AI Analysis page ─────────────────────────────────────────── */
+    analysisPage: {
+      title: 'AI Analysis',
+      subtitle: 'Choose an analysis type and specify a CVR number, BFE number or area',
+      chooseArea: 'Choose analysis area',
+      backToAreas: 'Back to analysis types',
+      targetLabel: 'What do you want to analyse?',
+      targetPlaceholder: 'CVR number, BFE number or address…',
+      targetPlaceholderArea: 'City, postcode or area…',
+      targetPlaceholderPortfolio: 'CVR number or owner name…',
+      orSearch: 'Or search:',
+      searchPlaceholder: 'Search company, address or CVR…',
+      runAnalysis: 'Run analysis',
+      runningAnalysis: 'Analysing…',
+      newAnalysis: 'New analysis',
+      result: 'Analysis result',
+      errorOccurred: 'An error occurred',
+      tryAgain: 'Try again',
+      fetchingData: 'Fetching data from registers…',
+      entitySelected: 'Selected entity',
+      clearEntity: 'Remove selected entity',
+      emptyHint: 'AI-powered analysis with real data from public registers',
+      emptyHintSub: 'Automatically fetches CVR, financials, BBR, valuations, ownership and more.',
+      areas: {
+        virksomhed: {
+          title: 'Company Analysis',
+          desc: 'Financials, ownership and risk profile',
+        },
+        ejendom: {
+          title: 'Property Analysis',
+          desc: 'Valuation vs. market price, tax optimisation',
+        },
+        ejerskab: {
+          title: 'Ownership Analysis',
+          desc: 'Group structure, ultimate owner, cross-ownership',
+        },
+        omraade: {
+          title: 'Area Analysis',
+          desc: 'Property prices and business density',
+        },
+        due_diligence: {
+          title: 'Due Diligence',
+          desc: 'Full report for acquisition or investment',
+        },
+        portefolje: {
+          title: 'Portfolio Analysis',
+          desc: 'Overview of properties and companies for one owner',
+        },
+      },
     },
 
     /* ─── Company page ─────────────────────────────────────────────── */
@@ -935,6 +1039,8 @@ export const translations = {
       loadingTinglysning: 'Loading personal register data for affiliated companies...',
       tinglysningError: 'Could not fetch personal register data',
       tinglysningEmpty: 'No registrations in the Personal Register for affiliated companies',
+      tinglysningIngenVirksomheder:
+        "Personal register data is fetched via affiliated companies' CVR numbers. This person has no affiliated companies, and the Land Registry API does not support direct person lookup without a CVR number.",
       tinglysningForCompany: 'Charges via company',
       loading: 'Loading person data...',
       error: 'Could not load person data',

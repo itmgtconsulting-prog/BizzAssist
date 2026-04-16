@@ -292,7 +292,7 @@ const UserDetailPanel = memo(function UserDetailPanel({
   if (!sub) {
     return (
       <div className="fixed inset-0 z-50 flex justify-end">
-        <div className="absolute inset-0 bg-black/60" onClick={onClose} />
+        <div className="absolute inset-0 bg-black/60" onClick={onClose} role="presentation" />
         <div
           ref={panelRef}
           role="dialog"
@@ -376,7 +376,7 @@ const UserDetailPanel = memo(function UserDetailPanel({
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
+      <div className="absolute inset-0 bg-black/60" onClick={onClose} role="presentation" />
 
       {/* Panel */}
       <div

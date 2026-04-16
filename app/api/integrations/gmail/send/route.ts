@@ -11,12 +11,24 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { resolveTenantId } from '@/lib/api/auth';
 import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
+import { parseBody } from '@/app/lib/validate';
+
+/** Zod schema for POST /api/integrations/gmail/send request body */
+const gmailSendSchema = z
+  .object({
+    to: z.string().min(1),
+    subject: z.string().min(1),
+    body: z.string().min(1),
+    isHtml: z.boolean().optional(),
+  })
+  .passthrough();
 
 /** Request body for sending a Gmail message */
-interface SendEmailBody {
+interface _SendEmailBody {
   to: string;
   subject: string;
   body: string;
@@ -102,20 +114,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const { tenantId, userId } = auth;
 
-  let body: SendEmailBody;
-  try {
-    body = (await request.json()) as SendEmailBody;
-  } catch {
-    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
-  }
-
-  const { to, subject, body: emailBody, isHtml } = body;
-  if (!to || !subject || !emailBody) {
-    return NextResponse.json(
-      { error: 'Missing required fields: to, subject, body' },
-      { status: 400 }
-    );
-  }
+  const parsed = await parseBody(request, gmailSendSchema);
+  if (!parsed.success) return parsed.response;
+  const { to, subject, body: emailBody, isHtml } = parsed.data;
 
   const admin = createAdminClient();
 

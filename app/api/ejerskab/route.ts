@@ -1,16 +1,17 @@
 /**
  * GET /api/ejerskab
  *
- * Henter ejeroplysninger (Ejerfortegnelsen) fra Datafordeler EJF GraphQL v1.
+ * Henter ejeroplysninger (Ejerfortegnelsen) fra Datafordeler FlexibleCurrent custom tjeneste.
  *
- * Endpoint: https://graphql.datafordeler.dk/EJF/v1
- * Kræver: Dataadgang-tilladelse til EJF fra Geodatastyrelsen (ansøgning på datafordeler.dk)
+ * Endpoint: https://graphql.datafordeler.dk/flexibleCurrent/v1/
+ * Query: EJFCustom_EjerskabBegraenset (custom tjeneste — ikke entitetsbaseret)
+ * Kræver: Dataadgang-tilladelse til EJF Custom fra Geodatastyrelsen
  *
  * Flow:
  *   1. Hent OAuth Bearer token via client_credentials (BizzAssist-Dev2 Shared Secret)
- *   2. Forespørg EJF_Ejerskab med virkningstid=nu og bestemtFastEjendomBFENr filter
+ *   2. Forespørg EJFCustom_EjerskabBegraenset med virkningstid=nu og BFE-filter
  *   3. For virksomhedsejere returneres CVR-nummer
- *   4. For personejere returneres kun ejeroplysningerLokalId (CPR kræver ekstra tilladelse)
+ *   4. For personejere returneres navn (ikke CPR) via ejendePersonBegraenset
  *
  * NB: Returnerer manglerAdgang: true hvis 403 fra Datafordeler (Dataadgang ikke godkendt endnu).
  *
@@ -20,11 +21,19 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import * as Sentry from '@sentry/nextjs';
+import { z } from 'zod';
 import { checkRateLimit, heavyRateLimit } from '@/app/lib/rateLimit';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { getCertOAuthToken, isCertAuthConfigured } from '@/app/lib/dfCertAuth';
 import { resolveTenantId } from '@/lib/api/auth';
+import { parseQuery } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
+import { getSharedOAuthToken } from '@/app/lib/dfTokenCache';
+
+/** Zod schema for /api/ejerskab query parameters */
+const ejerskabQuerySchema = z.object({
+  bfeNummer: z.coerce.number().int().positive(),
+});
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -32,6 +41,8 @@ import { logger } from '@/app/lib/logger';
 export interface EjerData {
   /** CVR-nummer hvis selskabsejer — ellers null */
   cvr: string | null;
+  /** Personnavn fra EJFCustom_EjerskabBegraenset — null hvis navnebeskyttet eller selskab */
+  personNavn: string | null;
   /** Ejerandel som brøk: taeller/naevner (f.eks. 1/1 = 100%) */
   ejerandel_taeller: number | null;
   ejerandel_naevner: number | null;
@@ -55,7 +66,7 @@ export interface EjerskabResponse {
 
 // ─── Datafordeler EJF GraphQL ────────────────────────────────────────────────
 
-const EJF_GQL_URL = 'https://graphql.datafordeler.dk/EJF/v1';
+const EJF_GQL_URL = 'https://graphql.datafordeler.dk/flexibleCurrent/v1/';
 const TOKEN_URL = 'https://auth.datafordeler.dk/realms/distribution/protocol/openid-connect/token';
 
 /** OAuth token cache — deles med vurdering/route.ts i serverprocessen */
@@ -67,7 +78,7 @@ let _cachedToken: { token: string; expiresAt: number } | null = null;
  *
  * @returns Bearer token som streng, eller null hvis auth-miljøvariabler mangler
  */
-async function getOAuthToken(): Promise<string | null> {
+async function _getOAuthToken(): Promise<string | null> {
   if (_cachedToken && Date.now() < _cachedToken.expiresAt - 60_000) {
     return _cachedToken.token;
   }
@@ -99,10 +110,12 @@ async function getOAuthToken(): Promise<string | null> {
 
 // ─── Rå typer fra EJF GraphQL ────────────────────────────────────────────────
 
+/** Rå node fra EJFCustom_EjerskabBegraenset (FlexibleCurrent) */
 interface RawEJFEjerskab {
   bestemtFastEjendomBFENr: number | null;
   ejendeVirksomhedCVRNr: number | null;
-  ejendePersonPersonNr: string | null;
+  /** Person-data fra custom tjeneste — indeholder navn (ikke CPR) */
+  ejendePersonBegraenset: { navn: { navn: string } | null } | null;
   ejerforholdskode: string | null;
   faktiskEjerandel_taeller: number | null;
   faktiskEjerandel_naevner: number | null;
@@ -144,7 +157,7 @@ export function parseEjertype(kode?: string): 'selskab' | 'person' | 'ukendt' {
  */
 function parseEjertypeFraNode(raw: RawEJFEjerskab): 'selskab' | 'person' | 'ukendt' {
   if (raw.ejendeVirksomhedCVRNr != null) return 'selskab';
-  if (raw.ejendePersonPersonNr != null) return 'person';
+  if (raw.ejendePersonBegraenset != null) return 'person';
   return parseEjertype(raw.ejerforholdskode ?? undefined);
 }
 
@@ -165,7 +178,7 @@ async function queryEJF(bfeNummer: number, token: string): Promise<EJFQueryResul
   const virkningstid = new Date().toISOString();
 
   const query = `{
-    EJF_Ejerskab(
+    EJFCustom_EjerskabBegraenset(
       first: 500
       virkningstid: "${virkningstid}"
       where: {
@@ -175,7 +188,7 @@ async function queryEJF(bfeNummer: number, token: string): Promise<EJFQueryResul
       nodes {
         bestemtFastEjendomBFENr
         ejendeVirksomhedCVRNr
-        ejendePersonPersonNr
+        ejendePersonBegraenset { navn { navn } }
         ejerforholdskode
         faktiskEjerandel_taeller
         faktiskEjerandel_naevner
@@ -212,7 +225,7 @@ async function queryEJF(bfeNummer: number, token: string): Promise<EJFQueryResul
   }
 
   const json = (await res.json()) as {
-    data?: { EJF_Ejerskab?: { nodes: RawEJFEjerskab[] } };
+    data?: { EJFCustom_EjerskabBegraenset?: { nodes: RawEJFEjerskab[] } };
     errors?: { message: string; extensions?: { code?: string } }[];
   };
 
@@ -221,7 +234,7 @@ async function queryEJF(bfeNummer: number, token: string): Promise<EJFQueryResul
     return { ok: false, manglerAdgang: true, fejl: null };
   }
 
-  return { ok: true, nodes: json.data?.EJF_Ejerskab?.nodes ?? [] };
+  return { ok: true, nodes: json.data?.EJFCustom_EjerskabBegraenset?.nodes ?? [] };
 }
 
 // ─── Route handler ───────────────────────────────────────────────────────────
@@ -256,29 +269,17 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjerskabRe
     );
   }
 
-  const { searchParams } = request.nextUrl;
-  const bfeNummerStr = searchParams.get('bfeNummer');
+  // Validate query params with Zod schema
+  const parsed = parseQuery(request, ejerskabQuerySchema);
+  if (!parsed.success) return parsed.response as NextResponse<EjerskabResponse>;
 
-  if (!bfeNummerStr || !/^\d+$/.test(bfeNummerStr)) {
-    return NextResponse.json(
-      {
-        bfeNummer: null,
-        ejere: [],
-        fejl: 'Ugyldigt eller manglende bfeNummer',
-        manglerNoegle: false,
-        manglerAdgang: false,
-      },
-      { status: 400 }
-    );
-  }
-
-  const bfeNummer = parseInt(bfeNummerStr, 10);
+  const { bfeNummer } = parsed.data;
 
   // ── Forsøg 1: OAuth Shared Secret ──
   let result: EJFQueryResult | null = null;
 
   if (hasSharedSecret) {
-    const token = await getOAuthToken();
+    const token = await getSharedOAuthToken();
     if (token) {
       try {
         result = await queryEJF(bfeNummer, token);
@@ -359,6 +360,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjerskabRe
 
   const ejere: EjerData[] = nodes.map((n) => ({
     cvr: n.ejendeVirksomhedCVRNr != null ? String(n.ejendeVirksomhedCVRNr) : null,
+    personNavn: n.ejendePersonBegraenset?.navn?.navn ?? null,
     ejerandel_taeller: n.faktiskEjerandel_taeller ?? null,
     ejerandel_naevner: n.faktiskEjerandel_naevner ?? null,
     ejerforholdskode: n.ejerforholdskode ?? null,

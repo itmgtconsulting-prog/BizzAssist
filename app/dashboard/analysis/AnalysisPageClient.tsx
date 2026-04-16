@@ -1,113 +1,131 @@
 'use client';
 
 /**
- * AI Analyse-side — ét søgefelt + fire analysetyper.
+ * AI Analyse-side — BIZZ-342 redesign med foruddefinerede analyseområder.
  *
  * Flow:
- *  1. Søg efter en virksomhed eller ejendom via unified search
- *  2. Vælg analysetype (Due Diligence, Konkurrentanalyse, Investeringsscreening, Markedsanalyse)
- *  3. Klik "Kør analyse" → streaming resultat via /api/analysis/run
+ *  1. Bruger ser et gitter med 6 analyseområde-kort og klikker på ét
+ *  2. Et simpelt formular vises: fritekst-mål (CVR/BFE/område) + valgfri søgning
+ *  3. "Kør analyse" → streaming resultat via /api/analysis/run
  *
- * Bruger de samme AI-tools som AI Bizzness Assistent:
- * CVR, regnskab, BBR, vurdering, ejerskab, salgshistorik, plandata m.fl.
+ * Nye analysetyper (BIZZ-342):
+ *  - virksomhed   — regnskab, ejerskab, risikoprofil
+ *  - ejendom      — vurdering vs. markedspris, skatteoptimering
+ *  - ejerskab     — koncernstruktur, ultimativ ejer, krydsejerskab
+ *  - omraade      — ejendomspriser, virksomhedstæthed
+ *  - due_diligence — samlet rapport for opkøb/investering
+ *  - portefolje   — overblik over ejendomme/virksomheder for én ejer
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import {
+  Building2,
+  HomeIcon,
+  Network,
+  MapPin,
   ClipboardCheck,
-  BarChart3,
-  Target,
-  TrendingUp,
+  LayoutGrid,
   Search,
   X,
-  Building2,
-  Briefcase,
-  MapPin,
-  User,
+  ArrowLeft,
   Loader2,
   AlertCircle,
   RefreshCw,
-  ChevronDown,
+  ChevronRight,
+  Briefcase,
+  User,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import type { UnifiedSearchResult } from '@/app/api/search/route';
 
-// ─── Types ───────────────────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────────────────
 
-/** Union of all supported analysis type identifiers */
-type AnalysisType = 'due_diligence' | 'konkurrent' | 'investering' | 'marked';
+/**
+ * Supported analysis type identifiers.
+ * Must match the z.enum in /api/analysis/run/route.ts.
+ */
+type AnalysisType =
+  | 'virksomhed'
+  | 'ejendom'
+  | 'ejerskab'
+  | 'omraade'
+  | 'due_diligence'
+  | 'portefolje';
 
-/** A selected entity from the search results */
+/** Entity type passed to the API — 'area' is used for free-text area targets */
+type EntityType = 'company' | 'address' | 'person' | 'area';
+
+/** Entity resolved either from search or from manual text input */
 interface SelectedEntity {
   id: string;
   title: string;
   subtitle: string;
-  type: 'address' | 'company' | 'person';
+  type: EntityType;
   meta?: Record<string, string>;
 }
 
-/** Configuration for a single analysis type card */
-interface AnalysisTypeConfig {
+/** Static configuration for a single analysis area card */
+interface AreaConfig {
   id: AnalysisType;
-  titleDa: string;
-  titleEn: string;
-  descDa: string;
-  descEn: string;
+  icon: React.ElementType;
   iconColor: string;
   iconBg: string;
-  icon: React.ElementType;
+  /** Which input mode the target form should use for this area */
+  inputMode: 'cvr' | 'bfe_or_address' | 'area' | 'portfolio';
 }
 
-// ─── Analysis type definitions ────────────────────────────────────────────────
+// ─── Analysis area definitions ────────────────────────────────────────────────
 
-/** All four analysis type configurations */
-const ANALYSIS_TYPES: AnalysisTypeConfig[] = [
+/** All six analysis area configurations */
+const AREAS: AreaConfig[] = [
   {
-    id: 'due_diligence',
-    titleDa: 'Due Diligence',
-    titleEn: 'Due Diligence',
-    descDa: 'Grundig gennemgang — økonomi, ejerskab, risici',
-    descEn: 'Thorough review — financials, ownership, risks',
-    icon: ClipboardCheck,
-    iconColor: 'text-emerald-400',
-    iconBg: 'bg-emerald-500/10',
-  },
-  {
-    id: 'konkurrent',
-    titleDa: 'Konkurrentanalyse',
-    titleEn: 'Competitor Analysis',
-    descDa: 'Sammenlign med konkurrenter i samme branche',
-    descEn: 'Compare companies in the same industry',
-    icon: BarChart3,
+    id: 'virksomhed',
+    icon: Building2,
     iconColor: 'text-blue-400',
     iconBg: 'bg-blue-500/10',
+    inputMode: 'cvr',
   },
   {
-    id: 'investering',
-    titleDa: 'Investeringsscreening',
-    titleEn: 'Investment Screening',
-    descDa: 'Vurder investeringspotentiale og afkast',
-    descEn: 'Assess investment potential and return',
-    icon: Target,
-    iconColor: 'text-purple-400',
-    iconBg: 'bg-purple-500/10',
+    id: 'ejendom',
+    icon: HomeIcon,
+    iconColor: 'text-emerald-400',
+    iconBg: 'bg-emerald-500/10',
+    inputMode: 'bfe_or_address',
   },
   {
-    id: 'marked',
-    titleDa: 'Markedsanalyse',
-    titleEn: 'Market Analysis',
-    descDa: 'Ejendomsmarked i et geografisk område',
-    descEn: 'Real estate market in a geographic area',
-    icon: TrendingUp,
+    id: 'ejerskab',
+    icon: Network,
+    iconColor: 'text-violet-400',
+    iconBg: 'bg-violet-500/10',
+    inputMode: 'cvr',
+  },
+  {
+    id: 'omraade',
+    icon: MapPin,
     iconColor: 'text-amber-400',
     iconBg: 'bg-amber-500/10',
+    inputMode: 'area',
+  },
+  {
+    id: 'due_diligence',
+    icon: ClipboardCheck,
+    iconColor: 'text-rose-400',
+    iconBg: 'bg-rose-500/10',
+    inputMode: 'cvr',
+  },
+  {
+    id: 'portefolje',
+    icon: LayoutGrid,
+    iconColor: 'text-cyan-400',
+    iconBg: 'bg-cyan-500/10',
+    inputMode: 'portfolio',
   },
 ];
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 /**
- * Icon component for a search result based on its type.
+ * Icon for a unified search result based on its entity type.
  *
  * @param type - 'address' | 'company' | 'person'
  */
@@ -117,90 +135,62 @@ function ResultTypeIcon({ type }: { type: 'address' | 'company' | 'person' }) {
   return <User size={14} className="text-purple-400" />;
 }
 
-/**
- * Chip showing the currently selected entity with a dismiss button.
- *
- * @param entity  - Selected entity to display
- * @param onClear - Called when user clicks the dismiss button
- */
-function EntityChip({ entity, onClear }: { entity: SelectedEntity; onClear: () => void }) {
-  return (
-    <div className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2">
-      <ResultTypeIcon type={entity.type} />
-      <div className="min-w-0">
-        <div className="text-sm font-medium text-white truncate max-w-xs">{entity.title}</div>
-        {entity.subtitle && (
-          <div className="text-xs text-slate-500 truncate max-w-xs">{entity.subtitle}</div>
-        )}
-      </div>
-      <button
-        type="button"
-        onClick={onClear}
-        aria-label="Fjern valgt entitet"
-        className="ml-1 text-slate-500 hover:text-white transition-colors"
-      >
-        <X size={14} />
-      </button>
-    </div>
-  );
-}
-
-/** Props for the AnalysisTypeCard component */
-interface AnalysisTypeCardProps {
-  config: AnalysisTypeConfig;
-  selected: boolean;
-  lang: 'da' | 'en';
+/** Props for the AnalysisAreaCard component */
+interface AreaCardProps {
+  config: AreaConfig;
+  title: string;
+  desc: string;
   onClick: () => void;
 }
 
 /**
- * Single analysis type selection card.
- * Highlights with a blue border when selected.
+ * Clickable card representing one predefined analysis area.
+ * Opens the target form when clicked.
  *
- * @param props - AnalysisTypeCardProps
+ * @param props - AreaCardProps
  */
-function AnalysisTypeCard({ config, selected, lang, onClick }: AnalysisTypeCardProps) {
+function AnalysisAreaCard({ config, title, desc, onClick }: AreaCardProps) {
   const Icon = config.icon;
-  const title = lang === 'da' ? config.titleDa : config.titleEn;
-  const desc = lang === 'da' ? config.descDa : config.descEn;
-
   return (
     <button
       type="button"
       onClick={onClick}
-      aria-pressed={selected}
       className={[
-        'w-full text-left rounded-2xl border p-4 transition-all duration-150',
-        'bg-white/5 hover:bg-white/8',
-        selected
-          ? 'border-blue-500 ring-1 ring-blue-500/40'
-          : 'border-white/8 hover:border-blue-500/40',
+        'group w-full text-left rounded-2xl border border-white/8 bg-white/5',
+        'p-5 transition-all duration-150',
+        'hover:border-white/20 hover:bg-white/8',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60',
       ].join(' ')}
     >
-      <div className="flex items-start gap-3">
+      <div className="flex items-start gap-4">
+        {/* Icon */}
         <div
           className={[
-            'w-9 h-9 rounded-xl flex items-center justify-center shrink-0',
+            'w-10 h-10 rounded-xl flex items-center justify-center shrink-0 transition-transform',
+            'group-hover:scale-105',
             config.iconBg,
           ].join(' ')}
         >
-          <Icon size={17} className={config.iconColor} />
+          <Icon size={18} className={config.iconColor} />
         </div>
-        <div className="min-w-0">
+
+        {/* Text */}
+        <div className="min-w-0 flex-1">
           <div className="font-semibold text-white text-sm">{title}</div>
-          <div className="text-slate-400 text-xs mt-0.5 leading-snug">{desc}</div>
+          <div className="text-slate-400 text-xs mt-1 leading-snug">{desc}</div>
         </div>
-        {selected && (
-          <div className="ml-auto shrink-0 w-4 h-4 rounded-full bg-blue-500 flex items-center justify-center">
-            <div className="w-2 h-2 rounded-full bg-white" />
-          </div>
-        )}
+
+        {/* Arrow */}
+        <ChevronRight
+          size={15}
+          className="text-slate-600 group-hover:text-slate-400 shrink-0 mt-0.5 transition-colors"
+        />
       </div>
     </button>
   );
 }
 
-/** Props for the MarkdownResult display panel */
+/** Props for the MarkdownResult panel */
 interface MarkdownResultProps {
   text: string;
   streaming: boolean;
@@ -209,7 +199,7 @@ interface MarkdownResultProps {
 
 /**
  * Renders streamed markdown output as structured HTML.
- * Shows live tool-status messages while streaming.
+ * Shows the latest tool-status message while streaming.
  *
  * @param props - MarkdownResultProps
  */
@@ -219,7 +209,6 @@ function MarkdownResult({ text, streaming, statusMessages }: MarkdownResultProps
 
   return (
     <div className="space-y-3">
-      {/* Tool status indicator while streaming */}
       {streaming && lastStatus && (
         <div className="flex items-center gap-2 text-xs text-slate-400">
           <Loader2 size={12} className="animate-spin text-blue-400 shrink-0" />
@@ -227,7 +216,6 @@ function MarkdownResult({ text, streaming, statusMessages }: MarkdownResultProps
         </div>
       )}
 
-      {/* Rendered markdown */}
       {text && (
         <div className="prose prose-invert prose-sm max-w-none space-y-2">
           {lines.map((line, i) => {
@@ -289,7 +277,7 @@ function MarkdownResult({ text, streaming, statusMessages }: MarkdownResultProps
  * Renders inline markdown (bold/italic) within a text segment.
  *
  * @param text - Raw text with optional ** and * markers
- * @returns React nodes
+ * @returns React nodes with bold/italic spans applied
  */
 function renderInline(text: string): React.ReactNode {
   const parts = text.split(/(\*\*[^*]+\*\*|\*[^*]+\*)/g);
@@ -313,56 +301,163 @@ function renderInline(text: string): React.ReactNode {
 // ─── Main component ───────────────────────────────────────────────────────────
 
 /**
- * AI Analyse-side.
+ * AI Analyse page client component — BIZZ-342 redesign.
  *
  * State machine:
- *  'search'    → søgefelt med autocomplete
- *  'ready'     → entitet valgt, vælg analysetype
- *  'streaming' → analyse kører, viser tool-status + streaming tekst
- *  'done'      → analyse færdig
+ *  'grid'       → 6 analysis-area cards displayed
+ *  'form'       → target input form for selected area
+ *  'streaming'  → analysis running, shows tool-status + streaming text
+ *  'done'       → analysis complete
  */
 export default function AnalysisPageClient() {
   const { lang } = useLanguage();
 
-  /** Unified search query text */
-  const [query, setQuery] = useState('');
-  /** Autocomplete dropdown results */
+  /** Selected analysis area config */
+  const [selectedArea, setSelectedArea] = useState<AreaConfig | null>(null);
+
+  /** Free-text target value (CVR, BFE, area name, etc.) */
+  const [targetValue, setTargetValue] = useState('');
+
+  /** Entity resolved from search (overrides targetValue when set) */
+  const [selectedEntity, setSelectedEntity] = useState<SelectedEntity | null>(null);
+
+  /** Search input query for the optional entity search */
+  const [searchQuery, setSearchQuery] = useState('');
+  /** Autocomplete search results */
   const [searchResults, setSearchResults] = useState<UnifiedSearchResult[]>([]);
   /** True while fetching search results */
   const [searchLoading, setSearchLoading] = useState(false);
-  /** True when dropdown should be visible */
+  /** True when the search dropdown should be visible */
   const [dropdownOpen, setDropdownOpen] = useState(false);
 
-  /** The entity the user has selected from search */
-  const [selectedEntity, setSelectedEntity] = useState<SelectedEntity | null>(null);
-  /** The analysis type the user has chosen */
-  const [selectedType, setSelectedType] = useState<AnalysisType | null>(null);
-
-  /** Page phase */
-  const [phase, setPhase] = useState<'search' | 'ready' | 'streaming' | 'done'>('search');
-  /** Streamed markdown result text */
+  /** Current page phase */
+  const [phase, setPhase] = useState<'grid' | 'form' | 'streaming' | 'done'>('grid');
+  /** Accumulated streamed markdown text */
   const [resultText, setResultText] = useState('');
-  /** Tool status messages shown while streaming */
+  /** Tool-status messages received during streaming */
   const [statusMessages, setStatusMessages] = useState<string[]>([]);
-  /** Error message */
+  /** Error message to display */
   const [errorMessage, setErrorMessage] = useState('');
 
   const abortRef = useRef<AbortController | null>(null);
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const resultBottomRef = useRef<HTMLDivElement>(null);
+  const targetInputRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // ── Translations ────────────────────────────────────────────────────────────
+
+  /** Look up a string from the analysisPage translation bucket */
+  const t = useCallback(
+    (key: string): string => {
+      // Access nested keys via dot notation — walk the translations object at runtime
+      // using a pre-built map to keep this type-safe without dynamic indexing.
+      const map: Record<string, Record<string, string>> = {
+        da: {
+          title: 'AI Analyse',
+          subtitle: 'Vælg en analysetype og angiv et CVR-nummer, BFE-nummer eller område',
+          chooseArea: 'Vælg analyseområde',
+          backToAreas: 'Tilbage til analysetyper',
+          targetLabel: 'Hvad vil du analysere?',
+          targetPlaceholder: 'CVR-nummer, BFE-nummer eller adresse…',
+          targetPlaceholderArea: 'By, postnummer eller område…',
+          targetPlaceholderPortfolio: 'CVR-nummer eller navn på ejer…',
+          orSearch: 'Eller søg:',
+          searchPlaceholder: 'Søg virksomhed, adresse eller CVR…',
+          runAnalysis: 'Kør analyse',
+          runningAnalysis: 'Analyserer…',
+          newAnalysis: 'Ny analyse',
+          result: 'Analyseresultat',
+          errorOccurred: 'Der opstod en fejl',
+          tryAgain: 'Prøv igen',
+          fetchingData: 'Henter data fra registre…',
+          entitySelected: 'Valgt entitet',
+          clearEntity: 'Fjern valgt entitet',
+          emptyHint: 'AI-drevet analyse med rigtige data fra offentlige registre',
+          emptyHintSub:
+            'Henter automatisk CVR, regnskaber, BBR, vurdering, ejerskab og meget mere.',
+        },
+        en: {
+          title: 'AI Analysis',
+          subtitle: 'Choose an analysis type and specify a CVR number, BFE number or area',
+          chooseArea: 'Choose analysis area',
+          backToAreas: 'Back to analysis types',
+          targetLabel: 'What do you want to analyse?',
+          targetPlaceholder: 'CVR number, BFE number or address…',
+          targetPlaceholderArea: 'City, postcode or area…',
+          targetPlaceholderPortfolio: 'CVR number or owner name…',
+          orSearch: 'Or search:',
+          searchPlaceholder: 'Search company, address or CVR…',
+          runAnalysis: 'Run analysis',
+          runningAnalysis: 'Analysing…',
+          newAnalysis: 'New analysis',
+          result: 'Analysis result',
+          errorOccurred: 'An error occurred',
+          tryAgain: 'Try again',
+          fetchingData: 'Fetching data from registers…',
+          entitySelected: 'Selected entity',
+          clearEntity: 'Remove selected entity',
+          emptyHint: 'AI-powered analysis with real data from public registers',
+          emptyHintSub:
+            'Automatically fetches CVR, financials, BBR, valuations, ownership and more.',
+        },
+      };
+      return map[lang]?.[key] ?? key;
+    },
+    [lang]
+  );
+
+  /**
+   * Returns the translated title and description for an analysis area.
+   *
+   * @param id - Analysis type identifier
+   * @returns { title, desc } strings for the current language
+   */
+  const areaLabel = useCallback(
+    (id: AnalysisType): { title: string; desc: string } => {
+      const labels: Record<AnalysisType, { da: [string, string]; en: [string, string] }> = {
+        virksomhed: {
+          da: ['Virksomhedsanalyse', 'Regnskab, ejerskab og risikoprofil'],
+          en: ['Company Analysis', 'Financials, ownership and risk profile'],
+        },
+        ejendom: {
+          da: ['Ejendomsanalyse', 'Vurdering vs. markedspris, skatteoptimering'],
+          en: ['Property Analysis', 'Valuation vs. market price, tax optimisation'],
+        },
+        ejerskab: {
+          da: ['Ejerskabsanalyse', 'Koncernstruktur, ultimativ ejer, krydsejerskab'],
+          en: ['Ownership Analysis', 'Group structure, ultimate owner, cross-ownership'],
+        },
+        omraade: {
+          da: ['Områdeanalyse', 'Ejendomspriser og virksomhedstæthed'],
+          en: ['Area Analysis', 'Property prices and business density'],
+        },
+        due_diligence: {
+          da: ['Due Diligence', 'Samlet rapport til opkøb eller investering'],
+          en: ['Due Diligence', 'Full report for acquisition or investment'],
+        },
+        portefolje: {
+          da: ['Porteføljeanalyse', 'Overblik over ejendomme og virksomheder for én ejer'],
+          en: ['Portfolio Analysis', 'Overview of properties and companies for one owner'],
+        },
+      };
+      const [title, desc] = labels[id][lang] ?? labels[id].da;
+      return { title, desc };
+    },
+    [lang]
+  );
 
   // ── Search debounce ─────────────────────────────────────────────────────────
 
   /**
-   * Debounced handler for search query changes.
-   * Waits 300ms after last keystroke before fetching.
+   * Debounced handler for the optional entity search input.
+   * Waits 300 ms after last keystroke before fetching from /api/search.
    *
-   * @param value - Current input value
+   * @param value - Current search input value
    */
-  const handleQueryChange = useCallback((value: string) => {
-    setQuery(value);
+  const handleSearchQueryChange = useCallback((value: string) => {
+    setSearchQuery(value);
 
     if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
 
@@ -392,7 +487,7 @@ export default function AnalysisPageClient() {
     }, 300);
   }, []);
 
-  /** Close dropdown when clicking outside */
+  /** Close the search dropdown when clicking outside of it */
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (
@@ -408,48 +503,102 @@ export default function AnalysisPageClient() {
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
 
-  // ── Entity selection ────────────────────────────────────────────────────────
+  // ── Area and form navigation ────────────────────────────────────────────────
 
   /**
-   * Handle selection of a search result.
-   * Transitions to the 'ready' phase.
+   * Select an analysis area card and navigate to the form phase.
+   *
+   * @param config - The area config that was clicked
+   */
+  const handleSelectArea = useCallback((config: AreaConfig) => {
+    setSelectedArea(config);
+    setTargetValue('');
+    setSelectedEntity(null);
+    setSearchQuery('');
+    setSearchResults([]);
+    setDropdownOpen(false);
+    setResultText('');
+    setErrorMessage('');
+    setStatusMessages([]);
+    setPhase('form');
+    // Focus the target input after the DOM update
+    setTimeout(() => targetInputRef.current?.focus(), 50);
+  }, []);
+
+  /**
+   * Navigate back from the form to the area grid.
+   * Cancels any in-flight requests.
+   */
+  const handleBack = useCallback(() => {
+    abortRef.current?.abort();
+    setPhase('grid');
+    setSelectedArea(null);
+    setTargetValue('');
+    setSelectedEntity(null);
+    setSearchQuery('');
+    setSearchResults([]);
+    setDropdownOpen(false);
+    setResultText('');
+    setErrorMessage('');
+    setStatusMessages([]);
+  }, []);
+
+  /**
+   * Handle selection of a search result from the optional entity search dropdown.
+   * Populates the target input with the result title and stores the entity.
    *
    * @param result - Unified search result the user clicked
    */
-  const handleSelectResult = useCallback((result: UnifiedSearchResult) => {
+  const handleSelectSearchResult = useCallback((result: UnifiedSearchResult) => {
     setSelectedEntity({
       id: result.id,
       title: result.title,
       subtitle: result.subtitle,
-      type: result.type,
+      type: result.type as EntityType,
       meta: result.meta as Record<string, string> | undefined,
     });
-    setQuery('');
+    setTargetValue(result.title);
+    setSearchQuery('');
     setSearchResults([]);
     setDropdownOpen(false);
-    setSelectedType(null);
-    setPhase('ready');
-  }, []);
-
-  /** Clear selected entity and return to search */
-  const handleClearEntity = useCallback(() => {
-    setSelectedEntity(null);
-    setSelectedType(null);
-    setPhase('search');
-    setResultText('');
-    setErrorMessage('');
-    setStatusMessages([]);
-    setTimeout(() => searchInputRef.current?.focus(), 50);
   }, []);
 
   // ── Analysis submission ─────────────────────────────────────────────────────
 
   /**
+   * Resolve the entity to submit to the API.
+   * If the user selected an entity from search, use it.
+   * Otherwise, construct a synthetic entity from the free-text target value.
+   *
+   * @returns SelectedEntity ready for the API, or null if no target is set
+   */
+  const resolveEntity = useCallback((): SelectedEntity | null => {
+    if (selectedEntity) return selectedEntity;
+    if (!selectedArea || !targetValue.trim()) return null;
+
+    // Determine entity type based on input mode
+    const typeMap: Record<AreaConfig['inputMode'], EntityType> = {
+      cvr: 'company',
+      bfe_or_address: 'address',
+      area: 'area',
+      portfolio: 'company',
+    };
+
+    return {
+      id: targetValue.trim(),
+      title: targetValue.trim(),
+      subtitle: '',
+      type: typeMap[selectedArea.inputMode],
+    };
+  }, [selectedEntity, selectedArea, targetValue]);
+
+  /**
    * Submit the analysis request.
-   * Opens an SSE stream from /api/analysis/run and accumulates chunks.
+   * Opens an SSE stream from /api/analysis/run and accumulates chunks into resultText.
    */
   const handleSubmit = useCallback(async () => {
-    if (!selectedEntity || !selectedType) return;
+    const entity = resolveEntity();
+    if (!entity || !selectedArea) return;
 
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -464,7 +613,7 @@ export default function AnalysisPageClient() {
       const res = await fetch('/api/analysis/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: selectedType, entity: selectedEntity }),
+        body: JSON.stringify({ type: selectedArea.id, entity }),
         signal: AbortSignal.timeout(120_000),
       });
 
@@ -525,215 +674,305 @@ export default function AnalysisPageClient() {
       setErrorMessage(err instanceof Error ? err.message : 'Uventet fejl');
       setPhase('done');
     }
-  }, [selectedEntity, selectedType]);
+  }, [resolveEntity, selectedArea]);
 
-  /** Reset everything and start a new analysis */
+  /**
+   * Reset the entire page back to the area grid, aborting any in-flight request.
+   */
   const handleReset = useCallback(() => {
     abortRef.current?.abort();
-    setPhase('search');
+    setPhase('grid');
+    setSelectedArea(null);
+    setTargetValue('');
     setSelectedEntity(null);
-    setSelectedType(null);
+    setSearchQuery('');
+    setSearchResults([]);
+    setDropdownOpen(false);
     setResultText('');
     setErrorMessage('');
     setStatusMessages([]);
-    setTimeout(() => searchInputRef.current?.focus(), 50);
   }, []);
 
-  // ── Labels ──────────────────────────────────────────────────────────────────
+  // ── Derived values ──────────────────────────────────────────────────────────
 
-  const pageTitle = lang === 'da' ? 'AI Analyse' : 'AI Analysis';
-  const searchPlaceholder =
-    lang === 'da'
-      ? 'Søg virksomhed, adresse eller CVR-nummer…'
-      : 'Search company, address or CVR number…';
-  const chooseTypeLabel = lang === 'da' ? 'Vælg analysetype' : 'Choose analysis type';
-  const runLabel = lang === 'da' ? 'Kør analyse' : 'Run analysis';
-  const analysisLabel = lang === 'da' ? 'Analyserer…' : 'Analysing…';
-  const newAnalysisLabel = lang === 'da' ? 'Ny analyse' : 'New analysis';
-  const errorLabel = lang === 'da' ? 'Der opstod en fejl' : 'An error occurred';
-  const tryAgainLabel = lang === 'da' ? 'Prøv igen' : 'Try again';
-  const resultLabel = lang === 'da' ? 'Analyseresultat' : 'Analysis result';
-
-  const activeConfig = ANALYSIS_TYPES.find((t) => t.id === selectedType) ?? null;
   const isStreaming = phase === 'streaming';
+
+  /** Returns true if the submit button should be enabled */
+  const canSubmit = !!selectedArea && (!!selectedEntity || targetValue.trim().length > 0);
+
+  /**
+   * Returns the appropriate placeholder for the target input
+   * based on the selected area's input mode.
+   */
+  const targetPlaceholder = useCallback((): string => {
+    if (!selectedArea) return t('targetPlaceholder');
+    if (selectedArea.inputMode === 'area') return t('targetPlaceholderArea');
+    if (selectedArea.inputMode === 'portfolio') return t('targetPlaceholderPortfolio');
+    return t('targetPlaceholder');
+  }, [selectedArea, t]);
+
+  // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-6">
       {/* Page header */}
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-white">{pageTitle}</h1>
+        <div>
+          <h1 className="text-2xl font-bold text-white">{t('title')}</h1>
+          {phase === 'grid' && <p className="text-sm text-slate-500 mt-1">{t('subtitle')}</p>}
+        </div>
         {(phase === 'streaming' || phase === 'done') && (
           <button
             type="button"
             onClick={handleReset}
+            aria-label={t('newAnalysis')}
             className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors"
           >
             <RefreshCw size={13} />
-            {newAnalysisLabel}
+            {t('newAnalysis')}
           </button>
         )}
       </div>
 
-      {/* ── Phase: search ── */}
-      {phase === 'search' && (
-        <div className="max-w-xl space-y-4">
-          {/* Search input + dropdown */}
-          <div className="relative">
-            <div className="relative flex items-center">
-              {searchLoading ? (
-                <Loader2
-                  size={16}
-                  className="absolute left-3.5 text-slate-400 animate-spin pointer-events-none"
+      {/* ── Phase: grid ── */}
+      {phase === 'grid' && (
+        <div className="space-y-4 max-w-3xl">
+          <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">
+            {t('chooseArea')}
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {AREAS.map((config) => {
+              const { title, desc } = areaLabel(config.id);
+              return (
+                <AnalysisAreaCard
+                  key={config.id}
+                  config={config}
+                  title={title}
+                  desc={desc}
+                  onClick={() => handleSelectArea(config)}
                 />
-              ) : (
-                <Search
-                  size={16}
-                  className="absolute left-3.5 text-slate-500 pointer-events-none"
-                />
-              )}
+              );
+            })}
+          </div>
+
+          {/* Decorative empty-state hint below the grid */}
+          <div className="mt-6 rounded-2xl border border-white/5 bg-white/3 p-6 flex items-center gap-4">
+            <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center shrink-0">
+              <Building2 size={18} className="text-blue-400" />
+            </div>
+            <div>
+              <div className="text-sm font-medium text-slate-300">{t('emptyHint')}</div>
+              <div className="text-xs text-slate-500 mt-1">{t('emptyHintSub')}</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Phase: form ── */}
+      {phase === 'form' && selectedArea && (
+        <div className="max-w-xl space-y-6">
+          {/* Back button */}
+          <button
+            type="button"
+            onClick={handleBack}
+            className="flex items-center gap-1.5 text-sm text-slate-400 hover:text-white transition-colors -mt-2"
+          >
+            <ArrowLeft size={15} />
+            {t('backToAreas')}
+          </button>
+
+          {/* Selected area heading */}
+          <div className="flex items-center gap-3">
+            <div
+              className={[
+                'w-10 h-10 rounded-xl flex items-center justify-center shrink-0',
+                selectedArea.iconBg,
+              ].join(' ')}
+            >
+              <selectedArea.icon size={18} className={selectedArea.iconColor} />
+            </div>
+            <div>
+              <div className="text-base font-semibold text-white">
+                {areaLabel(selectedArea.id).title}
+              </div>
+              <div className="text-xs text-slate-400">{areaLabel(selectedArea.id).desc}</div>
+            </div>
+          </div>
+
+          {/* Target input */}
+          <div className="space-y-2">
+            <label
+              htmlFor="analysis-target"
+              className="block text-xs font-medium text-slate-400 uppercase tracking-wider"
+            >
+              {t('targetLabel')}
+            </label>
+
+            {/* Show entity chip if an entity was resolved from search */}
+            {selectedEntity ? (
+              <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5">
+                <ResultTypeIcon type={selectedEntity.type as 'address' | 'company' | 'person'} />
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium text-white truncate">
+                    {selectedEntity.title}
+                  </div>
+                  {selectedEntity.subtitle && (
+                    <div className="text-xs text-slate-500 truncate">{selectedEntity.subtitle}</div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedEntity(null);
+                    setTargetValue('');
+                    setTimeout(() => targetInputRef.current?.focus(), 50);
+                  }}
+                  aria-label={t('clearEntity')}
+                  className="text-slate-500 hover:text-white transition-colors"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            ) : (
               <input
-                ref={searchInputRef}
+                id="analysis-target"
+                ref={targetInputRef}
                 type="text"
-                value={query}
-                onChange={(e) => handleQueryChange(e.target.value)}
-                onFocus={() => searchResults.length > 0 && setDropdownOpen(true)}
-                placeholder={searchPlaceholder}
-                autoFocus
+                value={targetValue}
+                onChange={(e) => setTargetValue(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && canSubmit && handleSubmit()}
+                placeholder={targetPlaceholder()}
                 className={[
-                  'w-full rounded-2xl border border-white/10 bg-white/5',
-                  'pl-10 pr-4 py-3 text-sm text-slate-200 placeholder:text-slate-600',
+                  'w-full rounded-xl border border-white/10 bg-white/5',
+                  'px-4 py-3 text-sm text-slate-200 placeholder:text-slate-600',
                   'focus:border-blue-500/60 focus:outline-none focus:ring-1 focus:ring-blue-500/30',
                   'transition-colors',
                 ].join(' ')}
               />
-              {query && (
-                <button
-                  type="button"
-                  onClick={() => handleQueryChange('')}
-                  aria-label="Ryd søgning"
-                  className="absolute right-3.5 text-slate-500 hover:text-white transition-colors"
-                >
-                  <X size={14} />
-                </button>
-              )}
-            </div>
-
-            {/* Dropdown */}
-            {dropdownOpen && searchResults.length > 0 && (
-              <div
-                ref={dropdownRef}
-                className={[
-                  'absolute z-50 mt-1.5 w-full rounded-2xl border border-white/10',
-                  'bg-[#0f172a] shadow-xl overflow-hidden',
-                ].join(' ')}
-              >
-                {searchResults.map((result) => (
-                  <button
-                    key={`${result.type}-${result.id}`}
-                    type="button"
-                    onClick={() => handleSelectResult(result)}
-                    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-colors text-left"
-                  >
-                    <div className="shrink-0 w-7 h-7 rounded-lg bg-white/5 border border-white/8 flex items-center justify-center">
-                      <ResultTypeIcon type={result.type} />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm text-white truncate">{result.title}</div>
-                      {result.subtitle && (
-                        <div className="text-xs text-slate-500 truncate">{result.subtitle}</div>
-                      )}
-                    </div>
-                    <ChevronDown size={13} className="text-slate-600 shrink-0 -rotate-90" />
-                  </button>
-                ))}
-              </div>
             )}
           </div>
 
-          {/* Helper text */}
-          <p className="text-xs text-slate-600">
-            {lang === 'da'
-              ? 'Søg efter en virksomhed ved navn eller CVR-nummer, eller en ejendom ved adresse.'
-              : 'Search for a company by name or CVR number, or a property by address.'}
-          </p>
-        </div>
-      )}
+          {/* Optional entity search (only for non-area modes) */}
+          {selectedArea.inputMode !== 'area' && !selectedEntity && (
+            <div className="space-y-2">
+              <p className="text-xs text-slate-500">{t('orSearch')}</p>
+              <div className="relative">
+                <div className="relative flex items-center">
+                  {searchLoading ? (
+                    <Loader2
+                      size={15}
+                      className="absolute left-3.5 text-slate-400 animate-spin pointer-events-none"
+                    />
+                  ) : (
+                    <Search
+                      size={15}
+                      className="absolute left-3.5 text-slate-500 pointer-events-none"
+                    />
+                  )}
+                  <input
+                    ref={searchInputRef}
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => handleSearchQueryChange(e.target.value)}
+                    onFocus={() => searchResults.length > 0 && setDropdownOpen(true)}
+                    placeholder={t('searchPlaceholder')}
+                    className={[
+                      'w-full rounded-xl border border-white/10 bg-white/5',
+                      'pl-10 pr-4 py-2.5 text-sm text-slate-200 placeholder:text-slate-600',
+                      'focus:border-blue-500/60 focus:outline-none focus:ring-1 focus:ring-blue-500/30',
+                      'transition-colors',
+                    ].join(' ')}
+                  />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => handleSearchQueryChange('')}
+                      aria-label={lang === 'da' ? 'Ryd søgning' : 'Clear search'}
+                      className="absolute right-3.5 text-slate-500 hover:text-white transition-colors"
+                    >
+                      <X size={13} />
+                    </button>
+                  )}
+                </div>
 
-      {/* ── Phase: ready ── */}
-      {phase === 'ready' && selectedEntity && (
-        <div className="max-w-xl space-y-6">
-          {/* Selected entity chip */}
-          <div className="space-y-2">
-            <p className="text-xs text-slate-500 uppercase tracking-wider font-medium">
-              {lang === 'da' ? 'Valgt entitet' : 'Selected entity'}
-            </p>
-            <EntityChip entity={selectedEntity} onClear={handleClearEntity} />
-          </div>
-
-          {/* Analysis type selection */}
-          <div className="space-y-3">
-            <p className="text-xs text-slate-500 uppercase tracking-wider font-medium">
-              {chooseTypeLabel}
-            </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {ANALYSIS_TYPES.map((config) => (
-                <AnalysisTypeCard
-                  key={config.id}
-                  config={config}
-                  selected={selectedType === config.id}
-                  lang={lang}
-                  onClick={() => setSelectedType(config.id)}
-                />
-              ))}
+                {/* Dropdown */}
+                {dropdownOpen && searchResults.length > 0 && (
+                  <div
+                    ref={dropdownRef}
+                    className={[
+                      'absolute z-50 mt-1.5 w-full rounded-2xl border border-white/10',
+                      'bg-[#0f172a] shadow-xl overflow-hidden',
+                    ].join(' ')}
+                  >
+                    {searchResults.map((result) => (
+                      <button
+                        key={`${result.type}-${result.id}`}
+                        type="button"
+                        onClick={() => handleSelectSearchResult(result)}
+                        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-colors text-left"
+                      >
+                        <div className="shrink-0 w-7 h-7 rounded-lg bg-white/5 border border-white/8 flex items-center justify-center">
+                          <ResultTypeIcon type={result.type} />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm text-white truncate">{result.title}</div>
+                          {result.subtitle && (
+                            <div className="text-xs text-slate-500 truncate">{result.subtitle}</div>
+                          )}
+                        </div>
+                        <ChevronRight size={13} className="text-slate-600 shrink-0" />
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
+          )}
 
-          {/* Run button */}
+          {/* Submit button */}
           <button
             type="button"
             onClick={handleSubmit}
-            disabled={!selectedType}
+            disabled={!canSubmit}
             className={[
               'w-full rounded-xl py-3 px-4 text-sm font-semibold transition-all',
-              selectedType
+              canSubmit
                 ? 'bg-blue-600 hover:bg-blue-500 text-white cursor-pointer'
                 : 'bg-white/5 text-slate-600 cursor-not-allowed',
             ].join(' ')}
           >
-            {selectedType && activeConfig
-              ? `${runLabel} — ${lang === 'da' ? activeConfig.titleDa : activeConfig.titleEn}`
-              : runLabel}
+            {t('runAnalysis')} — {areaLabel(selectedArea.id).title}
           </button>
         </div>
       )}
 
       {/* ── Phase: streaming / done ── */}
-      {(phase === 'streaming' || phase === 'done') && selectedEntity && (
+      {(phase === 'streaming' || phase === 'done') && selectedArea && (
         <div className="max-w-3xl space-y-4">
           {/* Header bar */}
           <div className="flex items-center gap-3">
             {isStreaming ? (
               <Loader2 size={16} className="text-blue-400 animate-spin shrink-0" />
-            ) : activeConfig ? (
+            ) : (
               <div
                 className={[
                   'w-7 h-7 rounded-lg flex items-center justify-center shrink-0',
-                  activeConfig.iconBg,
+                  selectedArea.iconBg,
                 ].join(' ')}
               >
-                <activeConfig.icon size={14} className={activeConfig.iconColor} />
+                <selectedArea.icon size={14} className={selectedArea.iconColor} />
               </div>
-            ) : null}
+            )}
             <div className="min-w-0">
               <span className="text-sm font-semibold text-white">
-                {isStreaming
-                  ? analysisLabel
-                  : `${activeConfig ? (lang === 'da' ? activeConfig.titleDa : activeConfig.titleEn) : ''}`}
+                {isStreaming ? t('runningAnalysis') : areaLabel(selectedArea.id).title}
               </span>
               {!isStreaming && (
-                <span className="text-slate-500 font-normal text-sm"> — {resultLabel}</span>
+                <span className="text-slate-500 font-normal text-sm"> — {t('result')}</span>
               )}
-              <div className="text-xs text-slate-500 truncate mt-0.5">{selectedEntity.title}</div>
+              <div className="text-xs text-slate-500 truncate mt-0.5">
+                {selectedEntity?.title ?? targetValue}
+              </div>
             </div>
           </div>
 
@@ -743,19 +982,19 @@ export default function AnalysisPageClient() {
               <AlertCircle size={16} className="text-red-400 mt-0.5 shrink-0" />
               <div className="flex-1 space-y-2">
                 <p className="text-sm text-red-300">
-                  {errorLabel}: {errorMessage}
+                  {t('errorOccurred')}: {errorMessage}
                 </p>
                 <button
                   type="button"
                   onClick={() => {
-                    setPhase('ready');
+                    setPhase('form');
                     setErrorMessage('');
                     setResultText('');
                     setStatusMessages([]);
                   }}
                   className="text-xs text-red-400 hover:text-red-300 underline underline-offset-2"
                 >
-                  {tryAgainLabel}
+                  {t('tryAgain')}
                 </button>
               </div>
             </div>
@@ -773,41 +1012,15 @@ export default function AnalysisPageClient() {
             </div>
           )}
 
-          {/* Streaming-only: collecting data placeholder */}
+          {/* Streaming placeholder while no text yet */}
           {isStreaming && !resultText && !errorMessage && (
             <div className="bg-white/5 border border-white/8 rounded-2xl p-6">
               <div className="flex items-center gap-2 text-sm text-slate-400">
                 <Loader2 size={14} className="animate-spin text-blue-400 shrink-0" />
-                <span>
-                  {statusMessages[statusMessages.length - 1] ??
-                    (lang === 'da' ? 'Henter data fra registre…' : 'Fetching data from registers…')}
-                </span>
+                <span>{statusMessages[statusMessages.length - 1] ?? t('fetchingData')}</span>
               </div>
             </div>
           )}
-        </div>
-      )}
-
-      {/* Building2 icon for empty entity placeholder (cosmetic) */}
-      {phase === 'search' && !query && (
-        <div className="max-w-xl">
-          <div className="rounded-2xl border border-white/5 bg-white/3 p-8 flex flex-col items-center gap-3 text-center">
-            <div className="w-12 h-12 rounded-2xl bg-blue-500/10 flex items-center justify-center">
-              <Building2 size={22} className="text-blue-400" />
-            </div>
-            <div>
-              <div className="text-sm font-medium text-slate-300">
-                {lang === 'da'
-                  ? 'AI-drevet analyse med rigtige data'
-                  : 'AI-powered analysis with real data'}
-              </div>
-              <div className="text-xs text-slate-500 mt-1 max-w-xs">
-                {lang === 'da'
-                  ? 'Henter automatisk CVR, regnskaber, BBR, vurdering, ejerskab og meget mere fra offentlige registre.'
-                  : 'Automatically fetches CVR, financials, BBR, valuations, ownership and more from public registers.'}
-              </div>
-            </div>
-          </div>
         </div>
       )}
     </div>

@@ -20,8 +20,34 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createClient } from '@supabase/supabase-js';
 import { logger } from '@/app/lib/logger';
+import { parseBody } from '@/app/lib/validate';
+import { writeAuditLog } from '@/app/lib/auditLog';
+
+/** Zod schema for POST /api/support request body */
+const supportPostSchema = z
+  .object({
+    message: z.string().optional(),
+    lang: z.enum(['da', 'en']).optional().default('da'),
+    context: z
+      .object({
+        page: z.string().optional(),
+        subscription: z.string().optional(),
+      })
+      .optional(),
+    action: z.literal('create_ticket').optional(),
+    ticketData: z
+      .object({
+        title: z.string(),
+        description: z.string(),
+        page: z.string().optional(),
+        email: z.string().optional(),
+      })
+      .optional(),
+  })
+  .passthrough();
 
 // ─── Knowledge Base ──────────────────────────────────────────────────────────
 
@@ -247,19 +273,9 @@ async function logSupportQuestion(
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const {
-      message,
-      lang = 'da',
-      action,
-      ticketData,
-    } = body as {
-      message: string;
-      lang: 'da' | 'en';
-      context?: { page?: string; subscription?: string };
-      action?: 'create_ticket';
-      ticketData?: { title: string; description: string; page?: string; email?: string };
-    };
+    const parsed = await parseBody(request, supportPostSchema);
+    if (!parsed.success) return parsed.response;
+    const { message, lang, action, ticketData } = parsed.data;
 
     // ── Action: Create JIRA ticket ──
     if (action === 'create_ticket' && ticketData) {
@@ -277,6 +293,14 @@ export async function POST(request: NextRequest) {
         : lang === 'da'
           ? 'Fejlrapporten kunne ikke oprettes. Kontakt support@bizzassist.dk i stedet.'
           : 'The bug report could not be created. Please contact support@bizzassist.dk instead.';
+
+      // Audit: support question created via ticket action (fire-and-forget — ISO 27001 A.12.4)
+      void writeAuditLog({
+        action: 'support_question_created',
+        resource_type: 'support',
+        resource_id: issueKey ?? 'ticket',
+        metadata: JSON.stringify({ ticket_key: issueKey }),
+      });
 
       return NextResponse.json({ reply, ticketKey: issueKey });
     }
@@ -311,8 +335,16 @@ export async function POST(request: NextRequest) {
     }
 
     // Log question for analytics (non-blocking)
-    const context = body.context as { page?: string } | undefined;
-    logSupportQuestion(message, reply, !!kbEntry, lang, context?.page).catch(() => {});
+    const context = parsed.data.context as { page?: string } | undefined;
+    logSupportQuestion(message ?? '', reply, !!kbEntry, lang, context?.page).catch(() => {});
+
+    // Audit: support question created (fire-and-forget — ISO 27001 A.12.4)
+    void writeAuditLog({
+      action: 'support_question_created',
+      resource_type: 'support',
+      resource_id: 'question',
+      metadata: JSON.stringify({ matched: !!kbEntry, lang }),
+    });
 
     return NextResponse.json({ reply, suggestTicket });
   } catch (err) {

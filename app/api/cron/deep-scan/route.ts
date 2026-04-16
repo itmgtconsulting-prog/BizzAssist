@@ -701,7 +701,7 @@ async function sendDeepScanReport(
       const body = await res.text();
       logger.error('[deep-scan] Resend API fejl:', res.status, body);
     } else {
-      logger.log('[deep-scan] Deep-scan rapport sendt til', TO_ADDRESS);
+      logger.log('[deep-scan] Deep-scan rapport sendt');
     }
   } catch (err) {
     logger.error('[deep-scan] Kunne ikke sende rapport:', err);

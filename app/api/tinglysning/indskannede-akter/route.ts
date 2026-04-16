@@ -16,21 +16,16 @@ import * as Sentry from '@sentry/nextjs';
 import { checkRateLimit, heavyRateLimit } from '@/app/lib/rateLimit';
 import { resolveTenantId } from '@/lib/api/auth';
 import { logger } from '@/app/lib/logger';
-import https from 'https';
-import fs from 'fs';
-import path from 'path';
-
-export const runtime = 'nodejs';
-export const maxDuration = 60;
-
-// ─── Config ──────────────────────────────────────────────────────────────────
+import { tlFetch } from '@/app/lib/tlFetch';
 
 const CERT_PATH =
   process.env.TINGLYSNING_CERT_PATH ?? process.env.NEMLOGIN_DEVTEST4_CERT_PATH ?? '';
+const CERT_B64 = process.env.TINGLYSNING_CERT_B64 ?? process.env.NEMLOGIN_DEVTEST4_CERT_B64 ?? '';
 const CERT_PASSWORD =
   process.env.TINGLYSNING_CERT_PASSWORD ?? process.env.NEMLOGIN_DEVTEST4_CERT_PASSWORD ?? '';
-const CERT_B64 = process.env.TINGLYSNING_CERT_B64 ?? process.env.NEMLOGIN_DEVTEST4_CERT_B64 ?? '';
-const TL_BASE = process.env.TINGLYSNING_BASE_URL ?? 'https://test.tinglysning.dk';
+
+export const runtime = 'nodejs';
+export const maxDuration = 60;
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -51,64 +46,6 @@ export interface IndskannedeAkterResponse {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-/**
- * Loader certifikat som Buffer — foretrækker base64 env var over filsti.
- */
-function loadCert(): Buffer {
-  if (CERT_B64) return Buffer.from(CERT_B64, 'base64');
-  const certAbsPath = path.resolve(CERT_PATH);
-  if (!fs.existsSync(certAbsPath)) {
-    throw new Error('Certifikat ikke fundet: ' + certAbsPath);
-  }
-  return fs.readFileSync(certAbsPath);
-}
-
-/**
- * Laver HTTPS GET request med client-certifikat (mTLS) og returnerer response body som tekst.
- *
- * @param urlPath - Sti relativt til /tinglysning/ssl
- * @returns HTTP status og XML-body
- */
-function tlFetch(urlPath: string): Promise<{ status: number; body: string }> {
-  return new Promise((resolve, reject) => {
-    let pfx: Buffer;
-    try {
-      pfx = loadCert();
-    } catch (e) {
-      reject(e);
-      return;
-    }
-
-    const url = new URL(TL_BASE + '/tinglysning/ssl' + urlPath);
-
-    const req = https.request(
-      {
-        hostname: url.hostname,
-        port: 443,
-        path: url.pathname + url.search,
-        method: 'GET',
-        pfx,
-        passphrase: CERT_PASSWORD,
-        rejectUnauthorized: false,
-        timeout: 20000,
-        headers: { Accept: 'application/xml, */*' },
-      },
-      (res) => {
-        let body = '';
-        res.on('data', (d: Buffer) => (body += d.toString('utf-8')));
-        res.on('end', () => resolve({ status: res.statusCode ?? 500, body }));
-      }
-    );
-
-    req.on('error', reject);
-    req.on('timeout', () => {
-      req.destroy();
-      reject(new Error('Timeout'));
-    });
-    req.end();
-  });
-}
 
 /**
  * Parser XML fra EjendomStamoplysningerHentResultat og udtrækker indskannede akter.

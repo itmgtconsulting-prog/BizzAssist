@@ -20,9 +20,19 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { resolveTenantId } from '@/lib/api/auth';
 import { tenantDb } from '@/lib/supabase/admin';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
+import { parseBody } from '@/app/lib/validate';
+
+/** Zod schema for POST /api/integrations/linkedin/enrich request body */
+const linkedinEnrichSchema = z
+  .object({
+    enhedsNummer: z.string().min(1),
+    personName: z.string().optional(),
+  })
+  .passthrough();
 
 /** Request body for the enrich endpoint */
 interface EnrichRequest {
@@ -43,7 +53,7 @@ interface EnrichUnavailableResponse {
 }
 
 /** Validates that the parsed body matches EnrichRequest */
-function isEnrichRequest(value: unknown): value is EnrichRequest {
+function _isEnrichRequest(value: unknown): value is EnrichRequest {
   return (
     typeof value === 'object' &&
     value !== null &&
@@ -73,16 +83,10 @@ export async function POST(
   if (!auth) return NextResponse.json({ error: 'Unauthenticated' }, { status: 401 });
 
   // Parse and validate request body
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: 'Ugyldig anmodning' }, { status: 400 });
-  }
-
-  if (!isEnrichRequest(body)) {
-    return NextResponse.json({ error: 'enhedsNummer er påkrævet' }, { status: 400 });
-  }
+  const parsed = await parseBody(request, linkedinEnrichSchema);
+  if (!parsed.success)
+    return parsed.response as NextResponse<EnrichUnavailableResponse | { error: string }>;
+  const body = parsed.data;
 
   const { tenantId, userId } = auth;
   // Verify user has LinkedIn connected

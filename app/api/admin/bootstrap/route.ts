@@ -13,13 +13,26 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
+import { parseBody } from '@/app/lib/validate';
+import { writeAuditLog } from '@/app/lib/auditLog';
+
+/** Zod schema for POST /api/admin/bootstrap request body */
+const bootstrapPostSchema = z
+  .object({
+    email: z.string().min(1),
+    secret: z.string().min(1),
+  })
+  .passthrough();
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
-    const { email, secret } = await req.json();
+    const parsed = await parseBody(req, bootstrapPostSchema);
+    if (!parsed.success) return parsed.response;
+    const { email, secret } = parsed.data;
 
     // Require a dedicated bootstrap secret — never compare against the service role key,
     // which is a database credential and must never travel over the wire.
@@ -27,12 +40,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     if (!bootstrapSecret) {
       return NextResponse.json({ error: 'Bootstrap not configured' }, { status: 503 });
     }
-    if (!safeCompare(secret ?? '', bootstrapSecret)) {
+    if (!safeCompare(secret, bootstrapSecret)) {
       return NextResponse.json({ error: 'Invalid secret' }, { status: 403 });
-    }
-
-    if (!email) {
-      return NextResponse.json({ error: 'Email required' }, { status: 400 });
     }
 
     const admin = createAdminClient();
@@ -59,6 +68,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const metadata = targetUser.app_metadata ?? {};
     await admin.auth.admin.updateUserById(targetUser.id, {
       app_metadata: { ...metadata, isAdmin: true },
+    });
+
+    // Fire-and-forget: record that admin privileges were granted. Critical security event (ISO 27001 A.9.2.3).
+    void writeAuditLog({
+      action: 'admin_bootstrap',
+      resource_type: 'user',
+      resource_id: targetUser.id,
+      metadata: JSON.stringify({ email }),
     });
 
     return NextResponse.json({ ok: true, email, isAdmin: true });

@@ -29,11 +29,37 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import Anthropic from '@anthropic-ai/sdk';
 import { Ratelimit } from '@upstash/ratelimit';
 import { Redis } from '@upstash/redis';
 import { resolveTenantId } from '@/lib/api/auth';
 import { fetchBbrForAddress } from '@/app/lib/fetchBbrData';
+import { parseBody } from '@/app/lib/validate';
+
+/** Zod schema for POST /api/analysis/run request body */
+const analysisRunSchema = z
+  .object({
+    type: z.enum([
+      'due_diligence',
+      'konkurrent',
+      'investering',
+      'marked',
+      'virksomhed',
+      'ejendom',
+      'ejerskab',
+      'omraade',
+      'portefolje',
+    ]),
+    entity: z.object({
+      id: z.string().min(1),
+      title: z.string(),
+      subtitle: z.string().optional(),
+      type: z.enum(['address', 'company', 'person', 'area']),
+      meta: z.record(z.string(), z.string()).optional(),
+    }),
+  })
+  .passthrough();
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -41,14 +67,23 @@ export const maxDuration = 120;
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 /** Union of supported analysis type identifiers */
-type AnalysisType = 'due_diligence' | 'konkurrent' | 'investering' | 'marked';
+type AnalysisType =
+  | 'due_diligence'
+  | 'konkurrent'
+  | 'investering'
+  | 'marked'
+  | 'virksomhed'
+  | 'ejendom'
+  | 'ejerskab'
+  | 'omraade'
+  | 'portefolje';
 
 /** Entity passed from the frontend */
 interface AnalysisEntity {
   id: string;
   title: string;
   subtitle?: string;
-  type: 'address' | 'company' | 'person';
+  type: 'address' | 'company' | 'person' | 'area';
   meta?: Record<string, string>;
 }
 
@@ -776,7 +811,8 @@ async function executeTool(
     setCache(name, input, result);
     return result;
   } catch (err) {
-    return { fejl: err instanceof Error ? err.message : 'Ukendt fejl ved tool-kald' };
+    console.error('[analysis/run] Tool-kald fejl:', err);
+    return { fejl: 'Ekstern API fejl' };
   }
 }
 
@@ -822,6 +858,11 @@ Kald disse tools i rækkefølge (brug parallelle kald hvor muligt):
 1. hent_person_virksomheder(enhedsNummer="${entity.id}") — alle ejede virksomheder med ejerandel
 2. For ALLE ejede virksomheder: kald hent_regnskab_noegletal parallelt
 3. For holdingselskaber (navn indeholder "Holding", "Invest", "Group"): kald hent_datterselskaber`,
+
+    area: `
+## Datahentning for område
+Brug din viden om det danske ejendomsmarked og virksomhedsregister til at give et overblik over: ${entity.title}.
+Supplér med relevante tools hvor det er muligt (f.eks. adresseopslag for konkrete adresser).`,
   };
 
   // Analysis-type-specific output instructions
@@ -868,6 +909,60 @@ Strukturér med disse sektioner:
 ## Sammenligning med naboområder
 ## Risici og drivere
 ## Udsigter`,
+
+    virksomhed: `
+## Analyse-output: Virksomhedsanalyse
+Hent CVR-data, regnskab og ejerskabsstruktur. Strukturér med disse sektioner:
+## Sammenfatning
+## Virksomhedsprofil (branche, stiftelse, ansatte, adresse)
+## Regnskabsoversigt (seneste 3 år): omsætning, resultat, egenkapital, soliditetsgrad
+## Ejerskab og ledelse
+## Risikoprofil (likviditet, gæld, kapitalforhold)
+## Konklusion`,
+
+    ejendom: `
+## Analyse-output: Ejendomsanalyse
+Hent BBR, vurdering, foreløbig vurdering, ejerskab og salgshistorik. Strukturér med disse sektioner:
+## Sammenfatning
+## Ejendomsbeskrivelse (BBR: areal, opførelsesår, materialer, enheder)
+## Offentlig vurdering vs. seneste handelspris
+## Skatteberegning (grundskyld og ejendomsværdiskat)
+## Ejerskabshistorik og nuværende ejer
+## Skatteoptimeringspotentiale
+## Konklusion`,
+
+    ejerskab: `
+## Analyse-output: Ejerskabsanalyse
+Hent ejerskabsdata, datterselskaber og personrelationer. Strukturér med disse sektioner:
+## Sammenfatning
+## Koncernstruktur (moderselskab → datterselskaber)
+## Ultimativ ejer (gennemgå holdinglag)
+## Krydsejerskab og cirkulære strukturer
+## Nøglepersoner og deres roller
+## Risici ved ejerskabsstrukturen
+## Konklusion`,
+
+    omraade: `
+## Analyse-output: Områdeanalyse
+Brug viden om det danske marked og tilgængelige registre til at beskrive området. Strukturér med disse sektioner:
+## Sammenfatning
+## Geografisk og demografisk profil
+## Ejendomspriser og prisudvikling
+## Virksomhedstæthed og erhvervsaktivitet
+## Infrastruktur og udviklingsplaner
+## Investorinteresse og potentiale
+## Konklusion`,
+
+    portefolje: `
+## Analyse-output: Porteføljeanalyse
+Hent data for alle ejede aktiver (ejendomme og virksomheder) fra ejerskabsdata. Strukturér med disse sektioner:
+## Sammenfatning
+## Porteføljeoverblik (antal aktiver, samlet værdi)
+## Ejendomsportefølje (vurdering, areal, lokation pr. ejendom)
+## Virksomhedsportefølje (CVR, branche, omsætning pr. selskab)
+## Koncentrations- og diversificeringsanalyse
+## Samlet risikoprofil
+## Konklusion`,
   };
 
   return `Du er en professionel erhvervs- og ejendomsanalytiker tilknyttet BizzAssist-platformen.
@@ -931,23 +1026,9 @@ export async function POST(request: NextRequest): Promise<Response> {
     return NextResponse.json({ error: 'BIZZASSIST_CLAUDE_KEY ikke konfigureret' }, { status: 500 });
 
   // ── Parse + validate body ────────────────────────────────────────────────────
-  let body: AnalysisRequestBody;
-  try {
-    body = (await request.json()) as AnalysisRequestBody;
-  } catch {
-    return NextResponse.json({ error: 'Ugyldig JSON' }, { status: 400 });
-  }
-
-  const VALID_TYPES: AnalysisType[] = ['due_diligence', 'konkurrent', 'investering', 'marked'];
-  if (!body.type || !VALID_TYPES.includes(body.type)) {
-    return NextResponse.json({ error: `Ugyldig analysetype` }, { status: 400 });
-  }
-  if (!body.entity?.id || !body.entity?.type) {
-    return NextResponse.json(
-      { error: 'Ugyldig entitet — id og type er påkrævet' },
-      { status: 400 }
-    );
-  }
+  const parsed = await parseBody(request, analysisRunSchema);
+  if (!parsed.success) return parsed.response;
+  const body = parsed.data as unknown as AnalysisRequestBody;
 
   // ── Determine base URL for internal API self-calls ───────────────────────────
   const host = request.headers.get('host') ?? 'localhost:3000';
@@ -1045,8 +1126,8 @@ export async function POST(request: NextRequest): Promise<Response> {
         sse('[DONE]');
         controller.close();
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Ukendt serverfejl';
-        sse(JSON.stringify({ error: message }));
+        console.error('[analysis/run] SSE stream fejl:', err);
+        sse(JSON.stringify({ error: 'AI-tjeneste fejl' }));
         sse('[DONE]');
         controller.close();
       }

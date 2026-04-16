@@ -6,10 +6,18 @@
  * @returns { adresse: string, id: string | null }
  */
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { resolveTenantId } from '@/lib/api/auth';
+import { parseQuery } from '@/app/lib/validate';
 
 // const DAR_ENDPOINT = 'https://graphql.datafordeler.dk/DAR/v1';
 // TODO(BIZZ-92): DAR GraphQL doesn't support spatial queries yet — enable when it does (before July 2026).
+
+/** Zod schema for reverse geocoding query params */
+const reverseSchema = z.object({
+  lng: z.coerce.number(),
+  lat: z.coerce.number(),
+});
 
 /**
  * Reverse geocoder — finder nærmeste adresse for koordinat.
@@ -21,13 +29,10 @@ import { resolveTenantId } from '@/lib/api/auth';
 export async function GET(request: NextRequest) {
   const auth = await resolveTenantId();
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  const { searchParams } = new URL(request.url);
-  const lng = parseFloat(searchParams.get('lng') ?? '');
-  const lat = parseFloat(searchParams.get('lat') ?? '');
 
-  if (isNaN(lng) || isNaN(lat)) {
-    return NextResponse.json({ adresse: null, id: null }, { status: 400 });
-  }
+  const parsed = parseQuery(request, reverseSchema);
+  if (!parsed.success) return NextResponse.json({ adresse: null, id: null }, { status: 400 });
+  const { lng, lat } = parsed.data;
 
   // DAWA fallback (virker til 1. juli 2026)
   try {

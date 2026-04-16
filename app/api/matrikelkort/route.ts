@@ -19,13 +19,22 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import PDFDocument from 'pdfkit';
+import { z } from 'zod';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
+import { parseQuery } from '@/app/lib/validate';
 
 // pdfkit bruger Node.js streams — tving Node.js runtime (ikke Edge)
 export const runtime = 'nodejs';
 
 // ─── Konstanter ────────────────────────────────────────────────────────────────
+
+// ─── Query param validation ─────────────────────────────────────────────────
+
+const matrikelkortQuerySchema = z.object({
+  ejerlavKode: z.string().regex(/^\d+$/, 'ejerlavKode skal være et heltal'),
+  matrikelnr: z.string().min(1, 'matrikelnr er påkrævet'),
+});
 
 const DAWA_BASE = 'https://api.dataforsyningen.dk';
 
@@ -640,18 +649,11 @@ async function genererPdf(
 export async function GET(request: NextRequest): Promise<Response> {
   const auth = await resolveTenantId();
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  const { searchParams } = request.nextUrl;
-  const ejerlavKodeStr = searchParams.get('ejerlavKode');
-  const matrikelnr = searchParams.get('matrikelnr');
 
-  if (!ejerlavKodeStr || !matrikelnr) {
-    return NextResponse.json({ fejl: 'Mangler ejerlavKode eller matrikelnr' }, { status: 400 });
-  }
-
+  const parsed = parseQuery(request, matrikelkortQuerySchema);
+  if (!parsed.success) return parsed.response;
+  const { ejerlavKode: ejerlavKodeStr, matrikelnr } = parsed.data;
   const ejerlavKode = parseInt(ejerlavKodeStr, 10);
-  if (isNaN(ejerlavKode)) {
-    return NextResponse.json({ fejl: 'Ugyldigt ejerlavKode' }, { status: 400 });
-  }
 
   try {
     const path = `${ejerlavKode}/${encodeURIComponent(matrikelnr)}`;
@@ -890,6 +892,10 @@ export async function GET(request: NextRequest): Promise<Response> {
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Ukendt fejl';
-    return NextResponse.json({ fejl: `Matrikelkort-fejl: ${msg}` }, { status: 500 });
+    const body =
+      process.env.NODE_ENV === 'development'
+        ? { fejl: 'Ekstern API fejl', dev_detail: msg }
+        : { fejl: 'Ekstern API fejl' };
+    return NextResponse.json(body, { status: 500 });
   }
 }

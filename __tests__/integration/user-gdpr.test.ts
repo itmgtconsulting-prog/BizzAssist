@@ -50,11 +50,15 @@ vi.mock('@/lib/supabase/server', () => ({
 
 const mockAdminDeleteUser = vi.fn().mockResolvedValue({ error: null });
 
-/** Schema-switched client stub */
+/** Schema-switched client stub — supports delete().eq(), delete().in(), select().eq(), insert() */
 const mockSchemaChain = {
   from: vi.fn(() => ({
     delete: vi.fn().mockReturnValue({
       eq: vi.fn().mockResolvedValue({ error: null }),
+      in: vi.fn().mockResolvedValue({ error: null }),
+    }),
+    select: vi.fn().mockReturnValue({
+      eq: vi.fn().mockResolvedValue({ data: [], error: null }),
     }),
     insert: vi.fn().mockResolvedValue({ error: null }),
   })),
@@ -249,6 +253,10 @@ describe('DELETE /api/user/delete-account', () => {
     mockSchemaChain.from.mockReturnValue({
       delete: vi.fn().mockReturnValue({
         eq: vi.fn().mockResolvedValue({ error: null }),
+        in: vi.fn().mockResolvedValue({ error: null }),
+      }),
+      select: vi.fn().mockReturnValue({
+        eq: vi.fn().mockResolvedValue({ data: [], error: null }),
       }),
       insert: vi.fn().mockResolvedValue({ error: null }),
     });

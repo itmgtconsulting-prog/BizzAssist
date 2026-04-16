@@ -940,6 +940,8 @@ export default function ServiceManagerClient() {
   const [configured, setConfigured] = useState(false);
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
+  /** BIZZ-345: tracks manual "Opdater" refresh so the button shows a spinner */
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [activeTab, setActiveTab] = useState<'scans' | 'activity'>('scans');
@@ -1010,6 +1012,25 @@ export default function ServiceManagerClient() {
       if (res.ok) await refresh();
     } finally {
       setScanning(false);
+    }
+  };
+
+  /**
+   * Manual refresh handler for the "Opdater" button.
+   *
+   * BIZZ-345: The plain `onClick={refresh}` call gave no visual feedback
+   * because `refresh` is a background async function with no loading state.
+   * This wrapper sets `isRefreshing` so the button shows a spinner and is
+   * disabled while the fetch is in-flight, giving clear user feedback.
+   *
+   * @returns Promise that resolves when the data refresh is complete
+   */
+  const handleManualRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await refresh();
+    } finally {
+      setIsRefreshing(false);
     }
   };
 
@@ -1185,11 +1206,13 @@ export default function ServiceManagerClient() {
                     : 'Run Bug Scan'}
               </button>
               <button
-                onClick={refresh}
-                className="flex items-center gap-2 px-3 py-2 bg-slate-700/60 hover:bg-slate-700 text-slate-300 text-sm rounded-xl transition-colors border border-slate-600/50"
+                onClick={() => void handleManualRefresh()}
+                disabled={isRefreshing || scanning || hasRunning}
+                aria-label={da ? 'Genindlæs data' : 'Refresh data'}
+                className="flex items-center gap-2 px-3 py-2 bg-slate-700/60 hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed text-slate-300 text-sm rounded-xl transition-colors border border-slate-600/50"
               >
-                <RefreshCw size={14} />
-                {da ? 'Opdater' : 'Refresh'}
+                <RefreshCw size={14} className={isRefreshing ? 'animate-spin' : ''} />
+                {isRefreshing ? (da ? 'Opdaterer…' : 'Refreshing…') : da ? 'Opdater' : 'Refresh'}
               </button>
               {lastRefresh && (
                 <span className="text-slate-500 text-xs">

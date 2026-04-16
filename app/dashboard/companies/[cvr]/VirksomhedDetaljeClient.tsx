@@ -81,10 +81,6 @@ const DiagramForce = dynamic(() => import('@/app/components/diagrams/DiagramForc
   ssr: false,
   loading: () => <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />,
 });
-const DiagramSimple = dynamic(() => import('@/app/components/diagrams/DiagramSimple'), {
-  ssr: false,
-  loading: () => <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />,
-});
 
 // ─── Tracked Companies (localStorage) ────────────────────────────────────────
 
@@ -176,7 +172,6 @@ function formatDatoKort(iso: string): string {
 type TabId =
   | 'overview'
   | 'diagram'
-  | 'diagram2'
   | 'tradeHistory'
   | 'properties'
   | 'companies'
@@ -189,7 +184,6 @@ type TabId =
 const tabIcons: Record<TabId, React.ReactNode> = {
   overview: <LayoutDashboard size={12} />,
   diagram: <Briefcase size={12} />,
-  diagram2: <Briefcase size={12} />,
   tradeHistory: <ArrowRightLeft size={12} />,
   properties: <Home size={12} />,
   companies: <Building2 size={12} />,
@@ -242,6 +236,8 @@ interface OwnerChainNode {
   erVirksomhed: boolean;
   /** Ejerandel */
   ejerandel: string | null;
+  /** Whether this company is ceased/ophørt (BIZZ-357) */
+  isCeased?: boolean;
   /** Ejere af denne node (rekursivt) */
   parents: OwnerChainNode[];
 }
@@ -316,7 +312,6 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
   const tabLabelMap: Record<TabId, string> = {
     overview: c.tabs.overview,
     diagram: lang === 'da' ? 'Diagram' : 'Diagram',
-    diagram2: lang === 'da' ? 'Diagram' : 'Diagram',
     tradeHistory: c.tabs.tradeHistory,
     properties: c.tabs.properties,
     companies: c.tabs.companies,
@@ -381,6 +376,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
   const [relatedCompanies, setRelatedCompanies] = useState<RelateretVirksomhed[]>([]);
   const [relatedLoading, setRelatedLoading] = useState(false);
   const relatedFetchedRef = useRef(false);
+  const relatedAbortRef = useRef<AbortController | null>(null);
 
   /** Ejerkæde opad (fra RelationsDiagram) — deles mellem diagram og Gruppe-tab */
   const [ownerChainShared, setOwnerChainShared] = useState<OwnerChainNode[]>([]);
@@ -413,7 +409,19 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
       return;
     }
 
-    const fetchedCache = new Map<number, { deltagere: CVRPublicData['deltagere']; cvr: number }>();
+    // BIZZ-253: Pre-seed cache with the current company's data to avoid re-fetching
+    // BIZZ-357: Also cache enddate so ceased status propagates into the owner chain
+    const fetchedCache = new Map<
+      number,
+      { deltagere: CVRPublicData['deltagere']; cvr: number; enddate: string | null }
+    >();
+    if (data.vat) {
+      fetchedCache.set(data.vat, {
+        deltagere: data.deltagere ?? [],
+        cvr: data.vat,
+        enddate: data.enddate ?? null,
+      });
+    }
 
     async function resolveChainTop(
       ownerList: ReturnType<typeof extractOwners>,
@@ -432,7 +440,12 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
               if (res.ok) {
                 const json = await res.json();
                 if (!json.error && json.vat) {
-                  cached = { deltagere: json.deltagere ?? [], cvr: json.vat };
+                  // BIZZ-357: Store enddate alongside deltagere so ceased status is known
+                  cached = {
+                    deltagere: json.deltagere ?? [],
+                    cvr: json.vat,
+                    enddate: json.enddate ?? null,
+                  };
                   fetchedCache.set(o.enhedsNummer, cached);
                 }
               }
@@ -440,7 +453,13 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
             if (!cached) return { ...o, cvr: null, parents: [] };
             const parentOwners = extractOwners(cached.deltagere);
             const resolvedParents = await resolveChainTop(parentOwners, depth + 1, maxDepth);
-            return { ...o, cvr: cached.cvr, parents: resolvedParents };
+            // BIZZ-357: Mark ceased companies so the diagram can render them visually distinct
+            return {
+              ...o,
+              cvr: cached.cvr,
+              isCeased: cached.enddate != null,
+              parents: resolvedParents,
+            };
           } catch {
             return { ...o, cvr: null, parents: [] };
           }
@@ -612,6 +631,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cvr, lang]);
 
   /**
@@ -651,6 +671,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
     } finally {
       setRegnskabLoading(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cvr]);
 
   /**
@@ -716,9 +737,20 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
         return;
       }
 
-      // ── Cache miss — hent resten progressivt ──
+      // ── Cache miss — hent resten progressivt + trigger cache-write parallelt ──
       if (total > FIRST_BATCH) {
         setXbrlLoadingMore(true);
+
+        // BIZZ-255: Start server-side cache-write in parallel with progressive fetch.
+        // Previously this ran AFTER progressive fetch completed, causing redundant
+        // re-parsing of all XBRL docs. Starting in parallel means the cache is ready
+        // sooner for subsequent visits while the user sees progressive results.
+        fetch(`/api/regnskab/xbrl?cvr=${cvr}&offset=0&limit=${total}`, {
+          signal: controller.signal,
+        }).catch(() => {
+          /* cache-write non-fatal */
+        });
+
         let offset = FIRST_BATCH;
         while (offset < total) {
           if (controller.signal.aborted) break;
@@ -733,16 +765,6 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
           offset += REST_BATCH;
         }
       }
-
-      // Trigger server-side cache-write: hent alle data i ét kald (baggrund)
-      // Serveren gemmer automatisk i Supabase når offset=0 og limit>=total
-      if (!controller.signal.aborted && total > FIRST_BATCH) {
-        fetch(`/api/regnskab/xbrl?cvr=${cvr}&offset=0&limit=${total}`, {
-          signal: controller.signal,
-        }).catch(() => {
-          /* Cache-write fejl — ignorer */
-        });
-      }
     } catch {
       if (!controller.signal.aborted) {
         setXbrlData((prev) => (prev && prev.length > 0 ? prev : []));
@@ -753,18 +775,32 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
     }
   }, [cvr]);
 
+  /** Reset related-fetch guard when CVR changes to prevent stale ref blocking re-fetch */
+  useEffect(() => {
+    relatedFetchedRef.current = false;
+    relatedAbortRef.current?.abort();
+    relatedAbortRef.current = null;
+  }, [cvr]);
+
   /** Henter relaterede virksomheder (gruppe) fra /api/cvr-public/related */
   const fetchRelated = useCallback(async () => {
     if (relatedFetchedRef.current) return;
     relatedFetchedRef.current = true;
+    relatedAbortRef.current?.abort();
+    const controller = new AbortController();
+    relatedAbortRef.current = controller;
     setRelatedLoading(true);
     try {
-      const res = await fetch(`/api/cvr-public/related?cvr=${encodeURIComponent(cvr)}`);
+      const res = await fetch(`/api/cvr-public/related?cvr=${encodeURIComponent(cvr)}`, {
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted) return;
       const json = await res.json();
       setRelatedCompanies(json.virksomheder ?? []);
       if (typeof json.parentEnhedsNummer === 'number')
         setParentEnhedsNummer(json.parentEnhedsNummer);
-    } catch {
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
       setRelatedCompanies([]);
     } finally {
       setRelatedLoading(false);
@@ -849,78 +885,93 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
    * efterfølgende batches tilføjes automatisk i baggrunden.
    * Bruger AbortController til at annullere igangværende hentning ved CVR-ændring.
    */
-  const fetchEjendommeProgressively = useCallback(async (uniqueCvrs: string[]) => {
-    ejendomAbortRef.current?.abort();
-    const controller = new AbortController();
-    ejendomAbortRef.current = controller;
+  /**
+   * BIZZ-265: Extended to support enhedsNummer for ENK owner-owned properties.
+   */
+  const fetchEjendommeProgressively = useCallback(
+    async (uniqueCvrs: string[], ownerEnhedsNumre?: string[]) => {
+      ejendomAbortRef.current?.abort();
+      const controller = new AbortController();
+      ejendomAbortRef.current = controller;
 
-    const FIRST_BATCH = 5;
-    const REST_BATCH = 10;
+      const FIRST_BATCH = 5;
+      const REST_BATCH = 10;
 
-    setEjendommeData([]);
-    setEjendommeFetchComplete(false);
-    setEjendommeLoadingMore(false);
-    setEjendommeLoading(true);
-    setEjendommeManglerNoegle(false);
-    setEjendommeManglerAdgang(false);
-
-    try {
-      const url = `/api/ejendomme-by-owner?cvr=${uniqueCvrs.join(',')}&offset=0&limit=${FIRST_BATCH}`;
-      const res = await fetch(url, { signal: controller.signal });
-      if (!res.ok) throw new Error(`${res.status}`);
-      const json = (await res.json()) as {
-        ejendomme: EjendomSummary[];
-        totalBfe: number;
-        manglerNoegle: boolean;
-        manglerAdgang: boolean;
-      };
-
-      if (controller.signal.aborted) return;
-
-      setEjendommeData(json.ejendomme ?? []);
-      setEjendommeTotalBfe(json.totalBfe ?? 0);
-      setEjendommeManglerNoegle(json.manglerNoegle === true);
-      setEjendommeManglerAdgang(json.manglerAdgang === true);
-      setEjendommeLoading(false);
-
-      let offset = FIRST_BATCH;
-      const total = json.totalBfe ?? 0;
-
-      if (offset < total) setEjendommeLoadingMore(true);
-
-      while (offset < total) {
-        if (controller.signal.aborted) return;
-
-        const res2 = await fetch(
-          `/api/ejendomme-by-owner?cvr=${uniqueCvrs.join(',')}&offset=${offset}&limit=${REST_BATCH}`,
-          { signal: controller.signal }
-        );
-        if (!res2.ok) break;
-        const json2 = (await res2.json()) as { ejendomme: EjendomSummary[] };
-
-        if (controller.signal.aborted) return;
-
-        setEjendommeData((prev) => [...prev, ...(json2.ejendomme ?? [])]);
-        offset += REST_BATCH;
-      }
-    } catch (e) {
-      if ((e as Error).name === 'AbortError') return;
       setEjendommeData([]);
-    } finally {
-      if (!controller.signal.aborted) {
+      setEjendommeFetchComplete(false);
+      setEjendommeLoadingMore(false);
+      setEjendommeLoading(true);
+      setEjendommeManglerNoegle(false);
+      setEjendommeManglerAdgang(false);
+
+      const params = new URLSearchParams();
+      if (uniqueCvrs.length > 0) params.set('cvr', uniqueCvrs.join(','));
+      if (ownerEnhedsNumre && ownerEnhedsNumre.length > 0)
+        params.set('enhedsNummer', ownerEnhedsNumre.join(','));
+      params.set('offset', '0');
+      params.set('limit', String(FIRST_BATCH));
+
+      try {
+        const res = await fetch(`/api/ejendomme-by-owner?${params}`, {
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error(`${res.status}`);
+        const json = (await res.json()) as {
+          ejendomme: EjendomSummary[];
+          totalBfe: number;
+          manglerNoegle: boolean;
+          manglerAdgang: boolean;
+        };
+
+        if (controller.signal.aborted) return;
+
+        setEjendommeData(json.ejendomme ?? []);
+        setEjendommeTotalBfe(json.totalBfe ?? 0);
+        setEjendommeManglerNoegle(json.manglerNoegle === true);
+        setEjendommeManglerAdgang(json.manglerAdgang === true);
         setEjendommeLoading(false);
-        setEjendommeLoadingMore(false);
-        setEjendommeFetchComplete(true);
+
+        let offset = FIRST_BATCH;
+        const total = json.totalBfe ?? 0;
+
+        if (offset < total) setEjendommeLoadingMore(true);
+
+        while (offset < total) {
+          if (controller.signal.aborted) return;
+
+          params.set('offset', String(offset));
+          params.set('limit', String(REST_BATCH));
+          const res2 = await fetch(`/api/ejendomme-by-owner?${params}`, {
+            signal: controller.signal,
+          });
+          if (!res2.ok) break;
+          const json2 = (await res2.json()) as { ejendomme: EjendomSummary[] };
+
+          if (controller.signal.aborted) return;
+
+          setEjendommeData((prev) => [...prev, ...(json2.ejendomme ?? [])]);
+          offset += REST_BATCH;
+        }
+      } catch (e) {
+        if ((e as Error).name === 'AbortError') return;
+        setEjendommeData([]);
+      } finally {
+        if (!controller.signal.aborted) {
+          setEjendommeLoading(false);
+          setEjendommeLoadingMore(false);
+          setEjendommeFetchComplete(true);
+        }
       }
-    }
-  }, []);
+    },
+    []
+  );
 
   /**
    * Trigger progressiv ejendomshentning når properties-tab aktiveres eller CVR-sæt ændres.
    * Kører igen når relatedCompanies ændres (datterselskaber loader ind).
    */
   useEffect(() => {
-    if (aktivTab !== 'properties' && aktivTab !== 'diagram' && aktivTab !== 'diagram2') return;
+    if (aktivTab !== 'properties' && aktivTab !== 'diagram') return;
 
     /* Saml CVR-numre: hovedvirksomhed + aktive datterselskaber */
     const cvrList = [
@@ -928,13 +979,31 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
       ...relatedCompanies.filter((v) => v.aktiv).map((v) => String(v.cvr).padStart(8, '0')),
     ];
     const uniqueCvrs = [...new Set(cvrList)].slice(0, 30);
-    const fetchKey = [...uniqueCvrs].sort().join(',');
+
+    /* BIZZ-265: For ENK virksomheder — find ejerens enhedsNummer for personligt ejede ejendomme */
+    const ownerEnhedsNumre: string[] = [];
+    const isEnk =
+      data?.companydesc?.toUpperCase()?.includes('ENKELTMANDSVIRKSOMHED') ||
+      data?.companydesc?.toUpperCase()?.includes('ENK');
+    if (isEnk && ownerChainShared.length > 0) {
+      for (const owner of ownerChainShared) {
+        if (!owner.erVirksomhed && owner.enhedsNummer) {
+          ownerEnhedsNumre.push(String(owner.enhedsNummer));
+        }
+      }
+    }
+
+    const fetchKey = [...uniqueCvrs, ...ownerEnhedsNumre].sort().join(',');
 
     /* Spring over hvis vi allerede henter for nøjagtigt dette sæt */
     if (ejendomFetchKeyRef.current === fetchKey) return;
     ejendomFetchKeyRef.current = fetchKey;
 
-    void fetchEjendommeProgressively(uniqueCvrs);
+    void fetchEjendommeProgressively(
+      uniqueCvrs,
+      ownerEnhedsNumre.length > 0 ? ownerEnhedsNumre : undefined
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aktivTab, cvr, relatedCompanies, fetchEjendommeProgressively]);
 
   /** Lazy-load regnskabstal for alle relaterede virksomheder (parallelt) */
@@ -1800,8 +1869,9 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                       ) : null;
                     })()}
 
-                  {/* Gruppeøkonomi — hidden, aktiveres senere */}
-                  {/* TODO: Genaktiver Gruppeøkonomi sektion */}
+                  {/* BIZZ-277: Gruppeøkonomi fjernet — data var sum af individuelle regnskaber,
+                      ikke konsolideret, og var derfor misvisende. Kan genaktiveres når
+                      konsoliderede regnskabsdata er tilgængelige. */}
                 </div>
               </div>
 
@@ -1883,30 +1953,6 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                 propertiesByCvr
               );
               return <DiagramForce graph={diagramGraph} lang={lang} />;
-            })()}
-
-          {/* ══ DIAGRAM (Simpelt — nyt) ══ */}
-          {aktivTab === 'diagram2' &&
-            (() => {
-              const propertiesByCvr =
-                ejendommeData.length > 0
-                  ? ejendommeData.reduce((map, p) => {
-                      const cvrNum = parseInt(p.ownerCvr, 10);
-                      if (!map.has(cvrNum)) map.set(cvrNum, []);
-                      map.get(cvrNum)!.push(p as DiagramPropertySummary);
-                      return map;
-                    }, new Map<number, DiagramPropertySummary[]>())
-                  : undefined;
-              const diagramGraph = buildDiagramGraph(
-                data.name,
-                data.vat,
-                data.companydesc ?? null,
-                ownerChainShared,
-                relatedCompanies,
-                data.industrydesc ?? null,
-                propertiesByCvr
-              );
-              return <DiagramSimple graph={diagramGraph} lang={lang} />;
             })()}
 
           {/* ══ EJENDOMME (inkl. ejendomshandler) ══ */}
@@ -3524,22 +3570,6 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
 
 // ─── AIArticleSearchPanel ─────────────────────────────────────────────────────
 
-/**
- * Synkroniserer token-forbrug til Supabase i baggrunden (fire-and-forget).
- *
- * @param tokensUsed - Antal forbrugte tokens
- */
-function syncTokenUsageToServer(tokensUsed: number) {
-  if (tokensUsed <= 0) return;
-  fetch('/api/subscription/track-tokens', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ tokensUsed }),
-  }).catch(() => {
-    /* stille fejl */
-  });
-}
-
 /** Et nyhedsresultat fra AI artikel søgning */
 interface AIArticleResult {
   title: string;
@@ -3789,7 +3819,8 @@ function AIArticleSearchPanel({
     if (total > 0) {
       setTokensUsedThisSearch(total);
       addTokenUsage(total);
-      syncTokenUsageToServer(total);
+      // Server already persists tokens — removed to prevent double-counting (BIZZ-343)
+      // syncTokenUsageToServer(total);
     }
   }, [
     anyLoading,
@@ -4923,6 +4954,7 @@ function RelationsDiagram({
       setChainLoading(false);
       onOwnerChainResolved?.(chain);
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.deltagere]);
 
   // ── Direkte ejere (fra chain eller fallback) ──

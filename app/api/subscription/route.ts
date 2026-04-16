@@ -174,39 +174,37 @@ export async function GET(): Promise<NextResponse> {
       (!providers.some((p) => ['azure', 'google', 'linkedin_oidc', 'github'].includes(p)) &&
         !!freshUser.user.email);
 
-    // Check if user has a verified TOTP factor (for 2FA banner)
+    // Check if user has a verified TOTP factor (for 2FA banner).
+    // Wrapped in a 3-second timeout so a slow/unreachable Supabase Auth API
+    // cannot block the entire subscription response (BIZZ-379).
     let hasMfa = false;
     if (isEmailUser) {
-      const { data: factorsData } = await (
-        admin as ReturnType<typeof import('@supabase/supabase-js').createClient>
-      )
-        .from('auth.mfa_factors')
-        .select('id')
-        .eq('user_id', user.id)
-        .eq('status', 'verified')
-        .limit(1);
-      hasMfa = Array.isArray(factorsData) && factorsData.length > 0;
-      if (!hasMfa) {
-        // Fallback: use admin MFA API
-        // mfa.listFactors is not typed in all SDK versions — use unknown cast
-        try {
-          const adminWithMfa = admin.auth.admin as unknown as {
-            mfa: {
-              listFactors: (params: { userId: string }) => Promise<{
-                data: { factors: Array<{ status: string; factor_type: string }> } | null;
-              }>;
-            };
-          };
-          const { data: mfaData } = await adminWithMfa.mfa.listFactors({
-            userId: user.id,
-          });
-          hasMfa = (mfaData?.factors ?? []).some(
-            (f: { status: string; factor_type: string }) =>
-              f.status === 'verified' && f.factor_type === 'totp'
-          );
-        } catch {
-          hasMfa = false;
-        }
+      try {
+        hasMfa = await Promise.race([
+          (async () => {
+            try {
+              const adminWithMfa = admin.auth.admin as unknown as {
+                mfa: {
+                  listFactors: (params: { userId: string }) => Promise<{
+                    data: { factors: Array<{ status: string; factor_type: string }> } | null;
+                  }>;
+                };
+              };
+              const { data: mfaData } = await adminWithMfa.mfa.listFactors({
+                userId: user.id,
+              });
+              return (mfaData?.factors ?? []).some(
+                (f: { status: string; factor_type: string }) =>
+                  f.status === 'verified' && f.factor_type === 'totp'
+              );
+            } catch {
+              return false;
+            }
+          })(),
+          new Promise<false>((resolve) => setTimeout(() => resolve(false), 3000)),
+        ]);
+      } catch {
+        hasMfa = false;
       }
     }
 

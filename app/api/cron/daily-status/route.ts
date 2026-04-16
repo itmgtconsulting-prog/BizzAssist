@@ -26,9 +26,11 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createAdminClient } from '@/lib/supabase/admin';
+import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
+import { checkAllCertificates, type CertExpiryInfo } from '@/app/lib/certExpiry';
+import { recordHeartbeat } from '@/app/lib/cronHeartbeat';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -51,11 +53,19 @@ interface StatusStats {
   aiChatCalls24h: number | null;
   /** Whether a simple DB ping query succeeded. */
   dbHealthy: boolean;
+  /** BIZZ-309: Whether Upstash Redis PING succeeded */
+  redisHealthy: boolean;
   /**
    * Sentry recent error count — placeholder until SENTRY_AUTH_TOKEN is
    * added to env and Sentry Issues API is wired up.
    */
   sentryErrors24h: 'N/A';
+  /** BIZZ-304: mTLS certificate expiry status */
+  certificates: CertExpiryInfo[];
+  /** BIZZ-307: AI tokens consumed in last 24h across all tenants */
+  aiTokens24h: number | null;
+  /** BIZZ-308: Database size in MB */
+  dbSizeMb: number | null;
 }
 
 /** Minimal shape of a row from public.tenants needed by this route. */
@@ -274,14 +284,70 @@ async function collectStats(since: Date): Promise<StatusStats> {
     countAiChatCalls(admin, sinceIso),
   ]);
 
+  // BIZZ-304: Check mTLS certificate expiry dates
+  const certificates = checkAllCertificates();
+
+  // BIZZ-307: AI token usage (last 24h across all tenants)
+  let aiTokens24h: number | null = null;
+  try {
+    const { data: tenants } = await admin.from('tenants').select('schema_name');
+    let totalTokens = 0;
+    for (const t of tenants ?? []) {
+      const { data: usage } = await tenantDb(t.schema_name)
+        .from('ai_token_usage')
+        .select('tokens_used')
+        .gte('created_at', sinceIso);
+      if (usage) {
+        for (const row of usage) totalTokens += row.tokens_used ?? 0;
+      }
+    }
+    aiTokens24h = totalTokens;
+  } catch {
+    /* non-fatal */
+  }
+
+  // BIZZ-308: Database size estimate
+  let dbSizeMb: number | null = null;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: sizeResult } = await (admin as any).rpc('pg_database_size', {
+      db_name: 'postgres',
+    });
+    if (typeof sizeResult === 'number') dbSizeMb = Math.round(sizeResult / 1024 / 1024);
+  } catch {
+    /* pg_database_size may not be available via RPC — non-fatal */
+  }
+
+  // BIZZ-309: Redis health check
+  let redisHealthy = true;
+  try {
+    const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
+    const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
+    if (redisUrl && redisToken) {
+      const r = await fetch(`${redisUrl}/ping`, {
+        headers: { Authorization: `Bearer ${redisToken}` },
+        signal: AbortSignal.timeout(3000),
+      });
+      if (!r.ok) redisHealthy = false;
+      else {
+        const d = await r.json();
+        if (d?.result !== 'PONG') redisHealthy = false;
+      }
+    }
+  } catch {
+    redisHealthy = false;
+  }
+
   return {
     tenantCount,
     newSignups24h,
     aiChatCalls24h,
     dbHealthy,
-    // Sentry integration placeholder — wire up when SENTRY_AUTH_TOKEN is available.
-    // See: https://docs.sentry.io/api/events/list-a-projects-issues/
+    redisHealthy,
     sentryErrors24h: 'N/A',
+    certificates,
+    aiTokens24h,
+    dbSizeMb,
   };
 }
 
@@ -395,11 +461,63 @@ function buildEmailHtml(stats: StatusStats, reportDate: Date): string {
     <!-- DB health -->
     <div style="margin-bottom: 28px;">
       <h3 style="margin: 0 0 12px 0; color: #94a3b8; font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 600;">Infrastruktur</h3>
-      <div style="display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; background: #1e293b; border-radius: 8px;">
+      <div style="display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; background: #1e293b; border-radius: 8px; margin-bottom: 8px;">
         <span style="color: #94a3b8; font-size: 13px;">Supabase DB (ping)</span>
         <span style="font-size: 13px; font-weight: 700; padding: 3px 10px; border-radius: 4px; background: ${stats.dbHealthy ? '#14532d' : '#450a0a'}; color: ${dbStatusColor};">${dbStatusText}</span>
       </div>
+      <!-- BIZZ-309: Redis health -->
+      <div style="display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; background: #1e293b; border-radius: 8px; margin-bottom: 8px;">
+        <span style="color: #94a3b8; font-size: 13px;">Upstash Redis (ping)</span>
+        <span style="font-size: 13px; font-weight: 700; padding: 3px 10px; border-radius: 4px; background: ${stats.redisHealthy ? '#14532d' : '#450a0a'}; color: ${stats.redisHealthy ? '#22c55e' : '#ef4444'};">${stats.redisHealthy ? 'OK' : 'FEJL'}</span>
+      </div>
+      ${
+        stats.aiTokens24h !== null
+          ? `
+      <!-- BIZZ-307: AI token usage -->
+      <div style="display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; background: #1e293b; border-radius: 8px; margin-bottom: 8px;">
+        <span style="color: #94a3b8; font-size: 13px;">AI tokens (24h)</span>
+        <span style="font-size: 13px; font-weight: 700; color: ${stats.aiTokens24h > 4000000 ? '#f59e0b' : '#22c55e'};">${stats.aiTokens24h.toLocaleString('da-DK')}</span>
+      </div>`
+          : ''
+      }
+      ${
+        stats.dbSizeMb !== null
+          ? `
+      <!-- BIZZ-308: DB size -->
+      <div style="display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; background: #1e293b; border-radius: 8px; margin-bottom: 8px;">
+        <span style="color: #94a3b8; font-size: 13px;">Database st&oslash;rrelse</span>
+        <span style="font-size: 13px; font-weight: 700; color: ${stats.dbSizeMb > 7000 ? '#ef4444' : stats.dbSizeMb > 5000 ? '#f59e0b' : '#22c55e'};">${stats.dbSizeMb.toLocaleString('da-DK')} MB</span>
+      </div>`
+          : ''
+      }
     </div>
+
+    <!-- BIZZ-304: Certificate expiry status -->
+    ${
+      stats.certificates.length > 0
+        ? `<div style="margin-bottom: 28px;">
+      <h3 style="margin: 0 0 12px 0; color: #94a3b8; font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 600;">Certifikater (mTLS)</h3>
+      ${stats.certificates
+        .map((c) => {
+          const color =
+            c.status === 'ok'
+              ? '#22c55e'
+              : c.status === 'warning'
+                ? '#f59e0b'
+                : c.status === 'critical' || c.status === 'expired'
+                  ? '#ef4444'
+                  : '#475569';
+          const label =
+            c.daysRemaining !== null ? `${c.daysRemaining} dage` : (c.error ?? 'Ukendt');
+          return `<div style="display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; background: #1e293b; border-radius: 8px; margin-bottom: 8px;">
+        <span style="color: #94a3b8; font-size: 13px;">${c.name}</span>
+        <span style="font-size: 13px; font-weight: 700; padding: 3px 10px; border-radius: 4px; background: ${color}22; color: ${color};">${label}</span>
+      </div>`;
+        })
+        .join('\n')}
+    </div>`
+        : ''
+    }
 
     <!-- Footer -->
     <hr style="border: none; border-top: 1px solid #1e293b; margin: 0 0 16px 0;" />
@@ -457,7 +575,7 @@ async function sendStatusEmail(html: string, subject: string): Promise<boolean> 
       return false;
     }
 
-    logger.log('[daily-status] Status report dispatched to', TO_ADDRESS);
+    logger.log('[daily-status] Status report dispatched');
     return true;
   } catch (err) {
     logger.error('[daily-status] Failed to send status email:', err);
@@ -501,6 +619,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   const html = buildEmailHtml(stats, now);
   const sent = await sendStatusEmail(html, subject);
+
+  // BIZZ-305: Record heartbeat for watchdog monitoring
+  recordHeartbeat('daily-status', sent ? 'success' : 'error', Date.now() - now.getTime(), 1440);
 
   return NextResponse.json({
     sent,

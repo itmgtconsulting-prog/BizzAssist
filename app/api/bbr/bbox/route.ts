@@ -15,10 +15,12 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import * as Sentry from '@sentry/nextjs';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
+import { parseQuery } from '@/app/lib/validate';
 
 const WFS_BASE = 'https://wfs.datafordeler.dk/BBR/BBR_WFS/1.0.0/WFS';
 const DF_API_KEY = process.env.DATAFORDELER_API_KEY ?? '';
@@ -41,18 +43,21 @@ export interface BBRTypePunkt {
  * @param request - NextRequest med w, s, e, n query params
  * @returns JSON array af BBRTypePunkt
  */
+/** Zod schema for BBR bbox query params */
+const bbrBboxSchema = z.object({
+  w: z.coerce.number(),
+  s: z.coerce.number(),
+  e: z.coerce.number(),
+  n: z.coerce.number(),
+});
+
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const auth = await resolveTenantId();
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  const { searchParams } = request.nextUrl;
-  const w = parseFloat(searchParams.get('w') ?? '');
-  const s = parseFloat(searchParams.get('s') ?? '');
-  const e = parseFloat(searchParams.get('e') ?? '');
-  const n = parseFloat(searchParams.get('n') ?? '');
 
-  if ([w, s, e, n].some(isNaN)) {
-    return NextResponse.json([], { status: 400 });
-  }
+  const parsed = parseQuery(request, bbrBboxSchema);
+  if (!parsed.success) return NextResponse.json([], { status: 400 });
+  const { w, s, e, n } = parsed.data;
 
   if (!DF_API_KEY) {
     return NextResponse.json([], {

@@ -30,7 +30,7 @@ export default function PrivacyPageClient() {
             {lang === 'da' ? 'Privatlivspolitik' : 'Privacy Policy'}
           </h1>
           <p className="text-slate-500 text-sm mb-10">
-            {lang === 'da' ? 'Sidst opdateret: 7. april 2026' : 'Last updated: April 7, 2026'}
+            {lang === 'da' ? 'Sidst opdateret: 15. april 2026' : 'Last updated: April 15, 2026'}
           </p>
 
           <div className="prose prose-invert prose-slate max-w-none space-y-8 text-slate-300 leading-relaxed">
@@ -145,6 +145,11 @@ function DanishPrivacy() {
           <li>
             <strong className="text-white">Twilio Inc.</strong> (USA) — SMS-beskeder. Overførsel
             sker på grundlag af standardkontraktbestemmelser (SCC).
+          </li>
+          <li>
+            <strong className="text-white">Mapbox Inc.</strong> (USA) — Kortvisning og
+            geodata-tjenester. Behandler: ejendomskoordinater, kortvisningsområde og IP-adresse.
+            Overførsel sker på grundlag af standardkontraktbestemmelser (SCC).
           </li>
         </ul>
         <p>
@@ -333,6 +338,11 @@ function EnglishPrivacy() {
           </li>
           <li>
             <strong className="text-white">Twilio Inc.</strong> (USA) — SMS messaging. Transfer is
+            based on Standard Contractual Clauses (SCC).
+          </li>
+          <li>
+            <strong className="text-white">Mapbox Inc.</strong> (USA) — Map display and geodata
+            services. Processes: property coordinates, map viewport and IP address. Transfer is
             based on Standard Contractual Clauses (SCC).
           </li>
         </ul>

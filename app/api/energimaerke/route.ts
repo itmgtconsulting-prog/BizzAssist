@@ -16,8 +16,15 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
+import { parseQuery } from '@/app/lib/validate';
+
+/** Zod schema for /api/energimaerke query parameters */
+const energimaerkeQuerySchema = z.object({
+  bfeNummer: z.string().regex(/^\d+$/),
+});
 
 const EMO_BASE = 'https://emoweb.dk/EMOData/EMOData.svc';
 
@@ -160,12 +167,12 @@ export async function GET(request: NextRequest): Promise<NextResponse<Energimaer
     return NextResponse.json({ error: 'Unauthorized' } as unknown as EnergimaerkeResponse, {
       status: 401,
     });
-  const { searchParams } = new URL(request.url);
-  const bfeNummer = searchParams.get('bfeNummer');
 
-  if (!bfeNummer) {
-    return NextResponse.json({ maerker: null, manglerAdgang: false, fejl: 'Mangler bfeNummer' });
-  }
+  // Validate query params with Zod schema
+  const parsed = parseQuery(request, energimaerkeQuerySchema);
+  if (!parsed.success) return parsed.response as NextResponse<EnergimaerkeResponse>;
+
+  const { bfeNummer } = parsed.data;
 
   if (!process.env.EMO_USERNAME || !process.env.EMO_PASSWORD) {
     return NextResponse.json({

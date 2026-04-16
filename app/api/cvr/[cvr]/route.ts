@@ -12,8 +12,12 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
+
+/** Zod schema for the [cvr] dynamic param — 8-digit string */
+const cvrParamSchema = z.object({ cvr: z.string().regex(/^\d{8}$/, 'CVR skal være 8 cifre') });
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -179,12 +183,12 @@ export async function GET(
 ): Promise<NextResponse> {
   const session = await resolveTenantId();
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  const { cvr } = await context.params;
-
-  // Valider: CVR skal være 8 cifre
-  if (!/^\d{8}$/.test(cvr)) {
+  const rawParams = await context.params;
+  const paramResult = cvrParamSchema.safeParse(rawParams);
+  if (!paramResult.success) {
     return NextResponse.json({ error: 'Ugyldigt CVR-nummer' }, { status: 400 });
   }
+  const { cvr } = paramResult.data;
 
   if (!CVR_ES_USER || !CVR_ES_PASS) {
     return NextResponse.json(

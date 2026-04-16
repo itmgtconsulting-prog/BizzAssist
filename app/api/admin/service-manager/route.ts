@@ -24,10 +24,20 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import type { ServiceManagerScan } from '@/lib/supabase/types';
 import { logger } from '@/app/lib/logger';
+import { parseBody } from '@/app/lib/validate';
+import { writeAuditLog } from '@/app/lib/auditLog';
+
+/** Zod schema for POST /api/admin/service-manager request body */
+const serviceManagerPostSchema = z
+  .object({
+    action: z.literal('scan'),
+  })
+  .passthrough();
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -180,10 +190,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    const body = await request.json();
-    if (body?.action !== 'scan') {
-      return NextResponse.json({ error: 'Ukendt action' }, { status: 400 });
-    }
+    const parsed = await parseBody(request, serviceManagerPostSchema);
+    if (!parsed.success) return parsed.response;
+    // action is guaranteed to be 'scan' by the schema
 
     // Create the scan record in state 'running'.
     const admin = createAdminClient();
@@ -204,6 +213,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       logger.error('[service-manager POST] insert error:', insertErr?.code ?? '[DB error]');
       return NextResponse.json({ error: 'Kunne ikke oprette scan' }, { status: 500 });
     }
+
+    // Audit: service scan created (fire-and-forget — ISO 27001 A.12.4)
+    void writeAuditLog({
+      action: 'service_scan_created',
+      resource_type: 'service_manager',
+      resource_id: scan.id,
+      metadata: JSON.stringify({ triggered_by: user.id, scan_type: 'manual' }),
+    });
 
     // Trigger the scan in the background — fire and forget.
     // The scan route updates the record when done.

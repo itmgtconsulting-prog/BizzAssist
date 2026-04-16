@@ -8,9 +8,16 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { resolveTenantId } from '@/lib/api/auth';
 import { getTenantContext } from '@/lib/db/tenant';
 import { logger } from '@/app/lib/logger';
+import { writeAuditLog } from '@/app/lib/auditLog';
+
+/** Zod schema for the conversation [id] route param. */
+const idParamSchema = z.object({
+  id: z.string().uuid('Ugyldigt samtale-id'),
+});
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -24,8 +31,12 @@ export async function GET(_request: NextRequest, { params }: RouteParams): Promi
   const auth = await resolveTenantId();
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { id } = await params;
-  if (!id) return NextResponse.json({ error: 'Manglende id' }, { status: 400 });
+  const rawParams = await params;
+  const paramResult = idParamSchema.safeParse(rawParams);
+  if (!paramResult.success) {
+    return NextResponse.json({ error: 'Ugyldigt samtale-id' }, { status: 400 });
+  }
+  const { id } = paramResult.data;
 
   try {
     const db = await getTenantContext(auth.tenantId);
@@ -53,12 +64,21 @@ export async function DELETE(
   const auth = await resolveTenantId();
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const { id } = await params;
-  if (!id) return NextResponse.json({ error: 'Manglende id' }, { status: 400 });
+  const rawParams = await params;
+  const paramResult = idParamSchema.safeParse(rawParams);
+  if (!paramResult.success) {
+    return NextResponse.json({ error: 'Ugyldigt samtale-id' }, { status: 400 });
+  }
+  const { id } = paramResult.data;
 
   try {
     const db = await getTenantContext(auth.tenantId);
     await db.aiConversations.delete(id);
+    writeAuditLog({
+      action: 'ai_conversation.delete',
+      resource_type: 'ai_conversation',
+      resource_id: id,
+    });
     return NextResponse.json({ ok: true });
   } catch (err) {
     logger.error('[ai/conversations/[id]] DELETE error:', err);

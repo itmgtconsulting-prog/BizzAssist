@@ -15,14 +15,23 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { logger } from '@/app/lib/logger';
+import { parseBody } from '@/app/lib/validate';
+
+/** Zod schema for PATCH /api/tenants/update request body */
+const tenantUpdateSchema = z
+  .object({
+    name: z.string().min(1),
+  })
+  .passthrough();
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 /** Expected PATCH request body */
-interface UpdateTenantBody {
+interface _UpdateTenantBody {
   name: string;
 }
 
@@ -82,14 +91,10 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
     );
   }
 
-  let body: UpdateTenantBody;
-  try {
-    body = (await request.json()) as UpdateTenantBody;
-  } catch {
-    return NextResponse.json({ error: 'Ugyldig request body' }, { status: 400 });
-  }
+  const parsed = await parseBody(request, tenantUpdateSchema);
+  if (!parsed.success) return parsed.response;
 
-  const name = body.name?.trim();
+  const name = parsed.data.name?.trim();
   if (!name || name.length < 2) {
     return NextResponse.json({ error: 'Virksomhedsnavn skal være mindst 2 tegn' }, { status: 422 });
   }

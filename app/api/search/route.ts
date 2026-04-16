@@ -206,12 +206,14 @@ async function searchAddresses(q: string, normQ: string): Promise<UnifiedSearchR
  */
 async function fetchCvrApi(
   param: string,
-  baseUrl: string
+  baseUrl: string,
+  cookieHeader: string = ''
 ): Promise<Record<string, unknown> | null> {
   try {
     // All requests go through internal proxy — handles SSL + caching
     const res = await fetch(`${baseUrl}/api/cvr-public?${param}`, {
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(10000),
+      headers: cookieHeader ? { cookie: cookieHeader } : {},
     });
     if (!res.ok) return null;
     const raw: Record<string, unknown> = await res.json();
@@ -276,14 +278,15 @@ function mapCompanyResult(
 async function searchCompanies(
   q: string,
   normQ: string,
-  baseUrl: string
+  baseUrl: string,
+  cookieHeader: string = ''
 ): Promise<UnifiedSearchResult[]> {
   try {
     const trimmed = q.trim();
     const isVat = /^\d{8}$/.test(trimmed);
 
     if (isVat) {
-      const raw = await fetchCvrApi(`vat=${trimmed}`, baseUrl);
+      const raw = await fetchCvrApi(`vat=${trimmed}`, baseUrl, cookieHeader);
       if (!raw) return [];
       const result = mapCompanyResult(raw, normQ, true);
       return result ? [result] : [];
@@ -292,6 +295,7 @@ async function searchCompanies(
     // Use /api/cvr-search for multi-result company search
     const res = await fetch(`${baseUrl}/api/cvr-search?q=${encodeURIComponent(trimmed)}`, {
       signal: AbortSignal.timeout(6000),
+      headers: cookieHeader ? { cookie: cookieHeader } : {},
     });
     if (!res.ok) return [];
 
@@ -346,11 +350,13 @@ async function searchCompanies(
 async function searchPeople(
   q: string,
   normQ: string,
-  baseUrl: string
+  baseUrl: string,
+  cookieHeader: string = ''
 ): Promise<UnifiedSearchResult[]> {
   try {
     const res = await fetch(`${baseUrl}/api/person-search?q=${encodeURIComponent(q.trim())}`, {
       signal: AbortSignal.timeout(6000),
+      headers: cookieHeader ? { cookie: cookieHeader } : {},
     });
     if (!res.ok) return [];
 
@@ -418,12 +424,14 @@ export async function GET(request: NextRequest) {
 
   // Derive base URL for internal API calls (works on localhost + Vercel)
   const baseUrl = `${request.nextUrl.protocol}//${request.nextUrl.host}`;
+  // BIZZ-318: Forward caller's cookies so internal API calls are authenticated
+  const cookieHeader = request.headers.get('cookie') ?? '';
 
   // Run all searches in parallel — each handles its own errors
   const [addresses, companies, people] = await Promise.all([
     searchAddresses(q, normQ),
-    searchCompanies(q, normQ, baseUrl),
-    searchPeople(q, normQ, baseUrl),
+    searchCompanies(q, normQ, baseUrl, cookieHeader),
+    searchPeople(q, normQ, baseUrl, cookieHeader),
   ]);
 
   // Group by type — max 5 per category, sorted by score within each group

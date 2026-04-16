@@ -54,10 +54,19 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import type { ServiceManagerFix, ServiceManagerActivity } from '@/lib/supabase/types';
 import { logger } from '@/app/lib/logger';
+import { parseBody } from '@/app/lib/validate';
+
+/** Zod schema for POST /api/admin/release-agent request body */
+const releaseAgentPostSchema = z
+  .object({
+    action: z.string().min(1),
+  })
+  .passthrough();
 
 /**
  * Returns the admin client for operations on service_manager tables.
@@ -805,12 +814,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // Resolve user ID — null for cron/internal calls, user UUID for admin calls
     const userId = caller.user?.id ?? null;
 
-    const body = await request.json();
-    const action = body?.action as string | undefined;
-
-    if (!action) {
-      return NextResponse.json({ error: 'action er påkrævet' }, { status: 400 });
-    }
+    const parsed = await parseBody(request, releaseAgentPostSchema);
+    if (!parsed.success) return parsed.response;
+    const body = parsed.data;
+    const action = body.action;
 
     switch (action) {
       // ── create-hotfix ───────────────────────────────────────────────────

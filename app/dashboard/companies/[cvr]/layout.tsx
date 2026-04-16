@@ -20,15 +20,40 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { cvr } = await params;
 
-  // Attempt to resolve the company name so link previews show a real name
-  // rather than just the CVR number.
+  // Resolve company name via Erhvervsstyrelsen CVR ES (system user) for OG meta.
+  // Replaces cvrapi.dk which has rate limits on the free tier.
   try {
-    const res = await fetch(`https://cvrapi.dk/api?search=${cvr}&country=dk`, {
-      headers: { 'User-Agent': 'BizzAssist/1.0' },
+    const cvrUser = process.env.CVR_ES_USER ?? '';
+    const cvrPass = process.env.CVR_ES_PASS ?? '';
+    const auth = Buffer.from(`${cvrUser}:${cvrPass}`).toString('base64');
+    const res = await fetch('http://distribution.virk.dk/cvr-permanent/virksomhed/_search', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Basic ${auth}`,
+      },
+      body: JSON.stringify({
+        query: { term: { 'Vrvirksomhed.cvrNummer': Number(cvr) } },
+        _source: ['Vrvirksomhed.navne'],
+        size: 1,
+      }),
       signal: AbortSignal.timeout(5000),
+      next: { revalidate: 3600 },
     });
-    const data = (await res.json()) as { name?: string };
-    const name = data?.name ?? `CVR ${cvr}`;
+    const data = (await res.json()) as {
+      hits?: {
+        hits?: Array<{
+          _source?: {
+            Vrvirksomhed?: {
+              navne?: Array<{ navn?: string; periode?: { gyldigTil?: string | null } }>;
+            };
+          };
+        }>;
+      };
+    };
+    const navne = data.hits?.hits?.[0]?._source?.Vrvirksomhed?.navne ?? [];
+    const aktivtNavn = navne.find((n) => n.periode?.gyldigTil == null) ?? navne[navne.length - 1];
+    const name = aktivtNavn?.navn ?? `CVR ${cvr}`;
     return {
       title: `${name} — BizzAssist`,
       description: `Virksomhedsdetaljer for ${name} (CVR: ${cvr}). Ejere, regnskaber, produktionsenheder og mere.`,

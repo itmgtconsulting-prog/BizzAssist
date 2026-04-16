@@ -10,14 +10,20 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import https from 'https';
-import fs from 'fs';
-import path from 'path';
+import { z } from 'zod';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
+import { tlFetch as tlFetchShared } from '@/app/lib/tlFetch';
+import { parseQuery } from '@/app/lib/validate';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
+
+const CERT_PATH =
+  process.env.TINGLYSNING_CERT_PATH ?? process.env.NEMLOGIN_DEVTEST4_CERT_PATH ?? '';
+const CERT_B64 = process.env.TINGLYSNING_CERT_B64 ?? process.env.NEMLOGIN_DEVTEST4_CERT_B64 ?? '';
+const CERT_PASSWORD =
+  process.env.TINGLYSNING_CERT_PASSWORD ?? process.env.NEMLOGIN_DEVTEST4_CERT_PASSWORD ?? '';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -77,108 +83,19 @@ export interface PersonbogData {
 
 // ─── Config ─────────────────────────────────────────────────────────────────
 
-const CERT_PATH =
-  process.env.TINGLYSNING_CERT_PATH ?? process.env.NEMLOGIN_DEVTEST4_CERT_PATH ?? '';
-const CERT_PASSWORD =
-  process.env.TINGLYSNING_CERT_PASSWORD ?? process.env.NEMLOGIN_DEVTEST4_CERT_PASSWORD ?? '';
-const CERT_B64 = process.env.TINGLYSNING_CERT_B64 ?? process.env.NEMLOGIN_DEVTEST4_CERT_B64 ?? '';
-const TL_BASE = process.env.TINGLYSNING_BASE_URL ?? 'https://test.tinglysning.dk';
-
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 /**
- * Laver HTTPS request med client-certifikat (mTLS).
  * Personbogen bruger /tinglysning/unsecuressl/ prefix — ikke /tinglysning/ssl/.
  * Se http_api_beskrivelse v1.12, afsnit 4.4.
- *
- * @param urlPath - Sti relativt til /tinglysning/unsecuressl/ (f.eks. '/soegpersonbogcvr?cvr=...')
  */
 function tlFetch(urlPath: string): Promise<{ status: number; body: string }> {
-  return new Promise((resolve, reject) => {
-    let pfx: Buffer;
-    if (CERT_B64) {
-      pfx = Buffer.from(CERT_B64, 'base64');
-    } else {
-      const certAbsPath = path.resolve(/*turbopackIgnore: true*/ CERT_PATH);
-      if (!fs.existsSync(certAbsPath)) {
-        reject(new Error('Certifikat ikke fundet'));
-        return;
-      }
-      pfx = fs.readFileSync(certAbsPath);
-    }
-    const url = new URL(TL_BASE + '/tinglysning/unsecuressl' + urlPath);
-
-    const req = https.request(
-      {
-        hostname: url.hostname,
-        port: 443,
-        path: url.pathname + url.search,
-        method: 'GET',
-        pfx,
-        passphrase: CERT_PASSWORD,
-        rejectUnauthorized: false,
-        timeout: 55000, // Turbopack dev + test mTLS
-        headers: { Accept: 'application/json, application/xml, */*' },
-      },
-      (res) => {
-        let body = '';
-        res.on('data', (d) => (body += d));
-        res.on('end', () => resolve({ status: res.statusCode ?? 500, body }));
-      }
-    );
-    req.on('error', reject);
-    req.on('timeout', () => {
-      req.destroy();
-      reject(new Error('Timeout'));
-    });
-    req.end();
-  });
+  return tlFetchShared(urlPath, { apiPath: '/tinglysning/unsecuressl' });
 }
 
-/**
- * Laver HTTPS request via /tinglysning/ssl/ prefix — bruges til dokument-opslag
- * (dokaktuel bruger ssl-stien ligesom ejendomssiden).
- */
+/** SSL-variant for dokument-opslag (dokaktuel) */
 function tlFetchSsl(urlPath: string): Promise<{ status: number; body: string }> {
-  return new Promise((resolve, reject) => {
-    let pfx: Buffer;
-    if (CERT_B64) {
-      pfx = Buffer.from(CERT_B64, 'base64');
-    } else {
-      const certAbsPath = path.resolve(/*turbopackIgnore: true*/ CERT_PATH);
-      if (!fs.existsSync(certAbsPath)) {
-        reject(new Error('Certifikat ikke fundet'));
-        return;
-      }
-      pfx = fs.readFileSync(certAbsPath);
-    }
-    const url = new URL(TL_BASE + '/tinglysning/ssl' + urlPath);
-
-    const req = https.request(
-      {
-        hostname: url.hostname,
-        port: 443,
-        path: url.pathname + url.search,
-        method: 'GET',
-        pfx,
-        passphrase: CERT_PASSWORD,
-        rejectUnauthorized: false,
-        timeout: 55000, // Turbopack dev + test mTLS
-        headers: { Accept: 'application/xml, */*' },
-      },
-      (res) => {
-        let body = '';
-        res.on('data', (d) => (body += d));
-        res.on('end', () => resolve({ status: res.statusCode ?? 500, body }));
-      }
-    );
-    req.on('error', reject);
-    req.on('timeout', () => {
-      req.destroy();
-      reject(new Error('Timeout'));
-    });
-    req.end();
-  });
+  return tlFetchShared(urlPath, { accept: 'application/xml, */*' });
 }
 
 // ─── XML Parsers ────────────────────────────────────────────────────────────
@@ -360,11 +277,16 @@ function normalizeType(raw: string): string {
 export async function GET(req: NextRequest) {
   const auth = await resolveTenantId();
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  const cvr = req.nextUrl.searchParams.get('cvr');
+  /** Zod schema for personbog query params */
+  const personbogSchema = z.object({
+    cvr: z.string().regex(/^\d{8}$/, 'cvr parameter er påkrævet (8 cifre)'),
+  });
 
-  if (!cvr || !/^\d{8}$/.test(cvr)) {
+  const parsed = parseQuery(req, personbogSchema);
+  if (!parsed.success) {
     return NextResponse.json({ error: 'cvr parameter er påkrævet (8 cifre)' }, { status: 400 });
   }
+  const { cvr } = parsed.data;
 
   if ((!CERT_PATH && !CERT_B64) || !CERT_PASSWORD) {
     return NextResponse.json({

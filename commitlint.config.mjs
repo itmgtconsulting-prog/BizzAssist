@@ -20,7 +20,7 @@
  *   ci       - CI/CD pipeline changes
  */
 
-export default {
+const config = {
   extends: ['@commitlint/config-conventional'],
   rules: {
     'type-enum': [
@@ -34,3 +34,5 @@ export default {
     'scope-case': [2, 'always', 'lower-case'],
   },
 };
+
+export default config;

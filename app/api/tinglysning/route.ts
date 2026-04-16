@@ -13,15 +13,15 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import * as Sentry from '@sentry/nextjs';
 import { checkRateLimit, heavyRateLimit } from '@/app/lib/rateLimit';
 import { resolveTenantId } from '@/lib/api/auth';
+import { parseQuery } from '@/app/lib/validate';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
-import https from 'https';
-import fs from 'fs';
-import path from 'path';
+import { tlFetch } from '@/app/lib/tlFetch';
 import { logger } from '@/app/lib/logger';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -55,67 +55,7 @@ export interface TinglysningData {
   kommuneNummer: string | null;
 }
 
-// ─── Config ─────────────────────────────────────────────────────────────────
-
-/** Cert path + password fra env — brug TINGLYSNING_CERT_* for produktion, NEMLOGIN_DEVTEST4_CERT_* for test */
-const CERT_PATH =
-  process.env.TINGLYSNING_CERT_PATH ?? process.env.NEMLOGIN_DEVTEST4_CERT_PATH ?? '';
-const CERT_PASSWORD =
-  process.env.TINGLYSNING_CERT_PASSWORD ?? process.env.NEMLOGIN_DEVTEST4_CERT_PASSWORD ?? '';
-/** Base64-encodet certifikat — bruges i serverless (Vercel) hvor filsystemet ikke er tilgængeligt */
-const CERT_B64 = process.env.TINGLYSNING_CERT_B64 ?? process.env.NEMLOGIN_DEVTEST4_CERT_B64 ?? '';
-
-/** Base URL — test vs prod */
-const TL_BASE = process.env.TINGLYSNING_BASE_URL ?? 'https://test.tinglysning.dk';
-const TL_API_PATH = '/tinglysning/ssl';
-
 // ─── Helpers ────────────────────────────────────────────────────────────────
-
-/** Laver HTTPS request med client-certifikat (mTLS) */
-function tlFetch(urlPath: string): Promise<{ status: number; body: string }> {
-  return new Promise((resolve, reject) => {
-    let pfx: Buffer;
-    if (CERT_B64) {
-      pfx = Buffer.from(CERT_B64, 'base64');
-    } else {
-      const certAbsPath = path.resolve(CERT_PATH);
-      if (!fs.existsSync(certAbsPath)) {
-        reject(new Error('Certifikat ikke fundet: ' + certAbsPath));
-        return;
-      }
-      pfx = fs.readFileSync(certAbsPath);
-    }
-    const url = new URL(TL_BASE + TL_API_PATH + urlPath);
-
-    const req = https.request(
-      {
-        hostname: url.hostname,
-        port: 443,
-        path: url.pathname + url.search,
-        method: 'GET',
-        pfx,
-        passphrase: CERT_PASSWORD,
-        rejectUnauthorized: false,
-        // Turbopack dev + test.tinglysning.dk mTLS kan tage 30s+.
-        // Prod er hurtigere. maxDuration=60 på route-niveau.
-        timeout: 55000,
-        headers: { Accept: 'application/json, application/xml, */*' },
-      },
-      (res) => {
-        let body = '';
-        res.on('data', (d) => (body += d));
-        res.on('end', () => resolve({ status: res.statusCode ?? 500, body }));
-      }
-    );
-
-    req.on('error', reject);
-    req.on('timeout', () => {
-      req.destroy();
-      reject(new Error('Timeout'));
-    });
-    req.end();
-  });
-}
 
 /** Parser XML-respons fra ejdsummarisk og udtrækker nøgledata */
 function parseEjdsummariskXml(xml: string): Partial<TinglysningData> {
@@ -160,13 +100,29 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const bfe = req.nextUrl.searchParams.get('bfe');
+  /** Zod schema for tinglysning query params */
+  const tinglysningSchema = z.object({
+    bfe: z.string().regex(/^\d+$/, 'bfe parameter er påkrævet (numerisk)'),
+  });
 
-  if (!bfe || !/^\d+$/.test(bfe)) {
+  const parsed = parseQuery(req, tinglysningSchema);
+  if (!parsed.success) {
     return NextResponse.json({ error: 'bfe parameter er påkrævet (numerisk)' }, { status: 400 });
   }
+  const { bfe } = parsed.data;
 
-  if ((!CERT_PATH && !CERT_B64) || !CERT_PASSWORD) {
+  const hasCert = !!(
+    process.env.TINGLYSNING_CERT_PATH ||
+    process.env.NEMLOGIN_DEVTEST4_CERT_PATH ||
+    process.env.TINGLYSNING_CERT_B64 ||
+    process.env.NEMLOGIN_DEVTEST4_CERT_B64
+  );
+  const hasProxy = !!process.env.DF_PROXY_URL;
+  const hasPassword = !!(
+    process.env.TINGLYSNING_CERT_PASSWORD || process.env.NEMLOGIN_DEVTEST4_CERT_PASSWORD
+  );
+
+  if (!hasProxy && (!hasCert || !hasPassword)) {
     return NextResponse.json(
       { error: 'Tinglysning certifikat ikke konfigureret' },
       { status: 503 }
@@ -188,7 +144,7 @@ export async function GET(req: NextRequest) {
      * bruger vi et kendt test-BFE (100165718) så UI'et kan vises med rigtige data.
      * Fjernes når TINGLYSNING_BASE_URL skiftes til prod.
      */
-    const erTestMiljoe = TL_BASE.includes('test.tinglysning.dk');
+    const erTestMiljoe = (process.env.TINGLYSNING_BASE_URL ?? '').includes('test.tinglysning.dk');
     let erTestFallback = false;
     if (items.length === 0 && erTestMiljoe) {
       const TEST_BFE = '100165718';

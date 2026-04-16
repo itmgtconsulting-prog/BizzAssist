@@ -13,6 +13,7 @@
 import { useState, useRef, useEffect, useCallback, memo } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { Send, Bot, Sparkles, Square, Maximize2, X, Plus } from 'lucide-react';
+import MarkdownContent from '@/app/components/MarkdownContent';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';
 import { resolvePlan, isSubscriptionFunctional, formatTokens } from '@/app/lib/subscriptions';
@@ -35,50 +36,6 @@ interface Message {
 /** Højde når panelet er lukket (kun header synlig) */
 
 // ─── Token usage tracking ────────────────────────────────────────────────────
-
-/**
- * Retry a fetch-like function with exponential backoff.
- * Silently gives up after maxRetries attempts — never throws.
- * Handles both network errors and non-ok HTTP responses.
- *
- * @param fn - Async factory that performs one fetch attempt and returns a Response
- * @param maxRetries - Maximum number of attempts (default 3 → delays: 1s, 2s, 4s)
- */
-async function syncWithRetry(fn: () => Promise<Response>, maxRetries = 3): Promise<void> {
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    try {
-      const res = await fn();
-      if (res.ok) return; // success — stop retrying
-    } catch {
-      // Network error — fall through to backoff
-      if (attempt === maxRetries - 1) return; // Silently fail on last attempt
-    }
-    // Exponential backoff: 1s, 2s, 4s
-    await new Promise((resolve) => setTimeout(resolve, 1000 * Math.pow(2, attempt)));
-  }
-}
-
-/**
- * Sync token usage to Supabase in background (fire-and-forget).
- * Uses exponential backoff (1s → 2s → 4s) with up to 3 attempts.
- * Failures are silent — billing accuracy is best-effort; in-memory
- * state is always updated immediately via SubscriptionContext.addTokenUsage().
- *
- * @param tokensUsed - Number of tokens consumed in this request
- */
-function syncTokenUsageToServer(tokensUsed: number) {
-  if (tokensUsed <= 0) return;
-
-  // Fire-and-forget: intentionally not awaited so the UI is never blocked.
-  // syncWithRetry swallows all errors after maxRetries is exhausted.
-  syncWithRetry(() =>
-    fetch('/api/subscription/track-tokens', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tokensUsed }),
-    })
-  );
-}
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
@@ -174,13 +131,14 @@ function AIChatPanel() {
     return () => clearTimeout(timerId);
   }, []);
 
-  /** BIZZ-228: Navigate to full-page chat instead of opening portal modal */
+  /** BIZZ-222: Navigate to full-page chat with current conversation */
   const openFullPageChat = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
-      router.push('/dashboard/chat');
+      const convId = chatCtx.activeId;
+      router.push(convId ? `/dashboard/chat?conversationId=${convId}` : '/dashboard/chat');
     },
-    [router]
+    [router, chatCtx.activeId]
   );
 
   /** Stop streaming */
@@ -439,7 +397,8 @@ function AIChatPanel() {
                 }
               } else if (parsed.usage) {
                 addTokenUsage(parsed.usage.totalTokens);
-                syncTokenUsageToServer(parsed.usage.totalTokens);
+                // Server already persists tokens — removed to prevent double-counting (BIZZ-343)
+                // syncTokenUsageToServer(parsed.usage.totalTokens);
               } else if (parsed.status) {
                 if (isActive) {
                   setToolStatus(parsed.status);
@@ -506,6 +465,7 @@ function AIChatPanel() {
       abortRef.current = null;
       refreshTokenInfo();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     input,
     isLoading,
@@ -679,13 +639,18 @@ function AIChatPanel() {
                     className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
                   >
                     <div
-                      className={`max-w-[88%] rounded-xl px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap ${
+                      className={`max-w-[88%] rounded-xl px-3 py-2 text-xs leading-relaxed ${
                         msg.role === 'user'
-                          ? 'bg-blue-600 text-white'
+                          ? 'bg-blue-600 text-white whitespace-pre-wrap'
                           : 'bg-slate-800/80 text-slate-300 border border-slate-700/40'
                       }`}
                     >
-                      {msg.content}
+                      {/* BIZZ-223: Use MarkdownContent for assistant, plain text for user */}
+                      {msg.role === 'assistant' ? (
+                        <MarkdownContent text={msg.content} />
+                      ) : (
+                        msg.content
+                      )}
                     </div>
                   </div>
                 ))}
@@ -693,8 +658,8 @@ function AIChatPanel() {
                 {/* Live streaming-tekst */}
                 {streamText && (
                   <div className="flex justify-start">
-                    <div className="max-w-[88%] rounded-xl px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap bg-slate-800/80 text-slate-300 border border-slate-700/40">
-                      {streamText}
+                    <div className="max-w-[88%] rounded-xl px-3 py-2 text-xs leading-relaxed bg-slate-800/80 text-slate-300 border border-slate-700/40">
+                      <MarkdownContent text={streamText} />
                       <span className="inline-block w-1.5 h-3.5 bg-blue-400/70 ml-0.5 animate-pulse rounded-sm" />
                     </div>
                   </div>

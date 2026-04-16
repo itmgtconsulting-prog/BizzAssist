@@ -10,9 +10,21 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { darHentJordstykke } from '@/app/lib/dar';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
+
+/** Zod schema for BFE-baseret opslag */
+const bfeQuerySchema = z.object({
+  bfe: z.string().regex(/^\d{1,10}$/, 'BFE skal være et positivt heltal (max 10 cifre)'),
+});
+
+/** Zod schema for koordinatbaseret opslag */
+const coordQuerySchema = z.object({
+  lng: z.coerce.number(),
+  lat: z.coerce.number(),
+});
 
 export async function GET(request: NextRequest) {
   const auth = await resolveTenantId();
@@ -21,8 +33,8 @@ export async function GET(request: NextRequest) {
 
   // BFE-baseret opslag — returnerer jordstykke + første adgangsadresse-UUID
   if (bfe) {
-    // Validate BFE is a positive integer to prevent SSRF via query param injection
-    if (!/^\d{1,10}$/.test(bfe)) {
+    const bfeParsed = bfeQuerySchema.safeParse({ bfe });
+    if (!bfeParsed.success) {
       return NextResponse.json(null, { status: 400 });
     }
     try {
@@ -68,12 +80,15 @@ export async function GET(request: NextRequest) {
   }
 
   // Koordinatbaseret opslag
-  const lng = parseFloat(request.nextUrl.searchParams.get('lng') ?? '');
-  const lat = parseFloat(request.nextUrl.searchParams.get('lat') ?? '');
+  const coordParsed = coordQuerySchema.safeParse({
+    lng: request.nextUrl.searchParams.get('lng') ?? '',
+    lat: request.nextUrl.searchParams.get('lat') ?? '',
+  });
 
-  if (isNaN(lng) || isNaN(lat)) {
+  if (!coordParsed.success) {
     return NextResponse.json(null, { status: 400 });
   }
+  const { lng, lat } = coordParsed.data;
 
   try {
     const jordstykke = await darHentJordstykke(lng, lat);

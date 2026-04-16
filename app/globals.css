@@ -48,6 +48,22 @@ body {
   border-radius: 4px;
 }
 
+/* Progress bar animation for tab loading indicators */
+@keyframes progress {
+  0% {
+    width: 0%;
+    margin-left: 0;
+  }
+  50% {
+    width: 60%;
+    margin-left: 20%;
+  }
+  100% {
+    width: 0%;
+    margin-left: 100%;
+  }
+}
+
 /* Hide scrollbar for tab bars and horizontal scroll areas */
 .scrollbar-hide {
   -ms-overflow-style: none;

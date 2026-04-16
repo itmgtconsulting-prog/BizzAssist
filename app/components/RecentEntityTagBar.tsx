@@ -35,21 +35,21 @@ const TYPE_CONFIG: Record<
     bg: 'bg-emerald-950/60',
     border: 'border-emerald-700/40',
     text: 'text-emerald-300',
-    icon: <Building2 size={10} />,
+    icon: <Building2 size={8} />,
     rowLabel: 'Ejendomme',
   },
   company: {
     bg: 'bg-blue-950/60',
     border: 'border-blue-700/40',
     text: 'text-blue-300',
-    icon: <Briefcase size={10} />,
+    icon: <Briefcase size={8} />,
     rowLabel: 'Virksomheder',
   },
   person: {
     bg: 'bg-purple-950/60',
     border: 'border-purple-700/40',
     text: 'text-purple-300',
-    icon: <User size={10} />,
+    icon: <User size={8} />,
     rowLabel: 'Personer',
   },
 };
@@ -230,26 +230,26 @@ const RecentEntityTagBar = React.memo(function RecentEntityTagBar({
     return (
       <div
         key={tag.key}
-        className={`flex items-center gap-1 ${cfg.bg} border ${
+        className={`flex items-center gap-0.5 ${cfg.bg} border ${
           isCurrent ? cfg.text.replace('text-', 'border-') : cfg.border
-        } rounded-full pl-2 pr-1 py-0.5 shrink-0 ${
+        } rounded-full pl-1.5 pr-0.5 py-px shrink-0 ${
           isCurrent ? 'ring-1 ring-current opacity-100' : 'opacity-80 hover:opacity-100'
         } transition-opacity`}
       >
         <Link
           href={tag.href}
-          className={`flex items-center gap-1 ${cfg.text} text-[11px] font-medium transition-opacity max-w-[160px]`}
+          className={`flex items-center gap-0.5 ${cfg.text} text-[9px] leading-tight font-medium transition-opacity max-w-[120px]`}
           title={tag.label}
         >
-          <span>{cfg.icon}</span>
+          <span className="shrink-0">{cfg.icon}</span>
           <span className="truncate">{tag.label}</span>
         </Link>
         <button
           onClick={() => dismiss(tag.key)}
-          className={`ml-0.5 ${cfg.text} opacity-40 hover:opacity-100 transition-opacity rounded-full p-0.5`}
+          className={`ml-0.5 ${cfg.text} opacity-40 hover:opacity-100 transition-opacity rounded-full p-px`}
           aria-label={`Fjern ${cfg.rowLabel ?? tag.type} tag`}
         >
-          <X size={9} />
+          <X size={7} />
         </button>
       </div>
     );
@@ -286,7 +286,7 @@ const RecentEntityTagBar = React.memo(function RecentEntityTagBar({
         return (
           <div
             key={type}
-            className="flex items-center gap-2 px-4 py-1 border-b border-white/[0.03] last:border-b-0 overflow-x-auto scrollbar-hide"
+            className="flex items-center gap-1.5 px-4 py-0.5 border-b border-white/[0.03] last:border-b-0 overflow-x-auto scrollbar-hide"
           >
             {/* Row label — hidden on very small screens */}
             <span

@@ -110,30 +110,30 @@ describe('PropertyOwnerCard', () => {
     expect(screen.getByText('Ejerlejlighed')).toBeInTheDocument();
   });
 
-  it('renders "Se ejendomsdetaljer" link (DA) when dawaId is set', () => {
+  it('renders "Se detaljer" link (DA) when dawaId is set', () => {
     render(<PropertyOwnerCard ejendom={baseEjendom} lang="da" />);
-    expect(screen.getByText('Se ejendomsdetaljer')).toBeInTheDocument();
+    expect(screen.getByText('Se detaljer')).toBeInTheDocument();
   });
 
-  it('renders "View property details" link (EN) when dawaId is set', () => {
+  it('renders "View details" link (EN) when dawaId is set', () => {
     render(<PropertyOwnerCard ejendom={baseEjendom} lang="en" />);
-    expect(screen.getByText('View property details')).toBeInTheDocument();
+    expect(screen.getByText('View details')).toBeInTheDocument();
   });
 
-  it('"Se ejendomsdetaljer" link points to /dashboard/ejendomme/{dawaId}', () => {
+  it('"Se detaljer" link points to /dashboard/ejendomme/{dawaId}', () => {
     render(<PropertyOwnerCard ejendom={baseEjendom} lang="da" />);
-    const link = screen.getByText('Se ejendomsdetaljer').closest('a');
+    const link = screen.getByText('Se detaljer').closest('a');
     expect(link).toHaveAttribute('href', `/dashboard/ejendomme/${baseEjendom.dawaId}`);
   });
 
   it('renders no-detail fallback message when dawaId is null', () => {
     render(<PropertyOwnerCard ejendom={ejendomNoDawaId} lang="da" />);
-    expect(screen.getByText(/Ingen detaljeside/)).toBeInTheDocument();
+    expect(screen.getByText(/DAWA-id mangler/)).toBeInTheDocument();
   });
 
   it('renders no-detail fallback in English when lang=en and dawaId is null', () => {
     render(<PropertyOwnerCard ejendom={ejendomNoDawaId} lang="en" />);
-    expect(screen.getByText(/No detail page/)).toBeInTheDocument();
+    expect(screen.getByText(/DAWA id missing/)).toBeInTheDocument();
   });
 
   it('does NOT render ejer-CVR section when showOwner is false (default)', () => {

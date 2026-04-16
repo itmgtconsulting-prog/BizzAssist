@@ -55,6 +55,7 @@ import { useSubscription } from '@/app/context/SubscriptionContext';
 import { useSubscriptionAccess } from '@/app/components/SubscriptionGate';
 import { resolvePlan, formatTokens, isSubscriptionFunctional } from '@/app/lib/subscriptions';
 import SektionLoader from '@/app/components/SektionLoader';
+import TabLoadingSpinner from '@/app/components/TabLoadingSpinner';
 
 const DiagramForce = dynamic(() => import('@/app/components/diagrams/DiagramForce'), {
   ssr: false,
@@ -2010,6 +2011,7 @@ export default function PersonDetailPageClient({
           {/* ══ EJENDOMME ══ */}
           {aktivTab === 'properties' && (
             <div className="space-y-4">
+              {(ejendommeLoading || ejendommeLoadingMore) && <TabLoadingSpinner />}
               {/* BIZZ-399: Filter chips — Alle / Ejendomme / Ejendomshandler */}
               <div className="flex flex-wrap gap-2">
                 <button
@@ -2224,15 +2226,18 @@ export default function PersonDetailPageClient({
 
           {/* ══ GRUPPE ══ */}
           {aktivTab === 'group' && (
-            <GroupTab
-              data={data}
-              ejerVirksomheder={topLevelEjer}
-              andreVirksomheder={andreVirksomheder}
-              relatedCompanies={relatedCompanies}
-              relatedLoading={relatedLoading}
-              noeglePersonerMap={noeglePersonerMap}
-              lang={lang}
-            />
+            <>
+              {relatedLoading && <TabLoadingSpinner />}
+              <GroupTab
+                data={data}
+                ejerVirksomheder={topLevelEjer}
+                andreVirksomheder={andreVirksomheder}
+                relatedCompanies={relatedCompanies}
+                relatedLoading={relatedLoading}
+                noeglePersonerMap={noeglePersonerMap}
+                lang={lang}
+              />
+            </>
           )}
 
           {/* ══ KRONOLOGI ══ */}
@@ -2240,19 +2245,22 @@ export default function PersonDetailPageClient({
 
           {/* ══ TINGLYSNING (PERSONBOG VIA VIRKSOMHEDER) ══ */}
           {aktivTab === 'liens' && (
-            <PersonTinglysningTab
-              personbogMap={personbogMap}
-              loading={personbogLoading}
-              fejl={personbogFejl}
-              // BIZZ-339: Ingen CVR at slå op — e-TL personbog API kræver CVR-nummer
-              ingenVirksomheder={!personbogLoading && (data?.virksomheder.length ?? 0) === 0}
-              c={c}
-              da={lang === 'da'}
-              expandedPant={expandedPant}
-              setExpandedPant={setExpandedPant}
-              selectedPantDocs={selectedPantDocs}
-              setSelectedPantDocs={setSelectedPantDocs}
-            />
+            <>
+              {personbogLoading && <TabLoadingSpinner />}
+              <PersonTinglysningTab
+                personbogMap={personbogMap}
+                loading={personbogLoading}
+                fejl={personbogFejl}
+                // BIZZ-339: Ingen CVR at slå op — e-TL personbog API kræver CVR-nummer
+                ingenVirksomheder={!personbogLoading && (data?.virksomheder.length ?? 0) === 0}
+                c={c}
+                da={lang === 'da'}
+                expandedPant={expandedPant}
+                setExpandedPant={setExpandedPant}
+                selectedPantDocs={selectedPantDocs}
+                setSelectedPantDocs={setSelectedPantDocs}
+              />
+            </>
           )}
         </div>
       </div>

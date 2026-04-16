@@ -498,6 +498,13 @@ export default function SettingsPageClient() {
     setIsAdmin(ctxIsAdmin);
   }, [ctxSub, ctxIsAdmin]);
 
+  /** Auto-redirect unpaid users to subscription tab unless a specific tab was requested */
+  useEffect(() => {
+    if (ctxSub && !ctxSub.isPaid && !tabParam) {
+      setTab('abonnement');
+    }
+  }, [ctxSub, tabParam]);
+
   /** Stripe billing details (next payment, card, cancellation) */
   const [billing, setBilling] = useState<{
     nextPaymentDate: string | null;

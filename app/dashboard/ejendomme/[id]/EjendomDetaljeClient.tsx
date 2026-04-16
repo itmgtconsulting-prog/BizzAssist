@@ -4958,9 +4958,9 @@ export default function EjendomDetaljeClient({
   return (
     <div className={`flex-1 flex flex-col overflow-hidden${trækker ? ' select-none' : ''}`}>
       {/* ─── Header ─── */}
-      <div className="px-6 pt-5 pb-0 border-b border-slate-700/50 bg-slate-900/30">
+      <div className="px-6 pt-3 pb-0 border-b border-slate-700/50 bg-slate-900/30">
         {/* Tilbage + handlinger */}
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-2">
           <button
             onClick={() => router.back()}
             className="flex items-center gap-2 text-slate-400 hover:text-white text-sm transition-colors"
@@ -5050,8 +5050,8 @@ export default function EjendomDetaljeClient({
         </div>
 
         {/* Adresse + meta */}
-        <div className="mb-3">
-          <h1 className="text-white text-xl font-bold">
+        <div className="mb-2">
+          <h1 className="text-white text-lg font-bold leading-tight">
             {ejendom.adresse}, {ejendom.postnummer} {ejendom.by}
           </h1>
           <div className="flex items-center gap-3 mt-1 text-slate-400 text-xs">
@@ -5059,7 +5059,7 @@ export default function EjendomDetaljeClient({
             <span>·</span>
             <span>ESR: {ejendom.esr}</span>
           </div>
-          <div className="flex items-center gap-2 mt-2 flex-wrap">
+          <div className="flex items-center gap-2 mt-1 flex-wrap">
             <span className="flex items-center gap-1 px-2 py-0.5 bg-slate-800 border border-slate-700/50 rounded-full text-xs text-slate-300">
               <MapPin size={11} />
               {ejendom.kommune}

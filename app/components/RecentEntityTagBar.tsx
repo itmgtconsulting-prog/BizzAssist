@@ -257,14 +257,16 @@ const RecentEntityTagBar = React.memo(function RecentEntityTagBar({
 
   // ---- inline variant: flat one-row list (legacy/compact usage) ----
   if (variant === 'inline') {
-    // Show at most one tag per type to keep topbar compact
-    const seenTypes = new Set<RecentTag['type']>();
-    const inlineTags = visibleTags.filter((t) => {
-      if (seenTypes.has(t.type)) return false;
-      seenTypes.add(t.type);
-      return true;
-    });
-    return <div className="flex items-center gap-1.5">{inlineTags.map(renderTag)}</div>;
+    // BIZZ-434: Show up to 3 tags per type in inline mode, grouped by type
+    const ORDER: RecentTag['type'][] = ['property', 'company', 'person'];
+    const inlineTags = ORDER.flatMap((type) =>
+      visibleTags.filter((t) => t.type === type).slice(0, 3)
+    );
+    return (
+      <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-hide">
+        {inlineTags.map(renderTag)}
+      </div>
+    );
   }
 
   // ---- bar variant: 3 rows, one per entity type ----

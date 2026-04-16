@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createClient } from '@supabase/supabase-js';
 import { parseBody } from '@/app/lib/validate';
+import { writeAuditLog } from '@/app/lib/auditLog';
 
 /** Zod schema for POST /api/links request body */
 const linksPostSchema = z
@@ -258,6 +259,14 @@ export async function POST(req: NextRequest) {
         .eq('id', linkId);
     }
 
+    // Audit: link verified (fire-and-forget — ISO 27001 A.12.4)
+    void writeAuditLog({
+      action: 'link_verified',
+      resource_type: 'link',
+      resource_id: linkId,
+      metadata: JSON.stringify({ user_id: userId }),
+    });
+
     return NextResponse.json({ success: true });
   }
 
@@ -318,6 +327,19 @@ export async function POST(req: NextRequest) {
       .from('verified_links')
       .update({ verify_count: countData?.length ?? 1, updated_at: new Date().toISOString() })
       .eq('id', linkIdToVerify);
+
+    // Audit: link verified after add (fire-and-forget — ISO 27001 A.12.4)
+    void writeAuditLog({
+      action: 'link_verified',
+      resource_type: 'link',
+      resource_id: linkIdToVerify,
+      metadata: JSON.stringify({
+        user_id: userId,
+        platform,
+        entity_type: entityType,
+        entity_id: entityId,
+      }),
+    });
 
     return NextResponse.json({ success: true, linkId: linkIdToVerify });
   }

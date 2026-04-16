@@ -18,12 +18,15 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 import { parseBody } from '@/app/lib/validate';
+import { writeAuditLog } from '@/app/lib/auditLog';
 
 /** Zod schema for POST /api/admin/bootstrap request body */
-const bootstrapPostSchema = z.object({
-  email: z.string().min(1),
-  secret: z.string().min(1),
-}).passthrough();
+const bootstrapPostSchema = z
+  .object({
+    email: z.string().min(1),
+    secret: z.string().min(1),
+  })
+  .passthrough();
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
@@ -65,6 +68,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const metadata = targetUser.app_metadata ?? {};
     await admin.auth.admin.updateUserById(targetUser.id, {
       app_metadata: { ...metadata, isAdmin: true },
+    });
+
+    // Fire-and-forget: record that admin privileges were granted. Critical security event (ISO 27001 A.9.2.3).
+    void writeAuditLog({
+      action: 'admin_bootstrap',
+      resource_type: 'user',
+      resource_id: targetUser.id,
+      metadata: JSON.stringify({ email }),
     });
 
     return NextResponse.json({ ok: true, email, isAdmin: true });

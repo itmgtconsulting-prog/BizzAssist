@@ -31,6 +31,7 @@ import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { checkRateLimit, aiRateLimit } from '@/app/lib/rateLimit';
 import { logger } from '@/app/lib/logger';
 import { parseBody } from '@/app/lib/validate';
+import { writeAuditLog } from '@/app/lib/auditLog';
 
 /** Zod schema for POST /api/support/chat request body */
 const supportChatSchema = z
@@ -428,6 +429,14 @@ Afslør IKKE oplysningerne medmindre brugeren spørger direkte til dem.`;
             await db
               .from('support_chat_sessions')
               .insert({ tenant_id: tenantId, user_id: user.id, tokens_used: totalTokens });
+
+            // Fire-and-forget audit log entry for the support chat session (ISO 27001 A.12.4).
+            void writeAuditLog({
+              action: 'support_chat_started',
+              resource_type: 'support_chat',
+              resource_id: user.id,
+              metadata: JSON.stringify({ tenantId, tokensUsed: totalTokens }),
+            });
 
             // Abuse detection: sum tokens for this user in the last 1 hour
             const oneHourAgo = new Date(Date.now() - 60 * 60_000).toISOString();

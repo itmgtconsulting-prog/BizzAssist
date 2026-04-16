@@ -18,6 +18,7 @@ import { stripe } from '@/app/lib/stripe';
 import { resolvePlan } from '@/app/lib/subscriptions';
 import { sendPaymentConfirmationEmail } from '@/app/lib/email';
 import { logger } from '@/app/lib/logger';
+import { writeAuditLog } from '@/app/lib/auditLog';
 
 /** Zod schema for verify-session request body. */
 const verifySessionSchema = z.object({
@@ -80,6 +81,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           approvedAt: currentSub.approvedAt ?? new Date().toISOString(),
         },
       },
+    });
+
+    // Fire-and-forget: record the subscription activation for the audit trail (ISO 27001 A.12.4).
+    void writeAuditLog({
+      action: 'subscription_verified',
+      resource_type: 'subscription',
+      resource_id: user.id,
+      metadata: JSON.stringify({ planId, stripeSessionId: sessionId }),
     });
 
     // 5. Increment sales_count for the purchased plan (best-effort)

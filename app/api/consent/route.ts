@@ -21,6 +21,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { createClient } from '@/lib/supabase/server';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { logger } from '@/app/lib/logger';
+import { writeAuditLog } from '@/app/lib/auditLog';
 import crypto from 'node:crypto';
 
 /** Zod schema for consent body */
@@ -82,6 +83,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       categories: JSON.stringify(categories),
       ip_hash: ipHash,
       user_agent: userAgent,
+    });
+
+    // Audit: consent recorded (fire-and-forget — ISO 27001 A.12.4)
+    void writeAuditLog({
+      action: 'consent_recorded',
+      resource_type: 'consent',
+      resource_id: ipHash,
+      metadata: JSON.stringify({ consent_value: consent }),
     });
 
     return NextResponse.json({ ok: true });

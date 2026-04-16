@@ -30,11 +30,14 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import type { ServiceManagerScan } from '@/lib/supabase/types';
 import { logger } from '@/app/lib/logger';
 import { parseBody } from '@/app/lib/validate';
+import { writeAuditLog } from '@/app/lib/auditLog';
 
 /** Zod schema for POST /api/admin/service-manager request body */
-const serviceManagerPostSchema = z.object({
-  action: z.literal('scan'),
-}).passthrough();
+const serviceManagerPostSchema = z
+  .object({
+    action: z.literal('scan'),
+  })
+  .passthrough();
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -210,6 +213,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       logger.error('[service-manager POST] insert error:', insertErr?.code ?? '[DB error]');
       return NextResponse.json({ error: 'Kunne ikke oprette scan' }, { status: 500 });
     }
+
+    // Audit: service scan created (fire-and-forget — ISO 27001 A.12.4)
+    void writeAuditLog({
+      action: 'service_scan_created',
+      resource_type: 'service_manager',
+      resource_id: scan.id,
+      metadata: JSON.stringify({ triggered_by: user.id, scan_type: 'manual' }),
+    });
 
     // Trigger the scan in the background — fire and forget.
     // The scan route updates the record when done.

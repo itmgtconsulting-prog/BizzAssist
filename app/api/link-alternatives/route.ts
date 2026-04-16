@@ -17,12 +17,15 @@ import { createClient } from '@supabase/supabase-js';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
 import { parseBody } from '@/app/lib/validate';
+import { writeAuditLog } from '@/app/lib/auditLog';
 
 /** Zod schema for PUT /api/link-alternatives request body */
-const linkAlternativesPutSchema = z.object({
-  cvr: z.string().min(1),
-  alternatives: z.record(z.string(), z.array(z.string())),
-}).passthrough();
+const linkAlternativesPutSchema = z
+  .object({
+    cvr: z.string().min(1),
+    alternatives: z.record(z.string(), z.array(z.string())),
+  })
+  .passthrough();
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
@@ -151,6 +154,18 @@ export async function PUT(req: NextRequest) {
       logger.error('[link-alternatives PUT] Supabase fejl:', error.message);
       return NextResponse.json({ error: 'Databasefejl' }, { status: 500 });
     }
+
+    // Audit: link alternatives upserted (fire-and-forget — ISO 27001 A.12.4)
+    void writeAuditLog({
+      action: 'link_alternative_updated',
+      resource_type: 'link_alternative',
+      resource_id: cvr,
+      metadata: JSON.stringify({
+        user_id: user.id,
+        tenant_id: auth.tenantId,
+        platforms_saved: rows.length,
+      }),
+    });
 
     return NextResponse.json({ success: true, saved: rows.length });
   } catch (err) {

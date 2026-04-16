@@ -29,11 +29,14 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { logger } from '@/app/lib/logger';
 import { parseBody } from '@/app/lib/validate';
+import { writeAuditLog } from '@/app/lib/auditLog';
 
 /** Zod schema for POST /api/tokens/verify request body */
-const verifyTokenSchema = z.object({
-  token: z.string().trim().min(1),
-}).passthrough();
+const verifyTokenSchema = z
+  .object({
+    token: z.string().trim().min(1),
+  })
+  .passthrough();
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -143,7 +146,8 @@ export async function POST(
 
   // ── Parse body ──
   const parsed = await parseBody(request, verifyTokenSchema);
-  if (!parsed.success) return parsed.response as unknown as NextResponse<VerifyResponse | { error: string }>;
+  if (!parsed.success)
+    return parsed.response as unknown as NextResponse<VerifyResponse | { error: string }>;
   const token = parsed.data.token;
 
   // ── Basic format check — tokens always start with "bza_" ──
@@ -175,6 +179,14 @@ export async function POST(
 
     // Fire-and-forget last_used update (non-blocking)
     touchLastUsed(row.id);
+
+    // Audit: api token used (fire-and-forget — ISO 27001 A.12.4)
+    void writeAuditLog({
+      action: 'api_token_used',
+      resource_type: 'api_token',
+      resource_id: String(row.id),
+      metadata: JSON.stringify({ tenant_id: row.tenant_id, scopes: row.scopes }),
+    });
 
     return NextResponse.json<VerifySuccessResponse>({
       valid: true,

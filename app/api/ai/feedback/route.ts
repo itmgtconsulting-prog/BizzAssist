@@ -27,6 +27,7 @@ import { resolveTenantId } from '@/lib/api/auth';
 import { tenantDb } from '@/lib/supabase/admin';
 import { parseBody } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
+import { writeAuditLog } from '@/app/lib/auditLog';
 
 const feedbackSchema = z.object({
   questionText: z.string().min(1).max(5000),
@@ -67,6 +68,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       logger.error('[ai/feedback] Insert error:', error);
       return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
     }
+
+    // Fire-and-forget: record the feedback submission for the audit trail (ISO 27001 A.12.4).
+    void writeAuditLog({
+      action: 'ai_feedback_submitted',
+      resource_type: 'ai_feedback',
+      resource_id: parsed.data.conversationId ?? auth.userId,
+      metadata: JSON.stringify({
+        feedbackType: parsed.data.feedbackType,
+        tenantId: auth.tenantId,
+      }),
+    });
 
     return NextResponse.json({ ok: true }, { status: 201 });
   } catch (err) {

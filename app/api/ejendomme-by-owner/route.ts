@@ -31,7 +31,6 @@ import {
   EJF_GQL_ENDPOINT,
   DATAFORDELER_TOKEN_URL,
   DAWA_BASE_URL,
-  BBR_GQL_ENDPOINT,
 } from '@/app/lib/serviceEndpoints';
 
 /** Zod schema for /api/ejendomme-by-owner query params */
@@ -432,14 +431,14 @@ async function _hentDawaBfeDataImpl(bfe: number): Promise<DawaBfeAdresse> {
 // ─── BBR GraphQL BFE→address fallback ────────────────────────────────────────
 
 /**
- * Resolves BFE→address via Datafordeler BBR GraphQL when DAWA fails.
- * Queries BBR_Grund by BFE number, gets the linked husnummer (adgangsadresse UUID),
- * then resolves the full address via DAWA /adgangsadresser/{id}.
+ * Resolves BFE→address via Vurderingsportalen Elasticsearch when DAWA fails.
+ * VP is a public API that has address data for most Danish properties.
+ * Requires browser-like User-Agent to pass CloudFront WAF.
  *
  * @param bfe - BFE-nummer
- * @returns Partial DawaBfeAdresse with address fields filled in, or empty
+ * @returns Partial DawaBfeAdresse with address fields, or empty
  */
-async function _hentBbrAdresseForBfe(bfe: number): Promise<DawaBfeAdresse> {
+async function _hentVPAdresseForBfe(bfe: number): Promise<DawaBfeAdresse> {
   const empty: DawaBfeAdresse = {
     adresse: null,
     postnr: null,
@@ -450,53 +449,47 @@ async function _hentBbrAdresseForBfe(bfe: number): Promise<DawaBfeAdresse> {
     dawaId: null,
   };
 
-  const apiKey = process.env.DATAFORDELER_API_KEY;
-  if (!apiKey) return empty;
-
   try {
-    const vt = new Date().toISOString();
-    const query = `{ BBR_Grund(first: 1, virkningstid: "${vt}", where: { bestemtFastEjendom_BFENr: { eq: ${bfe} } }) { nodes { husnummer } } }`;
-    const bbrUrl = `${BBR_GQL_ENDPOINT}?apiKey=${encodeURIComponent(apiKey)}`;
-    const bbrRes = await fetch(proxyUrl(bbrUrl), {
+    const res = await fetch('https://api-fs.vurderingsportalen.dk/preliminaryproperties/_search', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...proxyHeaders() },
-      body: JSON.stringify({ query }),
-      signal: AbortSignal.timeout(proxyTimeout()),
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
+      },
+      body: JSON.stringify({
+        query: { term: { bfeNumbers: bfe } },
+        size: 1,
+        _source: ['address', 'municipality', 'propertyType'],
+      }),
+      signal: AbortSignal.timeout(8000),
     });
-    if (!bbrRes.ok) return empty;
+    if (!res.ok) return empty;
 
-    const bbrData = (await bbrRes.json()) as {
-      data?: { BBR_Grund?: { nodes?: Array<{ husnummer?: string }> } };
+    const data = (await res.json()) as {
+      hits?: {
+        hits?: Array<{
+          _source?: { address?: string; municipality?: string; propertyType?: string };
+        }>;
+      };
     };
-    const husnummerId = bbrData.data?.BBR_Grund?.nodes?.[0]?.husnummer;
-    if (!husnummerId) return empty;
+    const src = data.hits?.hits?.[0]?._source;
+    if (!src?.address) return empty;
 
-    // Resolve the husnummer UUID to a full address via DAWA adgangsadresser
-    const addrRes = await fetch(`${DAWA_BASE_URL}/adgangsadresser/${husnummerId}?struktur=mini`, {
-      signal: AbortSignal.timeout(5000),
-      next: { revalidate: 86400 },
-    });
-    if (!addrRes.ok) return empty;
-
-    const addr = (await addrRes.json()) as {
-      id?: string;
-      vejnavn?: string;
-      husnr?: string;
-      postnr?: string;
-      postnrnavn?: string;
-      kommunekode?: string;
-      kommunenavn?: string;
-    };
-    if (!addr.vejnavn) return empty;
+    // Parse "Rosenørns Alle 65, 4. tv, 1970 Frederiksberg C" → structured fields
+    const parts = src.address.split(',').map((s: string) => s.trim());
+    const vejHusnr = parts[0] ?? null;
+    const lastPart = parts[parts.length - 1] ?? '';
+    const postnrMatch = lastPart.match(/^(\d{4})\s+(.+)/);
 
     return {
-      adresse: `${addr.vejnavn} ${addr.husnr ?? ''}`.trim(),
-      postnr: addr.postnr ?? null,
-      by: addr.postnrnavn ?? null,
-      kommune: addr.kommunenavn ?? null,
-      kommuneKode: addr.kommunekode ?? null,
-      ejendomstype: null,
-      dawaId: addr.id ?? husnummerId,
+      adresse: vejHusnr,
+      postnr: postnrMatch?.[1] ?? null,
+      by: postnrMatch?.[2] ?? null,
+      kommune: src.municipality ?? null,
+      kommuneKode: null,
+      ejendomstype: src.propertyType ?? null,
+      dawaId: null,
     };
   } catch {
     return empty;
@@ -528,8 +521,8 @@ async function hentDawaBfeData(bfe: number): Promise<DawaBfeAdresse> {
     // BIZZ-450: If DAWA returned no address, try BBR GraphQL as fallback.
     // DAWA /bfe/{bfe} endpoint is being deprecated; BBR is the authoritative source.
     if (!result.adresse) {
-      const bbrResult = await _hentBbrAdresseForBfe(bfe);
-      if (bbrResult.adresse) return { ...result, ...bbrResult };
+      const vpResult = await _hentVPAdresseForBfe(bfe);
+      if (vpResult.adresse) return { ...result, ...vpResult };
     }
     return result;
   });

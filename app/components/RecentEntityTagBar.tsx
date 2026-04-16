@@ -257,14 +257,19 @@ const RecentEntityTagBar = React.memo(function RecentEntityTagBar({
 
   // ---- inline variant: flat one-row list (legacy/compact usage) ----
   if (variant === 'inline') {
-    // BIZZ-434: Show up to 3 tags per type in inline mode, grouped by type
+    // BIZZ-434: 3 columns (green/blue/purple), each stacked vertically
     const ORDER: RecentTag['type'][] = ['property', 'company', 'person'];
-    const inlineTags = ORDER.flatMap((type) =>
-      visibleTags.filter((t) => t.type === type).slice(0, 3)
-    );
     return (
-      <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-hide">
-        {inlineTags.map(renderTag)}
+      <div className="flex items-start gap-2 overflow-x-auto scrollbar-hide">
+        {ORDER.map((type) => {
+          const typeTags = visibleTags.filter((t) => t.type === type).slice(0, 3);
+          if (typeTags.length === 0) return null;
+          return (
+            <div key={type} className="flex flex-col gap-0.5 shrink-0">
+              {typeTags.map(renderTag)}
+            </div>
+          );
+        })}
       </div>
     );
   }

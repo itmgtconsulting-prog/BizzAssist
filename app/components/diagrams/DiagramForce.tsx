@@ -136,12 +136,12 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
   /** BIZZ-427: Toggle visibility of ceased/historical owners */
   const [showCeased, setShowCeased] = useState(false);
 
-  /** BIZZ-451: Toggle visibility of property nodes (auto-hide when >10 properties) */
+  /** BIZZ-451: Toggle visibility of property nodes — default ON */
   const propertyCount = useMemo(
     () => graph.nodes.filter((n) => n.type === 'property').length,
     [graph.nodes]
   );
-  const [showProperties, setShowProperties] = useState(() => propertyCount <= 10);
+  const [showProperties, setShowProperties] = useState(true);
 
   /** Fullscreen overlay mode */
   const [isFullscreen, setIsFullscreen] = useState(false);

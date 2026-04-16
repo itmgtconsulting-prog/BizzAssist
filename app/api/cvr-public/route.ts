@@ -651,6 +651,21 @@ function mapESHit(hit: Record<string, unknown>): CVRPublicData | null {
     }
   }
 
+  // BIZZ-403: Tilføj ejerskabs-ændringer til historik-tidslinje
+  for (const d of deltagere) {
+    for (const rolle of d.roller) {
+      const upper = rolle.rolle.toUpperCase();
+      if (upper.includes('EJER') || upper.includes('LEGALE') || upper.includes('REEL')) {
+        historik.push({
+          type: 'ejerskab',
+          fra: rolle.fra ?? '',
+          til: rolle.til,
+          vaerdi: `${d.navn}${rolle.ejerandel ? ` (${rolle.ejerandel})` : ''}`,
+        });
+      }
+    }
+  }
+
   // Byg owners fra deltagere med aktive ejerroller (EJERREGISTER med til == null)
   for (const d of deltagere) {
     const harAktivEjerRolle = d.roller.some((r) => {

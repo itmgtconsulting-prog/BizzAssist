@@ -135,8 +135,8 @@ const MAX_CHILDREN_PER_PARENT = 15;
 
 // ─── Graph Builder ─────────────────────────────────────────────────────────
 
-/** Max properties shown per company node before capping (no overflow node) */
-const MAX_PROPS_PER_COMPANY = 6;
+/** Max properties shown per company node before overflow — matches MAX_PER_ROW in DiagramForce */
+const MAX_PROPS_PER_COMPANY = 5;
 
 /**
  * Builds a flat graph (nodes + edges) from owner chain and related companies.

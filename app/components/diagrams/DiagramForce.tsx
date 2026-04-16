@@ -673,8 +673,7 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
       const scaledW = viewBox.w * z + 32;
       const scaledH = viewBox.h * z + 32;
       const panX = Math.round((cW - scaledW) / 2);
-      // Placér diagrammet tæt på toppen (5% fra top)
-      const panY = Math.round(Math.max(4, (cH - scaledH) * 0.05));
+      const panY = Math.round((cH - scaledH) / 2);
       setZoom(z);
       setPanOffset({ x: panX, y: panY });
       initialFitDone.current = true;

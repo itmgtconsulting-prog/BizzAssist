@@ -212,6 +212,7 @@ const historikTypeConfig: Record<string, { icon: React.ReactNode; color: string 
   form: { icon: <Briefcase size={14} />, color: 'text-purple-400' },
   status: { icon: <CheckCircle size={14} />, color: 'text-amber-400' },
   branche: { icon: <Factory size={14} />, color: 'text-cyan-400' },
+  ejerskab: { icon: <Shield size={14} />, color: 'text-orange-400' },
 };
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -866,6 +867,9 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
     }
     if (aktivTab === 'companies' || aktivTab === 'overview') {
       fetchRelated();
+    }
+    if (aktivTab === 'overview') {
+      fetchXbrl();
     }
     if (aktivTab === 'tradeHistory' || aktivTab === 'properties') {
       fetchEjendomshandler();
@@ -1900,9 +1904,82 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                       ) : null;
                     })()}
 
-                  {/* BIZZ-277: Gruppeøkonomi fjernet — data var sum af individuelle regnskaber,
-                      ikke konsolideret, og var derfor misvisende. Kan genaktiveres når
-                      konsoliderede regnskabsdata er tilgængelige. */}
+                  {/* BIZZ-406: Regnskabs-nøgletal for seneste år */}
+                  {(oversigtFilter === null || oversigtFilter === 'gruppe') &&
+                    (() => {
+                      if (xbrlLoading)
+                        return (
+                          <section className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-5 animate-pulse">
+                            <div className="h-4 bg-slate-700/50 rounded w-32 mb-3" />
+                            <div className="grid grid-cols-3 gap-3">
+                              <div className="h-10 bg-slate-700/30 rounded" />
+                              <div className="h-10 bg-slate-700/30 rounded" />
+                              <div className="h-10 bg-slate-700/30 rounded" />
+                            </div>
+                          </section>
+                        );
+                      if (!xbrlData || xbrlData.length === 0) return null;
+                      const seneste = xbrlData[0];
+                      const r = seneste.resultat;
+                      const b = seneste.balance;
+                      const hasData =
+                        r.bruttofortjeneste != null ||
+                        r.resultatFoerSkat != null ||
+                        b.egenkapital != null;
+                      if (!hasData) return null;
+                      const fmtDKK = (v: number | null | undefined) =>
+                        v != null
+                          ? v.toLocaleString('da-DK', { maximumFractionDigits: 0 }) + ' kr'
+                          : '–';
+                      return (
+                        <section className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-5">
+                          <h3 className="text-white font-semibold text-sm mb-3">
+                            {lang === 'da' ? 'Nøgletal' : 'Key Figures'}
+                            <span className="text-slate-500 text-xs font-normal ml-2">
+                              ({seneste.aar})
+                            </span>
+                          </h3>
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                            {r.bruttofortjeneste != null && (
+                              <div>
+                                <p className="text-slate-500 text-xs">
+                                  {lang === 'da' ? 'Bruttofortjeneste' : 'Gross profit'}
+                                </p>
+                                <p
+                                  className={`text-sm font-semibold ${(r.bruttofortjeneste ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}
+                                >
+                                  {fmtDKK(r.bruttofortjeneste)}
+                                </p>
+                              </div>
+                            )}
+                            {r.resultatFoerSkat != null && (
+                              <div>
+                                <p className="text-slate-500 text-xs">
+                                  {lang === 'da' ? 'Resultat før skat' : 'Profit before tax'}
+                                </p>
+                                <p
+                                  className={`text-sm font-semibold ${(r.resultatFoerSkat ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}
+                                >
+                                  {fmtDKK(r.resultatFoerSkat)}
+                                </p>
+                              </div>
+                            )}
+                            {b.egenkapital != null && (
+                              <div>
+                                <p className="text-slate-500 text-xs">
+                                  {lang === 'da' ? 'Egenkapital' : 'Equity'}
+                                </p>
+                                <p
+                                  className={`text-sm font-semibold ${(b.egenkapital ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}
+                                >
+                                  {fmtDKK(b.egenkapital)}
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        </section>
+                      );
+                    })()}
                 </div>
               </div>
 

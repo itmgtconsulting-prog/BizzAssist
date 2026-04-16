@@ -57,6 +57,8 @@ export interface ChainEjerDetalje {
   overtagelsesdato: string | null;
   adkomstType: string | null;
   koebesum: number | null;
+  /** True when the owning company is ceased/dissolved — shown as warning in UI */
+  isCeased?: boolean;
 }
 
 export interface OwnershipChainResponse {
@@ -645,6 +647,14 @@ export async function GET(req: NextRequest) {
     }
 
     currentLevel = nextLevel;
+  }
+
+  // Propagate isCeased from resolved company nodes to ejerDetaljer entries
+  for (const d of ejerDetaljer) {
+    if (d.cvr && d.type === 'selskab') {
+      const node = nodes.find((n) => n.type === 'company' && n.cvr === parseInt(d.cvr!, 10));
+      if (node?.isCeased) d.isCeased = true;
+    }
   }
 
   const fejl: string | null = null;

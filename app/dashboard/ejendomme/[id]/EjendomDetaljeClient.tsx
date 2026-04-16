@@ -6689,6 +6689,7 @@ interface EjerDetalje {
   overtagelsesdato: string | null;
   adkomstType: string | null;
   koebesum: number | null;
+  isCeased?: boolean;
 }
 
 function PropertyOwnerDiagram({
@@ -6808,6 +6809,11 @@ function PropertyOwnerDiagram({
                     className="text-blue-300 font-semibold text-sm hover:text-blue-200 transition-colors flex items-center gap-1 underline decoration-blue-500/30 hover:decoration-blue-400/50"
                   >
                     {ejer.navn} {ejer.andel ? `(${ejer.andel})` : ''}
+                    {ejer.isCeased && (
+                      <span className="ml-1.5 text-[10px] font-medium text-red-400 bg-red-500/15 border border-red-500/30 rounded px-1.5 py-0.5">
+                        {da ? 'Ophørt' : 'Ceased'}
+                      </span>
+                    )}
                     <ChevronRight size={13} />
                   </Link>
                 ) : ejer.enhedsNummer ? (

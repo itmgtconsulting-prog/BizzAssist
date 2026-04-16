@@ -6407,61 +6407,63 @@ export default function EjendomDetaljeClient({
                   </div>
                 </div>
 
-                {/* Udbudshistorik */}
-                <div>
-                  <SectionTitle title={t.listingHistory} />
-                  <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
-                    <table className="w-full">
-                      <thead>
-                        <tr className="text-slate-500 text-xs border-b border-slate-700/30">
-                          <th className="px-4 py-2 text-left font-medium">{t.status}</th>
-                          <th className="px-4 py-2 text-right font-medium">{t.priceChange}</th>
-                          <th className="px-4 py-2 text-right font-medium">{t.price}</th>
-                          <th className="px-4 py-2 text-right font-medium">{t.date}</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {ejendom.udbudshistorik && ejendom.udbudshistorik.length > 0 ? (
-                          ejendom.udbudshistorik.map((u, i) => (
-                            <tr
-                              key={i}
-                              className="border-t border-slate-700/30 hover:bg-slate-700/20 transition-colors"
-                            >
-                              <td className="px-4 py-3 text-slate-200 text-sm">{u.status}</td>
-                              <td className="px-4 py-3 text-right">
-                                {u.prisaendring !== undefined ? (
-                                  <span
-                                    className={`text-sm font-medium ${u.prisaendring >= 0 ? 'text-green-400' : 'text-red-400'}`}
-                                  >
-                                    {u.prisaendring >= 0 ? '+' : ''}
-                                    {u.prisaendring.toLocaleString(da ? 'da-DK' : 'en-GB')} DKK
-                                  </span>
-                                ) : (
-                                  <span className="text-slate-500 text-sm">—</span>
-                                )}
-                              </td>
-                              <td className="px-4 py-3 text-white text-sm font-semibold text-right">
-                                {formatDKK(u.pris)}
-                              </td>
-                              <td className="px-4 py-3 text-slate-400 text-sm text-right">
-                                {formatDato(u.dato)}
+                {/* Udbudshistorik — only rendered when data exists (BIZZ-363) */}
+                {ejendom.udbudshistorik && ejendom.udbudshistorik.length > 0 && (
+                  <div>
+                    <SectionTitle title={t.listingHistory} />
+                    <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
+                      <table className="w-full">
+                        <thead>
+                          <tr className="text-slate-500 text-xs border-b border-slate-700/30">
+                            <th className="px-4 py-2 text-left font-medium">{t.status}</th>
+                            <th className="px-4 py-2 text-right font-medium">{t.priceChange}</th>
+                            <th className="px-4 py-2 text-right font-medium">{t.price}</th>
+                            <th className="px-4 py-2 text-right font-medium">{t.date}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {ejendom.udbudshistorik && ejendom.udbudshistorik.length > 0 ? (
+                            ejendom.udbudshistorik.map((u, i) => (
+                              <tr
+                                key={i}
+                                className="border-t border-slate-700/30 hover:bg-slate-700/20 transition-colors"
+                              >
+                                <td className="px-4 py-3 text-slate-200 text-sm">{u.status}</td>
+                                <td className="px-4 py-3 text-right">
+                                  {u.prisaendring !== undefined ? (
+                                    <span
+                                      className={`text-sm font-medium ${u.prisaendring >= 0 ? 'text-green-400' : 'text-red-400'}`}
+                                    >
+                                      {u.prisaendring >= 0 ? '+' : ''}
+                                      {u.prisaendring.toLocaleString(da ? 'da-DK' : 'en-GB')} DKK
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-500 text-sm">—</span>
+                                  )}
+                                </td>
+                                <td className="px-4 py-3 text-white text-sm font-semibold text-right">
+                                  {formatDKK(u.pris)}
+                                </td>
+                                <td className="px-4 py-3 text-slate-400 text-sm text-right">
+                                  {formatDato(u.dato)}
+                                </td>
+                              </tr>
+                            ))
+                          ) : (
+                            <tr>
+                              <td
+                                colSpan={4}
+                                className="px-4 py-6 text-center text-slate-500 text-sm"
+                              >
+                                {t.noListingHistory}
                               </td>
                             </tr>
-                          ))
-                        ) : (
-                          <tr>
-                            <td
-                              colSpan={4}
-                              className="px-4 py-6 text-center text-slate-500 text-sm"
-                            >
-                              {t.noListingHistory}
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             )}
 

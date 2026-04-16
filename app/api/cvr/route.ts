@@ -136,9 +136,12 @@ function mapESHit(hit: Record<string, unknown>): CVRVirksomhed | null {
   const vejnavn = typeof adr?.vejnavn === 'string' ? adr.vejnavn : '';
   const husnummerFra = typeof adr?.husnummerFra === 'number' ? String(adr.husnummerFra) : '';
   const bogstavFra = typeof adr?.bogstavFra === 'string' ? adr.bogstavFra : '';
+  const etage = typeof adr?.etage === 'string' ? adr.etage : '';
+  const sidedoer = typeof adr?.sidedoer === 'string' ? adr.sidedoer : '';
   const postnr = typeof adr?.postnummer === 'number' ? String(adr.postnummer) : '';
   const by = typeof adr?.postdistrikt === 'string' ? adr.postdistrikt : '';
-  const adresseStreng = `${vejnavn} ${husnummerFra}${bogstavFra}`.trim();
+  const adresseStreng =
+    `${vejnavn} ${husnummerFra}${bogstavFra}${etage ? `, ${etage}.` : ''}${sidedoer ? ` ${sidedoer}` : ''}`.trim();
 
   // ── Telefon ──
   const telefoner = Array.isArray(src.telefonnummer)

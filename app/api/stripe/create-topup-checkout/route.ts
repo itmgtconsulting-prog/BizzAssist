@@ -71,7 +71,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       | undefined;
 
     // Build Stripe checkout session
-    const origin = req.headers.get('origin') ?? 'http://localhost:3000';
+    // BIZZ-429: Use NEXT_PUBLIC_APP_URL with request origin fallback (never localhost in prod)
+    const origin =
+      process.env.NEXT_PUBLIC_APP_URL || req.headers.get('origin') || 'http://localhost:3000';
 
     const sessionParams: Stripe.Checkout.SessionCreateParams = {
       mode: 'payment',

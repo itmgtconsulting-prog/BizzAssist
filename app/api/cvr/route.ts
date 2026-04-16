@@ -274,6 +274,14 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       match: { 'Vrvirksomhed.beliggenhedsadresse.sidedoer': doer },
     });
   }
+  // Hovedejendom: exclude companies with specific apartment address (etage/dør)
+  if (!etage && !doer) {
+    beligFiltre.push({
+      bool: {
+        must_not: [{ exists: { field: 'Vrvirksomhed.beliggenhedsadresse.etage' } }],
+      },
+    });
+  }
 
   // ── Byg adressefiltre for P-enheder (produktionsenhed-adresser) ──
   const penhedFiltre: unknown[] = [
@@ -302,6 +310,14 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   if (doer) {
     penhedFiltre.push({
       match: { 'Vrvirksomhed.penheder.beliggenhedsadresse.sidedoer': doer },
+    });
+  }
+  // Hovedejendom: exclude P-enheder with specific apartment address (etage/dør)
+  if (!etage && !doer) {
+    penhedFiltre.push({
+      bool: {
+        must_not: [{ exists: { field: 'Vrvirksomhed.penheder.beliggenhedsadresse.etage' } }],
+      },
     });
   }
 

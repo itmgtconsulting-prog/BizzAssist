@@ -713,6 +713,7 @@ export default function ChatPageClient() {
       chatCtx.setIsStreaming(false);
       abortRef.current = null;
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     input,
     isLoading,

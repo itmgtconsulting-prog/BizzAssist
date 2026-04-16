@@ -1126,6 +1126,7 @@ export default function EjendomDetaljeClient({
         setDawaStatus('fejl');
       });
     return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, erDAWA]);
 
   /**
@@ -1155,6 +1156,7 @@ export default function EjendomDetaljeClient({
         if (!controller.signal.aborted) setBbrLoader(false);
       });
     return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, erDAWA, dawaStatus]);
 
   /**
@@ -1381,6 +1383,7 @@ export default function EjendomDetaljeClient({
       });
 
     return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, erDAWA, bbrData, dawaAdresse]);
 
   /**
@@ -1513,6 +1516,7 @@ export default function EjendomDetaljeClient({
         if (!controller.signal.aborted) setEnergiLoader(false);
       });
     return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, erDAWA, bbrData, dawaAdresse]);
 
   /**
@@ -1555,6 +1559,7 @@ export default function EjendomDetaljeClient({
         if (!controller.signal.aborted) setJordLoader(false);
       });
     return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, erDAWA, bbrData]);
 
   /**
@@ -1585,6 +1590,7 @@ export default function EjendomDetaljeClient({
         if (!controller.signal.aborted) setPlandataLoader(false);
       });
     return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, erDAWA, dawaStatus]);
 
   /**
@@ -2936,7 +2942,11 @@ export default function EjendomDetaljeClient({
                                   onClick={() =>
                                     setExpandedBygninger((prev) => {
                                       const next = new Set(prev);
-                                      aaben ? next.delete(rowId) : next.add(rowId);
+                                      if (aaben) {
+                                        next.delete(rowId);
+                                      } else {
+                                        next.add(rowId);
+                                      }
                                       return next;
                                     })
                                   }
@@ -3118,7 +3128,11 @@ export default function EjendomDetaljeClient({
                                   onClick={() =>
                                     setExpandedEnheder((prev) => {
                                       const next = new Set(prev);
-                                      aaben ? next.delete(rowId) : next.add(rowId);
+                                      if (aaben) {
+                                        next.delete(rowId);
+                                      } else {
+                                        next.add(rowId);
+                                      }
                                       return next;
                                     })
                                   }
@@ -5517,7 +5531,11 @@ export default function EjendomDetaljeClient({
                                   onClick={() =>
                                     setExpandedBygninger((prev) => {
                                       const next = new Set(prev);
-                                      aaben ? next.delete(b.id) : next.add(b.id);
+                                      if (aaben) {
+                                        next.delete(b.id);
+                                      } else {
+                                        next.add(b.id);
+                                      }
                                       return next;
                                     })
                                   }
@@ -5643,7 +5661,11 @@ export default function EjendomDetaljeClient({
                                   onClick={() =>
                                     setExpandedEnheder((prev) => {
                                       const next = new Set(prev);
-                                      aaben ? next.delete(e.id) : next.add(e.id);
+                                      if (aaben) {
+                                        next.delete(e.id);
+                                      } else {
+                                        next.add(e.id);
+                                      }
                                       return next;
                                     })
                                   }

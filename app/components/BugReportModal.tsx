@@ -485,6 +485,7 @@ const BugReportModal = React.memo(function BugReportModal({
               )}
               {screenshot ? (
                 <div className="relative">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={screenshot}
                     alt="Screenshot preview"

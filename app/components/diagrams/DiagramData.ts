@@ -382,6 +382,8 @@ export function buildDiagramGraph(
       const shown = props.slice(0, MAX_PROPS_PER_COMPANY);
       for (const p of shown) {
         const propId = `bfe-${p.bfeNummer}`;
+        // BIZZ-452: Always create edge even if node already exists (co-ownership)
+        edges.push({ from: companyNode.id, to: propId });
         if (seenIds.has(propId)) continue;
         seenIds.add(propId);
         const link = p.dawaId ? `/dashboard/ejendomme/${p.dawaId}` : undefined;
@@ -393,7 +395,6 @@ export function buildDiagramGraph(
           bfeNummer: p.bfeNummer,
           link,
         });
-        edges.push({ from: companyNode.id, to: propId });
       }
 
       // BIZZ-268: Overflow node when more properties exist than shown
@@ -703,6 +704,8 @@ export function buildPersonDiagramGraph(
       const shown = props.slice(0, MAX_PROPS_PER_COMPANY);
       for (const p of shown) {
         const propId = `bfe-${p.bfeNummer}`;
+        // BIZZ-452: Always create edge even if node already exists (co-ownership)
+        edges.push({ from: companyNode.id, to: propId });
         if (seenIds.has(propId)) continue;
         seenIds.add(propId);
         const link = p.dawaId ? `/dashboard/ejendomme/${p.dawaId}` : undefined;
@@ -714,7 +717,6 @@ export function buildPersonDiagramGraph(
           bfeNummer: p.bfeNummer,
           link,
         });
-        edges.push({ from: companyNode.id, to: propId });
       }
 
       // BIZZ-268: Overflow node when more properties exist than shown

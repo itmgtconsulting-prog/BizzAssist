@@ -18,6 +18,11 @@ import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { logger } from '@/app/lib/logger';
 import { getSharedOAuthToken } from '@/app/lib/dfTokenCache';
 import { resolveTenantId } from '@/lib/api/auth';
+import {
+  EJF_GQL_ENDPOINT,
+  DATAFORDELER_TOKEN_URL,
+  DAWA_BASE_URL,
+} from '@/app/lib/serviceEndpoints';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -60,9 +65,6 @@ export interface CvrSalgshistorikResponse {
 
 // ─── Datafordeler EJF GraphQL ────────────────────────────────────────────────
 
-const EJF_GQL_URL = 'https://graphql.datafordeler.dk/flexibleCurrent/v1/';
-const TOKEN_URL = 'https://auth.datafordeler.dk/realms/distribution/protocol/openid-connect/token';
-
 let _cachedToken: { token: string; expiresAt: number } | null = null;
 
 /**
@@ -79,7 +81,7 @@ async function _getOAuthToken(): Promise<string | null> {
   if (!clientId || !clientSecret) return null;
 
   try {
-    const res = await fetch(proxyUrl(TOKEN_URL), {
+    const res = await fetch(proxyUrl(DATAFORDELER_TOKEN_URL), {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...proxyHeaders() },
       body: `grant_type=client_credentials&client_id=${clientId}&client_secret=${encodeURIComponent(clientSecret)}`,
@@ -135,7 +137,7 @@ async function queryEJF<T>(
   token: string
 ): Promise<{ nodes: T[]; authError: boolean } | null> {
   try {
-    const res = await fetch(proxyUrl(EJF_GQL_URL), {
+    const res = await fetch(proxyUrl(EJF_GQL_ENDPOINT), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -181,7 +183,7 @@ interface DawaBfeResult {
 async function hentAdresseFraBfe(bfe: number): Promise<DawaBfeResult> {
   const empty: DawaBfeResult = { adresse: null, postnr: null, by: null, kommune: null };
   try {
-    const res = await fetch(`https://api.dataforsyningen.dk/bfe/${bfe}`, {
+    const res = await fetch(`${DAWA_BASE_URL}/bfe/${bfe}`, {
       signal: AbortSignal.timeout(5000),
       next: { revalidate: 86400 },
     });

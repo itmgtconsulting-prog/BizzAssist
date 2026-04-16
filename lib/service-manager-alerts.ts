@@ -1,4 +1,5 @@
 import { companyInfo } from '@/app/lib/companyInfo';
+import { RESEND_ENDPOINT } from '@/app/lib/serviceEndpoints';
 
 /**
  * Service Manager — Critical Alert Helpers
@@ -14,8 +15,6 @@ import { companyInfo } from '@/app/lib/companyInfo';
 
 import { sendCriticalSms } from '@/lib/sms';
 
-/** Resend API endpoint */
-const RESEND_ENDPOINT = 'https://api.resend.com/emails';
 const FROM_ADDRESS = `BizzAssist <${companyInfo.noreplyEmail}>`;
 const TO_ADDRESS = companyInfo.supportEmail;
 

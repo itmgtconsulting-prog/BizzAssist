@@ -24,11 +24,10 @@ import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 import { companyInfo } from '@/app/lib/companyInfo';
+import { RESEND_ENDPOINT } from '@/app/lib/serviceEndpoints';
 
 /** Max Vercel Hobby plan funktionsvarighed i sekunder */
 export const maxDuration = 30;
-
-const RESEND_ENDPOINT = 'https://api.resend.com/emails';
 const FROM_ADDRESS = `BizzAssist <${companyInfo.noreplyEmail}>`;
 const TO_ADDRESS = companyInfo.supportEmail;
 

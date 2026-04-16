@@ -21,6 +21,7 @@ import { createClient } from '@supabase/supabase-js';
 import { checkRateLimit, braveRateLimit } from '@/app/lib/rateLimit';
 import { withBraveCache } from '@/app/lib/searchCache';
 import { resolveTenantId } from '@/lib/api/auth';
+import { BRAVE_SEARCH_ENDPOINT } from '@/app/lib/serviceEndpoints';
 import { logger } from '@/app/lib/logger';
 
 export const runtime = 'nodejs';
@@ -166,7 +167,7 @@ async function searchBraveSocialPlatform(
   domainFilter?: string
 ): Promise<string[]> {
   try {
-    const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}&country=dk`;
+    const url = `${BRAVE_SEARCH_ENDPOINT}?q=${encodeURIComponent(query)}&count=${count}&country=dk`;
     const res = await fetch(url, {
       headers: { 'X-Subscription-Token': key, Accept: 'application/json' },
       signal: AbortSignal.timeout(5000),

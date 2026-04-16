@@ -27,6 +27,11 @@ import { getCertOAuthToken, isCertAuthConfigured } from '@/app/lib/dfCertAuth';
 import { logger } from '@/app/lib/logger';
 import { getSharedOAuthToken } from '@/app/lib/dfTokenCache';
 import { resolveTenantId } from '@/lib/api/auth';
+import {
+  EJF_GQL_ENDPOINT,
+  DATAFORDELER_TOKEN_URL,
+  DAWA_BASE_URL,
+} from '@/app/lib/serviceEndpoints';
 
 /** Zod schema for /api/ejendomme-by-owner query params */
 const _querySchema = z.object({
@@ -82,9 +87,6 @@ export interface EjendommeByOwnerResponse {
 
 // ─── Konstanter ─────────────────────────────────────────────────────────────
 
-const EJF_GQL_URL = 'https://graphql.datafordeler.dk/flexibleCurrent/v1/';
-const TOKEN_URL = 'https://auth.datafordeler.dk/realms/distribution/protocol/openid-connect/token';
-
 /** Maks antal CVR-numre der accepteres per kald */
 const MAX_CVR = 30;
 /** Maks antal BFE-numre per batch (sikkerhedsloft) */
@@ -115,7 +117,7 @@ async function _getOAuthToken(): Promise<string | null> {
   if (!clientId || !clientSecret) return null;
 
   try {
-    const res = await fetch(proxyUrl(TOKEN_URL), {
+    const res = await fetch(proxyUrl(DATAFORDELER_TOKEN_URL), {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...proxyHeaders() },
       body: `grant_type=client_credentials&client_id=${clientId}&client_secret=${encodeURIComponent(clientSecret)}`,
@@ -179,7 +181,7 @@ async function hentBfeByCvr(
   }`;
 
   try {
-    const res = await fetch(proxyUrl(EJF_GQL_URL), {
+    const res = await fetch(proxyUrl(EJF_GQL_ENDPOINT), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -246,7 +248,7 @@ async function hentBfeByPerson(
   }`;
 
   try {
-    const res = await fetch(proxyUrl(EJF_GQL_URL), {
+    const res = await fetch(proxyUrl(EJF_GQL_ENDPOINT), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -313,7 +315,7 @@ async function _hentDawaBfeDataImpl(bfe: number): Promise<DawaBfeAdresse> {
   };
 
   try {
-    const res = await fetch(`https://api.dataforsyningen.dk/bfe/${bfe}`, {
+    const res = await fetch(`${DAWA_BASE_URL}/bfe/${bfe}`, {
       signal: AbortSignal.timeout(10000),
       next: { revalidate: 86400 },
     });

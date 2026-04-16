@@ -27,6 +27,7 @@ import { checkRateLimit, braveRateLimit } from '@/app/lib/rateLimit';
 import { withBraveCache } from '@/app/lib/searchCache';
 import { resolveTenantId } from '@/lib/api/auth';
 import { logger } from '@/app/lib/logger';
+import { BRAVE_SEARCH_ENDPOINT } from '@/app/lib/serviceEndpoints';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -141,7 +142,7 @@ async function searchBrave(
 ): Promise<ArticleResult[]> {
   const params = new URLSearchParams({ q: query, count: String(count), country: 'dk' });
   if (freshness) params.set('freshness', freshness);
-  const url = `https://api.search.brave.com/res/v1/web/search?${params}`;
+  const url = `${BRAVE_SEARCH_ENDPOINT}?${params}`;
   const res = await fetch(url, {
     headers: { 'X-Subscription-Token': key, Accept: 'application/json' },
     signal: AbortSignal.timeout(10000),

@@ -1,5 +1,6 @@
 import { logger } from '@/app/lib/logger';
 import { companyInfo } from '@/app/lib/companyInfo';
+import { RESEND_ENDPOINT } from '@/app/lib/serviceEndpoints';
 
 /**
  * Service Manager Critical Alerts — app/lib/service-manager-alerts.ts
@@ -17,8 +18,6 @@ import { companyInfo } from '@/app/lib/companyInfo';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-/** Resend API endpoint */
-const RESEND_ENDPOINT = 'https://api.resend.com/emails';
 const FROM_ADDRESS = `BizzAssist <${companyInfo.noreplyEmail}>`;
 const TO_ADDRESS = companyInfo.supportEmail;
 

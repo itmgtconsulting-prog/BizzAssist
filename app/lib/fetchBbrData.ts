@@ -10,6 +10,7 @@
  */
 
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
+import { BBR_WFS_ENDPOINT, BBR_GQL_ENDPOINT, DAWA_BASE_URL } from '@/app/lib/serviceEndpoints';
 import {
   tagMaterialeTekst,
   ydervaegMaterialeTekst,
@@ -178,12 +179,6 @@ export interface EjendomApiResponse {
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const WFS_BASE = 'https://wfs.datafordeler.dk/BBR/BBR_WFS/1.0.0/WFS';
-const BBR_GQL_BASE = 'https://graphql.datafordeler.dk/BBR/v2';
-
-/** Base URL for DAWA (Danmarks Adresser Web API) — gratis, ingen auth */
-const DAWA_BASE = 'https://api.dataforsyningen.dk';
-
 // ─── UUID helper ─────────────────────────────────────────────────────────────
 
 /** UUID-mønster — bruges til at filtrere reference-ID'er fra tekst-felter */
@@ -223,7 +218,7 @@ async function fetchBygningPunkter(bygningIds: string[]): Promise<BBRBygningPunk
   const cqlFilter = encodeURIComponent(cqlRaw);
 
   const url =
-    `${WFS_BASE}?service=WFS&version=2.0.0&request=GetFeature` +
+    `${BBR_WFS_ENDPOINT}?service=WFS&version=2.0.0&request=GetFeature` +
     `&typeName=bbr_v001:bygning_current` +
     `&outputFormat=application%2Fjson` +
     `&srsName=EPSG:4326` +
@@ -352,7 +347,7 @@ async function fetchBBRGraphQL(
   query: string,
   variables: Record<string, string>
 ): Promise<unknown[] | null> {
-  return fetchDatafordelerGraphQL(BBR_GQL_BASE, query, variables);
+  return fetchDatafordelerGraphQL(BBR_GQL_ENDPOINT, query, variables);
 }
 
 // ─── BFE lookup ─────────────────────────────────────────────────────────────
@@ -391,7 +386,7 @@ async function fetchBFENummer(dawaId: string): Promise<{
     let adgKommunekode: string | null = null;
 
     // Trin 1a: Forsøg direkte som adgangsadresse
-    const adgRes = await fetch(`${DAWA_BASE}/adgangsadresser/${dawaId}`, {
+    const adgRes = await fetch(`${DAWA_BASE_URL}/adgangsadresser/${dawaId}`, {
       signal: AbortSignal.timeout(5000),
       next: { revalidate: 3600 },
     });
@@ -411,7 +406,7 @@ async function fetchBFENummer(dawaId: string): Promise<{
       adgKommunekode = adg?.kommune?.kode ?? null;
     } else {
       // Trin 1b: ID er en adresse (med etage/dør) — hent adgangsadresse via /adresser/{id}
-      const adrRes = await fetch(`${DAWA_BASE}/adresser/${dawaId}`, {
+      const adrRes = await fetch(`${DAWA_BASE_URL}/adresser/${dawaId}`, {
         signal: AbortSignal.timeout(5000),
         next: { revalidate: 3600 },
       });
@@ -456,7 +451,7 @@ async function fetchBFENummer(dawaId: string): Promise<{
 
     // BIZZ-254: Trin 2 + 3 kører parallelt (uafhængige af hinanden)
     // Trin 2: Hent BFEnummer fra jordstykker-endpoint (= moderejendommens BFE)
-    const jordBfePromise = fetch(`${DAWA_BASE}/jordstykker/${ejerlavKode}/${matrikelnr}`, {
+    const jordBfePromise = fetch(`${DAWA_BASE_URL}/jordstykker/${ejerlavKode}/${matrikelnr}`, {
       signal: AbortSignal.timeout(5000),
       next: { revalidate: 3600 },
     })
@@ -528,7 +523,7 @@ async function fetchBFENummer(dawaId: string): Promise<{
               if (adgKommunekode) {
                 try {
                   const verifyRes = await fetch(
-                    `${DAWA_BASE}/jordstykker?bfenummer=${candidate}&per_side=1`,
+                    `${DAWA_BASE_URL}/jordstykker?bfenummer=${candidate}&per_side=1`,
                     { signal: AbortSignal.timeout(3000), next: { revalidate: 3600 } }
                   );
                   if (verifyRes.ok) {
@@ -817,7 +812,7 @@ async function fetchDAWAEnhedAdresser(
 
   try {
     const params = uuids.map((id) => `id=${encodeURIComponent(id)}`).join('&');
-    const res = await fetch(`${DAWA_BASE}/adresser?${params}&struktur=mini`, {
+    const res = await fetch(`${DAWA_BASE_URL}/adresser?${params}&struktur=mini`, {
       signal: AbortSignal.timeout(8000),
       next: { revalidate: 3600 },
     });
@@ -902,7 +897,7 @@ export async function fetchBbrForAddress(
       // Trin 2: Ingen grund? Find andre adgangsadresser på samme matrikel via DAWA
       if (!grundId && ejerlavKode && matrikelnr) {
         const adgRes = await fetch(
-          `${DAWA_BASE}/adgangsadresser?ejerlavkode=${ejerlavKode}&matrikelnr=${encodeURIComponent(matrikelnr)}&per_side=10`,
+          `${DAWA_BASE_URL}/adgangsadresser?ejerlavkode=${ejerlavKode}&matrikelnr=${encodeURIComponent(matrikelnr)}&per_side=10`,
           { signal: AbortSignal.timeout(5000), next: { revalidate: 3600 } }
         );
         if (adgRes.ok) {
@@ -1082,10 +1077,9 @@ export async function fetchBbrForAddress(
   let effectiveBfe = bfeNummer;
   if (!effectiveBfe && ejerlavKode && matrikelnr) {
     try {
-      const jsRes = await fetch(
-        `https://api.dataforsyningen.dk/jordstykker/${ejerlavKode}/${matrikelnr}`,
-        { signal: AbortSignal.timeout(5000) }
-      );
+      const jsRes = await fetch(`${DAWA_BASE_URL}/jordstykker/${ejerlavKode}/${matrikelnr}`, {
+        signal: AbortSignal.timeout(5000),
+      });
       if (jsRes.ok) {
         const js = (await jsRes.json()) as { bfenummer?: number };
         effectiveBfe = js?.bfenummer ?? null;

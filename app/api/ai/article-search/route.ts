@@ -36,6 +36,7 @@ import { createClient } from '@supabase/supabase-js';
 import { checkRateLimit, braveRateLimit } from '@/app/lib/rateLimit';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
+import { BRAVE_SEARCH_ENDPOINT } from '@/app/lib/serviceEndpoints';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -270,7 +271,7 @@ async function searchBrave(
 ): Promise<ArticleResult[]> {
   const params = new URLSearchParams({ q: query, count: String(count), country: 'dk' });
   if (freshness) params.set('freshness', freshness);
-  const url = `https://api.search.brave.com/res/v1/web/search?${params}`;
+  const url = `${BRAVE_SEARCH_ENDPOINT}?${params}`;
   const res = await fetch(url, {
     headers: { 'X-Subscription-Token': key, Accept: 'application/json' },
     signal: AbortSignal.timeout(10000),
@@ -376,7 +377,7 @@ async function searchBraveSocials(key: string, companyName: string): Promise<Soc
 
   const results = await Promise.allSettled(
     platforms.map(async (p) => {
-      const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(p.query)}&count=${p.count}&country=dk`;
+      const url = `${BRAVE_SEARCH_ENDPOINT}?q=${encodeURIComponent(p.query)}&count=${p.count}&country=dk`;
       const res = await fetch(url, {
         headers: { 'X-Subscription-Token': key, Accept: 'application/json' },
         signal: AbortSignal.timeout(5000),

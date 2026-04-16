@@ -1,5 +1,6 @@
 import { logger } from '@/app/lib/logger';
 import { companyInfo } from '@/app/lib/companyInfo';
+import { RESEND_ENDPOINT } from '@/app/lib/serviceEndpoints';
 
 /**
  * Email helper — app/lib/email.ts
@@ -11,8 +12,6 @@ import { companyInfo } from '@/app/lib/companyInfo';
  *
  * @see /api/stripe/verify-session — sends payment confirmation after checkout
  */
-
-const RESEND_ENDPOINT = 'https://api.resend.com/emails';
 const FROM_ADDRESS = process.env.EMAIL_FROM_ADDRESS || 'BizzAssist <noreply@bizzassist.dk>';
 
 // ─── Payment confirmation ──────────────────────────────────────────────────

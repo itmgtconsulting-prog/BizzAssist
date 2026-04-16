@@ -1445,12 +1445,14 @@ export default function EjendomDetaljeClient({
       if (!moderBfe) return;
       params.set('bfeNummer', String(moderBfe));
     } else {
-      // Byg soegeparametre — brug adresseId (DAWA UUID) hvis tilgaengeligt, ellers bfeNummer
-      const adresseId = dawaAdresse?.id;
+      // Byg søgeparametre — VP bruger adgangsAdresseID (ikke adresse med etage/dør).
+      // For ejerlejligheder (har etage) er dawaAdresse.id et adresse-ID med etage
+      // som VP ikke matcher — brug BFE i stedet.
       const bfeNummer = bbrData?.ejendomsrelationer?.[0]?.bfeNummer;
+      const adresseId = dawaAdresse?.etage ? null : dawaAdresse?.id; // Kun for parcelhuse
       if (!adresseId && !bfeNummer) return;
-      if (adresseId) params.set('adresseId', adresseId);
       if (bfeNummer) params.set('bfeNummer', String(bfeNummer));
+      if (adresseId) params.set('adresseId', adresseId);
     }
 
     const controller = new AbortController();

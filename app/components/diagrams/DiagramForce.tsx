@@ -23,6 +23,7 @@ import {
   ChevronsUpDown,
   ChevronsDownUp,
   RotateCcw,
+  Clock,
 } from 'lucide-react';
 import type { DiagramVariantProps, DiagramNode } from './DiagramData';
 
@@ -131,6 +132,9 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
     return new Set(graph.nodes.filter((n) => n.overflowItems).map((n) => n.id));
   });
 
+  /** BIZZ-427: Toggle visibility of ceased/historical owners */
+  const [showCeased, setShowCeased] = useState(false);
+
   /** Fullscreen overlay mode */
   const [isFullscreen, setIsFullscreen] = useState(false);
 
@@ -189,6 +193,8 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
   // ── Filter graph based on expand state ──
   const filteredGraph = useMemo(() => {
     const visibleNodes = graph.nodes.filter((n) => {
+      // BIZZ-427: Hide ceased/historical owners unless toggle is on
+      if (!showCeased && n.isCeased) return false;
       // Always show non-co-owner nodes
       if (!n.isCoOwner) return true;
       // Show co-owner only if its parent is expanded
@@ -197,7 +203,7 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
     const visibleIds = new Set(visibleNodes.map((n) => n.id));
     const visibleEdges = graph.edges.filter((e) => visibleIds.has(e.from) && visibleIds.has(e.to));
     return { nodes: visibleNodes, edges: visibleEdges };
-  }, [graph, expandedNodes]);
+  }, [graph, expandedNodes, showCeased]);
 
   // ── Compute topological depth (owners above, subsidiaries below) ──
   // Co-owners are placed between the subsidiary's parent and the subsidiary
@@ -1023,6 +1029,21 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
             ? 'Træk noder · Hold og træk for panorering · Dobbeltklik for zoom'
             : 'Drag nodes · Hold & drag to pan · Double-click to zoom'}
         </span>
+        {/* BIZZ-427: Toggle ceased/historical owners */}
+        {graph.nodes.some((n) => n.isCeased) && (
+          <button
+            onClick={() => setShowCeased((s) => !s)}
+            className={`h-7 px-2 flex items-center gap-1 text-[10px] font-medium border rounded-lg transition ml-1 ${
+              showCeased
+                ? 'bg-amber-600/20 border-amber-500/40 text-amber-300'
+                : 'bg-slate-800 border-slate-700/50 text-slate-400 hover:text-slate-300'
+            }`}
+            title={lang === 'da' ? 'Vis/skjul ophørte ejere' : 'Show/hide ceased owners'}
+          >
+            <Clock size={11} />
+            {lang === 'da' ? 'Historiske' : 'Historical'}
+          </button>
+        )}
         {/* Fullscreen toggle */}
         <button
           onClick={() => {

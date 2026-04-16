@@ -617,6 +617,7 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
       cancelled = true;
       simulation.stop();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filteredGraph, depthMap, nodeYMap]);
 
   // ── Compute SVG viewBox ──

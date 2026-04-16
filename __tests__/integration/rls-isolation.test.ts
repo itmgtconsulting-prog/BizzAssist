@@ -97,7 +97,12 @@ const SEED_RECENT_B_ID = 'rls-test-recent-b-only';
  * This prevents slow live-Supabase tests from running in the standard CI
  * unit-test job (which uses jsdom and mocked dependencies).
  */
-const runRls = process.env['RLS_TEST'] === 'true';
+const runRls =
+  process.env['RLS_TEST'] === 'true' &&
+  !!process.env['RLS_TEST_EMAIL_1'] &&
+  !!process.env['RLS_TEST_PASSWORD_1'] &&
+  !!process.env['RLS_TEST_EMAIL_2'] &&
+  !!process.env['RLS_TEST_PASSWORD_2'];
 const describeRls = runRls ? describe : describe.skip;
 
 // ── Client factories ──────────────────────────────────────────────────────────
@@ -172,7 +177,7 @@ beforeAll(async () => {
   ) {
     console.log(
       'Skipping RLS tests — required env vars not set. ' +
-        'Required: RLS_TEST, RLS_TEST_EMAIL_1, RLS_TEST_PASSWORD_1, RLS_TEST_EMAIL_2, RLS_TEST_PASSWORD_2',
+        'Required: RLS_TEST, RLS_TEST_EMAIL_1, RLS_TEST_PASSWORD_1, RLS_TEST_EMAIL_2, RLS_TEST_PASSWORD_2'
     );
     return;
   }

@@ -402,6 +402,7 @@ export default function ChatPageClient() {
     const updated = freshConvs.map((c) => (c.id === id ? { ...c, messages: updatedMessages } : c));
     saveConversations(updated);
     setConversations(updated);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /**
@@ -439,6 +440,7 @@ export default function ChatPageClient() {
       setStreamText('');
       setToolStatus('');
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [conversations]
   );
 
@@ -463,6 +465,7 @@ export default function ChatPageClient() {
         }
       }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [conversations, activeId]
   );
 

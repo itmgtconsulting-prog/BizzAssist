@@ -13,7 +13,7 @@
 
 import { logger } from '@/app/lib/logger';
 import { DATAFORDELER_TOKEN_URL } from '@/app/lib/serviceEndpoints';
-import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
+// Proxy imports removed — OAuth token endpoint must be called directly
 
 /** Cached token with expiry timestamp */
 let _cachedToken: { token: string; expiresAt: number } | null = null;
@@ -45,18 +45,17 @@ export async function getSharedOAuthToken(): Promise<string | null> {
   // Start new token request with mutex
   _tokenPromise = (async () => {
     try {
-      const res = await fetch(proxyUrl(DATAFORDELER_TOKEN_URL), {
+      // OAuth token endpoint called directly (not via proxy) — auth.datafordeler.dk
+      // is a token issuer, not a data endpoint. Proxy routing caused failures.
+      const res = await fetch(DATAFORDELER_TOKEN_URL, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          ...proxyHeaders(),
-        },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
           grant_type: 'client_credentials',
           client_id: clientId,
           client_secret: clientSecret,
         }),
-        signal: AbortSignal.timeout(proxyTimeout()),
+        signal: AbortSignal.timeout(10_000),
       });
 
       if (!res.ok) {

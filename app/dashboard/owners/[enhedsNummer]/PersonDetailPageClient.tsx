@@ -1306,6 +1306,7 @@ export default function PersonDetailPageClient({
     }
 
     void fetchEjendommeProgressively(uniqueCvrs, personEnhedsNumre);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aktivTab, derived, relatedCompanies, fetchEjendommeProgressively]);
 
   /**

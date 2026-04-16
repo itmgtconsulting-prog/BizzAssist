@@ -537,8 +537,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
   /** Oversigt-tab: aktivt filter — null = vis alle, ellers kun valgt sektion */
   const [oversigtFilter, setOversigtFilter] = useState<string | null>(null);
 
-  /** Ejendomme-tab: filter — null = alle, 'portefolje' = ejendomme, 'handler' = ejendomshandler */
-  const [ejendommeFilter, setEjendommeFilter] = useState<string | null>(null);
+  // BIZZ-441: ejendommeFilter removed — handler section hidden
 
   /** Toggler et dokument-ID i valgteDoc-sættet */
   const toggleDoc = useCallback((id: string) => {
@@ -2068,53 +2067,10 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
           {aktivTab === 'properties' && (
             <div className="space-y-4">
               {(ejendommeLoading || ejendommeLoadingMore) && <TabLoadingSpinner />}
-              {/* ── Filter chips ── */}
-              <div className="flex flex-wrap gap-2">
-                <button
-                  onClick={() => setEjendommeFilter(null)}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-all border ${
-                    ejendommeFilter === null
-                      ? 'bg-white/10 border-white/30 text-white'
-                      : 'bg-slate-800/50 border-slate-700/40 text-slate-400 hover:text-slate-200 hover:border-slate-600'
-                  }`}
-                >
-                  <LayoutDashboard size={12} />
-                  {lang === 'da' ? 'Alle' : 'All'}
-                </button>
-                <button
-                  onClick={() =>
-                    setEjendommeFilter(ejendommeFilter === 'portefolje' ? null : 'portefolje')
-                  }
-                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-all border ${
-                    ejendommeFilter === 'portefolje'
-                      ? 'bg-blue-600/30 border-blue-500/50 text-blue-300'
-                      : 'bg-slate-800/50 border-slate-700/40 text-slate-400 hover:text-slate-200 hover:border-slate-600'
-                  }`}
-                >
-                  <span className={ejendommeFilter === 'portefolje' ? '' : 'text-blue-400'}>
-                    <Home size={12} />
-                  </span>
-                  {lang === 'da' ? 'Ejendomme' : 'Properties'}
-                </button>
-                <button
-                  onClick={() =>
-                    setEjendommeFilter(ejendommeFilter === 'handler' ? null : 'handler')
-                  }
-                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-all border ${
-                    ejendommeFilter === 'handler'
-                      ? 'bg-emerald-600/30 border-emerald-500/50 text-emerald-300'
-                      : 'bg-slate-800/50 border-slate-700/40 text-slate-400 hover:text-slate-200 hover:border-slate-600'
-                  }`}
-                >
-                  <span className={ejendommeFilter === 'handler' ? '' : 'text-emerald-400'}>
-                    <ArrowRightLeft size={12} />
-                  </span>
-                  {lang === 'da' ? 'Ejendomshandler' : 'Property Trades'}
-                </button>
-              </div>
+              {/* BIZZ-441: Filter chips removed — only property portfolio shown */}
 
               {/* ── Ejendomme-portefølje sektion ── */}
-              {(ejendommeFilter === null || ejendommeFilter === 'portefolje') && (
+              {
                 <div className="space-y-4">
                   {/* Indledende spinner */}
                   {ejendommeLoading && ejendommeData.length === 0 && (
@@ -2207,10 +2163,10 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                       </div>
                     )}
                 </div>
-              )}
+              }
 
-              {/* ── Ejendomshandler sektion ── */}
-              {(ejendommeFilter === null || ejendommeFilter === 'handler') && (
+              {/* BIZZ-441: Ejendomshandler sektion removed — only property portfolio shown */}
+              {false && (
                 <div className="space-y-4">
                   {handlerLoading ? (
                     <div className="flex items-center justify-center py-12">
@@ -2370,8 +2326,8 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                 </div>
               )}
 
-              {/* BIZZ-409: Historiske ejendomme (solgte) — fra ejendomshandler med rolle=Sælger */}
-              {(ejendommeFilter === null || ejendommeFilter === 'handler') &&
+              {/* BIZZ-409: Historiske ejendomme (solgte) — hidden with handler section */}
+              {false &&
                 !handlerLoading &&
                 (() => {
                   const solgte = ejendomshandler.filter((h) => h.rolle === 'saelger' && h.adresse);

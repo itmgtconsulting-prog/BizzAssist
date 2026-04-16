@@ -1651,6 +1651,37 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                               <p className="text-red-400 text-sm font-medium">{data.enddate}</p>
                             </div>
                           )}
+                          {data.senesteVedtaegtsdato && (
+                            <div>
+                              <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                                {lang === 'da' ? 'Seneste vedtægtsdato' : 'Latest articles date'}
+                              </p>
+                              <p className="text-white text-sm font-medium">
+                                {data.senesteVedtaegtsdato}
+                              </p>
+                            </div>
+                          )}
+                          {data.foersteRegnskabsperiode && (
+                            <div>
+                              <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                                {lang === 'da'
+                                  ? 'Første regnskabsperiode'
+                                  : 'First accounting period'}
+                              </p>
+                              <p className="text-white text-sm font-medium">
+                                {data.foersteRegnskabsperiode.start} –{' '}
+                                {data.foersteRegnskabsperiode.slut}
+                              </p>
+                            </div>
+                          )}
+                          {data.statusTekst && (
+                            <div>
+                              <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                                {lang === 'da' ? 'Virksomhedsstatus' : 'Company status'}
+                              </p>
+                              <p className="text-white text-sm font-medium">{data.statusTekst}</p>
+                            </div>
+                          )}
                         </div>
 
                         {/* ── Ledelse, Ejere & Kontakt — 2-kolonne grid ── */}

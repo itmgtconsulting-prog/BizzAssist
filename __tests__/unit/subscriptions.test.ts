@@ -179,8 +179,13 @@ describe('isSubscriptionFunctional', () => {
     expect(isSubscriptionFunctional(makeSub({ isPaid: true }), PLANS.professionel)).toBe(true);
   });
 
-  it('returns true for active free plan (priceDkk === 0) regardless of isPaid', () => {
-    expect(isSubscriptionFunctional(makeSub({ isPaid: false }), PLANS.demo)).toBe(true);
+  it('returns false for free plan with requiresApproval when not approved (isPaid=false)', () => {
+    // BIZZ-431: Demo plan requires admin approval — isPaid must be true
+    expect(isSubscriptionFunctional(makeSub({ isPaid: false }), PLANS.demo)).toBe(false);
+  });
+
+  it('returns true for free plan with requiresApproval when approved (isPaid=true)', () => {
+    expect(isSubscriptionFunctional(makeSub({ isPaid: true }), PLANS.demo)).toBe(true);
   });
 
   it('returns false for active paid plan where isPaid is false and no trial', () => {

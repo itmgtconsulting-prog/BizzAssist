@@ -187,7 +187,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
     /** Redirect to login if subscription check fails, or grant access. */
     const gateAccess = async (
       status: 'ok' | 'pending' | 'cancelled' | 'no_subscription',
-      functional = true,
+      functional = false,
       sub: UserSubscription | null = null,
       admin = false
     ) => {
@@ -322,7 +322,8 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                 json.isAdmin
               );
               // Admin users always have functional access; otherwise use server-computed flag
-              const functional = json.isAdmin ? true : (json.isFunctional ?? true);
+              // BIZZ-431: fail-closed — default to false if isFunctional is missing
+              const functional = json.isAdmin ? true : (json.isFunctional ?? false);
               gateAccess(checkSub(sub), functional, sub, !!json.isAdmin);
               return;
             }

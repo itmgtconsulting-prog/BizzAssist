@@ -276,8 +276,10 @@ export function isSubscriptionFunctional(
 ): boolean {
   if (!sub || !plan) return false;
   if (sub.status !== 'active') return false;
-  // Free plans always have access
-  if (plan.priceDkk === 0) return true;
+  // BIZZ-431: Free plans that require approval only have access when explicitly approved (isPaid)
+  // Free plans without approval requirement always have access
+  if (plan.priceDkk === 0 && !plan.requiresApproval) return true;
+  if (plan.priceDkk === 0 && plan.requiresApproval && sub.isPaid) return true;
   // Explicitly paid
   if (sub.isPaid) return true;
   // Within free trial period

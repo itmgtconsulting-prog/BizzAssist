@@ -3605,174 +3605,179 @@ export default function EjendomDetaljeClient({
                 </div>
 
                 {/* ── Salgshistorik (EJF + Tinglysning) ── */}
-                <div>
-                  <div className="flex items-center gap-2 mb-1">
-                    <SectionTitle title={t.salesHistory} />
-                    {tlTestFallback && mergedSalgshistorik.length > 0 && (
-                      <span className="px-2 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded text-[10px] text-amber-400 font-medium">
-                        TESTDATA
-                      </span>
-                    )}
-                  </div>
-                  {salgshistorikLoader || tlSumLoader ? (
-                    <SektionLoader label={t.loadingSalesHistory} rows={4} />
-                  ) : mergedSalgshistorik.length > 0 ? (
-                    <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl overflow-hidden overflow-x-auto">
-                      {/* BIZZ-324: table expanded with tinglysningsdato, tinglysningsafgift, loesoeresum and entreprisesum */}
-                      <table className="w-full text-sm min-w-[900px]">
-                        <thead>
-                          <tr className="border-b border-slate-700/30 text-slate-500 text-xs uppercase tracking-wider">
-                            <th className="text-left px-4 py-2.5 font-medium">{t.date}</th>
-                            <th className="text-left px-4 py-2.5 font-medium">{t.buyerName}</th>
-                            <th className="text-left px-4 py-2.5 font-medium">{t.type}</th>
-                            <th className="text-right px-4 py-2.5 font-medium">
-                              {t.purchasePrice}
-                            </th>
-                            <th className="text-right px-4 py-2.5 font-medium">{t.cashPrice}</th>
-                            <th className="text-right px-4 py-2.5 font-medium">{t.loesoereSum}</th>
-                            <th className="text-right px-4 py-2.5 font-medium">
-                              {t.entrepriseSum}
-                            </th>
-                            <th className="text-right px-4 py-2.5 font-medium">
-                              {t.registrationDate}
-                            </th>
-                            <th className="text-right px-4 py-2.5 font-medium">
-                              {t.registrationFee}
-                            </th>
-                            <th className="text-right px-4 py-2.5 font-medium">{t.share}</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {mergedSalgshistorik.map((h, i) => {
-                            /** Primær dato: købsaftaledato foretrukkes, ellers overtagelsesdato */
-                            const dato = h.koebsaftaleDato ?? h.overtagelsesdato;
-                            const overdragelse = h.overdragelsesmaade ?? h.adkomstType;
-                            return (
-                              <tr
-                                key={i}
-                                className="border-b border-slate-700/20 last:border-0 hover:bg-white/[0.02] transition-colors"
-                              >
-                                <td className="px-4 py-2.5 text-slate-300 tabular-nums whitespace-nowrap">
-                                  {dato
-                                    ? new Date(dato).toLocaleDateString(da ? 'da-DK' : 'en-GB', {
-                                        year: 'numeric',
-                                        month: 'short',
-                                        day: 'numeric',
-                                      })
-                                    : '—'}
-                                  {/* Show overtagelsesdato as secondary line when different from koebsaftaleDato */}
-                                  {h.koebsaftaleDato &&
-                                    h.overtagelsesdato &&
-                                    h.koebsaftaleDato !== h.overtagelsesdato && (
-                                      <p className="text-slate-600 text-[10px] mt-0.5">
-                                        {t.overtagelsesdato}:{' '}
-                                        {new Date(h.overtagelsesdato).toLocaleDateString(
+                {/* BIZZ-402: only render when loading or when there is data to show */}
+                {(salgshistorikLoader || tlSumLoader || mergedSalgshistorik.length > 0) && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-1">
+                      <SectionTitle title={t.salesHistory} />
+                      {tlTestFallback && mergedSalgshistorik.length > 0 && (
+                        <span className="px-2 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded text-[10px] text-amber-400 font-medium">
+                          TESTDATA
+                        </span>
+                      )}
+                    </div>
+                    {salgshistorikLoader || tlSumLoader ? (
+                      <SektionLoader label={t.loadingSalesHistory} rows={4} />
+                    ) : mergedSalgshistorik.length > 0 ? (
+                      <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl overflow-hidden overflow-x-auto">
+                        {/* BIZZ-324: table expanded with tinglysningsdato, tinglysningsafgift, loesoeresum and entreprisesum */}
+                        <table className="w-full text-sm min-w-[900px]">
+                          <thead>
+                            <tr className="border-b border-slate-700/30 text-slate-500 text-xs uppercase tracking-wider">
+                              <th className="text-left px-4 py-2.5 font-medium">{t.date}</th>
+                              <th className="text-left px-4 py-2.5 font-medium">{t.buyerName}</th>
+                              <th className="text-left px-4 py-2.5 font-medium">{t.type}</th>
+                              <th className="text-right px-4 py-2.5 font-medium">
+                                {t.purchasePrice}
+                              </th>
+                              <th className="text-right px-4 py-2.5 font-medium">{t.cashPrice}</th>
+                              <th className="text-right px-4 py-2.5 font-medium">
+                                {t.loesoereSum}
+                              </th>
+                              <th className="text-right px-4 py-2.5 font-medium">
+                                {t.entrepriseSum}
+                              </th>
+                              <th className="text-right px-4 py-2.5 font-medium">
+                                {t.registrationDate}
+                              </th>
+                              <th className="text-right px-4 py-2.5 font-medium">
+                                {t.registrationFee}
+                              </th>
+                              <th className="text-right px-4 py-2.5 font-medium">{t.share}</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {mergedSalgshistorik.map((h, i) => {
+                              /** Primær dato: købsaftaledato foretrukkes, ellers overtagelsesdato */
+                              const dato = h.koebsaftaleDato ?? h.overtagelsesdato;
+                              const overdragelse = h.overdragelsesmaade ?? h.adkomstType;
+                              return (
+                                <tr
+                                  key={i}
+                                  className="border-b border-slate-700/20 last:border-0 hover:bg-white/[0.02] transition-colors"
+                                >
+                                  <td className="px-4 py-2.5 text-slate-300 tabular-nums whitespace-nowrap">
+                                    {dato
+                                      ? new Date(dato).toLocaleDateString(da ? 'da-DK' : 'en-GB', {
+                                          year: 'numeric',
+                                          month: 'short',
+                                          day: 'numeric',
+                                        })
+                                      : '—'}
+                                    {/* Show overtagelsesdato as secondary line when different from koebsaftaleDato */}
+                                    {h.koebsaftaleDato &&
+                                      h.overtagelsesdato &&
+                                      h.koebsaftaleDato !== h.overtagelsesdato && (
+                                        <p className="text-slate-600 text-[10px] mt-0.5">
+                                          {t.overtagelsesdato}:{' '}
+                                          {new Date(h.overtagelsesdato).toLocaleDateString(
+                                            da ? 'da-DK' : 'en-GB',
+                                            {
+                                              year: 'numeric',
+                                              month: 'short',
+                                              day: 'numeric',
+                                            }
+                                          )}
+                                        </p>
+                                      )}
+                                  </td>
+                                  <td className="px-4 py-2.5">
+                                    {h.koeber ? (
+                                      <div>
+                                        <p className="text-slate-200 text-sm leading-tight">
+                                          {h.koebercvr ? (
+                                            <Link
+                                              href={`/dashboard/companies/${h.koebercvr}`}
+                                              className="hover:text-blue-400 transition-colors"
+                                            >
+                                              {h.koeber}
+                                            </Link>
+                                          ) : (
+                                            h.koeber
+                                          )}
+                                        </p>
+                                        {h.koebercvr && (
+                                          <p className="text-slate-500 text-[10px]">
+                                            CVR {h.koebercvr}
+                                          </p>
+                                        )}
+                                      </div>
+                                    ) : (
+                                      <span className="text-slate-500 text-xs">—</span>
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-2.5">
+                                    <span
+                                      className={`text-xs px-2 py-0.5 rounded-full ${
+                                        overdragelse?.toLowerCase().includes('frit')
+                                          ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20'
+                                          : overdragelse?.toLowerCase().includes('tvang')
+                                            ? 'text-red-400 bg-red-500/10 border border-red-500/20'
+                                            : 'text-slate-400 bg-slate-500/10 border border-slate-500/20'
+                                      }`}
+                                    >
+                                      {overdragelse ?? '—'}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-2.5 text-right text-white font-medium tabular-nums">
+                                    {h.samletKoebesum != null
+                                      ? `${h.samletKoebesum.toLocaleString(da ? 'da-DK' : 'en-GB')} kr.`
+                                      : '—'}
+                                  </td>
+                                  <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums">
+                                    {h.kontantKoebesum != null
+                                      ? `${h.kontantKoebesum.toLocaleString(da ? 'da-DK' : 'en-GB')} kr.`
+                                      : '—'}
+                                  </td>
+                                  <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums text-xs">
+                                    {h.loesoeresum != null
+                                      ? `${h.loesoeresum.toLocaleString(da ? 'da-DK' : 'en-GB')} kr.`
+                                      : '—'}
+                                  </td>
+                                  <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums text-xs">
+                                    {h.entreprisesum != null
+                                      ? `${h.entreprisesum.toLocaleString(da ? 'da-DK' : 'en-GB')} kr.`
+                                      : '—'}
+                                  </td>
+                                  <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums text-xs whitespace-nowrap">
+                                    {h.tinglysningsdato
+                                      ? new Date(h.tinglysningsdato).toLocaleDateString(
                                           da ? 'da-DK' : 'en-GB',
                                           {
                                             year: 'numeric',
                                             month: 'short',
                                             day: 'numeric',
                                           }
-                                        )}
-                                      </p>
-                                    )}
-                                </td>
-                                <td className="px-4 py-2.5">
-                                  {h.koeber ? (
-                                    <div>
-                                      <p className="text-slate-200 text-sm leading-tight">
-                                        {h.koebercvr ? (
-                                          <Link
-                                            href={`/dashboard/companies/${h.koebercvr}`}
-                                            className="hover:text-blue-400 transition-colors"
-                                          >
-                                            {h.koeber}
-                                          </Link>
-                                        ) : (
-                                          h.koeber
-                                        )}
-                                      </p>
-                                      {h.koebercvr && (
-                                        <p className="text-slate-500 text-[10px]">
-                                          CVR {h.koebercvr}
-                                        </p>
-                                      )}
-                                    </div>
-                                  ) : (
-                                    <span className="text-slate-500 text-xs">—</span>
-                                  )}
-                                </td>
-                                <td className="px-4 py-2.5">
-                                  <span
-                                    className={`text-xs px-2 py-0.5 rounded-full ${
-                                      overdragelse?.toLowerCase().includes('frit')
-                                        ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20'
-                                        : overdragelse?.toLowerCase().includes('tvang')
-                                          ? 'text-red-400 bg-red-500/10 border border-red-500/20'
-                                          : 'text-slate-400 bg-slate-500/10 border border-slate-500/20'
-                                    }`}
-                                  >
-                                    {overdragelse ?? '—'}
-                                  </span>
-                                </td>
-                                <td className="px-4 py-2.5 text-right text-white font-medium tabular-nums">
-                                  {h.samletKoebesum != null
-                                    ? `${h.samletKoebesum.toLocaleString(da ? 'da-DK' : 'en-GB')} kr.`
-                                    : '—'}
-                                </td>
-                                <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums">
-                                  {h.kontantKoebesum != null
-                                    ? `${h.kontantKoebesum.toLocaleString(da ? 'da-DK' : 'en-GB')} kr.`
-                                    : '—'}
-                                </td>
-                                <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums text-xs">
-                                  {h.loesoeresum != null
-                                    ? `${h.loesoeresum.toLocaleString(da ? 'da-DK' : 'en-GB')} kr.`
-                                    : '—'}
-                                </td>
-                                <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums text-xs">
-                                  {h.entreprisesum != null
-                                    ? `${h.entreprisesum.toLocaleString(da ? 'da-DK' : 'en-GB')} kr.`
-                                    : '—'}
-                                </td>
-                                <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums text-xs whitespace-nowrap">
-                                  {h.tinglysningsdato
-                                    ? new Date(h.tinglysningsdato).toLocaleDateString(
-                                        da ? 'da-DK' : 'en-GB',
-                                        {
-                                          year: 'numeric',
-                                          month: 'short',
-                                          day: 'numeric',
-                                        }
-                                      )
-                                    : '—'}
-                                </td>
-                                <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums text-xs">
-                                  {h.tinglysningsafgift != null
-                                    ? `${h.tinglysningsafgift.toLocaleString(da ? 'da-DK' : 'en-GB')} kr.`
-                                    : '—'}
-                                </td>
-                                <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums text-xs">
-                                  {h.andel ?? '—'}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : (
-                    <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl p-5 text-center space-y-2">
-                      <TrendingUp size={22} className="text-slate-600 mx-auto" />
-                      <p className="text-slate-500 text-xs">{t.noTransactions}</p>
-                      {salgshistorikManglerAdgang && (
-                        <p className="text-slate-600 text-[10px] max-w-sm mx-auto leading-relaxed">
-                          {t.salesHistoryEJF}
-                        </p>
-                      )}
-                    </div>
-                  )}
-                </div>
+                                        )
+                                      : '—'}
+                                  </td>
+                                  <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums text-xs">
+                                    {h.tinglysningsafgift != null
+                                      ? `${h.tinglysningsafgift.toLocaleString(da ? 'da-DK' : 'en-GB')} kr.`
+                                      : '—'}
+                                  </td>
+                                  <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums text-xs">
+                                    {h.andel ?? '—'}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <div className="bg-slate-800/20 border border-slate-700/30 rounded-xl p-5 text-center space-y-2">
+                        <TrendingUp size={22} className="text-slate-600 mx-auto" />
+                        <p className="text-slate-500 text-xs">{t.noTransactions}</p>
+                        {salgshistorikManglerAdgang && (
+                          <p className="text-slate-600 text-[10px] max-w-sm mx-auto leading-relaxed">
+                            {t.salesHistoryEJF}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Hæftelser fjernet — vises nu under Tinglysning-tab */}
                 {/* BIZZ-325: Udbudshistorik og Lignende handler fjernet — ingen datakilde tilgængelig endnu */}

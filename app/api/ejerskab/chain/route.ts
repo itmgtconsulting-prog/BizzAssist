@@ -260,6 +260,11 @@ export async function GET(req: NextRequest) {
   const companyOwnersToResolve: { nodeId: string; cvr: number; depth: number }[] = [];
   const ejerDetaljer: ChainEjerDetalje[] = [];
 
+  // BIZZ-386: Accumulators for batched parallel enhedsNummer lookups (Tinglysning + EJF paths)
+  const tlPersonsToResolve: { navn: string | undefined; nodeIdx: number; detaljeIdx: number }[] =
+    [];
+  const ejfPersonsToResolve: { navn: string; nodeIdx: number; detaljeIdx: number }[] = [];
+
   // Forward the caller's session cookie so internal API routes can authenticate.
   const cookieHeader = req.headers.get('cookie') ?? '';
 
@@ -342,44 +347,12 @@ export async function GET(req: NextRequest) {
                 });
               } else {
                 const id = `person-${nodes.length}`;
-                // Søg efter personens enhedsNummer i CVR ES via navn
-                let personLink: string | undefined;
-                let personEnhedsNummer: number | undefined;
-                if (ejer.navn && CVR_ES_USER && CVR_ES_PASS) {
-                  try {
-                    const auth = Buffer.from(`${CVR_ES_USER}:${CVR_ES_PASS}`).toString('base64');
-                    const pQuery = {
-                      query: { match: { 'Vrdeltagerperson.navne.navn': ejer.navn } },
-                      _source: ['Vrdeltagerperson.enhedsNummer'],
-                      size: 1,
-                    };
-                    const pRes = await fetch(`${CVR_ES_BASE}/deltager/_search`, {
-                      method: 'POST',
-                      headers: {
-                        'Content-Type': 'application/json',
-                        Authorization: `Basic ${auth}`,
-                      },
-                      body: JSON.stringify(pQuery),
-                      signal: AbortSignal.timeout(5000),
-                    });
-                    if (pRes.ok) {
-                      const pData = await pRes.json();
-                      const enr = pData?.hits?.hits?.[0]?._source?.Vrdeltagerperson?.enhedsNummer;
-                      if (typeof enr === 'number') {
-                        personEnhedsNummer = enr;
-                        personLink = `/dashboard/owners/${enr}`;
-                      }
-                    }
-                  } catch {
-                    /* ignore */
-                  }
-                }
+                // BIZZ-386: Push node immediately (without enhedsNummer) so id is stable,
+                // then batch-resolve enhedsNummer for all persons after the loop.
                 nodes.push({
                   id,
                   label: ejer.navn || 'Person',
                   type: 'person',
-                  enhedsNummer: personEnhedsNummer,
-                  link: personLink,
                 });
                 edges.push({ from: id, to: mainId, ejerandel: ejer.andel ?? undefined });
                 ejerDetaljer.push({
@@ -391,12 +364,51 @@ export async function GET(req: NextRequest) {
                   overtagelsesdato: ejer.overtagelsesdato ?? null,
                   adkomstType: ejer.adkomstType ?? null,
                   koebesum: ejer.koebesum ?? null,
-                  enhedsNummer: personEnhedsNummer ?? null,
+                  enhedsNummer: null,
+                });
+                // Track node/detaljer indices so we can patch them after batch lookup
+                tlPersonsToResolve.push({
+                  navn: ejer.navn,
+                  nodeIdx: nodes.length - 1,
+                  detaljeIdx: ejerDetaljer.length - 1,
                 });
               }
             }
           }
         }
+      }
+    }
+
+    // BIZZ-386: Batch-resolve enhedsNummer for all Tinglysning person owners in parallel
+    if (tlPersonsToResolve.length > 0 && CVR_ES_USER && CVR_ES_PASS) {
+      const auth = Buffer.from(`${CVR_ES_USER}:${CVR_ES_PASS}`).toString('base64');
+      const results = await Promise.allSettled(
+        tlPersonsToResolve.map(({ navn }) =>
+          navn
+            ? fetch(`${CVR_ES_BASE}/deltager/_search`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Basic ${auth}` },
+                body: JSON.stringify({
+                  query: { match: { 'Vrdeltagerperson.navne.navn': navn } },
+                  _source: ['Vrdeltagerperson.enhedsNummer'],
+                  size: 1,
+                }),
+                signal: AbortSignal.timeout(5000),
+              })
+                .then((r) => (r.ok ? r.json() : null))
+                .catch(() => null)
+            : Promise.resolve(null)
+        )
+      );
+      for (let i = 0; i < tlPersonsToResolve.length; i++) {
+        const result = results[i];
+        if (result.status !== 'fulfilled' || !result.value) continue;
+        const enr = result.value?.hits?.hits?.[0]?._source?.Vrdeltagerperson?.enhedsNummer;
+        if (typeof enr !== 'number') continue;
+        const { nodeIdx, detaljeIdx } = tlPersonsToResolve[i];
+        nodes[nodeIdx].enhedsNummer = enr;
+        nodes[nodeIdx].link = `/dashboard/owners/${enr}`;
+        ejerDetaljer[detaljeIdx].enhedsNummer = enr;
       }
     }
   } catch {
@@ -515,53 +527,27 @@ export async function GET(req: NextRequest) {
           } else if (ejer.personNavn) {
             const id = `person-ejf-${nodes.length}`;
 
-            // Søg efter personens enhedsNummer i CVR ES via navn
-            let personLink: string | undefined;
-            let personEnhedsNummer: number | undefined;
-            if (CVR_ES_USER && CVR_ES_PASS) {
-              try {
-                const auth = Buffer.from(`${CVR_ES_USER}:${CVR_ES_PASS}`).toString('base64');
-                const pRes = await fetch(`${CVR_ES_BASE}/deltager/_search`, {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Basic ${auth}`,
-                  },
-                  body: JSON.stringify({
-                    query: { match: { 'Vrdeltagerperson.navne.navn': ejer.personNavn } },
-                    _source: ['Vrdeltagerperson.enhedsNummer'],
-                    size: 1,
-                  }),
-                  signal: AbortSignal.timeout(5000),
-                });
-                if (pRes.ok) {
-                  const pData = await pRes.json();
-                  const enr = pData?.hits?.hits?.[0]?._source?.Vrdeltagerperson?.enhedsNummer;
-                  if (typeof enr === 'number') {
-                    personEnhedsNummer = enr;
-                    personLink = `/dashboard/owners/${enr}`;
-                  }
-                }
-              } catch {
-                /* ignore */
-              }
-            }
-
+            // BIZZ-386: Push node immediately (without enhedsNummer) so id is stable,
+            // then batch-resolve enhedsNummer for all EJF persons after the loop.
             if (!seenIds.has(id)) {
               seenIds.add(id);
               nodes.push({
                 id,
                 label: ejer.personNavn,
                 type: 'person',
-                enhedsNummer: personEnhedsNummer,
-                link: personLink,
+              });
+              // Only track for lookup when the node is newly added (deduplication guard)
+              ejfPersonsToResolve.push({
+                navn: ejer.personNavn,
+                nodeIdx: nodes.length - 1,
+                detaljeIdx: ejerDetaljer.length, // points to the entry we're about to push
               });
             }
             edges.push({ from: id, to: mainId, ejerandel: andel });
             ejerDetaljer.push({
               navn: ejer.personNavn,
               cvr: null,
-              enhedsNummer: personEnhedsNummer ?? null,
+              enhedsNummer: null,
               type: 'person',
               andel: andel ?? null,
               adresse: null,
@@ -570,6 +556,37 @@ export async function GET(req: NextRequest) {
               koebesum: null,
             });
           }
+        }
+      }
+
+      // BIZZ-386: Batch-resolve enhedsNummer for all EJF person owners in parallel
+      if (ejfPersonsToResolve.length > 0 && CVR_ES_USER && CVR_ES_PASS) {
+        const auth = Buffer.from(`${CVR_ES_USER}:${CVR_ES_PASS}`).toString('base64');
+        const results = await Promise.allSettled(
+          ejfPersonsToResolve.map(({ navn }) =>
+            fetch(`${CVR_ES_BASE}/deltager/_search`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Basic ${auth}` },
+              body: JSON.stringify({
+                query: { match: { 'Vrdeltagerperson.navne.navn': navn } },
+                _source: ['Vrdeltagerperson.enhedsNummer'],
+                size: 1,
+              }),
+              signal: AbortSignal.timeout(5000),
+            })
+              .then((r) => (r.ok ? r.json() : null))
+              .catch(() => null)
+          )
+        );
+        for (let i = 0; i < ejfPersonsToResolve.length; i++) {
+          const result = results[i];
+          if (result.status !== 'fulfilled' || !result.value) continue;
+          const enr = result.value?.hits?.hits?.[0]?._source?.Vrdeltagerperson?.enhedsNummer;
+          if (typeof enr !== 'number') continue;
+          const { nodeIdx, detaljeIdx } = ejfPersonsToResolve[i];
+          nodes[nodeIdx].enhedsNummer = enr;
+          nodes[nodeIdx].link = `/dashboard/owners/${enr}`;
+          ejerDetaljer[detaljeIdx].enhedsNummer = enr;
         }
       }
     } catch {

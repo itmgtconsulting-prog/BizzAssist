@@ -93,8 +93,8 @@ async function loadAllTags(): Promise<RecentTag[]> {
   function addTag(type: RecentTag['type'], href: string, label: string, suffix: string): void {
     if (byType[type].length >= TAGS_PER_TYPE) return;
     const key = `${type}::${suffix}`;
-    // Avoid duplicates (same href already present from another source)
-    if (byType[type].some((t) => t.href === href)) return;
+    // Avoid duplicates — same href OR same display label from another source
+    if (byType[type].some((t) => t.href === href || t.label === label)) return;
     byType[type].push({ type, key, href, label });
   }
 

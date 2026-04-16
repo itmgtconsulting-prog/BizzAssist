@@ -936,24 +936,32 @@ export default function EjendomDetaljeClient({
   /** Indlaes tracking-tilstand ved mount og lyt efter aendringer.
    *  Viser cached vaerdi med det samme, derefter opdaterer fra Supabase. */
   useEffect(() => {
+    let ignore = false;
     // Instant render from cache
     setErFulgt(erTracked(id));
-    // Then verify against Supabase
+    // Then verify against Supabase — skip update if component unmounted or toggle in progress
     fetchErTracked(id)
-      .then(setErFulgt)
+      .then((v) => {
+        if (!ignore && !foelgToggling) setErFulgt(v);
+      })
       .catch(() => {});
     const handler = () => {
+      if (ignore || foelgToggling) return;
       setErFulgt(erTracked(id));
       fetchErTracked(id)
-        .then(setErFulgt)
+        .then((v) => {
+          if (!ignore && !foelgToggling) setErFulgt(v);
+        })
         .catch(() => {});
     };
     window.addEventListener('ba-tracked-changed', handler);
     window.addEventListener('storage', handler);
     return () => {
+      ignore = true;
       window.removeEventListener('ba-tracked-changed', handler);
       window.removeEventListener('storage', handler);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   /**
@@ -3312,8 +3320,8 @@ export default function EjendomDetaljeClient({
               </div>
             )}
 
-            {/* ══ EJERFORHOLD ══ */}
-            {aktivTab === 'ejerforhold' && (
+            {/* ══ EJERFORHOLD — always mounted for prefetch (BIZZ-410), hidden when not active ══ */}
+            <div className={aktivTab === 'ejerforhold' ? '' : 'hidden'}>
               <div className="space-y-2">
                 {/* Loading state — vis spinner mens BBR eller ejerskab data hentes */}
                 {(ejereLoader || bbrLoader || !bbrData) && (
@@ -3446,7 +3454,7 @@ export default function EjendomDetaljeClient({
                     );
                   })()}
               </div>
-            )}
+            </div>
 
             {/* ══ TINGLYSNING ══ — altid mounted (hidden) så data ikke mistes ved tab-skift */}
             {(() => {

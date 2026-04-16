@@ -3926,8 +3926,25 @@ export default function EjendomDetaljeClient({
 
                     // Historiske rækker fra Datafordeler (filtrer år der allerede dækkes af forelobige)
                     const forelobigAar = new Set(forelobige.map((fv) => fv.vurderingsaar));
-                    const historiskeRaekker: SkatRaekke[] = alleVurderinger
-                      .filter((v) => v.aar != null && !forelobigAar.has(v.aar))
+                    // Deduplicate by year — alleVurderinger can contain multiple nodes for the
+                    // same year (e.g. revised assessments). Keep the entry with the highest
+                    // ejendomsvaerdi as it represents the most recent assessment for that year.
+                    const dedupedVurderinger = Array.from(
+                      alleVurderinger
+                        .filter((v) => v.aar != null && !forelobigAar.has(v.aar))
+                        .reduce((map, v) => {
+                          const existing = map.get(v.aar!);
+                          if (
+                            !existing ||
+                            (v.ejendomsvaerdi ?? 0) > (existing.ejendomsvaerdi ?? 0)
+                          ) {
+                            map.set(v.aar!, v);
+                          }
+                          return map;
+                        }, new Map<number, (typeof alleVurderinger)[number]>())
+                        .values()
+                    );
+                    const historiskeRaekker: SkatRaekke[] = dedupedVurderinger
                       .slice(0, 10)
                       .map((v) => ({
                         aar: v.aar!,
@@ -3973,9 +3990,9 @@ export default function EjendomDetaljeClient({
                               </tr>
                             </thead>
                             <tbody>
-                              {alleRaekker.map((r) => (
+                              {alleRaekker.map((r, i) => (
                                 <tr
-                                  key={r.aar}
+                                  key={r.aar + '-' + i}
                                   className="border-b border-slate-700/20 last:border-0 hover:bg-slate-800/30"
                                 >
                                   <td className="px-4 py-2 text-slate-300 font-medium">

@@ -2168,7 +2168,7 @@ export default function EjendomDetaljeClient({
                                 <p className="text-white text-sm font-medium">
                                   {tinglysningData?.tinglystAreal
                                     ? `${tinglysningData.tinglystAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                    : formatDKK(0)}
+                                    : '–'}
                                 </p>
                               </div>
                               <div>
@@ -2204,7 +2204,7 @@ export default function EjendomDetaljeClient({
                                 <p className="text-white text-sm font-medium">
                                   {grundareal
                                     ? `${grundareal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                    : formatDKK(0)}
+                                    : '–'}
                                 </p>
                               </div>
                               <div>
@@ -2313,7 +2313,7 @@ export default function EjendomDetaljeClient({
                             <p className="text-white text-sm font-medium">
                               {vurdering.vurderetAreal
                                 ? `${vurdering.vurderetAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
-                                : formatDKK(0)}
+                                : '–'}
                             </p>
                           </div>
                           {/* Grundskyld — foretrækker faktisk fra Vurderingsportalen, falder tilbage til estimeret */}
@@ -3408,12 +3408,12 @@ export default function EjendomDetaljeClient({
                                       {lej.ejer}
                                     </span>
                                     <span className="text-slate-300 text-[10px] text-right">
-                                      {lej.areal ? `${lej.areal} m²` : formatDKK(0)}
+                                      {lej.areal ? `${lej.areal} m²` : '–'}
                                     </span>
                                     <span className="text-slate-300 text-[10px] text-right font-medium">
                                       {lej.koebspris
                                         ? `${lej.koebspris.toLocaleString('da-DK')} DKK`
-                                        : formatDKK(0)}
+                                        : '–'}
                                     </span>
                                     <span className="text-slate-400 text-[10px] text-right">
                                       {lej.koebsdato
@@ -3422,7 +3422,7 @@ export default function EjendomDetaljeClient({
                                             month: 'short',
                                             year: 'numeric',
                                           })
-                                        : formatDKK(0)}
+                                        : '–'}
                                     </span>
                                   </Link>
                                 ))}

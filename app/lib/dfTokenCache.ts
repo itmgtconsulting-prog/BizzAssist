@@ -13,6 +13,7 @@
 
 import { logger } from '@/app/lib/logger';
 import { DATAFORDELER_TOKEN_URL } from '@/app/lib/serviceEndpoints';
+// Proxy imports removed — OAuth token endpoint must be called directly
 
 /** Cached token with expiry timestamp */
 let _cachedToken: { token: string; expiresAt: number } | null = null;
@@ -44,6 +45,8 @@ export async function getSharedOAuthToken(): Promise<string | null> {
   // Start new token request with mutex
   _tokenPromise = (async () => {
     try {
+      // OAuth token endpoint called directly (not via proxy) — auth.datafordeler.dk
+      // is a token issuer, not a data endpoint. Proxy routing caused failures.
       const res = await fetch(DATAFORDELER_TOKEN_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },

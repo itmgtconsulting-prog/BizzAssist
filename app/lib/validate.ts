@@ -47,7 +47,7 @@ type ParseFailure = { success: false; response: NextResponse };
  */
 export async function parseBody<T extends z.ZodType>(
   request: NextRequest,
-  schema: T,
+  schema: T
 ): Promise<ParseSuccess<z.infer<T>> | ParseFailure> {
   let raw: unknown;
   try {
@@ -86,7 +86,7 @@ export async function parseBody<T extends z.ZodType>(
  */
 export function parseQuery<T extends z.ZodType>(
   request: NextRequest,
-  schema: T,
+  schema: T
 ): ParseSuccess<z.infer<T>> | ParseFailure {
   const params: Record<string, string> = {};
   request.nextUrl.searchParams.forEach((value, key) => {

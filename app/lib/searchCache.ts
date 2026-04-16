@@ -176,13 +176,9 @@ export async function withBraveCache<T>(cacheKey: string, fetchFn: () => Promise
   // 3. Fetch from Brave
   const results = await fetchFn();
 
-  // Do not cache empty arrays — an empty result may be a transient Brave outage,
-  // not a permanent "no articles exist" state. Caching it would lock users out for 24h.
-  const isEmpty = Array.isArray(results) && results.length === 0;
-  if (!isEmpty) {
-    redisSet(cacheKey, results).catch(() => {});
-    supabaseSet(cacheKey, results).catch(() => {});
-  }
+  // Fire-and-forget writes to both stores
+  redisSet(cacheKey, results).catch(() => {});
+  supabaseSet(cacheKey, results).catch(() => {});
 
   return results;
 }

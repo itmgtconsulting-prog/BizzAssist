@@ -47,9 +47,7 @@ async function ensureOnHoldStatus() {
   // Get all statuses for the project
   const statuses = await jiraRequest('GET', `/project/${PROJECT_KEY}/statuses`);
   const allStatuses = statuses.flatMap((t) => t.statuses || []);
-  const existing = allStatuses.find(
-    (s) => s.name.toLowerCase() === 'on hold'
-  );
+  const existing = allStatuses.find((s) => s.name.toLowerCase() === 'on hold');
 
   if (existing) {
     console.log(`✓ "On Hold" status already exists (id: ${existing.id})`);
@@ -65,8 +63,7 @@ async function ensureOnHoldStatus() {
         {
           name: 'On Hold',
           statusCategory: 'IN_PROGRESS',
-          description:
-            'Issue is blocked or waiting on external input/approval',
+          description: 'Issue is blocked or waiting on external input/approval',
         },
       ],
       scope: { type: 'PROJECT', project: { id: await getProjectId() } },
@@ -74,12 +71,8 @@ async function ensureOnHoldStatus() {
     console.log('✓ "On Hold" status created successfully');
     return result?.[0]?.id;
   } catch (err) {
-    console.error(
-      '⚠ Could not create status via API. You may need to add it manually:'
-    );
-    console.error(
-      '  → JIRA → Project Settings → Board → Columns → Add "On Hold" column'
-    );
+    console.error('⚠ Could not create status via API. You may need to add it manually:');
+    console.error('  → JIRA → Project Settings → Board → Columns → Add "On Hold" column');
     console.error(`  Error: ${err.message}`);
     return null;
   }
@@ -503,8 +496,7 @@ async function createBoligaTicket() {
   const result = await jiraRequest('POST', '/issue', {
     fields: {
       project: { key: PROJECT_KEY },
-      summary:
-        'Boliga Pro API-integration — udbudshistorik og sammenlignelige handler',
+      summary: 'Boliga Pro API-integration — udbudshistorik og sammenlignelige handler',
       description,
       issuetype: { name: 'Story' },
       priority: { name: 'Medium' },
@@ -513,9 +505,7 @@ async function createBoligaTicket() {
   });
 
   console.log(`✓ Ticket created: ${result.key}`);
-  console.log(
-    `  URL: https://${JIRA_HOST}/browse/${result.key}`
-  );
+  console.log(`  URL: https://${JIRA_HOST}/browse/${result.key}`);
   return result.key;
 }
 
@@ -534,9 +524,7 @@ async function main() {
 
   console.log('\n--- Done ---');
   console.log(`Ticket: ${ticketKey}`);
-  console.log(
-    `URL: https://${JIRA_HOST}/browse/${ticketKey}`
-  );
+  console.log(`URL: https://${JIRA_HOST}/browse/${ticketKey}`);
   console.log(
     '\nNote: Set ticket to "On Hold" status manually if the automated status creation requires workflow configuration.'
   );

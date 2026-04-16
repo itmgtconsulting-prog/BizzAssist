@@ -65,6 +65,19 @@ export interface EjendomSummary {
   ejendomstype: string | null;
   /** DAWA adgangsadresse UUID — bruges til link til ejendomsdetaljeside */
   dawaId: string | null;
+  /** BIZZ-397: Progressive enrichment fields — populated client-side after initial load */
+  /** Bygningsareal i m² fra BBR */
+  areal?: number | null;
+  /** Seneste ejendomsvurdering i DKK */
+  vurdering?: number | null;
+  /** Vurderingsår */
+  vurderingsaar?: number | null;
+  /** Ejer-navn (person eller virksomhedsnavn) */
+  ejerNavn?: string | null;
+  /** Købesum i DKK fra seneste handel */
+  koebesum?: number | null;
+  /** Overtagelsesdato fra seneste handel */
+  koebsdato?: string | null;
 }
 
 /** API-svaret fra denne route */

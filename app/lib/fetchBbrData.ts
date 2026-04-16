@@ -972,6 +972,42 @@ export async function fetchBbrForAddress(
     }
   }
 
+  // ── BIZZ-321: Bygning-til-enhed fallback ────────────────────────────────────
+  // ENHED_QUERY filtrerer på adresseIdentificerer, som kun matcher individuelle
+  // lejlighedsadresser — ikke adgangsadressen for en hel bygning.
+  // Hvis vi har bygninger men stadig ingen enheder, henter vi enheder direkte via
+  // bygnings-UUID (ENHED_BY_BYGNING_QUERY) for at undgå "Enheder: 0" på BBR-tab.
+  // Gælder fx parcelhuse og erhvervsbygninger hvor alle enheder er knyttet til
+  // bygningen men ikke til en individuel adresseidentificerer der matcher dawaId.
+  if (
+    (!effectiveRawEnheder || effectiveRawEnheder.length === 0) &&
+    effectiveRawBygninger &&
+    effectiveRawBygninger.length > 0
+  ) {
+    try {
+      const bygIds = (effectiveRawBygninger as RawBBRBygning[])
+        .map((b) => b.id_lokalId)
+        .filter((id): id is string => typeof id === 'string' && id.length > 0);
+      const uniqueBygIds = [...new Set(bygIds)];
+      const enhedResultater = await Promise.all(
+        uniqueBygIds.map((bygId) => fetchBBRGraphQL(ENHED_BY_BYGNING_QUERY, { vt, id: bygId }))
+      );
+      const kombineredeEnheder = enhedResultater.flatMap((r) => r ?? []);
+      if (kombineredeEnheder.length > 0) {
+        effectiveRawEnheder = kombineredeEnheder;
+        // Re-extract building IDs from the newly found enheder
+        fraEnheder = kombineredeEnheder
+          .map((e) => (e as RawBBREnhed).bygning)
+          .filter((b): b is string => typeof b === 'string' && b.length > 0);
+        logger.log(
+          `[fetchBBR] BIZZ-321: fandt ${kombineredeEnheder.length} enheder via bygning-opslag for ${dawaId}`
+        );
+      }
+    } catch {
+      // Fallback fejler stille — BBR-tab viser bare tomme enheder
+    }
+  }
+
   // Fallback: brug id_lokalId fra rawBygninger hvis enheder ikke giver bygning-UUID'er
   // (fx adresser der er registreret direkte på bygningen uden enheder)
   const fraBygninger: string[] = effectiveRawBygninger

@@ -284,10 +284,12 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
   }, [filteredGraph, depthMap]);
 
   /** Dynamic LEVEL_GAP and SUB_ROW_GAP that account for tallest node at each depth */
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const getLevelGap = (depth: number) => {
     const maxH = maxHeightByDepth.get(depth) ?? NODE_H;
     return Math.max(BASE_LEVEL_GAP, maxH + 40);
   };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const getSubRowGap = (depth: number) => {
     const maxH = maxHeightByDepth.get(depth) ?? NODE_H;
     return Math.max(BASE_SUB_ROW_GAP, maxH + 20);

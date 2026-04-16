@@ -18,7 +18,6 @@ import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { stripe } from '@/app/lib/stripe';
 import { logger } from '@/app/lib/logger';
-import { writeAuditLog } from '@/app/lib/auditLog';
 
 /**
  * POST /api/stripe/portal

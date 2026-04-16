@@ -465,6 +465,7 @@ function AIChatPanel() {
       abortRef.current = null;
       refreshTokenInfo();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     input,
     isLoading,

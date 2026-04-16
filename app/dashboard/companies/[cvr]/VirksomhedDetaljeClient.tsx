@@ -631,6 +631,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cvr, lang]);
 
   /**
@@ -670,6 +671,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
     } finally {
       setRegnskabLoading(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cvr]);
 
   /**
@@ -1001,6 +1003,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
       uniqueCvrs,
       ownerEnhedsNumre.length > 0 ? ownerEnhedsNumre : undefined
     );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aktivTab, cvr, relatedCompanies, fetchEjendommeProgressively]);
 
   /** Lazy-load regnskabstal for alle relaterede virksomheder (parallelt) */
@@ -4951,6 +4954,7 @@ function RelationsDiagram({
       setChainLoading(false);
       onOwnerChainResolved?.(chain);
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.deltagere]);
 
   // ── Direkte ejere (fra chain eller fallback) ──

@@ -314,12 +314,13 @@ export async function GET(request: NextRequest): Promise<NextResponse<ForelobigV
     }
 
     if (!esResult?.hits?.hits?.length) {
+      // Empty results get short cache — data may appear later
       return NextResponse.json(
         { forelobige: [], fejl: null },
         {
           status: 200,
           headers: {
-            'Cache-Control': 'public, s-maxage=86400, stale-while-revalidate=3600',
+            'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=60',
           },
         }
       );

@@ -1457,6 +1457,8 @@ export default function EjendomDetaljeClient({
 
     const controller = new AbortController();
     setForelobigLoader(true);
+    // Cache-bust to avoid stale empty responses from Vercel CDN
+    params.set('_t', String(Math.floor(Date.now() / 300000))); // 5-min buckets
     fetch(`/api/vurdering-forelobig?${params}`, { signal: controller.signal })
       .then((r) => (r.ok ? r.json() : null))
       .then((data: ForelobigVurderingResponse | null) => {

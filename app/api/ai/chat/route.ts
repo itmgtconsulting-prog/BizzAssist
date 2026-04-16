@@ -28,7 +28,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import * as Sentry from '@sentry/nextjs';
 import { checkRateLimit, aiRateLimit } from '@/app/lib/rateLimit';
 import { fetchBbrForAddress } from '@/app/lib/fetchBbrData';
-import { createClient } from '@/lib/supabase/server';
+import { resolveTenantId } from '@/lib/api/auth';
 import { createAdminClient, tenantDb, type TenantDb } from '@/lib/supabase/admin';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/lib/supabase/types';
@@ -1088,18 +1088,16 @@ export async function POST(request: NextRequest): Promise<Response> {
   const limited = await checkRateLimit(request, aiRateLimit);
   if (limited) return limited;
 
-  // Require an authenticated user — AI chat consumes paid API tokens
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
+  // Require an authenticated user with tenant context — AI chat consumes paid API tokens
+  const auth = await resolveTenantId();
+  if (!auth) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
   }
+  const { userId, tenantId: resolvedTenantId } = auth;
 
   // Require an active subscription — read app_metadata via admin client (not exposed to JWT)
   const adminClient = createAdminClient();
-  const { data: freshUser } = await adminClient.auth.admin.getUserById(user.id);
+  const { data: freshUser } = await adminClient.auth.admin.getUserById(userId);
   const sub = freshUser?.user?.app_metadata?.subscription as
     | { status?: string; tokensUsedThisMonth?: number; bonusTokens?: number; planId?: string }
     | null
@@ -1143,71 +1141,57 @@ export async function POST(request: NextRequest): Promise<Response> {
   let recentEntitiesContext = '';
   /** Formatted tenant knowledge base context injected into the system prompt. */
   let knowledgeContext = '';
-  // Captured for activity logging below — avoids a second membership lookup
-  let resolvedTenantId: string | null = null;
   try {
-    const { data: membership } = await adminClient
-      .from('tenant_memberships')
-      .select('tenant_id')
-      .eq('user_id', user.id)
-      .limit(1)
+    const { data: tenantRow } = await adminClient
+      .from('tenants')
+      .select('schema_name')
+      .eq('id', resolvedTenantId)
       .single();
-    if (membership?.tenant_id) {
-      resolvedTenantId = membership.tenant_id as string;
-    }
 
-    if (membership?.tenant_id) {
-      const { data: tenantRow } = await adminClient
-        .from('tenants')
-        .select('schema_name')
-        .eq('id', membership.tenant_id)
-        .single();
+    if (tenantRow?.schema_name) {
+      const db = tenantDb(tenantRow.schema_name);
+      const { data: recents } = await db
+        .from('recent_entities')
+        .select('entity_type, entity_id, display_name, visited_at')
+        .eq('user_id', userId)
+        .in('entity_type', ['property', 'company', 'person'])
+        .order('visited_at', { ascending: false })
+        .limit(15);
 
-      if (tenantRow?.schema_name) {
-        const db = tenantDb(tenantRow.schema_name);
-        const { data: recents } = await db
-          .from('recent_entities')
-          .select('entity_type, entity_id, display_name, visited_at')
-          .eq('user_id', user.id)
-          .in('entity_type', ['property', 'company', 'person'])
-          .order('visited_at', { ascending: false })
-          .limit(15);
-
-        if (recents && recents.length > 0) {
-          // Group by entity_type for a readable summary
-          const grouped: Record<string, Array<{ entity_id: string; display_name: string }>> = {};
-          for (const r of recents as Array<{
-            entity_type: string;
-            entity_id: string;
-            display_name: string;
-            visited_at: string;
-          }>) {
-            if (!grouped[r.entity_type]) grouped[r.entity_type] = [];
-            grouped[r.entity_type].push({
-              entity_id: r.entity_id,
-              display_name: r.display_name,
-            });
-          }
-
-          const typeLabels: Record<string, string> = {
-            property: 'Ejendomme',
-            company: 'Virksomheder',
-            person: 'Personer',
-          };
-
-          const lines: string[] = ['## Brugerens seneste aktivitet'];
-          for (const [type, items] of Object.entries(grouped)) {
-            lines.push(`\n**${typeLabels[type] ?? type}:**`);
-            for (const item of items) {
-              lines.push(`- ${item.display_name} (id: ${item.entity_id})`);
-            }
-          }
-          lines.push(
-            '\nBrug disse entiteter som kontekst. Når brugeren refererer til "den" eller "den seneste" uden at specificere, antag de mener den øverste i listen ovenfor.'
-          );
-
-          recentEntitiesContext = lines.join('\n');
+      if (recents && recents.length > 0) {
+        // Group by entity_type for a readable summary
+        const grouped: Record<string, Array<{ entity_id: string; display_name: string }>> = {};
+        for (const r of recents as Array<{
+          entity_type: string;
+          entity_id: string;
+          display_name: string;
+          visited_at: string;
+        }>) {
+          if (!grouped[r.entity_type]) grouped[r.entity_type] = [];
+          grouped[r.entity_type].push({
+            entity_id: r.entity_id,
+            display_name: r.display_name,
+          });
         }
+
+        const typeLabels: Record<string, string> = {
+          property: 'Ejendomme',
+          company: 'Virksomheder',
+          person: 'Personer',
+        };
+
+        const lines: string[] = ['## Brugerens seneste aktivitet'];
+        for (const [type, items] of Object.entries(grouped)) {
+          lines.push(`\n**${typeLabels[type] ?? type}:**`);
+          for (const item of items) {
+            lines.push(`- ${item.display_name} (id: ${item.entity_id})`);
+          }
+        }
+        lines.push(
+          '\nBrug disse entiteter som kontekst. Når brugeren refererer til "den" eller "den seneste" uden at specificere, antag de mener den øverste i listen ovenfor.'
+        );
+
+        recentEntitiesContext = lines.join('\n');
       }
     }
   } catch {
@@ -1313,7 +1297,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   if (resolvedTenantId) {
     const lastMessage = messages[messages.length - 1];
     const promptLength = typeof lastMessage?.content === 'string' ? lastMessage.content.length : 0;
-    logActivity(adminClient, resolvedTenantId, user.id, 'ai_chat', { promptLength });
+    logActivity(adminClient, resolvedTenantId, userId, 'ai_chat', { promptLength });
   }
 
   // Resolve base URL for internal API calls
@@ -1408,7 +1392,7 @@ export async function POST(request: NextRequest): Promise<Response> {
 
             // Fire-and-forget: persist token usage so quota check works next request
             adminClient.auth.admin
-              .updateUserById(user.id, {
+              .updateUserById(userId, {
                 app_metadata: {
                   ...freshUser?.user?.app_metadata,
                   subscription: {
@@ -1424,7 +1408,7 @@ export async function POST(request: NextRequest): Promise<Response> {
               recordTenantTokenUsage(
                 adminClient,
                 resolvedTenantId,
-                user.id,
+                userId,
                 totalInputTokens,
                 totalOutputTokens
               );
@@ -1487,7 +1471,7 @@ export async function POST(request: NextRequest): Promise<Response> {
 
         // Fire-and-forget: persist token usage so quota check works next request
         adminClient.auth.admin
-          .updateUserById(user.id, {
+          .updateUserById(userId, {
             app_metadata: {
               ...freshUser?.user?.app_metadata,
               subscription: {
@@ -1503,7 +1487,7 @@ export async function POST(request: NextRequest): Promise<Response> {
           recordTenantTokenUsage(
             adminClient,
             resolvedTenantId,
-            user.id,
+            userId,
             totalInputTokens,
             totalOutputTokens
           );

@@ -684,7 +684,8 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
       const scaledW = viewBox.w * z + 32;
       const scaledH = viewBox.h * z + 32;
       const panX = Math.round((cW - scaledW) / 2);
-      const panY = Math.round((cH - scaledH) / 2);
+      // Align to top with small padding instead of vertical centering
+      const panY = Math.min(8, Math.round((cH - scaledH) / 2));
       setZoom(z);
       setPanOffset({ x: panX, y: panY });
       initialFitDone.current = true;

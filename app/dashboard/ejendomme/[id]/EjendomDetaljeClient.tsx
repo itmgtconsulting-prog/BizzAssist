@@ -6951,6 +6951,8 @@ function TinglysningTab({
   /** Tinglysning ejendoms-UUID — bruges til PDF-download af tingbogsattest */
   const [tlUuid, setTlUuid] = useState<string | null>(null);
   const [showAllServitutter, setShowAllServitutter] = useState(false);
+  /** True when the servitut fetch was aborted by the 30 s timeout — used to show a timeout warning in the UI. */
+  const [servituterTimedOut, setServituterTimedOut] = useState(false);
   const [expandedAdkomst, setExpandedAdkomst] = useState<Set<number>>(new Set());
   const [expandedHaeftelser, setExpandedHaeftelser] = useState<Set<number>>(new Set());
   const [expandedServitutter, setExpandedServitutter] = useState<Set<number>>(new Set());
@@ -7058,7 +7060,10 @@ function TinglysningTab({
               setServituterLoading(false);
             })
             .catch((err) => {
-              if (err.name !== 'AbortError') {
+              if (err.name === 'AbortError') {
+                // Timed out (30 s) — surface a warning so the user knows the list is incomplete.
+                setServituterTimedOut(true);
+              } else {
                 logger.error('[tinglysning] Servitut fetch fejlede:', err);
               }
               setServituterLoading(false);
@@ -7974,6 +7979,16 @@ function TinglysningTab({
             <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
             <span className="ml-2 text-slate-400 text-sm">
               {da ? 'Henter servitutter…' : 'Loading easements…'}
+            </span>
+          </div>
+        )}
+        {servituterTimedOut && servitutter.length === 0 && (
+          <div className="mx-4 my-3 flex items-start gap-2 rounded-md border border-yellow-500/40 bg-yellow-500/10 px-3 py-2">
+            <span className="mt-0.5 text-yellow-400 text-sm">⚠</span>
+            <span className="text-yellow-300 text-sm">
+              {da
+                ? 'Servitutter kunne ikke hentes inden for tidsgrænsen. Prøv at genindlæse siden.'
+                : 'Easements could not be loaded within the time limit. Please reload the page.'}
             </span>
           </div>
         )}

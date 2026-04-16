@@ -791,13 +791,16 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
             }>;
             const nodes = Object.values(data.data ?? {})[0]?.nodes ?? [];
             if (nodes.length === 0) return true;
-            // Sort by virkningFra descending — newest first
-            const sorted = [...nodes].sort(
-              (a, b) =>
-                new Date(b.virkningFra ?? 0).getTime() - new Date(a.virkningFra ?? 0).getTime()
+            // Find the newest virkningFra date
+            const newestDate = Math.max(
+              ...nodes.map((n) => new Date(n.virkningFra ?? 0).getTime())
             );
-            // Check if the newest owner is still this CVR
-            return sorted[0].ejendeVirksomhedCVRNr === cvrNum;
+            // Check if ANY of the newest records belong to this CVR (co-ownership)
+            return nodes.some(
+              (n) =>
+                n.ejendeVirksomhedCVRNr === cvrNum &&
+                new Date(n.virkningFra ?? 0).getTime() === newestDate
+            );
           })
         );
         for (let j = 0; j < chunk.length; j++) {

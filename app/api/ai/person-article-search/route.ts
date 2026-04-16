@@ -37,7 +37,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 import { checkRateLimit, braveRateLimit } from '@/app/lib/rateLimit';
 import { withBraveCache } from '@/app/lib/searchCache';
-import { createClient as createServerClient } from '@/lib/supabase/server';
+import { resolveTenantId } from '@/lib/api/auth';
 import { logger } from '@/app/lib/logger';
 
 export const runtime = 'nodejs';
@@ -969,14 +969,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const limited = await checkRateLimit(request, braveRateLimit);
   if (limited) return limited;
 
-  // Require an authenticated session — person-search consumes paid API tokens
-  const supabase = await createServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const auth = await resolveTenantId();
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const apiKey = process.env.BIZZASSIST_CLAUDE_KEY?.trim();
   if (!apiKey) {
@@ -1037,9 +1031,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     learningContext = learning;
     dbExcludedDomains = excludedDomains;
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Ukendt Brave Search fejl';
-    logger.error('[person-article-search] Initialiseringsfejl:', msg);
-    return NextResponse.json({ error: `Søgning fejlede: ${msg}` }, { status: 502 });
+    logger.error('[person-article-search] Initialiseringsfejl:', err);
+    return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 502 });
   }
 
   // Anvend DB-baserede ekskluderede domæner som ekstra filtrering oven på hardcodet liste
@@ -1279,14 +1272,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json(result, { status: 200 });
   } catch (err) {
     logger.error('[person-article-search] Fejl:', err);
-    const errorMsg =
-      err instanceof Anthropic.APIError
-        ? `API-fejl (${err.status}): ${err.message}`
-        : err instanceof Error
-          ? err.message
-          : 'Ukendt fejl';
     return NextResponse.json(
-      { error: errorMsg, articles: [], usage: { totalTokens: 0 } },
+      { error: 'Ekstern API fejl', articles: [], usage: { totalTokens: 0 } },
       { status: 500 }
     );
   }

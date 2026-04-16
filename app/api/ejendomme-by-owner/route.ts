@@ -314,7 +314,7 @@ async function _hentDawaBfeDataImpl(bfe: number): Promise<DawaBfeAdresse> {
 
   try {
     const res = await fetch(`https://api.dataforsyningen.dk/bfe/${bfe}`, {
-      signal: AbortSignal.timeout(6000),
+      signal: AbortSignal.timeout(10000),
       next: { revalidate: 86400 },
     });
     if (!res.ok) return empty;
@@ -681,14 +681,27 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
     );
   } catch (err) {
     logger.error('[ejendomme-by-owner] Fejl:', err instanceof Error ? err.message : err);
-    return NextResponse.json({
-      ejendomme: [],
-      totalBfe: 0,
-      offset,
-      limit,
-      manglerNoegle: false,
-      manglerAdgang: false,
-      fejl: err instanceof Error ? err.message : 'Ukendt fejl',
-    });
+    const body =
+      process.env.NODE_ENV === 'development'
+        ? {
+            ejendomme: [],
+            totalBfe: 0,
+            offset,
+            limit,
+            manglerNoegle: false,
+            manglerAdgang: false,
+            fejl: 'Intern serverfejl',
+            dev_detail: err instanceof Error ? err.message : 'Ukendt fejl',
+          }
+        : {
+            ejendomme: [],
+            totalBfe: 0,
+            offset,
+            limit,
+            manglerNoegle: false,
+            manglerAdgang: false,
+            fejl: 'Intern serverfejl',
+          };
+    return NextResponse.json(body);
   }
 }

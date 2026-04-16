@@ -25,7 +25,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 import { checkRateLimit, braveRateLimit } from '@/app/lib/rateLimit';
 import { withBraveCache } from '@/app/lib/searchCache';
-import { createClient as createServerClient } from '@/lib/supabase/server';
+import { resolveTenantId } from '@/lib/api/auth';
 import { logger } from '@/app/lib/logger';
 
 export const runtime = 'nodejs';
@@ -399,14 +399,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const limited = await checkRateLimit(request, braveRateLimit);
   if (limited) return limited;
 
-  // Require an authenticated session
-  const supabase = await createServerClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const auth = await resolveTenantId();
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const apiKey = process.env.BIZZASSIST_CLAUDE_KEY?.trim();
   if (!apiKey)
@@ -453,8 +447,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     batchCompanyNames = braveOutput.batchCompanyNames;
     dbExcludedDomains = domains;
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Brave Search fejl';
-    return NextResponse.json({ error: `Søgning fejlede: ${msg}` }, { status: 502 });
+    logger.error('[person-search/articles] Initialiseringsfejl:', err);
+    return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 502 });
   }
 
   // Anvend ekstra DB-domæne-filter
@@ -540,12 +534,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       source: 'brave+claude',
     });
   } catch (err) {
-    const msg =
-      err instanceof Anthropic.APIError
-        ? `API-fejl (${err.status}): ${err.message}`
-        : err instanceof Error
-          ? err.message
-          : 'Ukendt fejl';
-    return NextResponse.json({ error: msg, articles: [] }, { status: 500 });
+    logger.error('[person-search/articles] Fejl:', err);
+    return NextResponse.json({ error: 'Ekstern API fejl', articles: [] }, { status: 500 });
   }
 }

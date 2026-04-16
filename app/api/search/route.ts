@@ -212,7 +212,7 @@ async function fetchCvrApi(
   try {
     // All requests go through internal proxy — handles SSL + caching
     const res = await fetch(`${baseUrl}/api/cvr-public?${param}`, {
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(10000),
       headers: cookieHeader ? { cookie: cookieHeader } : {},
     });
     if (!res.ok) return null;

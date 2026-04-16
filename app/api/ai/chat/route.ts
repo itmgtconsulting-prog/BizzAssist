@@ -996,7 +996,8 @@ async function executeTool(
     setCache(name, input, result);
     return result;
   } catch (err) {
-    return { fejl: err instanceof Error ? err.message : 'Ukendt fejl ved tool-kald' };
+    Sentry.captureException(err);
+    return { fejl: 'Ekstern API fejl' };
   }
 }
 
@@ -1512,12 +1513,7 @@ export async function POST(request: NextRequest): Promise<Response> {
         if (!(err instanceof Anthropic.APIError)) {
           Sentry.captureException(err);
         }
-        const msg =
-          err instanceof Anthropic.APIError
-            ? `API-fejl (${err.status}): ${err.message}`
-            : err instanceof Error
-              ? err.message
-              : 'Ukendt fejl';
+        const msg = err instanceof Anthropic.APIError ? 'Ekstern API fejl' : 'AI-tjeneste fejl';
         sse(controller, JSON.stringify({ error: msg }));
         sse(controller, '[DONE]');
         controller.close();

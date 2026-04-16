@@ -28,10 +28,12 @@ import { logger } from '@/app/lib/logger';
 import { parseBody } from '@/app/lib/validate';
 
 /** Zod schema for POST /api/admin/subscription request body */
-const subscriptionPostSchema = z.object({
-  email: z.string().min(1),
-  action: z.string().optional().default('set'),
-}).passthrough();
+const subscriptionPostSchema = z
+  .object({
+    email: z.string().min(1),
+    action: z.string().optional().default('set'),
+  })
+  .passthrough();
 
 /**
  * Inserts a row into audit_log using an untyped client cast.
@@ -224,7 +226,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           app_metadata: { ...metadata, subscription: null },
         });
         if (removeErr) {
-          return NextResponse.json({ error: removeErr.message }, { status: 500 });
+          logger.error('[admin/subscription] removePlan fejl:', removeErr.message);
+          const body =
+            process.env.NODE_ENV === 'development'
+              ? { error: 'Intern serverfejl', dev_detail: removeErr.message }
+              : { error: 'Intern serverfejl' };
+          return NextResponse.json(body, { status: 500 });
         }
         // BIZZ-108: audit log includes old subscription state so the change is traceable.
         await insertAuditLog(admin, {
@@ -280,7 +287,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           },
         });
         if (adminErr) {
-          return NextResponse.json({ error: adminErr.message }, { status: 500 });
+          logger.error('[admin/subscription] toggleAdmin fejl:', adminErr.message);
+          const body =
+            process.env.NODE_ENV === 'development'
+              ? { error: 'Intern serverfejl', dev_detail: adminErr.message }
+              : { error: 'Intern serverfejl' };
+          return NextResponse.json(body, { status: 500 });
         }
         // BIZZ-108: audit log records old and new admin flag value for traceability.
         await insertAuditLog(admin, {

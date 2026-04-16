@@ -892,6 +892,10 @@ export async function GET(request: NextRequest): Promise<Response> {
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Ukendt fejl';
-    return NextResponse.json({ fejl: `Matrikelkort-fejl: ${msg}` }, { status: 500 });
+    const body =
+      process.env.NODE_ENV === 'development'
+        ? { fejl: 'Ekstern API fejl', dev_detail: msg }
+        : { fejl: 'Ekstern API fejl' };
+    return NextResponse.json(body, { status: 500 });
   }
 }

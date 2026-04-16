@@ -379,6 +379,10 @@ export async function GET(
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Ukendt fejl';
-    return NextResponse.json({ error: `Netværksfejl: ${msg}` }, { status: 500 });
+    const body =
+      process.env.NODE_ENV === 'development'
+        ? { error: 'Ekstern API fejl', dev_detail: msg }
+        : { error: 'Ekstern API fejl' };
+    return NextResponse.json(body, { status: 500 });
   }
 }

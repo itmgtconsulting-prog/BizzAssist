@@ -811,7 +811,8 @@ async function executeTool(
     setCache(name, input, result);
     return result;
   } catch (err) {
-    return { fejl: err instanceof Error ? err.message : 'Ukendt fejl ved tool-kald' };
+    console.error('[analysis/run] Tool-kald fejl:', err);
+    return { fejl: 'Ekstern API fejl' };
   }
 }
 
@@ -1125,8 +1126,8 @@ export async function POST(request: NextRequest): Promise<Response> {
         sse('[DONE]');
         controller.close();
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Ukendt serverfejl';
-        sse(JSON.stringify({ error: message }));
+        console.error('[analysis/run] SSE stream fejl:', err);
+        sse(JSON.stringify({ error: 'AI-tjeneste fejl' }));
         sse('[DONE]');
         controller.close();
       }

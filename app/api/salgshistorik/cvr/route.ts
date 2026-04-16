@@ -478,15 +478,23 @@ export async function GET(request: NextRequest): Promise<NextResponse<CvrSalgshi
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Ukendt fejl';
-    return NextResponse.json(
-      {
-        cvr,
-        handler: [],
-        fejl: `Netværksfejl: ${msg}`,
-        manglerNoegle: false,
-        manglerAdgang: false,
-      },
-      { status: 200 }
-    );
+    const body =
+      process.env.NODE_ENV === 'development'
+        ? {
+            cvr,
+            handler: [],
+            fejl: 'Ekstern API fejl',
+            dev_detail: msg,
+            manglerNoegle: false,
+            manglerAdgang: false,
+          }
+        : {
+            cvr,
+            handler: [],
+            fejl: 'Ekstern API fejl',
+            manglerNoegle: false,
+            manglerAdgang: false,
+          };
+    return NextResponse.json(body, { status: 200 });
   }
 }

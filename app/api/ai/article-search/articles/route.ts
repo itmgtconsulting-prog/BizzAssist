@@ -31,7 +31,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 import { checkRateLimit, braveRateLimit } from '@/app/lib/rateLimit';
 import { logger } from '@/app/lib/logger';
-import { resolveUserId } from '@/lib/api/auth';
+import { resolveTenantId } from '@/lib/api/auth';
 
 export const runtime = 'nodejs';
 export const maxDuration = 90;
@@ -677,10 +677,8 @@ function parseArticlesResponse(text: string): ArticleResult[] {
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const limited = await checkRateLimit(request, braveRateLimit);
   if (limited) return limited;
-  // Article-search does not access tenant-scoped data — user auth is sufficient.
-  // Consistent with /api/ai/chat which also uses resolveUserId().
-  const userId = await resolveUserId();
-  if (!userId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const auth = await resolveTenantId();
+  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   /** Faseparameter: 'raw' = kun Serper (hurtigt), 'ai' = Serper + Claude (standard) */
   const phase = request.nextUrl.searchParams.get('phase') ?? 'ai';
@@ -777,8 +775,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     rawResults = serperResults;
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Søgefejl';
-    return NextResponse.json({ error: `Søgning fejlede: ${msg}` }, { status: 502 });
+    logger.error('[article-search/articles] Søgefejl:', err);
+    return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 502 });
   }
 
   // Anvend ekstra DB-domæne-filter
@@ -883,12 +881,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       source: 'serper+claude',
     });
   } catch (err) {
-    const msg =
-      err instanceof Anthropic.APIError
-        ? `API-fejl (${err.status}): ${err.message}`
-        : err instanceof Error
-          ? err.message
-          : 'Ukendt fejl';
-    return NextResponse.json({ error: msg, articles: [] }, { status: 500 });
+    logger.error('[article-search/articles] Fejl:', err);
+    return NextResponse.json({ error: 'Ekstern API fejl', articles: [] }, { status: 500 });
   }
 }

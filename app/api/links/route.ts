@@ -16,10 +16,12 @@ import { createClient } from '@supabase/supabase-js';
 import { parseBody } from '@/app/lib/validate';
 
 /** Zod schema for POST /api/links request body */
-const linksPostSchema = z.object({
-  action: z.string().optional(),
-  userId: z.string().min(1),
-}).passthrough();
+const linksPostSchema = z
+  .object({
+    action: z.string().optional(),
+    userId: z.string().min(1),
+  })
+  .passthrough();
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? '';
@@ -206,7 +208,10 @@ export async function POST(req: NextRequest) {
   const parsed = await parseBody(req, linksPostSchema);
   if (!parsed.success) return parsed.response;
   const { action, userId } = parsed.data;
-  const { entityType, entityId, entityName, platform, url, linkId } = parsed.data as Record<string, string | undefined>;
+  const { entityType, entityId, entityName, platform, url, linkId } = parsed.data as Record<
+    string,
+    string | undefined
+  >;
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
@@ -230,7 +235,12 @@ export async function POST(req: NextRequest) {
       .insert({ link_id: linkId, user_id: userId });
 
     if (insertErr) {
-      return NextResponse.json({ error: insertErr.message }, { status: 500 });
+      console.error('[links] insert link_verifications fejl:', insertErr.message);
+      const body =
+        process.env.NODE_ENV === 'development'
+          ? { error: 'Intern serverfejl', dev_detail: insertErr.message }
+          : { error: 'Intern serverfejl' };
+      return NextResponse.json(body, { status: 500 });
     }
 
     // Opdater verify_count
@@ -282,7 +292,12 @@ export async function POST(req: NextRequest) {
         .single();
 
       if (insertErr || !inserted) {
-        return NextResponse.json({ error: insertErr?.message ?? 'Insert failed' }, { status: 500 });
+        console.error('[links] insert verified_links fejl:', insertErr?.message ?? 'Insert failed');
+        const body =
+          process.env.NODE_ENV === 'development'
+            ? { error: 'Intern serverfejl', dev_detail: insertErr?.message ?? 'Insert failed' }
+            : { error: 'Intern serverfejl' };
+        return NextResponse.json(body, { status: 500 });
       }
       linkIdToVerify = inserted.id;
     }

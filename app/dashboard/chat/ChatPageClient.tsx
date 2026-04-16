@@ -29,23 +29,6 @@ import { useAIPageContext } from '@/app/context/AIPageContext';
 import { useAIChatContext } from '@/app/context/AIChatContext';
 import { resolvePlan, isSubscriptionFunctional, formatTokens } from '@/app/lib/subscriptions';
 
-// ─── Token sync helper ──────────────────────────────────────────────────────
-
-/** Fire-and-forget token sync with 3 retries and exponential backoff */
-function syncTokenUsageToServer(tokensUsed: number): void {
-  if (tokensUsed <= 0) return;
-  const attempt = (retries: number) => {
-    fetch('/api/subscription/track-tokens', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tokensUsed }),
-    }).catch(() => {
-      if (retries > 0) setTimeout(() => attempt(retries - 1), 2000);
-    });
-  };
-  attempt(2);
-}
-
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 /** A single chat message */
@@ -663,7 +646,8 @@ export default function ChatPageClient() {
                 }
               } else if (parsed.usage) {
                 addTokenUsage(parsed.usage.totalTokens);
-                syncTokenUsageToServer(parsed.usage.totalTokens);
+                // Server already persists tokens — removed to prevent double-counting (BIZZ-343)
+                // syncTokenUsageToServer(parsed.usage.totalTokens);
               } else if (parsed.status) {
                 if (isActive) {
                   setToolStatus(parsed.status);

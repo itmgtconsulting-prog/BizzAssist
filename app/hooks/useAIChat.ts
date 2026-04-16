@@ -58,23 +58,6 @@ interface UseAIChatReturn {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-/** Fire-and-forget token sync with 3 retries */
-function syncTokenUsageToServer(tokensUsed: number): void {
-  if (tokensUsed <= 0) return;
-
-  const attempt = (retries: number) => {
-    fetch('/api/subscription/track-tokens', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tokensUsed }),
-    }).catch(() => {
-      if (retries > 0) setTimeout(() => attempt(retries - 1), 2000);
-    });
-  };
-
-  attempt(2);
-}
-
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(0)}k`;
@@ -208,7 +191,8 @@ export function useAIChat(options: UseAIChatOptions = {}): UseAIChatReturn {
                 setStreamText(accumulated);
               } else if (parsed.usage) {
                 addTokenUsage(parsed.usage.totalTokens);
-                syncTokenUsageToServer(parsed.usage.totalTokens);
+                // Server already persists tokens in ai/chat/route.ts — no client sync needed
+                // (previously caused double-counting via /api/subscription/track-tokens)
               } else if (parsed.status) {
                 setToolStatus(parsed.status);
               } else if (parsed.t) {

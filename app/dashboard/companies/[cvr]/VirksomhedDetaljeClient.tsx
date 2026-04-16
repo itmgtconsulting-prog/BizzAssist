@@ -3659,22 +3659,6 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
 
 // ─── AIArticleSearchPanel ─────────────────────────────────────────────────────
 
-/**
- * Synkroniserer token-forbrug til Supabase i baggrunden (fire-and-forget).
- *
- * @param tokensUsed - Antal forbrugte tokens
- */
-function syncTokenUsageToServer(tokensUsed: number) {
-  if (tokensUsed <= 0) return;
-  fetch('/api/subscription/track-tokens', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ tokensUsed }),
-  }).catch(() => {
-    /* stille fejl */
-  });
-}
-
 /** Et nyhedsresultat fra AI artikel søgning */
 interface AIArticleResult {
   title: string;
@@ -3924,7 +3908,8 @@ function AIArticleSearchPanel({
     if (total > 0) {
       setTokensUsedThisSearch(total);
       addTokenUsage(total);
-      syncTokenUsageToServer(total);
+      // Server already persists tokens — removed to prevent double-counting (BIZZ-343)
+      // syncTokenUsageToServer(total);
     }
   }, [
     anyLoading,

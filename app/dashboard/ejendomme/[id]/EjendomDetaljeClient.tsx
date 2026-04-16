@@ -2365,24 +2365,7 @@ export default function EjendomDetaljeClient({
                                 </div>
                               );
                             }
-                            if (vurdering.estimereretGrundskyld !== null) {
-                              return (
-                                <div>
-                                  <p className="text-slate-500 text-xs leading-none mb-0.5">
-                                    {t.estGroundTax}
-                                    {vurdering.grundskyldspromille !== null && (
-                                      <span className="text-slate-600 ml-1">
-                                        ({vurdering.grundskyldspromille}‰)
-                                      </span>
-                                    )}
-                                  </p>
-                                  <p className="text-white text-sm font-medium">
-                                    {formatDKK(vurdering.estimereretGrundskyld)}
-                                    <span className="text-slate-500 text-xs ml-1">{t.perYear}</span>
-                                  </p>
-                                </div>
-                              );
-                            }
+                            // BIZZ-445: Removed estimated grundskyld fallback — only show actual values
                             return null;
                           })()}
                         </div>
@@ -3938,104 +3921,30 @@ export default function EjendomDetaljeClient({
                           </div>
                         )}
 
-                        {/* ── Fallback: kun estimeret grundskyld fra Datafordeler ── */}
-                        {!nyeste && vurdering?.estimereretGrundskyld != null && (
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                              <p className="text-white text-lg font-bold">
-                                {formatDKK(vurdering.estimereretGrundskyld)}
-                                <span className="text-slate-500 text-xs font-normal ml-1">DKK</span>
-                              </p>
-                              <p className="text-slate-500 text-xs mt-0.5">
-                                {t.estGroundTax}
-                                {vurdering.grundskyldspromille !== null && (
-                                  <span className="text-slate-600 ml-1">
-                                    ({vurdering.grundskyldspromille}‰)
-                                  </span>
-                                )}
-                              </p>
-                            </div>
-                          </div>
-                        )}
+                        {/* BIZZ-445: Removed estimated grundskyld fallback — only actual Vurderingsportalen data */}
                       </div>
                     );
                   })()}
                 </div>
 
-                {/* BIZZ-269 / BIZZ-355: Skattehistorik — faktiske skatter fra Vurderingsportalen + estimater fra Datafordeler */}
-                {(forelobige.length > 0 || alleVurderinger.length > 1) &&
+                {/* BIZZ-445: Skattehistorik — kun faktiske skatter fra Vurderingsportalen */}
+                {forelobige.length > 0 &&
                   (() => {
                     /**
-                     * Byg en samlet skattehistorik-tabel.
-                     * Forelobige rækker (fra Vurderingsportalen) har faktiske grundskyld/ejendomsskat-beløb.
-                     * Historiske vurderingsrækker (fra Datafordeler) har estimeret grundskyld beregnet med promille.
-                     * Forelobige præpends og markeres tydeligt som faktiske værdier — ikke estimater.
+                     * Skattehistorik-tabel med kun faktiske data fra Vurderingsportalen.
+                     * BIZZ-445: Estimerede rækker (beregnet med promille) er fjernet.
                      */
-                    type SkatRaekke = {
-                      aar: number;
-                      ejendomsvaerdi: number | null;
-                      grundvaerdi: number | null;
-                      /** Faktisk grundskyld fra Vurderingsportalen (kun forelobige rækker) */
-                      grundskyldAktuel: number | null;
-                      /** Faktisk ejendomsskat fra Vurderingsportalen (kun forelobige rækker) */
-                      ejendomsskatAktuel: number | null;
-                      /** Estimeret grundskyld beregnet med kommunepromille (kun historiske rækker) */
-                      grundskyldEstimeret: number | null;
-                      /** true = faktisk beregnet af Vurderingsportalen; false = estimat med promille */
-                      erAktuel: boolean;
-                    };
+                    const raekker = forelobige
+                      .map((fv) => ({
+                        aar: fv.vurderingsaar,
+                        ejendomsvaerdi: fv.ejendomsvaerdi,
+                        grundvaerdi: fv.grundvaerdi,
+                        grundskyld: fv.grundskyld,
+                        ejendomsskat: fv.ejendomsskat,
+                      }))
+                      .sort((a, b) => b.aar - a.aar);
 
-                    // Faktiske rækker fra Vurderingsportalen
-                    const aktuelleRaekker: SkatRaekke[] = forelobige.map((fv) => ({
-                      aar: fv.vurderingsaar,
-                      ejendomsvaerdi: fv.ejendomsvaerdi,
-                      grundvaerdi: fv.grundvaerdi,
-                      grundskyldAktuel: fv.grundskyld,
-                      ejendomsskatAktuel: fv.ejendomsskat,
-                      grundskyldEstimeret: null,
-                      erAktuel: true,
-                    }));
-
-                    // Historiske rækker fra Datafordeler (filtrer år der allerede dækkes af forelobige)
-                    const forelobigAar = new Set(forelobige.map((fv) => fv.vurderingsaar));
-                    // Deduplicate by year — alleVurderinger can contain multiple nodes for the
-                    // same year (e.g. revised assessments). Keep the entry with the highest
-                    // ejendomsvaerdi as it represents the most recent assessment for that year.
-                    const dedupedVurderinger = Array.from(
-                      alleVurderinger
-                        .filter((v) => v.aar != null && !forelobigAar.has(v.aar))
-                        .reduce((map, v) => {
-                          const existing = map.get(v.aar!);
-                          if (
-                            !existing ||
-                            (v.ejendomsvaerdi ?? 0) > (existing.ejendomsvaerdi ?? 0)
-                          ) {
-                            map.set(v.aar!, v);
-                          }
-                          return map;
-                        }, new Map<number, (typeof alleVurderinger)[number]>())
-                        .values()
-                    );
-                    const historiskeRaekker: SkatRaekke[] = dedupedVurderinger
-                      .slice(0, 10)
-                      .map((v) => ({
-                        aar: v.aar!,
-                        ejendomsvaerdi: v.ejendomsvaerdi ?? null,
-                        grundvaerdi: v.grundvaerdi ?? null,
-                        grundskyldAktuel: null,
-                        ejendomsskatAktuel: null,
-                        grundskyldEstimeret: v.estimereretGrundskyld ?? null,
-                        erAktuel: false,
-                      }));
-
-                    const alleRaekker = [...aktuelleRaekker, ...historiskeRaekker].sort(
-                      (a, b) => b.aar - a.aar
-                    );
-
-                    if (alleRaekker.length === 0) return null;
-
-                    const harEstimater =
-                      historiskeRaekker.length > 0 && !!vurdering?.grundskyldspromille;
+                    if (raekker.length === 0) return null;
 
                     return (
                       <div>
@@ -4062,24 +3971,12 @@ export default function EjendomDetaljeClient({
                               </tr>
                             </thead>
                             <tbody>
-                              {alleRaekker.map((r, i) => (
+                              {raekker.map((r) => (
                                 <tr
-                                  key={r.aar + '-' + i}
+                                  key={r.aar}
                                   className="border-b border-slate-700/20 last:border-0 hover:bg-slate-800/30"
                                 >
-                                  <td className="px-4 py-2 text-slate-300 font-medium">
-                                    {r.aar}
-                                    {/* Badge indicating data provenance */}
-                                    {r.erAktuel ? (
-                                      <span className="ml-1.5 px-1 py-0.5 bg-emerald-500/10 border border-emerald-500/20 rounded text-[9px] text-emerald-400 font-medium">
-                                        {da ? 'faktisk' : 'actual'}
-                                      </span>
-                                    ) : (
-                                      <span className="ml-1.5 px-1 py-0.5 bg-slate-700/40 border border-slate-600/30 rounded text-[9px] text-slate-500 font-medium">
-                                        {da ? 'est.' : 'est.'}
-                                      </span>
-                                    )}
-                                  </td>
+                                  <td className="px-4 py-2 text-slate-300 font-medium">{r.aar}</td>
                                   <td className="px-4 py-2 text-right text-slate-300">
                                     {r.ejendomsvaerdi ? formatDKK(r.ejendomsvaerdi) : '–'}
                                   </td>
@@ -4087,35 +3984,23 @@ export default function EjendomDetaljeClient({
                                     {r.grundvaerdi ? formatDKK(r.grundvaerdi) : '–'}
                                   </td>
                                   <td className="px-4 py-2 text-right font-medium tabular-nums">
-                                    {r.erAktuel ? (
-                                      r.grundskyldAktuel != null ? (
-                                        <span className="text-emerald-400">
-                                          {formatDKK(r.grundskyldAktuel)} kr/år
-                                        </span>
-                                      ) : (
-                                        '–'
-                                      )
-                                    ) : r.grundskyldEstimeret != null ? (
-                                      <span className="text-blue-400">
-                                        {formatDKK(r.grundskyldEstimeret)} kr/år
+                                    {r.grundskyld != null ? (
+                                      <span className="text-emerald-400">
+                                        {formatDKK(r.grundskyld)} kr/år
                                       </span>
                                     ) : (
                                       '–'
                                     )}
                                   </td>
                                   <td className="px-4 py-2 text-right tabular-nums">
-                                    {r.erAktuel ? (
-                                      r.ejendomsskatAktuel != null ? (
-                                        <span className="text-emerald-400 font-medium">
-                                          {formatDKK(r.ejendomsskatAktuel)} kr/år
-                                        </span>
-                                      ) : (
-                                        <span className="text-slate-600 text-[10px]">
-                                          {da ? 'ikke opkrævet' : 'not charged'}
-                                        </span>
-                                      )
+                                    {r.ejendomsskat != null ? (
+                                      <span className="text-emerald-400 font-medium">
+                                        {formatDKK(r.ejendomsskat)} kr/år
+                                      </span>
                                     ) : (
-                                      <span className="text-slate-600">–</span>
+                                      <span className="text-slate-600 text-[10px]">
+                                        {da ? 'ikke opkrævet' : 'not charged'}
+                                      </span>
                                     )}
                                   </td>
                                 </tr>
@@ -4123,13 +4008,6 @@ export default function EjendomDetaljeClient({
                             </tbody>
                           </table>
                         </div>
-                        {harEstimater && (
-                          <p className="text-slate-600 text-[10px] mt-2">
-                            {da
-                              ? `Historiske rækker (est.) beregnet med kommunens grundskyldspromille: ${vurdering!.grundskyldspromille}‰ — faktiske rækker stammer direkte fra Vurderingsportalen.`
-                              : `Historical rows (est.) calculated using municipality land tax rate: ${vurdering!.grundskyldspromille}‰ — actual rows sourced directly from Vurderingsportalen.`}
-                          </p>
-                        )}
                       </div>
                     );
                   })()}

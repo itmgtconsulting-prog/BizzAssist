@@ -95,7 +95,9 @@ jobs:
           path: coverage/
           retention-days: 14
 
-  # ── 4. E2E tests ─────────────────────────────────────────────────────────
+  # ── 4. E2E tests against Vercel preview ───────────────────────────────────
+  # BIZZ-443: Wait for Vercel preview deployment, then run Playwright against it.
+  # On push to main/develop (no preview), falls back to local dev server.
   test-e2e:
     name: E2E tests (Playwright)
     runs-on: ubuntu-latest
@@ -115,15 +117,22 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
+      - name: Wait for Vercel preview deployment
+        if: github.event_name == 'pull_request'
+        uses: patrickedqvist/wait-for-vercel-preview@v1.3.2
+        id: vercel
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          max_timeout: 300
+          check_interval: 10
+
       - name: Run E2E tests
         run: npm run test:e2e
         env:
           CI: true
-          # Skip t3-env strict validation — public-page E2E tests don't need real secrets
           SKIP_ENV_VALIDATION: '1'
-          # Placeholder Supabase credentials so the browser client can initialise
-          # without throwing "Invalid URL" on public pages (homepage, login).
-          # Real credentials are not needed — these pages don't call the DB.
+          # Use Vercel preview URL when available (PRs), otherwise local dev server
+          E2E_BASE_URL: ${{ steps.vercel.outputs.url || '' }}
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder-ci.supabase.co' }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder-anon-key-ci' }}
 

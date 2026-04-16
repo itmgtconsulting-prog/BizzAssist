@@ -1,3 +1,5 @@
+import { companyInfo } from '@/app/lib/companyInfo';
+
 export type Language = 'da' | 'en';
 
 export const translations = {
@@ -163,9 +165,9 @@ export const translations = {
       },
       supplier: {
         label: 'Leveret af',
-        name: 'Pecunia IT ApS',
-        cvr: 'CVR-nr: 44718502',
-        address: 'Søbyvej 11, 2650 Hvidovre',
+        name: companyInfo.name,
+        cvr: `CVR-nr: ${companyInfo.cvr}`,
+        address: companyInfo.fullAddress,
       },
       copyright: '© 2025 BizzAssist. Alle rettigheder forbeholdes.',
     },
@@ -719,9 +721,9 @@ export const translations = {
       },
       supplier: {
         label: 'Provided by',
-        name: 'Pecunia IT ApS',
-        cvr: 'CVR: 44718502',
-        address: 'Søbyvej 11, 2650 Hvidovre',
+        name: companyInfo.name,
+        cvr: `CVR: ${companyInfo.cvr}`,
+        address: companyInfo.fullAddress,
       },
       copyright: '© 2025 BizzAssist. All rights reserved.',
     },

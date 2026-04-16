@@ -13,6 +13,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { companyInfo } from '@/app/lib/companyInfo';
 import { z } from 'zod';
 import PDFDocument from 'pdfkit';
 import { checkRateLimit, heavyRateLimit } from '@/app/lib/rateLimit';
@@ -82,7 +83,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       info: {
         Title:
           title ?? `BizzAssist ${type === 'property' ? 'Ejendomsrapport' : 'Virksomhedsrapport'}`,
-        Author: 'BizzAssist — Pecunia IT ApS',
+        Author: `BizzAssist — ${companyInfo.name}`,
         Creator: 'BizzAssist PDF Export',
       },
     });
@@ -178,7 +179,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     doc
       .fontSize(6)
       .fillColor('#475569')
-      .text('BizzAssist — Pecunia IT ApS — CVR 44718502 — Genereret automatisk', 50, 790);
+      .text(`${companyInfo.legalLine} — Genereret automatisk`, 50, 790);
 
     doc.end();
 

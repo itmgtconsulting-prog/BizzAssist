@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
+import { companyInfo } from '@/app/lib/companyInfo';
 import Navbar from '@/app/components/Navbar';
 import Footer from '@/app/components/Footer';
 
@@ -49,8 +50,8 @@ function DanishPrivacy() {
       <section>
         <h2 className="text-xl font-semibold text-white mb-3">1. Dataansvarlig</h2>
         <p>
-          Pecunia IT ApS (CVR: 44718502), Søbyvej 11, 2650 Hvidovre er dataansvarlig for behandling
-          af personoplysninger i forbindelse med BizzAssist.
+          {companyInfo.name} (CVR: {companyInfo.cvr}), {companyInfo.fullAddress} er dataansvarlig
+          for behandling af personoplysninger i forbindelse med BizzAssist.
         </p>
         <p>Kontakt: support@pecuniait.com</p>
       </section>
@@ -252,8 +253,9 @@ function EnglishPrivacy() {
       <section>
         <h2 className="text-xl font-semibold text-white mb-3">1. Data Controller</h2>
         <p>
-          Pecunia IT ApS (CVR: 44718502), Soebyvej 11, 2650 Hvidovre, Denmark is the data controller
-          for the processing of personal data in connection with BizzAssist.
+          {companyInfo.name} (CVR: {companyInfo.cvr}), {companyInfo.fullAddress},{' '}
+          {companyInfo.country} is the data controller for the processing of personal data in
+          connection with BizzAssist.
         </p>
         <p>Contact: support@pecuniait.com</p>
       </section>

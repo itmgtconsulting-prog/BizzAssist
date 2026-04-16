@@ -13,6 +13,7 @@ import https from 'https';
 import fs from 'fs';
 import PDFDocument from 'pdfkit';
 import { logger } from '@/app/lib/logger';
+import { companyInfo } from '@/app/lib/companyInfo';
 import { resolveTenantId } from '@/lib/api/auth';
 import { tlFetch as tlFetchShared } from '@/app/lib/tlFetch';
 
@@ -611,12 +612,9 @@ export async function GET(req: NextRequest) {
         doc.moveDown(0.5);
       }
 
-      doc
-        .fontSize(7)
-        .fillColor('#94a3b8')
-        .text('Genereret af BizzAssist — Pecunia IT ApS — CVR 44718502', 50, 780, {
-          align: 'center',
-        });
+      doc.fontSize(7).fillColor('#94a3b8').text(`Genereret af ${companyInfo.legalLine}`, 50, 780, {
+        align: 'center',
+      });
       doc.end();
 
       const pdfBuffer = await new Promise<Buffer>((resolve) => {
@@ -720,12 +718,9 @@ export async function GET(req: NextRequest) {
         .fillColor('#94a3b8')
         .text('Dokument-UUID: ' + uuid, { width: 495 });
 
-      doc
-        .fontSize(7)
-        .fillColor('#94a3b8')
-        .text('Genereret af BizzAssist — Pecunia IT ApS — CVR 44718502', 50, 780, {
-          align: 'center',
-        });
+      doc.fontSize(7).fillColor('#94a3b8').text(`Genereret af ${companyInfo.legalLine}`, 50, 780, {
+        align: 'center',
+      });
       doc.end();
 
       const pdfBuffer = await new Promise<Buffer>((resolve) => {
@@ -810,12 +805,9 @@ export async function GET(req: NextRequest) {
     }
 
     // Footer
-    doc
-      .fontSize(7)
-      .fillColor('#94a3b8')
-      .text('Genereret af BizzAssist — Pecunia IT ApS — CVR 44718502', 50, 780, {
-        align: 'center',
-      });
+    doc.fontSize(7).fillColor('#94a3b8').text(`Genereret af ${companyInfo.legalLine}`, 50, 780, {
+      align: 'center',
+    });
 
     doc.end();
 

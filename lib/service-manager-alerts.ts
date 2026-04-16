@@ -1,3 +1,5 @@
+import { companyInfo } from '@/app/lib/companyInfo';
+
 /**
  * Service Manager — Critical Alert Helpers
  *
@@ -157,7 +159,7 @@ function buildCriticalAlertHtml(params: CriticalAlertParams): string {
   <!-- Footer -->
   <hr style="border: none; border-top: 1px solid #1e293b; margin: 0 0 16px 0;" />
   <p style="color: #475569; font-size: 11px; margin: 0; line-height: 1.6;">
-    BizzAssist &mdash; Pecunia IT ApS &mdash; S&oslash;byvej 11, 2650 Hvidovre &mdash; CVR 44718502<br/>
+    ${companyInfo.legalLineHtml}<br/>
     Automatisk kritisk alert fra Service Manager Agent &mdash; m&aring; ikke videresendes
   </p>
 

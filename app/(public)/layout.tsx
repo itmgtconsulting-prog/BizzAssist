@@ -11,6 +11,7 @@
 
 import Link from 'next/link';
 import type { ReactNode } from 'react';
+import { companyInfo } from '@/app/lib/companyInfo';
 
 // ─── Public Header ──────────────────────────────────────────────────────────
 
@@ -75,7 +76,9 @@ function PublicFooter() {
             <span className="text-white font-semibold">
               Bizz<span className="text-blue-400">Assist</span>
             </span>
-            <span className="text-slate-600 text-sm ml-2">© {year} Pecunia IT ApS</span>
+            <span className="text-slate-600 text-sm ml-2">
+              © {year} {companyInfo.name}
+            </span>
           </div>
 
           {/* Links */}

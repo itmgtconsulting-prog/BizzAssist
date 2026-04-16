@@ -577,27 +577,45 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
       .alpha(1)
       .alphaDecay(0.03);
 
-    // BIZZ-320: Reduced from 300 to 120 ticks — 300 ticks blocked main thread
-    // for ~500ms on large diagrams, preventing Next.js navigation transitions.
-    // 120 ticks is enough for convergence with alphaDecay=0.03.
-    simulation.tick(120);
+    // BIZZ-401: Run simulation in async chunks to avoid blocking the main thread.
+    // Previously 120 synchronous ticks blocked navigation for large diagrams.
+    // Now runs 30 ticks per frame via setTimeout, yielding to the event loop between batches.
+    let cancelled = false;
+    const TICKS_PER_BATCH = 30;
+    const TOTAL_TICKS = 120;
+    let ticksDone = 0;
 
-    // Final pass: hard-snap Y to exact pre-computed position
-    for (const node of forceNodes) {
-      node.y = nodeYMap.get(node.id) ?? 0;
-    }
+    const runBatch = () => {
+      if (cancelled) return;
+      const batchSize = Math.min(TICKS_PER_BATCH, TOTAL_TICKS - ticksDone);
+      simulation.tick(batchSize);
+      ticksDone += batchSize;
 
-    const newPositions = new Map<string, { x: number; y: number }>();
-    for (const node of forceNodes) {
-      newPositions.set(node.id, { x: node.x ?? 0, y: node.y ?? 0 });
-    }
-    setPositions(newPositions);
-    // Trigger auto-zoom/center med lille forsinkelse så viewBox-memo når at opdatere
-    const fitTimer = setTimeout(() => setFitTrigger((t) => t + 1), 80);
+      if (ticksDone < TOTAL_TICKS) {
+        setTimeout(runBatch, 0);
+        return;
+      }
+
+      // Final pass: hard-snap Y to exact pre-computed position
+      for (const node of forceNodes) {
+        node.y = nodeYMap.get(node.id) ?? 0;
+      }
+
+      const newPositions = new Map<string, { x: number; y: number }>();
+      for (const node of forceNodes) {
+        newPositions.set(node.id, { x: node.x ?? 0, y: node.y ?? 0 });
+      }
+      setPositions(newPositions);
+      setTimeout(() => {
+        if (!cancelled) setFitTrigger((t) => t + 1);
+      }, 80);
+    };
+
+    runBatch();
 
     return () => {
+      cancelled = true;
       simulation.stop();
-      clearTimeout(fitTimer);
     };
   }, [filteredGraph, depthMap, nodeYMap]);
 

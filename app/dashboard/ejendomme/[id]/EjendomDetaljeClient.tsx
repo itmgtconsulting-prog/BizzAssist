@@ -1654,6 +1654,18 @@ export default function EjendomDetaljeClient({
       }
     }
 
+    // Energimærkerapporter — proxy URL åbnes direkte fra cachet state
+    if (energimaerker) {
+      for (const m of energimaerker) {
+        if (m.pdfUrl && valgteDoc.has(`energi-${m.serialId}`)) {
+          docs.push({
+            filename: `Energimaerke_${m.serialId}.pdf`,
+            url: m.pdfUrl,
+          });
+        }
+      }
+    }
+
     if (docs.length === 0) {
       alert(t.noDirectPdfLinks);
       return;
@@ -4714,7 +4726,7 @@ export default function EjendomDetaljeClient({
 
                     {energimaerker && energimaerker.length > 0 && (
                       <div>
-                        <div className="min-w-[650px] grid grid-cols-[56px_1fr_100px_120px_120px_80px] gap-x-3 px-4 py-1.5 border-b border-slate-700/20">
+                        <div className="min-w-[680px] grid grid-cols-[56px_1fr_100px_120px_120px_80px_28px] gap-x-3 px-4 py-1.5 border-b border-slate-700/20">
                           <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
                             Klasse
                           </span>
@@ -4733,6 +4745,7 @@ export default function EjendomDetaljeClient({
                           <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
                             Rapport
                           </span>
+                          <span />
                         </div>
                         {energimaerker.map((m) => {
                           // Officielle EU energimærke farver (Building Energy Performance Directive)
@@ -4759,7 +4772,7 @@ export default function EjendomDetaljeClient({
                           return (
                             <div
                               key={m.serialId}
-                              className="min-w-[650px] grid grid-cols-[56px_1fr_100px_120px_120px_80px] gap-x-3 px-4 py-2 border-b border-slate-700/15 hover:bg-slate-700/10 transition-colors items-center"
+                              className="min-w-[680px] grid grid-cols-[56px_1fr_100px_120px_120px_80px_28px] gap-x-3 px-4 py-2 border-b border-slate-700/15 hover:bg-slate-700/10 transition-colors items-center"
                             >
                               <span
                                 style={klasseStyle}
@@ -4809,6 +4822,37 @@ export default function EjendomDetaljeClient({
                                   <span className="text-xs text-slate-600">—</span>
                                 )}
                               </div>
+                              {/* Bulk-download checkbox — uses valgteDoc shared with the rest of the Dokumenter tab */}
+                              {m.pdfUrl ? (
+                                <label
+                                  className="flex items-center cursor-pointer flex-shrink-0"
+                                  onClick={(ev) => ev.stopPropagation()}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    className="sr-only"
+                                    checked={valgteDoc.has(`energi-${m.serialId}`)}
+                                    onChange={() => toggleDoc(`energi-${m.serialId}`)}
+                                  />
+                                  <span
+                                    className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors ${valgteDoc.has(`energi-${m.serialId}`) ? 'bg-blue-500 border-blue-500' : 'bg-[#0a1020] border-slate-400'}`}
+                                  >
+                                    {valgteDoc.has(`energi-${m.serialId}`) && (
+                                      <svg
+                                        viewBox="0 0 10 10"
+                                        className="w-2 h-2 text-white"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        strokeWidth="2.5"
+                                      >
+                                        <path d="M1.5 5.5l2.5 2.5 4.5-4.5" />
+                                      </svg>
+                                    )}
+                                  </span>
+                                </label>
+                              ) : (
+                                <span />
+                              )}
                             </div>
                           );
                         })}

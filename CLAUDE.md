@@ -283,3 +283,12 @@ When integrating a new external API, check this document first to see if the int
 ## Current Backlog
 
 See `docs/BACKLOG.md` for the authoritative list of open issues, pending integrations, and known limitations. Always check this before starting new work — the task may already be scoped there.
+
+---
+
+## Google Search Console
+
+- **Status:** Verified and active (as of 2026-04-16)
+- **Property:** `https://bizzassist.dk`
+- **Sitemap submitted:** `https://bizzassist.dk/sitemap/0.xml`
+- No need to add `google-site-verification` meta tag — verification is already complete

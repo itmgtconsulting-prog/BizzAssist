@@ -157,9 +157,7 @@ export async function sendApprovalEmail(params: SubscriptionApprovalParams): Pro
     to,
     fullName,
     planName,
-    loginUrl = process.env.NEXT_PUBLIC_APP_URL
-      ? `${process.env.NEXT_PUBLIC_APP_URL}/login`
-      : 'https://bizzassist.dk/login',
+    loginUrl = `${(process.env.NEXT_PUBLIC_APP_URL ?? 'https://bizzassist.dk').replace(/\/$/, '')}/login`,
   } = params;
 
   const greeting = fullName ? `Hej ${fullName}` : 'Hej';

@@ -15,6 +15,7 @@
 
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { getAppUrl } from '@/app/lib/appUrl';
 import JsonLdScript from '@/app/components/JsonLd';
 import {
   MapPin,
@@ -552,7 +553,7 @@ export async function generateMetadata({
     adresse.postnrnavn
   );
 
-  const canonicalUrl = `https://bizzassist.dk/ejendom/${canonicalSlug}/${bfe}`;
+  const canonicalUrl = `${getAppUrl()}/ejendom/${canonicalSlug}/${bfe}`;
 
   return {
     title: `${adresseStr} — BizzAssist`,
@@ -695,7 +696,7 @@ function JsonLd({
     .join(' ');
   const adresseKort = `${adresse.vejnavn} ${adresse.husnr}${etageDoerJld ? `, ${etageDoerJld}` : ''}`;
   const adresseNavn = `${adresseKort}, ${adresse.postnr} ${adresse.postnrnavn}`;
-  const canonicalUrl = `https://bizzassist.dk/ejendom/${slug}/${bfe}`;
+  const canonicalUrl = `${getAppUrl()}/ejendom/${slug}/${bfe}`;
 
   const realEstateSchema = {
     '@context': 'https://schema.org',
@@ -734,12 +735,12 @@ function JsonLd({
     '@context': 'https://schema.org',
     '@type': 'BreadcrumbList',
     itemListElement: [
-      { '@type': 'ListItem', position: 1, name: 'Hjem', item: 'https://bizzassist.dk' },
+      { '@type': 'ListItem', position: 1, name: 'Hjem', item: getAppUrl() },
       {
         '@type': 'ListItem',
         position: 2,
         name: 'Ejendomme',
-        item: 'https://bizzassist.dk/ejendomme',
+        item: `${getAppUrl()}/ejendomme`,
       },
       { '@type': 'ListItem', position: 3, name: adresseKort, item: canonicalUrl },
     ],

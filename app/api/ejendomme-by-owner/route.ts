@@ -31,6 +31,7 @@ import {
   EJF_GQL_ENDPOINT,
   DATAFORDELER_TOKEN_URL,
   DAWA_BASE_URL,
+  BBR_GQL_ENDPOINT,
 } from '@/app/lib/serviceEndpoints';
 
 /** Zod schema for /api/ejendomme-by-owner query params */
@@ -428,6 +429,80 @@ async function _hentDawaBfeDataImpl(bfe: number): Promise<DawaBfeAdresse> {
   }
 }
 
+// ─── BBR GraphQL BFE→address fallback ────────────────────────────────────────
+
+/**
+ * Resolves BFE→address via Datafordeler BBR GraphQL when DAWA fails.
+ * Queries BBR_Grund by BFE number, gets the linked husnummer (adgangsadresse UUID),
+ * then resolves the full address via DAWA /adgangsadresser/{id}.
+ *
+ * @param bfe - BFE-nummer
+ * @returns Partial DawaBfeAdresse with address fields filled in, or empty
+ */
+async function _hentBbrAdresseForBfe(bfe: number): Promise<DawaBfeAdresse> {
+  const empty: DawaBfeAdresse = {
+    adresse: null,
+    postnr: null,
+    by: null,
+    kommune: null,
+    kommuneKode: null,
+    ejendomstype: null,
+    dawaId: null,
+  };
+
+  const apiKey = process.env.DATAFORDELER_API_KEY;
+  if (!apiKey) return empty;
+
+  try {
+    const vt = new Date().toISOString();
+    const query = `{ BBR_Grund(first: 1, virkningstid: "${vt}", where: { bestemtFastEjendom_BFENr: { eq: ${bfe} } }) { nodes { husnummer } } }`;
+    const bbrUrl = `${BBR_GQL_ENDPOINT}?apiKey=${encodeURIComponent(apiKey)}`;
+    const bbrRes = await fetch(proxyUrl(bbrUrl), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...proxyHeaders() },
+      body: JSON.stringify({ query }),
+      signal: AbortSignal.timeout(proxyTimeout()),
+    });
+    if (!bbrRes.ok) return empty;
+
+    const bbrData = (await bbrRes.json()) as {
+      data?: { BBR_Grund?: { nodes?: Array<{ husnummer?: string }> } };
+    };
+    const husnummerId = bbrData.data?.BBR_Grund?.nodes?.[0]?.husnummer;
+    if (!husnummerId) return empty;
+
+    // Resolve the husnummer UUID to a full address via DAWA adgangsadresser
+    const addrRes = await fetch(`${DAWA_BASE_URL}/adgangsadresser/${husnummerId}?struktur=mini`, {
+      signal: AbortSignal.timeout(5000),
+      next: { revalidate: 86400 },
+    });
+    if (!addrRes.ok) return empty;
+
+    const addr = (await addrRes.json()) as {
+      id?: string;
+      vejnavn?: string;
+      husnr?: string;
+      postnr?: string;
+      postnrnavn?: string;
+      kommunekode?: string;
+      kommunenavn?: string;
+    };
+    if (!addr.vejnavn) return empty;
+
+    return {
+      adresse: `${addr.vejnavn} ${addr.husnr ?? ''}`.trim(),
+      postnr: addr.postnr ?? null,
+      by: addr.postnrnavn ?? null,
+      kommune: addr.kommunenavn ?? null,
+      kommuneKode: addr.kommunekode ?? null,
+      ejendomstype: null,
+      dawaId: addr.id ?? husnummerId,
+    };
+  } catch {
+    return empty;
+  }
+}
+
 // ─── DAWA BFE deduplication ──────────────────────────────────────────────────
 
 /**
@@ -449,7 +524,15 @@ const _bfeFetchInFlight = new Map<number, Promise<DawaBfeAdresse>>();
 async function hentDawaBfeData(bfe: number): Promise<DawaBfeAdresse> {
   const cached = _bfeFetchInFlight.get(bfe);
   if (cached) return cached;
-  const promise = _hentDawaBfeDataImpl(bfe);
+  const promise = _hentDawaBfeDataImpl(bfe).then(async (result) => {
+    // BIZZ-450: If DAWA returned no address, try BBR GraphQL as fallback.
+    // DAWA /bfe/{bfe} endpoint is being deprecated; BBR is the authoritative source.
+    if (!result.adresse) {
+      const bbrResult = await _hentBbrAdresseForBfe(bfe);
+      if (bbrResult.adresse) return { ...result, ...bbrResult };
+    }
+    return result;
+  });
   _bfeFetchInFlight.set(bfe, promise);
   void promise.finally(() => _bfeFetchInFlight.delete(bfe));
   return promise;

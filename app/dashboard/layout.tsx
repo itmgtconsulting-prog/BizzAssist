@@ -1175,6 +1175,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
         <div
           className="fixed inset-0 z-40 bg-black/30 sm:hidden"
           onClick={() => chatCtx.setDrawerOpen(false)}
+          role="presentation"
         />
       )}
       {/* Drawer panel — never unmounted, only visually hidden */}

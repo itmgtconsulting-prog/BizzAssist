@@ -98,6 +98,7 @@ export default function DiagramDagre({ graph, lang: _lang }: DiagramVariantProps
           <button
             onClick={() => setZoom((z) => Math.min(z + 0.15, 2))}
             className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-white bg-slate-800 border border-slate-700/50 rounded-lg text-xs transition"
+            aria-label="Zoom ind"
           >
             +
           </button>
@@ -107,6 +108,7 @@ export default function DiagramDagre({ graph, lang: _lang }: DiagramVariantProps
           <button
             onClick={() => setZoom((z) => Math.max(z - 0.15, 0.15))}
             className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-white bg-slate-800 border border-slate-700/50 rounded-lg text-xs transition"
+            aria-label="Zoom ud"
           >
             &minus;
           </button>

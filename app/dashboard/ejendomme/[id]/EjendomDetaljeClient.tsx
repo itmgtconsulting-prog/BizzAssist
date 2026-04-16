@@ -5290,7 +5290,10 @@ export default function EjendomDetaljeClient({
                             <p className="text-slate-400 text-xs">{m.beskrivelse}</p>
                           </div>
                         </div>
-                        <button className="text-slate-600 hover:text-slate-400 ml-2 flex-shrink-0">
+                        <button
+                          className="text-slate-600 hover:text-slate-400 ml-2 flex-shrink-0"
+                          aria-label="Vis på kort"
+                        >
                           <MapPin size={14} />
                         </button>
                       </div>
@@ -6056,7 +6059,10 @@ export default function EjendomDetaljeClient({
                               {formatDato(ejendom.adkomsthaver.dato)}
                             </td>
                             <td className="px-2 py-3 text-right">
-                              <button className="text-slate-600 hover:text-slate-300 transition-colors">
+                              <button
+                                className="text-slate-600 hover:text-slate-300 transition-colors"
+                                aria-label="Vis dokument"
+                              >
                                 <FileText size={13} />
                               </button>
                             </td>
@@ -6108,7 +6114,10 @@ export default function EjendomDetaljeClient({
                                 {formatDato(ha.dato)}
                               </td>
                               <td className="px-2 py-3 text-right">
-                                <button className="text-slate-600 hover:text-slate-300 transition-colors">
+                                <button
+                                  className="text-slate-600 hover:text-slate-300 transition-colors"
+                                  aria-label="Vis dokument"
+                                >
                                   <FileText size={13} />
                                 </button>
                               </td>
@@ -6169,7 +6178,10 @@ export default function EjendomDetaljeClient({
                               {formatDato(h.tinglysningsdato)}
                             </td>
                             <td className="px-2 py-3 text-right">
-                              <button className="text-slate-600 hover:text-slate-300 transition-colors">
+                              <button
+                                className="text-slate-600 hover:text-slate-300 transition-colors"
+                                aria-label="Vis dokument"
+                              >
                                 <FileText size={13} />
                               </button>
                             </td>

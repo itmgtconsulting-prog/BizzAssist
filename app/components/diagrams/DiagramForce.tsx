@@ -917,6 +917,7 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
             );
           }}
           className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-white bg-slate-800 border border-slate-700/50 rounded-lg text-xs transition"
+          aria-label="Zoom ind"
         >
           +
         </button>
@@ -941,6 +942,7 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
             );
           }}
           className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-white bg-slate-800 border border-slate-700/50 rounded-lg text-xs transition"
+          aria-label="Zoom ud"
         >
           &minus;
         </button>
@@ -1009,6 +1011,7 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
             setTimeout(() => setFitTrigger((t) => t + 1), 150);
           }}
           className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-white bg-slate-800 border border-slate-700/50 rounded-lg transition ml-1"
+          aria-label="Skift fuldskærm"
           title={
             isFullscreen
               ? lang === 'da'

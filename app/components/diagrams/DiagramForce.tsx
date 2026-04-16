@@ -18,6 +18,7 @@ import {
 } from 'd3-force';
 import {
   Briefcase,
+  Building2,
   Maximize2,
   Minimize2,
   ChevronsUpDown,
@@ -135,6 +136,13 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
   /** BIZZ-427: Toggle visibility of ceased/historical owners */
   const [showCeased, setShowCeased] = useState(false);
 
+  /** BIZZ-451: Toggle visibility of property nodes (auto-hide when >10 properties) */
+  const propertyCount = useMemo(
+    () => graph.nodes.filter((n) => n.type === 'property').length,
+    [graph.nodes]
+  );
+  const [showProperties, setShowProperties] = useState(() => propertyCount <= 10);
+
   /** Fullscreen overlay mode */
   const [isFullscreen, setIsFullscreen] = useState(false);
 
@@ -195,6 +203,8 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
     const visibleNodes = graph.nodes.filter((n) => {
       // BIZZ-427: Hide ceased/historical owners unless toggle is on
       if (!showCeased && n.isCeased) return false;
+      // BIZZ-451: Hide property nodes unless toggle is on
+      if (!showProperties && n.type === 'property') return false;
       // Always show non-co-owner nodes
       if (!n.isCoOwner) return true;
       // Show co-owner only if its parent is expanded
@@ -203,7 +213,7 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
     const visibleIds = new Set(visibleNodes.map((n) => n.id));
     const visibleEdges = graph.edges.filter((e) => visibleIds.has(e.from) && visibleIds.has(e.to));
     return { nodes: visibleNodes, edges: visibleEdges };
-  }, [graph, expandedNodes, showCeased]);
+  }, [graph, expandedNodes, showCeased, showProperties]);
 
   // ── Compute topological depth (owners above, subsidiaries below) ──
   // Co-owners are placed between the subsidiary's parent and the subsidiary
@@ -981,12 +991,13 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
         </button>
         <button
           onClick={() => {
-            setZoom(1);
-            setPanOffset({ x: 0, y: 0 });
+            initialFitDone.current = false;
+            setFitTrigger((t) => t + 1);
           }}
           className="px-2 h-7 flex items-center text-slate-400 hover:text-white bg-slate-800 border border-slate-700/50 rounded-lg text-[10px] transition"
+          title={lang === 'da' ? 'Tilpas og centrer' : 'Fit & center'}
         >
-          100%
+          {lang === 'da' ? 'Centrer' : 'Fit'}
         </button>
         <button
           onClick={() => {
@@ -1036,6 +1047,40 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
             ? 'Træk noder · Hold og træk for panorering · Dobbeltklik for zoom'
             : 'Drag nodes · Hold & drag to pan · Double-click to zoom'}
         </span>
+        {/* BIZZ-451: Toggle property nodes */}
+        {propertyCount > 0 && (
+          <button
+            onClick={() => {
+              setShowProperties((s) => !s);
+              // Trigger re-fit after toggling property visibility
+              initialFitDone.current = false;
+              setTimeout(() => setFitTrigger((t) => t + 1), 50);
+            }}
+            className={`h-7 px-2 flex items-center gap-1 text-[10px] font-medium border rounded-lg transition ${
+              showProperties
+                ? 'bg-emerald-600/20 border-emerald-500/40 text-emerald-300'
+                : 'bg-slate-800 border-slate-700/50 text-slate-400 hover:text-slate-300'
+            }`}
+            title={
+              showProperties
+                ? lang === 'da'
+                  ? 'Skjul ejendomme'
+                  : 'Hide properties'
+                : lang === 'da'
+                  ? `Vis ejendomme (${propertyCount})`
+                  : `Show properties (${propertyCount})`
+            }
+          >
+            <Building2 size={11} />
+            {showProperties
+              ? lang === 'da'
+                ? 'Ejendomme'
+                : 'Properties'
+              : lang === 'da'
+                ? `Ejendomme (${propertyCount})`
+                : `Properties (${propertyCount})`}
+          </button>
+        )}
         {/* BIZZ-427: Toggle ceased/historical owners */}
         {graph.nodes.some((n) => n.isCeased) && (
           <button

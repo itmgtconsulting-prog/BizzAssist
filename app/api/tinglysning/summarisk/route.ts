@@ -201,10 +201,10 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    // For ejere/haeftelser sections, limit download to 25KB — enough for adkomst+haeftelser
-    // but skips most servitutter (which can be 60KB+ for hovedejendomme).
-    // Full download only for servitutter section or no section (backwards compat).
-    const needsFullXml = !section || section === 'servitutter';
+    // BIZZ-448: Download full XML for haeftelser too — on hovedejendomme the adkomst
+    // section can exceed 25KB, pushing haeftelser beyond the truncation boundary.
+    // Only ejere section uses the 25KB optimisation (adkomst is always near the top).
+    const needsFullXml = !section || section === 'servitutter' || section === 'haeftelser';
     const maxBytes = needsFullXml ? 0 : 25_000;
     const res = await tlFetch(`/ejdsummarisk/${uuid}`, maxBytes);
     if (res.status !== 200) {
@@ -362,7 +362,7 @@ export async function GET(req: NextRequest) {
     // ── Parse hæftelser ──
     const haeftelser: TLHaeftelse[] = [];
     const haeftelseEntries = [
-      ...xml.matchAll(/<ns:HaeftelseSummarisk>([\s\S]*?)<\/ns:HaeftelseSummarisk>/g),
+      ...xml.matchAll(/HaeftelseSummarisk>([\s\S]*?)<\/[^:]*:?HaeftelseSummarisk>/g),
     ];
     for (const [, entry] of haeftelseEntries) {
       const type = entry.match(/HaeftelseType[^>]*>([^<]+)/)?.[1] ?? 'ukendt';
@@ -747,7 +747,7 @@ export async function GET(req: NextRequest) {
     // ── Parse servitutter ──
     const servitutter: TLServitut[] = [];
     const servitutEntries = [
-      ...xml.matchAll(/<ns:ServitutSummarisk>([\s\S]*?)<\/ns:ServitutSummarisk>/g),
+      ...xml.matchAll(/ServitutSummarisk>([\s\S]*?)<\/[^:]*:?ServitutSummarisk>/g),
     ];
     for (const [, entry] of servitutEntries) {
       const type = entry.match(/ServitutType[^>]*>([^<]+)/)?.[1] ?? 'ukendt';
@@ -996,7 +996,7 @@ export async function GET(req: NextRequest) {
                 // Spejler den eksisterende parsing-logik for lejlighedens egne servitutter,
                 // men markerer hver post med fraHovedejendom: true.
                 const hovedServitutEntries = [
-                  ...hovedXml.matchAll(/<ns:ServitutSummarisk>([\s\S]*?)<\/ns:ServitutSummarisk>/g),
+                  ...hovedXml.matchAll(/ServitutSummarisk>([\s\S]*?)<\/[^:]*:?ServitutSummarisk>/g),
                 ];
                 const servitutterFraHoved: TLServitut[] = [];
                 for (const [, entry] of hovedServitutEntries) {

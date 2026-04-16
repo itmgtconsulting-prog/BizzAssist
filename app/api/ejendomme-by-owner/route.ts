@@ -370,6 +370,42 @@ async function _hentDawaBfeDataImpl(bfe: number): Promise<DawaBfeAdresse> {
       };
     }
 
+    /* Fallback: query /adresser?bfenummer={bfe} for samlet ejendomme without single address */
+    try {
+      const addrRes = await fetch(
+        `${DAWA_BASE_URL}/adresser?bfenummer=${bfe}&per_side=1&struktur=mini`,
+        {
+          signal: AbortSignal.timeout(5000),
+          next: { revalidate: 86400 },
+        }
+      );
+      if (addrRes.ok) {
+        const addrList = (await addrRes.json()) as Array<{
+          id?: string;
+          vejnavn?: string;
+          husnr?: string;
+          postnr?: string;
+          postnrnavn?: string;
+          kommunekode?: string;
+          kommunenavn?: string;
+        }>;
+        const first = addrList[0];
+        if (first?.vejnavn) {
+          return {
+            adresse: `${first.vejnavn} ${first.husnr ?? ''}`.trim(),
+            postnr: first.postnr ?? null,
+            by: first.postnrnavn ?? null,
+            kommune: first.kommunenavn ?? null,
+            kommuneKode: first.kommunekode ?? null,
+            ejendomstype: json.ejendomstype ?? null,
+            dawaId: first.id ?? null,
+          };
+        }
+      }
+    } catch {
+      /* ignore fallback errors */
+    }
+
     /* Fallback: jordstykker → ejerlav */
     const js = json.jordstykker?.[0];
     if (js?.ejerlav?.navn) {

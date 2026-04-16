@@ -13,6 +13,9 @@ import { z } from 'zod';
 import { parseQuery } from '@/app/lib/validate';
 import { resolveTenantId } from '@/lib/api/auth';
 
+export const runtime = 'nodejs';
+export const maxDuration = 30;
+
 /** Zod schema for /api/cvr-public/person query params */
 const querySchema = z.object({
   enhedsNummer: z.string().regex(/^\d+$/, 'enhedsNummer skal være numerisk'),

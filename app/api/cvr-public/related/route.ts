@@ -16,6 +16,9 @@ import { parseQuery } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
 
+export const runtime = 'nodejs';
+export const maxDuration = 30;
+
 /** Zod schema for /api/cvr-public/related query params */
 const querySchema = z.object({ cvr: z.string().regex(/^\d{8}$/, 'CVR skal være 8 cifre') });
 

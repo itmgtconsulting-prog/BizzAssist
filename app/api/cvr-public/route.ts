@@ -22,6 +22,9 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { logActivity } from '@/app/lib/activityLog';
 import { logger } from '@/app/lib/logger';
 
+export const runtime = 'nodejs';
+export const maxDuration = 30;
+
 /** Zod schema for /api/cvr-public query params */
 const querySchema = z.object({
   vat: z

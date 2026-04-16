@@ -498,12 +498,7 @@ export default function SettingsPageClient() {
     setIsAdmin(ctxIsAdmin);
   }, [ctxSub, ctxIsAdmin]);
 
-  /** Auto-redirect unpaid users to subscription tab unless a specific tab was requested */
-  useEffect(() => {
-    if (ctxSub && !ctxSub.isPaid && !tabParam) {
-      setTab('abonnement');
-    }
-  }, [ctxSub, tabParam]);
+  // Auto-redirect for unpaid users is below tabParam declaration (line ~541)
 
   /** Stripe billing details (next payment, card, cancellation) */
   const [billing, setBilling] = useState<{
@@ -545,6 +540,13 @@ export default function SettingsPageClient() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabParam]);
+
+  /** Auto-redirect unpaid users to subscription tab unless a specific tab was requested */
+  useEffect(() => {
+    if (ctxSub && !ctxSub.isPaid && !tabParam) {
+      setTab('abonnement');
+    }
+  }, [ctxSub, tabParam]);
 
   /** Genindlaes data — Supabase-primaer via trackedEjendomme.ts */
   const refresh = useCallback(async () => {

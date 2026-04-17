@@ -203,19 +203,21 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
             //       ER ejer uden separat ejerandel-registrering — fx enkeltmands-
             //       virksomhed, I/S, K/S, P/S. Disse har ofte tom ejer-rolle-
             //       liste i CVR fordi registreringen ikke kræver det.
-            const harEjerAndel = v.roller.some((r) => {
+            // Find højeste ejerandel personen har i virksomheden (ekskl. stifter).
+            const ejerandelRolle = v.roller.find((r) => {
               if (r.ejerandel == null) return false;
               const rolle = r.rolle.toLowerCase();
               if (rolle.includes('stifter')) return false;
               return true;
             });
             const formLc = (v.form ?? '').toLowerCase();
+            const erEnkeltmand = formLc.includes('enkeltmand');
             const deltagerErEjerVedForm =
-              formLc.includes('enkeltmand') ||
+              erEnkeltmand ||
               formLc.includes('interessent') || // I/S
               formLc.includes('kommandit') || // K/S
               formLc.includes('partnersels'); // P/S
-            if (!harEjerAndel && !deltagerErEjerVedForm) continue;
+            if (!ejerandelRolle && !deltagerErEjerVedForm) continue;
             const cvrId = `cvr-${v.cvr}`;
             if (existingIds.has(cvrId)) continue;
             existingIds.add(cvrId);
@@ -228,7 +230,20 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
               branche: v.branche ?? undefined,
               link: `/dashboard/companies/${v.cvr}`,
             });
-            newEdges.push({ from: personId, to: cvrId });
+            // Sæt ejerandel på kanten:
+            //   • Enkeltmandsvirksomhed: personen er pr. definition 100% ejer,
+            //   • Virksomhed med registreret ejer-rolle: brug rollens ejerandel,
+            //   • I/S, K/S, P/S uden rolle-ejerandel: ukendt (ingen label).
+            const edgeEjerandel = ejerandelRolle?.ejerandel
+              ? ejerandelRolle.ejerandel
+              : erEnkeltmand
+                ? '100%'
+                : undefined;
+            newEdges.push({
+              from: personId,
+              to: cvrId,
+              ejerandel: edgeEjerandel,
+            });
           }
         }
 

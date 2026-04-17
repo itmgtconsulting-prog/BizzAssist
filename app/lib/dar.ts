@@ -1009,6 +1009,123 @@ export async function darReverseGeocode(
 }
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ * BIZZ-506: DAR GraphQL — resolve full adresse UUID for ejerlejligheder
+ * (adgangsadresse + etage + dør combination)
+ * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+/**
+ * BIZZ-506: Resolve a full DAR `adresse` UUID for a specific unit by
+ * chaining DAR GraphQL queries:
+ *   1. DAR_NavngivenVej(vejnavn)        → vej-UUID(s)
+ *   2. DAR_Postnummer(postnr)           → postnr-UUID
+ *   3. DAR_Husnummer(husnummertekst +
+ *      postnummer-UUID + navngivenVej)  → husnummer-UUID
+ *   4. DAR_Adresse(husnummer-UUID +
+ *      etagebetegnelse + doerbetegnelse) → final adresse-UUID
+ *
+ * Used by ejerlejlighed flows where we have split fields (vejnavn, husnr,
+ * postnr, etage, dør) from EJF but need the DAR adresseIdentificerer to
+ * query BBR_Enhed. DAWA /adresser?vejnavn=… is the pre-2026-07-01
+ * equivalent; callers should fall back to it on null.
+ *
+ * Never throws. Returns null on any missing API key, empty chain result,
+ * or GraphQL error.
+ *
+ * Cost: up to 4 GraphQL round-trips per call. Batch at the caller level
+ * when resolving many units from the same address list.
+ *
+ * @param input - Split address components
+ */
+export async function darResolveAdresseId(input: {
+  vejnavn: string;
+  husnr: string;
+  postnr: string;
+  etage?: string | null;
+  doer?: string | null;
+}): Promise<string | null> {
+  if (!process.env.DATAFORDELER_API_KEY) {
+    logger.warn(
+      'darResolveAdresseId: DATAFORDELER_API_KEY not set — skipping DAR, caller should fall back to DAWA'
+    );
+    return null;
+  }
+
+  const ts = nowTs();
+  const esc = (s: string) => s.replace(/"/g, '\\"');
+
+  // Step 1: NavngivenVej (vejnavne kan forekomme flere gange i landet →
+  // vi henter op til 20 kandidater og filtrerer via postnummer i trin 3).
+  const vejData = await darQuery<{
+    DAR_NavngivenVej: { nodes: Array<{ id_lokalId: string }> };
+  }>(`{
+    DAR_NavngivenVej(
+      where: { vejnavn: { eq: "${esc(input.vejnavn)}" } }
+      virkningstid: "${ts}"
+      registreringstid: "${ts}"
+      first: 20
+    ) { nodes { id_lokalId } }
+  }`);
+  const vejUuids = new Set((vejData?.DAR_NavngivenVej?.nodes ?? []).map((n) => n.id_lokalId));
+  if (vejUuids.size === 0) return null;
+
+  // Step 2: Postnummer
+  const postnrData = await darQuery<{
+    DAR_Postnummer: { nodes: Array<{ id_lokalId: string }> };
+  }>(`{
+    DAR_Postnummer(
+      where: { postnr: { eq: "${esc(input.postnr)}" } }
+      virkningstid: "${ts}"
+      registreringstid: "${ts}"
+      first: 1
+    ) { nodes { id_lokalId } }
+  }`);
+  const postnrUuid = postnrData?.DAR_Postnummer?.nodes?.[0]?.id_lokalId;
+  if (!postnrUuid) return null;
+
+  // Step 3: Husnummer — match husnummertekst + postnr, then filter by vej-UUIDs
+  const husnummerData = await darQuery<{
+    DAR_Husnummer: { nodes: Array<{ id_lokalId: string; navngivenVej: string }> };
+  }>(`{
+    DAR_Husnummer(
+      where: {
+        husnummertekst: { eq: "${esc(input.husnr)}" }
+        postnummer: { eq: "${postnrUuid}" }
+      }
+      virkningstid: "${ts}"
+      registreringstid: "${ts}"
+      first: 20
+    ) { nodes { id_lokalId navngivenVej } }
+  }`);
+  const husnummerMatch = (husnummerData?.DAR_Husnummer?.nodes ?? []).find((h) =>
+    vejUuids.has(h.navngivenVej)
+  );
+  if (!husnummerMatch) return null;
+
+  // Step 4: Adresse — composite match on husnummer + etage + dør.
+  // Etage or dør being absent is fine (ground-floor, single-entry flats) —
+  // we still require an exact match on whatever is provided.
+  const adresseWhereParts = [`husnummer: { eq: "${husnummerMatch.id_lokalId}" }`];
+  if (input.etage) {
+    adresseWhereParts.push(`etagebetegnelse: { eq: "${esc(input.etage)}" }`);
+  }
+  if (input.doer) {
+    adresseWhereParts.push(`doerbetegnelse: { eq: "${esc(input.doer)}" }`);
+  }
+
+  const adresseData = await darQuery<{
+    DAR_Adresse: { nodes: Array<{ id_lokalId: string }> };
+  }>(`{
+    DAR_Adresse(
+      where: { ${adresseWhereParts.join(', ')} }
+      virkningstid: "${ts}"
+      registreringstid: "${ts}"
+      first: 1
+    ) { nodes { id_lokalId } }
+  }`);
+  return adresseData?.DAR_Adresse?.nodes?.[0]?.id_lokalId ?? null;
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  * BIZZ-505: MAT GraphQL — jordstykke by BFE with ejerlav-name resolution
  * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 

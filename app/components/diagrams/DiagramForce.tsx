@@ -886,11 +886,14 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
       maxY = Math.max(maxY, pos.y + nh / 2);
     }
     const pad = 60;
+    // Smaller top pad so the topmost node sits closer to the container top
+    // when top-aligning the diagram (user request).
+    const padTop = 20;
     return {
       minX: minX - pad,
-      minY: minY - pad,
+      minY: minY - padTop,
       w: maxX - minX + pad * 2,
-      h: maxY - minY + pad * 2,
+      h: maxY - minY + padTop + pad,
     };
   }, [positions, expandedOverflow, filteredGraph.nodes]);
 
@@ -921,9 +924,11 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
       const scaledW = viewBox.w * z + 32;
       const scaledH = viewBox.h * z + 32;
       const panX = Math.round((cW - scaledW) / 2);
-      // Center small diagrams vertically; large ones align near top
-      const centeredY = Math.round((cH - scaledH) / 2);
-      const panY = scaledH > cH ? Math.min(8, centeredY) : centeredY;
+      // Always top-align the diagram with a small top margin. Previously we
+      // centred vertically for small diagrams which wasted screen real-estate
+      // and pushed the first node far below the fold.
+      void scaledH;
+      const panY = 8;
       setZoom(z);
       setPanOffset({ x: panX, y: panY });
       initialFitDone.current = true;

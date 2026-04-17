@@ -112,70 +112,87 @@ export async function GET(req: NextRequest) {
     } satisfies PersonBridgeResponse);
   }
 
-  // Trin 2 — DAWA: adresseId → BFE. CVR ES's adresseId kan være enten en
-  // DAR adresse (specifik enhed) eller en adgangsadresse (bygning). Vi prøver
-  // begge: først /adresser (specifik enhed), så /adgangsadresser (fallback),
-  // og sidst adresse-search på vejnavn+husnr+postnr hvis begge id-opslag fejler.
+  // Trin 2 — DAWA: adresseId → jordstykke (ejerlavkode + matrikelnr) → BFE.
+  // DAWA's adresse-endpoints eksponerer IKKE bfenummer direkte, kun ejerlav +
+  // matrikelnr. Men /jordstykker/{ejerlavkode}/{matrikelnr} har bfenummer.
   const encoded = encodeURIComponent(adr.adresseId);
   const viaAdresse =
     `${adr.vejnavn ?? ''} ${adr.husnummerFra ?? ''}${adr.bogstavFra ?? ''}, ${adr.postnummer ?? ''} ${adr.postdistrikt ?? ''}`.trim();
-  let bfeNummer: number | null = null;
-  const dawaTries: Array<{ label: string; url: string }> = [
-    { label: 'adresser-by-id', url: `https://api.dataforsyningen.dk/adresser/${encoded}` },
-    {
-      label: 'adgangsadresser-by-id',
-      url: `https://api.dataforsyningen.dk/adgangsadresser/${encoded}`,
-    },
-  ];
-  // Sidste fallback: søg på vejnavn + husnr + postnr
-  if (adr.vejnavn && adr.husnummerFra != null && adr.postnummer != null) {
-    const params = new URLSearchParams({
-      vejnavn: adr.vejnavn,
-      husnr: `${adr.husnummerFra}${adr.bogstavFra ?? ''}`,
-      postnr: String(adr.postnummer),
-      struktur: 'mini',
-    });
-    dawaTries.push({
-      label: 'adgangsadresser-search',
-      url: `https://api.dataforsyningen.dk/adgangsadresser?${params.toString()}`,
-    });
+
+  /** Slår jordstykket op på ejerlavkode + matrikelnr for at få BFE. */
+  async function jordstykkeBfe(
+    ejerlavkode: number | string,
+    matrikelnr: string
+  ): Promise<number | null> {
+    try {
+      const url = `https://api.dataforsyningen.dk/jordstykker/${ejerlavkode}/${encodeURIComponent(matrikelnr)}`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+      if (!res.ok) return null;
+      const j = (await res.json()) as { bfenummer?: number };
+      return j.bfenummer ?? null;
+    } catch {
+      return null;
+    }
   }
 
-  const dawaDiag: Array<{ label: string; status: number; bfe: number | null }> = [];
-  for (const t of dawaTries) {
-    if (bfeNummer != null) break;
+  let bfeNummer: number | null = null;
+  const dawaDiag: Array<{ label: string; status: number; info?: unknown }> = [];
+
+  /**
+   * Forsøg 1: /adresser/{id} returnerer adgangsadresse med ejerlav + matrikelnr.
+   */
+  try {
+    const res = await fetch(`https://api.dataforsyningen.dk/adresser/${encoded}`, {
+      signal: AbortSignal.timeout(10000),
+    });
+    if (res.ok) {
+      const d = (await res.json()) as {
+        adgangsadresse?: { ejerlav?: { kode?: number }; matrikelnr?: string };
+      };
+      const ek = d.adgangsadresse?.ejerlav?.kode;
+      const mn = d.adgangsadresse?.matrikelnr;
+      if (ek && mn) bfeNummer = await jordstykkeBfe(ek, mn);
+      dawaDiag.push({ label: 'adresser-by-id', status: res.status, info: { ek, mn, bfeNummer } });
+    } else {
+      dawaDiag.push({ label: 'adresser-by-id', status: res.status });
+    }
+  } catch (e) {
+    dawaDiag.push({ label: 'adresser-by-id', status: 0, info: String(e) });
+  }
+
+  /**
+   * Forsøg 2 (fallback): søg på vejnavn+husnr+postnr hvis adresseId ikke gav resultat.
+   */
+  if (bfeNummer == null && adr.vejnavn && adr.husnummerFra != null && adr.postnummer != null) {
     try {
-      const res = await fetch(t.url, { signal: AbortSignal.timeout(10000) });
-      if (!res.ok) {
-        dawaDiag.push({ label: t.label, status: res.status, bfe: null });
-        continue;
+      const params = new URLSearchParams({
+        vejnavn: adr.vejnavn,
+        husnr: `${adr.husnummerFra}${adr.bogstavFra ?? ''}`,
+        postnr: String(adr.postnummer),
+      });
+      const res = await fetch(
+        `https://api.dataforsyningen.dk/adgangsadresser?${params.toString()}`,
+        { signal: AbortSignal.timeout(10000) }
+      );
+      if (res.ok) {
+        const arr = (await res.json()) as Array<{
+          ejerlav?: { kode?: number };
+          matrikelnr?: string;
+        }>;
+        const first = arr[0];
+        const ek = first?.ejerlav?.kode;
+        const mn = first?.matrikelnr;
+        if (ek && mn) bfeNummer = await jordstykkeBfe(ek, mn);
+        dawaDiag.push({
+          label: 'adgangsadresser-search',
+          status: res.status,
+          info: { ek, mn, bfeNummer, count: arr.length },
+        });
+      } else {
+        dawaDiag.push({ label: 'adgangsadresser-search', status: res.status });
       }
-      const json = (await res.json()) as unknown;
-      // /adresser/{id}: object med adgangsadresse.jordstykke.bfenummer
-      // /adgangsadresser/{id}: object med jordstykke.bfenummer
-      // /adgangsadresser?...: array af mini-objekter
-      if (Array.isArray(json)) {
-        // mini-objekt har ikke jordstykke — vi skal følge op med en detalje-fetch.
-        const first = json[0] as { id?: string } | undefined;
-        if (first?.id) {
-          const detail = await fetch(`https://api.dataforsyningen.dk/adgangsadresser/${first.id}`, {
-            signal: AbortSignal.timeout(10000),
-          });
-          if (detail.ok) {
-            const dj = (await detail.json()) as { jordstykke?: { bfenummer?: number } };
-            bfeNummer = dj.jordstykke?.bfenummer ?? null;
-          }
-        }
-      } else if (json && typeof json === 'object') {
-        const obj = json as {
-          jordstykke?: { bfenummer?: number };
-          adgangsadresse?: { jordstykke?: { bfenummer?: number } };
-        };
-        bfeNummer = obj.jordstykke?.bfenummer ?? obj.adgangsadresse?.jordstykke?.bfenummer ?? null;
-      }
-      dawaDiag.push({ label: t.label, status: res.status, bfe: bfeNummer });
-    } catch {
-      dawaDiag.push({ label: t.label, status: 0, bfe: null });
+    } catch (e) {
+      dawaDiag.push({ label: 'adgangsadresser-search', status: 0, info: String(e) });
     }
   }
 

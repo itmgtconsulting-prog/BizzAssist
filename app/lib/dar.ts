@@ -780,6 +780,118 @@ export function erDarId(id: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 }
 
+/**
+ * BIZZ-504: GeoJSON FeatureCollection of address points inside a bbox.
+ * Properties kept minimal (`husnr` only) so the response matches the
+ * legacy DAWA shape used by the map layer.
+ */
+export interface DarHusnumreFeatureCollection {
+  type: 'FeatureCollection';
+  features: Array<{
+    type: 'Feature';
+    geometry: { type: 'Point'; coordinates: [number, number] };
+    properties: { husnr: string };
+  }>;
+}
+
+/**
+ * BIZZ-504: Hent alle husnumre inden for en WGS84 bbox via Datafordeler
+ * DAR WFS. Bruger WFS `bbox` parameter på husnummer/position geometri —
+ * WFS understøtter dette natively, ingen CQL_FILTER nødvendig.
+ *
+ * Returnerer:
+ *   - `null` hvis DATAFORDELER_API_KEY mangler, WFS fejler eller svaret
+ *     ikke kan parses → caller skal falde tilbage til DAWA
+ *   - Tom `features`-liste hvis bbox er gyldig men ingen adresser findes
+ *   - Udfyldt FeatureCollection med Point-features ellers
+ *
+ * Never throws; alle fejl logges.
+ *
+ * @param w - West længdegrad (WGS84)
+ * @param s - South breddegrad (WGS84)
+ * @param e - East længdegrad (WGS84)
+ * @param n - North breddegrad (WGS84)
+ * @param maxFeatures - Hard cap (default 1000 for kort-layeret)
+ */
+export async function darHusnumreBbox(
+  w: number,
+  s: number,
+  e: number,
+  n: number,
+  maxFeatures = 1000
+): Promise<DarHusnumreFeatureCollection | null> {
+  const apiKey = process.env.DATAFORDELER_API_KEY;
+  if (!apiKey) {
+    logger.warn(
+      'darHusnumreBbox: DATAFORDELER_API_KEY not set — skipping DAR, caller should fall back to DAWA'
+    );
+    return null;
+  }
+
+  try {
+    // WFS 2.0 standard: bbox filter as "minx,miny,maxx,maxy,srsName".
+    // srsName ensures the coordinates are interpreted as WGS84 regardless
+    // of server default.
+    const params = new URLSearchParams({
+      service: 'WFS',
+      version: '2.0.0',
+      request: 'GetFeature',
+      typeNames: 'DAR:Husnummer_Gaeldende',
+      srsName: 'EPSG:4326',
+      bbox: `${w},${s},${e},${n},EPSG:4326`,
+      outputFormat: 'json',
+      count: String(maxFeatures),
+      apiKey,
+    });
+
+    const res = await fetch(proxyUrl(`${DAR_WFS_ENDPOINT}?${params.toString()}`), {
+      headers: { ...proxyHeaders() },
+      signal: AbortSignal.timeout(proxyTimeout()),
+    });
+
+    if (!res.ok) {
+      logger.warn(`darHusnumreBbox DAR WFS fejl: ${res.status} ${res.statusText}`);
+      return null;
+    }
+
+    const geojson = (await res.json()) as {
+      features?: Array<{
+        properties?: Record<string, unknown>;
+        geometry?: { type?: string; coordinates?: unknown };
+      }>;
+    };
+
+    if (!Array.isArray(geojson.features)) return null;
+
+    const features: DarHusnumreFeatureCollection['features'] = [];
+    for (const f of geojson.features) {
+      const coords = f.geometry?.coordinates;
+      // Accept only Point geometries with numeric [lng, lat]
+      if (
+        f.geometry?.type !== 'Point' ||
+        !Array.isArray(coords) ||
+        typeof coords[0] !== 'number' ||
+        typeof coords[1] !== 'number'
+      ) {
+        continue;
+      }
+      const husnr = String(
+        f.properties?.husnummertekst ?? f.properties?.husnummer ?? f.properties?.husnr ?? ''
+      );
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [coords[0], coords[1]] },
+        properties: { husnr },
+      });
+    }
+
+    return { type: 'FeatureCollection', features };
+  } catch (err) {
+    logger.error('darHusnumreBbox DAR WFS fetch failed:', err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  * BIZZ-503: Reverse geocoding via Datafordeler DAR WFS
  * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */

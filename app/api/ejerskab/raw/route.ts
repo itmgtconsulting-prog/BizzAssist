@@ -10,20 +10,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantId } from '@/lib/api/auth';
 import { getSharedOAuthToken } from '@/app/lib/dfTokenCache';
 import { getCertOAuthToken, isCertAuthConfigured } from '@/app/lib/dfCertAuth';
+import { proxyUrl, proxyHeaders } from '@/app/lib/dfProxy';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
 
 const EJF_GQL_URL = 'https://services.datafordeler.dk/EJF/Ejerfortegnelsen/3/REST/graphql';
-
-function proxyUrl(url: string): string {
-  const base = process.env.DF_PROXY_URL;
-  return base ? `${base}${url.replace(/^https?:\/\/[^/]+/, '')}` : url;
-}
-function proxyHeaders(): Record<string, string> {
-  const secret = process.env.DF_PROXY_SECRET;
-  return secret ? { 'x-proxy-secret': secret } : {};
-}
 
 export async function GET(req: NextRequest) {
   const auth = await resolveTenantId();

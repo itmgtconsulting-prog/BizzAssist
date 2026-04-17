@@ -75,31 +75,51 @@ export async function GET(req: NextRequest) {
   const _safeFd = fd.replace(/"/g, '\\"');
   const _safeId = id.replace(/"/g, '\\"');
 
-  // Først: introspect filter-input-typen for at finde valide felter.
-  const introspectQuery = `{
-    __type(name: "EJFCustom_EjerskabBegraensetFilterInput") {
-      name
-      inputFields {
+  async function gql(q: string) {
+    const r = await fetch(proxyUrl(EJF_GQL_URL), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        ...proxyHeaders(),
+      },
+      body: JSON.stringify({ query: q }),
+      signal: AbortSignal.timeout(15000),
+    });
+    return r.text();
+  }
+
+  // 1. Root Query-type: hvilke top-level operations findes der?
+  const rootQuery = await gql(`{
+    __type(name: "Query") {
+      fields { name args { name type { name kind } } }
+    }
+  }`);
+
+  // 2. Alle typer der starter med EJFCustom
+  const typesList = await gql(`{
+    __schema {
+      types {
         name
-        type {
-          name
-          kind
-          ofType { name kind }
-        }
+        kind
       }
     }
-  }`;
-  const introspectRes = await fetch(proxyUrl(EJF_GQL_URL), {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-      ...proxyHeaders(),
-    },
-    body: JSON.stringify({ query: introspectQuery }),
-    signal: AbortSignal.timeout(15000),
-  });
-  const introspect = await introspectRes.text();
+  }`);
+
+  // 3. Filter-input for vores brugte type — prøv også navn-varianter
+  const filterTypes = [
+    'EJFCustom_EjerskabBegraensetFilterInput',
+    'EjfCustom_EjerskabBegraensetFilterInput',
+    'EJFCustom_EjerskabBegraenset_FilterInput',
+    'EJFCustomEjerskabBegraensetFilterInput',
+  ];
+  const filterIntrospections: Record<string, string> = {};
+  for (const n of filterTypes) {
+    const q = `{ __type(name: "${n}") { name inputFields { name type { name kind ofType { name kind } } } } }`;
+    filterIntrospections[n] = await gql(q);
+  }
+
+  const introspect = rootQuery;
 
   // Prøv også alternative typenavne
   const alternativeNames = [
@@ -139,7 +159,9 @@ export async function GET(req: NextRequest) {
   return NextResponse.json(
     {
       probeInputs: { navn, foedselsdato: fd, id },
-      introspection: introspect.slice(0, 4000),
+      rootQueryFields: introspect.slice(0, 6000),
+      allTypesSnippet: typesList.slice(0, 8000),
+      filterIntrospections,
       altIntrospections,
       results,
     },

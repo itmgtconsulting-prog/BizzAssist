@@ -386,6 +386,67 @@ async function hentBfeByPerson(
   }
 }
 
+/**
+ * Deterministisk opslag efter alle BFE'er som ejes af en given EJF person-id.
+ * Bruges når caller har resolvet personens EJF-id via /api/ejerskab/person-bridge.
+ * Dette er den eneste pålidelige måde at finde en CVR ES-persons ejendomme på,
+ * fordi CVR ES og EJF bruger forskellige person-id-skemaer.
+ *
+ * @param ejfPersonId - UUID fra ejendePersonBegraenset.id (EJF's interne nøgle)
+ * @param token - OAuth Bearer token
+ */
+async function hentBfeByEjfPersonId(
+  ejfPersonId: string,
+  token: string
+): Promise<{ bfeNumre: number[]; authError: boolean } | null> {
+  const virkningstid = new Date().toISOString();
+  // Escape i tilfælde af tegn der bryder GraphQL-stringen (UUID'er har det
+  // ikke normalt, men vi er defensive).
+  const safeId = ejfPersonId.replace(/"/g, '\\"');
+  const query = `{
+    EJFCustom_EjerskabBegraenset(
+      first: 500
+      virkningstid: "${virkningstid}"
+      where: { ejendePersonBegraenset: { id: { eq: "${safeId}" } } }
+    ) {
+      nodes {
+        bestemtFastEjendomBFENr
+        status
+      }
+    }
+  }`;
+  try {
+    const res = await fetch(proxyUrl(EJF_GQL_ENDPOINT), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        ...proxyHeaders(),
+      },
+      body: JSON.stringify({ query }),
+      signal: AbortSignal.timeout(proxyTimeout()),
+      next: { revalidate: 300 },
+    });
+    if (res.status === 403) return { bfeNumre: [], authError: true };
+    if (!res.ok) return null;
+    const json = (await res.json()) as GqlResult<RawEjerskab & { status?: string }>;
+    const authError =
+      json.errors?.some(
+        (e) => e.extensions?.code === 'DAF-AUTH-0001' || e.message?.includes('not authorized')
+      ) ?? false;
+    if (authError) return { bfeNumre: [], authError: true };
+    const nodes = json.data?.EJFCustom_EjerskabBegraenset?.nodes ?? [];
+    // Kun aktuelle ejerskaber (status = "gældende")
+    const bfeNumre = nodes
+      .filter((n) => !n.status || n.status === 'gældende')
+      .map((n) => n.bestemtFastEjendomBFENr)
+      .filter((b): b is number => b != null);
+    return { bfeNumre: [...new Set(bfeNumre)], authError: false };
+  } catch {
+    return null;
+  }
+}
+
 // ─── DAWA BFE adresse-opslag ─────────────────────────────────────────────────
 
 interface DawaBfeAdresse {
@@ -720,7 +781,12 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
   // lookup. EJF GraphQL matcher på ejendePersonBegraenset.navn.navn.
   const personNavnParam = searchParams.get('personNavn') ?? '';
 
-  if (!cvrParam && !enhedsNummerParam && !personNavnParam) {
+  // Deterministisk parameter: EJF's interne person-UUID. Dette er den foretrukne
+  // måde at slå en persons ejendomme op på fordi den undgår navne-kollisioner.
+  // Klienten henter EJF-id via /api/ejerskab/person-bridge og sender det her.
+  const ejfPersonIdParam = searchParams.get('ejfPersonId') ?? '';
+
+  if (!cvrParam && !enhedsNummerParam && !personNavnParam && !ejfPersonIdParam) {
     return NextResponse.json(
       {
         ejendomme: [],
@@ -729,7 +795,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
         limit,
         manglerNoegle: false,
         manglerAdgang: false,
-        fejl: 'cvr eller enhedsNummer parameter er påkrævet',
+        fejl: 'cvr, enhedsNummer, personNavn eller ejfPersonId parameter er påkrævet',
       },
       { status: 400 }
     );
@@ -767,7 +833,26 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
       ].slice(0, 10)
     : [];
 
-  if (cvrNumre.length === 0 && enhedsNumre.length === 0 && personNavne.length === 0) {
+  /* Parsér og validér EJF person-id (uuid-format) */
+  const ejfPersonIds = ejfPersonIdParam
+    ? [
+        ...new Set(
+          ejfPersonIdParam
+            .split(',')
+            .map((s) => s.trim())
+            .filter((s) =>
+              /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)
+            )
+        ),
+      ].slice(0, 10)
+    : [];
+
+  if (
+    cvrNumre.length === 0 &&
+    enhedsNumre.length === 0 &&
+    personNavne.length === 0 &&
+    ejfPersonIds.length === 0
+  ) {
     return NextResponse.json(
       {
         ejendomme: [],
@@ -776,7 +861,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
         limit,
         manglerNoegle: false,
         manglerAdgang: false,
-        fejl: 'Ingen gyldige CVR-numre, enhedsNumre eller personNavne angivet',
+        fejl: 'Ingen gyldige CVR-numre, enhedsNumre, personNavne eller ejfPersonId angivet',
       },
       { status: 400 }
     );
@@ -827,6 +912,14 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
         ? await Promise.allSettled(personNavne.map((navn) => hentBfeByPersonNavn(navn, token!)))
         : [];
 
+    // Deterministisk: EJF person-id (uuid) lookup. Dette er den foretrukne
+    // lookup-metode når klienten har resolvet personens EJF-id via
+    // /api/ejerskab/person-bridge.
+    const ejfPersonIdSettled =
+      ejfPersonIds.length > 0
+        ? await Promise.allSettled(ejfPersonIds.map((id) => hentBfeByEjfPersonId(id, token!)))
+        : [];
+
     const cvrResults = cvrSettled.map((settled, i) => {
       if (settled.status === 'rejected') {
         logger.error(
@@ -860,11 +953,23 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
       return settled.value;
     });
 
+    const ejfPersonIdResults = ejfPersonIdSettled.map((settled, i) => {
+      if (settled.status === 'rejected') {
+        logger.error(
+          `[ejendomme-by-owner] EJF person-id lookup failed for "${ejfPersonIds[i]}":`,
+          settled.reason
+        );
+        return null;
+      }
+      return settled.value;
+    });
+
     /* Tjek om nogen returnerede auth-fejl */
     const harAuthFejl =
       cvrResults.some((r) => r?.authError === true) ||
       personResults.some((r) => r?.authError === true) ||
-      personNavnResults.some((r) => r?.authError === true);
+      personNavnResults.some((r) => r?.authError === true) ||
+      ejfPersonIdResults.some((r) => r?.authError === true);
     if (harAuthFejl) {
       return NextResponse.json({
         ejendomme: [],
@@ -900,6 +1005,16 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
       for (const bfe of result.bfeNumre) {
         if (!bfeTilCvr.has(bfe)) {
           bfeTilCvr.set(bfe, `person-${enhedsNumre[i]}`);
+        }
+      }
+    }
+    // Deterministisk: Tilføj BFE'er fundet via EJF person-id
+    for (let i = 0; i < ejfPersonIds.length; i++) {
+      const result = ejfPersonIdResults[i];
+      if (!result) continue;
+      for (const bfe of result.bfeNumre) {
+        if (!bfeTilCvr.has(bfe)) {
+          bfeTilCvr.set(bfe, `ejf-person-${ejfPersonIds[i]}`);
         }
       }
     }

@@ -179,21 +179,48 @@ export async function GET(req: NextRequest) {
   // for at se om vi kan ramme noget der returnerer Jakobs BFE'er
   const filterFieldProbes: Record<string, string> = {};
   const candidateFields = [
-    'ejendeEnhedsNummer',
-    'ejendePersonId',
-    'ejendePersonBegraensetId_lokalId',
-    'ejendePersonLokalId',
-    'oplysningerEjesAfEjerskabId_lokalId',
-    'id_lokalId',
-    'ejetAfEnhedsNummer',
-    'ejerEnhedsNummer',
+    'ejendePersonCPRNummer',
+    'ejendePersonForretningsnoegle',
+    'ejendeforretningsnoegle',
+    'ejendePersonIdLokalId',
+    'ejendePersonidLokalId',
+    'ejendePersonId_lokalId',
+    'ejendePerson',
+    'ejendePersonBegraenset',
   ];
   for (const f of candidateFields) {
     const q = `{ EJFCustom_EjerskabBegraenset(first: 1, virkningstid: "${virkningstid}", where: { ${f}: { eq: "test" } }) { nodes { bestemtFastEjendomBFENr } } }`;
     filterFieldProbes[f] = (await gql(q)).slice(0, 400);
   }
 
-  const results = { rootTests, filterFieldProbes };
+  // Test EJF_PersonVirksomhedsoplys — eksisterer, men har ikke "navn" som filter.
+  // Prøv andre filter-felter for at finde Jakobs person-record.
+  const personVirkProbes: Record<string, string> = {};
+  const personCandidates = [
+    `{ id_lokalId: { eq: "${id.replace(/"/g, '\\"')}" } }`,
+    `{ id_namespace: { eq: "EJFCustom" } }`,
+    `{ navn: { eq: "Jakob Juul Rasmussen" } }`,
+    `{ forretningsnoegle: { eq: "${id.replace(/"/g, '\\"')}" } }`,
+    `{ fiktivtPVnummer: { eq: "${id.replace(/"/g, '\\"')}" } }`,
+  ];
+  for (const w of personCandidates) {
+    const q = `{ EJF_PersonVirksomhedsoplys(first: 5, virkningstid: "${virkningstid}", where: ${w}) { nodes { id_lokalId id_namespace navn fiktivtPVnummer adresselinje1 } } }`;
+    const key = w.slice(2, 25);
+    personVirkProbes[key] = (await gql(q)).slice(0, 1500);
+  }
+
+  // Forsøg reverse: EJFCustom_EjerskabBegraenset filtreret på id_lokalId
+  // fra Jakobs ejendePersonBegraenset (måske er det også ejerskabets eget id?)
+  const ejerskabByLokalId = await gql(
+    `{ EJFCustom_EjerskabBegraenset(first: 10, virkningstid: "${virkningstid}", where: { id_lokalId: { eq: "${id.replace(/"/g, '\\"')}" } }) { nodes { bestemtFastEjendomBFENr status ejendePersonBegraenset { navn { navn } } } } }`
+  );
+
+  const results = {
+    rootTests,
+    filterFieldProbes,
+    personVirkProbes,
+    ejerskabByLokalId: ejerskabByLokalId.slice(0, 2000),
+  };
 
   return NextResponse.json(
     {

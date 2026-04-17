@@ -18,11 +18,19 @@ import { NextRequest } from 'next/server';
 
 // ── Supabase admin mock ───────────────────────────────────────────────────────
 
+/** Shape of the admin.auth.admin.getUserById response — widened for BIZZ-543 tests */
+type GetUserByIdResult = {
+  data: { user: { id: string; app_metadata: Record<string, unknown> } | null };
+  error: { message: string } | null;
+};
+
 /** Mutable spy targets for the admin client */
 const mockUpdateUserById = vi.fn().mockResolvedValue({ data: {}, error: null });
-const mockGetUserById = vi
-  .fn()
-  .mockResolvedValue({ data: { user: { app_metadata: {} } }, error: null });
+// Default: echo the requested id so resolveUserId's step-1 lookup succeeds
+const mockGetUserById = vi.fn(
+  (id: string): Promise<GetUserByIdResult> =>
+    Promise.resolve({ data: { user: { id, app_metadata: {} } }, error: null })
+);
 const mockListUsers = vi.fn().mockResolvedValue({ data: { users: [] }, error: null });
 
 const mockAdminAuth = {
@@ -85,6 +93,17 @@ vi.mock('@/app/lib/stripe', () => ({
   stripe: mockStripeInstance,
 }));
 
+// ── Sentry mock ───────────────────────────────────────────────────────────────
+
+/** BIZZ-543: spy on Sentry capture calls so tests can assert visibility on drops */
+const mockSentryCaptureMessage = vi.fn();
+const mockSentryCaptureException = vi.fn();
+
+vi.mock('@sentry/nextjs', () => ({
+  captureMessage: (...args: unknown[]) => mockSentryCaptureMessage(...args),
+  captureException: (...args: unknown[]) => mockSentryCaptureException(...args),
+}));
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /**
@@ -124,10 +143,9 @@ describe('POST /api/stripe/webhook', () => {
 
     // Restore default admin mock state after clearAllMocks resets return values
     mockUpdateUserById.mockResolvedValue({ data: {}, error: null });
-    mockGetUserById.mockResolvedValue({
-      data: { user: { app_metadata: {} } },
-      error: null,
-    });
+    mockGetUserById.mockImplementation((id: string) =>
+      Promise.resolve({ data: { user: { id, app_metadata: {} } }, error: null })
+    );
     mockListUsers.mockResolvedValue({ data: { users: [] }, error: null });
     mockSelectSingle.mockResolvedValue({ data: null, error: null });
     mockEq.mockReturnValue({ single: mockSelectSingle });
@@ -223,7 +241,7 @@ describe('POST /api/stripe/webhook', () => {
     };
     mockGetUserById.mockResolvedValue({
       data: {
-        user: { app_metadata: { subscription: { topUpTokens: 100 } } },
+        user: { id: 'user-abc', app_metadata: { subscription: { topUpTokens: 100 } } },
       },
       error: null,
     });
@@ -371,5 +389,169 @@ describe('POST /api/stripe/webhook', () => {
     expect(res.status).toBe(200);
     // updateUserById should NOT be called because metadata is incomplete
     expect(mockUpdateUserById).not.toHaveBeenCalled();
+  });
+
+  // ── BIZZ-543: resilience tests ──────────────────────────────────────────────
+
+  /**
+   * BIZZ-543: invoice.payment_failed arrives with a supabase_user_id pointing
+   * at a deleted user. Handler must fall back to stripe_customer_id lookup
+   * and still mark the user payment_failed, not silently drop the event.
+   */
+  it('invoice.payment_failed with stale supabase_user_id → falls back via customer_id and marks payment_failed', async () => {
+    const invoice = { subscription: 'sub_stale_123', customer: 'cus_stale_456' };
+    mockConstructEvent.mockReturnValue(makeStripeEvent('invoice.payment_failed', invoice));
+
+    // Stripe subscription has a deleted user_id in metadata
+    mockSubscriptionsRetrieve.mockResolvedValue({
+      metadata: { supabase_user_id: 'deleted-user-xxx', user_email: null },
+      customer: 'cus_stale_456',
+    });
+    // Direct getUserById('deleted-user-xxx') → returns no id (simulates deleted)
+    mockGetUserById.mockImplementation((id: string) => {
+      if (id === 'deleted-user-xxx') {
+        return Promise.resolve({ data: { user: null }, error: { message: 'user_not_found' } });
+      }
+      return Promise.resolve({ data: { user: { id, app_metadata: {} } }, error: null });
+    });
+    // listUsers returns the real user whose app_metadata.stripe_customer_id matches
+    mockListUsers.mockResolvedValue({
+      data: {
+        users: [
+          {
+            id: 'real-user-abc',
+            email: 'real@example.com',
+            app_metadata: { stripe_customer_id: 'cus_stale_456' },
+          },
+        ],
+      },
+      error: null,
+    });
+
+    const { POST } = await import('@/app/api/stripe/webhook/route');
+    const res = await POST(makeWebhookRequest(JSON.stringify(invoice), 'valid-sig'));
+
+    expect(res.status).toBe(200);
+    // Final update should target the real user, not the stale id
+    expect(mockUpdateUserById).toHaveBeenCalledOnce();
+    const [calledUserId, calledPayload] = mockUpdateUserById.mock.calls[0] as [
+      string,
+      { app_metadata: { subscription: { status: string } } },
+    ];
+    expect(calledUserId).toBe('real-user-abc');
+    expect(calledPayload.app_metadata.subscription.status).toBe('payment_failed');
+    // Sentry should NOT be notified — resolution succeeded via fallback
+    expect(mockSentryCaptureMessage).not.toHaveBeenCalled();
+  });
+
+  /**
+   * BIZZ-543: invoice.payment_failed with no way to resolve the user at all.
+   * Handler must return 200 (consume the event so Stripe stops retrying) and
+   * Sentry-capture so the drop is visible.
+   */
+  it('invoice.payment_failed with unresolvable user → returns 200, no DB write, Sentry notified', async () => {
+    const invoice = { subscription: 'sub_orphan_123', customer: 'cus_orphan_456' };
+    mockConstructEvent.mockReturnValue(makeStripeEvent('invoice.payment_failed', invoice));
+
+    mockSubscriptionsRetrieve.mockResolvedValue({
+      metadata: { supabase_user_id: 'ghost-user', user_email: 'ghost@example.com' },
+      customer: 'cus_orphan_456',
+    });
+    mockGetUserById.mockResolvedValue({
+      data: { user: null },
+      error: { message: 'user_not_found' },
+    });
+    // No users match customer_id or email
+    mockListUsers.mockResolvedValue({ data: { users: [] }, error: null });
+
+    const { POST } = await import('@/app/api/stripe/webhook/route');
+    const res = await POST(makeWebhookRequest(JSON.stringify(invoice), 'valid-sig'));
+
+    expect(res.status).toBe(200);
+    expect(mockUpdateUserById).not.toHaveBeenCalled();
+    // Sentry MUST be notified — silent drops are the exact bug BIZZ-543 reported
+    expect(mockSentryCaptureMessage).toHaveBeenCalledOnce();
+    const [message, opts] = mockSentryCaptureMessage.mock.calls[0] as [
+      string,
+      { tags?: { webhook_event?: string } },
+    ];
+    expect(message).toContain('invoice.payment_failed');
+    expect(opts?.tags?.webhook_event).toBe('invoice.payment_failed');
+  });
+
+  /**
+   * BIZZ-543: customer.subscription.updated with a stale supabase_user_id.
+   * Previously this threw and returned 500, trapping the event in Stripe's
+   * retry queue indefinitely. Now we fall back and return 200.
+   */
+  it('customer.subscription.updated with stale userId → falls back via customer_id and returns 200', async () => {
+    const subscription = {
+      metadata: { supabase_user_id: 'deleted-user', plan_id: 'basis' },
+      status: 'past_due',
+      customer: 'cus_live_789',
+      current_period_start: Math.floor(Date.now() / 1000),
+    };
+    mockConstructEvent.mockReturnValue(
+      makeStripeEvent('customer.subscription.updated', subscription)
+    );
+
+    mockGetUserById.mockImplementation((id: string) => {
+      if (id === 'deleted-user') {
+        return Promise.resolve({ data: { user: null }, error: { message: 'user_not_found' } });
+      }
+      return Promise.resolve({ data: { user: { id, app_metadata: {} } }, error: null });
+    });
+    mockListUsers.mockResolvedValue({
+      data: {
+        users: [
+          {
+            id: 'live-user-xyz',
+            email: 'live@example.com',
+            app_metadata: { stripe_customer_id: 'cus_live_789' },
+          },
+        ],
+      },
+      error: null,
+    });
+
+    const { POST } = await import('@/app/api/stripe/webhook/route');
+    const res = await POST(makeWebhookRequest(JSON.stringify(subscription), 'valid-sig'));
+
+    expect(res.status).toBe(200);
+    expect(mockUpdateUserById).toHaveBeenCalledOnce();
+    const [calledUserId, calledPayload] = mockUpdateUserById.mock.calls[0] as [
+      string,
+      { app_metadata: { subscription: { status: string } } },
+    ];
+    expect(calledUserId).toBe('live-user-xyz');
+    expect(calledPayload.app_metadata.subscription.status).toBe('payment_failed');
+  });
+
+  /**
+   * BIZZ-543: customer.subscription.updated with no way to resolve user.
+   * Must return 200 + Sentry, never 500 — otherwise Stripe retries forever.
+   */
+  it('customer.subscription.updated with unresolvable user → returns 200 with Sentry (never 500)', async () => {
+    const subscription = {
+      metadata: { supabase_user_id: 'ghost' },
+      status: 'active',
+      customer: 'cus_no_match',
+      current_period_start: Math.floor(Date.now() / 1000),
+    };
+    mockConstructEvent.mockReturnValue(
+      makeStripeEvent('customer.subscription.updated', subscription)
+    );
+    mockGetUserById.mockResolvedValue({
+      data: { user: null },
+      error: { message: 'user_not_found' },
+    });
+    mockListUsers.mockResolvedValue({ data: { users: [] }, error: null });
+
+    const { POST } = await import('@/app/api/stripe/webhook/route');
+    const res = await POST(makeWebhookRequest(JSON.stringify(subscription), 'valid-sig'));
+
+    expect(res.status).toBe(200);
+    expect(mockUpdateUserById).not.toHaveBeenCalled();
+    expect(mockSentryCaptureMessage).toHaveBeenCalledOnce();
   });
 });

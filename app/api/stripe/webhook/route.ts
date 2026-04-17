@@ -19,11 +19,92 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import Stripe from 'stripe';
+import * as Sentry from '@sentry/nextjs';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { stripe } from '@/app/lib/stripe';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { sendRecurringPaymentEmail } from '@/app/lib/email';
 import { logger } from '@/app/lib/logger';
 import { writeAuditLog } from '@/app/lib/auditLog';
+
+/**
+ * BIZZ-543: Shared 3-step fallback lookup that resolves a Supabase user ID
+ * from partial Stripe data. Used by every webhook handler so a stale
+ * `supabase_user_id` in Stripe metadata (e.g. pointing at a deleted user)
+ * can never cause a webhook to silently drop an event.
+ *
+ * Steps, in order:
+ *   1. Direct lookup by `userId` — verifies user still exists
+ *   2. Scan auth.users for matching `app_metadata.stripe_customer_id`
+ *   3. Scan auth.users for matching email
+ *
+ * @param admin      - Supabase admin client
+ * @param candidates - Any known identifiers from the webhook payload
+ * @returns The resolved Supabase user ID, or null if no match
+ */
+async function resolveUserId(
+  admin: SupabaseClient,
+  candidates: { userId?: string | null; customerId?: string | null; email?: string | null }
+): Promise<string | null> {
+  const { userId, customerId, email } = candidates;
+
+  // Step 1: direct lookup — confirms user still exists
+  if (userId) {
+    const { data, error } = await admin.auth.admin.getUserById(userId);
+    if (!error && data?.user?.id) {
+      return data.user.id;
+    }
+  }
+
+  // Steps 2 + 3 require scanning users — fetch once, reuse
+  if (!customerId && !email) return null;
+
+  const { data: usersPage } = await admin.auth.admin.listUsers({ perPage: 1000 });
+  const users = usersPage?.users ?? [];
+
+  if (customerId) {
+    const match = users.find(
+      (u) => (u.app_metadata?.stripe_customer_id as string | undefined) === customerId
+    );
+    if (match?.id) return match.id;
+  }
+
+  if (email) {
+    const match = users.find((u) => u.email === email);
+    if (match?.id) return match.id;
+  }
+
+  return null;
+}
+
+/**
+ * BIZZ-543: Report an unmatched webhook event to Sentry so silent drops
+ * become visible in production monitoring. Always safe to call — Sentry
+ * degrades gracefully when DSN is not configured.
+ *
+ * @param eventType - Stripe event type (e.g. 'invoice.payment_failed')
+ * @param context   - Identifiers known at time of failed resolution
+ */
+function captureUnmatchedEvent(
+  eventType: string,
+  context: {
+    userId?: string | null;
+    customerId?: string | null;
+    email?: string | null;
+    subscriptionId?: string | null;
+  }
+): void {
+  Sentry.captureMessage(`[stripe/webhook] Unmatched ${eventType}`, {
+    level: 'error',
+    tags: { webhook_event: eventType },
+    extra: {
+      attempted_user_id: context.userId ?? null,
+      attempted_customer_id: context.customerId ?? null,
+      attempted_email: context.email ?? null,
+      subscription_id: context.subscriptionId ?? null,
+    },
+  });
+}
 
 /**
  * Disable Next.js body parsing — Stripe signature verification
@@ -136,25 +217,49 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session): Promis
   }
 
   // ── Subscription checkout ──
-  const userId = session.metadata?.supabase_user_id;
+  const sessionUserId = session.metadata?.supabase_user_id ?? null;
+  const sessionEmail = session.metadata?.user_email ?? null;
+  const customerId = typeof session.customer === 'string' ? session.customer : null;
   const planId = session.metadata?.plan_id;
 
-  if (!userId || !planId) {
-    logger.error('[stripe/webhook] checkout.session.completed missing metadata', {
-      hasUserId: !!userId,
-      hasPlanId: !!planId,
+  if (!planId) {
+    logger.error('[stripe/webhook] checkout.session.completed missing plan_id');
+    captureUnmatchedEvent('checkout.session.completed', {
+      userId: sessionUserId,
+      customerId,
+      email: sessionEmail,
     });
     return;
   }
 
   const admin = createAdminClient();
+
+  // BIZZ-543: 3-step fallback — original userId may reference a deleted user
+  const userId = await resolveUserId(admin, {
+    userId: sessionUserId,
+    customerId,
+    email: sessionEmail,
+  });
+
+  if (!userId) {
+    logger.error(
+      '[stripe/webhook] checkout.session.completed — could not resolve user via id/customer/email'
+    );
+    captureUnmatchedEvent('checkout.session.completed', {
+      userId: sessionUserId,
+      customerId,
+      email: sessionEmail,
+    });
+    return;
+  }
+
   const now = new Date().toISOString();
 
-  // Get existing app_metadata to merge with
+  // Get existing app_metadata to merge with (userId is already verified above)
   const { data: existingUser } = await admin.auth.admin.getUserById(userId);
   const existingMeta = existingUser?.user?.app_metadata ?? {};
 
-  await admin.auth.admin.updateUserById(userId, {
+  const { error: updateErr } = await admin.auth.admin.updateUserById(userId, {
     app_metadata: {
       ...existingMeta,
       stripe_customer_id: session.customer as string,
@@ -172,6 +277,17 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session): Promis
     },
   });
 
+  if (updateErr) {
+    // BIZZ-543: Previously this failure was silent. Surface it so activation
+    // gaps are visible before a user complains about lost paid access.
+    logger.error('[stripe/webhook] checkout.session.completed updateUserById failed', updateErr);
+    Sentry.captureException(updateErr, {
+      tags: { webhook_event: 'checkout.session.completed' },
+      extra: { userId, planId },
+    });
+    return;
+  }
+
   logger.log(`[stripe/webhook] Activated plan "${planId}" — ok`);
 }
 
@@ -182,13 +298,39 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session): Promis
  * @param subscription - The updated Stripe subscription
  */
 async function handleSubscriptionUpdated(subscription: Stripe.Subscription): Promise<void> {
-  const userId = subscription.metadata?.supabase_user_id;
+  const metaUserId = subscription.metadata?.supabase_user_id ?? null;
+  const metaEmail = subscription.metadata?.user_email ?? null;
+  const customerId =
+    typeof subscription.customer === 'string'
+      ? subscription.customer
+      : ((subscription.customer as { id?: string })?.id ?? null);
+
+  const admin = createAdminClient();
+
+  // BIZZ-543: 3-step fallback. Previously, a stale supabase_user_id (e.g. after
+  // a test-user re-creation) made updateUserById throw, which returned 500 and
+  // trapped the event in Stripe's retry queue indefinitely. Now we try to
+  // resolve via customer_id → email before giving up.
+  const userId = await resolveUserId(admin, {
+    userId: metaUserId,
+    customerId,
+    email: metaEmail,
+  });
+
   if (!userId) {
-    logger.error('[stripe/webhook] subscription.updated missing supabase_user_id in metadata');
+    logger.error(
+      '[stripe/webhook] subscription.updated — could not resolve user via id/customer/email'
+    );
+    captureUnmatchedEvent('customer.subscription.updated', {
+      userId: metaUserId,
+      customerId,
+      email: metaEmail,
+      subscriptionId: subscription.id,
+    });
+    // BIZZ-543: Consume the event so Stripe stops retrying. Sentry has the details.
     return;
   }
 
-  const admin = createAdminClient();
   const { data: existingUser } = await admin.auth.admin.getUserById(userId);
   const existingMeta = existingUser?.user?.app_metadata ?? {};
   const existingSub = (existingMeta.subscription as Record<string, unknown>) ?? {};
@@ -214,7 +356,7 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription): Pro
   // Get current plan from subscription items
   const planId = subscription.metadata?.plan_id ?? existingSub.planId ?? 'basis';
 
-  await admin.auth.admin.updateUserById(userId, {
+  const { error: updateErr } = await admin.auth.admin.updateUserById(userId, {
     app_metadata: {
       ...existingMeta,
       subscription: {
@@ -229,6 +371,17 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription): Pro
     },
   });
 
+  if (updateErr) {
+    // BIZZ-543: Don't throw — that trips the outer try/catch and returns 500,
+    // which Stripe then retries forever. Surface via Sentry and consume event.
+    logger.error('[stripe/webhook] subscription.updated updateUserById failed', updateErr);
+    Sentry.captureException(updateErr, {
+      tags: { webhook_event: 'customer.subscription.updated' },
+      extra: { userId, planId, status },
+    });
+    return;
+  }
+
   logger.log(`[stripe/webhook] Updated subscription: plan=${planId}, status=${status}`);
 }
 
@@ -238,18 +391,41 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription): Pro
  * @param subscription - The deleted Stripe subscription
  */
 async function handleSubscriptionDeleted(subscription: Stripe.Subscription): Promise<void> {
-  const userId = subscription.metadata?.supabase_user_id;
+  const metaUserId = subscription.metadata?.supabase_user_id ?? null;
+  const metaEmail = subscription.metadata?.user_email ?? null;
+  const customerId =
+    typeof subscription.customer === 'string'
+      ? subscription.customer
+      : ((subscription.customer as { id?: string })?.id ?? null);
+
+  const admin = createAdminClient();
+
+  // BIZZ-543: Same 3-step fallback as handleSubscriptionUpdated — a stale
+  // supabase_user_id must not block cancellation sync.
+  const userId = await resolveUserId(admin, {
+    userId: metaUserId,
+    customerId,
+    email: metaEmail,
+  });
+
   if (!userId) {
-    logger.error('[stripe/webhook] subscription.deleted missing supabase_user_id in metadata');
+    logger.error(
+      '[stripe/webhook] subscription.deleted — could not resolve user via id/customer/email'
+    );
+    captureUnmatchedEvent('customer.subscription.deleted', {
+      userId: metaUserId,
+      customerId,
+      email: metaEmail,
+      subscriptionId: subscription.id,
+    });
     return;
   }
 
-  const admin = createAdminClient();
   const { data: existingUser } = await admin.auth.admin.getUserById(userId);
   const existingMeta = existingUser?.user?.app_metadata ?? {};
   const existingSub = (existingMeta.subscription as Record<string, unknown>) ?? {};
 
-  await admin.auth.admin.updateUserById(userId, {
+  const { error: updateErr } = await admin.auth.admin.updateUserById(userId, {
     app_metadata: {
       ...existingMeta,
       stripe_subscription_id: null,
@@ -259,6 +435,15 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription): Pro
       },
     },
   });
+
+  if (updateErr) {
+    logger.error('[stripe/webhook] subscription.deleted updateUserById failed', updateErr);
+    Sentry.captureException(updateErr, {
+      tags: { webhook_event: 'customer.subscription.deleted' },
+      extra: { userId },
+    });
+    return;
+  }
 
   logger.log(`[stripe/webhook] Cancelled subscription — ok`);
 }
@@ -469,29 +654,87 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice): Promise<void> {
  * @param invoice - The failed Stripe invoice
  */
 async function handlePaymentFailed(invoice: Stripe.Invoice): Promise<void> {
-  // Get the subscription to find the user ID
+  // Resolve subscription ID (legacy or newer API path)
   const rawSub = (invoice as unknown as Record<string, unknown>).subscription;
-  const subscriptionId =
+  const legacySubId: string | null =
     typeof rawSub === 'string' ? rawSub : ((rawSub as { id?: string } | null)?.id ?? null);
+  const rawParent = (invoice as unknown as Record<string, unknown>).parent as
+    | Record<string, unknown>
+    | null
+    | undefined;
+  const subDetails = rawParent?.subscription_details as Record<string, unknown> | null | undefined;
+  const parentSubId: string | null =
+    typeof subDetails?.subscription === 'string' ? subDetails.subscription : null;
+  const subscriptionId: string | null = legacySubId ?? parentSubId;
 
-  if (!subscriptionId) {
-    logger.error('[stripe/webhook] invoice.payment_failed missing subscription ID');
-    return;
+  // Gather any identifiers we can — we may need them for fallback even if
+  // subscription retrieval fails.
+  const invoiceCustomerId =
+    typeof invoice.customer === 'string'
+      ? invoice.customer
+      : ((invoice.customer as { id?: string } | null)?.id ?? null);
+  const invoiceEmail =
+    ((invoice as unknown as Record<string, unknown>).customer_email as string | null | undefined) ??
+    null;
+
+  // Retrieve the subscription when possible — gives us metadata + customer.
+  // If retrieval throws (e.g. deleted subscription), continue with invoice data.
+  let sub: Stripe.Subscription | null = null;
+  if (subscriptionId) {
+    try {
+      sub = await stripe!.subscriptions.retrieve(subscriptionId);
+    } catch (err) {
+      logger.error(
+        `[stripe/webhook] invoice.payment_failed: subscriptions.retrieve(${subscriptionId}) failed`,
+        err
+      );
+      Sentry.captureException(err, {
+        tags: { webhook_event: 'invoice.payment_failed' },
+        extra: { subscriptionId },
+      });
+    }
   }
 
-  const sub = await stripe!.subscriptions.retrieve(subscriptionId);
-  const userId = sub.metadata?.supabase_user_id;
-  if (!userId) {
-    logger.error('[stripe/webhook] invoice.payment_failed: subscription missing supabase_user_id');
-    return;
-  }
+  const metaUserId = sub?.metadata?.supabase_user_id ?? null;
+  const metaEmail = sub?.metadata?.user_email ?? null;
+  const subCustomerId = sub
+    ? typeof sub.customer === 'string'
+      ? sub.customer
+      : ((sub.customer as { id?: string } | null)?.id ?? null)
+    : null;
+
+  const customerId = subCustomerId ?? invoiceCustomerId;
+  const email = metaEmail ?? invoiceEmail;
 
   const admin = createAdminClient();
+
+  // BIZZ-543: 3-step fallback — payment_failed used to silently drop when
+  // subscription.metadata.supabase_user_id was missing or stale, leaving users
+  // in `active` status with an unpaid card.
+  const userId = await resolveUserId(admin, {
+    userId: metaUserId,
+    customerId,
+    email,
+  });
+
+  if (!userId) {
+    logger.error(
+      '[stripe/webhook] invoice.payment_failed — could not resolve user via id/customer/email'
+    );
+    captureUnmatchedEvent('invoice.payment_failed', {
+      userId: metaUserId,
+      customerId,
+      email,
+      subscriptionId,
+    });
+    return;
+  }
+
   const { data: existingUser } = await admin.auth.admin.getUserById(userId);
   const existingMeta = existingUser?.user?.app_metadata ?? {};
   const existingSub = (existingMeta.subscription as Record<string, unknown>) ?? {};
 
-  await admin.auth.admin.updateUserById(userId, {
+  const { error: updateErr } = await admin.auth.admin.updateUserById(userId, {
     app_metadata: {
       ...existingMeta,
       subscription: {
@@ -500,6 +743,15 @@ async function handlePaymentFailed(invoice: Stripe.Invoice): Promise<void> {
       },
     },
   });
+
+  if (updateErr) {
+    logger.error('[stripe/webhook] invoice.payment_failed updateUserById failed', updateErr);
+    Sentry.captureException(updateErr, {
+      tags: { webhook_event: 'invoice.payment_failed' },
+      extra: { userId, subscriptionId },
+    });
+    return;
+  }
 
   logger.log(`[stripe/webhook] Payment failed — subscription marked payment_failed`);
 }

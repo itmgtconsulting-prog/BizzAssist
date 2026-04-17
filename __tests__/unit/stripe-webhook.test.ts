@@ -86,11 +86,13 @@ function makeEvent(type: string, data: unknown): Record<string, unknown> {
 
 /**
  * Default mock user returned by getUserById.
+ * BIZZ-543: includes `id` so resolveUserId's step-1 direct lookup succeeds.
  */
 function mockUser(overrides: Record<string, unknown> = {}) {
   return {
     data: {
       user: {
+        id: (overrides as { id?: string }).id ?? 'mock-user-id',
         email: 'test@example.com',
         app_metadata: {
           subscription: { planId: 'basis', status: 'active', tokensUsedThisMonth: 0 },
@@ -98,6 +100,7 @@ function mockUser(overrides: Record<string, unknown> = {}) {
         ...overrides,
       },
     },
+    error: null,
   };
 }
 
@@ -110,8 +113,8 @@ beforeEach(() => {
 
   // Default: updateUserById succeeds silently
   mockUpdateUserById.mockResolvedValue({ data: {}, error: null });
-  // Default: getUserById returns a user
-  mockGetUserById.mockResolvedValue(mockUser());
+  // Default: getUserById echoes the requested id so resolveUserId step-1 succeeds
+  mockGetUserById.mockImplementation((id: string) => Promise.resolve(mockUser({ id })));
   // Default: listUsers returns empty list
   mockListUsers.mockResolvedValue({ data: { users: [] } });
   // Default: from().select().eq().single() returns null (plan name lookup)

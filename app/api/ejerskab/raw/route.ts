@@ -13,6 +13,8 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantId } from '@/lib/api/auth';
+import { getSharedOAuthToken } from '@/app/lib/dfTokenCache';
+import { getCertOAuthToken, isCertAuthConfigured } from '@/app/lib/dfCertAuth';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -26,32 +28,6 @@ function proxyUrl(url: string): string {
 function proxyHeaders(): Record<string, string> {
   const secret = process.env.DF_PROXY_SECRET;
   return secret ? { 'x-proxy-secret': secret } : {};
-}
-
-async function getOAuthToken(): Promise<string | null> {
-  const clientId = process.env.DATAFORDELER_OAUTH_CLIENT_ID;
-  const clientSecret = process.env.DATAFORDELER_OAUTH_CLIENT_SECRET;
-  if (!clientId || !clientSecret) return null;
-  try {
-    const res = await fetch(proxyUrl('https://services.datafordeler.dk/Oauth2/Token'), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        ...proxyHeaders(),
-      },
-      body: new URLSearchParams({
-        grant_type: 'client_credentials',
-        client_id: clientId,
-        client_secret: clientSecret,
-      }).toString(),
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!res.ok) return null;
-    const data = (await res.json()) as { access_token?: string };
-    return data.access_token ?? null;
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -121,8 +97,21 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'bfeNummer required' }, { status: 400 });
   }
 
-  const token = await getOAuthToken();
-  if (!token) return NextResponse.json({ error: 'OAuth token unavailable' }, { status: 503 });
+  // Samme token-strategi som /api/ejerskab: shared secret først, mTLS-cert som fallback.
+  let token: string | null = await getSharedOAuthToken().catch(() => null);
+  let tokenSource = 'shared-secret';
+  if (!token && isCertAuthConfigured()) {
+    token = await getCertOAuthToken().catch(() => null);
+    tokenSource = 'cert';
+  }
+  if (!token) {
+    return NextResponse.json(
+      { error: 'OAuth token unavailable', tokenSource: 'none' },
+      { status: 503 }
+    );
+  }
+  const tokenInfoHeader = { 'x-token-source': tokenSource };
+  void tokenInfoHeader;
 
   // En række kandidat-selections vi prøver i rækkefølge for at finde ud af
   // hvilke felter EJF faktisk eksponerer på node + ejendePersonBegraenset.

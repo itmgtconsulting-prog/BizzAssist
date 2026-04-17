@@ -93,14 +93,29 @@ const mockCustomersRetrieve = vi.fn().mockResolvedValue({
   email: 'user@example.com',
 });
 
+/** BIZZ-542: invoices.retrieve is used by handleChargeFailed to walk charge→invoice→subscription */
+const mockInvoicesRetrieve = vi.fn().mockResolvedValue({
+  subscription: 'sub_from_invoice',
+});
+
 const mockStripeInstance = {
   webhooks: { constructEvent: mockConstructEvent },
   subscriptions: { retrieve: mockSubscriptionsRetrieve },
   customers: { retrieve: mockCustomersRetrieve },
+  invoices: { retrieve: mockInvoicesRetrieve },
 };
 
 vi.mock('@/app/lib/stripe', () => ({
   stripe: mockStripeInstance,
+}));
+
+// ── Audit log mock (BIZZ-542: charge.failed audit entries are asserted) ─────
+
+/** Spy on writeAuditLog calls so charge.failed tests can assert failure_code landed */
+const mockWriteAuditLog = vi.fn();
+
+vi.mock('@/app/lib/auditLog', () => ({
+  writeAuditLog: (...args: unknown[]) => mockWriteAuditLog(...args),
 }));
 
 // ── Sentry mock ───────────────────────────────────────────────────────────────
@@ -172,6 +187,7 @@ describe('POST /api/stripe/webhook', () => {
       current_period_start: Math.floor(Date.now() / 1000),
     });
     mockCustomersRetrieve.mockResolvedValue({ deleted: false, email: 'user@example.com' });
+    mockInvoicesRetrieve.mockResolvedValue({ subscription: 'sub_from_invoice' });
 
     // Set required env vars
     process.env.STRIPE_WEBHOOK_SECRET = 'whsec_test_secret';
@@ -660,5 +676,171 @@ describe('POST /api/stripe/webhook', () => {
     expect(res.status).toBe(200);
     expect(mockUpdateUserById).not.toHaveBeenCalled();
     expect(mockSentryCaptureMessage).toHaveBeenCalledOnce();
+  });
+
+  // ── BIZZ-542: charge.failed handler ─────────────────────────────────────────
+
+  /**
+   * BIZZ-542: charge.failed for a subscription charge — handler walks
+   * invoice → subscription → supabase_user_id, writes an audit entry with
+   * the failure_code, and does NOT touch subscription.status (that is
+   * invoice.payment_failed's job for recurring charges).
+   */
+  it('charge.failed (subscription) → logs audit + does not update sub status', async () => {
+    const charge = {
+      id: 'ch_sub_fail_1',
+      invoice: 'in_sub_fail_1',
+      customer: 'cus_sub_fail',
+      failure_code: 'card_declined',
+      failure_message: 'Your card was declined',
+      amount: 79900, // 799 DKK in øre
+      payment_intent: 'pi_sub_fail',
+      billing_details: { email: 'sub@example.com' },
+    };
+    mockConstructEvent.mockReturnValue(makeStripeEvent('charge.failed', charge));
+    mockInvoicesRetrieve.mockResolvedValue({ subscription: 'sub_resolved_1' });
+    mockSubscriptionsRetrieve.mockResolvedValue({
+      metadata: { supabase_user_id: 'user-pro' },
+    });
+
+    const { POST } = await import('@/app/api/stripe/webhook/route');
+    const res = await POST(makeWebhookRequest(JSON.stringify(charge), 'valid-sig'));
+
+    expect(res.status).toBe(200);
+
+    // updateUserById must NOT have been called — status updates belong to
+    // invoice.payment_failed. This handler only audits.
+    expect(mockUpdateUserById).not.toHaveBeenCalled();
+
+    // Find the charge_failed audit entry (webhook_processed is also called)
+    const auditEntries = mockWriteAuditLog.mock.calls
+      .map((c) => c[0] as { action?: string; metadata?: string })
+      .filter((e) => e.action === 'stripe.charge_failed');
+    expect(auditEntries).toHaveLength(1);
+    const parsed = JSON.parse(auditEntries[0].metadata ?? '{}') as Record<string, unknown>;
+    expect(parsed.userId).toBe('user-pro');
+    expect(parsed.failureCode).toBe('card_declined');
+    expect(parsed.amountDkk).toBe(799);
+    expect(parsed.flow).toBe('subscription');
+  });
+
+  /**
+   * BIZZ-542: charge.failed for a one-off token top-up — invoice is null,
+   * handler falls back to customer_id lookup (via listUsers). Audit entry
+   * is tagged flow=token_topup.
+   */
+  it('charge.failed (token top-up, no invoice) → resolves via customer_id + logs audit', async () => {
+    const charge = {
+      id: 'ch_topup_fail_1',
+      invoice: null,
+      customer: 'cus_topup_xyz',
+      failure_code: 'insufficient_funds',
+      failure_message: 'Your card has insufficient funds',
+      amount: 4900, // 49 DKK in øre
+      payment_intent: 'pi_topup_fail',
+      billing_details: { email: 'topup@example.com' },
+    };
+    mockConstructEvent.mockReturnValue(makeStripeEvent('charge.failed', charge));
+
+    // listUsers returns the user whose stripe_customer_id matches
+    mockListUsers.mockResolvedValue({
+      data: {
+        users: [
+          {
+            id: 'user-topup',
+            email: 'topup@example.com',
+            app_metadata: { stripe_customer_id: 'cus_topup_xyz' },
+          },
+        ],
+      },
+      error: null,
+    });
+
+    const { POST } = await import('@/app/api/stripe/webhook/route');
+    const res = await POST(makeWebhookRequest(JSON.stringify(charge), 'valid-sig'));
+
+    expect(res.status).toBe(200);
+    // No invoice → no stripe.invoices.retrieve / subscriptions.retrieve
+    expect(mockInvoicesRetrieve).not.toHaveBeenCalled();
+    // No status update for top-up failures — correct
+    expect(mockUpdateUserById).not.toHaveBeenCalled();
+
+    const auditEntries = mockWriteAuditLog.mock.calls
+      .map((c) => c[0] as { action?: string; metadata?: string })
+      .filter((e) => e.action === 'stripe.charge_failed');
+    expect(auditEntries).toHaveLength(1);
+    const parsed = JSON.parse(auditEntries[0].metadata ?? '{}') as Record<string, unknown>;
+    expect(parsed.userId).toBe('user-topup');
+    expect(parsed.failureCode).toBe('insufficient_funds');
+    expect(parsed.flow).toBe('token_topup');
+  });
+
+  /**
+   * BIZZ-542: Unknown decline codes are escalated to Sentry (vs routine codes
+   * like card_declined which are audit-only noise).
+   */
+  it('charge.failed with unusual failure_code → Sentry captureMessage', async () => {
+    const charge = {
+      id: 'ch_weird_1',
+      invoice: null,
+      customer: 'cus_weird',
+      failure_code: 'fraudulent', // not in ROUTINE_DECLINE_CODES
+      failure_message: 'Stripe flagged this charge',
+      amount: 10000,
+      payment_intent: 'pi_weird',
+      billing_details: { email: 'weird@example.com' },
+    };
+    mockConstructEvent.mockReturnValue(makeStripeEvent('charge.failed', charge));
+    mockListUsers.mockResolvedValue({
+      data: {
+        users: [
+          {
+            id: 'user-weird',
+            email: 'weird@example.com',
+            app_metadata: { stripe_customer_id: 'cus_weird' },
+          },
+        ],
+      },
+      error: null,
+    });
+
+    const { POST } = await import('@/app/api/stripe/webhook/route');
+    const res = await POST(makeWebhookRequest(JSON.stringify(charge), 'valid-sig'));
+
+    expect(res.status).toBe(200);
+    expect(mockSentryCaptureMessage).toHaveBeenCalledOnce();
+    const [msg, opts] = mockSentryCaptureMessage.mock.calls[0] as [
+      string,
+      { tags?: { failure_code?: string } },
+    ];
+    expect(msg).toContain('fraudulent');
+    expect(opts?.tags?.failure_code).toBe('fraudulent');
+  });
+
+  /**
+   * BIZZ-542: charge.failed where no user can be resolved — returns 200,
+   * captures Sentry unmatched event, writes no audit entry for the charge.
+   */
+  it('charge.failed with unresolvable user → Sentry unmatched + no audit', async () => {
+    const charge = {
+      id: 'ch_orphan',
+      invoice: null,
+      customer: 'cus_no_match',
+      failure_code: 'card_declined',
+      amount: 1000,
+      billing_details: { email: 'ghost@example.com' },
+    };
+    mockConstructEvent.mockReturnValue(makeStripeEvent('charge.failed', charge));
+    mockListUsers.mockResolvedValue({ data: { users: [] }, error: null });
+
+    const { POST } = await import('@/app/api/stripe/webhook/route');
+    const res = await POST(makeWebhookRequest(JSON.stringify(charge), 'valid-sig'));
+
+    expect(res.status).toBe(200);
+    expect(mockSentryCaptureMessage).toHaveBeenCalledOnce();
+    const auditEntries = mockWriteAuditLog.mock.calls
+      .map((c) => c[0] as { action?: string })
+      .filter((e) => e.action === 'stripe.charge_failed');
+    expect(auditEntries).toHaveLength(0);
   });
 });

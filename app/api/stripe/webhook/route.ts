@@ -173,6 +173,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         await handlePaymentFailed(event.data.object as Stripe.Invoice);
         break;
 
+      case 'charge.failed':
+        await handleChargeFailed(event.data.object as Stripe.Charge);
+        break;
+
       default:
         // Unhandled event — log but don't error
         logger.log(`[stripe/webhook] Unhandled event type: ${event.type}`);
@@ -908,4 +912,143 @@ async function handleTokenTopUp(session: Stripe.Checkout.Session): Promise<void>
   logger.log(
     `[stripe/webhook] Added ${tokenAmount} top-up tokens (total: ${currentTopUp + tokenAmount})`
   );
+}
+
+/**
+ * BIZZ-542: Handles charge.failed — fires when a Stripe charge attempt is
+ * declined or otherwise fails. Complements invoice.payment_failed:
+ *   - For recurring subscription charges, invoice.payment_failed will ALSO
+ *     fire and drive the subscription status update. This handler focuses
+ *     on auditing the decline code so support can diagnose patterns
+ *     (card_declined, insufficient_funds, expired_card, …).
+ *   - For one-off token-top-up charges (mode=payment, no invoice), this is
+ *     the ONLY signal we receive. No subscription state is involved, but we
+ *     still want an audit entry and a Sentry alert when a paying customer's
+ *     top-up fails.
+ *
+ * Dunning interaction: Stripe's default smart-retries fire automatically
+ * for subscription invoices. This handler does not reschedule anything —
+ * see docs/runbooks/STRIPE_PAYMENT_FAILURES.md for the full flow.
+ *
+ * @param charge - The failed Stripe charge
+ */
+async function handleChargeFailed(charge: Stripe.Charge): Promise<void> {
+  const chargeRaw = charge as unknown as Record<string, unknown>;
+  const invoiceId =
+    typeof chargeRaw.invoice === 'string'
+      ? chargeRaw.invoice
+      : ((chargeRaw.invoice as { id?: string } | null)?.id ?? null);
+  const customerId =
+    typeof chargeRaw.customer === 'string'
+      ? chargeRaw.customer
+      : ((chargeRaw.customer as { id?: string } | null)?.id ?? null);
+  const failureCode = (chargeRaw.failure_code as string | null | undefined) ?? null;
+  const failureMessage = (chargeRaw.failure_message as string | null | undefined) ?? null;
+  const amountOre = (chargeRaw.amount as number | undefined) ?? 0;
+  const amountDkk = Math.round(amountOre / 100);
+  const paymentIntentId =
+    typeof chargeRaw.payment_intent === 'string'
+      ? chargeRaw.payment_intent
+      : ((chargeRaw.payment_intent as { id?: string } | null)?.id ?? null);
+
+  // Pull billing_details email as a last-resort for email fallback resolution
+  const billingDetails = chargeRaw.billing_details as { email?: string | null } | null | undefined;
+  const billingEmail = billingDetails?.email ?? null;
+
+  const admin = createAdminClient();
+
+  // ── Resolve the affected Supabase user ─────────────────────────────────────
+  // For subscription charges we can retrieve the invoice → subscription to get
+  // metadata.supabase_user_id. For one-off top-ups we fall back to customer_id
+  // (matched against auth.users.app_metadata.stripe_customer_id) or the billing
+  // email. resolveUserId handles the scan.
+  let userIdFromSub: string | null = null;
+  if (invoiceId) {
+    try {
+      const invoice = (await stripe!.invoices.retrieve(invoiceId)) as unknown as Record<
+        string,
+        unknown
+      >;
+      const rawSub = invoice.subscription;
+      const subId: string | null =
+        typeof rawSub === 'string' ? rawSub : ((rawSub as { id?: string } | null)?.id ?? null);
+      if (subId) {
+        const sub = await stripe!.subscriptions.retrieve(subId);
+        userIdFromSub = sub.metadata?.supabase_user_id ?? null;
+      }
+    } catch (err) {
+      logger.error('[stripe/webhook] charge.failed: invoice/subscription retrieve failed', err);
+      Sentry.captureException(err, {
+        tags: { webhook_event: 'charge.failed', step: 'invoice_retrieve' },
+        extra: { invoiceId, chargeId: charge.id },
+      });
+    }
+  }
+
+  const userId = await resolveUserId(admin, {
+    userId: userIdFromSub,
+    customerId,
+    email: billingEmail,
+  });
+
+  if (!userId) {
+    logger.error('[stripe/webhook] charge.failed: could not resolve user', {
+      chargeId: charge.id,
+      customerId,
+      billingEmail,
+    });
+    captureUnmatchedEvent('charge.failed', {
+      userId: userIdFromSub,
+      customerId,
+      email: billingEmail,
+    });
+    return;
+  }
+
+  // ── Audit log — failure_code is the key value for dunning analysis ─────────
+  // No PII (email / name / address) in metadata, only IDs + decline metadata.
+  writeAuditLog({
+    action: 'stripe.charge_failed',
+    resource_type: 'charge',
+    resource_id: charge.id ?? 'unknown',
+    metadata: JSON.stringify({
+      userId,
+      customerId,
+      invoiceId,
+      paymentIntentId,
+      failureCode,
+      failureMessage,
+      amountDkk,
+      // Helps separate dunning categories in queries later
+      flow: invoiceId ? 'subscription' : 'token_topup',
+    }),
+  });
+
+  logger.log(
+    `[stripe/webhook] charge.failed — user=${userId} code=${failureCode ?? 'none'} amount=${amountDkk}kr flow=${invoiceId ? 'subscription' : 'topup'}`
+  );
+
+  // ── Sentry for unusual decline codes ───────────────────────────────────────
+  // Routine declines (card_declined, insufficient_funds, expired_card) are
+  // expected noise — log to audit only. Anything else is worth Sentry.
+  const ROUTINE_DECLINE_CODES = new Set([
+    'card_declined',
+    'insufficient_funds',
+    'expired_card',
+    'incorrect_cvc',
+    'processing_error',
+    'generic_decline',
+  ]);
+  if (failureCode && !ROUTINE_DECLINE_CODES.has(failureCode)) {
+    Sentry.captureMessage(`[stripe/webhook] charge.failed unusual code: ${failureCode}`, {
+      level: 'warning',
+      tags: { webhook_event: 'charge.failed', failure_code: failureCode },
+      extra: { userId, invoiceId, chargeId: charge.id, amountDkk },
+    });
+  }
+
+  // We do NOT touch subscription.status here — that is invoice.payment_failed's
+  // job for recurring charges. For one-off top-ups there is no status to set;
+  // the user simply did not receive the tokens (handleTokenTopUp would only
+  // run on success).
 }

@@ -2399,24 +2399,7 @@ export default function EjendomDetaljeClient({
                                 </div>
                               );
                             }
-                            if (vurdering.estimereretGrundskyld !== null) {
-                              return (
-                                <div>
-                                  <p className="text-slate-500 text-xs leading-none mb-0.5">
-                                    {t.estGroundTax}
-                                    {vurdering.grundskyldspromille !== null && (
-                                      <span className="text-slate-600 ml-1">
-                                        ({vurdering.grundskyldspromille}‰)
-                                      </span>
-                                    )}
-                                  </p>
-                                  <p className="text-white text-sm font-medium">
-                                    {formatDKK(vurdering.estimereretGrundskyld)}
-                                    <span className="text-slate-500 text-xs ml-1">{t.perYear}</span>
-                                  </p>
-                                </div>
-                              );
-                            }
+                            // BIZZ-445: Removed estimated grundskyld fallback — only show actual values
                             return null;
                           })()}
                         </div>
@@ -3974,31 +3957,13 @@ export default function EjendomDetaljeClient({
                           </div>
                         )}
 
-                        {/* ── Fallback: kun estimeret grundskyld fra Datafordeler ── */}
-                        {!nyeste && vurdering?.estimereretGrundskyld != null && (
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                              <p className="text-white text-lg font-bold">
-                                {formatDKK(vurdering.estimereretGrundskyld)}
-                                <span className="text-slate-500 text-xs font-normal ml-1">DKK</span>
-                              </p>
-                              <p className="text-slate-500 text-xs mt-0.5">
-                                {t.estGroundTax}
-                                {vurdering.grundskyldspromille !== null && (
-                                  <span className="text-slate-600 ml-1">
-                                    ({vurdering.grundskyldspromille}‰)
-                                  </span>
-                                )}
-                              </p>
-                            </div>
-                          </div>
-                        )}
+                        {/* BIZZ-445: Removed estimated grundskyld fallback — only actual Vurderingsportalen data */}
                       </div>
                     );
                   })()}
                 </div>
 
-                {/* BIZZ-469: Skattehistorik — kun faktiske tal fra Vurderingsportalen */}
+                {/* BIZZ-445 + BIZZ-469: Skattehistorik — kun faktiske tal fra Vurderingsportalen (estimater fjernet) */}
                 {forelobige.length > 0 &&
                   (() => {
                     type SkatRaekke = {
@@ -4051,9 +4016,9 @@ export default function EjendomDetaljeClient({
                               </tr>
                             </thead>
                             <tbody>
-                              {alleRaekker.map((r, i) => (
+                              {alleRaekker.map((r) => (
                                 <tr
-                                  key={r.aar + '-' + i}
+                                  key={r.aar}
                                   className="border-b border-slate-700/20 last:border-0 hover:bg-slate-800/30"
                                 >
                                   <td className="px-4 py-2 text-slate-300 font-medium">

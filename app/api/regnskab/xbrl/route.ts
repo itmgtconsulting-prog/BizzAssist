@@ -261,10 +261,13 @@ function extractValue(xml: string, tagNames: string[], validCtxIds?: Set<string>
         }
         const num = parseFloat(cleaned);
         if (!isNaN(num)) {
-          // Beregn reel DKK-værdi baseret på iXBRL scale eller standard XBRL
+          // Beregn reel DKK-værdi baseret på iXBRL scale eller standard XBRL decimals
           const scaleMatch = attrs.match(/scale="(-?\d+)"/);
           const scale = scaleMatch ? parseInt(scaleMatch[1], 10) : 0;
           const hasScale = scaleMatch !== null;
+          // BIZZ-449: Standard XBRL bruger decimals-attribut til at angive enhed
+          // decimals="-3" → tusinder, decimals="-6" → millioner, "INF"/0 → hele DKK
+          const decimalsMatch = attrs.match(/decimals="(-?\d+|INF)"/i);
           let dkkValue: number;
 
           if (hasScale && scale > 0) {
@@ -276,8 +279,13 @@ function extractValue(xml: string, tagNames: string[], validCtxIds?: Set<string>
             // Sandsynligvis i millioner DKK (visuel display-enhed ikke i XBRL).
             // Heuristik: hvis scale=0 men tal < 10M, antag millioner.
             dkkValue = num * 1_000_000;
+          } else if (decimalsMatch && decimalsMatch[1] !== 'INF') {
+            // BIZZ-449: Standard XBRL med decimals-attribut (mest almindelig for danske SMB'er)
+            // decimals="-3" → værdi er i tusinder → gang med 1.000
+            const d = parseInt(decimalsMatch[1], 10);
+            dkkValue = d < 0 ? num * Math.pow(10, -d) : num;
           } else {
-            // Standard XBRL: tal er i hele DKK (f.eks. 101933000000)
+            // Standard XBRL uden scale/decimals: tal er i hele DKK
             dkkValue = num;
           }
           // BIZZ-435: Return hele DKK — UI formatter selv med toLocaleString
@@ -556,7 +564,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     }
 
     // Seneste offentliggørelsestidspunkt — bruges som cache-nøgle
-    const latestTimestamp = regnskabData.regnskaber[0]?.offentliggjort ?? '';
+    // BIZZ-449: Append parser version to timestamp so cache is invalidated when
+    // the XBRL parser logic changes (e.g. decimals attribute handling fix).
+    const PARSER_VERSION = 'v2';
+    const latestTimestamp =
+      (regnskabData.regnskaber[0]?.offentliggjort ?? '') + `_${PARSER_VERSION}`;
 
     // ── 2. Tjek Supabase cache ──
     const supabase = getSupabase();

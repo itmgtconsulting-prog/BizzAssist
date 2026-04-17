@@ -495,6 +495,42 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
   const [ejendommeTotalBfe, setEjendommeTotalBfe] = useState(0);
   /** BIZZ-455: Toggle for visning af tidligere ejede (solgte) ejendomme */
   const [visSolgte, setVisSolgte] = useState(false);
+  /** BIZZ-diagram: Memoized diagram graph — only rebuilds when ejendomme fully loaded,
+   * preventing "jumping" as properties stream in progressively. Shows active only. */
+  const diagramGraphStable = useMemo(() => {
+    if (!data) return { nodes: [], edges: [], mainId: '' };
+    const aktiveEjendomme = ejendommeData.filter((p) => p.aktiv !== false);
+    const propertiesByCvr =
+      aktiveEjendomme.length > 0
+        ? aktiveEjendomme.reduce((map, p) => {
+            const cvrNum = parseInt(p.ownerCvr, 10);
+            if (!map.has(cvrNum)) map.set(cvrNum, []);
+            map.get(cvrNum)!.push(p as DiagramPropertySummary);
+            return map;
+          }, new Map<number, DiagramPropertySummary[]>())
+        : undefined;
+    return buildDiagramGraph(
+      data.name,
+      data.vat,
+      data.companydesc ?? null,
+      ownerChainShared,
+      relatedCompanies,
+      data.industrydesc ?? null,
+      propertiesByCvr
+    );
+    // Only rebuild when ejendomme loading finishes (ejendommeFetchComplete flips true)
+    // OR when ownership/company data changes. Deliberately EXCLUDE ejendommeData so
+    // progressive batches don't trigger re-simulation mid-load.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    data?.name,
+    data?.vat,
+    data?.companydesc,
+    data?.industrydesc,
+    ownerChainShared,
+    relatedCompanies,
+    ejendommeFetchComplete,
+  ]);
   /** Kommasepereret CVR-nøgle der sidst blev hentet — forhindrer duplicate-fetches */
   const ejendomFetchKeyRef = useRef('');
   /** AbortController for igangværende progressiv ejendomshentning */
@@ -2042,28 +2078,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
           )}
 
           {/* ══ RELATIONSDIAGRAM (Force Graph — original) ══ */}
-          {aktivTab === 'diagram' &&
-            (() => {
-              const propertiesByCvr =
-                ejendommeData.length > 0
-                  ? ejendommeData.reduce((map, p) => {
-                      const cvrNum = parseInt(p.ownerCvr, 10);
-                      if (!map.has(cvrNum)) map.set(cvrNum, []);
-                      map.get(cvrNum)!.push(p as DiagramPropertySummary);
-                      return map;
-                    }, new Map<number, DiagramPropertySummary[]>())
-                  : undefined;
-              const diagramGraph = buildDiagramGraph(
-                data.name,
-                data.vat,
-                data.companydesc ?? null,
-                ownerChainShared,
-                relatedCompanies,
-                data.industrydesc ?? null,
-                propertiesByCvr
-              );
-              return <DiagramForce graph={diagramGraph} lang={lang} />;
-            })()}
+          {aktivTab === 'diagram' && <DiagramForce graph={diagramGraphStable} lang={lang} />}
 
           {/* ══ EJENDOMME (inkl. ejendomshandler) ══ */}
           {aktivTab === 'properties' && (

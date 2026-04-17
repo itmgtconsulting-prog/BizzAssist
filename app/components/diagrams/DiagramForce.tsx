@@ -449,18 +449,17 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
         }
         // Reserve space for properties below this sub-row if any company here owns properties
         if (subRowHasProperties) {
-          // Find max property count per owner in this sub-row to size the reservation
-          let maxPropsInSubrow = 0;
+          // Count TOTAL properties from all owners in this sub-row (they share a Y).
+          // Iterative wrap (Pass 4) caps at MAX_PER_ROW per line, so total/MAX ceil sub-rows.
+          let totalPropsInSubrow = 0;
           for (let i = startIdx; i < endIdx; i++) {
             if (nodeIds[i] === '__pad__') continue;
             const props = propertiesByOwner.get(nodeIds[i]);
-            if (props) {
-              const propSubrows = Math.ceil(props.length / MAX_PER_ROW);
-              maxPropsInSubrow = Math.max(maxPropsInSubrow, propSubrows);
-            }
+            if (props) totalPropsInSubrow += props.length;
           }
+          const propSubrows = Math.max(1, Math.ceil(totalPropsInSubrow / MAX_PER_ROW));
           // 95 initial gap + 70 per additional sub-row
-          levelHeight += 95 + Math.max(0, maxPropsInSubrow - 1) * 70;
+          levelHeight += 95 + (propSubrows - 1) * 70;
         }
       }
       cumulativeY += Math.max(levelHeight, levelGap);
@@ -479,20 +478,19 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
         if (subRow !== prevSubRow) {
           if (subRow > 0) {
             runningY += subRowGap;
-            // Extra gap if PREVIOUS sub-row had owners with properties
+            // Extra gap if PREVIOUS sub-row had owners with properties.
+            // Count TOTAL properties across sub-row owners (they share a Y line).
             const prevStart = prevSubRow * MAX_PER_ROW;
             const prevEnd = Math.min(prevStart + MAX_PER_ROW, nodeIds.length);
-            let prevMaxProps = 0;
+            let prevTotalProps = 0;
             for (let j = prevStart; j < prevEnd; j++) {
               if (nodeIds[j] === '__pad__') continue;
               const props = propertiesByOwner.get(nodeIds[j]);
-              if (props) {
-                const pr = Math.ceil(props.length / MAX_PER_ROW);
-                prevMaxProps = Math.max(prevMaxProps, pr);
-              }
+              if (props) prevTotalProps += props.length;
             }
-            if (prevMaxProps > 0) {
-              runningY += 95 + Math.max(0, prevMaxProps - 1) * 70;
+            if (prevTotalProps > 0) {
+              const propSubrows = Math.ceil(prevTotalProps / MAX_PER_ROW);
+              runningY += 95 + (propSubrows - 1) * 70;
             }
           }
           // Check if this sub-row needs extra space for co-owners above it

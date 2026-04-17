@@ -192,14 +192,22 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
           const data: PersonPublicData = await personRes.json();
           for (const v of data.virksomheder ?? []) {
             if (!v.aktiv) continue;
-            // Kun virksomheder hvor personen er DIREKTE ejer:
-            // - ejerandel angivet (legal/reel ejer med faktisk andel), ELLER
-            // - eksplicit ejer-rolle i navnet (ikke stifter)
+            // DIREKTE personlig ejerskab kræver:
+            //   • aktiv rolle (ingen til-dato),
+            //   • registreret ejerandel (ellers er det bare en bestyrelses-
+            //     eller direktionspost),
+            //   • IKKE reel ejer / EJERREGISTER (det dækker indirekte
+            //     beneficial-ownership via holdings som vi ikke vil vise
+            //     som "personligt ejet"),
+            //   • IKKE stifter (historisk, ikke nødvendigvis ejer i dag).
             const erDirekteEjer = v.roller.some((r) => {
-              if (r.til) return false; // kun aktive roller
-              if (r.ejerandel != null) return true;
+              if (r.til) return false;
+              if (r.ejerandel == null) return false;
               const rolle = r.rolle.toLowerCase();
-              return rolle.includes('ejer') && !rolle.includes('stifter');
+              if (rolle.includes('reel')) return false;
+              if (rolle.includes('stifter')) return false;
+              if (rolle.includes('register')) return false; // EJERREGISTER
+              return true;
             });
             if (!erDirekteEjer) continue;
             const cvrId = `cvr-${v.cvr}`;

@@ -418,14 +418,25 @@ export function buildDiagramGraph(
         });
       }
 
-      // BIZZ-268: Overflow node when more properties exist than shown
+      // BIZZ-268: Overflow node when more properties exist than shown.
+      // overflowItems tillader at boksen foldes ud til en klikbar liste med
+      // adresser der linker til den enkelte ejendom.
       if (props.length > MAX_PROPS_PER_COMPANY) {
         const overflowId = `props-overflow-${cvr}`;
         const remaining = props.length - MAX_PROPS_PER_COMPANY;
+        const overflowProps = props.slice(MAX_PROPS_PER_COMPANY);
         nodes.push({
           id: overflowId,
           label: `+${remaining} ejendomme`,
           type: 'property',
+          overflowItems: overflowProps.map((p) => {
+            const postBy = [p.postnr, p.by].filter(Boolean).join(' ');
+            const baseAddr = p.adresse ?? `BFE ${p.bfeNummer}`;
+            return {
+              label: postBy ? `${baseAddr}, ${postBy}` : baseAddr,
+              link: p.dawaId ? `/dashboard/ejendomme/${p.dawaId}` : undefined,
+            };
+          }),
         });
         edges.push({ from: companyNode.id, to: overflowId });
       }

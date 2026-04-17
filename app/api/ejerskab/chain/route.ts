@@ -666,12 +666,34 @@ export async function GET(req: NextRequest) {
     currentLevel = nextLevel;
   }
 
-  // Propagate isCeased from resolved company nodes to ejerDetaljer entries
+  // Propagate isCeased from resolved company nodes til ejerDetaljer entries.
+  // Skal ske FØR filtreringen nedenfor, så detaljerne bevarer advarslen
+  // om at en direkte ejer er ophørt selvom noden fjernes fra diagrammet.
   for (const d of ejerDetaljer) {
     if (d.cvr && d.type === 'selskab') {
-      const node = nodes.find((n) => n.type === 'company' && n.cvr === parseInt(d.cvr!, 10));
+      const cvrNum = parseInt(d.cvr, 10);
+      const node = nodes.find((n) => n.type === 'company' && n.cvr === cvrNum);
       if (node?.isCeased) d.isCeased = true;
     }
+  }
+
+  // BIZZ-471: Fjern ophørte virksomheder fra ejerstrukturen. Ophørte selskaber
+  // kan ikke længere eje noget i dag, så de hører ikke med i ejerstrukturen —
+  // heller ikke som mellemled i ejerkæden. Advarslen om en direkte ejer er
+  // ophørt bevares i ejerDetaljer (via isCeased propagation ovenfor), så
+  // listen over adkomsthavere stadig markerer det.
+  const ceasedCompanyIds = new Set(
+    nodes.filter((n) => n.type === 'company' && n.isCeased).map((n) => n.id)
+  );
+  if (ceasedCompanyIds.size > 0) {
+    const filteredNodes = nodes.filter((n) => !ceasedCompanyIds.has(n.id));
+    nodes.length = 0;
+    nodes.push(...filteredNodes);
+    const filteredEdges = edges.filter(
+      (e) => !ceasedCompanyIds.has(e.from) && !ceasedCompanyIds.has(e.to)
+    );
+    edges.length = 0;
+    edges.push(...filteredEdges);
   }
 
   const fejl: string | null = null;

@@ -64,6 +64,8 @@ interface PlanConfig {
   requiresApproval: boolean;
   isActive: boolean;
   freeTrialDays: number;
+  /** BIZZ-541: hours of continued access after a failed recurring payment (default 0) */
+  paymentGraceHours: number;
   stripePriceId: string;
   maxSales: number | null;
   salesCount: number;
@@ -140,6 +142,7 @@ const NEW_PLAN_DEFAULTS: Omit<PlanConfig, 'id'> = {
   requiresApproval: false,
   isActive: true,
   freeTrialDays: 0,
+  paymentGraceHours: 0,
   stripePriceId: '',
   maxSales: null,
   salesCount: 0,
@@ -231,6 +234,10 @@ export default function PlansClient() {
     requiresApproval: da ? 'Kræver godkendelse' : 'Requires approval',
     active: da ? 'Aktiv' : 'Active',
     freeTrialDays: da ? 'Gratis dage' : 'Free trial days',
+    paymentGraceHours: da ? 'Grace-timer ved fejlet betaling' : 'Payment-failure grace hours',
+    paymentGraceHoursHint: da
+      ? '0 = adgang blokeres straks ved fejlet betaling (anbefalet default).'
+      : '0 = access revoked immediately on failed payment (recommended default).',
     save: da ? 'Gem' : 'Save',
     saved: da ? 'Gemt!' : 'Saved!',
     saving: da ? 'Gemmer...' : 'Saving...',
@@ -372,6 +379,7 @@ export default function PlansClient() {
           requiresApproval: merged.requiresApproval,
           isActive: merged.isActive,
           freeTrialDays: merged.freeTrialDays,
+          paymentGraceHours: merged.paymentGraceHours,
           stripePriceId: merged.stripePriceId,
           maxSales: merged.maxSales,
           salesCount: merged.salesCount,
@@ -1009,6 +1017,28 @@ export default function PlansClient() {
                         />
                       </div>
                       <div>
+                        <label
+                          className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1"
+                          title={t.paymentGraceHoursHint}
+                        >
+                          {t.paymentGraceHours}
+                        </label>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          value={String(newPlanData.paymentGraceHours)}
+                          onChange={(e) => {
+                            const v = e.target.value.replace(/[^0-9]/g, '');
+                            setNewPlanData((d) => ({
+                              ...d,
+                              paymentGraceHours:
+                                v === '' ? 0 : Math.min(168, Math.max(0, Number(v))),
+                            }));
+                          }}
+                          className="bg-slate-900/50 border border-slate-700/40 rounded-lg px-2.5 py-1.5 text-white text-sm w-full focus:outline-none focus:border-blue-500/50 transition-colors"
+                        />
+                      </div>
+                      <div>
                         <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
                           {t.maxSales}
                         </label>
@@ -1259,13 +1289,22 @@ export default function PlansClient() {
                           {/* Duration hint */}
                           <p className="text-[10px] text-slate-600 -mt-2">{t.durationHint}</p>
 
-                          {/* Free trial + toggles */}
-                          <div className="grid grid-cols-5 gap-3 items-end">
+                          {/* Free trial + grace + toggles */}
+                          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3 items-end">
                             <div>
                               <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
                                 {t.freeTrialDays}
                               </label>
                               {renderNumInput(plan, 'freeTrialDays', { min: 0 })}
+                            </div>
+                            <div>
+                              <label
+                                className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1"
+                                title={t.paymentGraceHoursHint}
+                              >
+                                {t.paymentGraceHours}
+                              </label>
+                              {renderNumInput(plan, 'paymentGraceHours', { min: 0 })}
                             </div>
                             <label className="flex items-center gap-2 text-sm text-slate-300 pb-1">
                               {renderToggle(getPlanValue(plan, 'aiEnabled') as boolean, () =>

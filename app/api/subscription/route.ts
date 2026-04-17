@@ -22,6 +22,7 @@ import {
   isSubscriptionFunctional,
   type PlanId,
   type PlanDef,
+  type SubStatus,
 } from '@/app/lib/subscriptions';
 import { logger } from '@/app/lib/logger';
 
@@ -235,6 +236,8 @@ export async function GET(): Promise<NextResponse> {
           durationDays: planRow.duration_days ?? 0,
           tokenAccumulationCapMultiplier: planRow.token_accumulation_cap_multiplier ?? 5,
           freeTrialDays: planRow.free_trial_days ?? 0,
+          // BIZZ-541: per-plan grace window; fall back to 0 (no grace)
+          paymentGraceHours: (planRow as { payment_grace_hours?: number }).payment_grace_hours ?? 0,
         };
       }
     }
@@ -247,8 +250,7 @@ export async function GET(): Promise<NextResponse> {
       ? {
           email: freshUser.user.email ?? '',
           planId: (subscription.planId as PlanId) ?? 'demo',
-          status:
-            (subscription.status as 'active' | 'pending' | 'cancelled' | 'expired') ?? 'pending',
+          status: (subscription.status as SubStatus) ?? 'pending',
           createdAt: (subscription.createdAt as string) ?? '',
           approvedAt: (subscription.approvedAt as string | null) ?? null,
           tokensUsedThisMonth: (subscription.tokensUsedThisMonth as number) ?? 0,
@@ -257,6 +259,10 @@ export async function GET(): Promise<NextResponse> {
           topUpTokens: (subscription.topUpTokens as number) ?? 0,
           bonusTokens: (subscription.bonusTokens as number) ?? 0,
           isPaid: (subscription.isPaid as boolean) ?? false,
+          // BIZZ-541: Pass through grace-window fields so isSubscriptionFunctional
+          // can evaluate past_due correctly on both server and client.
+          nextPaymentAttempt: (subscription.nextPaymentAttempt as string | undefined) ?? undefined,
+          graceExpiresAt: (subscription.graceExpiresAt as string | undefined) ?? undefined,
         }
       : null;
 

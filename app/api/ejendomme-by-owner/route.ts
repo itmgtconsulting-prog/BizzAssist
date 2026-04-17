@@ -65,6 +65,12 @@ export interface EjendomSummary {
   ejendomstype: string | null;
   /** DAWA adgangsadresse UUID — bruges til link til ejendomsdetaljeside */
   dawaId: string | null;
+  /** Ejer-andel (faktisk ejerandel fra EJF, f.eks. "100%") */
+  ejerandel?: string | null;
+  /** BIZZ-455: false hvis ejendommen er solgt (CVR ikke længere aktuel ejer) */
+  aktiv?: boolean;
+  /** BIZZ-455: Dato hvor CVR ophørte som ejer (ISO-dato) — kun for solgte */
+  solgtDato?: string | null;
   /** BIZZ-397: Progressive enrichment fields — populated client-side after initial load */
   /** Bygningsareal i m² fra BBR */
   areal?: number | null;
@@ -155,6 +161,8 @@ interface RawEjerskab {
   bestemtFastEjendomBFENr: number | null;
   ejendeVirksomhedCVRNr: number | null;
   virkningFra: string | null;
+  faktiskEjerandel_taeller: number | null;
+  faktiskEjerandel_naevner: number | null;
 }
 
 interface GqlResult<T> {
@@ -174,7 +182,11 @@ interface GqlResult<T> {
 async function hentBfeByCvr(
   cvr: number,
   token: string
-): Promise<{ bfeNumre: number[]; authError: boolean } | null> {
+): Promise<{
+  bfeNumre: number[];
+  ejerandelByBfe: Map<number, string>;
+  authError: boolean;
+} | null> {
   const virkningstid = new Date().toISOString();
 
   const query = `{
@@ -189,6 +201,8 @@ async function hentBfeByCvr(
         bestemtFastEjendomBFENr
         ejendeVirksomhedCVRNr
         virkningFra
+        faktiskEjerandel_taeller
+        faktiskEjerandel_naevner
       }
     }
   }`;
@@ -209,7 +223,7 @@ async function hentBfeByCvr(
       next: { revalidate: 300 },
     });
 
-    if (res.status === 403) return { bfeNumre: [], authError: true };
+    if (res.status === 403) return { bfeNumre: [], ejerandelByBfe: new Map(), authError: true };
     if (!res.ok) return null;
 
     const json = (await res.json()) as GqlResult<RawEjerskab>;
@@ -218,14 +232,26 @@ async function hentBfeByCvr(
       json.errors?.some(
         (e) => e.extensions?.code === 'DAF-AUTH-0001' || e.message?.includes('not authorized')
       ) ?? false;
-    if (authError) return { bfeNumre: [], authError: true };
+    if (authError) return { bfeNumre: [], ejerandelByBfe: new Map(), authError: true };
 
     const nodes = json.data?.EJFCustom_EjerskabBegraenset?.nodes ?? [];
     const bfeNumre = nodes
       .map((n) => n.bestemtFastEjendomBFENr)
       .filter((b): b is number => b != null);
 
-    return { bfeNumre, authError: false };
+    // Build map of BFE → ejerandel string (e.g. "50%", "100%")
+    const ejerandelByBfe = new Map<number, string>();
+    for (const n of nodes) {
+      if (n.bestemtFastEjendomBFENr == null) continue;
+      const t = n.faktiskEjerandel_taeller;
+      const nav = n.faktiskEjerandel_naevner;
+      if (t != null && nav != null && nav > 0) {
+        const pct = Math.round((t / nav) * 100);
+        ejerandelByBfe.set(n.bestemtFastEjendomBFENr, `${pct}%`);
+      }
+    }
+
+    return { bfeNumre, ejerandelByBfe, authError: false };
   } catch {
     return null;
   }
@@ -370,8 +396,46 @@ async function _hentDawaBfeDataImpl(bfe: number): Promise<DawaBfeAdresse> {
       };
     }
 
-    /* Fallback: jordstykker → ejerlav */
+    /* Fallback: resolve address from jordstykker → husnumre → adgangsadresse.
+     * Samlet ejendomme without beliggenhedsadresse often have jordstykker with
+     * husnumre UUIDs that point to actual street addresses in DAWA. */
     const js = json.jordstykker?.[0];
+    const husnumreId = js?.husnumre?.[0]?.id as string | undefined;
+
+    if (husnumreId) {
+      try {
+        const addrRes = await fetch(
+          `${DAWA_BASE_URL}/adgangsadresser/${husnumreId}?struktur=mini`,
+          { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } }
+        );
+        if (addrRes.ok) {
+          const addr = (await addrRes.json()) as {
+            id?: string;
+            vejnavn?: string;
+            husnr?: string;
+            postnr?: string;
+            postnrnavn?: string;
+            kommunekode?: string;
+            kommunenavn?: string;
+          };
+          if (addr.vejnavn) {
+            return {
+              adresse: `${addr.vejnavn} ${addr.husnr ?? ''}`.trim(),
+              postnr: addr.postnr ?? null,
+              by: addr.postnrnavn ?? null,
+              kommune: addr.kommunenavn ?? null,
+              kommuneKode: addr.kommunekode ?? null,
+              ejendomstype: json.ejendomstype ?? null,
+              dawaId: addr.id ?? husnumreId,
+            };
+          }
+        }
+      } catch {
+        /* ignore — fallback to ejerlav below */
+      }
+    }
+
+    /* Last resort: use ejerlav name (cadastral district) as address */
     if (js?.ejerlav?.navn) {
       return {
         adresse: js.ejerlav.navn,
@@ -380,11 +444,98 @@ async function _hentDawaBfeDataImpl(bfe: number): Promise<DawaBfeAdresse> {
         kommune: js.kommune?.navn ?? null,
         kommuneKode: js.kommune?.kode ?? null,
         ejendomstype: json.ejendomstype ?? null,
-        dawaId: js.husnumre?.[0]?.id ?? null,
+        dawaId: husnumreId ?? null,
       };
     }
 
     return { ...empty, ejendomstype: json.ejendomstype ?? null };
+  } catch {
+    return empty;
+  }
+}
+
+// ─── BBR GraphQL BFE→address fallback ────────────────────────────────────────
+
+/**
+ * Resolves BFE→address via Vurderingsportalen Elasticsearch when DAWA fails.
+ * VP is a public API that has address data for most Danish properties.
+ * Requires browser-like User-Agent to pass CloudFront WAF.
+ *
+ * @param bfe - BFE-nummer
+ * @returns Partial DawaBfeAdresse with address fields, or empty
+ */
+async function _hentVPAdresseForBfe(bfe: number): Promise<DawaBfeAdresse> {
+  const empty: DawaBfeAdresse = {
+    adresse: null,
+    postnr: null,
+    by: null,
+    kommune: null,
+    kommuneKode: null,
+    ejendomstype: null,
+    dawaId: null,
+  };
+
+  try {
+    // Call VP directly (not via proxy) — VP works from Vercel with browser User-Agent.
+    // The proxy server doesn't whitelist api-fs.vurderingsportalen.dk.
+    const res = await fetch('https://api-fs.vurderingsportalen.dk/preliminaryproperties/_search', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
+      },
+      body: JSON.stringify({
+        query: { term: { bfeNumbers: bfe } },
+        size: 1,
+        _source: [
+          'address',
+          'roadName',
+          'houseNumber',
+          'zipcode',
+          'postDistrict',
+          'adgangsAdresseID',
+          'juridiskKategori',
+          'municipalityNumber',
+        ],
+      }),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return empty;
+
+    const data = (await res.json()) as {
+      hits?: {
+        hits?: Array<{
+          _source?: {
+            address?: string;
+            roadName?: string;
+            houseNumber?: string;
+            zipcode?: string;
+            postDistrict?: string;
+            adgangsAdresseID?: string;
+            juridiskKategori?: string;
+            municipalityNumber?: string;
+          };
+        }>;
+      };
+    };
+    const src = data.hits?.hits?.[0]?._source;
+    if (!src?.address) return empty;
+
+    const adresse =
+      src.roadName && src.houseNumber
+        ? `${src.roadName} ${src.houseNumber}`.trim()
+        : (src.address.split(',')[0]?.trim() ?? null);
+
+    return {
+      adresse,
+      postnr: src.zipcode ?? null,
+      by: src.postDistrict ?? null,
+      kommune: null,
+      kommuneKode: src.municipalityNumber ? String(src.municipalityNumber).padStart(4, '0') : null,
+      ejendomstype: src.juridiskKategori ?? null,
+      dawaId: src.adgangsAdresseID ?? null,
+    };
   } catch {
     return empty;
   }
@@ -411,7 +562,15 @@ const _bfeFetchInFlight = new Map<number, Promise<DawaBfeAdresse>>();
 async function hentDawaBfeData(bfe: number): Promise<DawaBfeAdresse> {
   const cached = _bfeFetchInFlight.get(bfe);
   if (cached) return cached;
-  const promise = _hentDawaBfeDataImpl(bfe);
+  const promise = _hentDawaBfeDataImpl(bfe).then(async (result) => {
+    // BIZZ-450: If DAWA returned no address, try BBR GraphQL as fallback.
+    // DAWA /bfe/{bfe} endpoint is being deprecated; BBR is the authoritative source.
+    if (!result.adresse) {
+      const vpResult = await _hentVPAdresseForBfe(bfe);
+      if (vpResult.adresse) return { ...result, ...vpResult };
+    }
+    return result;
+  });
   _bfeFetchInFlight.set(bfe, promise);
   void promise.finally(() => _bfeFetchInFlight.delete(bfe));
   return promise;
@@ -619,8 +778,9 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
       });
     }
 
-    /* Saml unikke BFE-numre med tilhørende ejer-ID */
+    /* Saml unikke BFE-numre med tilhørende ejer-ID + ejer-andel */
     const bfeTilCvr = new Map<number, string>();
+    const bfeTilEjerandel = new Map<number, string>();
     for (let i = 0; i < cvrNumre.length; i++) {
       const result = cvrResults[i];
       if (!result) continue;
@@ -628,6 +788,10 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
         if (!bfeTilCvr.has(bfe)) {
           bfeTilCvr.set(bfe, String(cvrNumre[i]).padStart(8, '0'));
         }
+      }
+      // Merge ejer-andel map (first owner wins when multiple CVRs queried)
+      for (const [bfe, andel] of result.ejerandelByBfe) {
+        if (!bfeTilEjerandel.has(bfe)) bfeTilEjerandel.set(bfe, andel);
       }
     }
     // BIZZ-264: Add person-owned BFEs (use enhedsNummer as ownerCvr placeholder)
@@ -638,6 +802,91 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
         if (!bfeTilCvr.has(bfe)) {
           bfeTilCvr.set(bfe, `person-${enhedsNumre[i]}`);
         }
+      }
+    }
+
+    /* ── Verificér aktivt ejerskab — markér solgte ejendomme ──
+     * BIZZ-455: EJF flexibleCurrent returnerer historiske ejerskaber. For hvert BFE
+     * tjekker vi om den seneste ejerpost stadig matcher CVR. Hvis en nyere post med
+     * en anden ejer findes, markerer vi ejendommen som solgt (aktiv=false) men
+     * beholder den i listen så UI'et kan vise fold-ud med tidligere ejendomme. */
+    const aktivByBfe = new Map<number, boolean>();
+    const solgtDatoByBfe = new Map<number, string | null>();
+    if (cvrNumre.length > 0) {
+      const queriedCvrSet = new Set(cvrNumre);
+      const bfeList = [...bfeTilCvr.keys()];
+      const VERIFY_BATCH = 20;
+      for (let i = 0; i < bfeList.length; i += VERIFY_BATCH) {
+        const chunk = bfeList.slice(i, i + VERIFY_BATCH);
+        await Promise.allSettled(
+          chunk.map(async (bfe) => {
+            const ownerCvr = bfeTilCvr.get(bfe);
+            if (!ownerCvr || ownerCvr.startsWith('person-')) {
+              aktivByBfe.set(bfe, true);
+              return;
+            }
+            const cvrNum = parseInt(ownerCvr, 10);
+            const vt = new Date().toISOString();
+            const query = `{ EJFCustom_EjerskabBegraenset(first: 10, virkningstid: "${vt}", where: { bestemtFastEjendomBFENr: { eq: ${bfe} } }) { nodes { ejendeVirksomhedCVRNr virkningFra } } }`;
+            const res = await fetch(proxyUrl(EJF_GQL_ENDPOINT), {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`,
+                ...proxyHeaders(),
+              },
+              body: JSON.stringify({ query }),
+              signal: AbortSignal.timeout(proxyTimeout()),
+            });
+            if (!res.ok) {
+              aktivByBfe.set(bfe, true); // default to active on error
+              return;
+            }
+            const data = (await res.json()) as GqlResult<{
+              ejendeVirksomhedCVRNr: number | null;
+              virkningFra: string | null;
+            }>;
+            const nodes = Object.values(data.data ?? {})[0]?.nodes ?? [];
+            if (nodes.length === 0) {
+              aktivByBfe.set(bfe, true);
+              return;
+            }
+            const newestDate = Math.max(
+              ...nodes.map((n) => new Date(n.virkningFra ?? 0).getTime())
+            );
+            // BIZZ-463: Among ALL nodes at newest date, pick one whose CVR was in
+            // our queried list (= actual current owner for this concern). If the
+            // current bfeTilCvr mapping points to a different (historical) owner,
+            // reassign to the correct current owner.
+            const newestNodes = nodes.filter(
+              (n) => new Date(n.virkningFra ?? 0).getTime() === newestDate
+            );
+            const currentOwnerInList = newestNodes.find(
+              (n) => n.ejendeVirksomhedCVRNr != null && queriedCvrSet.has(n.ejendeVirksomhedCVRNr)
+            );
+            if (currentOwnerInList?.ejendeVirksomhedCVRNr) {
+              // Reassign bfeTilCvr to the actual current owner
+              const actualCvr = currentOwnerInList.ejendeVirksomhedCVRNr;
+              bfeTilCvr.set(bfe, String(actualCvr).padStart(8, '0'));
+              aktivByBfe.set(bfe, true);
+            } else {
+              // No queried CVR is the current owner → property was sold externally
+              aktivByBfe.set(bfe, false);
+              const ourLastDate = nodes
+                .filter((n) => n.ejendeVirksomhedCVRNr === cvrNum)
+                .map((n) => new Date(n.virkningFra ?? 0).getTime())
+                .reduce((a, b) => Math.max(a, b), 0);
+              const soldDate = nodes
+                .filter((n) => new Date(n.virkningFra ?? 0).getTime() > ourLastDate)
+                .map((n) => new Date(n.virkningFra ?? 0).getTime())
+                .reduce((a, b) => Math.min(a || Infinity, b), Infinity);
+              solgtDatoByBfe.set(
+                bfe,
+                soldDate && soldDate !== Infinity ? new Date(soldDate).toISOString() : null
+              );
+            }
+          })
+        );
       }
     }
 
@@ -656,8 +905,13 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
       });
     }
 
-    /* Sortér BFE-numre for konsistent paginering på tværs af batches */
-    alleBfe.sort((a, b) => a - b);
+    /* Sortér: aktive først, så solgte — for konsistent paginering */
+    alleBfe.sort((a, b) => {
+      const aktivA = aktivByBfe.get(a) ?? true;
+      const aktivB = aktivByBfe.get(b) ?? true;
+      if (aktivA !== aktivB) return aktivA ? -1 : 1;
+      return a - b;
+    });
 
     /* Afgræns batch baseret på offset + limit */
     const begransetBfe = alleBfe.slice(offset, offset + limit);
@@ -670,6 +924,9 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
       bfeNummer: bfe,
       ownerCvr: bfeTilCvr.get(bfe) ?? '',
       ...adresseData[idx],
+      ejerandel: bfeTilEjerandel.get(bfe) ?? null,
+      aktiv: aktivByBfe.get(bfe) ?? true,
+      solgtDato: solgtDatoByBfe.get(bfe) ?? null,
     }));
 
     /* Sortér: adresser først, derefter BFE-numre */

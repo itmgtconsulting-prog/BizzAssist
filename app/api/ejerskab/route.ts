@@ -114,6 +114,8 @@ async function _getOAuthToken(): Promise<string | null> {
 interface RawEJFEjerskab {
   bestemtFastEjendomBFENr: number | null;
   ejendeVirksomhedCVRNr: number | null;
+  /** EJF-specifik enhedsNummer for ejer — kan bruges til reverse lookup */
+  ejendeEnhedsNummer: number | null;
   /** Person-data fra custom tjeneste — indeholder navn (ikke CPR) */
   ejendePersonBegraenset: { navn: { navn: string } | null } | null;
   ejerforholdskode: string | null;

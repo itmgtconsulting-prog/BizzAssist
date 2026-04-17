@@ -24,6 +24,7 @@ import {
   X,
   MapPin,
   Building2,
+  Home,
   ChevronDown,
   ChevronRight,
   TrendingUp,
@@ -59,6 +60,7 @@ import {
   type EjerstrukturNode,
 } from '@/app/lib/mock/ejendomme';
 import { erDawaId, type DawaAdresse, type DawaJordstykke } from '@/app/lib/dawa';
+import { formatBenyttelseOgByggeaar } from '@/app/lib/benyttelseskoder';
 import type { EjendomApiResponse, LiveBBRBygning } from '@/app/api/ejendom/[id]/route';
 import type { CVRVirksomhed, CVRResponse } from '@/app/api/cvr/route';
 import type { VurderingData, VurderingResponse } from '@/app/api/vurdering/route';
@@ -845,6 +847,9 @@ export default function EjendomDetaljeClient({
 
   /** CVR-virksomheder registreret på adressen */
   const [cvrVirksomheder, setCvrVirksomheder] = useState<CVRVirksomhed[] | null>(null);
+  /** BIZZ-473: True when CVR fetch has completed (success or error). Used to prevent
+   * flicker where the section appears briefly then disappears if no companies found. */
+  const [cvrFetchComplete, setCvrFetchComplete] = useState(false);
   /** True hvis CVR_ES_USER/PASS mangler i .env.local */
   const [cvrTokenMangler, setCvrTokenMangler] = useState(false);
   /** True hvis CVR ElasticSearch API er utilgængeligt (timeout/nedbrud) */
@@ -1251,6 +1256,7 @@ export default function EjendomDetaljeClient({
     // For ejerlejligheder: filtrer på etage+dør for præcise resultater
     if (dawaAdresse.etage) params.set('etage', dawaAdresse.etage);
     if (dawaAdresse.dør) params.set('doer', dawaAdresse.dør);
+    setCvrFetchComplete(false);
     fetch(`/api/cvr?${params}`, { signal: controller.signal })
       .then((r) => (r.ok ? r.json() : { virksomheder: [], tokenMangler: false }))
       .then((data: CVRResponse) => {
@@ -1258,11 +1264,13 @@ export default function EjendomDetaljeClient({
         setCvrVirksomheder(data.virksomheder);
         setCvrTokenMangler(data.tokenMangler);
         setCvrApiDown(data.apiDown ?? false);
+        setCvrFetchComplete(true);
       })
       .catch((err) => {
         if (err.name === 'AbortError') return;
         logger.error('[ejendom] CVR fetch error:', err);
         setCvrVirksomheder([]);
+        setCvrFetchComplete(true);
       });
     return () => controller.abort();
     // BIZZ-333: Use stable address components as deps instead of full dawaAdresse object
@@ -1843,12 +1851,19 @@ export default function EjendomDetaljeClient({
         return gDato === dato && gSum === sum && dato !== '';
       });
       if (existing && h.koeber) {
-        // Append buyer name and combine shares
-        existing.koeber = existing.koeber
-          ? `${existing.koeber}, ${h.koeber}${h.andel ? ` (${h.andel})` : ''}`
-          : h.koeber;
-        if (!existing.andel && h.andel) existing.andel = h.andel;
-        else if (existing.andel && h.andel) existing.andel = null; // Multiple shares — don't show individual
+        // BIZZ-468: Append ejerandel to EVERY buyer in combined string — not just
+        // the later ones. Ensures first buyer's share is also shown explicitly.
+        if (existing.koeber) {
+          // If first buyer has no share suffix yet, add their existing top-level andel
+          if (!/\(\s*\d/.test(existing.koeber) && existing.andel) {
+            existing.koeber = `${existing.koeber} (${existing.andel})`;
+          }
+          existing.koeber = `${existing.koeber}, ${h.koeber}${h.andel ? ` (${h.andel})` : ''}`;
+        } else {
+          existing.koeber = `${h.koeber}${h.andel ? ` (${h.andel})` : ''}`;
+        }
+        // When multiple buyers with shares, clear top-level andel (shown inline)
+        if (h.andel) existing.andel = null;
       } else {
         grouped.push({ ...h });
       }
@@ -2074,6 +2089,25 @@ export default function EjendomDetaljeClient({
                     {lang === 'da' ? 'Ejerlejlighed' : 'Condominium'}
                   </span>
                 )}
+                {/* BIZZ-457: Benyttelse (VUR) + byggeår (BBR) — "Værksted (1955)" */}
+                {(() => {
+                  const nyesteByg = bbrData?.bbr?.reduce<number | null>((latest, b) => {
+                    if (b.opfoerelsesaar == null) return latest;
+                    if (latest == null || b.opfoerelsesaar > latest) return b.opfoerelsesaar;
+                    return latest;
+                  }, null);
+                  const label = formatBenyttelseOgByggeaar(
+                    vurdering?.benyttelseskode ?? null,
+                    nyesteByg ?? null
+                  );
+                  if (!label) return null;
+                  return (
+                    <span className="flex items-center gap-1 px-2.5 py-0.5 bg-emerald-500/15 border border-emerald-500/30 rounded-full text-emerald-300 text-xs font-medium flex-shrink-0">
+                      <Home size={11} />
+                      {label}
+                    </span>
+                  );
+                })()}
               </div>
               <div className="flex items-center gap-2 mt-2 flex-wrap">
                 <span className="flex items-center gap-1 px-2 py-0.5 bg-slate-800 border border-slate-700/50 rounded-full text-xs text-slate-300">
@@ -2595,8 +2629,10 @@ export default function EjendomDetaljeClient({
                 {/* Lejligheder er flyttet til ejerskabs-tab for hovedejendomme */}
                 {!(lejligheder !== null && lejligheder.length > 0) && (
                   <>
-                    {/* Virksomheder på adressen — CVR OpenData (skjult for ejerlejlighedsejendomme) */}
-                    {cvrTokenMangler ? (
+                    {/* Virksomheder på adressen — CVR OpenData (skjult for ejerlejlighedsejendomme).
+                        BIZZ-473: Don't render anything until fetch is complete, to avoid
+                        the loading spinner briefly showing then disappearing when no results. */}
+                    {!cvrFetchComplete ? null : cvrTokenMangler ? (
                       <div className="bg-amber-500/8 border border-amber-500/20 rounded-xl p-4">
                         <p className="text-amber-300 text-xs font-medium uppercase tracking-wide mb-2">
                           {t.companiesAtAddress}
@@ -3927,34 +3963,43 @@ export default function EjendomDetaljeClient({
                   })()}
                 </div>
 
-                {/* BIZZ-445: Skattehistorik — kun faktiske skatter fra Vurderingsportalen */}
+                {/* BIZZ-445 + BIZZ-469: Skattehistorik — kun faktiske tal fra Vurderingsportalen (estimater fjernet) */}
                 {forelobige.length > 0 &&
                   (() => {
-                    /**
-                     * Skattehistorik-tabel med kun faktiske data fra Vurderingsportalen.
-                     * BIZZ-445: Estimerede rækker (beregnet med promille) er fjernet.
-                     */
-                    const raekker = forelobige
+                    type SkatRaekke = {
+                      aar: number;
+                      ejendomsvaerdi: number | null;
+                      grundvaerdi: number | null;
+                      grundskyldAktuel: number | null;
+                      ejendomsskatAktuel: number | null;
+                    };
+
+                    const alleRaekker: SkatRaekke[] = forelobige
                       .map((fv) => ({
                         aar: fv.vurderingsaar,
                         ejendomsvaerdi: fv.ejendomsvaerdi,
                         grundvaerdi: fv.grundvaerdi,
-                        grundskyld: fv.grundskyld,
-                        ejendomsskat: fv.ejendomsskat,
+                        grundskyldAktuel: fv.grundskyld,
+                        ejendomsskatAktuel: fv.ejendomsskat,
                       }))
                       .sort((a, b) => b.aar - a.aar);
 
-                    if (raekker.length === 0) return null;
+                    if (alleRaekker.length === 0) return null;
 
                     return (
                       <div>
                         <SectionTitle title={da ? 'Skattehistorik' : 'Tax history'} />
+                        <p className="text-slate-500 text-xs mb-2 leading-relaxed">
+                          {da
+                            ? 'Årstal refererer til vurderingsåret. Skatten baseret på vurderingen opkræves typisk det følgende år — fx bygger betalinger i 2025 på vurderingen for 2024.'
+                            : 'Year refers to the assessment year. The tax based on that assessment is usually collected the following year — e.g. payments in 2025 are based on the 2024 assessment.'}
+                        </p>
                         <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden overflow-x-auto">
                           <table className="w-full text-xs">
                             <thead>
                               <tr className="border-b border-slate-700/40">
                                 <th className="px-4 py-2.5 text-left text-slate-500 font-medium">
-                                  {da ? 'År' : 'Year'}
+                                  {da ? 'Vurderingsår' : 'Assessment year'}
                                 </th>
                                 <th className="px-4 py-2.5 text-right text-slate-500 font-medium">
                                   {da ? 'Ejendomsværdi' : 'Property value'}
@@ -3971,12 +4016,17 @@ export default function EjendomDetaljeClient({
                               </tr>
                             </thead>
                             <tbody>
-                              {raekker.map((r) => (
+                              {alleRaekker.map((r) => (
                                 <tr
                                   key={r.aar}
                                   className="border-b border-slate-700/20 last:border-0 hover:bg-slate-800/30"
                                 >
-                                  <td className="px-4 py-2 text-slate-300 font-medium">{r.aar}</td>
+                                  <td className="px-4 py-2 text-slate-300 font-medium">
+                                    {r.aar}
+                                    <span className="ml-1.5 text-slate-600 text-[10px] font-normal">
+                                      {da ? `(betales ${r.aar + 1})` : `(paid ${r.aar + 1})`}
+                                    </span>
+                                  </td>
                                   <td className="px-4 py-2 text-right text-slate-300">
                                     {r.ejendomsvaerdi ? formatDKK(r.ejendomsvaerdi) : '–'}
                                   </td>
@@ -3984,18 +4034,18 @@ export default function EjendomDetaljeClient({
                                     {r.grundvaerdi ? formatDKK(r.grundvaerdi) : '–'}
                                   </td>
                                   <td className="px-4 py-2 text-right font-medium tabular-nums">
-                                    {r.grundskyld != null ? (
+                                    {r.grundskyldAktuel != null ? (
                                       <span className="text-emerald-400">
-                                        {formatDKK(r.grundskyld)} kr/år
+                                        {formatDKK(r.grundskyldAktuel)} kr/år
                                       </span>
                                     ) : (
                                       '–'
                                     )}
                                   </td>
                                   <td className="px-4 py-2 text-right tabular-nums">
-                                    {r.ejendomsskat != null ? (
+                                    {r.ejendomsskatAktuel != null ? (
                                       <span className="text-emerald-400 font-medium">
-                                        {formatDKK(r.ejendomsskat)} kr/år
+                                        {formatDKK(r.ejendomsskatAktuel)} kr/år
                                       </span>
                                     ) : (
                                       <span className="text-slate-600 text-[10px]">
@@ -7106,10 +7156,14 @@ function TinglysningTab({
         // Trin 2: Hent summariske data i 3 parallelle sektions-kald
         // Progressiv loading — hver sektion vises straks den er klar
         const base = `/api/tinglysning/summarisk?uuid=${tlData.uuid}`;
-        const erEjerlejlighed = moderBfe && moderBfe !== bfe;
-        const servituterUrl = erEjerlejlighed
-          ? `${base}&section=servitutter&hovedBfe=${moderBfe}`
-          : `${base}&section=servitutter`;
+        // BIZZ-474: Send altid hovedBfe til summarisk-API'en — for ejerlejligheder
+        // bruges moderBfe (lejlighedens forældreejendom), og for hovedejendomme
+        // bruges deres egen BFE. API'en slår hovednoteringsnummer op og tilføjer
+        // servitutter fra den primære grundbogs-UUID hvis den afviger fra den
+        // UUID vi allerede har. Tidligere mistede hovedejendomme servitutter der
+        // lå på en anden hovednoteringsnummer-UUID end tlFetch returnerede.
+        const effektivtHovedBfe = moderBfe && moderBfe !== bfe ? moderBfe : bfe;
+        const servituterUrl = `${base}&section=servitutter&hovedBfe=${effektivtHovedBfe}`;
         return Promise.all([
           fetch(`${base}&section=ejere`, { signal })
             .then((r) => (r.ok ? r.json() : null))

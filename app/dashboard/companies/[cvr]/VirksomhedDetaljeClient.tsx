@@ -493,6 +493,44 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
   const [ejendommeManglerNoegle, setEjendommeManglerNoegle] = useState(false);
   const [ejendommeManglerAdgang, setEjendommeManglerAdgang] = useState(false);
   const [ejendommeTotalBfe, setEjendommeTotalBfe] = useState(0);
+  /** BIZZ-455: Toggle for visning af tidligere ejede (solgte) ejendomme */
+  const [visSolgte, setVisSolgte] = useState(false);
+  /** BIZZ-diagram: Memoized diagram graph — only rebuilds when ejendomme fully loaded,
+   * preventing "jumping" as properties stream in progressively. Shows active only. */
+  const diagramGraphStable = useMemo(() => {
+    if (!data) return { nodes: [], edges: [], mainId: '' };
+    const aktiveEjendomme = ejendommeData.filter((p) => p.aktiv !== false);
+    const propertiesByCvr =
+      aktiveEjendomme.length > 0
+        ? aktiveEjendomme.reduce((map, p) => {
+            const cvrNum = parseInt(p.ownerCvr, 10);
+            if (!map.has(cvrNum)) map.set(cvrNum, []);
+            map.get(cvrNum)!.push(p as DiagramPropertySummary);
+            return map;
+          }, new Map<number, DiagramPropertySummary[]>())
+        : undefined;
+    return buildDiagramGraph(
+      data.name,
+      data.vat,
+      data.companydesc ?? null,
+      ownerChainShared,
+      relatedCompanies,
+      data.industrydesc ?? null,
+      propertiesByCvr
+    );
+    // Only rebuild when ejendomme loading finishes (ejendommeFetchComplete flips true)
+    // OR when ownership/company data changes. Deliberately EXCLUDE ejendommeData so
+    // progressive batches don't trigger re-simulation mid-load.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    data?.name,
+    data?.vat,
+    data?.companydesc,
+    data?.industrydesc,
+    ownerChainShared,
+    relatedCompanies,
+    ejendommeFetchComplete,
+  ]);
   /** Kommasepereret CVR-nøgle der sidst blev hentet — forhindrer duplicate-fetches */
   const ejendomFetchKeyRef = useRef('');
   /** AbortController for igangværende progressiv ejendomshentning */
@@ -2040,28 +2078,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
           )}
 
           {/* ══ RELATIONSDIAGRAM (Force Graph — original) ══ */}
-          {aktivTab === 'diagram' &&
-            (() => {
-              const propertiesByCvr =
-                ejendommeData.length > 0
-                  ? ejendommeData.reduce((map, p) => {
-                      const cvrNum = parseInt(p.ownerCvr, 10);
-                      if (!map.has(cvrNum)) map.set(cvrNum, []);
-                      map.get(cvrNum)!.push(p as DiagramPropertySummary);
-                      return map;
-                    }, new Map<number, DiagramPropertySummary[]>())
-                  : undefined;
-              const diagramGraph = buildDiagramGraph(
-                data.name,
-                data.vat,
-                data.companydesc ?? null,
-                ownerChainShared,
-                relatedCompanies,
-                data.industrydesc ?? null,
-                propertiesByCvr
-              );
-              return <DiagramForce graph={diagramGraph} lang={lang} />;
-            })()}
+          {aktivTab === 'diagram' && <DiagramForce graph={diagramGraphStable} lang={lang} />}
 
           {/* ══ EJENDOMME (inkl. ejendomshandler) ══ */}
           {aktivTab === 'properties' && (
@@ -2128,16 +2145,178 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                         )}
                       </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-                        {ejendommeData.map((ej) => (
-                          <PropertyOwnerCard
-                            key={ej.bfeNummer}
-                            ejendom={ej}
-                            showOwner={relatedCompanies.length > 0}
-                            lang={lang}
-                          />
-                        ))}
-                      </div>
+                      {/* BIZZ-456: Gruppér ejendomme efter ejer-CVR i koncernhierarki.
+                          BIZZ-455: Separat fold-ud for solgte ejendomme. */}
+                      {(() => {
+                        // Build concern hierarchy order: main CVR first, then active subsidiaries
+                        const cvrOrder: number[] = [data.vat];
+                        const seenCvr = new Set<number>([data.vat]);
+                        for (const rv of relatedCompanies.filter((v) => v.aktiv)) {
+                          if (!seenCvr.has(rv.cvr)) {
+                            cvrOrder.push(rv.cvr);
+                            seenCvr.add(rv.cvr);
+                          }
+                        }
+                        const nameByCvr = new Map<number, string>();
+                        nameByCvr.set(data.vat, data.name);
+                        for (const rv of relatedCompanies) nameByCvr.set(rv.cvr, rv.navn);
+
+                        // Split into active and sold
+                        const aktive = ejendommeData.filter((e) => e.aktiv !== false);
+                        const solgte = ejendommeData.filter((e) => e.aktiv === false);
+
+                        // Group active by ownerCvr (normalized to number)
+                        const groupedActive = new Map<number, typeof aktive>();
+                        for (const e of aktive) {
+                          const cvrNum = parseInt(e.ownerCvr, 10);
+                          if (!groupedActive.has(cvrNum)) groupedActive.set(cvrNum, []);
+                          groupedActive.get(cvrNum)!.push(e);
+                        }
+                        // Catch any ownerCvrs not in cvrOrder (e.g. person-owned)
+                        for (const cvr of groupedActive.keys()) {
+                          if (!seenCvr.has(cvr)) {
+                            cvrOrder.push(cvr);
+                            seenCvr.add(cvr);
+                          }
+                        }
+
+                        return (
+                          <>
+                            {cvrOrder.map((cvr) => {
+                              const props = groupedActive.get(cvr);
+                              if (!props || props.length === 0) return null;
+                              const name = nameByCvr.get(cvr) ?? `CVR ${cvr}`;
+                              const isMain = cvr === data.vat;
+                              return (
+                                <div key={cvr} className="space-y-2">
+                                  <Link
+                                    href={`/dashboard/companies/${cvr}`}
+                                    className="inline-flex items-center gap-2 group"
+                                  >
+                                    <Building2
+                                      size={14}
+                                      className="text-slate-500 group-hover:text-blue-400 transition-colors"
+                                    />
+                                    <h3 className="text-sm font-semibold text-slate-200 group-hover:text-blue-400 transition-colors">
+                                      {name}
+                                    </h3>
+                                    <span className="text-[10px] text-slate-500 font-mono">
+                                      CVR {cvr}
+                                    </span>
+                                    <span className="text-[10px] text-slate-500">
+                                      · {props.length}{' '}
+                                      {lang === 'da'
+                                        ? props.length === 1
+                                          ? 'ejendom'
+                                          : 'ejendomme'
+                                        : props.length === 1
+                                          ? 'property'
+                                          : 'properties'}
+                                    </span>
+                                    {isMain && (
+                                      <span className="text-[9px] px-1.5 py-0.5 bg-blue-500/15 border border-blue-500/30 rounded text-blue-400 font-medium">
+                                        {lang === 'da' ? 'Moder' : 'Parent'}
+                                      </span>
+                                    )}
+                                  </Link>
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                                    {props.map((ej) => (
+                                      <PropertyOwnerCard
+                                        key={ej.bfeNummer}
+                                        ejendom={ej}
+                                        showOwner={false}
+                                        lang={lang}
+                                      />
+                                    ))}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                            {/* Fold-out for sold properties — grouped by historical owner */}
+                            {solgte.length > 0 && (
+                              <div className="pt-4 border-t border-slate-700/30">
+                                <button
+                                  type="button"
+                                  onClick={() => setVisSolgte((v) => !v)}
+                                  className="flex items-center gap-2 text-xs text-slate-400 hover:text-slate-200 transition-colors"
+                                >
+                                  {visSolgte ? (
+                                    <ChevronDown size={14} />
+                                  ) : (
+                                    <ChevronRight size={14} />
+                                  )}
+                                  {lang === 'da'
+                                    ? `${visSolgte ? 'Skjul' : 'Vis'} ${solgte.length} tidligere ejendom${solgte.length !== 1 ? 'me' : ''}`
+                                    : `${visSolgte ? 'Hide' : 'Show'} ${solgte.length} former propert${solgte.length !== 1 ? 'ies' : 'y'}`}
+                                </button>
+                                {visSolgte &&
+                                  (() => {
+                                    // Group sold properties by historical owner (same ownerCvr logic)
+                                    const groupedSold = new Map<number, typeof solgte>();
+                                    for (const e of solgte) {
+                                      const cvrNum = parseInt(e.ownerCvr, 10);
+                                      if (!groupedSold.has(cvrNum)) groupedSold.set(cvrNum, []);
+                                      groupedSold.get(cvrNum)!.push(e);
+                                    }
+                                    // Include sold-only CVRs not already in cvrOrder
+                                    const soldCvrOrder = [...cvrOrder];
+                                    for (const cvr of groupedSold.keys()) {
+                                      if (!soldCvrOrder.includes(cvr)) soldCvrOrder.push(cvr);
+                                    }
+                                    return (
+                                      <div className="space-y-4 mt-3">
+                                        {soldCvrOrder.map((cvr) => {
+                                          const props = groupedSold.get(cvr);
+                                          if (!props || props.length === 0) return null;
+                                          const name = nameByCvr.get(cvr) ?? `CVR ${cvr}`;
+                                          return (
+                                            <div key={cvr} className="space-y-2">
+                                              <Link
+                                                href={`/dashboard/companies/${cvr}`}
+                                                className="inline-flex items-center gap-2 group"
+                                              >
+                                                <Building2
+                                                  size={14}
+                                                  className="text-slate-500 group-hover:text-blue-400 transition-colors"
+                                                />
+                                                <h3 className="text-sm font-semibold text-slate-400 group-hover:text-blue-400 transition-colors">
+                                                  {name}
+                                                </h3>
+                                                <span className="text-[10px] text-slate-500 font-mono">
+                                                  CVR {cvr}
+                                                </span>
+                                                <span className="text-[10px] text-slate-500">
+                                                  · {props.length}{' '}
+                                                  {lang === 'da'
+                                                    ? props.length === 1
+                                                      ? 'tidligere ejendom'
+                                                      : 'tidligere ejendomme'
+                                                    : props.length === 1
+                                                      ? 'former property'
+                                                      : 'former properties'}
+                                                </span>
+                                              </Link>
+                                              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                                                {props.map((ej) => (
+                                                  <PropertyOwnerCard
+                                                    key={ej.bfeNummer}
+                                                    ejendom={ej}
+                                                    showOwner={false}
+                                                    lang={lang}
+                                                  />
+                                                ))}
+                                              </div>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    );
+                                  })()}
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()}
 
                       {ejendommeLoadingMore && (
                         <div className="flex items-center justify-center gap-2 py-4 text-slate-500 text-sm">

@@ -112,15 +112,33 @@ export default function PropertyOwnerCard({
   const postalLinje =
     ejendom.postnr && ejendom.by ? `${ejendom.postnr} ${ejendom.by}` : (ejendom.kommune ?? null);
 
+  // BIZZ-455: Dim sold properties
+  const aktiv = ejendom.aktiv !== false;
+  // BIZZ-454: Green accent for property cards (matches diagram property color)
   const CardContent = (
-    <div className="group relative flex flex-col bg-slate-800/60 border border-slate-700/50 rounded-xl overflow-hidden hover:border-blue-500/40 hover:bg-slate-800/80 transition-all duration-150">
-      {/* Top stripe */}
-      <div className="h-1 bg-gradient-to-r from-blue-600/60 to-blue-500/20 flex-shrink-0" />
+    <div
+      className={`group relative flex flex-col bg-slate-800/60 border rounded-xl overflow-hidden transition-all duration-150 ${
+        aktiv
+          ? 'border-slate-700/50 hover:border-emerald-500/40 hover:bg-slate-800/80'
+          : 'border-slate-700/30 bg-slate-800/30 opacity-60 hover:opacity-80 hover:border-slate-600/40'
+      }`}
+    >
+      {/* Top stripe — green for active, slate for sold */}
+      <div
+        className={`h-1 flex-shrink-0 ${
+          aktiv
+            ? 'bg-gradient-to-r from-emerald-600/60 to-emerald-500/20'
+            : 'bg-gradient-to-r from-slate-600/40 to-slate-500/10'
+        }`}
+      />
 
       <div className="p-4 flex flex-col gap-2.5 flex-1">
-        {/* Adresse — hovedtekst */}
+        {/* Adresse — hovedtekst (BIZZ-454: green MapPin for property context) */}
         <div className="flex items-start gap-2">
-          <MapPin size={14} className="text-slate-500 mt-0.5 flex-shrink-0" />
+          <MapPin
+            size={14}
+            className={`mt-0.5 flex-shrink-0 ${aktiv ? 'text-emerald-500' : 'text-slate-500'}`}
+          />
           <div className="min-w-0">
             <p className="text-white font-medium text-sm leading-snug truncate">{adresselinje}</p>
             {postalLinje && <p className="text-slate-400 text-xs mt-0.5">{postalLinje}</p>}
@@ -199,10 +217,22 @@ export default function PropertyOwnerCard({
         )}
       </div>
 
-      {/* Footer */}
+      {/* Footer — BIZZ-454: green accent, BIZZ-455: sold badge */}
       <div className="px-4 pb-3 pt-0">
-        {detailHref ? (
-          <span className="flex items-center justify-between w-full px-3 py-1.5 rounded-lg bg-blue-600/15 text-blue-400 text-xs font-medium group-hover:bg-blue-600/25 group-hover:text-blue-300 transition-colors">
+        {!aktiv ? (
+          <span className="flex items-center justify-between w-full px-3 py-1.5 rounded-lg bg-slate-700/30 text-slate-400 text-[10px] font-medium">
+            <span>{da ? 'Solgt' : 'Sold'}</span>
+            {ejendom.solgtDato && (
+              <span className="text-slate-500 text-[9px]">
+                {new Date(ejendom.solgtDato).toLocaleDateString('da-DK', {
+                  year: 'numeric',
+                  month: 'short',
+                })}
+              </span>
+            )}
+          </span>
+        ) : detailHref ? (
+          <span className="flex items-center justify-between w-full px-3 py-1.5 rounded-lg bg-emerald-600/15 text-emerald-400 text-xs font-medium group-hover:bg-emerald-600/25 group-hover:text-emerald-300 transition-colors">
             <span>{da ? 'Se detaljer' : 'View details'}</span>
             <ExternalLink size={11} />
           </span>

@@ -86,11 +86,13 @@ function makeEvent(type: string, data: unknown): Record<string, unknown> {
 
 /**
  * Default mock user returned by getUserById.
+ * BIZZ-543: includes `id` so resolveUserId's step-1 direct lookup succeeds.
  */
 function mockUser(overrides: Record<string, unknown> = {}) {
   return {
     data: {
       user: {
+        id: (overrides as { id?: string }).id ?? 'mock-user-id',
         email: 'test@example.com',
         app_metadata: {
           subscription: { planId: 'basis', status: 'active', tokensUsedThisMonth: 0 },
@@ -98,6 +100,7 @@ function mockUser(overrides: Record<string, unknown> = {}) {
         ...overrides,
       },
     },
+    error: null,
   };
 }
 
@@ -110,8 +113,8 @@ beforeEach(() => {
 
   // Default: updateUserById succeeds silently
   mockUpdateUserById.mockResolvedValue({ data: {}, error: null });
-  // Default: getUserById returns a user
-  mockGetUserById.mockResolvedValue(mockUser());
+  // Default: getUserById echoes the requested id so resolveUserId step-1 succeeds
+  mockGetUserById.mockImplementation((id: string) => Promise.resolve(mockUser({ id })));
   // Default: listUsers returns empty list
   mockListUsers.mockResolvedValue({ data: { users: [] } });
   // Default: from().select().eq().single() returns null (plan name lookup)
@@ -253,7 +256,7 @@ describe('customer.subscription.updated', () => {
     );
   });
 
-  it('maps past_due Stripe status to payment_failed', async () => {
+  it('maps past_due Stripe status to past_due (BIZZ-541: grace window)', async () => {
     const subscription = {
       metadata: { supabase_user_id: 'user-456', plan_id: 'basis' },
       status: 'past_due',
@@ -266,6 +269,27 @@ describe('customer.subscription.updated', () => {
 
     expect(mockUpdateUserById).toHaveBeenCalledWith(
       'user-456',
+      expect.objectContaining({
+        app_metadata: expect.objectContaining({
+          subscription: expect.objectContaining({ status: 'past_due' }),
+        }),
+      })
+    );
+  });
+
+  it('maps unpaid Stripe status to payment_failed (BIZZ-541: retries exhausted)', async () => {
+    const subscription = {
+      metadata: { supabase_user_id: 'user-unpaid', plan_id: 'basis' },
+      status: 'unpaid',
+      current_period_start: Math.floor(Date.now() / 1000),
+    };
+    mockConstructEvent.mockReturnValue(makeEvent('customer.subscription.updated', subscription));
+
+    const req = buildRequest('{}', 'valid-sig');
+    await POST(req);
+
+    expect(mockUpdateUserById).toHaveBeenCalledWith(
+      'user-unpaid',
       expect.objectContaining({
         app_metadata: expect.objectContaining({
           subscription: expect.objectContaining({ status: 'payment_failed' }),

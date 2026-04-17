@@ -38,6 +38,8 @@ interface PlanConfigRow {
   sales_count: number;
   stripe_price_id: string | null;
   sort_order: number;
+  /** BIZZ-541: Hours of continued access after a failed payment (default 0) */
+  payment_grace_hours: number;
 }
 
 /**
@@ -77,6 +79,8 @@ export async function GET(): Promise<NextResponse> {
         requiresApproval: db?.requires_approval ?? d.requiresApproval,
         isActive: db?.is_active ?? true,
         freeTrialDays: db?.free_trial_days ?? 0,
+        // BIZZ-541: per-plan grace hours — falls back to 0 (no grace)
+        paymentGraceHours: db?.payment_grace_hours ?? d.paymentGraceHours ?? 0,
         maxSales: db?.max_sales ?? null,
         salesCount: db?.sales_count ?? 0,
         // Use env var fallback (STRIPE_PRICE_BASIS etc.) when DB has no price ID
@@ -105,6 +109,7 @@ export async function GET(): Promise<NextResponse> {
         requiresApproval: row.requires_approval,
         isActive: row.is_active ?? true,
         freeTrialDays: row.free_trial_days ?? 0,
+        paymentGraceHours: row.payment_grace_hours ?? 0,
         maxSales: row.max_sales ?? null,
         salesCount: row.sales_count ?? 0,
         // Custom plans have no env var fallback — only DB source

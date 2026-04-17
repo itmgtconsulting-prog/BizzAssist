@@ -261,8 +261,8 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
         }
       }
     }
-    // BFS downward (skip co-owners) — property nodes get depth + 0.5 so they render
-    // on a sub-row directly between their owner and the next company level.
+    // BFS downward (skip co-owners). Properties are NOT assigned integer depth —
+    // they'll be placed in Pass 3 of nodeYMap directly below their specific owner.
     const nodeById = new Map(filteredGraph.nodes.map((n) => [n.id, n]));
     const downQueue = [graph.mainId];
     while (downQueue.length > 0) {
@@ -271,10 +271,15 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
       for (const c of childEdges.get(current) ?? []) {
         if (!depths.has(c) && !coOwnerIds.has(c)) {
           const childNode = nodeById.get(c);
-          // BIZZ-450: properties sit on a fractional depth between owner and next level
           const isPropertyLike = childNode?.type === 'property' || c.startsWith('props-overflow-');
-          depths.set(c, isPropertyLike ? d + 0.5 : d + 1);
-          if (!isPropertyLike) downQueue.push(c);
+          if (isPropertyLike) {
+            // Properties get their owner's depth — they'll be positioned below
+            // the specific owner's sub-row in nodeYMap Pass 3
+            depths.set(c, d);
+          } else {
+            depths.set(c, d + 1);
+            downQueue.push(c);
+          }
         }
       }
     }
@@ -303,13 +308,13 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
   }, [filteredGraph, graph.mainId]);
 
   // ── Layout constants ──
-  const BASE_LEVEL_GAP = 140;
+  const BASE_LEVEL_GAP = 160;
   /** Max nodes per row before wrapping to sub-rows */
   const MAX_PER_ROW = 5;
   /** Base vertical offset between sub-rows within the same depth level */
-  const BASE_SUB_ROW_GAP = 90;
+  const BASE_SUB_ROW_GAP = 100;
   /** Horizontal spacing between nodes in a grid row */
-  const NODE_GAP_X = NODE_W + 28;
+  const NODE_GAP_X = NODE_W + 32;
 
   /** Extra vertical space inserted before a sub-row to fit co-owner nodes */
   const CO_ROW_GAP = 120;
@@ -364,29 +369,36 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
     // Set of target IDs that have expanded co-owners
     const targetsWithCoOwners = new Set(coByTarget.keys());
 
-    // Group only NON-co-owner nodes by depth for standard sub-row layout
-    // Within each depth, separate companies and persons so they never share a row
+    // Group only NON-co-owner, NON-property nodes by depth for standard sub-row layout.
+    // Properties are placed in Pass 3 directly below their specific owner.
     const nodeById = new Map(filteredGraph.nodes.map((n) => [n.id, n]));
+    const isPropertyId = (id: string) => {
+      const n = nodeById.get(id);
+      return n?.type === 'property' || id.startsWith('props-overflow-');
+    };
+    // Map from owner node id → list of property node ids
+    const propertiesByOwner = new Map<string, string[]>();
+    for (const edge of filteredGraph.edges) {
+      if (isPropertyId(edge.to)) {
+        if (!propertiesByOwner.has(edge.from)) propertiesByOwner.set(edge.from, []);
+        propertiesByOwner.get(edge.from)!.push(edge.to);
+      }
+    }
     const byDepth = new Map<number, string[]>();
     for (const node of filteredGraph.nodes) {
       if (coOwnerIds.has(node.id)) continue;
+      if (isPropertyId(node.id)) continue; // placed in Pass 3
       const d = depthMap.get(node.id) ?? 0;
       if (!byDepth.has(d)) byDepth.set(d, []);
       byDepth.get(d)!.push(node.id);
     }
-    // Re-order each depth group: persons first, then companies, then properties
-    // Each type group is padded to a row boundary so they never share a sub-row.
+    // Re-order each depth group: persons first, then companies.
+    // (Properties are handled in Pass 3 — not in byDepth anymore.)
     for (const [depth, ids] of byDepth) {
       const persons = ids.filter((id) => nodeById.get(id)?.type === 'person');
-      const properties = ids.filter((id) => nodeById.get(id)?.type === 'property');
-      const companies = ids.filter((id) => {
-        const t = nodeById.get(id)?.type;
-        return t !== 'person' && t !== 'property';
-      });
+      const companies = ids.filter((id) => nodeById.get(id)?.type !== 'person');
 
-      const hasMixedTypes =
-        (persons.length > 0 && companies.length > 0) ||
-        (properties.length > 0 && (persons.length > 0 || companies.length > 0));
+      const hasMixedTypes = persons.length > 0 && companies.length > 0;
 
       if (hasMixedTypes) {
         // Pad persons so companies start on a fresh row
@@ -398,21 +410,7 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
         ) {
           paddedPersons.push('__pad__');
         }
-        // Pad companies so properties start on a fresh row
-        const paddedCompanies = [...companies];
-        while (
-          properties.length > 0 &&
-          companies.length > 0 &&
-          paddedCompanies.length % MAX_PER_ROW !== 0
-        ) {
-          paddedCompanies.push('__pad__');
-        }
-        byDepth.set(depth, [...paddedPersons, ...paddedCompanies, ...properties]);
-      } else if (properties.length > 0 && companies.length > 0) {
-        // Only companies + properties (no persons): pad companies, then properties
-        const paddedCompanies = [...companies];
-        while (paddedCompanies.length % MAX_PER_ROW !== 0) paddedCompanies.push('__pad__');
-        byDepth.set(depth, [...paddedCompanies, ...properties]);
+        byDepth.set(depth, [...paddedPersons, ...companies]);
       }
     }
 
@@ -434,10 +432,13 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
         const startIdx = sr * MAX_PER_ROW;
         const endIdx = Math.min(startIdx + MAX_PER_ROW, nodeIds.length);
         let subRowHasCoOwners = false;
+        let subRowHasProperties = false;
         for (let i = startIdx; i < endIdx; i++) {
           if (nodeIds[i] !== '__pad__' && targetsWithCoOwners.has(nodeIds[i])) {
             subRowHasCoOwners = true;
-            break;
+          }
+          if (nodeIds[i] !== '__pad__' && propertiesByOwner.has(nodeIds[i])) {
+            subRowHasProperties = true;
           }
         }
         if (sr > 0 || depth !== sortedDepths[0]) {
@@ -446,12 +447,27 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
         if (subRowHasCoOwners) {
           levelHeight += CO_ROW_GAP;
         }
+        // Reserve space for properties below this sub-row if any company here owns properties
+        if (subRowHasProperties) {
+          // Find max property count per owner in this sub-row to size the reservation
+          let maxPropsInSubrow = 0;
+          for (let i = startIdx; i < endIdx; i++) {
+            if (nodeIds[i] === '__pad__') continue;
+            const props = propertiesByOwner.get(nodeIds[i]);
+            if (props) {
+              const propSubrows = Math.ceil(props.length / MAX_PER_ROW);
+              maxPropsInSubrow = Math.max(maxPropsInSubrow, propSubrows);
+            }
+          }
+          // 95 initial gap + 70 per additional sub-row
+          levelHeight += 95 + Math.max(0, maxPropsInSubrow - 1) * 70;
+        }
       }
       cumulativeY += Math.max(levelHeight, levelGap);
     }
 
-    // Pass 1: Assign Y to non-co-owner nodes, inserting extra gaps before sub-rows with co-owners
-    // Skip __pad__ placeholder entries used for person/company row separation
+    // Pass 1: Assign Y to non-co-owner nodes, inserting extra gaps before sub-rows
+    // with co-owners, AND after sub-rows whose owners have properties.
     for (const [depth, nodeIds] of byDepth) {
       const baseY = depthBaseY.get(depth) ?? 0;
       const subRowGap = getSubRowGap(depth);
@@ -463,6 +479,21 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
         if (subRow !== prevSubRow) {
           if (subRow > 0) {
             runningY += subRowGap;
+            // Extra gap if PREVIOUS sub-row had owners with properties
+            const prevStart = prevSubRow * MAX_PER_ROW;
+            const prevEnd = Math.min(prevStart + MAX_PER_ROW, nodeIds.length);
+            let prevMaxProps = 0;
+            for (let j = prevStart; j < prevEnd; j++) {
+              if (nodeIds[j] === '__pad__') continue;
+              const props = propertiesByOwner.get(nodeIds[j]);
+              if (props) {
+                const pr = Math.ceil(props.length / MAX_PER_ROW);
+                prevMaxProps = Math.max(prevMaxProps, pr);
+              }
+            }
+            if (prevMaxProps > 0) {
+              runningY += 95 + Math.max(0, prevMaxProps - 1) * 70;
+            }
           }
           // Check if this sub-row needs extra space for co-owners above it
           const startIdx = subRow * MAX_PER_ROW;
@@ -531,6 +562,20 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
       }
     }
 
+    // Pass 3: Place properties directly below their specific owner.
+    // Each owner's properties form their own sub-row at ownerY + PROPERTY_ROW_GAP,
+    // so property boxes appear immediately under the company that owns them.
+    const PROPERTY_ROW_GAP = 95;
+    const PROPERTY_SUBROW_GAP = 70;
+    for (const [ownerId, propIds] of propertiesByOwner) {
+      const ownerY = yMap.get(ownerId);
+      if (ownerY == null) continue;
+      const propBaseY = ownerY + PROPERTY_ROW_GAP;
+      for (let i = 0; i < propIds.length; i++) {
+        const subRow = Math.floor(i / MAX_PER_ROW);
+        yMap.set(propIds[i], propBaseY + subRow * PROPERTY_SUBROW_GAP);
+      }
+    }
     return yMap;
   }, [filteredGraph, depthMap, getSubRowGap, getLevelGap]);
 
@@ -1246,11 +1291,15 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
         const midY = (sy + ey) / 2;
         const midX = (sx + ex) / 2;
 
+        // Property edges rendered with emerald color to match property nodes
+        const isPropertyEdge = toNode?.type === 'property' || edge.to.startsWith('props-overflow-');
         const strokeColor = isCoOwnerEdge
-          ? 'rgba(139,92,246,0.25)'
-          : edge.from === graph.mainId || edge.to === graph.mainId
-            ? 'rgba(59,130,246,0.5)'
-            : 'rgba(100,116,139,0.4)';
+          ? 'rgba(167,139,250,0.55)'
+          : isPropertyEdge
+            ? 'rgba(52,211,153,0.65)'
+            : edge.from === graph.mainId || edge.to === graph.mainId
+              ? 'rgba(96,165,250,0.85)'
+              : 'rgba(148,163,184,0.75)';
 
         return (
           <g key={`e-${i}`}>
@@ -1258,11 +1307,11 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
               d={`M ${sx} ${sy} C ${sx} ${midY}, ${ex} ${midY}, ${ex} ${ey}`}
               fill="none"
               stroke={strokeColor}
-              strokeWidth={isCoOwnerEdge ? 1 : 1.5}
+              strokeWidth={isCoOwnerEdge ? 1.5 : 2.25}
               strokeDasharray={isCoOwnerEdge ? '4 3' : undefined}
             />
             <polygon
-              points={`${ex},${ey} ${ex - 3.5},${ey - 7} ${ex + 3.5},${ey - 7}`}
+              points={`${ex},${ey} ${ex - 5},${ey - 9} ${ex + 5},${ey - 9}`}
               fill={strokeColor}
             />
             {edge.ejerandel && (

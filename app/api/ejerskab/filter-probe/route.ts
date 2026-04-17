@@ -71,52 +71,78 @@ export async function GET(req: NextRequest) {
   const token = await getSharedOAuthToken().catch(() => null);
   if (!token) return NextResponse.json({ error: 'OAuth token unavailable' }, { status: 503 });
 
-  const safeNavn = navn.replace(/"/g, '\\"');
-  const safeFd = fd.replace(/"/g, '\\"');
-  const safeId = id.replace(/"/g, '\\"');
+  const _safeNavn = navn.replace(/"/g, '\\"');
+  const _safeFd = fd.replace(/"/g, '\\"');
+  const _safeId = id.replace(/"/g, '\\"');
 
-  // Test flere filter-syntaxer
+  // Først: introspect filter-input-typen for at finde valide felter.
+  const introspectQuery = `{
+    __type(name: "EJFCustom_EjerskabBegraensetFilterInput") {
+      name
+      inputFields {
+        name
+        type {
+          name
+          kind
+          ofType { name kind }
+        }
+      }
+    }
+  }`;
+  const introspectRes = await fetch(proxyUrl(EJF_GQL_URL), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+      ...proxyHeaders(),
+    },
+    body: JSON.stringify({ query: introspectQuery }),
+    signal: AbortSignal.timeout(15000),
+  });
+  const introspect = await introspectRes.text();
+
+  // Prøv også alternative typenavne
+  const alternativeNames = [
+    'EJFCustom_EjerskabBegraensetFilter',
+    'EjfCustom_EjerskabBegraensetFilter',
+    'EjfCustomEjerskabBegraensetFilterInput',
+  ];
+  const altIntrospections: Record<string, unknown> = {};
+  for (const n of alternativeNames) {
+    const q = `{ __type(name: "${n}") { name kind inputFields { name type { name kind } } } }`;
+    const r = await fetch(proxyUrl(EJF_GQL_URL), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        ...proxyHeaders(),
+      },
+      body: JSON.stringify({ query: q }),
+      signal: AbortSignal.timeout(10000),
+    });
+    altIntrospections[n] = await r.text();
+  }
+
+  // Test flere filter-syntaxer (baseline som sanity-check)
   const variants: Array<{ name: string; where: string }> = [
+    { name: 'bfe_direct', where: `{ bestemtFastEjendomBFENr: { eq: 2081243 } }` },
     {
-      name: 'nested_navn_only',
-      where: `{ ejendePersonBegraenset: { navn: { navn: { eq: "${safeNavn}" } } } }`,
-    },
-    {
-      name: 'nested_foedselsdato_only',
-      where: `{ ejendePersonBegraenset: { foedselsdato: { eq: "${safeFd}" } } }`,
-    },
-    {
-      name: 'nested_id_only',
-      where: `{ ejendePersonBegraenset: { id: { eq: "${safeId}" } } }`,
-    },
-    {
-      name: 'flat_ejendePersonBegraensetId',
-      where: `{ ejendePersonBegraensetId: { eq: "${safeId}" } }`,
-    },
-    {
-      name: 'flat_ejendePersonNavn',
-      where: `{ ejendePersonNavn: { eq: "${safeNavn}" } }`,
-    },
-    {
-      name: 'flat_ejendePersonFoedselsdato',
-      where: `{ ejendePersonFoedselsdato: { eq: "${safeFd}" } }`,
-    },
-    {
-      name: 'nested_and_navn_fd',
-      where: `{ and: [
-        { ejendePersonBegraenset: { navn: { navn: { eq: "${safeNavn}" } } } }
-        { ejendePersonBegraenset: { foedselsdato: { eq: "${safeFd}" } } }
-      ] }`,
+      name: 'ejendePersonEnhedsNummer_68_prefix',
+      where: `{ ejendePersonEnhedsNummer: { eq: 68595 } }`,
     },
   ];
-
   const results: Record<string, unknown> = {};
   for (const v of variants) {
     results[v.name] = await runQuery(token, v.where);
   }
 
   return NextResponse.json(
-    { probeInputs: { navn, foedselsdato: fd, id }, results },
+    {
+      probeInputs: { navn, foedselsdato: fd, id },
+      introspection: introspect.slice(0, 4000),
+      altIntrospections,
+      results,
+    },
     { status: 200, headers: { 'Cache-Control': 'no-store' } }
   );
 }

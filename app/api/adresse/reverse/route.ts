@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { resolveTenantId } from '@/lib/api/auth';
 import { parseQuery } from '@/app/lib/validate';
+import { fetchDawa } from '@/app/lib/dawa';
 
 // const DAR_ENDPOINT = 'https://graphql.datafordeler.dk/DAR/v1';
 // TODO(BIZZ-92): DAR GraphQL doesn't support spatial queries yet — enable when it does (before July 2026).
@@ -36,9 +37,10 @@ export async function GET(request: NextRequest) {
 
   // DAWA fallback (virker til 1. juli 2026)
   try {
-    const res = await fetch(
+    const res = await fetchDawa(
       `https://api.dataforsyningen.dk/adgangsadresser/reverse?x=${lng}&y=${lat}&struktur=mini`,
-      { signal: AbortSignal.timeout(5000) }
+      { signal: AbortSignal.timeout(5000) },
+      { caller: 'adresse.reverse' }
     );
     if (!res.ok) return NextResponse.json({ adresse: null, id: null });
     const d = (await res.json()) as Record<string, unknown>;

@@ -11,6 +11,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { resolveTenantId } from '@/lib/api/auth';
+import { fetchDawa } from '@/app/lib/dawa';
 
 /**
  * Henter matrikelpolygoner for en bounding box via Datafordeler MAT WFS.
@@ -88,7 +89,11 @@ export async function GET(request: NextRequest) {
       ])
     );
     const url = `https://api.dataforsyningen.dk/jordstykker?polygon=${poly}&srid=4326&format=geojson&per_side=1000`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
+    const res = await fetchDawa(
+      url,
+      { signal: AbortSignal.timeout(20000) },
+      { caller: 'matrikel.bbox.jordstykker' }
+    );
     if (!res.ok) return NextResponse.json(emptyFc);
     const json = await res.json();
     if (Array.isArray(json)) {

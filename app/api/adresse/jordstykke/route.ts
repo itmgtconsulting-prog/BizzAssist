@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { darHentJordstykke } from '@/app/lib/dar';
+import { fetchDawa } from '@/app/lib/dawa';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
 
@@ -38,11 +39,10 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(null, { status: 400 });
     }
     try {
-      const jsRes = await fetch(
+      const jsRes = await fetchDawa(
         `https://api.dataforsyningen.dk/jordstykker?bfenummer=${encodeURIComponent(bfe)}`,
-        {
-          signal: AbortSignal.timeout(5000),
-        }
+        { signal: AbortSignal.timeout(5000) },
+        { caller: 'adresse.jordstykke.bfe' }
       );
       if (!jsRes.ok) return NextResponse.json(null, { status: 200 });
       const jsData = await jsRes.json();
@@ -56,9 +56,10 @@ export async function GET(request: NextRequest) {
       const ek = js.ejerlav?.kode;
       const mn = js.matrikelnr;
       if (ek && mn) {
-        const adgRes = await fetch(
+        const adgRes = await fetchDawa(
           `https://api.dataforsyningen.dk/adgangsadresser?ejerlavkode=${ek}&matrikelnr=${encodeURIComponent(mn)}&struktur=mini&per_side=1`,
-          { signal: AbortSignal.timeout(5000) }
+          { signal: AbortSignal.timeout(5000) },
+          { caller: 'adresse.jordstykke.ejerlav' }
         );
         if (adgRes.ok) {
           const adgData = await adgRes.json();

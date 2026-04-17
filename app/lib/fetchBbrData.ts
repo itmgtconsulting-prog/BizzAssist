@@ -11,6 +11,7 @@
 
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { BBR_WFS_ENDPOINT, BBR_GQL_ENDPOINT, DAWA_BASE_URL } from '@/app/lib/serviceEndpoints';
+import { fetchDawa } from '@/app/lib/dawa';
 import {
   tagMaterialeTekst,
   ydervaegMaterialeTekst,
@@ -386,10 +387,11 @@ async function fetchBFENummer(dawaId: string): Promise<{
     let adgKommunekode: string | null = null;
 
     // Trin 1a: Forsøg direkte som adgangsadresse
-    const adgRes = await fetch(`${DAWA_BASE_URL}/adgangsadresser/${dawaId}`, {
-      signal: AbortSignal.timeout(5000),
-      next: { revalidate: 3600 },
-    });
+    const adgRes = await fetchDawa(
+      `${DAWA_BASE_URL}/adgangsadresser/${dawaId}`,
+      { signal: AbortSignal.timeout(5000), next: { revalidate: 3600 } },
+      { caller: 'fetchBbrData.adgangsadresse' }
+    );
 
     if (adgRes.ok) {
       const adg = (await adgRes.json()) as {
@@ -406,10 +408,11 @@ async function fetchBFENummer(dawaId: string): Promise<{
       adgKommunekode = adg?.kommune?.kode ?? null;
     } else {
       // Trin 1b: ID er en adresse (med etage/dør) — hent adgangsadresse via /adresser/{id}
-      const adrRes = await fetch(`${DAWA_BASE_URL}/adresser/${dawaId}`, {
-        signal: AbortSignal.timeout(5000),
-        next: { revalidate: 3600 },
-      });
+      const adrRes = await fetchDawa(
+        `${DAWA_BASE_URL}/adresser/${dawaId}`,
+        { signal: AbortSignal.timeout(5000), next: { revalidate: 3600 } },
+        { caller: 'fetchBbrData.adresse' }
+      );
       if (!adrRes.ok)
         return {
           bfeNummer: null,
@@ -451,10 +454,11 @@ async function fetchBFENummer(dawaId: string): Promise<{
 
     // BIZZ-254: Trin 2 + 3 kører parallelt (uafhængige af hinanden)
     // Trin 2: Hent BFEnummer fra jordstykker-endpoint (= moderejendommens BFE)
-    const jordBfePromise = fetch(`${DAWA_BASE_URL}/jordstykker/${ejerlavKode}/${matrikelnr}`, {
-      signal: AbortSignal.timeout(5000),
-      next: { revalidate: 3600 },
-    })
+    const jordBfePromise = fetchDawa(
+      `${DAWA_BASE_URL}/jordstykker/${ejerlavKode}/${matrikelnr}`,
+      { signal: AbortSignal.timeout(5000), next: { revalidate: 3600 } },
+      { caller: 'fetchBbrData.jordstykker.moder' }
+    )
       .then(async (jsRes) => {
         if (!jsRes.ok) return null;
         const js = (await jsRes.json()) as { bfenummer?: number };
@@ -812,10 +816,11 @@ async function fetchDAWAEnhedAdresser(
 
   try {
     const params = uuids.map((id) => `id=${encodeURIComponent(id)}`).join('&');
-    const res = await fetch(`${DAWA_BASE_URL}/adresser?${params}&struktur=mini`, {
-      signal: AbortSignal.timeout(8000),
-      next: { revalidate: 3600 },
-    });
+    const res = await fetchDawa(
+      `${DAWA_BASE_URL}/adresser?${params}&struktur=mini`,
+      { signal: AbortSignal.timeout(8000), next: { revalidate: 3600 } },
+      { caller: 'fetchBbrData.adresser.batch' }
+    );
     if (!res.ok) return result;
     const data = (await res.json()) as Array<Record<string, unknown>>;
     for (const item of data) {
@@ -1077,9 +1082,11 @@ export async function fetchBbrForAddress(
   let effectiveBfe = bfeNummer;
   if (!effectiveBfe && ejerlavKode && matrikelnr) {
     try {
-      const jsRes = await fetch(`${DAWA_BASE_URL}/jordstykker/${ejerlavKode}/${matrikelnr}`, {
-        signal: AbortSignal.timeout(5000),
-      });
+      const jsRes = await fetchDawa(
+        `${DAWA_BASE_URL}/jordstykker/${ejerlavKode}/${matrikelnr}`,
+        { signal: AbortSignal.timeout(5000) },
+        { caller: 'fetchBbrData.jordstykker.fallback' }
+      );
       if (jsRes.ok) {
         const js = (await jsRes.json()) as { bfenummer?: number };
         effectiveBfe = js?.bfenummer ?? null;

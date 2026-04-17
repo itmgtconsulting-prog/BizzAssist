@@ -32,6 +32,7 @@ import {
   DATAFORDELER_TOKEN_URL,
   DAWA_BASE_URL,
 } from '@/app/lib/serviceEndpoints';
+import { fetchDawa } from '@/app/lib/dawa';
 
 /** Zod schema for /api/ejendomme-by-owner query params */
 const _querySchema = z.object({
@@ -354,10 +355,11 @@ async function _hentDawaBfeDataImpl(bfe: number): Promise<DawaBfeAdresse> {
   };
 
   try {
-    const res = await fetch(`${DAWA_BASE_URL}/bfe/${bfe}`, {
-      signal: AbortSignal.timeout(10000),
-      next: { revalidate: 86400 },
-    });
+    const res = await fetchDawa(
+      `${DAWA_BASE_URL}/bfe/${bfe}`,
+      { signal: AbortSignal.timeout(10000), next: { revalidate: 86400 } },
+      { caller: 'ejendomme-by-owner.bfe' }
+    );
     if (!res.ok) return empty;
 
     const json = (await res.json()) as {
@@ -404,9 +406,10 @@ async function _hentDawaBfeDataImpl(bfe: number): Promise<DawaBfeAdresse> {
 
     if (husnumreId) {
       try {
-        const addrRes = await fetch(
+        const addrRes = await fetchDawa(
           `${DAWA_BASE_URL}/adgangsadresser/${husnumreId}?struktur=mini`,
-          { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } }
+          { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
+          { caller: 'ejendomme-by-owner.adgangsadresser.husnumre' }
         );
         if (addrRes.ok) {
           const addr = (await addrRes.json()) as {

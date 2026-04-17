@@ -31,6 +31,7 @@ import { bygAnvendelseTekst, ejerforholdTekst } from '@/app/lib/bbrKoder';
 import { generateEjendomSlug } from '@/app/lib/slug';
 import { fetchBbrForAddress } from '@/app/lib/fetchBbrData';
 import { darHentAdresse } from '@/app/lib/dar';
+import { fetchDawa } from '@/app/lib/dawa';
 import PublicPricingSection from '@/app/(public)/components/PublicPricingSection';
 import { logger } from '@/app/lib/logger';
 
@@ -216,21 +217,23 @@ async function hentDawaAdresse(bfe: string, slug: string): Promise<DawaAdresse |
 
     const [darAdresse, adgJson, fullAdresseArr] = await Promise.all([
       darHentAdresse(adgangsAdresseId),
-      fetch(`${DAWA_API}/adgangsadresser/${adgangsAdresseId}`, {
-        signal: AbortSignal.timeout(5000),
-        next: { revalidate: 3600 },
-      })
+      fetchDawa(
+        `${DAWA_API}/adgangsadresser/${adgangsAdresseId}`,
+        { signal: AbortSignal.timeout(5000), next: { revalidate: 3600 } },
+        { caller: 'public.ejendom.page.adgangsadresser' }
+      )
         .then((r) => (r.ok ? (r.json() as Promise<DawaAdgangResponse>) : Promise.resolve(null)))
         .catch(() => null),
       hasEtageOrDoer
-        ? fetch(
+        ? fetchDawa(
             // Korrekt DAWA-parameter er 'adgangsadresse' (ikke 'adgangsadresseid')
             `${DAWA_API}/adresser?adgangsadresse=${encodeURIComponent(adgangsAdresseId)}` +
               (src.floor ? `&etage=${encodeURIComponent(src.floor)}` : '') +
               // 'dør' URL-encoded som 'd%C3%B8r' for RFC 3986-compliance
               (src.door ? `&d%C3%B8r=${encodeURIComponent(src.door)}` : '') +
               `&per_side=1&struktur=mini`,
-            { signal: AbortSignal.timeout(5000), next: { revalidate: 3600 } }
+            { signal: AbortSignal.timeout(5000), next: { revalidate: 3600 } },
+            { caller: 'public.ejendom.page.adresser.etage' }
           )
             .then((r) => (r.ok ? (r.json() as Promise<DawaAdresseMini[]>) : Promise.resolve(null)))
             .catch(() => null)
@@ -256,10 +259,11 @@ async function hentDawaAdresse(bfe: string, slug: string): Promise<DawaAdresse |
         per_side: '1',
         struktur: 'mini',
       });
-      const textResult = await fetch(`${DAWA_API}/adresser?${textParams}`, {
-        signal: AbortSignal.timeout(5000),
-        next: { revalidate: 3600 },
-      })
+      const textResult = await fetchDawa(
+        `${DAWA_API}/adresser?${textParams}`,
+        { signal: AbortSignal.timeout(5000), next: { revalidate: 3600 } },
+        { caller: 'public.ejendom.page.adresser.text' }
+      )
         .then((r) => (r.ok ? (r.json() as Promise<DawaAdresseMini[]>) : Promise.resolve(null)))
         .catch(() => null);
 
@@ -267,10 +271,11 @@ async function hentDawaAdresse(bfe: string, slug: string): Promise<DawaAdresse |
         resolvedFullAdresseArr = textResult;
         const correctAdgId = textResult[0].adgangsadresseid;
         if (correctAdgId) {
-          resolvedAdgJson = await fetch(`${DAWA_API}/adgangsadresser/${correctAdgId}`, {
-            signal: AbortSignal.timeout(5000),
-            next: { revalidate: 3600 },
-          })
+          resolvedAdgJson = await fetchDawa(
+            `${DAWA_API}/adgangsadresser/${correctAdgId}`,
+            { signal: AbortSignal.timeout(5000), next: { revalidate: 3600 } },
+            { caller: 'public.ejendom.page.adgangsadresser.correct' }
+          )
             .then((r) => (r.ok ? (r.json() as Promise<DawaAdgangResponse>) : Promise.resolve(null)))
             .catch(() => null);
         }

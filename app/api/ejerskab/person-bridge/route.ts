@@ -22,6 +22,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantId } from '@/lib/api/auth';
+import { fetchDawa } from '@/app/lib/dawa';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -126,7 +127,11 @@ export async function GET(req: NextRequest) {
   ): Promise<number | null> {
     try {
       const url = `https://api.dataforsyningen.dk/jordstykker/${ejerlavkode}/${encodeURIComponent(matrikelnr)}`;
-      const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+      const res = await fetchDawa(
+        url,
+        { signal: AbortSignal.timeout(10000) },
+        { caller: 'person-bridge.jordstykker' }
+      );
       if (!res.ok) return null;
       const j = (await res.json()) as { bfenummer?: number };
       return j.bfenummer ?? null;
@@ -142,9 +147,11 @@ export async function GET(req: NextRequest) {
    * Forsøg 1: /adresser/{id} returnerer adgangsadresse med ejerlav + matrikelnr.
    */
   try {
-    const res = await fetch(`https://api.dataforsyningen.dk/adresser/${encoded}`, {
-      signal: AbortSignal.timeout(10000),
-    });
+    const res = await fetchDawa(
+      `https://api.dataforsyningen.dk/adresser/${encoded}`,
+      { signal: AbortSignal.timeout(10000) },
+      { caller: 'person-bridge.adresser' }
+    );
     if (res.ok) {
       const d = (await res.json()) as {
         adgangsadresse?: { ejerlav?: { kode?: number }; matrikelnr?: string };
@@ -170,9 +177,10 @@ export async function GET(req: NextRequest) {
         husnr: `${adr.husnummerFra}${adr.bogstavFra ?? ''}`,
         postnr: String(adr.postnummer),
       });
-      const res = await fetch(
+      const res = await fetchDawa(
         `https://api.dataforsyningen.dk/adgangsadresser?${params.toString()}`,
-        { signal: AbortSignal.timeout(10000) }
+        { signal: AbortSignal.timeout(10000) },
+        { caller: 'person-bridge.adgangsadresser' }
       );
       if (res.ok) {
         const arr = (await res.json()) as Array<{

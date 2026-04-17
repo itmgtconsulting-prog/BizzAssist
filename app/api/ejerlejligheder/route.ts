@@ -18,6 +18,7 @@ import { z } from 'zod';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
 import { parseQuery } from '@/app/lib/validate';
+import { fetchDawa } from '@/app/lib/dawa';
 // EJF/Datafordeler er ikke nødvendig — alt data hentes fra tinglysning summarisk XML
 
 // ─── Query param validation ─────────────────────────────────────────────────
@@ -368,9 +369,11 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
             const params = new URLSearchParams({ vejnavn: vej, husnr: nr, postnr });
             if (etage) params.set('etage', etage);
             if (doer) params.set('dør', doer);
-            const dawaRes = await fetch(`https://api.dataforsyningen.dk/adresser?${params}`, {
-              signal: AbortSignal.timeout(5000),
-            });
+            const dawaRes = await fetchDawa(
+              `https://api.dataforsyningen.dk/adresser?${params}`,
+              { signal: AbortSignal.timeout(5000) },
+              { caller: 'ejerlejligheder.adresser.resolve' }
+            );
             if (!dawaRes.ok) return;
             const addrs = (await dawaRes.json()) as { id: string }[];
             if (addrs.length > 0) {

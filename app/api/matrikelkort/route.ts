@@ -24,6 +24,7 @@ import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
 import { parseQuery } from '@/app/lib/validate';
 import { DAWA_BASE_URL } from '@/app/lib/serviceEndpoints';
+import { fetchDawa } from '@/app/lib/dawa';
 
 // pdfkit bruger Node.js streams — tving Node.js runtime (ikke Edge)
 export const runtime = 'nodejs';
@@ -659,10 +660,16 @@ export async function GET(request: NextRequest): Promise<Response> {
 
     // Trin 1: Hent primær matrikel — flat JSON for metadata
     const [flatRes, geoRes] = await Promise.all([
-      fetch(`${DAWA_BASE_URL}/jordstykker/${path}`, { signal: AbortSignal.timeout(8000) }),
-      fetch(`${DAWA_BASE_URL}/jordstykker/${path}?format=geojson`, {
-        signal: AbortSignal.timeout(8000),
-      }),
+      fetchDawa(
+        `${DAWA_BASE_URL}/jordstykker/${path}`,
+        { signal: AbortSignal.timeout(8000) },
+        { caller: 'matrikelkort.jordstykker.flat' }
+      ),
+      fetchDawa(
+        `${DAWA_BASE_URL}/jordstykker/${path}?format=geojson`,
+        { signal: AbortSignal.timeout(8000) },
+        { caller: 'matrikelkort.jordstykker.geojson' }
+      ),
     ]);
 
     if (!flatRes.ok) {

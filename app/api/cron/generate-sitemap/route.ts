@@ -46,6 +46,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { generateSlug, generateVirksomhedSlug } from '@/app/lib/slug';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
+import { fetchDawa } from '@/app/lib/dawa';
 
 // ─── Konstanter ────────────────────────────────────────────────────────────────
 
@@ -347,10 +348,14 @@ async function phaseProperties(
       `?per_side=${JORDSTYKKE_PAGE_SIZE}&side=${currentPage}`;
 
     try {
-      const res = await fetch(url, {
-        headers: { Accept: 'application/json' },
-        signal: AbortSignal.timeout(10000),
-      });
+      const res = await fetchDawa(
+        url,
+        {
+          headers: { Accept: 'application/json' },
+          signal: AbortSignal.timeout(10000),
+        },
+        { caller: 'cron.generate-sitemap.jordstykker' }
+      );
 
       if (!res.ok) {
         logger.error(

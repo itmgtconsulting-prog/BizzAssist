@@ -168,22 +168,28 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
    * ikke nødvendigvis stadig ejer selskabet.
    */
   const expandPersonDynamic = useCallback(
-    async (personId: string, enhedsNummer: number) => {
+    async (personId: string, enhedsNummer: number, personNavn?: string) => {
       if (expandedDynamic.has(personId) || loadingExpansion.has(personId)) return;
       setLoadingExpansion((prev) => new Set(prev).add(personId));
       try {
-        // Bruger KUN enhedsNummer-baseret ejendomsopslag. Navne-fallback er
-        // bevidst fravalgt: personnavne er ikke unikke og risikerer at bind
-        // ejendomme fra en anden person med samme navn til denne node.
-        // Hvis EJF's enhedsNummer-lookup returnerer 0 vises ingen ejendomme
-        // hellere end risikere forkerte data.
+        // Ejendoms-opslag bruger BÅDE enhedsNummer (CVR ES) OG personnavn
+        // som kriterier. CVR ES og EJF bruger forskellige person-
+        // identifikatorer, så enhedsNummer-alene matcher ofte 0. Ved at
+        // sende personens navn som fallback finder vi også de ejendomme
+        // hvor EJF kun har navnet registreret. Resultater fra navn-match
+        // markeres med ownerCvr="person-navn-<navn>" så klienten kan vise
+        // en "navn-match"-indikator — de skal verificeres af brugeren.
+        const navnParam = personNavn ? `&personNavn=${encodeURIComponent(personNavn)}` : '';
         const [personRes, ejendommeRes] = await Promise.all([
           fetch(`/api/cvr-public/person?enhedsNummer=${enhedsNummer}`, {
             signal: AbortSignal.timeout(15000),
           }).catch(() => null),
-          fetch(`/api/ejendomme-by-owner?enhedsNummer=${enhedsNummer}&limit=50&offset=0`, {
-            signal: AbortSignal.timeout(15000),
-          }).catch(() => null),
+          fetch(
+            `/api/ejendomme-by-owner?enhedsNummer=${enhedsNummer}${navnParam}&limit=50&offset=0`,
+            {
+              signal: AbortSignal.timeout(15000),
+            }
+          ).catch(() => null),
         ]);
         const existingIds = new Set<string>([
           ...graph.nodes.map((n) => n.id),

@@ -389,24 +389,32 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
       }
     }
 
-    // Assign co-owners:
-    //   - PERSON co-owners go to the very top of the diagram (below min depth)
-    //     to avoid overlap with company rows when expanded (user request)
-    //   - COMPANY co-owners stay at targetDepth - 0.5 (one half-level above subsidiary)
-    // Find the minimum depth among non-co-owner nodes (the topmost company/main)
-    let minDepth = 0;
+    // Compute the minimum depth among non-PERSON, non-co-owner nodes.
+    // Used as anchor for a dedicated "person row" placed one level above.
+    let minDepthNonPerson = 0;
     for (const [id, d] of depths) {
-      if (!coOwnerIds.has(id) && d < minDepth) minDepth = d;
+      if (coOwnerIds.has(id)) continue;
+      if (nodeById.get(id)?.type === 'person') continue;
+      if (d < minDepthNonPerson) minDepthNonPerson = d;
     }
+
+    // Pin ALL person nodes (owner-chain AND co-owners) to the very top of the
+    // diagram. Tidligere kunne ownerchain-persons lande midt i diagrammet hvis
+    // deres BFS-depth ramte et indrykket holding-niveau; brugeren vil have alle
+    // personer samlet øverst uanset hvor de logisk hører til i kæden.
+    for (const node of filteredGraph.nodes) {
+      if (node.type !== 'person') continue;
+      if (node.id === effectiveGraph.mainId) continue; // main stays where it is
+      depths.set(node.id, minDepthNonPerson - 1);
+    }
+
+    // Company co-owners stay close to their subsidiary (targetDepth - 0.5) so
+    // the parentage is still readable.
     for (const [coId, targetId] of coOwnerTarget) {
       const coNode = nodeById.get(coId);
-      if (coNode?.type === 'person') {
-        // All person co-owners pinned to the very top
-        depths.set(coId, minDepth - 1);
-      } else {
-        const targetDepth = depths.get(targetId) ?? 1;
-        depths.set(coId, targetDepth - 0.5);
-      }
+      if (coNode?.type === 'person') continue; // already pinned to top above
+      const targetDepth = depths.get(targetId) ?? 1;
+      depths.set(coId, targetDepth - 0.5);
     }
 
     return depths;
@@ -491,7 +499,10 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
     }
     const byDepth = new Map<number, string[]>();
     for (const node of filteredGraph.nodes) {
-      if (coOwnerIds.has(node.id)) continue;
+      // Include PERSON co-owners in byDepth — they share the top person row
+      // with ownerchain persons (uniform placement). Company co-owners still
+      // get their own dedicated Pass 2 placement above their target.
+      if (coOwnerIds.has(node.id) && node.type !== 'person') continue;
       if (isPropertyId(node.id)) continue; // placed in Pass 3
       const d = depthMap.get(node.id) ?? 0;
       if (!byDepth.has(d)) byDepth.set(d, []);
@@ -652,22 +663,11 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
     for (const [id, yVal] of yMap) {
       if (!coOwnerIds.has(id) && yVal < globalMinY) globalMinY = yVal;
     }
-    // All person co-owners collected globally, placed on a shared row at the top
-    const allPersonCoOwners: string[] = [];
-    for (const [, coIds] of coByTarget) {
-      const targetY =
-        yMap.get([...coByTarget.keys()].find((k) => coByTarget.get(k) === coIds) ?? '') ?? 0;
-      void targetY; // unused here — handled below per target
-      const companies = coIds.filter((id) => nodeById.get(id)?.type === 'company');
-      const persons = coIds.filter((id) => nodeById.get(id)?.type === 'person');
-      allPersonCoOwners.push(...persons);
-      // Place company co-owners relative to their target
-      if (companies.length > 0) {
-        const actualTargetId = [...coByTarget.entries()].find(([, v]) => v === coIds)?.[0];
-        void actualTargetId; // not directly needed — we iterate below
-      }
-    }
-    // Actually iterate properly (simpler): re-loop for companies
+    void globalMinY; // reserved for future use
+
+    // Pass 2: Place COMPANY co-owners just above their target subsidiary.
+    // Person co-owners are now handled uniformly in Pass 1 (placed in byDepth
+    // alongside ownerchain persons at the top of the diagram).
     for (const [targetId, coIds] of coByTarget) {
       const targetY = yMap.get(targetId) ?? 0;
       const targetDepth = depthMap.get(targetId) ?? 0;
@@ -677,36 +677,6 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
       for (let i = 0; i < companies.length; i++) {
         const subRow = Math.floor(i / MAX_PER_ROW);
         yMap.set(companies[i], companyBaseY + subRow * coRowGap);
-      }
-    }
-    // Place person co-owners on the SAME row as existing owner-chain persons
-    // (topmost person row). If total > MAX_PER_ROW, additional persons wrap to
-    // a new row ABOVE the existing row.
-    if (allPersonCoOwners.length > 0) {
-      const personRowGap = 80;
-      // Find Y of existing person nodes in the topmost row (non-co-owner persons)
-      let topPersonY: number | null = null;
-      for (const [id, yVal] of yMap) {
-        if (coOwnerIds.has(id)) continue;
-        if (nodeById.get(id)?.type !== 'person') continue;
-        if (topPersonY === null || yVal < topPersonY) topPersonY = yVal;
-      }
-      // Count non-co-owner persons already at that Y to know how many slots remain
-      const existingPersonsAtTop =
-        topPersonY !== null
-          ? [...yMap.entries()].filter(
-              ([id, yVal]) =>
-                !coOwnerIds.has(id) && nodeById.get(id)?.type === 'person' && yVal === topPersonY
-            ).length
-          : 0;
-      // If no existing person row, put new persons above the topmost row
-      const baseY = topPersonY ?? globalMinY - CO_ROW_GAP;
-      const uniquePersons = [...new Set(allPersonCoOwners)];
-      for (let i = 0; i < uniquePersons.length; i++) {
-        const slotIndex = existingPersonsAtTop + i;
-        // Fill the existing row first (up to MAX_PER_ROW), then wrap up
-        const subRow = Math.floor(slotIndex / MAX_PER_ROW);
-        yMap.set(uniquePersons[i], baseY - subRow * personRowGap);
       }
     }
 

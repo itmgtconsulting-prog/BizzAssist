@@ -228,6 +228,9 @@ export function buildDiagramGraph(
         label: node.navn,
         type: node.erVirksomhed ? 'company' : 'person',
         cvr: node.cvr ?? undefined,
+        // Persons need enhedsNummer so DiagramForce can offer the "Udvid"-knap
+        // to fetch their other owned companies.
+        enhedsNummer: !node.erVirksomhed ? (node.enhedsNummer ?? undefined) : undefined,
         // BIZZ-357: Propagate ceased status from owner chain so diagram can render it visually
         isCeased: node.isCeased ?? undefined,
         link,

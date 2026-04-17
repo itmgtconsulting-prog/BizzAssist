@@ -586,15 +586,34 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
         yMap.set(companies[i], companyBaseY + subRow * coRowGap);
       }
     }
-    // Place ALL person co-owners at the very top (one shared Y row, or stacked if many)
+    // Place person co-owners on the SAME row as existing owner-chain persons
+    // (topmost person row). If total > MAX_PER_ROW, additional persons wrap to
+    // a new row ABOVE the existing row.
     if (allPersonCoOwners.length > 0) {
       const personRowGap = 80;
-      const personBaseY = globalMinY - CO_ROW_GAP;
-      // Deduplicate while preserving order
+      // Find Y of existing person nodes in the topmost row (non-co-owner persons)
+      let topPersonY: number | null = null;
+      for (const [id, yVal] of yMap) {
+        if (coOwnerIds.has(id)) continue;
+        if (nodeById.get(id)?.type !== 'person') continue;
+        if (topPersonY === null || yVal < topPersonY) topPersonY = yVal;
+      }
+      // Count non-co-owner persons already at that Y to know how many slots remain
+      const existingPersonsAtTop =
+        topPersonY !== null
+          ? [...yMap.entries()].filter(
+              ([id, yVal]) =>
+                !coOwnerIds.has(id) && nodeById.get(id)?.type === 'person' && yVal === topPersonY
+            ).length
+          : 0;
+      // If no existing person row, put new persons above the topmost row
+      const baseY = topPersonY ?? globalMinY - CO_ROW_GAP;
       const uniquePersons = [...new Set(allPersonCoOwners)];
       for (let i = 0; i < uniquePersons.length; i++) {
-        const subRow = Math.floor(i / MAX_PER_ROW);
-        yMap.set(uniquePersons[i], personBaseY - subRow * personRowGap);
+        const slotIndex = existingPersonsAtTop + i;
+        // Fill the existing row first (up to MAX_PER_ROW), then wrap up
+        const subRow = Math.floor(slotIndex / MAX_PER_ROW);
+        yMap.set(uniquePersons[i], baseY - subRow * personRowGap);
       }
     }
 

@@ -18,18 +18,24 @@ import { NextRequest } from 'next/server';
 
 // ── Supabase admin mock ───────────────────────────────────────────────────────
 
-/** Shape of the admin.auth.admin.getUserById response — widened for BIZZ-543 tests */
+/** Shape of the admin.auth.admin.getUserById response — widened for BIZZ-543 + BIZZ-540 tests */
 type GetUserByIdResult = {
-  data: { user: { id: string; app_metadata: Record<string, unknown> } | null };
+  data: {
+    user: { id: string; email?: string; app_metadata: Record<string, unknown> } | null;
+  };
   error: { message: string } | null;
 };
 
 /** Mutable spy targets for the admin client */
 const mockUpdateUserById = vi.fn().mockResolvedValue({ data: {}, error: null });
-// Default: echo the requested id so resolveUserId's step-1 lookup succeeds
+// Default: echo the requested id AND provide an email so resolveUserId's step-1
+// lookup succeeds and BIZZ-540's email dispatch has a recipient.
 const mockGetUserById = vi.fn(
   (id: string): Promise<GetUserByIdResult> =>
-    Promise.resolve({ data: { user: { id, app_metadata: {} } }, error: null })
+    Promise.resolve({
+      data: { user: { id, email: `${id}@test.example`, app_metadata: {} } },
+      error: null,
+    })
 );
 const mockListUsers = vi.fn().mockResolvedValue({ data: { users: [] }, error: null });
 
@@ -56,8 +62,12 @@ vi.mock('@/lib/supabase/admin', () => ({
 
 // ── Email mock ────────────────────────────────────────────────────────────────
 
+/** BIZZ-540: spy on payment-failed email dispatch */
+const mockSendPaymentFailedEmail = vi.fn().mockResolvedValue(undefined);
+
 vi.mock('@/app/lib/email', () => ({
   sendRecurringPaymentEmail: vi.fn().mockResolvedValue(undefined),
+  sendPaymentFailedEmail: (...args: unknown[]) => mockSendPaymentFailedEmail(...args),
 }));
 
 // ── Stripe mock ───────────────────────────────────────────────────────────────
@@ -144,7 +154,10 @@ describe('POST /api/stripe/webhook', () => {
     // Restore default admin mock state after clearAllMocks resets return values
     mockUpdateUserById.mockResolvedValue({ data: {}, error: null });
     mockGetUserById.mockImplementation((id: string) =>
-      Promise.resolve({ data: { user: { id, app_metadata: {} } }, error: null })
+      Promise.resolve({
+        data: { user: { id, email: `${id}@test.example`, app_metadata: {} } },
+        error: null,
+      })
     );
     mockListUsers.mockResolvedValue({ data: { users: [] }, error: null });
     mockSelectSingle.mockResolvedValue({ data: null, error: null });
@@ -317,6 +330,73 @@ describe('POST /api/stripe/webhook', () => {
       { app_metadata: { subscription: { status: string } } },
     ];
     expect(calledPayload.app_metadata.subscription.status).toBe('payment_failed');
+  });
+
+  /**
+   * BIZZ-540: invoice.payment_failed must also dispatch an email to the user
+   * so they know to update their card before access is cut off. The email
+   * goes out AFTER the status update succeeds.
+   */
+  it('invoice.payment_failed → dispatches payment-failed email with amount + retry date', async () => {
+    const nextAttemptUnix = Math.floor(Date.now() / 1000) + 3 * 24 * 60 * 60;
+    const invoice = {
+      subscription: 'sub_failed_mail',
+      amount_due: 1000, // 10 DKK in øre
+      attempt_count: 1,
+      next_payment_attempt: nextAttemptUnix,
+      last_finalization_error: { message: 'Your card was declined' },
+    };
+    mockConstructEvent.mockReturnValue(makeStripeEvent('invoice.payment_failed', invoice));
+
+    // plan_configs lookup returns a display name
+    mockSelectSingle.mockResolvedValue({ data: { name_da: 'Basis' }, error: null });
+
+    const { POST } = await import('@/app/api/stripe/webhook/route');
+    const res = await POST(makeWebhookRequest(JSON.stringify(invoice), 'valid-sig'));
+
+    expect(res.status).toBe(200);
+    // Email dispatch must have been called exactly once with correct payload
+    expect(mockSendPaymentFailedEmail).toHaveBeenCalledOnce();
+    const callArg = mockSendPaymentFailedEmail.mock.calls[0][0] as {
+      to: string;
+      planName: string;
+      amountDueDkk: number;
+      failureReason: string | null;
+      nextRetryAt: Date | null;
+      updateUrl: string;
+      attemptCount: number | null;
+    };
+    expect(callArg.to).toBe('user-123@test.example'); // from default mockGetUserById
+    expect(callArg.planName).toBe('Basis');
+    expect(callArg.amountDueDkk).toBe(10);
+    expect(callArg.failureReason).toBe('Your card was declined');
+    expect(callArg.attemptCount).toBe(1);
+    expect(callArg.nextRetryAt).toBeInstanceOf(Date);
+    expect(callArg.updateUrl).toMatch(/\/dashboard\/settings\?tab=abonnement$/);
+  });
+
+  /**
+   * BIZZ-540: If the user has no email on record, the handler must still
+   * return 200 — an email cannot be sent but the status update still holds.
+   */
+  it('invoice.payment_failed → skips email gracefully when user has no email', async () => {
+    const invoice = { subscription: 'sub_failed_noemail', amount_due: 1000 };
+    mockConstructEvent.mockReturnValue(makeStripeEvent('invoice.payment_failed', invoice));
+
+    // User exists (step-1 of resolveUserId succeeds) but has no email field
+    mockGetUserById.mockImplementation((id: string) =>
+      Promise.resolve({
+        data: { user: { id, email: undefined, app_metadata: {} } },
+        error: null,
+      })
+    );
+
+    const { POST } = await import('@/app/api/stripe/webhook/route');
+    const res = await POST(makeWebhookRequest(JSON.stringify(invoice), 'valid-sig'));
+
+    expect(res.status).toBe(200);
+    expect(mockUpdateUserById).toHaveBeenCalledOnce();
+    expect(mockSendPaymentFailedEmail).not.toHaveBeenCalled();
   });
 
   /**

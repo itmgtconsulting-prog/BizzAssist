@@ -23,7 +23,7 @@ import * as Sentry from '@sentry/nextjs';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { stripe } from '@/app/lib/stripe';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { sendRecurringPaymentEmail } from '@/app/lib/email';
+import { sendRecurringPaymentEmail, sendPaymentFailedEmail } from '@/app/lib/email';
 import { logger } from '@/app/lib/logger';
 import { writeAuditLog } from '@/app/lib/auditLog';
 
@@ -754,6 +754,88 @@ async function handlePaymentFailed(invoice: Stripe.Invoice): Promise<void> {
   }
 
   logger.log(`[stripe/webhook] Payment failed — subscription marked payment_failed`);
+
+  // ── BIZZ-540: Notify user by email ────────────────────────────────────────
+  // Fire-and-forget — wrapped in try/catch so an email failure never breaks
+  // the webhook-handler contract (must return 2xx to Stripe).
+  const recipientEmail = existingUser?.user?.email ?? null;
+  if (recipientEmail) {
+    const invoiceRaw = invoice as unknown as Record<string, unknown>;
+    const amountDueOre =
+      (invoiceRaw.amount_due as number) ?? (invoiceRaw.amount_remaining as number) ?? 0;
+    const amountDueDkk = Math.round(amountDueOre / 100);
+    const nextAttemptTs = invoiceRaw.next_payment_attempt as number | null | undefined;
+    const nextRetryAt = nextAttemptTs ? new Date(nextAttemptTs * 1000) : null;
+    const attemptCount = (invoiceRaw.attempt_count as number | null | undefined) ?? null;
+
+    // Best-effort decline reason from Stripe. `last_finalization_error` exists
+    // on invoices that failed to finalize. We do not retrieve the charge here
+    // to avoid an extra Stripe API call in the hot path — an empty reason is
+    // acceptable and the email omits the row when absent.
+    const lastErr = invoiceRaw.last_finalization_error as
+      | Record<string, unknown>
+      | null
+      | undefined;
+    const failureReason = (lastErr?.message as string | undefined) ?? null;
+
+    // Resolve plan display name (DB first, hardcoded fallbacks, then raw id)
+    const planIdForEmail: string =
+      sub?.metadata?.plan_id ?? (existingSub.planId as string | undefined) ?? 'basis';
+    const { data: planRow } = await admin
+      .from('plan_configs')
+      .select('name_da')
+      .eq('plan_id', planIdForEmail)
+      .single();
+    const hardcodedNames: Record<string, string> = {
+      basis: 'Basis',
+      professionel: 'Professionel',
+      enterprise: 'Enterprise',
+      demo: 'Demo',
+    };
+    const planName =
+      (planRow as { name_da?: string } | null)?.name_da ??
+      hardcodedNames[String(planIdForEmail)] ??
+      String(planIdForEmail);
+
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://bizzassist.dk';
+    const updateUrl = `${appUrl}/dashboard/settings?tab=abonnement`;
+
+    try {
+      await sendPaymentFailedEmail({
+        to: recipientEmail,
+        planName,
+        amountDueDkk,
+        failureReason,
+        nextRetryAt,
+        updateUrl,
+        attemptCount,
+      });
+
+      // BIZZ-540 AC: audit_log entry with user_id + event_type.
+      // Do NOT include the email address — only user_id — per GDPR / ISO 27001.
+      writeAuditLog({
+        action: 'payment_failed_email_sent',
+        resource_type: 'user',
+        resource_id: userId,
+        metadata: JSON.stringify({
+          subscriptionId,
+          planId: planIdForEmail,
+          amountDueDkk,
+          attemptCount,
+        }),
+      });
+    } catch (err) {
+      logger.error('[stripe/webhook] payment_failed email dispatch error:', err);
+      Sentry.captureException(err, {
+        tags: { webhook_event: 'invoice.payment_failed', step: 'email_dispatch' },
+        extra: { userId, subscriptionId },
+      });
+    }
+  } else {
+    logger.warn(
+      '[stripe/webhook] invoice.payment_failed — no email on user, skipping notification'
+    );
+  }
 }
 
 /**

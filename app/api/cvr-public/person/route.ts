@@ -184,7 +184,9 @@ export async function GET(
       },
       body: JSON.stringify(esQuery),
       signal: AbortSignal.timeout(12000),
-      next: { revalidate: 3600 },
+      // Reduceret cache så nye felter (fx sammensatStatus) bliver synlige
+      // straks efter deploy i stedet for at vente op til en time.
+      next: { revalidate: 300 },
     });
 
     if (!res.ok) {

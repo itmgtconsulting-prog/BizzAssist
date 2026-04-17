@@ -195,12 +195,24 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
         // ── Personligt ejede virksomheder (CVR) ──
         if (personRes?.ok) {
           const data: PersonPublicData = await personRes.json();
+          // DEBUG: Log status + aktiv + ejer-roller per virksomhed så vi kan
+          // verificere hvorfor fx IT Management Consulting (18145901) skjules.
+          if (typeof window !== 'undefined') {
+            console.log(
+              '[diagram-expand-person] status-diagnostik:',
+              (data.virksomheder ?? []).map((v) => ({
+                cvr: v.cvr,
+                navn: v.navn,
+                aktiv: v.aktiv,
+                sammensatStatus: v.sammensatStatus ?? '(mangler)',
+                form: v.form,
+                ejerRoller: (v.roller ?? [])
+                  .filter((r) => r.ejerandel != null)
+                  .map((r) => `${r.rolle}${r.til ? ' (til:' + r.til + ')' : ''} → ${r.ejerandel}`),
+              }))
+            );
+          }
           for (const v of data.virksomheder ?? []) {
-            // Skip kun reelt ophørte selskaber. CVR's aktiv-flag kan være false
-            // af andre årsager (fx historiske livsforløb-perioder på I/S'er der
-            // stadig driver videre). Vi bruger sammensatStatus som autoritativt
-            // signal: kun "Ophørt" fjerner selskabet fra diagrammet — andre
-            // statusser som "Under konkurs", "Under tvangsopløsning" vises.
             if (v.sammensatStatus === 'Ophørt') continue;
             // Ejerskab = mindst én rolle med registreret ejerandel.
             // Stifter-rollen udelukkes da den ikke nødvendigvis betyder ejerskab.

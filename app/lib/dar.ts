@@ -43,6 +43,9 @@ const MAT_WFS_ENDPOINT = 'https://services.datafordeler.dk/Matrikel/MatGaeld662/
  */
 const DAR_WFS_ENDPOINT = 'https://services.datafordeler.dk/DAR/DAR/1/WFS';
 
+/** BIZZ-505: Datafordeler MAT GraphQL endpoint for jordstykke BFE lookup. */
+const MAT_GQL_URL = 'https://graphql.datafordeler.dk/MAT/v1';
+
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  * GraphQL helpers
  * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
@@ -1003,4 +1006,178 @@ export async function darReverseGeocode(
     );
     return null;
   }
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ * BIZZ-505: MAT GraphQL — jordstykke by BFE with ejerlav-name resolution
+ * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+/**
+ * Shape returned by matHentJordstykkeByBfe — intentionally kept close to the
+ * legacy DAWA `/jordstykker?bfenummer=` response so the /api/adresse/jordstykke
+ * route can return a compatible payload without caller changes.
+ */
+export interface MatJordstykkeByBfe {
+  matrikelnr: string;
+  registreretAreal: number | null;
+  vejareal: number | null;
+  ejerlav: {
+    /** 7-digit ejerlavskode, e.g. 1161451 — may be 0 if MAT_Ejerlav lookup fails */
+    kode: number;
+    /** Ejerlavsnavn (e.g. "Søgård Hgd., Kliplev Sogn") — null if resolution fails */
+    navn: string | null;
+  };
+}
+
+/**
+ * BIZZ-505: Look up a jordstykke by BFE number via MAT GraphQL and resolve
+ * the associated ejerlav name.
+ *
+ * Pipeline:
+ *   1. MAT_SamletFastEjendom(BFEnummer=bfe) → jordstykke with ejerlavLokalId (UUID)
+ *   2. MAT_Ejerlav(id_lokalId=ejerlavLokalId) → ejerlavskode + ejerlavsnavn
+ *
+ * Returns null on:
+ *   - DATAFORDELER_API_KEY missing
+ *   - MAT GraphQL errors or empty result
+ *   - Schema drift (defensive field reading)
+ *
+ * Caller (`/api/adresse/jordstykke?bfe=…`) falls back to DAWA on null.
+ *
+ * @param bfe - BFE number (positive integer)
+ */
+export async function matHentJordstykkeByBfe(bfe: number): Promise<MatJordstykkeByBfe | null> {
+  const apiKey = process.env.DATAFORDELER_API_KEY;
+  if (!apiKey) {
+    logger.warn(
+      'matHentJordstykkeByBfe: DATAFORDELER_API_KEY not set — skipping MAT, caller should fall back to DAWA'
+    );
+    return null;
+  }
+
+  const nowIso = new Date().toISOString();
+  const url = `${MAT_GQL_URL}?apiKey=${encodeURIComponent(apiKey)}`;
+
+  // Helper — minimal GraphQL POST with JSON response. Returns parsed data
+  // or null on any error so the pipeline can fall back cleanly.
+  async function gqlQuery<T extends object>(query: string): Promise<T | null> {
+    try {
+      const res = await fetch(proxyUrl(url), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...proxyHeaders() },
+        body: JSON.stringify({ query }),
+        signal: AbortSignal.timeout(proxyTimeout()),
+      });
+      if (!res.ok) {
+        logger.warn(`MAT GraphQL fejl: ${res.status} ${res.statusText}`);
+        return null;
+      }
+      const json = (await res.json()) as { data?: T; errors?: unknown[] };
+      if (json.errors?.length) {
+        logger.warn('MAT GraphQL errors:', JSON.stringify(json.errors).slice(0, 400));
+        return null;
+      }
+      return json.data ?? null;
+    } catch (err) {
+      logger.error('MAT GraphQL fetch failed:', err instanceof Error ? err.message : err);
+      return null;
+    }
+  }
+
+  // Step 1: SamletFastEjendom → jordstykke
+  const sfeQuery = `{
+    MAT_SamletFastEjendom(
+      first: 1
+      virkningstid: "${nowIso}"
+      registreringstid: "${nowIso}"
+      where: { BFEnummer: { eq: ${bfe} } }
+    ) {
+      nodes {
+        BFEnummer
+        jordstykkeSamlesISamletFastEjendom(first: 1) {
+          nodes {
+            id_lokalId
+            matrikelnummer
+            registreretAreal
+            vejareal
+            ejerlavLokalId
+          }
+        }
+      }
+    }
+  }`;
+
+  const sfeData = await gqlQuery<{
+    MAT_SamletFastEjendom?: {
+      nodes?: Array<{
+        jordstykkeSamlesISamletFastEjendom?: {
+          nodes?: Array<{
+            matrikelnummer?: string;
+            registreretAreal?: number;
+            vejareal?: number;
+            ejerlavLokalId?: string;
+          }>;
+        };
+      }>;
+    };
+  }>(sfeQuery);
+
+  const js =
+    sfeData?.MAT_SamletFastEjendom?.nodes?.[0]?.jordstykkeSamlesISamletFastEjendom?.nodes?.[0];
+  if (!js || !js.matrikelnummer) {
+    logger.warn(`matHentJordstykkeByBfe: no jordstykke for BFE ${bfe}`);
+    return null;
+  }
+
+  const matrikelnr = String(js.matrikelnummer);
+  const registreretAreal = typeof js.registreretAreal === 'number' ? js.registreretAreal : null;
+  const vejareal = typeof js.vejareal === 'number' ? js.vejareal : null;
+  const ejerlavLokalId = typeof js.ejerlavLokalId === 'string' ? js.ejerlavLokalId : null;
+
+  // Step 2: Resolve ejerlav name + kode. If this fails the jordstykke is
+  // still useful (matrikelnr + areal) so we return with navn=null, kode=0.
+  let ejerlavKode = 0;
+  let ejerlavNavn: string | null = null;
+
+  if (ejerlavLokalId) {
+    const ejerlavQuery = `{
+      MAT_Ejerlav(
+        first: 1
+        virkningstid: "${nowIso}"
+        registreringstid: "${nowIso}"
+        where: { id_lokalId: { eq: "${ejerlavLokalId}" } }
+      ) {
+        nodes {
+          ejerlavskode
+          ejerlavsnavn
+        }
+      }
+    }`;
+    const ejerlavData = await gqlQuery<{
+      MAT_Ejerlav?: {
+        nodes?: Array<{
+          ejerlavskode?: number | string;
+          ejerlavsnavn?: string;
+        }>;
+      };
+    }>(ejerlavQuery);
+    const row = ejerlavData?.MAT_Ejerlav?.nodes?.[0];
+    if (row) {
+      const kodeRaw = row.ejerlavskode;
+      ejerlavKode =
+        typeof kodeRaw === 'number'
+          ? kodeRaw
+          : typeof kodeRaw === 'string'
+            ? Number(kodeRaw) || 0
+            : 0;
+      ejerlavNavn = typeof row.ejerlavsnavn === 'string' ? row.ejerlavsnavn : null;
+    }
+  }
+
+  return {
+    matrikelnr,
+    registreretAreal,
+    vejareal,
+    ejerlav: { kode: ejerlavKode, navn: ejerlavNavn },
+  };
 }

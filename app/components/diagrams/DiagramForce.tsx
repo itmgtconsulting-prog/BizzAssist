@@ -215,7 +215,17 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
     });
     const visibleIds = new Set(visibleNodes.map((n) => n.id));
     const visibleEdges = graph.edges.filter((e) => visibleIds.has(e.from) && visibleIds.has(e.to));
-    return { nodes: visibleNodes, edges: visibleEdges };
+    // Hide orphan person nodes (no edges) — they can't visually connect and
+    // just appear disconnected. Never hide the main node.
+    const connectedIds = new Set<string>([graph.mainId]);
+    for (const e of visibleEdges) {
+      connectedIds.add(e.from);
+      connectedIds.add(e.to);
+    }
+    const connectedNodes = visibleNodes.filter(
+      (n) => n.type !== 'person' || connectedIds.has(n.id)
+    );
+    return { nodes: connectedNodes, edges: visibleEdges };
   }, [graph, expandedNodes, showCeased, showProperties]);
 
   // ── Compute topological depth (owners above, subsidiaries below) ──

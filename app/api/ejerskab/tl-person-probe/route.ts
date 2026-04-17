@@ -30,35 +30,65 @@ export async function GET(req: NextRequest) {
   const fdatoShort = `${d}${m}${y.slice(2)}`;
 
   const encodedNavn = encodeURIComponent(navn);
+  // Jakobs kendte person-UUID fundet via tidligere probe
+  const personUuid =
+    req.nextUrl.searchParams.get('personUuid') ?? '905ba322-eb8e-42e9-ab76-19027c296523';
 
   // Liste af endpoints vi vil prøve — både /unsecuressl/ og /ssl/ varianter
   const probes: Array<{ label: string; path: string; apiPath?: string }> = [
-    // Kendt endpoint: personbog-søgning (løsøre) med fdato+navn
+    // Kendt endpoint som bekræftet virker
     {
-      label: 'soegpersonbogcvr_fdato_navn_unsecuressl',
+      label: 'soegpersonbogcvr_fdato_navn',
       path: `/soegpersonbogcvr?fdato=${fdatoShort}&navn=${encodedNavn}&udenfdato=false`,
       apiPath: '/tinglysning/unsecuressl',
     },
-    // Samme men via ssl
+    // Person-UUID til personbog-opslag (kendt: løsøre)
     {
-      label: 'soegpersonbogcvr_fdato_navn_ssl',
-      path: `/soegpersonbogcvr?fdato=${fdatoShort}&navn=${encodedNavn}&udenfdato=false`,
-    },
-    // Prøv soegvirksomhed med navn+fdato i stedet for cvr (langskud)
-    {
-      label: 'soegvirksomhed_fdato_navn_bog1',
-      path: `/soegvirksomhed/cvr?bog=1&rolle=ejer&fdato=${fdatoShort}&navn=${encodedNavn}`,
-    },
-    // Tingbog-søgning via adresse for Jakobs bopæl (uafhængig check)
-    {
-      label: 'ejendom_adresse_soebyvej11',
-      path: `/ejendom/adresse?husnummer=11&postnummer=2650&vejnavn=S%C3%B8byvej`,
-    },
-    // Person-UUID opslag når vi kender uuid (placeholder)
-    {
-      label: 'personbog_opslag_via_uuid_placeholder',
-      path: `/personbog/TEST-UUID`,
+      label: 'personbog_by_uuid',
+      path: `/personbog/${personUuid}`,
       apiPath: '/tinglysning/unsecuressl',
+    },
+    // MÅLET: Find alle ejendomme hvor denne person er adkomsthaver.
+    // Prøv soegvirksomhed-stilen med uuid-parameter
+    {
+      label: 'soegvirksomhed_uuid_bog1_ejer',
+      path: `/soegvirksomhed/cvr?bog=1&rolle=ejer&uuid=${personUuid}`,
+    },
+    {
+      label: 'soegvirksomhed_plain_uuid',
+      path: `/soegvirksomhed?bog=1&rolle=ejer&uuid=${personUuid}`,
+    },
+    {
+      label: 'soegperson_uuid',
+      path: `/soegperson/uuid/${personUuid}?bog=1&rolle=ejer`,
+    },
+    {
+      label: 'soegperson_fdatonavn_bog1',
+      path: `/soegperson/fdatonavn?bog=1&rolle=ejer&fdato=${fdatoShort}&navn=${encodedNavn}`,
+    },
+    {
+      label: 'soegfastejendom_person_uuid',
+      path: `/soegfastejendom?personuuid=${personUuid}&rolle=ejer`,
+    },
+    // Prøv at hente dokumenter hvor person-uuid er med
+    {
+      label: 'soegdokument_person_uuid',
+      path: `/soegdokument?personuuid=${personUuid}&bog=1&rolle=ejer`,
+    },
+    // Udvidet personbog-søgning med rolle/bog
+    {
+      label: 'soegpersonbog_with_bog1',
+      path: `/soegpersonbogcvr?fdato=${fdatoShort}&navn=${encodedNavn}&bog=1&rolle=ejer&udenfdato=false`,
+      apiPath: '/tinglysning/unsecuressl',
+    },
+    // Direkte REST-path-variant
+    {
+      label: 'person_ejendomme_by_uuid',
+      path: `/person/${personUuid}/ejendomme`,
+    },
+    {
+      label: 'persons_adkomster',
+      path: `/persons/${personUuid}/adkomster`,
     },
   ];
 

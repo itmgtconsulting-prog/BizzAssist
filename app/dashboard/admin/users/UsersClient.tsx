@@ -111,6 +111,17 @@ function StatusBadge({ status, da }: { status: SubStatus; da: boolean }) {
       color: 'bg-slate-500/20 text-slate-400 border-slate-500/30',
       icon: <AlertTriangle size={12} />,
     },
+    // BIZZ-541: payment-problem states — separate labels + warning colors
+    past_due: {
+      label: da ? 'Betaling fejlet (grace)' : 'Payment failed (grace)',
+      color: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
+      icon: <AlertTriangle size={12} />,
+    },
+    payment_failed: {
+      label: da ? 'Betaling fejlet' : 'Payment failed',
+      color: 'bg-red-500/20 text-red-400 border-red-500/30',
+      icon: <AlertTriangle size={12} />,
+    },
   };
   const c = config[status];
   return (

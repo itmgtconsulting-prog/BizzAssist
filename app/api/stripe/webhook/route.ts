@@ -335,7 +335,9 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription): Pro
   const existingMeta = existingUser?.user?.app_metadata ?? {};
   const existingSub = (existingMeta.subscription as Record<string, unknown>) ?? {};
 
-  // Determine status from Stripe subscription state
+  // Determine status from Stripe subscription state.
+  // BIZZ-541: `past_due` and `unpaid` are now distinct. `past_due` preserves
+  // access during the grace window; `unpaid` means Stripe gave up retrying.
   let status: string;
   switch (subscription.status) {
     case 'active':
@@ -343,10 +345,12 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription): Pro
       status = 'active';
       break;
     case 'past_due':
+      status = 'past_due';
+      break;
+    case 'unpaid':
       status = 'payment_failed';
       break;
     case 'canceled':
-    case 'unpaid':
       status = 'cancelled';
       break;
     default:
@@ -356,18 +360,26 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription): Pro
   // Get current plan from subscription items
   const planId = subscription.metadata?.plan_id ?? existingSub.planId ?? 'basis';
 
+  // BIZZ-541: When subscription transitions back to active, clear any stored
+  // retry-countdown + grace-expiry fields so the warning banner disappears.
+  const clearGraceFields = status === 'active' || status === 'cancelled';
+  const subPayload: Record<string, unknown> = {
+    ...existingSub,
+    planId,
+    status,
+    periodStart: new Date(
+      ((subscription as unknown as Record<string, unknown>).current_period_start as number) * 1000
+    ).toISOString(),
+  };
+  if (clearGraceFields) {
+    subPayload.nextPaymentAttempt = null;
+    subPayload.graceExpiresAt = null;
+  }
+
   const { error: updateErr } = await admin.auth.admin.updateUserById(userId, {
     app_metadata: {
       ...existingMeta,
-      subscription: {
-        ...existingSub,
-        planId,
-        status,
-        periodStart: new Date(
-          ((subscription as unknown as Record<string, unknown>).current_period_start as number) *
-            1000
-        ).toISOString(),
-      },
+      subscription: subPayload,
     },
   });
 
@@ -734,12 +746,42 @@ async function handlePaymentFailed(invoice: Stripe.Invoice): Promise<void> {
   const existingMeta = existingUser?.user?.app_metadata ?? {};
   const existingSub = (existingMeta.subscription as Record<string, unknown>) ?? {};
 
+  // BIZZ-541: Look up the plan's grace window + display name in one query.
+  // paymentGraceHours defaults to 0 — meaning a failed payment behaves
+  // identically to "unpaid" for that plan (access revoked immediately).
+  // Plans can opt in to a non-zero window via plan_configs.
+  const invoiceRaw = invoice as unknown as Record<string, unknown>;
+  const nextAttemptTs = invoiceRaw.next_payment_attempt as number | null | undefined;
+  const planIdForGrace: string =
+    sub?.metadata?.plan_id ?? (existingSub.planId as string | undefined) ?? 'basis';
+  const { data: planRow } = await admin
+    .from('plan_configs')
+    .select('payment_grace_hours, name_da')
+    .eq('plan_id', planIdForGrace)
+    .single();
+  const planRowTyped = planRow as { payment_grace_hours?: number; name_da?: string } | null;
+  const planGraceHours = planRowTyped?.payment_grace_hours ?? 0;
+
+  // Status: past_due only when Stripe will retry AND plan grants any grace.
+  // Zero-grace plans go straight to payment_failed — same block as unpaid.
+  const retryingStatus = nextAttemptTs && planGraceHours > 0 ? 'past_due' : 'payment_failed';
+
+  // Grace expiry: keep existing if already set (don't reset on each retry),
+  // otherwise start a fresh window at first failure sized to plan.
+  const existingGrace = (existingSub.graceExpiresAt as string | undefined) ?? null;
+  const graceExpiresAt =
+    planGraceHours > 0
+      ? (existingGrace ?? new Date(Date.now() + planGraceHours * 60 * 60 * 1000).toISOString())
+      : null;
+
   const { error: updateErr } = await admin.auth.admin.updateUserById(userId, {
     app_metadata: {
       ...existingMeta,
       subscription: {
         ...existingSub,
-        status: 'payment_failed',
+        status: retryingStatus,
+        nextPaymentAttempt: nextAttemptTs ? new Date(nextAttemptTs * 1000).toISOString() : null,
+        graceExpiresAt,
       },
     },
   });
@@ -753,18 +795,19 @@ async function handlePaymentFailed(invoice: Stripe.Invoice): Promise<void> {
     return;
   }
 
-  logger.log(`[stripe/webhook] Payment failed — subscription marked payment_failed`);
+  logger.log(
+    `[stripe/webhook] Payment failed — subscription marked ${retryingStatus} (nextAttempt=${nextAttemptTs ? new Date(nextAttemptTs * 1000).toISOString() : 'none'})`
+  );
 
   // ── BIZZ-540: Notify user by email ────────────────────────────────────────
   // Fire-and-forget — wrapped in try/catch so an email failure never breaks
   // the webhook-handler contract (must return 2xx to Stripe).
   const recipientEmail = existingUser?.user?.email ?? null;
   if (recipientEmail) {
-    const invoiceRaw = invoice as unknown as Record<string, unknown>;
+    // invoiceRaw already declared above (BIZZ-541 status block) — reuse it
     const amountDueOre =
       (invoiceRaw.amount_due as number) ?? (invoiceRaw.amount_remaining as number) ?? 0;
     const amountDueDkk = Math.round(amountDueOre / 100);
-    const nextAttemptTs = invoiceRaw.next_payment_attempt as number | null | undefined;
     const nextRetryAt = nextAttemptTs ? new Date(nextAttemptTs * 1000) : null;
     const attemptCount = (invoiceRaw.attempt_count as number | null | undefined) ?? null;
 
@@ -778,24 +821,15 @@ async function handlePaymentFailed(invoice: Stripe.Invoice): Promise<void> {
       | undefined;
     const failureReason = (lastErr?.message as string | undefined) ?? null;
 
-    // Resolve plan display name (DB first, hardcoded fallbacks, then raw id)
-    const planIdForEmail: string =
-      sub?.metadata?.plan_id ?? (existingSub.planId as string | undefined) ?? 'basis';
-    const { data: planRow } = await admin
-      .from('plan_configs')
-      .select('name_da')
-      .eq('plan_id', planIdForEmail)
-      .single();
+    // Resolve plan display name — reuse the planRowTyped from the grace
+    // lookup above (BIZZ-541) so we don't round-trip to plan_configs twice.
     const hardcodedNames: Record<string, string> = {
       basis: 'Basis',
       professionel: 'Professionel',
       enterprise: 'Enterprise',
       demo: 'Demo',
     };
-    const planName =
-      (planRow as { name_da?: string } | null)?.name_da ??
-      hardcodedNames[String(planIdForEmail)] ??
-      String(planIdForEmail);
+    const planName = planRowTyped?.name_da ?? hardcodedNames[planIdForGrace] ?? planIdForGrace;
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://bizzassist.dk';
     const updateUrl = `${appUrl}/dashboard/settings?tab=abonnement`;
@@ -819,7 +853,7 @@ async function handlePaymentFailed(invoice: Stripe.Invoice): Promise<void> {
         resource_id: userId,
         metadata: JSON.stringify({
           subscriptionId,
-          planId: planIdForEmail,
+          planId: planIdForGrace,
           amountDueDkk,
           attemptCount,
         }),

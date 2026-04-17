@@ -247,6 +247,18 @@ export default function BillingClient() {
         cls: 'bg-slate-500/15 text-slate-400 border-slate-500/20',
         icon: <AlertTriangle size={10} />,
       },
+      // BIZZ-541: payment-problem states reuse pending/cancelled visuals —
+      // dedicated strings can be added later if needed.
+      past_due: {
+        label: t.pending,
+        cls: 'bg-amber-500/15 text-amber-400 border-amber-500/20',
+        icon: <AlertTriangle size={10} />,
+      },
+      payment_failed: {
+        label: t.cancelled,
+        cls: 'bg-red-500/15 text-red-400 border-red-500/20',
+        icon: <AlertTriangle size={10} />,
+      },
     };
     const c = cfg[status] ?? cfg.expired;
     return (

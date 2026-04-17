@@ -400,10 +400,11 @@ describe('POST /api/stripe/webhook', () => {
   });
 
   /**
-   * customer.subscription.updated with status 'past_due':
-   * should map to 'payment_failed' in app_metadata.
+   * BIZZ-541: customer.subscription.updated with status 'past_due' should map
+   * to 'past_due' in app_metadata (grace period). The plan decides whether
+   * the grace actually allows access via paymentGraceHours.
    */
-  it('customer.subscription.updated (past_due) → sets payment_failed and returns 200', async () => {
+  it('customer.subscription.updated (past_due) → sets past_due and returns 200', async () => {
     const subscription = {
       metadata: { supabase_user_id: 'user-upd', plan_id: 'basis' },
       status: 'past_due',
@@ -424,8 +425,32 @@ describe('POST /api/stripe/webhook', () => {
       string,
       { app_metadata: { subscription: { status: string; planId: string } } },
     ];
-    expect(calledPayload.app_metadata.subscription.status).toBe('payment_failed');
+    expect(calledPayload.app_metadata.subscription.status).toBe('past_due');
     expect(calledPayload.app_metadata.subscription.planId).toBe('basis');
+  });
+
+  /**
+   * BIZZ-541: Stripe 'unpaid' (retries exhausted) maps to 'payment_failed'.
+   */
+  it('customer.subscription.updated (unpaid) → sets payment_failed and returns 200', async () => {
+    const subscription = {
+      metadata: { supabase_user_id: 'user-unpaid', plan_id: 'basis' },
+      status: 'unpaid',
+      current_period_start: Math.floor(Date.now() / 1000),
+    };
+    mockConstructEvent.mockReturnValue(
+      makeStripeEvent('customer.subscription.updated', subscription)
+    );
+
+    const { POST } = await import('@/app/api/stripe/webhook/route');
+    const res = await POST(makeWebhookRequest(JSON.stringify(subscription), 'valid-sig'));
+
+    expect(res.status).toBe(200);
+    const [, calledPayload] = mockUpdateUserById.mock.calls[0] as [
+      string,
+      { app_metadata: { subscription: { status: string } } },
+    ];
+    expect(calledPayload.app_metadata.subscription.status).toBe('payment_failed');
   });
 
   /**
@@ -604,7 +629,9 @@ describe('POST /api/stripe/webhook', () => {
       { app_metadata: { subscription: { status: string } } },
     ];
     expect(calledUserId).toBe('live-user-xyz');
-    expect(calledPayload.app_metadata.subscription.status).toBe('payment_failed');
+    // BIZZ-541: past_due Stripe status now maps to past_due in DB
+    // (previous behavior was payment_failed — updated as part of grace redesign)
+    expect(calledPayload.app_metadata.subscription.status).toBe('past_due');
   });
 
   /**

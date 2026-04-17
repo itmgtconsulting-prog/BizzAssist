@@ -47,6 +47,7 @@ import { useSessionTimeout } from '@/app/hooks/useSessionTimeout';
 import OnboardingModal from '@/app/components/OnboardingModal';
 import FeedbackButton from '@/app/components/FeedbackButton';
 import SubscriptionGate from '@/app/components/SubscriptionGate';
+import PaymentWarningBanner from '@/app/components/PaymentWarningBanner';
 import { companyInfo } from '@/app/lib/companyInfo';
 import { cachePlans, type UserSubscription, type PlanDef } from '@/app/lib/subscriptions';
 import { SubscriptionProvider, useSubscription } from '@/app/context/SubscriptionContext';
@@ -1155,6 +1156,10 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
             </button>
           </div>
         )}
+
+        {/* BIZZ-541: Payment-failure banner — shown when status is past_due / payment_failed.
+            Rendered above main content so it persists across page navigation. */}
+        <PaymentWarningBanner />
 
         {/* Page content — gated by subscription for non-free pages */}
         <main id="main-content" className="relative z-0 flex-1 flex overflow-y-auto">

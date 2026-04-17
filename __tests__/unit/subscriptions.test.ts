@@ -212,6 +212,50 @@ describe('isSubscriptionFunctional', () => {
     });
     expect(isSubscriptionFunctional(sub, trialPlan)).toBe(false);
   });
+
+  // ── BIZZ-541: per-plan paymentGraceHours ───────────────────────────────────
+
+  it('past_due with paymentGraceHours=0 blocks access immediately (default behavior)', () => {
+    // Default plans have paymentGraceHours=0 — failed payment = same as unpaid
+    const sub = makeSub({
+      status: 'past_due',
+      graceExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    });
+    expect(isSubscriptionFunctional(sub, PLANS.professionel)).toBe(false);
+  });
+
+  it('past_due with paymentGraceHours>0 and future graceExpiresAt grants access', () => {
+    const gracePlan: PlanDef = { ...PLANS.professionel, paymentGraceHours: 48 };
+    const sub = makeSub({
+      status: 'past_due',
+      graceExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    });
+    expect(isSubscriptionFunctional(sub, gracePlan)).toBe(true);
+  });
+
+  it('past_due with paymentGraceHours>0 but expired graceExpiresAt blocks access', () => {
+    const gracePlan: PlanDef = { ...PLANS.professionel, paymentGraceHours: 48 };
+    const sub = makeSub({
+      status: 'past_due',
+      graceExpiresAt: new Date(Date.now() - 1000).toISOString(), // already expired
+    });
+    expect(isSubscriptionFunctional(sub, gracePlan)).toBe(false);
+  });
+
+  it('payment_failed status always blocks regardless of plan grace', () => {
+    const gracePlan: PlanDef = { ...PLANS.professionel, paymentGraceHours: 48 };
+    const sub = makeSub({
+      status: 'payment_failed',
+      graceExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    });
+    expect(isSubscriptionFunctional(sub, gracePlan)).toBe(false);
+  });
+
+  it('past_due with grace>0 but missing graceExpiresAt fails open (legacy records)', () => {
+    const gracePlan: PlanDef = { ...PLANS.professionel, paymentGraceHours: 48 };
+    const sub = makeSub({ status: 'past_due' }); // no graceExpiresAt at all
+    expect(isSubscriptionFunctional(sub, gracePlan)).toBe(true);
+  });
 });
 
 // ─── getEffectiveTokenLimit ───────────────────────────────────────────────────

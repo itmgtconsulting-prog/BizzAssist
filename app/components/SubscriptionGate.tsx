@@ -16,7 +16,7 @@ import { Lock, ArrowRight } from 'lucide-react';
 import Link from 'next/link';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { useSubscription } from '@/app/context/SubscriptionContext';
-import { resolvePlan, type UserSubscription } from '@/app/lib/subscriptions';
+import { resolvePlan, isWithinPaymentGrace, type UserSubscription } from '@/app/lib/subscriptions';
 
 interface Props {
   /** Content to render if access is granted */
@@ -36,12 +36,16 @@ interface Props {
  */
 function hasAccess(sub: UserSubscription | null, feature?: string): boolean {
   if (!sub) return false;
-  if (sub.status !== 'active') return false;
+  // BIZZ-541: Resolve plan first so grace logic can use plan.paymentGraceHours.
+  // past_due + grace-hours > 0 + within window = allowed.
+  // Default plans have paymentGraceHours=0 → past_due blocks immediately,
+  // matching the "failed payment = unpaid" design.
+  const plan = resolvePlan(sub.planId);
+  const activeOrGrace = sub.status === 'active' || isWithinPaymentGrace(sub, plan);
+  if (!activeOrGrace) return false;
 
   // All active plans have access to search and detail views
   if (!feature) return true;
-
-  const plan = resolvePlan(sub.planId);
 
   switch (feature) {
     case 'ai':

@@ -83,12 +83,26 @@ export async function GET(req: NextRequest) {
         ...proxyHeaders(),
       },
       body: JSON.stringify({ query }),
-      signal: AbortSignal.timeout(15000),
-      cache: 'no-store',
+      signal: AbortSignal.timeout(20000),
     });
-    const json = await res.json();
+    const text = await res.text();
+    let parsed: unknown = null;
+    let parseError: string | null = null;
+    try {
+      parsed = text ? JSON.parse(text) : null;
+    } catch (e) {
+      parseError = e instanceof Error ? e.message : String(e);
+    }
     return NextResponse.json(
-      { bfeNummer, tokenSource, status: res.status, result: json },
+      {
+        bfeNummer,
+        tokenSource,
+        httpStatus: res.status,
+        responseLen: text.length,
+        rawPreview: text.slice(0, 1200),
+        parseError,
+        result: parsed,
+      },
       { status: 200, headers: { 'Cache-Control': 'no-store' } }
     );
   } catch (err) {
@@ -96,6 +110,7 @@ export async function GET(req: NextRequest) {
       {
         bfeNummer,
         error: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack?.split('\n').slice(0, 5) : null,
       },
       { status: 502 }
     );

@@ -15,7 +15,7 @@ import { proxyUrl, proxyHeaders } from '@/app/lib/dfProxy';
 export const runtime = 'nodejs';
 export const maxDuration = 30;
 
-const EJF_GQL_URL = 'https://services.datafordeler.dk/EJF/Ejerfortegnelsen/3/REST/graphql';
+const EJF_GQL_URL = 'https://graphql.datafordeler.dk/flexibleCurrent/v1/';
 
 export async function GET(req: NextRequest) {
   const auth = await resolveTenantId();

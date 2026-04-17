@@ -34,8 +34,8 @@ const NODE_W = 320;
 const NODE_H = 64;
 const NODE_H_EXPAND = 78;
 const NODE_H_PERSON = 34;
-/** BIZZ-352: Reduced from 72 — property nodes should be compact like person nodes */
-const NODE_H_PROPERTY = 48;
+/** Property node height — taller to fit address + postnr/by + BFE lines */
+const NODE_H_PROPERTY = 58;
 
 /** Extra height per noeglePerson row inside a company box */
 const PERSON_ROW_H = 14;
@@ -123,6 +123,9 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
   const svgRef = useRef<SVGSVGElement>(null);
   const [zoom, setZoom] = useState(1);
   const [positions, setPositions] = useState<Map<string, { x: number; y: number }>>(new Map());
+  /** User-dragged node positions — preserved across simulation re-runs.
+   * Cleared when user clicks Reset. */
+  const userPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
 
   /** Set of node IDs whose co-owners are currently expanded */
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
@@ -276,11 +279,24 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
       }
     }
 
-    // Assign co-owners: place between their target subsidiary and its parent
-    // (target depth - 0.5) so they sit one half-level above the subsidiary
+    // Assign co-owners:
+    //   - PERSON co-owners go to the very top of the diagram (below min depth)
+    //     to avoid overlap with company rows when expanded (user request)
+    //   - COMPANY co-owners stay at targetDepth - 0.5 (one half-level above subsidiary)
+    // Find the minimum depth among non-co-owner nodes (the topmost company/main)
+    let minDepth = 0;
+    for (const [id, d] of depths) {
+      if (!coOwnerIds.has(id) && d < minDepth) minDepth = d;
+    }
     for (const [coId, targetId] of coOwnerTarget) {
-      const targetDepth = depths.get(targetId) ?? 1;
-      depths.set(coId, targetDepth - 0.5);
+      const coNode = nodeById.get(coId);
+      if (coNode?.type === 'person') {
+        // All person co-owners pinned to the very top
+        depths.set(coId, minDepth - 1);
+      } else {
+        const targetDepth = depths.get(targetId) ?? 1;
+        depths.set(coId, targetDepth - 0.5);
+      }
     }
 
     return depths;
@@ -467,29 +483,51 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
       }
     }
 
-    // Pass 2: Place co-owners just above their specific target's Y position.
-    // Separate persons and companies onto different rows so they never mix.
+    // Pass 2: Place co-owners.
+    //   - COMPANY co-owners sit just above their target (targetY - CO_ROW_GAP)
+    //   - PERSON co-owners ALL pinned to the very top of the diagram (user request:
+    //     "flyt alle personer op i toppen" to avoid mid-diagram overlap)
+    // Find the minimum Y among non-co-owner nodes (topmost row)
+    let globalMinY = 0;
+    for (const [id, yVal] of yMap) {
+      if (!coOwnerIds.has(id) && yVal < globalMinY) globalMinY = yVal;
+    }
+    // All person co-owners collected globally, placed on a shared row at the top
+    const allPersonCoOwners: string[] = [];
+    for (const [, coIds] of coByTarget) {
+      const targetY =
+        yMap.get([...coByTarget.keys()].find((k) => coByTarget.get(k) === coIds) ?? '') ?? 0;
+      void targetY; // unused here — handled below per target
+      const companies = coIds.filter((id) => nodeById.get(id)?.type === 'company');
+      const persons = coIds.filter((id) => nodeById.get(id)?.type === 'person');
+      allPersonCoOwners.push(...persons);
+      // Place company co-owners relative to their target
+      if (companies.length > 0) {
+        const actualTargetId = [...coByTarget.entries()].find(([, v]) => v === coIds)?.[0];
+        void actualTargetId; // not directly needed — we iterate below
+      }
+    }
+    // Actually iterate properly (simpler): re-loop for companies
     for (const [targetId, coIds] of coByTarget) {
       const targetY = yMap.get(targetId) ?? 0;
       const targetDepth = depthMap.get(targetId) ?? 0;
       const coRowGap = getSubRowGap(targetDepth);
-      // Split into companies and persons
       const companies = coIds.filter((id) => nodeById.get(id)?.type === 'company');
-      const persons = coIds.filter((id) => nodeById.get(id)?.type === 'person');
-
-      // Companies first (closest to target), persons above
       const companyBaseY = targetY - CO_ROW_GAP;
       for (let i = 0; i < companies.length; i++) {
         const subRow = Math.floor(i / MAX_PER_ROW);
         yMap.set(companies[i], companyBaseY + subRow * coRowGap);
       }
-      if (persons.length > 0) {
-        const companyRows = Math.max(1, Math.ceil(companies.length / MAX_PER_ROW));
-        const personBaseY = companyBaseY - companyRows * (coRowGap * 0.6);
-        for (let i = 0; i < persons.length; i++) {
-          const subRow = Math.floor(i / MAX_PER_ROW);
-          yMap.set(persons[i], personBaseY + subRow * coRowGap);
-        }
+    }
+    // Place ALL person co-owners at the very top (one shared Y row, or stacked if many)
+    if (allPersonCoOwners.length > 0) {
+      const personRowGap = 80;
+      const personBaseY = globalMinY - CO_ROW_GAP;
+      // Deduplicate while preserving order
+      const uniquePersons = [...new Set(allPersonCoOwners)];
+      for (let i = 0; i < uniquePersons.length; i++) {
+        const subRow = Math.floor(i / MAX_PER_ROW);
+        yMap.set(uniquePersons[i], personBaseY - subRow * personRowGap);
       }
     }
 
@@ -671,7 +709,13 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
 
       const newPositions = new Map<string, { x: number; y: number }>();
       for (const node of forceNodes) {
-        newPositions.set(node.id, { x: node.x ?? 0, y: node.y ?? 0 });
+        // Respect user-dragged positions — they take precedence over simulation
+        const userPos = userPositionsRef.current.get(node.id);
+        if (userPos) {
+          newPositions.set(node.id, userPos);
+        } else {
+          newPositions.set(node.id, { x: node.x ?? 0, y: node.y ?? 0 });
+        }
       }
       setPositions(newPositions);
       setTimeout(() => {
@@ -802,12 +846,15 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
         const dx = (e.clientX - dragRef.current.startX) / zoom;
         const dy = (e.clientY - dragRef.current.startY) / zoom;
         if (Math.abs(dx) > 3 || Math.abs(dy) > 3) dragRef.current.didMove = true;
+        const newPos = {
+          x: dragRef.current.origX + dx,
+          y: dragRef.current.origY + dy,
+        };
+        // Persist manual position so re-simulation doesn't overwrite it
+        userPositionsRef.current.set(dragRef.current.nodeId!, newPos);
         setPositions((prev) => {
           const next = new Map(prev);
-          next.set(dragRef.current.nodeId!, {
-            x: dragRef.current.origX + dx,
-            y: dragRef.current.origY + dy,
-          });
+          next.set(dragRef.current.nodeId!, newPos);
           return next;
         });
       } else if (panRef.current.active) {
@@ -1046,6 +1093,8 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
         </button>
         <button
           onClick={() => {
+            // Clear manual drag positions so simulation re-layout takes effect
+            userPositionsRef.current.clear();
             initialFitDone.current = false;
             setFitTrigger((t) => t + 1);
             containerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
@@ -1054,7 +1103,7 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
               ?.scrollTo({ top: 0, behavior: 'smooth' });
           }}
           className="px-2 h-7 flex items-center gap-1 text-slate-400 hover:text-white bg-slate-800 border border-slate-700/50 rounded-lg text-[10px] transition"
-          title={lang === 'da' ? 'Nulstil visning' : 'Reset view'}
+          title={lang === 'da' ? 'Nulstil visning og manuelle træk' : 'Reset view and manual drags'}
         >
           <RotateCcw size={11} />
           {lang === 'da' ? 'Reset' : 'Reset'}
@@ -1501,76 +1550,92 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
                           strokeWidth="1"
                         />
                       )}
-                      {/* Label — split property addresses over 2 lines when postnr/by present */}
-                      {isProperty && node.label.includes(',') ? (
+                      {/* Property nodes: address (line 1), postnr/by (line 2), BFE (line 3)
+                          Non-property nodes: label (line 1), role/CVR (line 2) */}
+                      {isProperty ? (
+                        (() => {
+                          const parts = node.label.split(',').map((s) => s.trim());
+                          const street = parts[0] ?? node.label;
+                          const postBy = parts.slice(1).join(', ');
+                          // Truncate street to fit in box (NODE_W=320, ~30 chars at 11px)
+                          const maxStreet = 32;
+                          const streetText =
+                            street.length > maxStreet ? street.slice(0, maxStreet) + '…' : street;
+                          return (
+                            <>
+                              <text
+                                x={x + 30}
+                                y={topY + 10}
+                                fill={textFill}
+                                fontSize="11"
+                                fontWeight="500"
+                                className="cursor-pointer pointer-events-none"
+                              >
+                                {streetText}
+                              </text>
+                              {postBy && (
+                                <text
+                                  x={x + 30}
+                                  y={topY + 23}
+                                  fill="rgba(167,243,208,0.85)"
+                                  fontSize="9.5"
+                                  className="pointer-events-none"
+                                >
+                                  {postBy.length > 36 ? postBy.slice(0, 36) + '…' : postBy}
+                                </text>
+                              )}
+                              {node.bfeNummer && (
+                                <text
+                                  x={x + 30}
+                                  y={topY + 38}
+                                  fill="rgba(110,231,183,0.65)"
+                                  fontSize="8.5"
+                                  className="pointer-events-none"
+                                >
+                                  BFE {node.bfeNummer.toLocaleString('da-DK')}
+                                </text>
+                              )}
+                            </>
+                          );
+                        })()
+                      ) : (
                         <>
                           <text
                             x={x + 30}
                             y={topY + 10}
                             fill={textFill}
                             fontSize="11"
-                            fontWeight="500"
+                            fontWeight={isMain ? '600' : '500'}
                             className="cursor-pointer pointer-events-none"
                           >
-                            {node.label.split(',').slice(0, -1).join(',').trim()}
+                            {node.label.length > 44 ? node.label.slice(0, 44) + '…' : node.label}
                           </text>
-                          <text
-                            x={x + 30}
-                            y={topY + 23}
-                            fill="rgba(167,243,208,0.7)"
-                            fontSize="9"
-                            className="pointer-events-none"
-                          >
-                            {node.label.split(',').slice(-1)[0].trim()}
-                          </text>
+                          {node.personRolle ? (
+                            <text
+                              x={x + 30}
+                              y={topY + 23}
+                              fill="rgba(196,167,255,0.9)"
+                              fontSize="9"
+                              fontWeight="500"
+                              className="pointer-events-none"
+                            >
+                              {node.personRolle.length > 50
+                                ? node.personRolle.slice(0, 50) + '…'
+                                : node.personRolle}
+                            </text>
+                          ) : node.cvr ? (
+                            <text
+                              x={x + 30}
+                              y={topY + 23}
+                              fill="rgba(165,180,200,0.9)"
+                              fontSize="9"
+                              className="pointer-events-none"
+                            >
+                              CVR {node.cvr}
+                            </text>
+                          ) : null}
                         </>
-                      ) : (
-                        <text
-                          x={x + 30}
-                          y={topY + 10}
-                          fill={textFill}
-                          fontSize="11"
-                          fontWeight={isMain ? '600' : '500'}
-                          className="cursor-pointer pointer-events-none"
-                        >
-                          {node.label.length > 44 ? node.label.slice(0, 44) + '…' : node.label}
-                        </text>
                       )}
-                      {/* Person's role in this company OR CVR number OR BFE number for properties */}
-                      {node.personRolle ? (
-                        <text
-                          x={x + 30}
-                          y={topY + 23}
-                          fill="rgba(196,167,255,0.9)"
-                          fontSize="9"
-                          fontWeight="500"
-                          className="pointer-events-none"
-                        >
-                          {node.personRolle.length > 50
-                            ? node.personRolle.slice(0, 50) + '…'
-                            : node.personRolle}
-                        </text>
-                      ) : node.cvr ? (
-                        <text
-                          x={x + 30}
-                          y={topY + 23}
-                          fill="rgba(165,180,200,0.9)"
-                          fontSize="9"
-                          className="pointer-events-none"
-                        >
-                          CVR {node.cvr}
-                        </text>
-                      ) : isProperty && node.bfeNummer ? (
-                        <text
-                          x={x + 30}
-                          y={topY + 23}
-                          fill="rgba(110,231,183,0.8)"
-                          fontSize="9"
-                          className="pointer-events-none"
-                        >
-                          BFE {node.bfeNummer.toLocaleString('da-DK')}
-                        </text>
-                      ) : null}
                       {/* Branche */}
                       {node.branche && (
                         <text
@@ -1585,8 +1650,9 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
                             : node.branche}
                         </text>
                       )}
-                      {/* Sublabel fallback (form) if no branche */}
-                      {!node.branche && node.sublabel && (
+                      {/* Sublabel fallback (form) if no branche — NOT for property nodes
+                          (property nodes render BFE at y+38 instead) */}
+                      {!node.branche && !isProperty && node.sublabel && (
                         <text
                           x={x + 30}
                           y={topY + 35}

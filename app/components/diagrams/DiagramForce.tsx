@@ -573,42 +573,49 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
     }
 
     // Pass 3: Place properties directly below their specific owner.
-    // Each owner's properties form their own sub-row at ownerY + PROPERTY_ROW_GAP.
+    // Rule: if an owner's properties can't ALL fit on the current line (would exceed
+    // MAX_PER_ROW), all of that owner's properties go on the NEXT line instead of
+    // being split. Owners are grouped first by their Y (depth sub-row), then per Y
+    // group we assign properties to lines in owner-order.
     const PROPERTY_ROW_GAP = 95;
     const PROPERTY_SUBROW_GAP = 70;
-    for (const [ownerId, propIds] of propertiesByOwner) {
-      const ownerY = yMap.get(ownerId);
-      if (ownerY == null) continue;
-      const propBaseY = ownerY + PROPERTY_ROW_GAP;
-      for (let i = 0; i < propIds.length; i++) {
-        const subRow = Math.floor(i / MAX_PER_ROW);
-        yMap.set(propIds[i], propBaseY + subRow * PROPERTY_SUBROW_GAP);
-      }
+    // Group owners by their own Y (sub-row of depth)
+    const ownersByY = new Map<number, string[]>();
+    for (const ownerId of propertiesByOwner.keys()) {
+      const y = yMap.get(ownerId);
+      if (y == null) continue;
+      if (!ownersByY.has(y)) ownersByY.set(y, []);
+      ownersByY.get(y)!.push(ownerId);
     }
-
-    // Pass 4: Enforce max MAX_PER_ROW properties per Y line, iteratively.
-    // Properties from multiple owners in the same sub-row share the same Y,
-    // potentially exceeding 5. Repeatedly wrap extras to the next sub-row until
-    // no Y row has > MAX_PER_ROW properties.
-    const allPropIds = [...propertiesByOwner.values()].flat();
-    for (let iter = 0; iter < 10; iter++) {
-      const propsByY = new Map<number, string[]>();
-      for (const propId of allPropIds) {
-        const y = yMap.get(propId);
-        if (y == null) continue;
-        if (!propsByY.has(y)) propsByY.set(y, []);
-        propsByY.get(y)!.push(propId);
-      }
-      let anyWrapped = false;
-      for (const [y, propsAtY] of propsByY) {
-        if (propsAtY.length <= MAX_PER_ROW) continue;
-        // Wrap extras to next sub-row (y + PROPERTY_SUBROW_GAP)
-        for (let i = MAX_PER_ROW; i < propsAtY.length; i++) {
-          yMap.set(propsAtY[i], y + PROPERTY_SUBROW_GAP);
+    // Sort owners within each Y by their X position (initialX not set yet — use
+    // byDepth order as a proxy, which matches visual left-to-right)
+    for (const [ownerY, ownerIds] of ownersByY) {
+      const propBaseY = ownerY + PROPERTY_ROW_GAP;
+      let currentLine = 0;
+      let countOnLine = 0;
+      for (const ownerId of ownerIds) {
+        const props = propertiesByOwner.get(ownerId) ?? [];
+        if (props.length === 0) continue;
+        // If this owner's properties don't all fit on current line, start new line
+        if (countOnLine > 0 && countOnLine + props.length > MAX_PER_ROW) {
+          currentLine++;
+          countOnLine = 0;
         }
-        anyWrapped = true;
+        // If this single owner has > MAX_PER_ROW properties, wrap within owner
+        for (let i = 0; i < props.length; i++) {
+          const withinOwnerLine = Math.floor(i / MAX_PER_ROW);
+          const line = currentLine + withinOwnerLine;
+          yMap.set(props[i], propBaseY + line * PROPERTY_SUBROW_GAP);
+        }
+        // Update counters: if owner fills multiple lines, advance past all but last
+        const ownerLines = Math.ceil(props.length / MAX_PER_ROW);
+        if (ownerLines > 1) {
+          currentLine += ownerLines - 1;
+          countOnLine = props.length % MAX_PER_ROW || MAX_PER_ROW;
+        } else {
+          countOnLine += props.length;
+        }
       }
-      if (!anyWrapped) break;
     }
 
     return yMap;

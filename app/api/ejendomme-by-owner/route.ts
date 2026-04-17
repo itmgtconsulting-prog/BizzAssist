@@ -813,6 +813,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
     const aktivByBfe = new Map<number, boolean>();
     const solgtDatoByBfe = new Map<number, string | null>();
     if (cvrNumre.length > 0) {
+      const queriedCvrSet = new Set(cvrNumre);
       const bfeList = [...bfeTilCvr.keys()];
       const VERIFY_BATCH = 20;
       for (let i = 0; i < bfeList.length; i += VERIFY_BATCH) {
@@ -826,7 +827,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
             }
             const cvrNum = parseInt(ownerCvr, 10);
             const vt = new Date().toISOString();
-            const query = `{ EJFCustom_EjerskabBegraenset(first: 5, virkningstid: "${vt}", where: { bestemtFastEjendomBFENr: { eq: ${bfe} } }) { nodes { ejendeVirksomhedCVRNr virkningFra } } }`;
+            const query = `{ EJFCustom_EjerskabBegraenset(first: 10, virkningstid: "${vt}", where: { bestemtFastEjendomBFENr: { eq: ${bfe} } }) { nodes { ejendeVirksomhedCVRNr virkningFra } } }`;
             const res = await fetch(proxyUrl(EJF_GQL_ENDPOINT), {
               method: 'POST',
               headers: {
@@ -853,19 +854,28 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
             const newestDate = Math.max(
               ...nodes.map((n) => new Date(n.virkningFra ?? 0).getTime())
             );
-            const stillOwned = nodes.some(
-              (n) =>
-                n.ejendeVirksomhedCVRNr === cvrNum &&
-                new Date(n.virkningFra ?? 0).getTime() === newestDate
+            // BIZZ-463: Among ALL nodes at newest date, pick one whose CVR was in
+            // our queried list (= actual current owner for this concern). If the
+            // current bfeTilCvr mapping points to a different (historical) owner,
+            // reassign to the correct current owner.
+            const newestNodes = nodes.filter(
+              (n) => new Date(n.virkningFra ?? 0).getTime() === newestDate
             );
-            aktivByBfe.set(bfe, stillOwned);
-            if (!stillOwned) {
-              // Find the date when CVR stopped being owner (latest record with our CVR)
+            const currentOwnerInList = newestNodes.find(
+              (n) => n.ejendeVirksomhedCVRNr != null && queriedCvrSet.has(n.ejendeVirksomhedCVRNr)
+            );
+            if (currentOwnerInList?.ejendeVirksomhedCVRNr) {
+              // Reassign bfeTilCvr to the actual current owner
+              const actualCvr = currentOwnerInList.ejendeVirksomhedCVRNr;
+              bfeTilCvr.set(bfe, String(actualCvr).padStart(8, '0'));
+              aktivByBfe.set(bfe, true);
+            } else {
+              // No queried CVR is the current owner → property was sold externally
+              aktivByBfe.set(bfe, false);
               const ourLastDate = nodes
                 .filter((n) => n.ejendeVirksomhedCVRNr === cvrNum)
                 .map((n) => new Date(n.virkningFra ?? 0).getTime())
                 .reduce((a, b) => Math.max(a, b), 0);
-              // Find the next record AFTER our last ownership (= sold-to date)
               const soldDate = nodes
                 .filter((n) => new Date(n.virkningFra ?? 0).getTime() > ourLastDate)
                 .map((n) => new Date(n.virkningFra ?? 0).getTime())

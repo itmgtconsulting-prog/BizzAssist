@@ -215,25 +215,53 @@ export async function GET(req: NextRequest) {
     `{ EJFCustom_EjerskabBegraenset(first: 10, virkningstid: "${virkningstid}", where: { id_lokalId: { eq: "${id.replace(/"/g, '\\"')}" } }) { nodes { bestemtFastEjendomBFENr status ejendePersonBegraenset { navn { navn } } } } }`
   );
 
-  // DURCHBRUCH: fiktivtPVnummer er et Long-filter der eksisterer på EJFCustom_EjerskabBegraenset.
-  // Hent Søbyvej 11's ejerskab med fiktivtPVnummer i select, så vi kan se Jakobs nummer.
-  const soebyvej11FullResp = await gql(
-    `{ EJFCustom_EjerskabBegraenset(first: 10, virkningstid: "${virkningstid}", where: { bestemtFastEjendomBFENr: { eq: 2081243 } }) { nodes { bestemtFastEjendomBFENr status ejendePersonBegraenset { id navn { navn } foedselsdato } oplysningerEjesAfEjerskab { fiktivtPVnummer navn id_lokalId id_namespace } } } }`
-  );
+  // Sidste forsøg: andre EJF Custom-tjenester vi måske har adgang til
+  const extraCustomProbes: Record<string, string> = {};
+  const extraCustomNames = [
+    'EJFCustom_EjerskabUdvidet',
+    'EJFCustom_EjerskabFuld',
+    'EJFCustom_EjerskabStamoplysninger',
+    'EJFCustom_Ejer',
+    'EJFCustom_PersonVirksomhedsoplys',
+    'EJFCustom_PersonVirksomhedsoplysBegraenset',
+    'EJFCustom_PersonsEjendomme',
+    'EJFCustom_EjersEjendomme',
+    'EJFCustom_EjerlejlighedBegraenset',
+    'EJF_EjerskabBegraensetByPerson',
+  ];
+  for (const n of extraCustomNames) {
+    const q = `{ ${n}(first: 1, virkningstid: "${virkningstid}") { nodes { __typename } } }`;
+    extraCustomProbes[n] = (await gql(q)).slice(0, 400);
+  }
 
-  // Prøv at filtrere direkte på fiktivtPVnummer — først med et eksempel-tal så vi ser
-  // svarstrukturen. Bruger "1" som nonsense-værdi — vi vil få 0 nodes men ingen fejl.
-  const fiktivProbe = await gql(
-    `{ EJFCustom_EjerskabBegraenset(first: 5, virkningstid: "${virkningstid}", where: { fiktivtPVnummer: { eq: 1 } }) { nodes { bestemtFastEjendomBFENr } } }`
-  );
+  // Prøv alle kendte mulige filter-felter på EJFCustom_EjerskabBegraenset
+  const finalFilterProbes: Record<string, string> = {};
+  const finalFilterCandidates = [
+    'ejendePersonNavn',
+    'ejendePersonBegraensetNavn',
+    'ejendePersonBegraensetnavn',
+    'ejerPersonNavn',
+    'navn',
+    'ejendeNavn',
+    'ejerskabAdministreresAfPersonEllerVirksomhedsoplysningerNavn',
+    'fiktivtPVnummer',
+    'ejendeFiktivtPVnummer',
+    'oplysningerEjesAfEjerskabFiktivtPVnummer',
+  ];
+  for (const f of finalFilterCandidates) {
+    const isString = !f.toLowerCase().includes('nummer');
+    const val = isString ? `"Jakob Juul Rasmussen"` : `1`;
+    const q = `{ EJFCustom_EjerskabBegraenset(first: 1, virkningstid: "${virkningstid}", where: { ${f}: { eq: ${val} } }) { nodes { bestemtFastEjendomBFENr } } }`;
+    finalFilterProbes[f] = (await gql(q)).slice(0, 400);
+  }
 
   const results = {
     rootTests,
     filterFieldProbes,
     personVirkProbes,
     ejerskabByLokalId: ejerskabByLokalId.slice(0, 2000),
-    soebyvej11Full: soebyvej11FullResp.slice(0, 3500),
-    fiktivProbe: fiktivProbe.slice(0, 1000),
+    extraCustomProbes,
+    finalFilterProbes,
   };
 
   return NextResponse.json(

@@ -35,7 +35,20 @@ interface HealthStatus {
     api: 'ok' | 'error';
     database: 'ok' | 'error' | 'unconfigured';
     redis?: 'ok' | 'error' | 'unconfigured';
-    external_apis?: Record<string, { status: 'ok' | 'slow' | 'down'; latency_ms: number }>;
+    external_apis?: Record<
+      string,
+      {
+        status: 'ok' | 'slow' | 'down';
+        latency_ms: number;
+        /**
+         * BIZZ-538: Probe is kept running after the service is scheduled to be
+         * shut down (e.g. DAWA → 2026-07-01) so we can observe when the real
+         * outage happens, but a `down` result on a deprecated probe does NOT
+         * mark overall health as degraded.
+         */
+        deprecated?: boolean;
+      }
+    >;
     certificates?: CertExpiryInfo[];
   };
 }
@@ -51,21 +64,31 @@ interface HealthStatus {
 async function probeApi(
   name: string,
   url: string,
-  options?: RequestInit
-): Promise<{ name: string; status: 'ok' | 'slow' | 'down'; latency_ms: number }> {
+  options?: RequestInit,
+  opts?: { deprecated?: boolean }
+): Promise<{
+  name: string;
+  status: 'ok' | 'slow' | 'down';
+  latency_ms: number;
+  deprecated?: boolean;
+}> {
   const start = Date.now();
+  const deprecated = opts?.deprecated === true ? true : undefined;
   try {
     const res = await fetch(url, {
       ...options,
       signal: AbortSignal.timeout(5000),
     });
     const latency = Date.now() - start;
+    // Auth-guarded services (401/403) are still considered reachable — the
+    // service responded, it just rejected our anonymous probe. That is the
+    // expected behaviour for Datafordeler GraphQL without credentials.
     if (!res.ok && res.status !== 401 && res.status !== 403) {
-      return { name, status: 'down', latency_ms: latency };
+      return { name, status: 'down', latency_ms: latency, deprecated };
     }
-    return { name, status: latency > 2000 ? 'slow' : 'ok', latency_ms: latency };
+    return { name, status: latency > 2000 ? 'slow' : 'ok', latency_ms: latency, deprecated };
   } catch {
-    return { name, status: 'down', latency_ms: Date.now() - start };
+    return { name, status: 'down', latency_ms: Date.now() - start, deprecated };
   }
 }
 
@@ -141,19 +164,38 @@ export async function GET(request: NextRequest): Promise<NextResponse<HealthStat
       // Redis
       healthStatus.checks.redis = await checkRedis();
 
-      // External APIs — probe in parallel
+      // External APIs — probe in parallel.
+      //
+      // BIZZ-538: The previous generic `datafordeler` probe only exercised the
+      // BBR endpoint, which hid per-service outages (DAR down while BBR up
+      // would look healthy). Each Datafordeler sub-service now gets its own
+      // probe. GraphQL endpoints are queried with a trivial `{ __typename }`
+      // introspection — auth-guarded services return 401/403 which probeApi
+      // treats as reachable. The DAWA probe is kept with deprecated=true so
+      // we can observe when Erhvervsstyrelsen actually pulls the plug
+      // (scheduled 2026-07-01) without getting false-positive alerts once it
+      // goes dark.
+      const gqlIntrospect = {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: '{ __typename }' }),
+      } satisfies RequestInit;
       const apiProbes = await Promise.all([
-        probeApi('datafordeler', 'https://graphql.datafordeler.dk/BBR/v2', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: '{ __typename }' }),
-        }),
+        probeApi('bbr', 'https://graphql.datafordeler.dk/BBR/v2', gqlIntrospect),
+        probeApi('dar', 'https://graphql.datafordeler.dk/DAR/v1', gqlIntrospect),
+        probeApi('mat', 'https://graphql.datafordeler.dk/MAT/v1', gqlIntrospect),
+        probeApi('vur', 'https://graphql.datafordeler.dk/VUR/v2', gqlIntrospect),
         probeApi('cvr_es', 'http://distribution.virk.dk/cvr-permanent/virksomhed/_search', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ query: { match_none: {} }, size: 0 }),
         }),
-        probeApi('dawa', 'https://api.dataforsyningen.dk/autocomplete?q=test&per_side=1'),
+        probeApi(
+          'dawa',
+          'https://api.dataforsyningen.dk/autocomplete?q=test&per_side=1',
+          undefined,
+          { deprecated: true }
+        ),
         probeApi('vurderingsportalen', 'https://api-fs.vurderingsportalen.dk/'),
       ]);
 
@@ -162,6 +204,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<HealthStat
         healthStatus.checks.external_apis[probe.name] = {
           status: probe.status,
           latency_ms: probe.latency_ms,
+          ...(probe.deprecated ? { deprecated: true } : {}),
         };
       }
 
@@ -172,7 +215,10 @@ export async function GET(request: NextRequest): Promise<NextResponse<HealthStat
       if (healthStatus.checks.redis === 'error') {
         healthStatus.status = 'degraded';
       }
-      const downApis = apiProbes.filter((p) => p.status === 'down');
+      // BIZZ-538: A deprecated probe going `down` is informational only — the
+      // service is scheduled to be shut down, so alerting on it once the
+      // shutdown lands would be false-positive noise.
+      const downApis = apiProbes.filter((p) => p.status === 'down' && !p.deprecated);
       if (downApis.length > 0) {
         healthStatus.status = 'degraded';
       }

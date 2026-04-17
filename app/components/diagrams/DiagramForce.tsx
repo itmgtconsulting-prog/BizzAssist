@@ -195,34 +195,27 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
         // ── Personligt ejede virksomheder (CVR) ──
         if (personRes?.ok) {
           const data: PersonPublicData = await personRes.json();
-          // DEBUG: Log status + aktiv + ejer-roller per virksomhed så vi kan
-          // verificere hvorfor fx IT Management Consulting (18145901) skjules.
-          if (typeof window !== 'undefined') {
-            console.log(
-              '[diagram-expand-person] status-diagnostik:',
-              (data.virksomheder ?? []).map((v) => ({
-                cvr: v.cvr,
-                navn: v.navn,
-                aktiv: v.aktiv,
-                sammensatStatus: v.sammensatStatus ?? '(mangler)',
-                form: v.form,
-                ejerRoller: (v.roller ?? [])
-                  .filter((r) => r.ejerandel != null)
-                  .map((r) => `${r.rolle}${r.til ? ' (til:' + r.til + ')' : ''} → ${r.ejerandel}`),
-              }))
-            );
-          }
           for (const v of data.virksomheder ?? []) {
             if (v.sammensatStatus === 'Ophørt') continue;
-            // Ejerskab = mindst én rolle med registreret ejerandel.
-            // Stifter-rollen udelukkes da den ikke nødvendigvis betyder ejerskab.
-            const erEjer = v.roller.some((r) => {
+            // Personligt ejet virksomhed = ÉN af:
+            //   (a) personen har rolle med registreret ejerandel (ekskl. stifter), ELLER
+            //   (b) virksomhedsformen er en type hvor deltageren pr. definition
+            //       ER ejer uden separat ejerandel-registrering — fx enkeltmands-
+            //       virksomhed, I/S, K/S, P/S. Disse har ofte tom ejer-rolle-
+            //       liste i CVR fordi registreringen ikke kræver det.
+            const harEjerAndel = v.roller.some((r) => {
               if (r.ejerandel == null) return false;
               const rolle = r.rolle.toLowerCase();
               if (rolle.includes('stifter')) return false;
               return true;
             });
-            if (!erEjer) continue;
+            const formLc = (v.form ?? '').toLowerCase();
+            const deltagerErEjerVedForm =
+              formLc.includes('enkeltmand') ||
+              formLc.includes('interessent') || // I/S
+              formLc.includes('kommandit') || // K/S
+              formLc.includes('partnersels'); // P/S
+            if (!harEjerAndel && !deltagerErEjerVedForm) continue;
             const cvrId = `cvr-${v.cvr}`;
             if (existingIds.has(cvrId)) continue;
             existingIds.add(cvrId);

@@ -681,18 +681,21 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
 
     // Assign initial X positions: process Y rows top-to-bottom so property rows
     // can reuse their owner's X position (computed in earlier iteration).
+    // Co-owners are handled in a SECOND pass so they can be placed around
+    // their target's X instead of drifting toward X=0 (which caused overlap
+    // with row-siblings when a mid-row node's co-owners were expanded).
     const initialX = new Map<string, number>();
     const sortedYs = [...byY.keys()].sort((a, b) => a - b);
+
+    // ── Pass A: non-co-owner nodes spread evenly per Y row ──
     for (const y of sortedYs) {
       const nodes = byY.get(y)!;
-      // Split into property nodes (positioned under owner) vs others (spread evenly)
       const propNodes = nodes.filter(
         (n) => n.type === 'property' || n.id.startsWith('props-overflow-')
       );
       const otherNodes = nodes.filter(
-        (n) => n.type !== 'property' && !n.id.startsWith('props-overflow-')
+        (n) => !n.isCoOwner && n.type !== 'property' && !n.id.startsWith('props-overflow-')
       );
-      // Spread non-property nodes evenly
       const otherCount = otherNodes.length;
       for (let i = 0; i < otherNodes.length; i++) {
         initialX.set(otherNodes[i].id, (i - (otherCount - 1) / 2) * NODE_GAP_X);
@@ -704,6 +707,24 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
       const propSpacing = NODE_W + 40;
       for (let i = 0; i < propCount; i++) {
         initialX.set(propNodes[i].id, (i - (propCount - 1) / 2) * propSpacing);
+      }
+    }
+
+    // ── Pass B: co-owners placed around their target's X ──
+    // Group co-owners by their collapseParent and centre the group at target X.
+    const coByTargetLocal = new Map<string, DiagramNode[]>();
+    for (const n of filteredGraph.nodes) {
+      if (n.isCoOwner && n.collapseParent) {
+        if (!coByTargetLocal.has(n.collapseParent)) coByTargetLocal.set(n.collapseParent, []);
+        coByTargetLocal.get(n.collapseParent)!.push(n);
+      }
+    }
+    for (const [targetId, coNodes] of coByTargetLocal) {
+      const targetX = initialX.get(targetId) ?? 0;
+      const count = coNodes.length;
+      for (let i = 0; i < count; i++) {
+        // Spread around targetX with NODE_GAP_X spacing.
+        initialX.set(coNodes[i].id, targetX + (i - (count - 1) / 2) * NODE_GAP_X);
       }
     }
 

@@ -2062,19 +2062,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                 data.industrydesc ?? null,
                 propertiesByCvr
               );
-              return (
-                <>
-                  {(ejendommeLoading || ejendommeLoadingMore) && (
-                    <div className="flex items-center gap-2 px-3 py-2 mb-2 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs">
-                      <div className="w-3 h-3 border-2 border-blue-400/30 border-t-blue-400 rounded-full animate-spin" />
-                      {lang === 'da'
-                        ? `Henter ejendomme… (${ejendommeData.length}${ejendommeTotalBfe ? ` af ${ejendommeTotalBfe}` : ''})`
-                        : `Loading properties… (${ejendommeData.length}${ejendommeTotalBfe ? ` of ${ejendommeTotalBfe}` : ''})`}
-                    </div>
-                  )}
-                  <DiagramForce graph={diagramGraph} lang={lang} />
-                </>
-              );
+              return <DiagramForce graph={diagramGraph} lang={lang} />;
             })()}
 
           {/* ══ EJENDOMME (inkl. ejendomshandler) ══ */}

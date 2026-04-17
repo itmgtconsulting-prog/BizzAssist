@@ -112,23 +112,71 @@ export async function GET(req: NextRequest) {
     } satisfies PersonBridgeResponse);
   }
 
-  // Trin 2 — DAWA: adresseId → BFE via jordstykke-opslag
-  // DAWA returnerer adgangsadressedata inkl. jordstykke.bfenummer
-  const dawaUrl = `https://api.dataforsyningen.dk/adgangsadresser/${encodeURIComponent(adr.adresseId)}`;
-  let bfeNummer: number | null = null;
+  // Trin 2 — DAWA: adresseId → BFE. CVR ES's adresseId kan være enten en
+  // DAR adresse (specifik enhed) eller en adgangsadresse (bygning). Vi prøver
+  // begge: først /adresser (specifik enhed), så /adgangsadresser (fallback),
+  // og sidst adresse-search på vejnavn+husnr+postnr hvis begge id-opslag fejler.
+  const encoded = encodeURIComponent(adr.adresseId);
   const viaAdresse =
     `${adr.vejnavn ?? ''} ${adr.husnummerFra ?? ''}${adr.bogstavFra ?? ''}, ${adr.postnummer ?? ''} ${adr.postdistrikt ?? ''}`.trim();
-  try {
-    const res = await fetch(dawaUrl, { signal: AbortSignal.timeout(10000) });
-    if (res.ok) {
-      const d = (await res.json()) as {
-        jordstykke?: { bfenummer?: number };
-        adgangspunkt?: { bfenummer?: number };
-      };
-      bfeNummer = d.jordstykke?.bfenummer ?? d.adgangspunkt?.bfenummer ?? null;
+  let bfeNummer: number | null = null;
+  const dawaTries: Array<{ label: string; url: string }> = [
+    { label: 'adresser-by-id', url: `https://api.dataforsyningen.dk/adresser/${encoded}` },
+    {
+      label: 'adgangsadresser-by-id',
+      url: `https://api.dataforsyningen.dk/adgangsadresser/${encoded}`,
+    },
+  ];
+  // Sidste fallback: søg på vejnavn + husnr + postnr
+  if (adr.vejnavn && adr.husnummerFra != null && adr.postnummer != null) {
+    const params = new URLSearchParams({
+      vejnavn: adr.vejnavn,
+      husnr: `${adr.husnummerFra}${adr.bogstavFra ?? ''}`,
+      postnr: String(adr.postnummer),
+      struktur: 'mini',
+    });
+    dawaTries.push({
+      label: 'adgangsadresser-search',
+      url: `https://api.dataforsyningen.dk/adgangsadresser?${params.toString()}`,
+    });
+  }
+
+  const dawaDiag: Array<{ label: string; status: number; bfe: number | null }> = [];
+  for (const t of dawaTries) {
+    if (bfeNummer != null) break;
+    try {
+      const res = await fetch(t.url, { signal: AbortSignal.timeout(10000) });
+      if (!res.ok) {
+        dawaDiag.push({ label: t.label, status: res.status, bfe: null });
+        continue;
+      }
+      const json = (await res.json()) as unknown;
+      // /adresser/{id}: object med adgangsadresse.jordstykke.bfenummer
+      // /adgangsadresser/{id}: object med jordstykke.bfenummer
+      // /adgangsadresser?...: array af mini-objekter
+      if (Array.isArray(json)) {
+        // mini-objekt har ikke jordstykke — vi skal følge op med en detalje-fetch.
+        const first = json[0] as { id?: string } | undefined;
+        if (first?.id) {
+          const detail = await fetch(`https://api.dataforsyningen.dk/adgangsadresser/${first.id}`, {
+            signal: AbortSignal.timeout(10000),
+          });
+          if (detail.ok) {
+            const dj = (await detail.json()) as { jordstykke?: { bfenummer?: number } };
+            bfeNummer = dj.jordstykke?.bfenummer ?? null;
+          }
+        }
+      } else if (json && typeof json === 'object') {
+        const obj = json as {
+          jordstykke?: { bfenummer?: number };
+          adgangsadresse?: { jordstykke?: { bfenummer?: number } };
+        };
+        bfeNummer = obj.jordstykke?.bfenummer ?? obj.adgangsadresse?.jordstykke?.bfenummer ?? null;
+      }
+      dawaDiag.push({ label: t.label, status: res.status, bfe: bfeNummer });
+    } catch {
+      dawaDiag.push({ label: t.label, status: 0, bfe: null });
     }
-  } catch {
-    /* fortsæt — ingen BFE */
   }
 
   if (bfeNummer == null) {
@@ -139,7 +187,7 @@ export async function GET(req: NextRequest) {
       foedselsdato: null,
       viaBfe: null,
       viaAdresse,
-      fejl: 'Kunne ikke resolve hjem-adresse til BFE via DAWA',
+      fejl: `Kunne ikke resolve hjem-adresse til BFE via DAWA (diag: ${JSON.stringify(dawaDiag)})`,
     } satisfies PersonBridgeResponse);
   }
 

@@ -176,7 +176,8 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
           fetch(`/api/cvr-public/person?enhedsNummer=${enhedsNummer}`, {
             signal: AbortSignal.timeout(15000),
           }).catch(() => null),
-          fetch(`/api/ejendomme-by-owner?enhedsNummer=${enhedsNummer}`, {
+          // limit=50 så vi får hele porteføljen med i første kald (default er 5).
+          fetch(`/api/ejendomme-by-owner?enhedsNummer=${enhedsNummer}&limit=50&offset=0`, {
             signal: AbortSignal.timeout(15000),
           }).catch(() => null),
         ]);
@@ -187,9 +188,24 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
         const newNodes: DiagramNode[] = [];
         const newEdges: DiagramEdge[] = [];
 
+        // Debug-output så brugeren kan verificere API-svar i browserens devtools
+        if (typeof window !== 'undefined') {
+          console.log('[diagram-expand-person]', {
+            personId,
+            enhedsNummer,
+            personStatus: personRes?.status,
+            ejendommeStatus: ejendommeRes?.status,
+          });
+        }
+
         // ── Personligt ejede virksomheder (CVR) ──
         if (personRes?.ok) {
           const data: PersonPublicData = await personRes.json();
+
+          console.log(
+            '[diagram-expand-person] virksomheder returneret:',
+            data.virksomheder?.length ?? 0
+          );
           for (const v of data.virksomheder ?? []) {
             if (!v.aktiv) continue;
             // DIREKTE personlig ejerskab kræver:
@@ -230,6 +246,14 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
         if (ejendommeRes?.ok) {
           const ejData = await ejendommeRes.json();
           const ejendomme = Array.isArray(ejData.ejendomme) ? ejData.ejendomme : [];
+
+          console.log('[diagram-expand-person] ejendomme returneret:', {
+            count: ejendomme.length,
+            totalBfe: ejData.totalBfe,
+            manglerAdgang: ejData.manglerAdgang,
+            manglerNoegle: ejData.manglerNoegle,
+            fejl: ejData.fejl,
+          });
           for (const p of ejendomme) {
             if (p.aktiv === false) continue; // skip solgte
             const bfeId = `bfe-${p.bfeNummer}`;
@@ -531,6 +555,18 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
     // Set of target IDs that have expanded co-owners
     const targetsWithCoOwners = new Set(coByTarget.keys());
 
+    // Set of target IDs that have expanded COMPANY co-owners specifically —
+    // each one needs its own stacked sub-row so we count them separately for
+    // vertical space reservation.
+    const targetsWithCompanyCoOwners = new Set<string>();
+    for (const [targetId, coIds] of coByTarget) {
+      const hasCompany = coIds.some((id) => {
+        const n = filteredGraph.nodes.find((nn) => nn.id === id);
+        return n?.type === 'company';
+      });
+      if (hasCompany) targetsWithCompanyCoOwners.add(targetId);
+    }
+
     // Group only NON-co-owner, NON-property nodes by depth for standard sub-row layout.
     // Properties are placed in Pass 3 directly below their specific owner.
     const nodeById = new Map(filteredGraph.nodes.map((n) => [n.id, n]));
@@ -652,9 +688,13 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
         const endIdx = Math.min(startIdx + MAX_PER_ROW, nodeIds.length);
         let subRowHasCoOwners = false;
         let subRowHasProperties = false;
+        let companyCoOwnerTargetCount = 0;
         for (let i = startIdx; i < endIdx; i++) {
           if (nodeIds[i] !== '__pad__' && targetsWithCoOwners.has(nodeIds[i])) {
             subRowHasCoOwners = true;
+          }
+          if (nodeIds[i] !== '__pad__' && targetsWithCompanyCoOwners.has(nodeIds[i])) {
+            companyCoOwnerTargetCount++;
           }
           if (nodeIds[i] !== '__pad__' && propertiesByOwner.has(nodeIds[i])) {
             subRowHasProperties = true;
@@ -664,7 +704,12 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
           levelHeight += subRowGap;
         }
         if (subRowHasCoOwners) {
-          levelHeight += CO_ROW_GAP;
+          // Reserver ekstra plads per target-med-company-coowners så hver får
+          // sin egen stack-række (se Pass 2). Mindst 1 CO_ROW_GAP selv hvis
+          // kun person-co-owners er til stede (de pinnes til toppen men vi
+          // vil stadig have en lille afstand).
+          const stacks = Math.max(1, companyCoOwnerTargetCount);
+          levelHeight += CO_ROW_GAP * stacks;
         }
         // Reserve space for properties below this sub-row using the same
         // "keep owner together" rule as Pass 3 placement — otherwise next
@@ -742,14 +787,18 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
           const startIdx = subRow * MAX_PER_ROW;
           const endIdx = Math.min(startIdx + MAX_PER_ROW, nodeIds.length);
           let subRowHasCoOwners = false;
+          let companyCoOwnerTargetCount = 0;
           for (let j = startIdx; j < endIdx; j++) {
             if (nodeIds[j] !== '__pad__' && targetsWithCoOwners.has(nodeIds[j])) {
               subRowHasCoOwners = true;
-              break;
+            }
+            if (nodeIds[j] !== '__pad__' && targetsWithCompanyCoOwners.has(nodeIds[j])) {
+              companyCoOwnerTargetCount++;
             }
           }
           if (subRowHasCoOwners) {
-            runningY += CO_ROW_GAP;
+            const stacks = Math.max(1, companyCoOwnerTargetCount);
+            runningY += CO_ROW_GAP * stacks;
           }
           prevSubRow = subRow;
         }
@@ -768,18 +817,43 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
     }
     void globalMinY; // reserved for future use
 
-    // Pass 2: Place COMPANY co-owners just above their target subsidiary.
-    // Person co-owners are now handled uniformly in Pass 1 (placed in byDepth
-    // alongside ownerchain persons at the top of the diagram).
-    for (const [targetId, coIds] of coByTarget) {
-      const targetY = yMap.get(targetId) ?? 0;
-      const targetDepth = depthMap.get(targetId) ?? 0;
-      const coRowGap = getSubRowGap(targetDepth);
-      const companies = coIds.filter((id) => nodeById.get(id)?.type === 'company');
-      const companyBaseY = targetY - CO_ROW_GAP;
-      for (let i = 0; i < companies.length; i++) {
-        const subRow = Math.floor(i / MAX_PER_ROW);
-        yMap.set(companies[i], companyBaseY + subRow * coRowGap);
+    // Pass 2: Place COMPANY co-owners stacked above their target subsidiary.
+    // Hvis flere subsidiaries på samme Y har expanded company co-owners, får
+    // hver subsidiary sin egen sub-row (stack) så co-ownergrupper fra
+    // forskellige forældre ikke lapper ind over hinanden horisontalt.
+    const targetsByY = new Map<number, string[]>();
+    for (const targetId of coByTarget.keys()) {
+      const coIds = coByTarget.get(targetId) ?? [];
+      const hasCompanyCo = coIds.some((id) => nodeById.get(id)?.type === 'company');
+      if (!hasCompanyCo) continue;
+      const ty = yMap.get(targetId);
+      if (ty == null) continue;
+      if (!targetsByY.has(ty)) targetsByY.set(ty, []);
+      targetsByY.get(ty)!.push(targetId);
+    }
+    // For determinisme: sorter targets på samme Y efter deres rækkefølge i byDepth
+    const indexInByDepth = new Map<string, number>();
+    for (const [, ids] of byDepth) {
+      for (let i = 0; i < ids.length; i++) {
+        if (ids[i] !== '__pad__') indexInByDepth.set(ids[i], i);
+      }
+    }
+    for (const [, targetIds] of targetsByY) {
+      targetIds.sort((a, b) => (indexInByDepth.get(a) ?? 0) - (indexInByDepth.get(b) ?? 0));
+    }
+    for (const [targetY, targetIds] of targetsByY) {
+      for (let ti = 0; ti < targetIds.length; ti++) {
+        const targetId = targetIds[ti];
+        const coIds = coByTarget.get(targetId) ?? [];
+        const targetDepth = depthMap.get(targetId) ?? 0;
+        const coRowGap = getSubRowGap(targetDepth);
+        const companies = coIds.filter((id) => nodeById.get(id)?.type === 'company');
+        // ti=0 → umiddelbart over target, ti=1 → én række højere, osv.
+        const companyBaseY = targetY - CO_ROW_GAP * (ti + 1);
+        for (let i = 0; i < companies.length; i++) {
+          const subRow = Math.floor(i / MAX_PER_ROW);
+          yMap.set(companies[i], companyBaseY + subRow * coRowGap);
+        }
       }
     }
 

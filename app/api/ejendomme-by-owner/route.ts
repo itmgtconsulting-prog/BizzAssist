@@ -65,6 +65,8 @@ export interface EjendomSummary {
   ejendomstype: string | null;
   /** DAWA adgangsadresse UUID — bruges til link til ejendomsdetaljeside */
   dawaId: string | null;
+  /** Ejer-andel (faktisk ejerandel fra EJF, f.eks. "100%") */
+  ejerandel?: string | null;
   /** BIZZ-397: Progressive enrichment fields — populated client-side after initial load */
   /** Bygningsareal i m² fra BBR */
   areal?: number | null;
@@ -155,6 +157,8 @@ interface RawEjerskab {
   bestemtFastEjendomBFENr: number | null;
   ejendeVirksomhedCVRNr: number | null;
   virkningFra: string | null;
+  faktiskEjerandel_taeller: number | null;
+  faktiskEjerandel_naevner: number | null;
 }
 
 interface GqlResult<T> {
@@ -174,7 +178,11 @@ interface GqlResult<T> {
 async function hentBfeByCvr(
   cvr: number,
   token: string
-): Promise<{ bfeNumre: number[]; authError: boolean } | null> {
+): Promise<{
+  bfeNumre: number[];
+  ejerandelByBfe: Map<number, string>;
+  authError: boolean;
+} | null> {
   const virkningstid = new Date().toISOString();
 
   const query = `{
@@ -189,6 +197,8 @@ async function hentBfeByCvr(
         bestemtFastEjendomBFENr
         ejendeVirksomhedCVRNr
         virkningFra
+        faktiskEjerandel_taeller
+        faktiskEjerandel_naevner
       }
     }
   }`;
@@ -209,7 +219,7 @@ async function hentBfeByCvr(
       next: { revalidate: 300 },
     });
 
-    if (res.status === 403) return { bfeNumre: [], authError: true };
+    if (res.status === 403) return { bfeNumre: [], ejerandelByBfe: new Map(), authError: true };
     if (!res.ok) return null;
 
     const json = (await res.json()) as GqlResult<RawEjerskab>;
@@ -218,14 +228,26 @@ async function hentBfeByCvr(
       json.errors?.some(
         (e) => e.extensions?.code === 'DAF-AUTH-0001' || e.message?.includes('not authorized')
       ) ?? false;
-    if (authError) return { bfeNumre: [], authError: true };
+    if (authError) return { bfeNumre: [], ejerandelByBfe: new Map(), authError: true };
 
     const nodes = json.data?.EJFCustom_EjerskabBegraenset?.nodes ?? [];
     const bfeNumre = nodes
       .map((n) => n.bestemtFastEjendomBFENr)
       .filter((b): b is number => b != null);
 
-    return { bfeNumre, authError: false };
+    // Build map of BFE → ejerandel string (e.g. "50%", "100%")
+    const ejerandelByBfe = new Map<number, string>();
+    for (const n of nodes) {
+      if (n.bestemtFastEjendomBFENr == null) continue;
+      const t = n.faktiskEjerandel_taeller;
+      const nav = n.faktiskEjerandel_naevner;
+      if (t != null && nav != null && nav > 0) {
+        const pct = Math.round((t / nav) * 100);
+        ejerandelByBfe.set(n.bestemtFastEjendomBFENr, `${pct}%`);
+      }
+    }
+
+    return { bfeNumre, ejerandelByBfe, authError: false };
   } catch {
     return null;
   }
@@ -462,7 +484,16 @@ async function _hentVPAdresseForBfe(bfe: number): Promise<DawaBfeAdresse> {
       body: JSON.stringify({
         query: { term: { bfeNumbers: bfe } },
         size: 1,
-        _source: ['address', 'municipality', 'propertyType'],
+        _source: [
+          'address',
+          'roadName',
+          'houseNumber',
+          'zipcode',
+          'postDistrict',
+          'adgangsAdresseID',
+          'juridiskKategori',
+          'municipalityNumber',
+        ],
       }),
       signal: AbortSignal.timeout(8000),
     });
@@ -471,27 +502,35 @@ async function _hentVPAdresseForBfe(bfe: number): Promise<DawaBfeAdresse> {
     const data = (await res.json()) as {
       hits?: {
         hits?: Array<{
-          _source?: { address?: string; municipality?: string; propertyType?: string };
+          _source?: {
+            address?: string;
+            roadName?: string;
+            houseNumber?: string;
+            zipcode?: string;
+            postDistrict?: string;
+            adgangsAdresseID?: string;
+            juridiskKategori?: string;
+            municipalityNumber?: string;
+          };
         }>;
       };
     };
     const src = data.hits?.hits?.[0]?._source;
     if (!src?.address) return empty;
 
-    // Parse "Rosenørns Alle 65, 4. tv, 1970 Frederiksberg C" → structured fields
-    const parts = src.address.split(',').map((s: string) => s.trim());
-    const vejHusnr = parts[0] ?? null;
-    const lastPart = parts[parts.length - 1] ?? '';
-    const postnrMatch = lastPart.match(/^(\d{4})\s+(.+)/);
+    const adresse =
+      src.roadName && src.houseNumber
+        ? `${src.roadName} ${src.houseNumber}`.trim()
+        : (src.address.split(',')[0]?.trim() ?? null);
 
     return {
-      adresse: vejHusnr,
-      postnr: postnrMatch?.[1] ?? null,
-      by: postnrMatch?.[2] ?? null,
-      kommune: src.municipality ?? null,
-      kommuneKode: null,
-      ejendomstype: src.propertyType ?? null,
-      dawaId: null,
+      adresse,
+      postnr: src.zipcode ?? null,
+      by: src.postDistrict ?? null,
+      kommune: null,
+      kommuneKode: src.municipalityNumber ? String(src.municipalityNumber).padStart(4, '0') : null,
+      ejendomstype: src.juridiskKategori ?? null,
+      dawaId: src.adgangsAdresseID ?? null,
     };
   } catch {
     return empty;
@@ -735,8 +774,9 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
       });
     }
 
-    /* Saml unikke BFE-numre med tilhørende ejer-ID */
+    /* Saml unikke BFE-numre med tilhørende ejer-ID + ejer-andel */
     const bfeTilCvr = new Map<number, string>();
+    const bfeTilEjerandel = new Map<number, string>();
     for (let i = 0; i < cvrNumre.length; i++) {
       const result = cvrResults[i];
       if (!result) continue;
@@ -744,6 +784,10 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
         if (!bfeTilCvr.has(bfe)) {
           bfeTilCvr.set(bfe, String(cvrNumre[i]).padStart(8, '0'));
         }
+      }
+      // Merge ejer-andel map (first owner wins when multiple CVRs queried)
+      for (const [bfe, andel] of result.ejerandelByBfe) {
+        if (!bfeTilEjerandel.has(bfe)) bfeTilEjerandel.set(bfe, andel);
       }
     }
     // BIZZ-264: Add person-owned BFEs (use enhedsNummer as ownerCvr placeholder)
@@ -840,6 +884,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
       bfeNummer: bfe,
       ownerCvr: bfeTilCvr.get(bfe) ?? '',
       ...adresseData[idx],
+      ejerandel: bfeTilEjerandel.get(bfe) ?? null,
     }));
 
     /* Sortér: adresser først, derefter BFE-numre */

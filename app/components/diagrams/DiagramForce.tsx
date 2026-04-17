@@ -258,15 +258,20 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
         }
       }
     }
-    // BFS downward (skip co-owners)
+    // BFS downward (skip co-owners) — property nodes get depth + 0.5 so they render
+    // on a sub-row directly between their owner and the next company level.
+    const nodeById = new Map(filteredGraph.nodes.map((n) => [n.id, n]));
     const downQueue = [graph.mainId];
     while (downQueue.length > 0) {
       const current = downQueue.shift()!;
       const d = depths.get(current) ?? 0;
       for (const c of childEdges.get(current) ?? []) {
         if (!depths.has(c) && !coOwnerIds.has(c)) {
-          depths.set(c, d + 1);
-          downQueue.push(c);
+          const childNode = nodeById.get(c);
+          // BIZZ-450: properties sit on a fractional depth between owner and next level
+          const isPropertyLike = childNode?.type === 'property' || c.startsWith('props-overflow-');
+          depths.set(c, isPropertyLike ? d + 0.5 : d + 1);
+          if (!isPropertyLike) downQueue.push(c);
         }
       }
     }

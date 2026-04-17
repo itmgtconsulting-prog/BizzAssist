@@ -48,10 +48,16 @@ export interface DiagramPropertySummary {
   ownerCvr: string;
   /** Adresse (vejnavn + husnr) */
   adresse: string | null;
+  /** Postnummer */
+  postnr?: string | null;
+  /** By/postdistrikt */
+  by?: string | null;
   /** Ejendomstype (f.eks. "Normal ejendom", "Ejerlejlighed") */
   ejendomstype: string | null;
   /** DAWA adgangsadresse UUID — til link til detaljeside */
   dawaId: string | null;
+  /** Ejer-andel (f.eks. "50%", "100%") */
+  ejerandel?: string | null;
 }
 
 /** A node in the diagram graph */
@@ -383,14 +389,22 @@ export function buildDiagramGraph(
       for (const p of shown) {
         const propId = `bfe-${p.bfeNummer}`;
         // BIZZ-452: Always create edge even if node already exists (co-ownership)
-        edges.push({ from: companyNode.id, to: propId });
+        edges.push({
+          from: companyNode.id,
+          to: propId,
+          ejerandel: p.ejerandel ?? undefined,
+        });
         if (seenIds.has(propId)) continue;
         seenIds.add(propId);
+        // Link to property detail page via DAWA adgangsadresse UUID
         const link = p.dawaId ? `/dashboard/ejendomme/${p.dawaId}` : undefined;
+        // Build sublabel: "1970 Frederiksberg" or fallback to ejendomstype
+        const postBy = [p.postnr, p.by].filter(Boolean).join(' ');
+        const sublabel = postBy || p.ejendomstype || undefined;
         nodes.push({
           id: propId,
           label: p.adresse ?? `BFE ${p.bfeNummer}`,
-          sublabel: p.ejendomstype ?? undefined,
+          sublabel,
           type: 'property',
           bfeNummer: p.bfeNummer,
           link,
@@ -705,14 +719,22 @@ export function buildPersonDiagramGraph(
       for (const p of shown) {
         const propId = `bfe-${p.bfeNummer}`;
         // BIZZ-452: Always create edge even if node already exists (co-ownership)
-        edges.push({ from: companyNode.id, to: propId });
+        edges.push({
+          from: companyNode.id,
+          to: propId,
+          ejerandel: p.ejerandel ?? undefined,
+        });
         if (seenIds.has(propId)) continue;
         seenIds.add(propId);
+        // Link to property detail page via DAWA adgangsadresse UUID
         const link = p.dawaId ? `/dashboard/ejendomme/${p.dawaId}` : undefined;
+        // Build sublabel: "1970 Frederiksberg" or fallback to ejendomstype
+        const postBy = [p.postnr, p.by].filter(Boolean).join(' ');
+        const sublabel = postBy || p.ejendomstype || undefined;
         nodes.push({
           id: propId,
           label: p.adresse ?? `BFE ${p.bfeNummer}`,
-          sublabel: p.ejendomstype ?? undefined,
+          sublabel,
           type: 'property',
           bfeNummer: p.bfeNummer,
           link,

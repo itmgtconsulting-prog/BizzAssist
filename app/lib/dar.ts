@@ -37,6 +37,11 @@ import { DAR_ENDPOINT } from '@/app/lib/serviceEndpoints';
  * Constants
  * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 const MAT_WFS_ENDPOINT = 'https://services.datafordeler.dk/Matrikel/MatGaeld662/1/WFS';
+/**
+ * BIZZ-503: Datafordeler DAR WFS endpoint. Used for spatial queries
+ * (reverse geocoding) that DAR GraphQL does not support.
+ */
+const DAR_WFS_ENDPOINT = 'https://services.datafordeler.dk/DAR/DAR/1/WFS';
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  * GraphQL helpers
@@ -773,4 +778,117 @@ export async function darHentJordstykke(lng: number, lat: number): Promise<DawaJ
  */
 export function erDarId(id: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ * BIZZ-503: Reverse geocoding via Datafordeler DAR WFS
+ * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+/**
+ * Result shape of a successful reverse geocode.
+ * Keeps the `id` nullable — DAR WFS occasionally returns a feature without an
+ * address UUID attached.
+ */
+export interface DarReverseResult {
+  /** Human-readable address string, e.g. "Bredgade 1, 1260 København K" */
+  adresse: string;
+  /** DAR Husnummer UUID when available (navigable in our app) */
+  id: string | null;
+}
+
+/**
+ * BIZZ-503: Reverse-geocode a WGS84 coordinate via Datafordeler DAR WFS.
+ *
+ * Uses CQL_FILTER DWITHIN on the `husnummer:position` geometry to find
+ * address points within ~50m of the input coordinate. Returns the first
+ * result (WFS does not sort by distance, but density of Danish addresses
+ * makes the nearest match reliable inside 50m).
+ *
+ * Returns null when:
+ *   - DATAFORDELER_API_KEY is not set
+ *   - WFS returns no features
+ *   - WFS errors (non-2xx) — callers should fall back to DAWA
+ *
+ * Never throws; all errors are logged.
+ *
+ * @param lng - Længdegrad (WGS84)
+ * @param lat - Breddegrad (WGS84)
+ * @returns DarReverseResult or null
+ */
+export async function darReverseGeocode(
+  lng: number,
+  lat: number
+): Promise<DarReverseResult | null> {
+  const apiKey = process.env.DATAFORDELER_API_KEY;
+  if (!apiKey) {
+    logger.warn(
+      'darReverseGeocode: DATAFORDELER_API_KEY not set — skipping DAR, caller should fall back to DAWA'
+    );
+    return null;
+  }
+
+  try {
+    // DWITHIN with 50m radius. Denmark's address density is such that any
+    // address this close is effectively "the one" the user clicked. If no
+    // feature is returned we return null and the caller falls back to DAWA.
+    const cql = `DWITHIN(husnummer/position,POINT(${lng} ${lat}),50,meters)`;
+    const params = new URLSearchParams({
+      service: 'WFS',
+      version: '2.0.0',
+      request: 'GetFeature',
+      typeNames: 'DAR:Husnummer_Gaeldende',
+      srsName: 'EPSG:4326',
+      CQL_FILTER: cql,
+      outputFormat: 'json',
+      count: '1',
+      apiKey,
+    });
+
+    const res = await fetch(proxyUrl(`${DAR_WFS_ENDPOINT}?${params.toString()}`), {
+      headers: { ...proxyHeaders() },
+      signal: AbortSignal.timeout(proxyTimeout()),
+    });
+
+    if (!res.ok) {
+      logger.warn(`darReverseGeocode DAR WFS fejl: ${res.status} ${res.statusText}`);
+      return null;
+    }
+
+    const geojson = (await res.json()) as {
+      features?: Array<{
+        properties?: Record<string, unknown>;
+        id?: string;
+      }>;
+    };
+
+    const feature = geojson.features?.[0];
+    if (!feature?.properties) return null;
+
+    const p = feature.properties;
+    // DAR exposes husnummer + adresseUuid under slightly varying names depending
+    // on output format version. Guard all three common casings.
+    const vejnavn = (p.vejnavn ?? p.vejNavn ?? '') as string;
+    const husnr = (p.husnummertekst ?? p.husnummer ?? p.husnr ?? '') as string;
+    const postnr = String(p.postnummer ?? p.postnr ?? '').trim();
+    const postnrnavn = (p.postdistriktnavn ?? p.postnrnavn ?? '') as string;
+    const id =
+      (p.adresseUuid as string | null) ??
+      (p.husnummerUuid as string | null) ??
+      (feature.id as string | null) ??
+      null;
+
+    const adresseParts = [`${vejnavn} ${husnr}`.trim()];
+    if (postnr) adresseParts.push(`${postnr} ${postnrnavn}`.trim());
+    const adresse = adresseParts.filter(Boolean).join(', ');
+
+    if (!adresse) return null;
+
+    return { adresse, id };
+  } catch (err) {
+    logger.error(
+      'darReverseGeocode DAR WFS fetch failed:',
+      err instanceof Error ? err.message : err
+    );
+    return null;
+  }
 }

@@ -31,6 +31,8 @@ import type { DiagramVariantProps, DiagramNode } from './DiagramData';
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const NODE_W = 320;
+/** Narrower width for property nodes — tighter box around address text */
+const NODE_W_PROPERTY = 260;
 const NODE_H = 64;
 const NODE_H_EXPAND = 78;
 const NODE_H_PERSON = 34;
@@ -625,15 +627,6 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
       byY.get(y)!.push(n);
     }
 
-    // Build owner lookup: property node id → owner company node id (from edges)
-    const ownerOfProperty = new Map<string, string>();
-    for (const edge of filteredGraph.edges) {
-      const toNode = filteredGraph.nodes.find((n) => n.id === edge.to);
-      if (toNode?.type === 'property' || edge.to.startsWith('props-overflow-')) {
-        if (!ownerOfProperty.has(edge.to)) ownerOfProperty.set(edge.to, edge.from);
-      }
-    }
-
     // Assign initial X positions: process Y rows top-to-bottom so property rows
     // can reuse their owner's X position (computed in earlier iteration).
     const initialX = new Map<string, number>();
@@ -652,22 +645,13 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
       for (let i = 0; i < otherNodes.length; i++) {
         initialX.set(otherNodes[i].id, (i - (otherCount - 1) / 2) * NODE_GAP_X);
       }
-      // Group property nodes by their owner to cluster siblings together
-      const propsByOwner = new Map<string, DiagramNode[]>();
-      for (const p of propNodes) {
-        const owner = ownerOfProperty.get(p.id) ?? '__unknown__';
-        if (!propsByOwner.has(owner)) propsByOwner.set(owner, []);
-        propsByOwner.get(owner)!.push(p);
-      }
-      // Place each group centered on its owner's X
-      for (const [ownerId, props] of propsByOwner) {
-        const ownerX = initialX.get(ownerId) ?? 0;
-        const n = props.length;
-        // Use tighter spacing for properties so they cluster under owner
-        const propSpacing = NODE_W + 20;
-        for (let i = 0; i < n; i++) {
-          initialX.set(props[i].id, ownerX + (i - (n - 1) / 2) * propSpacing);
-        }
+      // Place properties globally spread across the row (not clustered per owner)
+      // so multiple owners' properties don't overlap horizontally when 5+ share a Y.
+      // Force simulation will still pull each property toward its owner via edges.
+      const propCount = propNodes.length;
+      const propSpacing = NODE_W + 40;
+      for (let i = 0; i < propCount; i++) {
+        initialX.set(propNodes[i].id, (i - (propCount - 1) / 2) * propSpacing);
       }
     }
 
@@ -700,10 +684,11 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
         node.y = (node.y ?? 0) * 0.15 + targetY * 0.85;
       }
 
-      // Same-level X repulsion: only push apart nodes that share the same Y level.
-      // Property nodes use tighter minDist so they cluster under their owner.
+      // Same-level X repulsion: push apart any nodes at the same Y to
+      // prevent horizontal overlap. Property-property pairs use narrower minDist
+      // matching their smaller box width.
       const MIN_DIST_COMPANY = NODE_W + 36;
-      const MIN_DIST_PROPERTY = NODE_W + 16;
+      const MIN_DIST_PROPERTY = NODE_W_PROPERTY + 20;
       for (const [, siblings] of nodesByY) {
         for (let i = 0; i < siblings.length; i++) {
           for (let j = i + 1; j < siblings.length; j++) {
@@ -714,7 +699,7 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
             const dx = (b.x ?? 0) - (a.x ?? 0);
             const absDx = Math.abs(dx);
             if (absDx < minDist) {
-              const push = (minDist - absDx) * (bothProperty ? 0.2 : 0.5);
+              const push = (minDist - absDx) * 0.6;
               const sign = dx >= 0 ? 1 : -1;
               a.x = (a.x ?? 0) - push * sign;
               b.x = (b.x ?? 0) + push * sign;
@@ -753,7 +738,8 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
         forceLink<ForceNode, ForceLink>(forceLinks)
           .id((d) => d.id)
           .distance(80)
-          .strength(0.5)
+          // Weaker link force so property edges don't pull siblings on top of each other
+          .strength(0.15)
       )
       // No global charge — only same-level repulsion in forceHierarchy
       .force('centerX', forceCenter(0, 0).strength(0.05))
@@ -820,9 +806,10 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
     for (const [nodeId, pos] of positions.entries()) {
       const node = filteredGraph.nodes.find((n) => n.id === nodeId);
       const nh = node ? getNodeH(node, expandedOverflow) : NODE_H;
-      minX = Math.min(minX, pos.x - NODE_W / 2);
+      const nw = node?.type === 'property' ? NODE_W_PROPERTY : NODE_W;
+      minX = Math.min(minX, pos.x - nw / 2);
       minY = Math.min(minY, pos.y - nh / 2);
-      maxX = Math.max(maxX, pos.x + NODE_W / 2);
+      maxX = Math.max(maxX, pos.x + nw / 2);
       maxY = Math.max(maxY, pos.y + nh / 2);
     }
     const pad = 60;
@@ -1430,7 +1417,9 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
         }
 
         const rx = isPerson ? h / 2 : isProperty ? 16 : 12;
-        const x = pos.x - NODE_W / 2;
+        // Property nodes are narrower (less wasted space around short addresses)
+        const w = isProperty ? NODE_W_PROPERTY : NODE_W;
+        const x = pos.x - w / 2;
         // Overflow-noder: forankr fra toppen (brug kollapseret højde) så de udvider nedad
         const collapsedH = node.overflowItems
           ? 30 +
@@ -1559,7 +1548,7 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
             <rect
               x={x}
               y={y}
-              width={NODE_W}
+              width={w}
               height={h}
               rx={rx}
               fill={fill}

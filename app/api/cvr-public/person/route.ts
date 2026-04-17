@@ -73,6 +73,19 @@ export interface PersonPublicData {
   navn: string;
   /** Om personen er en virksomhed */
   erVirksomhed: boolean;
+  /** Personens seneste beliggenhedsadresse fra CVR (til EJF-bridge) */
+  beliggenhedsadresse: {
+    /** DAWA adresseId (UUID) — primær nøgle til at slå BFE op via DAWA */
+    adresseId: string | null;
+    vejnavn: string | null;
+    husnummerFra: number | null;
+    bogstavFra: string | null;
+    etage: string | null;
+    sidedoer: string | null;
+    postnummer: number | null;
+    postdistrikt: string | null;
+    kommuneKode: number | null;
+  } | null;
   /** Alle virksomheder personen har roller i */
   virksomheder: PersonCompanyRole[];
 }
@@ -382,8 +395,61 @@ export async function GET(
       return a.navn.localeCompare(b.navn, 'da');
     });
 
+    // Hent personens egen beliggenhedsadresse fra /deltager/_search. Bruges som
+    // bro til EJF: personens hjemadresse har en BFE hvor han/hun selv står som
+    // ejer, og via den kan vi finde personens EJF-id uden navnegæt.
+    let beliggenhedsadresse: PersonPublicData['beliggenhedsadresse'] = null;
+    try {
+      const deltagerRes = await fetch(`${CVR_ES_BASE}/deltager/_search`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Basic ${auth}` },
+        body: JSON.stringify({
+          query: { term: { 'Vrdeltagerperson.enhedsNummer': enhedsNr } },
+          _source: ['Vrdeltagerperson.beliggenhedsadresse'],
+          size: 1,
+        }),
+        signal: AbortSignal.timeout(8000),
+        next: { revalidate: 300 },
+      });
+      if (deltagerRes.ok) {
+        const dData = (await deltagerRes.json()) as {
+          hits?: { hits?: Array<{ _source?: Record<string, unknown> }> };
+        };
+        const dSrc = (dData.hits?.hits?.[0]?._source as Record<string, unknown>)
+          ?.Vrdeltagerperson as Record<string, unknown> | undefined;
+        const adrArr = Array.isArray(dSrc?.beliggenhedsadresse)
+          ? (dSrc.beliggenhedsadresse as (Periodic & Record<string, unknown>)[])
+          : [];
+        const adr = gyldigNu(adrArr);
+        if (adr) {
+          beliggenhedsadresse = {
+            adresseId: typeof adr.adresseId === 'string' ? adr.adresseId : null,
+            vejnavn: typeof adr.vejnavn === 'string' ? adr.vejnavn : null,
+            husnummerFra: typeof adr.husnummerFra === 'number' ? adr.husnummerFra : null,
+            bogstavFra: typeof adr.bogstavFra === 'string' ? adr.bogstavFra : null,
+            etage: typeof adr.etage === 'string' ? adr.etage : null,
+            sidedoer: typeof adr.sidedoer === 'string' ? adr.sidedoer : null,
+            postnummer: typeof adr.postnummer === 'number' ? adr.postnummer : null,
+            postdistrikt: typeof adr.postdistrikt === 'string' ? adr.postdistrikt : null,
+            kommuneKode:
+              typeof (adr.kommune as Record<string, unknown> | undefined)?.kommuneKode === 'number'
+                ? ((adr.kommune as { kommuneKode: number }).kommuneKode as number)
+                : null,
+          };
+        }
+      }
+    } catch {
+      /* non-fatal — bare drop adressen hvis deltager-kaldet fejler */
+    }
+
     return NextResponse.json(
-      { enhedsNummer: enhedsNr, navn: personNavn, erVirksomhed, virksomheder },
+      {
+        enhedsNummer: enhedsNr,
+        navn: personNavn,
+        erVirksomhed,
+        beliggenhedsadresse,
+        virksomheder,
+      },
       {
         status: 200,
         headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },

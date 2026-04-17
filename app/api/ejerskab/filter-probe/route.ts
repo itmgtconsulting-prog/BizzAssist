@@ -17,7 +17,7 @@ export const maxDuration = 30;
 
 const EJF_GQL_URL = 'https://graphql.datafordeler.dk/flexibleCurrent/v1/';
 
-async function runQuery(token: string, whereClause: string) {
+async function _runQuery(token: string, whereClause: string) {
   const virkningstid = new Date().toISOString();
   const query = `{
     EJFCustom_EjerskabBegraenset(
@@ -143,18 +143,57 @@ export async function GET(req: NextRequest) {
     altIntrospections[n] = await r.text();
   }
 
-  // Test flere filter-syntaxer (baseline som sanity-check)
-  const variants: Array<{ name: string; where: string }> = [
-    { name: 'bfe_direct', where: `{ bestemtFastEjendomBFENr: { eq: 2081243 } }` },
-    {
-      name: 'ejendePersonEnhedsNummer_68_prefix',
-      where: `{ ejendePersonEnhedsNummer: { eq: 68595 } }`,
-    },
-  ];
-  const results: Record<string, unknown> = {};
-  for (const v of variants) {
-    results[v.name] = await runQuery(token, v.where);
+  // Probe for andre top-level queries der matcher EJFCustom-mønstret.
+  // Uden introspection prøver vi simpelthen kendte mønstre og ser hvilke
+  // der returnerer data vs field-does-not-exist fejl.
+  async function _tryRootQuery(name: string, args: string): Promise<unknown> {
+    const q = `{ ${name}(${args}) { nodes { __typename } } }`;
+    return { query: q, response: await gql(q) };
   }
+
+  const virkningstid = new Date().toISOString();
+  const rootTests: Record<string, unknown> = {};
+  const candidateQueries = [
+    `EJFCustom_EjerskabBegraenset(first: 1, virkningstid: "${virkningstid}", where: { bestemtFastEjendomBFENr: { eq: 2081243 } })`,
+    `EJFCustom_PersonEjerskab(first: 1, virkningstid: "${virkningstid}")`,
+    `EJFCustom_EjerskabByPerson(first: 1, virkningstid: "${virkningstid}")`,
+    `EJFCustom_EjerskabPerson(first: 1, virkningstid: "${virkningstid}")`,
+    `EJF_EjerskabByPerson(first: 1, virkningstid: "${virkningstid}")`,
+    `EJF_EjerskabBegraenset(first: 1, virkningstid: "${virkningstid}")`,
+    `EJF_PersonVirksomhedsoplys(first: 1, virkningstid: "${virkningstid}", where: { navn: { eq: "${navn.replace(/"/g, '\\"')}" } })`,
+    `EJFCustom_EjerskabBegraensetByPerson(first: 1, virkningstid: "${virkningstid}")`,
+    `EJF_Handelsoplysninger(first: 1, virkningstid: "${virkningstid}")`,
+  ];
+  for (const q of candidateQueries) {
+    const queryStr = `{ ${q} { nodes { __typename } } }`;
+    const resp = await gql(queryStr);
+    const match = q.match(/^(\w+)/);
+    const key = match ? match[1] : q.slice(0, 30);
+    rootTests[key] = {
+      query: queryStr.slice(0, 200),
+      response: resp.slice(0, 500),
+    };
+  }
+
+  // Prøv filter på eksisterende Ejerskab med alle kendte felter samtidig
+  // for at se om vi kan ramme noget der returnerer Jakobs BFE'er
+  const filterFieldProbes: Record<string, string> = {};
+  const candidateFields = [
+    'ejendeEnhedsNummer',
+    'ejendePersonId',
+    'ejendePersonBegraensetId_lokalId',
+    'ejendePersonLokalId',
+    'oplysningerEjesAfEjerskabId_lokalId',
+    'id_lokalId',
+    'ejetAfEnhedsNummer',
+    'ejerEnhedsNummer',
+  ];
+  for (const f of candidateFields) {
+    const q = `{ EJFCustom_EjerskabBegraenset(first: 1, virkningstid: "${virkningstid}", where: { ${f}: { eq: "test" } }) { nodes { bestemtFastEjendomBFENr } } }`;
+    filterFieldProbes[f] = (await gql(q)).slice(0, 400);
+  }
+
+  const results = { rootTests, filterFieldProbes };
 
   return NextResponse.json(
     {

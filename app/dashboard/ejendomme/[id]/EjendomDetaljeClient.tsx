@@ -847,6 +847,9 @@ export default function EjendomDetaljeClient({
 
   /** CVR-virksomheder registreret på adressen */
   const [cvrVirksomheder, setCvrVirksomheder] = useState<CVRVirksomhed[] | null>(null);
+  /** BIZZ-473: True when CVR fetch has completed (success or error). Used to prevent
+   * flicker where the section appears briefly then disappears if no companies found. */
+  const [cvrFetchComplete, setCvrFetchComplete] = useState(false);
   /** True hvis CVR_ES_USER/PASS mangler i .env.local */
   const [cvrTokenMangler, setCvrTokenMangler] = useState(false);
   /** True hvis CVR ElasticSearch API er utilgængeligt (timeout/nedbrud) */
@@ -1253,6 +1256,7 @@ export default function EjendomDetaljeClient({
     // For ejerlejligheder: filtrer på etage+dør for præcise resultater
     if (dawaAdresse.etage) params.set('etage', dawaAdresse.etage);
     if (dawaAdresse.dør) params.set('doer', dawaAdresse.dør);
+    setCvrFetchComplete(false);
     fetch(`/api/cvr?${params}`, { signal: controller.signal })
       .then((r) => (r.ok ? r.json() : { virksomheder: [], tokenMangler: false }))
       .then((data: CVRResponse) => {
@@ -1260,11 +1264,13 @@ export default function EjendomDetaljeClient({
         setCvrVirksomheder(data.virksomheder);
         setCvrTokenMangler(data.tokenMangler);
         setCvrApiDown(data.apiDown ?? false);
+        setCvrFetchComplete(true);
       })
       .catch((err) => {
         if (err.name === 'AbortError') return;
         logger.error('[ejendom] CVR fetch error:', err);
         setCvrVirksomheder([]);
+        setCvrFetchComplete(true);
       });
     return () => controller.abort();
     // BIZZ-333: Use stable address components as deps instead of full dawaAdresse object
@@ -2633,8 +2639,10 @@ export default function EjendomDetaljeClient({
                 {/* Lejligheder er flyttet til ejerskabs-tab for hovedejendomme */}
                 {!(lejligheder !== null && lejligheder.length > 0) && (
                   <>
-                    {/* Virksomheder på adressen — CVR OpenData (skjult for ejerlejlighedsejendomme) */}
-                    {cvrTokenMangler ? (
+                    {/* Virksomheder på adressen — CVR OpenData (skjult for ejerlejlighedsejendomme).
+                        BIZZ-473: Don't render anything until fetch is complete, to avoid
+                        the loading spinner briefly showing then disappearing when no results. */}
+                    {!cvrFetchComplete ? null : cvrTokenMangler ? (
                       <div className="bg-amber-500/8 border border-amber-500/20 rounded-xl p-4">
                         <p className="text-amber-300 text-xs font-medium uppercase tracking-wide mb-2">
                           {t.companiesAtAddress}

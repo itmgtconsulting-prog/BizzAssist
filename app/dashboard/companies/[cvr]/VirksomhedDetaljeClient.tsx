@@ -2232,7 +2232,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                                 </div>
                               );
                             })}
-                            {/* Fold-out for sold properties */}
+                            {/* Fold-out for sold properties — grouped by historical owner */}
                             {solgte.length > 0 && (
                               <div className="pt-4 border-t border-slate-700/30">
                                 <button
@@ -2249,18 +2249,69 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                                     ? `${visSolgte ? 'Skjul' : 'Vis'} ${solgte.length} tidligere ejendom${solgte.length !== 1 ? 'me' : ''}`
                                     : `${visSolgte ? 'Hide' : 'Show'} ${solgte.length} former propert${solgte.length !== 1 ? 'ies' : 'y'}`}
                                 </button>
-                                {visSolgte && (
-                                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 mt-3">
-                                    {solgte.map((ej) => (
-                                      <PropertyOwnerCard
-                                        key={ej.bfeNummer}
-                                        ejendom={ej}
-                                        showOwner={true}
-                                        lang={lang}
-                                      />
-                                    ))}
-                                  </div>
-                                )}
+                                {visSolgte &&
+                                  (() => {
+                                    // Group sold properties by historical owner (same ownerCvr logic)
+                                    const groupedSold = new Map<number, typeof solgte>();
+                                    for (const e of solgte) {
+                                      const cvrNum = parseInt(e.ownerCvr, 10);
+                                      if (!groupedSold.has(cvrNum)) groupedSold.set(cvrNum, []);
+                                      groupedSold.get(cvrNum)!.push(e);
+                                    }
+                                    // Include sold-only CVRs not already in cvrOrder
+                                    const soldCvrOrder = [...cvrOrder];
+                                    for (const cvr of groupedSold.keys()) {
+                                      if (!soldCvrOrder.includes(cvr)) soldCvrOrder.push(cvr);
+                                    }
+                                    return (
+                                      <div className="space-y-4 mt-3">
+                                        {soldCvrOrder.map((cvr) => {
+                                          const props = groupedSold.get(cvr);
+                                          if (!props || props.length === 0) return null;
+                                          const name = nameByCvr.get(cvr) ?? `CVR ${cvr}`;
+                                          return (
+                                            <div key={cvr} className="space-y-2">
+                                              <Link
+                                                href={`/dashboard/companies/${cvr}`}
+                                                className="inline-flex items-center gap-2 group"
+                                              >
+                                                <Building2
+                                                  size={14}
+                                                  className="text-slate-500 group-hover:text-blue-400 transition-colors"
+                                                />
+                                                <h3 className="text-sm font-semibold text-slate-400 group-hover:text-blue-400 transition-colors">
+                                                  {name}
+                                                </h3>
+                                                <span className="text-[10px] text-slate-500 font-mono">
+                                                  CVR {cvr}
+                                                </span>
+                                                <span className="text-[10px] text-slate-500">
+                                                  · {props.length}{' '}
+                                                  {lang === 'da'
+                                                    ? props.length === 1
+                                                      ? 'tidligere ejendom'
+                                                      : 'tidligere ejendomme'
+                                                    : props.length === 1
+                                                      ? 'former property'
+                                                      : 'former properties'}
+                                                </span>
+                                              </Link>
+                                              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                                                {props.map((ej) => (
+                                                  <PropertyOwnerCard
+                                                    key={ej.bfeNummer}
+                                                    ejendom={ej}
+                                                    showOwner={false}
+                                                    lang={lang}
+                                                  />
+                                                ))}
+                                              </div>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    );
+                                  })()}
                               </div>
                             )}
                           </>

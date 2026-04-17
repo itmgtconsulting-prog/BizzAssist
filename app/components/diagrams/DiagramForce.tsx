@@ -459,18 +459,30 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
         if (subRowHasCoOwners) {
           levelHeight += CO_ROW_GAP;
         }
-        // Reserve space for properties below this sub-row if any company here owns properties
+        // Reserve space for properties below this sub-row using the same
+        // "keep owner together" rule as Pass 3 placement — otherwise next
+        // depth's companies can overlap with wrapped property lines.
         if (subRowHasProperties) {
-          // Count TOTAL properties from all owners in this sub-row (they share a Y).
-          // Iterative wrap (Pass 4) caps at MAX_PER_ROW per line, so total/MAX ceil sub-rows.
-          let totalPropsInSubrow = 0;
+          let linesUsed = 0;
+          let countOnLine = 0;
           for (let i = startIdx; i < endIdx; i++) {
             if (nodeIds[i] === '__pad__') continue;
             const props = propertiesByOwner.get(nodeIds[i]);
-            if (props) totalPropsInSubrow += props.length;
+            if (!props || props.length === 0) continue;
+            if (countOnLine > 0 && countOnLine + props.length > MAX_PER_ROW) {
+              linesUsed++;
+              countOnLine = 0;
+            }
+            const ownerLines = Math.ceil(props.length / MAX_PER_ROW);
+            if (ownerLines > 1) {
+              linesUsed += ownerLines - 1;
+              countOnLine = props.length % MAX_PER_ROW || MAX_PER_ROW;
+            } else {
+              countOnLine += props.length;
+            }
           }
-          const propSubrows = Math.max(1, Math.ceil(totalPropsInSubrow / MAX_PER_ROW));
-          // 95 initial gap + 70 per additional sub-row
+          // linesUsed counts line-starts; +1 for first line. Clamp to min 1.
+          const propSubrows = Math.max(1, linesUsed + 1);
           levelHeight += 95 + (propSubrows - 1) * 70;
         }
       }
@@ -491,17 +503,31 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
           if (subRow > 0) {
             runningY += subRowGap;
             // Extra gap if PREVIOUS sub-row had owners with properties.
-            // Count TOTAL properties across sub-row owners (they share a Y line).
+            // Use "keep owner together" rule to count lines accurately.
             const prevStart = prevSubRow * MAX_PER_ROW;
             const prevEnd = Math.min(prevStart + MAX_PER_ROW, nodeIds.length);
-            let prevTotalProps = 0;
+            let linesUsed = 0;
+            let countOnLine = 0;
+            let hasAny = false;
             for (let j = prevStart; j < prevEnd; j++) {
               if (nodeIds[j] === '__pad__') continue;
               const props = propertiesByOwner.get(nodeIds[j]);
-              if (props) prevTotalProps += props.length;
+              if (!props || props.length === 0) continue;
+              hasAny = true;
+              if (countOnLine > 0 && countOnLine + props.length > MAX_PER_ROW) {
+                linesUsed++;
+                countOnLine = 0;
+              }
+              const ownerLines = Math.ceil(props.length / MAX_PER_ROW);
+              if (ownerLines > 1) {
+                linesUsed += ownerLines - 1;
+                countOnLine = props.length % MAX_PER_ROW || MAX_PER_ROW;
+              } else {
+                countOnLine += props.length;
+              }
             }
-            if (prevTotalProps > 0) {
-              const propSubrows = Math.ceil(prevTotalProps / MAX_PER_ROW);
+            if (hasAny) {
+              const propSubrows = Math.max(1, linesUsed + 1);
               runningY += 95 + (propSubrows - 1) * 70;
             }
           }

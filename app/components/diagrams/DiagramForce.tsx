@@ -557,11 +557,62 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
       if (!byDepth.has(d)) byDepth.set(d, []);
       byDepth.get(d)!.push(node.id);
     }
-    // Re-order each depth group: persons first, then companies.
+    // Build parent lookup for company subsidiaries so we can group them
+    // together on the same row. Each subsidiary's "parent" is the edge.from
+    // of its first inbound edge (prioritising non-co-owner parents).
+    const parentByChild = new Map<string, string>();
+    for (const edge of filteredGraph.edges) {
+      if (isPropertyId(edge.to)) continue;
+      if (coOwnerIds.has(edge.from)) continue; // ignore co-owner edges — they don't represent direct parentage
+      if (!parentByChild.has(edge.to)) parentByChild.set(edge.to, edge.from);
+    }
+
+    /**
+     * Pakker subsidier i rækker efter forælder:
+     *   • søskende fra samme forælder holdes sammen,
+     *   • hvis en forældergruppe ikke kan rummes på den igangværende linje
+     *     (sammenlagt > MAX_PER_ROW), padder vi resten af linjen og starter
+     *     gruppen på en ny.
+     * Returnerer en række ids med '__pad__' indsat hvor linjer afsluttes.
+     */
+    const packCompaniesByParent = (companies: string[]): string[] => {
+      if (companies.length <= MAX_PER_ROW) return companies;
+      // Group by parent (stable: preserve first-seen order)
+      const groups = new Map<string, string[]>();
+      for (const id of companies) {
+        const parent = parentByChild.get(id) ?? '__noparent__';
+        if (!groups.has(parent)) groups.set(parent, []);
+        groups.get(parent)!.push(id);
+      }
+      const packed: string[] = [];
+      let countOnLine = 0;
+      for (const [, children] of groups) {
+        // If the whole group would overflow the current line, pad to end of
+        // the line and start the group on the next line — but only if the
+        // group itself fits a single line (≤ MAX_PER_ROW). For larger groups
+        // we just let the natural wrap split them.
+        const groupFitsLine = children.length <= MAX_PER_ROW;
+        if (countOnLine > 0 && groupFitsLine && countOnLine + children.length > MAX_PER_ROW) {
+          while (countOnLine % MAX_PER_ROW !== 0) {
+            packed.push('__pad__');
+            countOnLine++;
+          }
+          countOnLine = 0;
+        }
+        for (const c of children) {
+          packed.push(c);
+          countOnLine = (countOnLine + 1) % MAX_PER_ROW;
+        }
+      }
+      return packed;
+    };
+
+    // Re-order each depth group: persons first, then companies (grouped by parent).
     // (Properties are handled in Pass 3 — not in byDepth anymore.)
     for (const [depth, ids] of byDepth) {
       const persons = ids.filter((id) => nodeById.get(id)?.type === 'person');
-      const companies = ids.filter((id) => nodeById.get(id)?.type !== 'person');
+      const companiesRaw = ids.filter((id) => nodeById.get(id)?.type !== 'person');
+      const companies = packCompaniesByParent(companiesRaw);
 
       const hasMixedTypes = persons.length > 0 && companies.length > 0;
 
@@ -576,6 +627,9 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
           paddedPersons.push('__pad__');
         }
         byDepth.set(depth, [...paddedPersons, ...companies]);
+      } else if (companies.length !== companiesRaw.length) {
+        // Companies-only depth — still apply packing padding
+        byDepth.set(depth, companies);
       }
     }
 

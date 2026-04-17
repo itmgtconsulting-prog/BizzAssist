@@ -188,44 +188,25 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
         const newNodes: DiagramNode[] = [];
         const newEdges: DiagramEdge[] = [];
 
-        // Debug-output så brugeren kan verificere API-svar i browserens devtools
-        if (typeof window !== 'undefined') {
-          console.log('[diagram-expand-person]', {
-            personId,
-            enhedsNummer,
-            personStatus: personRes?.status,
-            ejendommeStatus: ejendommeRes?.status,
-          });
-        }
-
         // ── Personligt ejede virksomheder (CVR) ──
         if (personRes?.ok) {
           const data: PersonPublicData = await personRes.json();
-
-          console.log(
-            '[diagram-expand-person] virksomheder returneret:',
-            data.virksomheder?.length ?? 0
-          );
           for (const v of data.virksomheder ?? []) {
             if (!v.aktiv) continue;
-            // DIREKTE personlig ejerskab kræver:
-            //   • aktiv rolle (ingen til-dato),
-            //   • registreret ejerandel (ellers er det bare en bestyrelses-
-            //     eller direktionspost),
-            //   • IKKE reel ejer / EJERREGISTER (det dækker indirekte
-            //     beneficial-ownership via holdings som vi ikke vil vise
-            //     som "personligt ejet"),
-            //   • IKKE stifter (historisk, ikke nødvendigvis ejer i dag).
-            const erDirekteEjer = v.roller.some((r) => {
+            // Ejerskab = mindst én aktiv rolle med registreret ejerandel.
+            // CVR lister alle ejere (både direkte og reelle) under
+            // EJERREGISTER-organisationen, så vi kan ikke pålideligt skelne
+            // direkte/indirekte på rollenavn alene. Vi ekskluderer kun
+            // stifter-rolle da den er historisk og ikke nødvendigvis
+            // afspejler nuværende ejerskab.
+            const erEjer = v.roller.some((r) => {
               if (r.til) return false;
               if (r.ejerandel == null) return false;
               const rolle = r.rolle.toLowerCase();
-              if (rolle.includes('reel')) return false;
               if (rolle.includes('stifter')) return false;
-              if (rolle.includes('register')) return false; // EJERREGISTER
               return true;
             });
-            if (!erDirekteEjer) continue;
+            if (!erEjer) continue;
             const cvrId = `cvr-${v.cvr}`;
             if (existingIds.has(cvrId)) continue;
             existingIds.add(cvrId);
@@ -246,14 +227,6 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
         if (ejendommeRes?.ok) {
           const ejData = await ejendommeRes.json();
           const ejendomme = Array.isArray(ejData.ejendomme) ? ejData.ejendomme : [];
-
-          console.log('[diagram-expand-person] ejendomme returneret:', {
-            count: ejendomme.length,
-            totalBfe: ejData.totalBfe,
-            manglerAdgang: ejData.manglerAdgang,
-            manglerNoegle: ejData.manglerNoegle,
-            fejl: ejData.fejl,
-          });
           for (const p of ejendomme) {
             if (p.aktiv === false) continue; // skip solgte
             const bfeId = `bfe-${p.bfeNummer}`;

@@ -159,52 +159,93 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
   }, [graph, extensionNodes, extensionEdges]);
 
   /**
-   * Fetch and add a person's other owned companies to the diagram.
-   * Fires on Udvid-click on a person node when enhedsNummer is set.
+   * Fetch and add a person's personally-owned companies AND properties to the
+   * diagram. Fires on Udvid-click on a person node when enhedsNummer is set.
+   *
+   * "Personligt ejet" betyder direkte ejerskab — enten en aktiv EJER-rolle
+   * (med ejerandel) i virksomheden, ELLER en ejendom hvor personen står som
+   * direkte ejer i EJF. Stifter-rolle alene udelukkes bevidst da en stifter
+   * ikke nødvendigvis stadig ejer selskabet.
    */
   const expandPersonDynamic = useCallback(
     async (personId: string, enhedsNummer: number) => {
       if (expandedDynamic.has(personId) || loadingExpansion.has(personId)) return;
       setLoadingExpansion((prev) => new Set(prev).add(personId));
       try {
-        const res = await fetch(`/api/cvr-public/person?enhedsNummer=${enhedsNummer}`, {
-          signal: AbortSignal.timeout(15000),
-        });
-        if (!res.ok) return;
-        const data: PersonPublicData = await res.json();
-        // Use the current effective graph snapshot to avoid duplicating existing nodes.
+        const [personRes, ejendommeRes] = await Promise.all([
+          fetch(`/api/cvr-public/person?enhedsNummer=${enhedsNummer}`, {
+            signal: AbortSignal.timeout(15000),
+          }).catch(() => null),
+          fetch(`/api/ejendomme-by-owner?enhedsNummer=${enhedsNummer}`, {
+            signal: AbortSignal.timeout(15000),
+          }).catch(() => null),
+        ]);
         const existingIds = new Set<string>([
           ...graph.nodes.map((n) => n.id),
           ...extensionNodes.map((n) => n.id),
         ]);
         const newNodes: DiagramNode[] = [];
         const newEdges: DiagramEdge[] = [];
-        for (const v of data.virksomheder ?? []) {
-          if (!v.aktiv) continue;
-          // Only include companies where the person has an active owner/stifter role
-          // (avoids pulling in every bestyrelse-role company, which would flood the graph).
-          const erEjer = v.roller.some(
-            (r) =>
-              !r.til &&
-              (r.rolle.toLowerCase().includes('ejer') ||
-                r.rolle.toLowerCase().includes('stifter') ||
-                r.ejerandel != null)
-          );
-          if (!erEjer) continue;
-          const cvrId = `cvr-${v.cvr}`;
-          if (existingIds.has(cvrId)) continue;
-          existingIds.add(cvrId);
-          newNodes.push({
-            id: cvrId,
-            label: v.navn,
-            sublabel: v.form ?? undefined,
-            type: 'company',
-            cvr: v.cvr,
-            branche: v.branche ?? undefined,
-            link: `/dashboard/companies/${v.cvr}`,
-          });
-          newEdges.push({ from: personId, to: cvrId });
+
+        // ── Personligt ejede virksomheder (CVR) ──
+        if (personRes?.ok) {
+          const data: PersonPublicData = await personRes.json();
+          for (const v of data.virksomheder ?? []) {
+            if (!v.aktiv) continue;
+            // Kun virksomheder hvor personen er DIREKTE ejer:
+            // - ejerandel angivet (legal/reel ejer med faktisk andel), ELLER
+            // - eksplicit ejer-rolle i navnet (ikke stifter)
+            const erDirekteEjer = v.roller.some((r) => {
+              if (r.til) return false; // kun aktive roller
+              if (r.ejerandel != null) return true;
+              const rolle = r.rolle.toLowerCase();
+              return rolle.includes('ejer') && !rolle.includes('stifter');
+            });
+            if (!erDirekteEjer) continue;
+            const cvrId = `cvr-${v.cvr}`;
+            if (existingIds.has(cvrId)) continue;
+            existingIds.add(cvrId);
+            newNodes.push({
+              id: cvrId,
+              label: v.navn,
+              sublabel: v.form ?? undefined,
+              type: 'company',
+              cvr: v.cvr,
+              branche: v.branche ?? undefined,
+              link: `/dashboard/companies/${v.cvr}`,
+            });
+            newEdges.push({ from: personId, to: cvrId });
+          }
         }
+
+        // ── Personligt ejede ejendomme (direkte via EJF) ──
+        if (ejendommeRes?.ok) {
+          const ejData = await ejendommeRes.json();
+          const ejendomme = Array.isArray(ejData.ejendomme) ? ejData.ejendomme : [];
+          for (const p of ejendomme) {
+            if (p.aktiv === false) continue; // skip solgte
+            const bfeId = `bfe-${p.bfeNummer}`;
+            if (existingIds.has(bfeId)) continue;
+            existingIds.add(bfeId);
+            const postBy = [p.postnr, p.by].filter(Boolean).join(' ');
+            const baseAddr = p.adresse ?? `BFE ${p.bfeNummer}`;
+            const mainLabel = postBy ? `${baseAddr}, ${postBy}` : baseAddr;
+            newNodes.push({
+              id: bfeId,
+              label: mainLabel,
+              sublabel: p.ejendomstype ?? undefined,
+              type: 'property',
+              bfeNummer: p.bfeNummer,
+              link: p.dawaId ? `/dashboard/ejendomme/${p.dawaId}` : undefined,
+            });
+            newEdges.push({
+              from: personId,
+              to: bfeId,
+              ejerandel: p.ejerandel ?? undefined,
+            });
+          }
+        }
+
         if (newNodes.length > 0) {
           setExtensionNodes((prev) => [...prev, ...newNodes]);
           setExtensionEdges((prev) => [...prev, ...newEdges]);

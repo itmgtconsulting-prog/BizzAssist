@@ -47,8 +47,10 @@ export interface PersonCompanyRole {
   form: string | null;
   /** Branchebeskrivelse */
   branche: string | null;
-  /** Om virksomheden er aktiv */
+  /** Om virksomheden er aktiv (NORMAL/AKTIV status + ikke ophørt) */
   aktiv: boolean;
+  /** Sammensat status fra CVR (f.eks. "Normal", "Under konkurs", "Under tvangsopløsning", "Ophørt") */
+  sammensatStatus: string | null;
   /** Antal ansatte */
   ansatte: string | null;
   /** Adresse */
@@ -247,11 +249,15 @@ export async function GET(
       const meta = src.virksomhedMetadata as Record<string, unknown> | undefined;
       const sammensatStatus = typeof meta?.sammensatStatus === 'string' ? meta.sammensatStatus : '';
       const livsforloeb = Array.isArray(src.livsforloeb) ? (src.livsforloeb as Periodic[]) : [];
-      const harSlutdato = livsforloeb.some((l) => l.periode?.gyldigTil != null);
+      // Ophørt KRÆVER at det seneste livsforløb har en slutdato. Historiske
+      // perioder med slutdato betyder ikke at virksomheden er ophørt nu —
+      // fx har I/S'er og andre selskaber typisk flere perioder over tid.
+      const sidstePeriode = livsforloeb[livsforloeb.length - 1];
+      const sidstePeriodeAfsluttet = sidstePeriode?.periode?.gyldigTil != null;
       const aktiv =
         (statusVal === 'NORMAL' || statusVal === 'AKTIV' || statusVal === '') &&
         sammensatStatus !== 'Ophørt' &&
-        !harSlutdato;
+        !sidstePeriodeAfsluttet;
 
       // Ansatte
       const maanedsBeskæf = meta?.nyesteErstMaanedsbeskaeftigelse as
@@ -354,6 +360,7 @@ export async function GET(
           form,
           branche,
           aktiv,
+          sammensatStatus: sammensatStatus || null,
           ansatte,
           adresse,
           postnr,

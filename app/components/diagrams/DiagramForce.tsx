@@ -196,13 +196,14 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
         if (personRes?.ok) {
           const data: PersonPublicData = await personRes.json();
           for (const v of data.virksomheder ?? []) {
-            // Ejerskab = mindst én rolle med registreret ejerandel. Inkluderer
-            // både aktive virksomheder OG ophørte virksomheder personen ejede.
-            // Ophørte markeres visuelt med isCeased=true så diagrammet renderer
-            // dem med grå/dashed stil, og "Vis ophørte"-toggle kan skjule dem.
-            // Stifter-rollen udelukkes fordi den er historisk og ikke
-            // nødvendigvis betyder ejerskab. Roller med til-dato bevares dog
-            // så tidligere ejerskab af ophørte selskaber fanges.
+            // Skip kun reelt ophørte selskaber. CVR's aktiv-flag kan være false
+            // af andre årsager (fx historiske livsforløb-perioder på I/S'er der
+            // stadig driver videre). Vi bruger sammensatStatus som autoritativt
+            // signal: kun "Ophørt" fjerner selskabet fra diagrammet — andre
+            // statusser som "Under konkurs", "Under tvangsopløsning" vises.
+            if (v.sammensatStatus === 'Ophørt') continue;
+            // Ejerskab = mindst én rolle med registreret ejerandel.
+            // Stifter-rollen udelukkes da den ikke nødvendigvis betyder ejerskab.
             const erEjer = v.roller.some((r) => {
               if (r.ejerandel == null) return false;
               const rolle = r.rolle.toLowerCase();
@@ -221,7 +222,6 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
               cvr: v.cvr,
               branche: v.branche ?? undefined,
               link: `/dashboard/companies/${v.cvr}`,
-              isCeased: v.aktiv === false ? true : undefined,
             });
             newEdges.push({ from: personId, to: cvrId });
           }

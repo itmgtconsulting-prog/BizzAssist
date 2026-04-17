@@ -195,30 +195,15 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
         // ── Personligt ejede virksomheder (CVR) ──
         if (personRes?.ok) {
           const data: PersonPublicData = await personRes.json();
-          // DEBUG: Log hele listen + aktive roller per virksomhed for verifikation
-          if (typeof window !== 'undefined') {
-            console.log(
-              '[diagram-expand-person] hele virksomhedslisten:',
-              (data.virksomheder ?? []).map((v) => ({
-                cvr: v.cvr,
-                navn: v.navn,
-                aktiv: v.aktiv,
-                aktiveRoller: v.roller
-                  .filter((r) => !r.til)
-                  .map((r) => `${r.rolle}${r.ejerandel ? ` (${r.ejerandel})` : ''}`),
-              }))
-            );
-          }
           for (const v of data.virksomheder ?? []) {
-            if (!v.aktiv) continue;
-            // Ejerskab = mindst én aktiv rolle med registreret ejerandel.
-            // CVR lister alle ejere (både direkte og reelle) under
-            // EJERREGISTER-organisationen, så vi kan ikke pålideligt skelne
-            // direkte/indirekte på rollenavn alene. Vi ekskluderer kun
-            // stifter-rolle da den er historisk og ikke nødvendigvis
-            // afspejler nuværende ejerskab.
+            // Ejerskab = mindst én rolle med registreret ejerandel. Inkluderer
+            // både aktive virksomheder OG ophørte virksomheder personen ejede.
+            // Ophørte markeres visuelt med isCeased=true så diagrammet renderer
+            // dem med grå/dashed stil, og "Vis ophørte"-toggle kan skjule dem.
+            // Stifter-rollen udelukkes fordi den er historisk og ikke
+            // nødvendigvis betyder ejerskab. Roller med til-dato bevares dog
+            // så tidligere ejerskab af ophørte selskaber fanges.
             const erEjer = v.roller.some((r) => {
-              if (r.til) return false;
               if (r.ejerandel == null) return false;
               const rolle = r.rolle.toLowerCase();
               if (rolle.includes('stifter')) return false;
@@ -236,6 +221,7 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
               cvr: v.cvr,
               branche: v.branche ?? undefined,
               link: `/dashboard/companies/${v.cvr}`,
+              isCeased: v.aktiv === false ? true : undefined,
             });
             newEdges.push({ from: personId, to: cvrId });
           }

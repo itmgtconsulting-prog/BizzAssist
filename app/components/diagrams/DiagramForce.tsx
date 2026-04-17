@@ -195,6 +195,20 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
         // ── Personligt ejede virksomheder (CVR) ──
         if (personRes?.ok) {
           const data: PersonPublicData = await personRes.json();
+          // DEBUG: Log hele listen + aktive roller per virksomhed for verifikation
+          if (typeof window !== 'undefined') {
+            console.log(
+              '[diagram-expand-person] hele virksomhedslisten:',
+              (data.virksomheder ?? []).map((v) => ({
+                cvr: v.cvr,
+                navn: v.navn,
+                aktiv: v.aktiv,
+                aktiveRoller: v.roller
+                  .filter((r) => !r.til)
+                  .map((r) => `${r.rolle}${r.ejerandel ? ` (${r.ejerandel})` : ''}`),
+              }))
+            );
+          }
           for (const v of data.virksomheder ?? []) {
             if (!v.aktiv) continue;
             // Ejerskab = mindst én aktiv rolle med registreret ejerandel.

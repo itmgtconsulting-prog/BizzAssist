@@ -24,6 +24,7 @@ import {
   X,
   MapPin,
   Building2,
+  Home,
   ChevronDown,
   ChevronRight,
   TrendingUp,
@@ -59,6 +60,7 @@ import {
   type EjerstrukturNode,
 } from '@/app/lib/mock/ejendomme';
 import { erDawaId, type DawaAdresse, type DawaJordstykke } from '@/app/lib/dawa';
+import { formatBenyttelseOgByggeaar } from '@/app/lib/benyttelseskoder';
 import type { EjendomApiResponse, LiveBBRBygning } from '@/app/api/ejendom/[id]/route';
 import type { CVRVirksomhed, CVRResponse } from '@/app/api/cvr/route';
 import type { VurderingData, VurderingResponse } from '@/app/api/vurdering/route';
@@ -2074,6 +2076,25 @@ export default function EjendomDetaljeClient({
                     {lang === 'da' ? 'Ejerlejlighed' : 'Condominium'}
                   </span>
                 )}
+                {/* BIZZ-457: Benyttelse (VUR) + byggeår (BBR) — "Værksted (1955)" */}
+                {(() => {
+                  const nyesteByg = bbrData?.bbr?.reduce<number | null>((latest, b) => {
+                    if (b.opfoerelsesaar == null) return latest;
+                    if (latest == null || b.opfoerelsesaar > latest) return b.opfoerelsesaar;
+                    return latest;
+                  }, null);
+                  const label = formatBenyttelseOgByggeaar(
+                    vurdering?.benyttelseskode ?? null,
+                    nyesteByg ?? null
+                  );
+                  if (!label) return null;
+                  return (
+                    <span className="flex items-center gap-1 px-2.5 py-0.5 bg-emerald-500/15 border border-emerald-500/30 rounded-full text-emerald-300 text-xs font-medium flex-shrink-0">
+                      <Home size={11} />
+                      {label}
+                    </span>
+                  );
+                })()}
               </div>
               <div className="flex items-center gap-2 mt-2 flex-wrap">
                 <span className="flex items-center gap-1 px-2 py-0.5 bg-slate-800 border border-slate-700/50 rounded-full text-xs text-slate-300">

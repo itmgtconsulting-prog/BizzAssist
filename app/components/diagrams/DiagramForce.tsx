@@ -172,11 +172,15 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
       if (expandedDynamic.has(personId) || loadingExpansion.has(personId)) return;
       setLoadingExpansion((prev) => new Set(prev).add(personId));
       try {
+        // Bruger KUN enhedsNummer-baseret ejendomsopslag. Navne-fallback er
+        // bevidst fravalgt: personnavne er ikke unikke og risikerer at bind
+        // ejendomme fra en anden person med samme navn til denne node.
+        // Hvis EJF's enhedsNummer-lookup returnerer 0 vises ingen ejendomme
+        // hellere end risikere forkerte data.
         const [personRes, ejendommeRes] = await Promise.all([
           fetch(`/api/cvr-public/person?enhedsNummer=${enhedsNummer}`, {
             signal: AbortSignal.timeout(15000),
           }).catch(() => null),
-          // limit=50 så vi får hele porteføljen med i første kald (default er 5).
           fetch(`/api/ejendomme-by-owner?enhedsNummer=${enhedsNummer}&limit=50&offset=0`, {
             signal: AbortSignal.timeout(15000),
           }).catch(() => null),

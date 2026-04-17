@@ -7191,10 +7191,14 @@ function TinglysningTab({
         // Trin 2: Hent summariske data i 3 parallelle sektions-kald
         // Progressiv loading — hver sektion vises straks den er klar
         const base = `/api/tinglysning/summarisk?uuid=${tlData.uuid}`;
-        const erEjerlejlighed = moderBfe && moderBfe !== bfe;
-        const servituterUrl = erEjerlejlighed
-          ? `${base}&section=servitutter&hovedBfe=${moderBfe}`
-          : `${base}&section=servitutter`;
+        // BIZZ-474: Send altid hovedBfe til summarisk-API'en — for ejerlejligheder
+        // bruges moderBfe (lejlighedens forældreejendom), og for hovedejendomme
+        // bruges deres egen BFE. API'en slår hovednoteringsnummer op og tilføjer
+        // servitutter fra den primære grundbogs-UUID hvis den afviger fra den
+        // UUID vi allerede har. Tidligere mistede hovedejendomme servitutter der
+        // lå på en anden hovednoteringsnummer-UUID end tlFetch returnerede.
+        const effektivtHovedBfe = moderBfe && moderBfe !== bfe ? moderBfe : bfe;
+        const servituterUrl = `${base}&section=servitutter&hovedBfe=${effektivtHovedBfe}`;
         return Promise.all([
           fetch(`${base}&section=ejere`, { signal })
             .then((r) => (r.ok ? r.json() : null))

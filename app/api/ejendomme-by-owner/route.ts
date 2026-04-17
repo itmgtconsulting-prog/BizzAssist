@@ -258,6 +258,69 @@ async function hentBfeByCvr(
 }
 
 /**
+ * Sender EJF GraphQL forespørgsel efter en persons BFE'er baseret på navn.
+ * Bruges som fallback når lookup via enhedsNummer giver 0 — EJF og CVR ES
+ * bruger forskellige person-identifikatorer, så en direkte ejer kan være
+ * registreret i EJF uden at enhedsNummer-feltet matcher CVR ES-værdien.
+ *
+ * @param personNavn - Eksakt navn som det står i EJF's ejendePersonBegraenset.navn.navn
+ * @param token - OAuth Bearer token
+ * @returns { bfeNumre: number[]; authError: boolean } eller null ved netværksfejl
+ */
+async function hentBfeByPersonNavn(
+  personNavn: string,
+  token: string
+): Promise<{ bfeNumre: number[]; authError: boolean } | null> {
+  const virkningstid = new Date().toISOString();
+  // Escape quotes in name to avoid GraphQL injection
+  const safeNavn = personNavn.replace(/"/g, '\\"');
+
+  const query = `{
+    EJFCustom_EjerskabBegraenset(
+      first: 500
+      virkningstid: "${virkningstid}"
+      where: {
+        ejendePersonBegraenset: { navn: { navn: { eq: "${safeNavn}" } } }
+      }
+    ) {
+      nodes {
+        bestemtFastEjendomBFENr
+        virkningFra
+      }
+    }
+  }`;
+
+  try {
+    const res = await fetch(proxyUrl(EJF_GQL_ENDPOINT), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        ...proxyHeaders(),
+      },
+      body: JSON.stringify({ query }),
+      signal: AbortSignal.timeout(proxyTimeout()),
+      next: { revalidate: 300 },
+    });
+    if (res.status === 403) return { bfeNumre: [], authError: true };
+    if (!res.ok) return null;
+    const json = (await res.json()) as GqlResult<RawEjerskab>;
+    const authError =
+      json.errors?.some(
+        (e) => e.extensions?.code === 'DAF-AUTH-0001' || e.message?.includes('not authorized')
+      ) ?? false;
+    if (authError) return { bfeNumre: [], authError: true };
+    const nodes = json.data?.EJFCustom_EjerskabBegraenset?.nodes ?? [];
+    const bfeNumre = nodes
+      .map((n) => n.bestemtFastEjendomBFENr)
+      .filter((b): b is number => b != null);
+    return { bfeNumre, authError: false };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Sender EJF GraphQL forespørgsel for ét person enhedsNummer og returnerer aktuelle BFE-numre.
  * BIZZ-264: Direkte personejede ejendomme via EJF.
  *
@@ -652,8 +715,12 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
 
   const cvrParam = searchParams.get('cvr') ?? '';
   const enhedsNummerParam = searchParams.get('enhedsNummer') ?? '';
+  // Fallback-parameter: Når EJF's enhedsNummer ikke matcher CVR ES enhedsNummer
+  // kan klienten også sende personens navn (komma-separeret liste) som sekundær
+  // lookup. EJF GraphQL matcher på ejendePersonBegraenset.navn.navn.
+  const personNavnParam = searchParams.get('personNavn') ?? '';
 
-  if (!cvrParam && !enhedsNummerParam) {
+  if (!cvrParam && !enhedsNummerParam && !personNavnParam) {
     return NextResponse.json(
       {
         ejendomme: [],
@@ -688,7 +755,19 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
 
   const enhedsNumre = [...new Set(rawEnheder.map((s) => parseInt(s, 10)))].slice(0, 10);
 
-  if (cvrNumre.length === 0 && enhedsNumre.length === 0) {
+  /* Parsér og validér person-navne (fallback når enhedsNummer ikke matcher EJF) */
+  const personNavne = personNavnParam
+    ? [
+        ...new Set(
+          personNavnParam
+            .split(',')
+            .map((s) => s.trim())
+            .filter((s) => s.length >= 3 && s.length <= 120)
+        ),
+      ].slice(0, 10)
+    : [];
+
+  if (cvrNumre.length === 0 && enhedsNumre.length === 0 && personNavne.length === 0) {
     return NextResponse.json(
       {
         ejendomme: [],
@@ -697,7 +776,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
         limit,
         manglerNoegle: false,
         manglerAdgang: false,
-        fejl: 'Ingen gyldige CVR-numre eller enhedsNumre angivet',
+        fejl: 'Ingen gyldige CVR-numre, enhedsNumre eller personNavne angivet',
       },
       { status: 400 }
     );
@@ -740,6 +819,14 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
         ? await Promise.allSettled(enhedsNumre.map((en) => hentBfeByPerson(en, token!)))
         : [];
 
+    // Fallback: Person-navn lookup. CVR ES og EJF bruger forskellige person-
+    // identifikatorer, så en person ejet direkte kan findes via navn selvom
+    // enhedsNummer-matchet fejler.
+    const personNavnSettled =
+      personNavne.length > 0
+        ? await Promise.allSettled(personNavne.map((navn) => hentBfeByPersonNavn(navn, token!)))
+        : [];
+
     const cvrResults = cvrSettled.map((settled, i) => {
       if (settled.status === 'rejected') {
         logger.error(
@@ -762,10 +849,22 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
       return settled.value;
     });
 
+    const personNavnResults = personNavnSettled.map((settled, i) => {
+      if (settled.status === 'rejected') {
+        logger.error(
+          `[ejendomme-by-owner] EJF person-navn lookup failed for "${personNavne[i]}":`,
+          settled.reason
+        );
+        return null;
+      }
+      return settled.value;
+    });
+
     /* Tjek om nogen returnerede auth-fejl */
     const harAuthFejl =
       cvrResults.some((r) => r?.authError === true) ||
-      personResults.some((r) => r?.authError === true);
+      personResults.some((r) => r?.authError === true) ||
+      personNavnResults.some((r) => r?.authError === true);
     if (harAuthFejl) {
       return NextResponse.json({
         ejendomme: [],
@@ -801,6 +900,16 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
       for (const bfe of result.bfeNumre) {
         if (!bfeTilCvr.has(bfe)) {
           bfeTilCvr.set(bfe, `person-${enhedsNumre[i]}`);
+        }
+      }
+    }
+    // Fallback: Tilføj BFE'er fundet via person-navn lookup
+    for (let i = 0; i < personNavne.length; i++) {
+      const result = personNavnResults[i];
+      if (!result) continue;
+      for (const bfe of result.bfeNumre) {
+        if (!bfeTilCvr.has(bfe)) {
+          bfeTilCvr.set(bfe, `person-navn-${personNavne[i]}`);
         }
       }
     }

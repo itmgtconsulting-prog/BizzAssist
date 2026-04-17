@@ -387,27 +387,33 @@ async function hentBfeByPerson(
 }
 
 /**
- * Deterministisk opslag efter alle BFE'er som ejes af en given EJF person-id.
- * Bruges når caller har resolvet personens EJF-id via /api/ejerskab/person-bridge.
- * Dette er den eneste pålidelige måde at finde en CVR ES-persons ejendomme på,
- * fordi CVR ES og EJF bruger forskellige person-id-skemaer.
+ * Deterministisk opslag efter alle BFE'er som ejes af en given EJF-person,
+ * identificeret via navn + fødselsdato. Kombinationen er unik i praksis
+ * (to personer med nøjagtigt samme navn OG samme fødselsdato er ekstremt
+ * sjældent) og er de to felter EJF eksponerer som filterbare.
  *
- * @param ejfPersonId - UUID fra ejendePersonBegraenset.id (EJF's interne nøgle)
- * @param token - OAuth Bearer token
+ * Format: ejfPersonKey = "<navn>|<foedselsdato>"  (foedselsdato ISO YYYY-MM-DD)
+ *
+ * Klienten henter begge via /api/ejerskab/person-bridge og sender dem her.
  */
-async function hentBfeByEjfPersonId(
-  ejfPersonId: string,
+async function hentBfeByPersonKey(
+  navn: string,
+  foedselsdato: string,
   token: string
 ): Promise<{ bfeNumre: number[]; authError: boolean } | null> {
   const virkningstid = new Date().toISOString();
-  // Escape i tilfælde af tegn der bryder GraphQL-stringen (UUID'er har det
-  // ikke normalt, men vi er defensive).
-  const safeId = ejfPersonId.replace(/"/g, '\\"');
+  const safeNavn = navn.replace(/"/g, '\\"');
+  const safeFd = foedselsdato.replace(/"/g, '\\"');
   const query = `{
     EJFCustom_EjerskabBegraenset(
       first: 500
       virkningstid: "${virkningstid}"
-      where: { ejendePersonBegraenset: { id: { eq: "${safeId}" } } }
+      where: {
+        and: [
+          { ejendePersonBegraenset: { navn: { navn: { eq: "${safeNavn}" } } } }
+          { ejendePersonBegraenset: { foedselsdato: { eq: "${safeFd}" } } }
+        ]
+      }
     ) {
       nodes {
         bestemtFastEjendomBFENr
@@ -436,7 +442,6 @@ async function hentBfeByEjfPersonId(
       ) ?? false;
     if (authError) return { bfeNumre: [], authError: true };
     const nodes = json.data?.EJFCustom_EjerskabBegraenset?.nodes ?? [];
-    // Kun aktuelle ejerskaber (status = "gældende")
     const bfeNumre = nodes
       .filter((n) => !n.status || n.status === 'gældende')
       .map((n) => n.bestemtFastEjendomBFENr)
@@ -781,12 +786,13 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
   // lookup. EJF GraphQL matcher på ejendePersonBegraenset.navn.navn.
   const personNavnParam = searchParams.get('personNavn') ?? '';
 
-  // Deterministisk parameter: EJF's interne person-UUID. Dette er den foretrukne
-  // måde at slå en persons ejendomme op på fordi den undgår navne-kollisioner.
-  // Klienten henter EJF-id via /api/ejerskab/person-bridge og sender det her.
-  const ejfPersonIdParam = searchParams.get('ejfPersonId') ?? '';
+  // Deterministisk parameter: kombineret person-nøgle "<navn>|<YYYY-MM-DD>"
+  // (komma-separeret ved flere). EJF GraphQL accepterer navn + foedselsdato som
+  // filter på ejendePersonBegraenset, og kombinationen er unik i praksis.
+  // Klienten henter begge via /api/ejerskab/person-bridge.
+  const personKeyParam = searchParams.get('personKey') ?? '';
 
-  if (!cvrParam && !enhedsNummerParam && !personNavnParam && !ejfPersonIdParam) {
+  if (!cvrParam && !enhedsNummerParam && !personNavnParam && !personKeyParam) {
     return NextResponse.json(
       {
         ejendomme: [],
@@ -795,7 +801,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
         limit,
         manglerNoegle: false,
         manglerAdgang: false,
-        fejl: 'cvr, enhedsNummer, personNavn eller ejfPersonId parameter er påkrævet',
+        fejl: 'cvr, enhedsNummer, personNavn eller personKey parameter er påkrævet',
       },
       { status: 400 }
     );
@@ -833,25 +839,27 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
       ].slice(0, 10)
     : [];
 
-  /* Parsér og validér EJF person-id (uuid-format) */
-  const ejfPersonIds = ejfPersonIdParam
-    ? [
-        ...new Set(
-          ejfPersonIdParam
-            .split(',')
-            .map((s) => s.trim())
-            .filter((s) =>
-              /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)
-            )
-        ),
-      ].slice(0, 10)
+  /* Parsér og validér personKey (navn|YYYY-MM-DD) — komma-separeret liste */
+  const personKeys: Array<{ navn: string; foedselsdato: string }> = personKeyParam
+    ? personKeyParam
+        .split(',')
+        .map((s) => s.trim())
+        .map((s) => {
+          const [navn, fd] = s.split('|');
+          return navn && fd ? { navn: navn.trim(), foedselsdato: fd.trim() } : null;
+        })
+        .filter(
+          (p): p is { navn: string; foedselsdato: string } =>
+            p != null && p.navn.length >= 3 && /^\d{4}-\d{2}-\d{2}$/.test(p.foedselsdato)
+        )
+        .slice(0, 10)
     : [];
 
   if (
     cvrNumre.length === 0 &&
     enhedsNumre.length === 0 &&
     personNavne.length === 0 &&
-    ejfPersonIds.length === 0
+    personKeys.length === 0
   ) {
     return NextResponse.json(
       {
@@ -861,7 +869,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
         limit,
         manglerNoegle: false,
         manglerAdgang: false,
-        fejl: 'Ingen gyldige CVR-numre, enhedsNumre, personNavne eller ejfPersonId angivet',
+        fejl: 'Ingen gyldige CVR-numre, enhedsNumre, personNavne eller personKey angivet',
       },
       { status: 400 }
     );
@@ -912,12 +920,14 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
         ? await Promise.allSettled(personNavne.map((navn) => hentBfeByPersonNavn(navn, token!)))
         : [];
 
-    // Deterministisk: EJF person-id (uuid) lookup. Dette er den foretrukne
-    // lookup-metode når klienten har resolvet personens EJF-id via
-    // /api/ejerskab/person-bridge.
-    const ejfPersonIdSettled =
-      ejfPersonIds.length > 0
-        ? await Promise.allSettled(ejfPersonIds.map((id) => hentBfeByEjfPersonId(id, token!)))
+    // Deterministisk: person-key (navn + foedselsdato) lookup.
+    // Bruges af /api/ejerskab/person-bridge når klienten har resolvet både
+    // navn og fødselsdato via hjem-adresse-broen.
+    const personKeySettled =
+      personKeys.length > 0
+        ? await Promise.allSettled(
+            personKeys.map((k) => hentBfeByPersonKey(k.navn, k.foedselsdato, token!))
+          )
         : [];
 
     const cvrResults = cvrSettled.map((settled, i) => {
@@ -953,10 +963,10 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
       return settled.value;
     });
 
-    const ejfPersonIdResults = ejfPersonIdSettled.map((settled, i) => {
+    const personKeyResults = personKeySettled.map((settled, i) => {
       if (settled.status === 'rejected') {
         logger.error(
-          `[ejendomme-by-owner] EJF person-id lookup failed for "${ejfPersonIds[i]}":`,
+          `[ejendomme-by-owner] EJF person-key lookup failed for "${personKeys[i]?.navn}":`,
           settled.reason
         );
         return null;
@@ -969,7 +979,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
       cvrResults.some((r) => r?.authError === true) ||
       personResults.some((r) => r?.authError === true) ||
       personNavnResults.some((r) => r?.authError === true) ||
-      ejfPersonIdResults.some((r) => r?.authError === true);
+      personKeyResults.some((r) => r?.authError === true);
     if (harAuthFejl) {
       return NextResponse.json({
         ejendomme: [],
@@ -1008,13 +1018,13 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
         }
       }
     }
-    // Deterministisk: Tilføj BFE'er fundet via EJF person-id
-    for (let i = 0; i < ejfPersonIds.length; i++) {
-      const result = ejfPersonIdResults[i];
+    // Deterministisk: Tilføj BFE'er fundet via person-key (navn + foedselsdato)
+    for (let i = 0; i < personKeys.length; i++) {
+      const result = personKeyResults[i];
       if (!result) continue;
       for (const bfe of result.bfeNumre) {
         if (!bfeTilCvr.has(bfe)) {
-          bfeTilCvr.set(bfe, `ejf-person-${ejfPersonIds[i]}`);
+          bfeTilCvr.set(bfe, `ejf-key-${personKeys[i].navn}|${personKeys[i].foedselsdato}`);
         }
       }
     }

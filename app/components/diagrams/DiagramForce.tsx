@@ -190,21 +190,26 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
           }).catch(() => null),
         ]);
 
-        // Trin 2: Udled EJF-person-id hvis broen lykkedes.
-        let ejfPersonId: string | null = null;
+        // Trin 2: Udled navn + foedselsdato hvis broen lykkedes.
+        let bridgeNavn: string | null = null;
+        let bridgeFoedselsdato: string | null = null;
         if (bridgeRes?.ok) {
           const bridge = (await bridgeRes.json()) as {
+            navn: string | null;
+            foedselsdato: string | null;
             ejfPersonId: string | null;
             fejl: string | null;
           };
-          ejfPersonId = bridge.ejfPersonId;
+          bridgeNavn = bridge.navn;
+          bridgeFoedselsdato = bridge.foedselsdato;
         }
 
-        // Trin 3: Hent ejendomme — prioriter EJF-id hvis vi har det (deterministisk),
-        // ellers fall back til enhedsNummer-lookup.
-        const ejendommeUrl = ejfPersonId
-          ? `/api/ejendomme-by-owner?ejfPersonId=${encodeURIComponent(ejfPersonId)}&limit=50&offset=0`
-          : `/api/ejendomme-by-owner?enhedsNummer=${enhedsNummer}&limit=50&offset=0`;
+        // Trin 3: Hent ejendomme — prioriter navn+foedselsdato (deterministisk
+        // via EJF filter), ellers fall back til enhedsNummer-lookup.
+        const ejendommeUrl =
+          bridgeNavn && bridgeFoedselsdato
+            ? `/api/ejendomme-by-owner?personKey=${encodeURIComponent(`${bridgeNavn}|${bridgeFoedselsdato}`)}&limit=50&offset=0`
+            : `/api/ejendomme-by-owner?enhedsNummer=${enhedsNummer}&limit=50&offset=0`;
         const ejendommeRes = await fetch(ejendommeUrl, {
           signal: AbortSignal.timeout(15000),
         }).catch(() => null);

@@ -563,8 +563,7 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
     }
 
     // Pass 3: Place properties directly below their specific owner.
-    // Each owner's properties form their own sub-row at ownerY + PROPERTY_ROW_GAP,
-    // so property boxes appear immediately under the company that owns them.
+    // Each owner's properties form their own sub-row at ownerY + PROPERTY_ROW_GAP.
     const PROPERTY_ROW_GAP = 95;
     const PROPERTY_SUBROW_GAP = 70;
     for (const [ownerId, propIds] of propertiesByOwner) {
@@ -576,6 +575,32 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
         yMap.set(propIds[i], propBaseY + subRow * PROPERTY_SUBROW_GAP);
       }
     }
+
+    // Pass 4: Enforce max MAX_PER_ROW properties per Y line, iteratively.
+    // Properties from multiple owners in the same sub-row share the same Y,
+    // potentially exceeding 5. Repeatedly wrap extras to the next sub-row until
+    // no Y row has > MAX_PER_ROW properties.
+    const allPropIds = [...propertiesByOwner.values()].flat();
+    for (let iter = 0; iter < 10; iter++) {
+      const propsByY = new Map<number, string[]>();
+      for (const propId of allPropIds) {
+        const y = yMap.get(propId);
+        if (y == null) continue;
+        if (!propsByY.has(y)) propsByY.set(y, []);
+        propsByY.get(y)!.push(propId);
+      }
+      let anyWrapped = false;
+      for (const [y, propsAtY] of propsByY) {
+        if (propsAtY.length <= MAX_PER_ROW) continue;
+        // Wrap extras to next sub-row (y + PROPERTY_SUBROW_GAP)
+        for (let i = MAX_PER_ROW; i < propsAtY.length; i++) {
+          yMap.set(propsAtY[i], y + PROPERTY_SUBROW_GAP);
+        }
+        anyWrapped = true;
+      }
+      if (!anyWrapped) break;
+    }
+
     return yMap;
   }, [filteredGraph, depthMap, getSubRowGap, getLevelGap]);
 

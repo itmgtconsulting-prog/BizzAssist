@@ -215,11 +215,25 @@ export async function GET(req: NextRequest) {
     `{ EJFCustom_EjerskabBegraenset(first: 10, virkningstid: "${virkningstid}", where: { id_lokalId: { eq: "${id.replace(/"/g, '\\"')}" } }) { nodes { bestemtFastEjendomBFENr status ejendePersonBegraenset { navn { navn } } } } }`
   );
 
+  // DURCHBRUCH: fiktivtPVnummer er et Long-filter der eksisterer på EJFCustom_EjerskabBegraenset.
+  // Hent Søbyvej 11's ejerskab med fiktivtPVnummer i select, så vi kan se Jakobs nummer.
+  const soebyvej11FullResp = await gql(
+    `{ EJFCustom_EjerskabBegraenset(first: 10, virkningstid: "${virkningstid}", where: { bestemtFastEjendomBFENr: { eq: 2081243 } }) { nodes { bestemtFastEjendomBFENr status ejendePersonBegraenset { id navn { navn } foedselsdato } oplysningerEjesAfEjerskab { fiktivtPVnummer navn id_lokalId id_namespace } } } }`
+  );
+
+  // Prøv at filtrere direkte på fiktivtPVnummer — først med et eksempel-tal så vi ser
+  // svarstrukturen. Bruger "1" som nonsense-værdi — vi vil få 0 nodes men ingen fejl.
+  const fiktivProbe = await gql(
+    `{ EJFCustom_EjerskabBegraenset(first: 5, virkningstid: "${virkningstid}", where: { fiktivtPVnummer: { eq: 1 } }) { nodes { bestemtFastEjendomBFENr } } }`
+  );
+
   const results = {
     rootTests,
     filterFieldProbes,
     personVirkProbes,
     ejerskabByLokalId: ejerskabByLokalId.slice(0, 2000),
+    soebyvej11Full: soebyvej11FullResp.slice(0, 3500),
+    fiktivProbe: fiktivProbe.slice(0, 1000),
   };
 
   return NextResponse.json(

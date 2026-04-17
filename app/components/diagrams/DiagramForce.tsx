@@ -26,7 +26,8 @@ import {
   RotateCcw,
   Clock,
 } from 'lucide-react';
-import type { DiagramVariantProps, DiagramNode } from './DiagramData';
+import type { DiagramVariantProps, DiagramNode, DiagramEdge } from './DiagramData';
+import type { PersonPublicData } from '@/app/api/cvr-public/person/route';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -132,6 +133,96 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
   /** Set of node IDs whose co-owners are currently expanded */
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
 
+  // ── Dynamic extension — person nodes can fetch + append their other companies/properties ──
+  /** Nodes added dynamically via person "Udvid" button (not from original graph prop) */
+  const [extensionNodes, setExtensionNodes] = useState<DiagramNode[]>([]);
+  /** Edges added dynamically via person "Udvid" button */
+  const [extensionEdges, setExtensionEdges] = useState<DiagramEdge[]>([]);
+  /** Person node IDs whose dynamic data has already been fetched+added */
+  const [expandedDynamic, setExpandedDynamic] = useState<Set<string>>(new Set());
+  /** Person node IDs currently loading dynamic data (shows spinner/disabled state) */
+  const [loadingExpansion, setLoadingExpansion] = useState<Set<string>>(new Set());
+
+  /**
+   * Effective graph = source graph + dynamic extensions (person expansion).
+   * All downstream useMemos reference this instead of the raw `graph` prop so
+   * newly-added nodes flow through layout + rendering automatically.
+   */
+  const effectiveGraph = useMemo(() => {
+    if (extensionNodes.length === 0 && extensionEdges.length === 0) return graph;
+    return {
+      nodes: [...graph.nodes, ...extensionNodes],
+      edges: [...graph.edges, ...extensionEdges],
+      mainId: graph.mainId,
+      hiddenCount: graph.hiddenCount,
+    };
+  }, [graph, extensionNodes, extensionEdges]);
+
+  /**
+   * Fetch and add a person's other owned companies to the diagram.
+   * Fires on Udvid-click on a person node when enhedsNummer is set.
+   */
+  const expandPersonDynamic = useCallback(
+    async (personId: string, enhedsNummer: number) => {
+      if (expandedDynamic.has(personId) || loadingExpansion.has(personId)) return;
+      setLoadingExpansion((prev) => new Set(prev).add(personId));
+      try {
+        const res = await fetch(`/api/cvr-public/person?enhedsNummer=${enhedsNummer}`, {
+          signal: AbortSignal.timeout(15000),
+        });
+        if (!res.ok) return;
+        const data: PersonPublicData = await res.json();
+        // Use the current effective graph snapshot to avoid duplicating existing nodes.
+        const existingIds = new Set<string>([
+          ...graph.nodes.map((n) => n.id),
+          ...extensionNodes.map((n) => n.id),
+        ]);
+        const newNodes: DiagramNode[] = [];
+        const newEdges: DiagramEdge[] = [];
+        for (const v of data.virksomheder ?? []) {
+          if (!v.aktiv) continue;
+          // Only include companies where the person has an active owner/stifter role
+          // (avoids pulling in every bestyrelse-role company, which would flood the graph).
+          const erEjer = v.roller.some(
+            (r) =>
+              !r.til &&
+              (r.rolle.toLowerCase().includes('ejer') ||
+                r.rolle.toLowerCase().includes('stifter') ||
+                r.ejerandel != null)
+          );
+          if (!erEjer) continue;
+          const cvrId = `cvr-${v.cvr}`;
+          if (existingIds.has(cvrId)) continue;
+          existingIds.add(cvrId);
+          newNodes.push({
+            id: cvrId,
+            label: v.navn,
+            sublabel: v.form ?? undefined,
+            type: 'company',
+            cvr: v.cvr,
+            branche: v.branche ?? undefined,
+            link: `/dashboard/companies/${v.cvr}`,
+          });
+          newEdges.push({ from: personId, to: cvrId });
+        }
+        if (newNodes.length > 0) {
+          setExtensionNodes((prev) => [...prev, ...newNodes]);
+          setExtensionEdges((prev) => [...prev, ...newEdges]);
+        }
+        setExpandedDynamic((prev) => new Set(prev).add(personId));
+      } catch {
+        /* Fetch fejl er ikke-fatal — knap bliver bare ikke marked as expanded */
+      } finally {
+        setLoadingExpansion((prev) => {
+          const next = new Set(prev);
+          next.delete(personId);
+          return next;
+        });
+      }
+    },
+    [expandedDynamic, loadingExpansion, graph.nodes, extensionNodes]
+  );
+
   /** Set of overflow node IDs that are fully expanded (show all items) — starter udfoldet */
   const [expandedOverflow, setExpandedOverflow] = useState<Set<string>>(() => {
     // Alle overflow-noder starter udfoldet
@@ -143,8 +234,8 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
 
   /** BIZZ-451: Toggle visibility of property nodes — default ON */
   const propertyCount = useMemo(
-    () => graph.nodes.filter((n) => n.type === 'property').length,
-    [graph.nodes]
+    () => effectiveGraph.nodes.filter((n) => n.type === 'property').length,
+    [effectiveGraph.nodes]
   );
   const [showProperties, setShowProperties] = useState(true);
 
@@ -205,7 +296,7 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
 
   // ── Filter graph based on expand state ──
   const filteredGraph = useMemo(() => {
-    const visibleNodes = graph.nodes.filter((n) => {
+    const visibleNodes = effectiveGraph.nodes.filter((n) => {
       // BIZZ-427: Hide ceased/historical owners unless toggle is on
       if (!showCeased && n.isCeased) return false;
       // BIZZ-451: Hide property nodes unless toggle is on
@@ -216,10 +307,12 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
       return n.collapseParent ? expandedNodes.has(n.collapseParent) : true;
     });
     const visibleIds = new Set(visibleNodes.map((n) => n.id));
-    const visibleEdges = graph.edges.filter((e) => visibleIds.has(e.from) && visibleIds.has(e.to));
+    const visibleEdges = effectiveGraph.edges.filter(
+      (e) => visibleIds.has(e.from) && visibleIds.has(e.to)
+    );
     // Hide orphan person nodes (no edges) — they can't visually connect and
     // just appear disconnected. Never hide the main node.
-    const connectedIds = new Set<string>([graph.mainId]);
+    const connectedIds = new Set<string>([effectiveGraph.mainId]);
     for (const e of visibleEdges) {
       connectedIds.add(e.from);
       connectedIds.add(e.to);
@@ -228,14 +321,14 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
       (n) => n.type !== 'person' || connectedIds.has(n.id)
     );
     return { nodes: connectedNodes, edges: visibleEdges };
-  }, [graph, expandedNodes, showCeased, showProperties]);
+  }, [effectiveGraph, expandedNodes, showCeased, showProperties]);
 
   // ── Compute topological depth (owners above, subsidiaries below) ──
   // Co-owners are placed between the subsidiary's parent and the subsidiary
   // itself (depth - 0.5), so they visually sit in between.
   const depthMap = useMemo(() => {
     const depths = new Map<string, number>();
-    depths.set(graph.mainId, 0);
+    depths.set(effectiveGraph.mainId, 0);
 
     // Build co-owner lookup for special depth handling
     const coOwnerIds = new Set<string>();
@@ -258,7 +351,7 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
 
     // BFS upward (skip co-owners — they get special depth later)
     // BIZZ-426: Use shallowest (closest to root) depth when a node is reachable via multiple paths
-    const upQueue = [graph.mainId];
+    const upQueue = [effectiveGraph.mainId];
     while (upQueue.length > 0) {
       const current = upQueue.shift()!;
       const d = depths.get(current) ?? 0;
@@ -276,7 +369,7 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
     // BFS downward (skip co-owners). Properties are NOT assigned integer depth —
     // they'll be placed in Pass 3 of nodeYMap directly below their specific owner.
     const nodeById = new Map(filteredGraph.nodes.map((n) => [n.id, n]));
-    const downQueue = [graph.mainId];
+    const downQueue = [effectiveGraph.mainId];
     while (downQueue.length > 0) {
       const current = downQueue.shift()!;
       const d = depths.get(current) ?? 0;
@@ -317,7 +410,7 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
     }
 
     return depths;
-  }, [filteredGraph, graph.mainId]);
+  }, [filteredGraph, effectiveGraph.mainId]);
 
   // ── Layout constants ──
   const BASE_LEVEL_GAP = 160;
@@ -792,8 +885,8 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
           typeof link.source === 'object' ? (link.source as ForceNode).id : (link.source as string);
         const tgtId =
           typeof link.target === 'object' ? (link.target as ForceNode).id : (link.target as string);
-        const srcNode = graph.nodes.find((n) => n.id === srcId);
-        const tgtNode = graph.nodes.find((n) => n.id === tgtId);
+        const srcNode = effectiveGraph.nodes.find((n) => n.id === srcId);
+        const tgtNode = effectiveGraph.nodes.find((n) => n.id === tgtId);
         const srcH = srcNode ? getNodeH(srcNode) : NODE_H;
         const tgtH = tgtNode ? getNodeH(tgtNode) : NODE_H;
         const minGap = Math.max(srcH, tgtH) + 30;
@@ -1133,8 +1226,8 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
   // ── Expand/collapse all helpers ──
   // Nodes that have expandable children (expandableChildren > 0)
   const allExpandableIds = useMemo(
-    () => graph.nodes.filter((n) => (n.expandableChildren ?? 0) > 0).map((n) => n.id),
-    [graph.nodes]
+    () => effectiveGraph.nodes.filter((n) => (n.expandableChildren ?? 0) > 0).map((n) => n.id),
+    [effectiveGraph.nodes]
   );
   // Currently visible expandable nodes that are NOT yet expanded (can expand next)
   const canExpandMore = useMemo(() => {
@@ -1168,7 +1261,7 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
     <div className="flex items-center justify-between sticky top-0 z-10 bg-[#0a1020]/95 backdrop-blur-sm py-2 -mt-2">
       <h2 className="text-white font-semibold text-base flex items-center gap-2">
         <Briefcase size={16} className="text-blue-400" />
-        {graph.nodes.some((n) => n.type === 'property')
+        {effectiveGraph.nodes.some((n) => n.type === 'property')
           ? lang === 'da'
             ? 'Ejerskabsdiagram'
             : 'Ownership Diagram'
@@ -1319,7 +1412,7 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
           </button>
         )}
         {/* BIZZ-427: Toggle ceased/historical owners */}
-        {graph.nodes.some((n) => n.isCeased) && (
+        {effectiveGraph.nodes.some((n) => n.isCeased) && (
           <button
             onClick={() => setShowCeased((s) => !s)}
             className={`h-7 px-2 flex items-center gap-1 text-[10px] font-medium border rounded-lg transition ml-1 ${
@@ -1395,7 +1488,7 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
           ? 'rgba(167,139,250,0.55)'
           : isPropertyEdge
             ? 'rgba(52,211,153,0.65)'
-            : edge.from === graph.mainId || edge.to === graph.mainId
+            : edge.from === effectiveGraph.mainId || edge.to === effectiveGraph.mainId
               ? 'rgba(96,165,250,0.85)'
               : 'rgba(148,163,184,0.75)';
 
@@ -1882,6 +1975,49 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
                       {node.label.length > 44 ? node.label.slice(0, 44) + '…' : node.label}
                     </text>
                   )}
+                  {/* Person dynamic expand — fetch this person's other owned companies */}
+                  {isPerson &&
+                    !isMain &&
+                    node.enhedsNummer != null &&
+                    (() => {
+                      const personLoading = loadingExpansion.has(node.id);
+                      const personExpanded = expandedDynamic.has(node.id);
+                      // Once expanded, hide the button so the person can't re-trigger a duplicate fetch
+                      if (personExpanded) return null;
+                      return (
+                        <g
+                          className="cursor-pointer"
+                          style={{ pointerEvents: 'auto' }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (personLoading) return;
+                            expandPersonDynamic(node.id, node.enhedsNummer!);
+                          }}
+                        >
+                          <rect
+                            x={x + NODE_W - 68}
+                            y={pos.y - 8}
+                            width={58}
+                            height={16}
+                            rx={8}
+                            fill="rgba(139,92,246,0.15)"
+                            stroke="rgba(139,92,246,0.4)"
+                            strokeWidth="0.6"
+                          />
+                          <text
+                            x={x + NODE_W - 39}
+                            y={pos.y + 3}
+                            textAnchor="middle"
+                            fill="rgba(196,167,255,0.95)"
+                            fontSize="8"
+                            fontWeight="500"
+                            className="pointer-events-none"
+                          >
+                            {personLoading ? '… henter' : '▸ Udvid'}
+                          </text>
+                        </g>
+                      );
+                    })()}
                 </>
               );
             })()}
@@ -1958,9 +2094,9 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
   );
 
   /** Warning badge when nodes are hidden due to overflow grouping */
-  const hiddenWarning = graph.hiddenCount ? (
+  const hiddenWarning = effectiveGraph.hiddenCount ? (
     <div className="absolute top-3 right-3 z-10 max-w-[200px] px-2.5 py-2 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-400 text-[10px] font-medium leading-tight backdrop-blur-sm">
-      <span className="font-bold">{graph.hiddenCount}</span>{' '}
+      <span className="font-bold">{effectiveGraph.hiddenCount}</span>{' '}
       {lang === 'da'
         ? `virksomheder relateret til "flere virksomheder" er ikke vist`
         : `companies related to "more companies" are not shown`}

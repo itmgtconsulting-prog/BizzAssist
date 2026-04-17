@@ -72,6 +72,8 @@ export interface DiagramNode {
   type: 'person' | 'company' | 'main' | 'property' | 'status';
   /** CVR number (companies only) */
   cvr?: number;
+  /** EnhedsNummer (person nodes only) — used for dynamic expansion via CVR ES */
+  enhedsNummer?: number;
   /** BFE number (property nodes only) */
   bfeNummer?: number;
   /** Industry / branche description */
@@ -367,6 +369,7 @@ export function buildDiagramGraph(
         label: ejer.navn,
         type: ejer.erVirksomhed ? 'company' : 'person',
         cvr: ejer.erVirksomhed ? ejer.enhedsNummer : undefined,
+        enhedsNummer: !ejer.erVirksomhed ? ejer.enhedsNummer : undefined,
         branche: ejer.branche ?? undefined,
         link,
         isCoOwner: true,
@@ -643,6 +646,7 @@ export function buildPersonDiagramGraph(
           label: ejer.navn,
           type: ejer.erVirksomhed ? 'company' : 'person',
           cvr: ejer.erVirksomhed ? ejer.enhedsNummer : undefined,
+          enhedsNummer: !ejer.erVirksomhed ? ejer.enhedsNummer : undefined,
           branche: ejer.branche ?? undefined,
           link,
           isCoOwner: true,

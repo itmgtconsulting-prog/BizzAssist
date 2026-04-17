@@ -172,47 +172,19 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
       if (expandedDynamic.has(personId) || loadingExpansion.has(personId)) return;
       setLoadingExpansion((prev) => new Set(prev).add(personId));
       try {
-        // Trin 1: CVR persondata + bro til EJF-person-id parallelt.
-        //
-        // Brotjenesten /api/ejerskab/person-bridge resolver CVR ES enhedsNummer
-        // til EJF's interne person-uuid ved hjælp af personens egen registrerede
-        // hjem-adresse. Det giver en deterministisk nøgle vi kan bruge til at
-        // finde ALLE personens ejendomme uden navne-gæt. Hvis broen fejler
-        // (fx fordi personen ikke ejer sin bopæl), falder vi tilbage til
-        // enhedsNummer-lookup alene — der kan så returnere 0, men vi tager
-        // aldrig chancen at vise forkerte data.
-        const [personRes, bridgeRes] = await Promise.all([
+        // Henter personens virksomheder fra CVR + evt. direkte personejede
+        // ejendomme via enhedsNummer (BIZZ-264). Person→ejendomme er begrænset
+        // til dem EJF matcher på enhedsNummer — for fuld dækning af personligt
+        // ejede ejendomme (inkl. bopæl der ikke er i en virksomhed) er bulk-
+        // ingestion-sporet (BIZZ-XXX) den langsigtede løsning.
+        const [personRes, ejendommeRes] = await Promise.all([
           fetch(`/api/cvr-public/person?enhedsNummer=${enhedsNummer}`, {
             signal: AbortSignal.timeout(15000),
           }).catch(() => null),
-          fetch(`/api/ejerskab/person-bridge?enhedsNummer=${enhedsNummer}`, {
+          fetch(`/api/ejendomme-by-owner?enhedsNummer=${enhedsNummer}&limit=50&offset=0`, {
             signal: AbortSignal.timeout(15000),
           }).catch(() => null),
         ]);
-
-        // Trin 2: Udled navn + foedselsdato hvis broen lykkedes.
-        let bridgeNavn: string | null = null;
-        let bridgeFoedselsdato: string | null = null;
-        if (bridgeRes?.ok) {
-          const bridge = (await bridgeRes.json()) as {
-            navn: string | null;
-            foedselsdato: string | null;
-            ejfPersonId: string | null;
-            fejl: string | null;
-          };
-          bridgeNavn = bridge.navn;
-          bridgeFoedselsdato = bridge.foedselsdato;
-        }
-
-        // Trin 3: Hent ejendomme — prioriter navn+foedselsdato (deterministisk
-        // via EJF filter), ellers fall back til enhedsNummer-lookup.
-        const ejendommeUrl =
-          bridgeNavn && bridgeFoedselsdato
-            ? `/api/ejendomme-by-owner?personKey=${encodeURIComponent(`${bridgeNavn}|${bridgeFoedselsdato}`)}&limit=50&offset=0`
-            : `/api/ejendomme-by-owner?enhedsNummer=${enhedsNummer}&limit=50&offset=0`;
-        const ejendommeRes = await fetch(ejendommeUrl, {
-          signal: AbortSignal.timeout(15000),
-        }).catch(() => null);
         const existingIds = new Set<string>([
           ...graph.nodes.map((n) => n.id),
           ...extensionNodes.map((n) => n.id),

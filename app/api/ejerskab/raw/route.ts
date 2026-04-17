@@ -1,10 +1,27 @@
 /**
- * GET /api/ejerskab/raw?bfeNummer=2081243
+ * GET /api/ejerskab/raw?bfeNummer=<N>
  *
- * Diagnostisk endpoint der henter de UDVIDEDE EJF-felter for en BFE, så vi
- * kan verificere at `ejendePersonBegraenset.id` og `.foedselsdato` er
- * tilgængelige og bygge en deterministisk bro fra CVR ES-person til EJF-ejer.
+ * DIAGNOSTISK endpoint — deaktiveret i produktion.
+ *
+ * Brugt under EJF-adgangs-analysen (se BIZZ-XXX EJF bulk-ingestion) til at
+ * probe hvilke felter EJFCustom_EjerskabBegraenset eksponerer på nodes.
+ * Returnerer HTTP 410 indtil re-aktiveret.
+ *
+ * Re-aktivering: unwrap DISABLED-blokken nedenfor og gen-udrul.
  */
+
+import { NextResponse } from 'next/server';
+
+export const runtime = 'nodejs';
+
+export async function GET() {
+  return NextResponse.json(
+    { error: 'Diagnostic endpoint disabled in production' },
+    { status: 410 }
+  );
+}
+
+/* ─────────── DISABLED — re-enable by moving code above the stub ───────────
 
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantId } from '@/lib/api/auth';
@@ -12,7 +29,6 @@ import { getSharedOAuthToken } from '@/app/lib/dfTokenCache';
 import { getCertOAuthToken, isCertAuthConfigured } from '@/app/lib/dfCertAuth';
 import { proxyUrl, proxyHeaders } from '@/app/lib/dfProxy';
 
-export const runtime = 'nodejs';
 export const maxDuration = 30;
 
 const EJF_GQL_URL = 'https://graphql.datafordeler.dk/flexibleCurrent/v1/';
@@ -88,31 +104,20 @@ export async function GET(req: NextRequest) {
     const text = await res.text();
     let parsed: unknown = null;
     let parseError: string | null = null;
-    try {
-      parsed = text ? JSON.parse(text) : null;
-    } catch (e) {
-      parseError = e instanceof Error ? e.message : String(e);
-    }
+    try { parsed = text ? JSON.parse(text) : null; }
+    catch (e) { parseError = e instanceof Error ? e.message : String(e); }
     return NextResponse.json(
-      {
-        bfeNummer,
-        tokenSource,
-        httpStatus: res.status,
-        responseLen: text.length,
-        rawPreview: text.slice(0, 1200),
-        parseError,
-        result: parsed,
-      },
+      { bfeNummer, tokenSource, httpStatus: res.status, responseLen: text.length,
+        rawPreview: text.slice(0, 1200), parseError, result: parsed },
       { status: 200, headers: { 'Cache-Control': 'no-store' } }
     );
   } catch (err) {
     return NextResponse.json(
-      {
-        bfeNummer,
-        error: err instanceof Error ? err.message : String(err),
-        stack: err instanceof Error ? err.stack?.split('\n').slice(0, 5) : null,
-      },
+      { bfeNummer, error: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack?.split('\n').slice(0, 5) : null },
       { status: 502 }
     );
   }
 }
+
+─────────── END DISABLED ─────────── */

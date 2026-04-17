@@ -258,69 +258,6 @@ async function hentBfeByCvr(
 }
 
 /**
- * Sender EJF GraphQL forespørgsel efter en persons BFE'er baseret på navn.
- * Bruges som fallback når lookup via enhedsNummer giver 0 — EJF og CVR ES
- * bruger forskellige person-identifikatorer, så en direkte ejer kan være
- * registreret i EJF uden at enhedsNummer-feltet matcher CVR ES-værdien.
- *
- * @param personNavn - Eksakt navn som det står i EJF's ejendePersonBegraenset.navn.navn
- * @param token - OAuth Bearer token
- * @returns { bfeNumre: number[]; authError: boolean } eller null ved netværksfejl
- */
-async function hentBfeByPersonNavn(
-  personNavn: string,
-  token: string
-): Promise<{ bfeNumre: number[]; authError: boolean } | null> {
-  const virkningstid = new Date().toISOString();
-  // Escape quotes in name to avoid GraphQL injection
-  const safeNavn = personNavn.replace(/"/g, '\\"');
-
-  const query = `{
-    EJFCustom_EjerskabBegraenset(
-      first: 500
-      virkningstid: "${virkningstid}"
-      where: {
-        ejendePersonBegraenset: { navn: { navn: { eq: "${safeNavn}" } } }
-      }
-    ) {
-      nodes {
-        bestemtFastEjendomBFENr
-        virkningFra
-      }
-    }
-  }`;
-
-  try {
-    const res = await fetch(proxyUrl(EJF_GQL_ENDPOINT), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-        ...proxyHeaders(),
-      },
-      body: JSON.stringify({ query }),
-      signal: AbortSignal.timeout(proxyTimeout()),
-      next: { revalidate: 300 },
-    });
-    if (res.status === 403) return { bfeNumre: [], authError: true };
-    if (!res.ok) return null;
-    const json = (await res.json()) as GqlResult<RawEjerskab>;
-    const authError =
-      json.errors?.some(
-        (e) => e.extensions?.code === 'DAF-AUTH-0001' || e.message?.includes('not authorized')
-      ) ?? false;
-    if (authError) return { bfeNumre: [], authError: true };
-    const nodes = json.data?.EJFCustom_EjerskabBegraenset?.nodes ?? [];
-    const bfeNumre = nodes
-      .map((n) => n.bestemtFastEjendomBFENr)
-      .filter((b): b is number => b != null);
-    return { bfeNumre, authError: false };
-  } catch {
-    return null;
-  }
-}
-
-/**
  * Sender EJF GraphQL forespørgsel for ét person enhedsNummer og returnerer aktuelle BFE-numre.
  * BIZZ-264: Direkte personejede ejendomme via EJF.
  *
@@ -381,72 +318,6 @@ async function hentBfeByPerson(
       .filter((b): b is number => b != null);
 
     return { bfeNumre, authError: false };
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Deterministisk opslag efter alle BFE'er som ejes af en given EJF-person,
- * identificeret via navn + fødselsdato. Kombinationen er unik i praksis
- * (to personer med nøjagtigt samme navn OG samme fødselsdato er ekstremt
- * sjældent) og er de to felter EJF eksponerer som filterbare.
- *
- * Format: ejfPersonKey = "<navn>|<foedselsdato>"  (foedselsdato ISO YYYY-MM-DD)
- *
- * Klienten henter begge via /api/ejerskab/person-bridge og sender dem her.
- */
-async function hentBfeByPersonKey(
-  navn: string,
-  foedselsdato: string,
-  token: string
-): Promise<{ bfeNumre: number[]; authError: boolean } | null> {
-  const virkningstid = new Date().toISOString();
-  const safeNavn = navn.replace(/"/g, '\\"');
-  const safeFd = foedselsdato.replace(/"/g, '\\"');
-  const query = `{
-    EJFCustom_EjerskabBegraenset(
-      first: 500
-      virkningstid: "${virkningstid}"
-      where: {
-        and: [
-          { ejendePersonBegraenset: { navn: { navn: { eq: "${safeNavn}" } } } }
-          { ejendePersonBegraenset: { foedselsdato: { eq: "${safeFd}" } } }
-        ]
-      }
-    ) {
-      nodes {
-        bestemtFastEjendomBFENr
-        status
-      }
-    }
-  }`;
-  try {
-    const res = await fetch(proxyUrl(EJF_GQL_ENDPOINT), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-        ...proxyHeaders(),
-      },
-      body: JSON.stringify({ query }),
-      signal: AbortSignal.timeout(proxyTimeout()),
-      next: { revalidate: 300 },
-    });
-    if (res.status === 403) return { bfeNumre: [], authError: true };
-    if (!res.ok) return null;
-    const json = (await res.json()) as GqlResult<RawEjerskab & { status?: string }>;
-    const authError =
-      json.errors?.some(
-        (e) => e.extensions?.code === 'DAF-AUTH-0001' || e.message?.includes('not authorized')
-      ) ?? false;
-    if (authError) return { bfeNumre: [], authError: true };
-    const nodes = json.data?.EJFCustom_EjerskabBegraenset?.nodes ?? [];
-    const bfeNumre = nodes
-      .filter((n) => !n.status || n.status === 'gældende')
-      .map((n) => n.bestemtFastEjendomBFENr)
-      .filter((b): b is number => b != null);
-    return { bfeNumre: [...new Set(bfeNumre)], authError: false };
   } catch {
     return null;
   }
@@ -781,18 +652,8 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
 
   const cvrParam = searchParams.get('cvr') ?? '';
   const enhedsNummerParam = searchParams.get('enhedsNummer') ?? '';
-  // Fallback-parameter: Når EJF's enhedsNummer ikke matcher CVR ES enhedsNummer
-  // kan klienten også sende personens navn (komma-separeret liste) som sekundær
-  // lookup. EJF GraphQL matcher på ejendePersonBegraenset.navn.navn.
-  const personNavnParam = searchParams.get('personNavn') ?? '';
 
-  // Deterministisk parameter: kombineret person-nøgle "<navn>|<YYYY-MM-DD>"
-  // (komma-separeret ved flere). EJF GraphQL accepterer navn + foedselsdato som
-  // filter på ejendePersonBegraenset, og kombinationen er unik i praksis.
-  // Klienten henter begge via /api/ejerskab/person-bridge.
-  const personKeyParam = searchParams.get('personKey') ?? '';
-
-  if (!cvrParam && !enhedsNummerParam && !personNavnParam && !personKeyParam) {
+  if (!cvrParam && !enhedsNummerParam) {
     return NextResponse.json(
       {
         ejendomme: [],
@@ -801,7 +662,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
         limit,
         manglerNoegle: false,
         manglerAdgang: false,
-        fejl: 'cvr, enhedsNummer, personNavn eller personKey parameter er påkrævet',
+        fejl: 'cvr eller enhedsNummer parameter er påkrævet',
       },
       { status: 400 }
     );
@@ -827,40 +688,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
 
   const enhedsNumre = [...new Set(rawEnheder.map((s) => parseInt(s, 10)))].slice(0, 10);
 
-  /* Parsér og validér person-navne (fallback når enhedsNummer ikke matcher EJF) */
-  const personNavne = personNavnParam
-    ? [
-        ...new Set(
-          personNavnParam
-            .split(',')
-            .map((s) => s.trim())
-            .filter((s) => s.length >= 3 && s.length <= 120)
-        ),
-      ].slice(0, 10)
-    : [];
-
-  /* Parsér og validér personKey (navn|YYYY-MM-DD) — komma-separeret liste */
-  const personKeys: Array<{ navn: string; foedselsdato: string }> = personKeyParam
-    ? personKeyParam
-        .split(',')
-        .map((s) => s.trim())
-        .map((s) => {
-          const [navn, fd] = s.split('|');
-          return navn && fd ? { navn: navn.trim(), foedselsdato: fd.trim() } : null;
-        })
-        .filter(
-          (p): p is { navn: string; foedselsdato: string } =>
-            p != null && p.navn.length >= 3 && /^\d{4}-\d{2}-\d{2}$/.test(p.foedselsdato)
-        )
-        .slice(0, 10)
-    : [];
-
-  if (
-    cvrNumre.length === 0 &&
-    enhedsNumre.length === 0 &&
-    personNavne.length === 0 &&
-    personKeys.length === 0
-  ) {
+  if (cvrNumre.length === 0 && enhedsNumre.length === 0) {
     return NextResponse.json(
       {
         ejendomme: [],
@@ -869,7 +697,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
         limit,
         manglerNoegle: false,
         manglerAdgang: false,
-        fejl: 'Ingen gyldige CVR-numre, enhedsNumre, personNavne eller personKey angivet',
+        fejl: 'Ingen gyldige CVR-numre eller enhedsNumre angivet',
       },
       { status: 400 }
     );
@@ -912,24 +740,6 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
         ? await Promise.allSettled(enhedsNumre.map((en) => hentBfeByPerson(en, token!)))
         : [];
 
-    // Fallback: Person-navn lookup. CVR ES og EJF bruger forskellige person-
-    // identifikatorer, så en person ejet direkte kan findes via navn selvom
-    // enhedsNummer-matchet fejler.
-    const personNavnSettled =
-      personNavne.length > 0
-        ? await Promise.allSettled(personNavne.map((navn) => hentBfeByPersonNavn(navn, token!)))
-        : [];
-
-    // Deterministisk: person-key (navn + foedselsdato) lookup.
-    // Bruges af /api/ejerskab/person-bridge når klienten har resolvet både
-    // navn og fødselsdato via hjem-adresse-broen.
-    const personKeySettled =
-      personKeys.length > 0
-        ? await Promise.allSettled(
-            personKeys.map((k) => hentBfeByPersonKey(k.navn, k.foedselsdato, token!))
-          )
-        : [];
-
     const cvrResults = cvrSettled.map((settled, i) => {
       if (settled.status === 'rejected') {
         logger.error(
@@ -952,34 +762,10 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
       return settled.value;
     });
 
-    const personNavnResults = personNavnSettled.map((settled, i) => {
-      if (settled.status === 'rejected') {
-        logger.error(
-          `[ejendomme-by-owner] EJF person-navn lookup failed for "${personNavne[i]}":`,
-          settled.reason
-        );
-        return null;
-      }
-      return settled.value;
-    });
-
-    const personKeyResults = personKeySettled.map((settled, i) => {
-      if (settled.status === 'rejected') {
-        logger.error(
-          `[ejendomme-by-owner] EJF person-key lookup failed for "${personKeys[i]?.navn}":`,
-          settled.reason
-        );
-        return null;
-      }
-      return settled.value;
-    });
-
     /* Tjek om nogen returnerede auth-fejl */
     const harAuthFejl =
       cvrResults.some((r) => r?.authError === true) ||
-      personResults.some((r) => r?.authError === true) ||
-      personNavnResults.some((r) => r?.authError === true) ||
-      personKeyResults.some((r) => r?.authError === true);
+      personResults.some((r) => r?.authError === true);
     if (harAuthFejl) {
       return NextResponse.json({
         ejendomme: [],
@@ -1015,26 +801,6 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
       for (const bfe of result.bfeNumre) {
         if (!bfeTilCvr.has(bfe)) {
           bfeTilCvr.set(bfe, `person-${enhedsNumre[i]}`);
-        }
-      }
-    }
-    // Deterministisk: Tilføj BFE'er fundet via person-key (navn + foedselsdato)
-    for (let i = 0; i < personKeys.length; i++) {
-      const result = personKeyResults[i];
-      if (!result) continue;
-      for (const bfe of result.bfeNumre) {
-        if (!bfeTilCvr.has(bfe)) {
-          bfeTilCvr.set(bfe, `ejf-key-${personKeys[i].navn}|${personKeys[i].foedselsdato}`);
-        }
-      }
-    }
-    // Fallback: Tilføj BFE'er fundet via person-navn lookup
-    for (let i = 0; i < personNavne.length; i++) {
-      const result = personNavnResults[i];
-      if (!result) continue;
-      for (const bfe of result.bfeNumre) {
-        if (!bfeTilCvr.has(bfe)) {
-          bfeTilCvr.set(bfe, `person-navn-${personNavne[i]}`);
         }
       }
     }

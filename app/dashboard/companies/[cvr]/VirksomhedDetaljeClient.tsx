@@ -493,6 +493,8 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
   const [ejendommeManglerNoegle, setEjendommeManglerNoegle] = useState(false);
   const [ejendommeManglerAdgang, setEjendommeManglerAdgang] = useState(false);
   const [ejendommeTotalBfe, setEjendommeTotalBfe] = useState(0);
+  /** BIZZ-455: Toggle for visning af tidligere ejede (solgte) ejendomme */
+  const [visSolgte, setVisSolgte] = useState(false);
   /** Kommasepereret CVR-nøgle der sidst blev hentet — forhindrer duplicate-fetches */
   const ejendomFetchKeyRef = useRef('');
   /** AbortController for igangværende progressiv ejendomshentning */
@@ -2140,16 +2142,127 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                         )}
                       </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-                        {ejendommeData.map((ej) => (
-                          <PropertyOwnerCard
-                            key={ej.bfeNummer}
-                            ejendom={ej}
-                            showOwner={relatedCompanies.length > 0}
-                            lang={lang}
-                          />
-                        ))}
-                      </div>
+                      {/* BIZZ-456: Gruppér ejendomme efter ejer-CVR i koncernhierarki.
+                          BIZZ-455: Separat fold-ud for solgte ejendomme. */}
+                      {(() => {
+                        // Build concern hierarchy order: main CVR first, then active subsidiaries
+                        const cvrOrder: number[] = [data.vat];
+                        const seenCvr = new Set<number>([data.vat]);
+                        for (const rv of relatedCompanies.filter((v) => v.aktiv)) {
+                          if (!seenCvr.has(rv.cvr)) {
+                            cvrOrder.push(rv.cvr);
+                            seenCvr.add(rv.cvr);
+                          }
+                        }
+                        const nameByCvr = new Map<number, string>();
+                        nameByCvr.set(data.vat, data.name);
+                        for (const rv of relatedCompanies) nameByCvr.set(rv.cvr, rv.navn);
+
+                        // Split into active and sold
+                        const aktive = ejendommeData.filter((e) => e.aktiv !== false);
+                        const solgte = ejendommeData.filter((e) => e.aktiv === false);
+
+                        // Group active by ownerCvr (normalized to number)
+                        const groupedActive = new Map<number, typeof aktive>();
+                        for (const e of aktive) {
+                          const cvrNum = parseInt(e.ownerCvr, 10);
+                          if (!groupedActive.has(cvrNum)) groupedActive.set(cvrNum, []);
+                          groupedActive.get(cvrNum)!.push(e);
+                        }
+                        // Catch any ownerCvrs not in cvrOrder (e.g. person-owned)
+                        for (const cvr of groupedActive.keys()) {
+                          if (!seenCvr.has(cvr)) {
+                            cvrOrder.push(cvr);
+                            seenCvr.add(cvr);
+                          }
+                        }
+
+                        return (
+                          <>
+                            {cvrOrder.map((cvr) => {
+                              const props = groupedActive.get(cvr);
+                              if (!props || props.length === 0) return null;
+                              const name = nameByCvr.get(cvr) ?? `CVR ${cvr}`;
+                              const isMain = cvr === data.vat;
+                              return (
+                                <div key={cvr} className="space-y-2">
+                                  <Link
+                                    href={`/dashboard/companies/${cvr}`}
+                                    className="inline-flex items-center gap-2 group"
+                                  >
+                                    <Building2
+                                      size={14}
+                                      className="text-slate-500 group-hover:text-blue-400 transition-colors"
+                                    />
+                                    <h3 className="text-sm font-semibold text-slate-200 group-hover:text-blue-400 transition-colors">
+                                      {name}
+                                    </h3>
+                                    <span className="text-[10px] text-slate-500 font-mono">
+                                      CVR {cvr}
+                                    </span>
+                                    <span className="text-[10px] text-slate-500">
+                                      · {props.length}{' '}
+                                      {lang === 'da'
+                                        ? props.length === 1
+                                          ? 'ejendom'
+                                          : 'ejendomme'
+                                        : props.length === 1
+                                          ? 'property'
+                                          : 'properties'}
+                                    </span>
+                                    {isMain && (
+                                      <span className="text-[9px] px-1.5 py-0.5 bg-blue-500/15 border border-blue-500/30 rounded text-blue-400 font-medium">
+                                        {lang === 'da' ? 'Moder' : 'Parent'}
+                                      </span>
+                                    )}
+                                  </Link>
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                                    {props.map((ej) => (
+                                      <PropertyOwnerCard
+                                        key={ej.bfeNummer}
+                                        ejendom={ej}
+                                        showOwner={false}
+                                        lang={lang}
+                                      />
+                                    ))}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                            {/* Fold-out for sold properties */}
+                            {solgte.length > 0 && (
+                              <div className="pt-4 border-t border-slate-700/30">
+                                <button
+                                  type="button"
+                                  onClick={() => setVisSolgte((v) => !v)}
+                                  className="flex items-center gap-2 text-xs text-slate-400 hover:text-slate-200 transition-colors"
+                                >
+                                  {visSolgte ? (
+                                    <ChevronDown size={14} />
+                                  ) : (
+                                    <ChevronRight size={14} />
+                                  )}
+                                  {lang === 'da'
+                                    ? `${visSolgte ? 'Skjul' : 'Vis'} ${solgte.length} tidligere ejendom${solgte.length !== 1 ? 'me' : ''}`
+                                    : `${visSolgte ? 'Hide' : 'Show'} ${solgte.length} former propert${solgte.length !== 1 ? 'ies' : 'y'}`}
+                                </button>
+                                {visSolgte && (
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 mt-3">
+                                    {solgte.map((ej) => (
+                                      <PropertyOwnerCard
+                                        key={ej.bfeNummer}
+                                        ejendom={ej}
+                                        showOwner={true}
+                                        lang={lang}
+                                      />
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()}
 
                       {ejendommeLoadingMore && (
                         <div className="flex items-center justify-center gap-2 py-4 text-slate-500 text-sm">

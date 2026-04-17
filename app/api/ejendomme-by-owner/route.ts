@@ -67,6 +67,10 @@ export interface EjendomSummary {
   dawaId: string | null;
   /** Ejer-andel (faktisk ejerandel fra EJF, f.eks. "100%") */
   ejerandel?: string | null;
+  /** BIZZ-455: false hvis ejendommen er solgt (CVR ikke længere aktuel ejer) */
+  aktiv?: boolean;
+  /** BIZZ-455: Dato hvor CVR ophørte som ejer (ISO-dato) — kun for solgte */
+  solgtDato?: string | null;
   /** BIZZ-397: Progressive enrichment fields — populated client-side after initial load */
   /** Bygningsareal i m² fra BBR */
   areal?: number | null;
@@ -801,20 +805,25 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
       }
     }
 
-    /* ── Verificér aktivt ejerskab — fjern solgte ejendomme ──
-     * EJF flexibleCurrent returnerer historiske ejerskaber. For hvert BFE tjekker vi
-     * om den seneste ejerpost stadig matcher den forespurgte CVR. Hvis en nyere post
-     * med en anden ejer (eller null = privat person) findes, er ejendommen solgt. */
+    /* ── Verificér aktivt ejerskab — markér solgte ejendomme ──
+     * BIZZ-455: EJF flexibleCurrent returnerer historiske ejerskaber. For hvert BFE
+     * tjekker vi om den seneste ejerpost stadig matcher CVR. Hvis en nyere post med
+     * en anden ejer findes, markerer vi ejendommen som solgt (aktiv=false) men
+     * beholder den i listen så UI'et kan vise fold-ud med tidligere ejendomme. */
+    const aktivByBfe = new Map<number, boolean>();
+    const solgtDatoByBfe = new Map<number, string | null>();
     if (cvrNumre.length > 0) {
       const bfeList = [...bfeTilCvr.keys()];
-      // Batch-verify in chunks of 20 BFEs
       const VERIFY_BATCH = 20;
       for (let i = 0; i < bfeList.length; i += VERIFY_BATCH) {
         const chunk = bfeList.slice(i, i + VERIFY_BATCH);
-        const verifyResults = await Promise.allSettled(
+        await Promise.allSettled(
           chunk.map(async (bfe) => {
             const ownerCvr = bfeTilCvr.get(bfe);
-            if (!ownerCvr || ownerCvr.startsWith('person-')) return true; // skip person-owned
+            if (!ownerCvr || ownerCvr.startsWith('person-')) {
+              aktivByBfe.set(bfe, true);
+              return;
+            }
             const cvrNum = parseInt(ownerCvr, 10);
             const vt = new Date().toISOString();
             const query = `{ EJFCustom_EjerskabBegraenset(first: 5, virkningstid: "${vt}", where: { bestemtFastEjendomBFENr: { eq: ${bfe} } }) { nodes { ejendeVirksomhedCVRNr virkningFra } } }`;
@@ -828,30 +837,46 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
               body: JSON.stringify({ query }),
               signal: AbortSignal.timeout(proxyTimeout()),
             });
-            if (!res.ok) return true; // keep on error
+            if (!res.ok) {
+              aktivByBfe.set(bfe, true); // default to active on error
+              return;
+            }
             const data = (await res.json()) as GqlResult<{
               ejendeVirksomhedCVRNr: number | null;
               virkningFra: string | null;
             }>;
             const nodes = Object.values(data.data ?? {})[0]?.nodes ?? [];
-            if (nodes.length === 0) return true;
-            // Find the newest virkningFra date
+            if (nodes.length === 0) {
+              aktivByBfe.set(bfe, true);
+              return;
+            }
             const newestDate = Math.max(
               ...nodes.map((n) => new Date(n.virkningFra ?? 0).getTime())
             );
-            // Check if ANY of the newest records belong to this CVR (co-ownership)
-            return nodes.some(
+            const stillOwned = nodes.some(
               (n) =>
                 n.ejendeVirksomhedCVRNr === cvrNum &&
                 new Date(n.virkningFra ?? 0).getTime() === newestDate
             );
+            aktivByBfe.set(bfe, stillOwned);
+            if (!stillOwned) {
+              // Find the date when CVR stopped being owner (latest record with our CVR)
+              const ourLastDate = nodes
+                .filter((n) => n.ejendeVirksomhedCVRNr === cvrNum)
+                .map((n) => new Date(n.virkningFra ?? 0).getTime())
+                .reduce((a, b) => Math.max(a, b), 0);
+              // Find the next record AFTER our last ownership (= sold-to date)
+              const soldDate = nodes
+                .filter((n) => new Date(n.virkningFra ?? 0).getTime() > ourLastDate)
+                .map((n) => new Date(n.virkningFra ?? 0).getTime())
+                .reduce((a, b) => Math.min(a || Infinity, b), Infinity);
+              solgtDatoByBfe.set(
+                bfe,
+                soldDate && soldDate !== Infinity ? new Date(soldDate).toISOString() : null
+              );
+            }
           })
         );
-        for (let j = 0; j < chunk.length; j++) {
-          const result = verifyResults[j];
-          const stillOwned = result.status === 'fulfilled' ? result.value : true;
-          if (!stillOwned) bfeTilCvr.delete(chunk[j]);
-        }
       }
     }
 
@@ -870,8 +895,13 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
       });
     }
 
-    /* Sortér BFE-numre for konsistent paginering på tværs af batches */
-    alleBfe.sort((a, b) => a - b);
+    /* Sortér: aktive først, så solgte — for konsistent paginering */
+    alleBfe.sort((a, b) => {
+      const aktivA = aktivByBfe.get(a) ?? true;
+      const aktivB = aktivByBfe.get(b) ?? true;
+      if (aktivA !== aktivB) return aktivA ? -1 : 1;
+      return a - b;
+    });
 
     /* Afgræns batch baseret på offset + limit */
     const begransetBfe = alleBfe.slice(offset, offset + limit);
@@ -885,6 +915,8 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
       ownerCvr: bfeTilCvr.get(bfe) ?? '',
       ...adresseData[idx],
       ejerandel: bfeTilEjerandel.get(bfe) ?? null,
+      aktiv: aktivByBfe.get(bfe) ?? true,
+      solgtDato: solgtDatoByBfe.get(bfe) ?? null,
     }));
 
     /* Sortér: adresser først, derefter BFE-numre */

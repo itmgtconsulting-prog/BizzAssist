@@ -509,13 +509,49 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
       byY.get(y)!.push(n);
     }
 
-    // Assign initial X positions: grid-like for levels with many nodes
+    // Build owner lookup: property node id → owner company node id (from edges)
+    const ownerOfProperty = new Map<string, string>();
+    for (const edge of filteredGraph.edges) {
+      const toNode = filteredGraph.nodes.find((n) => n.id === edge.to);
+      if (toNode?.type === 'property' || edge.to.startsWith('props-overflow-')) {
+        if (!ownerOfProperty.has(edge.to)) ownerOfProperty.set(edge.to, edge.from);
+      }
+    }
+
+    // Assign initial X positions: process Y rows top-to-bottom so property rows
+    // can reuse their owner's X position (computed in earlier iteration).
     const initialX = new Map<string, number>();
-    for (const [, nodes] of byY) {
-      const count = nodes.length;
-      // Spread evenly, centered at 0
-      for (let i = 0; i < nodes.length; i++) {
-        initialX.set(nodes[i].id, (i - (count - 1) / 2) * NODE_GAP_X);
+    const sortedYs = [...byY.keys()].sort((a, b) => a - b);
+    for (const y of sortedYs) {
+      const nodes = byY.get(y)!;
+      // Split into property nodes (positioned under owner) vs others (spread evenly)
+      const propNodes = nodes.filter(
+        (n) => n.type === 'property' || n.id.startsWith('props-overflow-')
+      );
+      const otherNodes = nodes.filter(
+        (n) => n.type !== 'property' && !n.id.startsWith('props-overflow-')
+      );
+      // Spread non-property nodes evenly
+      const otherCount = otherNodes.length;
+      for (let i = 0; i < otherNodes.length; i++) {
+        initialX.set(otherNodes[i].id, (i - (otherCount - 1) / 2) * NODE_GAP_X);
+      }
+      // Group property nodes by their owner to cluster siblings together
+      const propsByOwner = new Map<string, DiagramNode[]>();
+      for (const p of propNodes) {
+        const owner = ownerOfProperty.get(p.id) ?? '__unknown__';
+        if (!propsByOwner.has(owner)) propsByOwner.set(owner, []);
+        propsByOwner.get(owner)!.push(p);
+      }
+      // Place each group centered on its owner's X
+      for (const [ownerId, props] of propsByOwner) {
+        const ownerX = initialX.get(ownerId) ?? 0;
+        const n = props.length;
+        // Use tighter spacing for properties so they cluster under owner
+        const propSpacing = NODE_W + 20;
+        for (let i = 0; i < n; i++) {
+          initialX.set(props[i].id, ownerX + (i - (n - 1) / 2) * propSpacing);
+        }
       }
     }
 
@@ -548,17 +584,21 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
         node.y = (node.y ?? 0) * 0.15 + targetY * 0.85;
       }
 
-      // Same-level X repulsion: only push apart nodes that share the same Y level
-      const minDist = NODE_W + 36;
+      // Same-level X repulsion: only push apart nodes that share the same Y level.
+      // Property nodes use tighter minDist so they cluster under their owner.
+      const MIN_DIST_COMPANY = NODE_W + 36;
+      const MIN_DIST_PROPERTY = NODE_W + 16;
       for (const [, siblings] of nodesByY) {
         for (let i = 0; i < siblings.length; i++) {
           for (let j = i + 1; j < siblings.length; j++) {
             const a = siblings[i];
             const b = siblings[j];
+            const bothProperty = a.data.type === 'property' && b.data.type === 'property';
+            const minDist = bothProperty ? MIN_DIST_PROPERTY : MIN_DIST_COMPANY;
             const dx = (b.x ?? 0) - (a.x ?? 0);
             const absDx = Math.abs(dx);
             if (absDx < minDist) {
-              const push = (minDist - absDx) * 0.5;
+              const push = (minDist - absDx) * (bothProperty ? 0.2 : 0.5);
               const sign = dx >= 0 ? 1 : -1;
               a.x = (a.x ?? 0) - push * sign;
               b.x = (b.x ?? 0) + push * sign;
@@ -1461,8 +1501,8 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
                           strokeWidth="1"
                         />
                       )}
-                      {/* Label — split long addresses over 2 lines for property nodes */}
-                      {isProperty && node.label.length > 44 ? (
+                      {/* Label — split property addresses over 2 lines when postnr/by present */}
+                      {isProperty && node.label.includes(',') ? (
                         <>
                           <text
                             x={x + 30}

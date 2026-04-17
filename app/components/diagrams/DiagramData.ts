@@ -398,13 +398,14 @@ export function buildDiagramGraph(
         seenIds.add(propId);
         // Link to property detail page via DAWA adgangsadresse UUID
         const link = p.dawaId ? `/dashboard/ejendomme/${p.dawaId}` : undefined;
-        // Build sublabel: "1970 Frederiksberg" or fallback to ejendomstype
+        // Merge address + postnr+by into main label (e.g. "Arnold Nielsens Boulevard 64A, 2650 Hvidovre")
         const postBy = [p.postnr, p.by].filter(Boolean).join(' ');
-        const sublabel = postBy || p.ejendomstype || undefined;
+        const baseAddr = p.adresse ?? `BFE ${p.bfeNummer}`;
+        const mainLabel = postBy ? `${baseAddr}, ${postBy}` : baseAddr;
         nodes.push({
           id: propId,
-          label: p.adresse ?? `BFE ${p.bfeNummer}`,
-          sublabel,
+          label: mainLabel,
+          sublabel: p.ejendomstype ?? undefined,
           type: 'property',
           bfeNummer: p.bfeNummer,
           link,
@@ -728,13 +729,14 @@ export function buildPersonDiagramGraph(
         seenIds.add(propId);
         // Link to property detail page via DAWA adgangsadresse UUID
         const link = p.dawaId ? `/dashboard/ejendomme/${p.dawaId}` : undefined;
-        // Build sublabel: "1970 Frederiksberg" or fallback to ejendomstype
+        // Merge address + postnr+by into main label (e.g. "Arnold Nielsens Boulevard 64A, 2650 Hvidovre")
         const postBy = [p.postnr, p.by].filter(Boolean).join(' ');
-        const sublabel = postBy || p.ejendomstype || undefined;
+        const baseAddr = p.adresse ?? `BFE ${p.bfeNummer}`;
+        const mainLabel = postBy ? `${baseAddr}, ${postBy}` : baseAddr;
         nodes.push({
           id: propId,
-          label: p.adresse ?? `BFE ${p.bfeNummer}`,
-          sublabel,
+          label: mainLabel,
+          sublabel: p.ejendomstype ?? undefined,
           type: 'property',
           bfeNummer: p.bfeNummer,
           link,

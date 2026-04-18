@@ -7204,7 +7204,10 @@ function TinglysningTab({
           // BIZZ-331: Servitutter for ejerlejligheder can be slow (fetches
           // from hovedejendom). Use separate timeout + error handling so other
           // sections still display even if servitutter times out.
-          fetch(servituterUrl, { signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]) })
+          // BIZZ-474: Bumped to 45s — hovedejendomme with many servitutter
+          // need enough headroom for per-document enrichment even with
+          // concurrency=10 and cap=30.
+          fetch(servituterUrl, { signal: AbortSignal.any([signal, AbortSignal.timeout(45000)]) })
             .then((r) => (r.ok ? r.json() : null))
             .then((res) => {
               if (res) {

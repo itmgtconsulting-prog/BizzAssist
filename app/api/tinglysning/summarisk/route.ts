@@ -835,9 +835,15 @@ export async function GET(req: NextRequest) {
     }
 
     // ── Berig servitutter med tillægstekst fra dokument-detaljer ──
-    // Paralleliseret i batches af 5
+    // BIZZ-474: Hovedejendomme kan have mange servitutter (20+); per-dokument
+    // enrichment serielt i batches af 5 gav timeout (>30s client). Parallelisér
+    // mere aggressivt, og cap antallet for at undgå at enkelte ejendomme med
+    // 50+ servitutter rammer serverless-loftet. Resterende viser bare den
+    // summariske tillægstekst fra ejdsummarisk-XML'en (ikke dybde-beriget).
+    const ENRICH_CAP = 30;
+    const servitutterToEnrich = servitutter.filter((s) => s.dokumentId).slice(0, ENRICH_CAP);
     await batchParallel(
-      servitutter.filter((s) => s.dokumentId),
+      servitutterToEnrich,
       async (s) => {
         try {
           const dokRes = await tlFetch(`/dokaktuel/uuid/${s.dokumentId}`);
@@ -856,7 +862,8 @@ export async function GET(req: NextRequest) {
         } catch {
           /* ignore — detaljer er valgfrie */
         }
-      }
+      },
+      10 // batchSize bumpet fra 5 → 10 for hurtigere total-latency
     );
 
     // ── Parse tingbogsattest stamoplysninger ──
@@ -1093,8 +1100,11 @@ export async function GET(req: NextRequest) {
 
                 // ── Berig moderejendommens servitutter med tillægstekst fra dokumenter ──
                 // Spejler den eksisterende dokument-berigelse for lejlighedens servitutter.
+                // BIZZ-474: Same cap + bumpet batchSize som primær enrichment for
+                // at undgå 30s client-timeout når hovedejendom har mange servitutter.
+                const ENRICH_CAP_HOVED = 30;
                 await batchParallel(
-                  servitutterFraHoved.filter((s) => s.dokumentId),
+                  servitutterFraHoved.filter((s) => s.dokumentId).slice(0, ENRICH_CAP_HOVED),
                   async (s) => {
                     try {
                       const dokRes = await tlFetch(`/dokaktuel/uuid/${s.dokumentId}`);
@@ -1113,7 +1123,8 @@ export async function GET(req: NextRequest) {
                     } catch {
                       /* ignore — tillaegstekst fra dokument er valgfri */
                     }
-                  }
+                  },
+                  10 // batchSize bumpet fra 5 → 10
                 );
 
                 // Tilføj moderejendommens servitutter til svaret

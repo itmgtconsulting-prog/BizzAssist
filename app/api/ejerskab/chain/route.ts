@@ -711,13 +711,19 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // BIZZ-471: Fjern ophørte virksomheder fra ejerstrukturen. Ophørte selskaber
-  // kan ikke længere eje noget i dag, så de hører ikke med i ejerstrukturen —
-  // heller ikke som mellemled i ejerkæden. Advarslen om en direkte ejer er
-  // ophørt bevares i ejerDetaljer (via isCeased propagation ovenfor), så
-  // listen over adkomsthavere stadig markerer det.
+  // BIZZ-471 + BIZZ-477: Fjern ophørte virksomheder fra ejerstrukturen OG
+  // fra adkomst-listen. Ophørte selskaber kan ikke længere eje noget i dag;
+  // at vise dem som 100%-ejer (selv med "Ophørt" badge) giver forkert
+  // indtryk af det aktuelle ejerskab. Tinglysning-registreringen kan være
+  // forældet når selskabet er afregistreret uden formel re-tinglysning af
+  // adkomsten. Match chain-graph og ejer-liste: samme filter, samme ejere.
   const ceasedCompanyIds = new Set(
     nodes.filter((n) => n.type === 'company' && n.isCeased).map((n) => n.id)
+  );
+  const ceasedCvrs = new Set(
+    nodes
+      .filter((n) => n.type === 'company' && n.isCeased && n.cvr != null)
+      .map((n) => String(n.cvr))
   );
   if (ceasedCompanyIds.size > 0) {
     const filteredNodes = nodes.filter((n) => !ceasedCompanyIds.has(n.id));
@@ -728,6 +734,16 @@ export async function GET(req: NextRequest) {
     );
     edges.length = 0;
     edges.push(...filteredEdges);
+  }
+  if (ceasedCvrs.size > 0) {
+    // BIZZ-477: Drop ophørte selskaber fra ejerDetaljer så UI-listen matcher
+    // diagrammet (begge viser kun aktive ejere).
+    const filteredEjerDetaljer = ejerDetaljer.filter((d) => {
+      if (d.type !== 'selskab' || !d.cvr) return true;
+      return !ceasedCvrs.has(d.cvr);
+    });
+    ejerDetaljer.length = 0;
+    ejerDetaljer.push(...filteredEjerDetaljer);
   }
 
   const fejl: string | null = null;

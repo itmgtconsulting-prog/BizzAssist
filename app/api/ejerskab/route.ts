@@ -28,6 +28,7 @@ import { getCertOAuthToken, isCertAuthConfigured } from '@/app/lib/dfCertAuth';
 import { resolveTenantId } from '@/lib/api/auth';
 import { parseQuery } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
+import { hentCvrStatusBatch } from '@/app/lib/cvrStatus';
 import { getSharedOAuthToken } from '@/app/lib/dfTokenCache';
 
 /** Zod schema for /api/ejerskab query parameters */
@@ -52,6 +53,11 @@ export interface EjerData {
   ejertype: 'selskab' | 'person' | 'ukendt';
   /** ISO 8601 dato for hvornår ejerskab trådte i kraft */
   virkningFra: string | null;
+  /**
+   * BIZZ-477: Virksomhedsnavn slået op i CVR ES (kun for selskabsejere).
+   * Undgår at UI'en viser rå "CVR 12345678" som eneste identifikation.
+   */
+  virksomhedsnavn?: string | null;
 }
 
 /** API-svaret fra denne route */
@@ -360,7 +366,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjerskabRe
     );
   }
 
-  const ejere: EjerData[] = nodes.map((n) => ({
+  const raaEjere: EjerData[] = nodes.map((n) => ({
     cvr: n.ejendeVirksomhedCVRNr != null ? String(n.ejendeVirksomhedCVRNr) : null,
     personNavn: n.ejendePersonBegraenset?.navn?.navn ?? null,
     ejerandel_taeller: n.faktiskEjerandel_taeller ?? null,
@@ -369,6 +375,34 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjerskabRe
     ejertype: parseEjertypeFraNode(n),
     virkningFra: n.virkningFra ?? null,
   }));
+
+  // BIZZ-477: Filtrér ophørte selskabsejere og berig med virksomhedsnavn.
+  // EJF registrerer ofte at et selskab "ejer" en ejendom længe efter
+  // selskabet er ophørt (adkomst aldrig retinglyst). Disse noder skal
+  // ikke fremstå som aktive ejere i UI'en — matcher /api/ejerskab/chain's
+  // filter-adfærd og BIZZ-471's ejerstruktur-fix.
+  const cvrIds = raaEjere
+    .map((e) => e.cvr)
+    .filter((c): c is string => !!c)
+    .map((c) => parseInt(c, 10))
+    .filter((n) => Number.isFinite(n));
+
+  const statusMap = cvrIds.length > 0 ? await hentCvrStatusBatch(cvrIds) : new Map();
+
+  const ejere: EjerData[] = raaEjere
+    .filter((e) => {
+      if (!e.cvr) return true; // person-ejere passerer altid
+      const status = statusMap.get(parseInt(e.cvr, 10));
+      return !status?.isCeased;
+    })
+    .map((e) => {
+      if (!e.cvr) return e;
+      const status = statusMap.get(parseInt(e.cvr, 10));
+      return {
+        ...e,
+        virksomhedsnavn: status?.navn ?? null,
+      };
+    });
 
   return NextResponse.json(
     { bfeNummer, ejere, fejl: null, manglerNoegle: false, manglerAdgang: false },

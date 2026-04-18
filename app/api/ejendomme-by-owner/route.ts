@@ -1007,18 +1007,33 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
     /* ── Trin 2: Hent adressedata for hvert BFE (begrænset parallelisme) ── */
     const adresseData = await pMap(begransetBfe, DAWA_CONCURRENCY, hentDawaBfeData);
 
-    /* ── Trin 2b: BIZZ-461 — slå moderejendommens BFE op for ejerlejligheder.
-     * Grupperer på ejerlav+matrikel så flere enheder i samme kompleks kun
-     * koster ét DAWA-opslag. Kun ejendomstype-matches (case-insensitivt)
-     * med "ejerlejlighed" udløser opslaget — normale ejendomme har ingen
-     * moderejendom. */
+    /* ── Trin 2b: BIZZ-461 — slå moderejendommens BFE op for at gruppere
+     * enheder på samme grund. Trigger-regel:
+     *   (a) ejendomstype indeholder "ejerlejlighed" (klassisk boliglejlighed),
+     *       ELLER
+     *   (b) mindst 2 BFE i denne batch deler samme ejerlav+matrikel.
+     * Regel (b) fanger erhvervsejerlejligheder (juridisk kategori
+     * "Erhvervsejendom eller øvrig ejendom") som Arnbo 62 ApS' 62A/62B —
+     * ikke klassificeret som ejerlejlighed i DAWA, men deler jordstykke og
+     * bør vises som ét kompleks. Deduplikering på ejerlav+matrikel sikrer
+     * at et kompleks med N enheder kun koster ét DAWA-opslag.
+     */
+    const jordstykkeCount = new Map<string, number>();
+    for (let i = 0; i < begransetBfe.length; i++) {
+      const ad = adresseData[i];
+      if (!ad.ejerlavKode || !ad.matrikelnr) continue;
+      const key = `${ad.ejerlavKode}:${ad.matrikelnr}`;
+      jordstykkeCount.set(key, (jordstykkeCount.get(key) ?? 0) + 1);
+    }
     const moderByJordstykke = new Map<string, number | null>();
     const jordstykkeLookups: Array<{ key: string; kode: number; matrikel: string }> = [];
     for (let i = 0; i < begransetBfe.length; i++) {
       const ad = adresseData[i];
-      if (!ad.ejendomstype || !ad.ejerlavKode || !ad.matrikelnr) continue;
-      if (!/ejerlejlighed/i.test(ad.ejendomstype)) continue;
+      if (!ad.ejerlavKode || !ad.matrikelnr) continue;
       const key = `${ad.ejerlavKode}:${ad.matrikelnr}`;
+      const erEjerlejlighed = /ejerlejlighed/i.test(ad.ejendomstype ?? '');
+      const delerJordstykke = (jordstykkeCount.get(key) ?? 0) >= 2;
+      if (!erEjerlejlighed && !delerJordstykke) continue;
       if (moderByJordstykke.has(key)) continue;
       moderByJordstykke.set(key, null); // placeholder
       jordstykkeLookups.push({ key, kode: ad.ejerlavKode, matrikel: ad.matrikelnr });

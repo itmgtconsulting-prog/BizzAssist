@@ -1766,6 +1766,14 @@ export default function EjendomDetaljeClient({
     tinglysningsdato: string | null;
     tinglysningsafgift: number | null;
     kilde: 'ejf' | 'tinglysning' | 'begge';
+    /**
+     * BIZZ-468: Struktureret liste af alle købere i denne handel med hver
+     * deres andel. Bruges af render-laget i stedet for den concatenerede
+     * `koeber`-streng så hver navn kan få sin egen andel-suffix (ikke kun
+     * den sidste). Tom liste = én køber uden andel — brug fallback til
+     * `koeber` + `andel`-felterne.
+     */
+    koebere?: { navn: string; cvr: string | null; andel: string | null }[];
   }
 
   /**
@@ -1851,19 +1859,25 @@ export default function EjendomDetaljeClient({
         return gDato === dato && gSum === sum && dato !== '';
       });
       if (existing && h.koeber) {
-        // BIZZ-468: Append ejerandel to EVERY buyer in combined string — not just
-        // the later ones. Ensures first buyer's share is also shown explicitly.
-        if (existing.koeber) {
-          // If first buyer has no share suffix yet, add their existing top-level andel
-          if (!/\(\s*\d/.test(existing.koeber) && existing.andel) {
-            existing.koeber = `${existing.koeber} (${existing.andel})`;
-          }
-          existing.koeber = `${existing.koeber}, ${h.koeber}${h.andel ? ` (${h.andel})` : ''}`;
-        } else {
-          existing.koeber = `${h.koeber}${h.andel ? ` (${h.andel})` : ''}`;
+        // BIZZ-468: Build a structured koebere[] — each buyer keeps sin egen
+        // andel. Undgår den gamle string-concat-bug hvor kun sidste køber
+        // havde andel-suffix fordi første købers `andel` var null på
+        // existing-rækken selvom den faktisk var kendt på en senere række.
+        if (!existing.koebere || existing.koebere.length === 0) {
+          // Seed koebere med existing's single buyer først
+          existing.koebere = [
+            { navn: existing.koeber ?? '', cvr: existing.koebercvr, andel: existing.andel },
+          ];
         }
-        // When multiple buyers with shares, clear top-level andel (shown inline)
-        if (h.andel) existing.andel = null;
+        existing.koebere.push({ navn: h.koeber, cvr: h.koebercvr, andel: h.andel });
+        // Rebuild koeber-strengen — inkluder andel per navn hvis minimum ét
+        // navn har en kendt andel. Hvis INGEN har andel, vis bare navnene.
+        const anyAndel = existing.koebere.some((k) => k.andel);
+        existing.koeber = existing.koebere
+          .map((k) => (anyAndel && k.andel ? `${k.navn} (${k.andel})` : k.navn))
+          .join(', ');
+        // Når flere købere med andel: ryd top-level andel (vises inline pr navn)
+        if (anyAndel) existing.andel = null;
       } else {
         grouped.push({ ...h });
       }

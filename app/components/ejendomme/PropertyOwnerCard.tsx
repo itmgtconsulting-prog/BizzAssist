@@ -217,9 +217,15 @@ export default function PropertyOwnerCard({
         )}
       </div>
 
-      {/* Footer — BIZZ-454: green accent, BIZZ-455: sold badge */}
-      <div className="px-4 pb-3 pt-0">
-        {!aktiv ? (
+      {/*
+        BIZZ-464: "Se detaljer"-pillen er fjernet — hele kortet er allerede
+        klikbart via den ydre Link-wrapper. Solgt-badge og "DAWA-id mangler"
+        beholdes da de bærer ekstra information. En subtil ExternalLink-ikon
+        i øverste højre hjørne (fader ind på hover) signalerer stadig at
+        kortet kan klikkes.
+      */}
+      {!aktiv ? (
+        <div className="px-4 pb-3 pt-0">
           <span className="flex items-center justify-between w-full px-3 py-1.5 rounded-lg bg-slate-700/30 text-slate-400 text-[10px] font-medium">
             <span>{da ? 'Solgt' : 'Sold'}</span>
             {ejendom.solgtDato && (
@@ -231,24 +237,33 @@ export default function PropertyOwnerCard({
               </span>
             )}
           </span>
-        ) : detailHref ? (
-          <span className="flex items-center justify-between w-full px-3 py-1.5 rounded-lg bg-emerald-600/15 text-emerald-400 text-xs font-medium group-hover:bg-emerald-600/25 group-hover:text-emerald-300 transition-colors">
-            <span>{da ? 'Se detaljer' : 'View details'}</span>
-            <ExternalLink size={11} />
-          </span>
-        ) : (
+        </div>
+      ) : !detailHref ? (
+        <div className="px-4 pb-3 pt-0">
           <span className="flex items-center w-full px-3 py-1.5 rounded-lg bg-slate-900/40 text-slate-500 text-[10px]">
             {da ? 'DAWA-id mangler' : 'DAWA id missing'}
           </span>
-        )}
-      </div>
+        </div>
+      ) : null}
+
+      {/* Hover affordance — kun på aktive, klikbare kort */}
+      {aktiv && detailHref && (
+        <ExternalLink
+          size={11}
+          className="absolute top-3 right-3 text-slate-600 opacity-0 group-hover:opacity-100 group-hover:text-emerald-400 transition-opacity pointer-events-none"
+          aria-hidden="true"
+        />
+      )}
     </div>
   );
 
   // Wrap in Link if detail page available
   if (detailHref) {
+    const ariaLabel = da
+      ? `Se detaljer for ${ejendom.adresse ?? `BFE ${ejendom.bfeNummer}`}`
+      : `View details for ${ejendom.adresse ?? `BFE ${ejendom.bfeNummer}`}`;
     return (
-      <Link href={detailHref} className="block">
+      <Link href={detailHref} className="block" aria-label={ariaLabel}>
         {CardContent}
       </Link>
     );

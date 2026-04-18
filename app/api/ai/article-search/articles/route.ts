@@ -468,14 +468,16 @@ function dedupArticles(articles: ArticleResult[]): ArticleResult[] {
  */
 function buildArticlesSystemPrompt(primaryDomains: string[]): string {
   const preferredList = primaryDomains.join(', ');
-  return `Du er en dansk medieekspert. Du rangerer og filtrerer nyheder/artikler om en dansk VIRKSOMHED.
+  return `Du er en dansk medieekspert. Du rangerer og filtrerer nyheder/artikler om en dansk VIRKSOMHED registreret i CVR.
 
 Din opgave:
-1. Vurdér om hvert hit handler om DENNE SPECIFIKKE virksomhed (ikke en anden med lignende navn)
-2. Prioritér artikler fra FORETRUKNE MEDIER — placer dem øverst uanset dato
-3. Sortér derefter øvrige artikler efter dato — NYESTE artikler FØRST
-4. Inkludér gerne ældre artikler (2022-2023 og ældre) hvis de er relevante — især for mindre virksomheder
-5. Forbedre snippet-beskrivelser til max 100 tegn dansk tekst
+1. Vurdér om hvert hit handler om DENNE SPECIFIKKE CVR-virksomhed — ikke en anden virksomhed med samme bogstavskombination i et andet land
+2. Brug ALLE tilgængelige entitets-anker: CVR-nummer, fulde juridiske navn, branche, by, nøglepersoner. Et resultat der ikke har mindst ét af disse anker knyttet til sig, er sandsynligvis en falsk positiv og skal AFVISES
+3. Prioritér artikler fra FORETRUKNE MEDIER — placer dem øverst uanset dato
+4. Sortér derefter øvrige artikler efter dato — NYESTE artikler FØRST
+5. Inkludér gerne ældre artikler (2022-2023 og ældre) hvis de er relevante — især for mindre virksomheder
+6. Forbedre snippet-beskrivelser til max 100 tegn dansk tekst
+7. Hvis INGEN af resultaterne klart handler om den danske CVR-virksomhed, returnér en tom articles-liste. Det er bedre at vise "ingen relevante artikler" end at fylde med støj
 
 FORETRUKNE MEDIEDOMÆNER — placer disse ØVERST i resultatlisten:
 ${preferredList}
@@ -484,7 +486,8 @@ EKSKLUDEREDE DOMÆNER — inkludér ALDRIG:
 ownr.dk, estatistik.dk, profiler.dk, krak.dk, proff.dk, paqle.dk, erhvervplus.dk, lasso.dk, cvrapi.dk, find-virksomhed.dk, virksomhedskartoteket.dk, crunchbase.com, b2bhint.com, resights.dk
 
 AFVIS et resultat hvis:
-- Det handler om en ANDEN virksomhed med samme eller lignende navn
+- Det handler om en ANDEN virksomhed med samme eller lignende navn (meget almindeligt for 2-3 bogstavs-forkortelser som "HP", "SE", "DK" m.fl. — check altid hele konteksten)
+- Det handler om en udenlandsk entitet (indisk delstat, amerikansk byggeprojekt, videnskabelig artikel m.m.) der bare tilfældigvis deler bogstaver med virksomhedens navn
 - Det er et jobopslag (stillingsopslag, karriere, ledige stillinger)
 - Det er en generisk brancheportal der bare lister virksomheden
 - Det er åbenlyst spam eller irrelevant indhold
@@ -592,6 +595,30 @@ function isSocialDomain(url: string): boolean {
 function isPrimaryDomain(url: string, primaryDomains: string[]): boolean {
   try {
     const hostname = new URL(url).hostname.replace(/^www\./, '');
+    return primaryDomains.some((d) => hostname === d || hostname.endsWith(`.${d}`));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * BIZZ-476: Afgør om en URL er dansk-relevant for en CVR-virksomhed.
+ * Vi betragter et resultat som DK-relevant når:
+ *   - domænet har `.dk` TLD, ELLER
+ *   - domænet står på admin's foretrukne medieliste (tillader fx bloomberg.com
+ *     hvis admin eksplicit har hvidlistet det)
+ *
+ * For danske CVR-virksomheder er dette filter den vigtigste beskyttelse mod
+ * internationale støj-resultater der matcher firmaets bogstavskombination
+ * (fx "HP Properties" matchede tidligere indiske nyheder om "HP" delstat).
+ *
+ * @param url            - URL der skal tjekkes
+ * @param primaryDomains - Admin-hvidlistede mediedomæner
+ */
+function isDkRelevant(url: string, primaryDomains: string[]): boolean {
+  try {
+    const hostname = new URL(url).hostname.replace(/^www\./, '');
+    if (hostname.endsWith('.dk')) return true;
     return primaryDomains.some((d) => hostname === d || hostname.endsWith(`.${d}`));
   } catch {
     return false;
@@ -729,40 +756,39 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   let maxTokens: number;
 
   try {
-    // Kør Supabase-konfiguration og Serper i PARALLEL for at undgå sekventiel ventetid.
-    // Serper-søgningen bruger DEFAULT_PRIMARY_MEDIA_DOMAINS til qMedia-query — de
-    // admin-konfigurerede domæner bruges kun til post-processing sort, ikke til søgning.
-    // I raw-fasen hentes kun excluded domains (primær-domæner og limits bruges ikke).
-    const [resolvedDbDomains, resolvedPrimaryDomains, resolvedLimits, serperResults] =
-      await Promise.all([
-        fetchExcludedDomains(),
-        phase !== 'raw'
-          ? fetchPrimaryMediaDomains()
-          : Promise.resolve(DEFAULT_PRIMARY_MEDIA_DOMAINS),
-        phase !== 'raw'
-          ? fetchArticleLimits()
-          : Promise.resolve({ maxArticles: DEFAULT_MAX_ARTICLES, maxTokens: DEFAULT_MAX_TOKENS }),
-        isPerson
-          ? searchSerperPersonArticles(
-              serperApiKey,
-              searchLabel,
-              company,
-              DEFAULT_PRIMARY_MEDIA_DOMAINS
-            ).catch((err: unknown) => {
-              logger.log(
-                `[article-search/articles] Serper person fejl: ${err instanceof Error ? err.message : String(err)}`
-              );
-              return [] as ArticleResult[];
-            })
-          : searchSerperArticles(serperApiKey, searchLabel, DEFAULT_PRIMARY_MEDIA_DOMAINS).catch(
-              (err: unknown) => {
-                logger.log(
-                  `[article-search/articles] Serper fejl: ${err instanceof Error ? err.message : String(err)}`
-                );
-                return [] as ArticleResult[];
-              }
-            ),
-      ]);
+    // BIZZ-476: Hent admin-konfigurerede primære medier FØR Serper-kaldet så
+    // site:-filter-query'en faktisk bruger dem. Tidligere blev
+    // DEFAULT_PRIMARY_MEDIA_DOMAINS brugt til søgningen, så admin-ændringer
+    // havde ingen effekt på hvilke kilder Serper faktisk spurgte om. Vi
+    // kører parallelt med excluded-domain-opslag så no net latency impact.
+    const [resolvedDbDomains, resolvedPrimaryDomains, resolvedLimits] = await Promise.all([
+      fetchExcludedDomains(),
+      fetchPrimaryMediaDomains(),
+      phase !== 'raw'
+        ? fetchArticleLimits()
+        : Promise.resolve({ maxArticles: DEFAULT_MAX_ARTICLES, maxTokens: DEFAULT_MAX_TOKENS }),
+    ]);
+
+    const serperResults = await (isPerson
+      ? searchSerperPersonArticles(
+          serperApiKey,
+          searchLabel,
+          company,
+          resolvedPrimaryDomains
+        ).catch((err: unknown) => {
+          logger.log(
+            `[article-search/articles] Serper person fejl: ${err instanceof Error ? err.message : String(err)}`
+          );
+          return [] as ArticleResult[];
+        })
+      : searchSerperArticles(serperApiKey, searchLabel, resolvedPrimaryDomains).catch(
+          (err: unknown) => {
+            logger.log(
+              `[article-search/articles] Serper fejl: ${err instanceof Error ? err.message : String(err)}`
+            );
+            return [] as ArticleResult[];
+          }
+        ));
 
     dbExcludedDomains = resolvedDbDomains;
     primaryDomains = resolvedPrimaryDomains;
@@ -792,6 +818,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     });
   }
 
+  // BIZZ-476: Når vi søger efter en virksomhed med CVR eller en person er det
+  // per definition en dansk entitet. Drop resultater fra ikke-.dk-domæner
+  // medmindre admin eksplicit har hvidlistet domænet i primaryDomains. Dette
+  // filtrerer støjen fra internationale medier der matcher bogstavs-
+  // kombinationen (fx HP Properties ApS fik tidligere indiske "HP-delstat"-
+  // artikler fordi Serper gl:dk/hl:da ikke er nok til at undertrykke dem).
+  const erDansk = Boolean(cvr) || isPerson;
+  if (erDansk) {
+    const foer = rawResults.length;
+    rawResults = rawResults.filter((r) => isDkRelevant(r.url, primaryDomains));
+    logger.log(
+      `[article-search/articles] "${searchLabel}" DK-filter: ${foer} → ${rawResults.length} (droppede ikke-DK resultater)`
+    );
+  }
+
   logger.log(
     `[article-search/articles] "${searchLabel}" [${entityType}][${phase}]: ${rawResults.length} resultater efter dedup+filter`
   );
@@ -799,7 +840,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   // ── Raw-fase: returnér Serper-resultater direkte uden Claude ──
   // Foretrukne medier sorteres øverst, derefter sorterer frontenden efter dato.
   if (phase === 'raw') {
-    const articles = sortByPrimaryDomains(rawResults.slice(0, 20), DEFAULT_PRIMARY_MEDIA_DOMAINS);
+    const articles = sortByPrimaryDomains(rawResults.slice(0, 20), primaryDomains);
     return NextResponse.json({ articles, tokensUsed: 0, source: 'serper+raw', preliminary: true });
   }
 

@@ -39,7 +39,6 @@ import {
   CheckCircle,
   XCircle,
   Info,
-  Loader2,
 } from 'lucide-react';
 /** Recharts — single dynamic import keeps recharts in one chunk */
 const EjendomPrisChart = dynamic(() => import('./EjendomPrisChart'), { ssr: false });
@@ -3433,14 +3432,12 @@ export default function EjendomDetaljeClient({
                             </p>
                           </div>
 
-                          {/* Lejlighedsliste under info-boksen */}
+                          {/* Lejlighedsliste under info-boksen.
+                              BIZZ-478: Ensartet blå TabLoadingSpinner. */}
                           {lejlighederLoader && (
-                            <div className="flex items-center justify-center py-8">
-                              <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
-                              <span className="ml-2 text-slate-400 text-sm">
-                                {da ? 'Henter lejlighedsdata…' : 'Loading apartment data…'}
-                              </span>
-                            </div>
+                            <TabLoadingSpinner
+                              label={da ? 'Henter lejlighedsdata…' : 'Loading apartment data…'}
+                            />
                           )}
                           {lejligheder !== null && lejligheder.length > 0 && (
                             <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden overflow-x-auto">
@@ -5952,13 +5949,11 @@ export default function EjendomDetaljeClient({
                               : 'Ownership is registered on individual condominium units.'}
                           </p>
                         </div>
+                        {/* BIZZ-478: Ensartet blå TabLoadingSpinner. */}
                         {lejlighederLoader && (
-                          <div className="flex items-center justify-center py-8">
-                            <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
-                            <span className="ml-2 text-slate-400 text-sm">
-                              {da ? 'Henter lejlighedsdata…' : 'Loading apartment data…'}
-                            </span>
-                          </div>
+                          <TabLoadingSpinner
+                            label={da ? 'Henter lejlighedsdata…' : 'Loading apartment data…'}
+                          />
                         )}
                         {lejligheder !== null && lejligheder.length > 0 && (
                           <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden overflow-x-auto">
@@ -6933,13 +6928,10 @@ function PropertyOwnerDiagram({
   }, [bfe, adresse, erEjerlejlighed]);
 
   if (loading)
+    // BIZZ-478: Brug den blå TabLoadingSpinner-bar i stedet for box-spinner
+    // så ejendomssidens diagram-tab visuelt matcher resten af appen.
     return (
-      <div className="flex items-center justify-center py-12 bg-slate-800/40 border border-slate-700/40 rounded-xl">
-        <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
-        <span className="ml-2 text-slate-400 text-sm">
-          {da ? 'Henter ejerstruktur…' : 'Loading ownership structure…'}
-        </span>
-      </div>
+      <TabLoadingSpinner label={da ? 'Henter ejerstruktur…' : 'Loading ownership structure…'} />
     );
 
   if (!graph || graph.nodes.length <= 1) {
@@ -7329,16 +7321,10 @@ function TinglysningTab({
     Anden: da ? 'Andet' : 'Other',
   };
 
-  // Initial loading — vent kun på UUID-søgning, ikke alle sektioner
+  // Initial loading — vent kun på UUID-søgning, ikke alle sektioner.
+  // BIZZ-478: Ensartet blå loading-bar i stedet for box-spinner.
   if (loading && ejereLoading && haeftelserLoading && servituterLoading && ejere.length === 0)
-    return (
-      <div className="flex items-center justify-center py-16">
-        <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
-        <span className="ml-2 text-slate-400 text-sm">
-          {da ? 'Henter tingbogsdata…' : 'Loading registry data…'}
-        </span>
-      </div>
-    );
+    return <TabLoadingSpinner label={da ? 'Henter tingbogsdata…' : 'Loading registry data…'} />;
 
   if (fejl || !bfe)
     return (
@@ -7829,13 +7815,9 @@ function TinglysningTab({
         )}
 
         {/* ── HÆFTELSER ── */}
+        {/* BIZZ-478: Ensartet blå TabLoadingSpinner. */}
         {haeftelserLoading && (
-          <div className="flex items-center justify-center py-8">
-            <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
-            <span className="ml-2 text-slate-400 text-sm">
-              {da ? 'Henter hæftelser…' : 'Loading charges…'}
-            </span>
-          </div>
+          <TabLoadingSpinner label={da ? 'Henter hæftelser…' : 'Loading charges…'} />
         )}
         {haeftelser.length > 0 && (
           <>
@@ -8182,14 +8164,10 @@ function TinglysningTab({
           </>
         )}
 
-        {/* ── SERVITUTTER ── */}
+        {/* ── SERVITUTTER ──
+            BIZZ-478: Ensartet blå TabLoadingSpinner. */}
         {servituterLoading && (
-          <div className="flex items-center justify-center py-8">
-            <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
-            <span className="ml-2 text-slate-400 text-sm">
-              {da ? 'Henter servitutter…' : 'Loading easements…'}
-            </span>
-          </div>
+          <TabLoadingSpinner label={da ? 'Henter servitutter…' : 'Loading easements…'} />
         )}
         {servituterTimedOut && servitutter.length === 0 && (
           <div className="mx-4 my-3 flex items-start gap-2 rounded-md border border-yellow-500/40 bg-yellow-500/10 px-3 py-2">

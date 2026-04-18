@@ -3510,13 +3510,11 @@ function GroupTab({
 
   return (
     <div className="space-y-4">
+      {/* BIZZ-478: Ensartet blå TabLoadingSpinner. */}
       {relatedLoading && (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
-          <span className="ml-2 text-slate-400 text-sm">
-            {lang === 'da' ? 'Henter gruppevirksomheder…' : 'Loading group companies…'}
-          </span>
-        </div>
+        <TabLoadingSpinner
+          label={lang === 'da' ? 'Henter gruppevirksomheder…' : 'Loading group companies…'}
+        />
       )}
 
       {!relatedLoading && (

@@ -2048,10 +2048,8 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                       const fmtNum = (n: number) => n.toLocaleString('da-DK');
 
                       return relatedLoading ? (
-                        <div className="flex items-center justify-center py-8">
-                          <Loader2 className="w-5 h-5 text-indigo-500 animate-spin" />
-                          <span className="ml-2 text-slate-400 text-sm">{c.loading}</span>
-                        </div>
+                        // BIZZ-478: Ensartet blå TabLoadingSpinner.
+                        <TabLoadingSpinner label={c.loading} />
                       ) : aktive.length > 0 ? (
                         <section className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-5">
                           <h2 className="text-white font-semibold text-sm mb-3 flex items-center gap-2">
@@ -2240,16 +2238,13 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
               {/* ── Ejendomme-portefølje sektion ── */}
               {
                 <div className="space-y-4">
-                  {/* Indledende spinner */}
+                  {/* Indledende spinner — BIZZ-478: ensartet blå TabLoadingSpinner */}
                   {ejendommeLoading && ejendommeData.length === 0 && (
-                    <div className="flex items-center justify-center py-12">
-                      <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
-                      <span className="ml-2 text-slate-400 text-sm">
-                        {lang === 'da'
-                          ? 'Henter ejendomsportefølje…'
-                          : 'Loading property portfolio…'}
-                      </span>
-                    </div>
+                    <TabLoadingSpinner
+                      label={
+                        lang === 'da' ? 'Henter ejendomsportefølje…' : 'Loading property portfolio…'
+                      }
+                    />
                   )}
 
                   {/* Mangler nøgle / adgang */}

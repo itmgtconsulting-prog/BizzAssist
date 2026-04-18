@@ -510,6 +510,12 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
   const [ejendommeTotalBfe, setEjendommeTotalBfe] = useState(0);
   /** BIZZ-455: Toggle for visning af tidligere ejede (solgte) ejendomme */
   const [visSolgte, setVisSolgte] = useState(false);
+  /**
+   * BIZZ-461: Udfoldede ejerlejlighedskomplekser (nøgle = moderejendommens BFE).
+   * Grupper starter kollapsede så én virksomhed med mange ejerlejligheder ikke
+   * lukker grid'et op i en endeløs vertikal liste.
+   */
+  const [expandedKomplekser, setExpandedKomplekser] = useState<Set<number>>(new Set());
   /** BIZZ-diagram: Memoized diagram graph — only rebuilds when ejendomme fully loaded,
    * preventing "jumping" as properties stream in progressively. Shows active only. */
   const diagramGraphStable = useMemo(() => {
@@ -2364,16 +2370,126 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                                       </span>
                                     )}
                                   </Link>
-                                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-                                    {props.map((ej) => (
-                                      <PropertyOwnerCard
-                                        key={ej.bfeNummer}
-                                        ejendom={ej}
-                                        showOwner={false}
-                                        lang={lang}
-                                      />
-                                    ))}
-                                  </div>
+                                  {(() => {
+                                    // BIZZ-461: Gruppér ejerlejligheder efter moderejendommens
+                                    // BFE så et kompleks med flere enheder vises som én
+                                    // kollapset kompleks-card i stedet for N løsrevne kort.
+                                    const komplekser = new Map<number, typeof props>();
+                                    const singler: typeof props = [];
+                                    for (const ej of props) {
+                                      const moderBfe = ej.moderejendomBFE;
+                                      if (moderBfe != null) {
+                                        const arr = komplekser.get(moderBfe) ?? [];
+                                        arr.push(ej);
+                                        komplekser.set(moderBfe, arr);
+                                      } else {
+                                        singler.push(ej);
+                                      }
+                                    }
+                                    // Kompleks kræver mindst 2 enheder — en enkelt ejerlejlighed
+                                    // vises som almindeligt kort.
+                                    const faktiskeKomplekser = [...komplekser.entries()].filter(
+                                      ([, enheder]) => enheder.length >= 2
+                                    );
+                                    const enkelteEjerlejligheder = [...komplekser.entries()]
+                                      .filter(([, enheder]) => enheder.length < 2)
+                                      .flatMap(([, enheder]) => enheder);
+                                    const alleSingler = [...singler, ...enkelteEjerlejligheder];
+                                    return (
+                                      <div className="space-y-3">
+                                        {/* Kompleks-cards */}
+                                        {faktiskeKomplekser.map(([moderBfe, enheder]) => {
+                                          const isOpen = expandedKomplekser.has(moderBfe);
+                                          // Basisadresse uden etage/dør — brug første enheds
+                                          // vejnavn+husnr minus det evt. ejerlejlighedsbogstav.
+                                          // F.eks. "Arnold Nielsens Boulevard 62A" → "…62"
+                                          const forsteAdr = enheder[0]?.adresse ?? null;
+                                          const baseAdr = forsteAdr
+                                            ? forsteAdr.replace(/([0-9]+)[A-ZÆØÅ]\b/i, '$1')
+                                            : null;
+                                          const postalLinje =
+                                            enheder[0]?.postnr && enheder[0]?.by
+                                              ? `${enheder[0].postnr} ${enheder[0].by}`
+                                              : (enheder[0]?.kommune ?? null);
+                                          return (
+                                            <div
+                                              key={`kompleks-${moderBfe}`}
+                                              className="bg-slate-800/40 border border-emerald-500/20 rounded-xl overflow-hidden"
+                                            >
+                                              <button
+                                                type="button"
+                                                onClick={() =>
+                                                  setExpandedKomplekser((prev) => {
+                                                    const next = new Set(prev);
+                                                    if (next.has(moderBfe)) next.delete(moderBfe);
+                                                    else next.add(moderBfe);
+                                                    return next;
+                                                  })
+                                                }
+                                                aria-expanded={isOpen}
+                                                className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-slate-800/60 transition-colors"
+                                              >
+                                                <ChevronDown
+                                                  size={14}
+                                                  className={`text-slate-400 shrink-0 transition-transform ${isOpen ? '' : '-rotate-90'}`}
+                                                />
+                                                <Home
+                                                  size={14}
+                                                  className="text-emerald-500 shrink-0"
+                                                />
+                                                <div className="min-w-0 flex-1">
+                                                  <p className="text-white text-sm font-medium truncate">
+                                                    {baseAdr ??
+                                                      (lang === 'da'
+                                                        ? 'Ejerlejlighedskompleks'
+                                                        : 'Condominium complex')}
+                                                  </p>
+                                                  {postalLinje && (
+                                                    <p className="text-slate-400 text-xs mt-0.5">
+                                                      {postalLinje}
+                                                    </p>
+                                                  )}
+                                                </div>
+                                                <span className="shrink-0 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-900/40 text-emerald-300">
+                                                  {enheder.length}{' '}
+                                                  {lang === 'da' ? 'enheder' : 'units'}
+                                                </span>
+                                                <span className="shrink-0 text-[10px] text-slate-500 font-mono">
+                                                  {lang === 'da' ? 'Hovedejendom' : 'Parent'} BFE{' '}
+                                                  {moderBfe.toLocaleString('da-DK')}
+                                                </span>
+                                              </button>
+                                              {isOpen && (
+                                                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 p-3 border-t border-slate-700/40 bg-slate-900/30">
+                                                  {enheder.map((ej) => (
+                                                    <PropertyOwnerCard
+                                                      key={ej.bfeNummer}
+                                                      ejendom={ej}
+                                                      showOwner={false}
+                                                      lang={lang}
+                                                    />
+                                                  ))}
+                                                </div>
+                                              )}
+                                            </div>
+                                          );
+                                        })}
+                                        {/* Almindelige kort (incl. ejerlejligheder uden kompleks) */}
+                                        {alleSingler.length > 0 && (
+                                          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                                            {alleSingler.map((ej) => (
+                                              <PropertyOwnerCard
+                                                key={ej.bfeNummer}
+                                                ejendom={ej}
+                                                showOwner={false}
+                                                lang={lang}
+                                              />
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })()}
                                 </div>
                               );
                             })}

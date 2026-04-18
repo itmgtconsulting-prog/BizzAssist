@@ -25,6 +25,7 @@ import {
   ChevronsDownUp,
   RotateCcw,
   Clock,
+  X,
 } from 'lucide-react';
 import type { DiagramVariantProps, DiagramNode, DiagramEdge } from './DiagramData';
 import type { PersonPublicData } from '@/app/api/cvr-public/person/route';
@@ -293,11 +294,21 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
     [expandedDynamic, loadingExpansion, graph.nodes, extensionNodes]
   );
 
-  /** Set of overflow node IDs that are fully expanded (show all items) — starter udfoldet */
-  const [expandedOverflow, setExpandedOverflow] = useState<Set<string>>(() => {
-    // Alle overflow-noder starter udfoldet
-    return new Set(graph.nodes.filter((n) => n.overflowItems).map((n) => n.id));
-  });
+  /**
+   * BIZZ-479: Overflow-nodes starter COLLAPSED (viser kun de første
+   * OVERFLOW_INITIAL_SHOW = 5). Hvis listen har flere, åbner "Vis alle"
+   * knappen en modal i stedet for at folde ud inline — det forhindrer
+   * SVG-layoutet i at kollidere med andre noder når en enkelt box pludselig
+   * vokser fra 60px til 1000+ px (fx NOVO NORDISK med 74 ejendomme).
+   *
+   * Bevares som tom Set for bagudkompatibilitet med getNodeH logik —
+   * hvis nogen fremtidig branche vil udfolde inline, kan de bare tilføje
+   * node.id til dette set.
+   */
+  const [expandedOverflow] = useState<Set<string>>(() => new Set());
+
+  /** BIZZ-479: Modal-state — hvilken overflow-node der i øjeblikket vises i modal */
+  const [overflowModalNode, setOverflowModalNode] = useState<DiagramNode | null>(null);
 
   /** BIZZ-427: Toggle visibility of ceased/historical owners */
   const [showCeased, setShowCeased] = useState(false);
@@ -1804,19 +1815,17 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
                   className="cursor-pointer"
                   style={{ pointerEvents: 'auto' }}
                   onClick={(e) => {
+                    // BIZZ-479: Åbn modal i stedet for at udvide inline. Fold-
+                    // ud-logikken kollapsede tidligere layoutet når overflow
+                    // havde 20+ items (fx NOVO NORDISK's 74 ejendomme).
                     e.stopPropagation();
-                    setExpandedOverflow((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(node.id)) next.delete(node.id);
-                      else next.add(node.id);
-                      return next;
-                    });
+                    setOverflowModalNode(node);
                   }}
                 >
                   <rect
-                    x={x + NODE_W / 2 - 40}
+                    x={x + NODE_W / 2 - 50}
                     y={y + h - 18}
-                    width={80}
+                    width={100}
                     height={15}
                     rx={8}
                     fill="rgba(51,65,85,0.6)"
@@ -1827,11 +1836,11 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
                     x={x + NODE_W / 2}
                     y={y + h - 8}
                     textAnchor="middle"
-                    fill="rgba(148,163,184,0.8)"
+                    fill="rgba(148,163,184,0.9)"
                     fontSize="8"
                     fontWeight="500"
                   >
-                    {isOvExpanded ? `▾ Skjul` : `▸ Vis alle ${node.overflowItems.length}`}
+                    ▸ Vis alle {node.overflowItems.length}
                   </text>
                 </g>
               )}
@@ -2247,6 +2256,58 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
     </div>
   ) : null;
 
+  // BIZZ-479: Modal til overflow-lister (fx NOVO NORDISK's 74 ejendomme).
+  // Tidligere foldede listen ud inline i SVG og kolliderede med andre noder
+  // + skar pile. Nu åbner "Vis alle" en scrollbar modal så det ikke påvirker
+  // diagram-layoutet.
+  const overflowModal = overflowModalNode ? (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/80 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="overflow-modal-title"
+      onClick={() => setOverflowModalNode(null)}
+    >
+      <div
+        className="bg-slate-900 border border-slate-700/50 rounded-2xl shadow-2xl w-full max-w-lg max-h-[80vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 py-3 border-b border-slate-700/40">
+          <h2 id="overflow-modal-title" className="text-white text-sm font-medium">
+            {overflowModalNode.label}
+          </h2>
+          <button
+            onClick={() => setOverflowModalNode(null)}
+            className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800/50"
+            aria-label={lang === 'da' ? 'Luk' : 'Close'}
+          >
+            <X size={16} />
+          </button>
+        </div>
+        <div className="overflow-y-auto flex-1 p-3 space-y-1">
+          {(overflowModalNode.overflowItems ?? []).map((item, idx) => (
+            <a
+              key={idx}
+              href={item.link}
+              onClick={(e) => {
+                if (!item.link) e.preventDefault();
+              }}
+              className={`block px-3 py-2 rounded-lg text-xs text-slate-200 hover:bg-slate-800/60 hover:text-blue-300 transition-colors ${
+                item.link ? 'cursor-pointer' : 'cursor-default text-slate-400'
+              }`}
+            >
+              <span className="text-slate-500 mr-2">•</span>
+              {item.label}
+            </a>
+          ))}
+        </div>
+        <div className="px-5 py-2 border-t border-slate-700/40 text-[10px] text-slate-500">
+          {overflowModalNode.overflowItems?.length ?? 0} {lang === 'da' ? 'enheder' : 'items'}
+        </div>
+      </div>
+    </div>
+  ) : null;
+
   // ── Fullscreen overlay (BIZZ-248: topbar with close button) ──
   if (isFullscreen) {
     return (
@@ -2273,6 +2334,7 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
             {hiddenWarning}
           </div>
         </div>
+        {overflowModal}
       </div>
     );
   }
@@ -2285,6 +2347,7 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
         {canvasEl}
         {hiddenWarning}
       </div>
+      {overflowModal}
     </div>
   );
 }

@@ -3917,8 +3917,21 @@ export default function EjendomDetaljeClient({
                         {/* ── {t.currentTaxation} (nyeste foreløbige) ── */}
                         {nyeste && (
                           <div>
-                            <p className="text-slate-300 text-sm font-semibold mb-2">
+                            <p className="text-slate-300 text-sm font-semibold mb-0.5">
                               {t.currentTaxation} ({nyeste.vurderingsaar + 1})
+                            </p>
+                            {/*
+                              BIZZ-469: Forklar eksplicit år-mappingen i
+                              selve Nuværende beskatning-sektion. Samme note
+                              findes under Skattehistorik, men her møder den
+                              brugeren FØR de ser det større historiske
+                              afsnit og undgår forveksling af vurderingsår
+                              og betalingsår på det nyeste tal.
+                            */}
+                            <p className="text-slate-500 text-[11px] mb-2 leading-relaxed">
+                              {da
+                                ? `Skat betalt i ${nyeste.vurderingsaar + 1}, beregnet ud fra vurderingen for ${nyeste.vurderingsaar}.`
+                                : `Tax paid in ${nyeste.vurderingsaar + 1}, calculated from the ${nyeste.vurderingsaar} assessment.`}
                             </p>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                               {/* Grundskyld */}

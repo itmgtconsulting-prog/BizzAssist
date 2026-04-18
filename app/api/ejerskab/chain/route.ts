@@ -21,6 +21,27 @@ import { resolveTenantId } from '@/lib/api/auth';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
+/**
+ * Resolve the label for the root property node in the ejerskab diagram.
+ *
+ * The client-side code that composes the `adresse` query param for this
+ * route sometimes produces strings that are only commas and whitespace
+ * (e.g. `" , , "`) when the DAR/DAWA lookup returned an address with
+ * missing fields. Rendering such a string in the diagram produces a blank
+ * node box. Falling back to `BFE <nr>` makes the node always carry
+ * meaningful text.
+ *
+ * Exported so it can be unit-tested in isolation.
+ *
+ * @param adresse - Address string supplied by the caller (may be empty)
+ * @param bfe     - BFE number for the property (used as fallback identifier)
+ */
+export function resolvePropertyLabel(adresse: string, bfe: string | number): string {
+  const trimmed = (adresse ?? '').replace(/[\s,]+/g, ' ').trim();
+  if (trimmed.length > 0) return adresse;
+  return `BFE ${bfe}`;
+}
+
 interface ChainNode {
   id: string;
   label: string;
@@ -31,6 +52,12 @@ interface ChainNode {
   link?: string;
   /** True when the company has a slutdato / sammensatStatus "Ophørt" — shown greyed out in diagrams */
   isCeased?: boolean;
+  /**
+   * BFE number on property nodes — lets the diagram render a `BFE 12345` line
+   * even when the address is missing or empty, so the root property node is
+   * never a blank box (bug seen on Ejerskab tab 2026-04-18).
+   */
+  bfeNummer?: number;
 }
 
 /** Status-tekster fra Tinglysning der ikke er faktiske ejere */
@@ -252,8 +279,15 @@ export async function GET(req: NextRequest) {
   const seenIds = new Set<string>();
   const mainId = `bfe-${bfe}`;
 
-  // Ejendomsnode (grøn)
-  nodes.push({ id: mainId, label: adresse, type: 'property' });
+  // Ejendomsnode (grøn). Fallback-label håndteres af resolvePropertyLabel:
+  // hvis klientens adresse-streng er tom eller kun kommaer/mellemrum, brug
+  // `BFE <nr>` så noden aldrig renderes som en blank kasse.
+  nodes.push({
+    id: mainId,
+    label: resolvePropertyLabel(adresse, bfe),
+    type: 'property',
+    bfeNummer: Number(bfe) || undefined,
+  });
   seenIds.add(mainId);
 
   // Hent ejere fra Tinglysning adkomst (primær kilde) og beriget via CVR API

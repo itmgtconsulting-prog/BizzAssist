@@ -6857,6 +6857,10 @@ function PropertyOwnerDiagram({
               type: n.type as 'person' | 'company' | 'property' | 'status',
               cvr: n.cvr as number | undefined,
               link: n.link as string | undefined,
+              // Propagate bfeNummer so DiagramForce renders "BFE X" on the
+              // property node (bug seen 2026-04-18 where root property
+              // node was a blank box)
+              bfeNummer: n.bfeNummer as number | undefined,
             })),
             edges: data.edges.map((e: Record<string, unknown>) => ({
               from: e.from as string,

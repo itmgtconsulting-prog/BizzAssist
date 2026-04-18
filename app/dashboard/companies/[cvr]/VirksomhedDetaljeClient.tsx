@@ -2105,9 +2105,12 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                         r.resultatFoerSkat != null ||
                         b.egenkapital != null;
                       if (!hasData) return null;
+                      // BIZZ-459: XBRL-route normaliserer nu alle monetære
+                      // felter til T DKK (tusinder) før udlevering. Label
+                      // matcher kilden.
                       const fmtDKK = (v: number | null | undefined) =>
                         v != null
-                          ? v.toLocaleString('da-DK', { maximumFractionDigits: 0 }) + ' kr'
+                          ? v.toLocaleString('da-DK', { maximumFractionDigits: 0 }) + ' T DKK'
                           : '–';
                       return (
                         <section className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-5">
@@ -6947,7 +6950,7 @@ function RegnskabstalTable({ years, lang, regnskaber = [] }: RegnskabstalTablePr
           )}
           <BarChart3 size={15} className="text-slate-400" />
           <span className="text-sm font-semibold text-slate-200">{title}</span>
-          {!rows[0]?.isPercent && <span className="text-xs text-slate-500 ml-1">(DKK)</span>}
+          {!rows[0]?.isPercent && <span className="text-xs text-slate-500 ml-1">(T DKK)</span>}
         </button>
 
         {/* Tabel — skjult hvis sammenklappet */}

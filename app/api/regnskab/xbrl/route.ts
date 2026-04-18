@@ -484,6 +484,56 @@ function periodeDage(y: RegnskabsAar): number {
   return (new Date(y.periodeSlut).getTime() - new Date(y.periodeStart).getTime()) / 86400000;
 }
 
+/**
+ * BIZZ-459/466: Normaliser numeriske felter til T DKK (tusinder).
+ *
+ * XBRL-parseren returnerer inkonsistente enheder på tværs af virksomheder:
+ *  - Nogle SMB'er: decimals-attribut mangler → returneres som T DKK (fx JaJR 15310)
+ *  - Store virksomheder med decimals="-3"/"-6": returneres som fuld DKK (fx NOVO 130540000)
+ *
+ * Heuristik: Find max abs(monetært felt) i et regnskabsår. Hvis > 10M er det
+ * "umuligt" T DKK for et normalt årsregnskab (=10 mia T DKK) → dvs. tallene
+ * er i fuld DKK. Vi dividerer alle monetære felter med 1.000 så udlevering
+ * altid er konsistent T DKK. Nøgletal-rationerne (soliditetsgrad, ROI osv.)
+ * røres ikke da de er procenter/forhold.
+ */
+function normaliserTilTDKK(year: RegnskabsAar): RegnskabsAar {
+  const monetaereFelter = [
+    ...Object.values(year.resultat),
+    ...Object.values(year.balance),
+    year.noegletal.nettoGaeld,
+  ].filter((v): v is number => typeof v === 'number');
+  if (monetaereFelter.length === 0) return year;
+
+  const maksVaerdi = Math.max(...monetaereFelter.map((v) => Math.abs(v)));
+  // Tærskel 10M = 10.000.000 T DKK = 10 mia DKK. Hvis max > 10M er det
+  // urealistisk som T DKK for et dansk selskab → tallene er i fuld DKK.
+  const erFuldDkk = maksVaerdi > 10_000_000;
+  if (!erFuldDkk) return year;
+
+  const divider = (v: number | null): number | null => (v == null ? v : Math.round(v / 1000));
+  const divideAll = (obj: Record<string, number | null>): Record<string, number | null> => {
+    const out: Record<string, number | null> = {};
+    for (const [k, v] of Object.entries(obj)) out[k] = divider(v);
+    return out;
+  };
+
+  return {
+    ...year,
+    resultat: divideAll(
+      year.resultat as unknown as Record<string, number | null>
+    ) as unknown as Resultatopgoerelse,
+    balance: divideAll(
+      year.balance as unknown as Record<string, number | null>
+    ) as unknown as Balance,
+    noegletal: {
+      ...year.noegletal,
+      // Kun nettoGaeld er et monetært tal — resten er procenter/forhold
+      nettoGaeld: divider(year.noegletal.nettoGaeld),
+    },
+  };
+}
+
 /** Dedupliker RegnskabsAar-array: ét regnskab per år, bedste vinder */
 function deduplicateYears(years: RegnskabsAar[]): RegnskabsAar[] {
   const perAar = new Map<number, RegnskabsAar>();
@@ -658,7 +708,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     // Merge nye parsede data med cached data
     const allYears = [...cachedYears, ...years];
-    const uniqueYears = deduplicateYears(allYears);
+    // BIZZ-459/466: Normaliser hver år til T DKK før vi dedupliker/returnerer,
+    // så UI'en kan vise konsistent "T DKK"-label uanset om den underliggende
+    // XBRL var deklareret i T DKK eller fuld DKK.
+    const uniqueYears = deduplicateYears(allYears).map(normaliserTilTDKK);
 
     // ── 4. Gem opdateret cache i Supabase (kun ved komplet fetch) ──
     if (supabase && latestTimestamp && offset === 0 && limit >= total && uniqueYears.length > 0) {

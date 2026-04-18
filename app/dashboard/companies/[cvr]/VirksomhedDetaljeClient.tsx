@@ -434,8 +434,8 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
       depth: number,
       maxDepth: number
     ): Promise<OwnerChainNode[]> {
-      return Promise.all(
-        ownerList.map(async (o): Promise<OwnerChainNode> => {
+      const resolved = await Promise.all(
+        ownerList.map(async (o): Promise<OwnerChainNode | null> => {
           if (!o.erVirksomhed || !o.enhedsNummer || depth >= maxDepth) {
             return { ...o, cvr: null, parents: [] };
           }
@@ -457,13 +457,21 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
               }
             }
             if (!cached) return { ...o, cvr: null, parents: [] };
+
+            // BIZZ-471: Ophørte virksomheder kan ikke være reelle nuværende
+            // ejere — drop dem fra ejerstrukturen helt. CVR registeret kan
+            // stadig liste en ceased entity som deltager fordi role.til
+            // ikke altid bliver sat, men selskabet eksisterer ikke længere.
+            // Matches /api/ejerskab/chain's filter-logik for konsistens.
+            if (cached.enddate != null) {
+              return null;
+            }
+
             const parentOwners = extractOwners(cached.deltagere);
             const resolvedParents = await resolveChainTop(parentOwners, depth + 1, maxDepth);
-            // BIZZ-357: Mark ceased companies so the diagram can render them visually distinct
             return {
               ...o,
               cvr: cached.cvr,
-              isCeased: cached.enddate != null,
               parents: resolvedParents,
             };
           } catch {
@@ -471,6 +479,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
           }
         })
       );
+      return resolved.filter((n): n is OwnerChainNode => n !== null);
     }
 
     resolveChainTop(directOwners, 0, 4).then(setOwnerChainShared);

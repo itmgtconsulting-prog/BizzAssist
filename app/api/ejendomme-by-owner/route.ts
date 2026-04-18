@@ -965,6 +965,14 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
       return a.bfeNummer - b.bfeNummer;
     });
 
+    // BIZZ-521 follow-up: kortere cache når nogen adresser mangler, så
+    // midlertidigt tomme VP-resultater ikke holder i 30 min på CDN'en.
+    // Fuld cache kun når alle ejendomme har adresse — da er data stabile.
+    const anyMissingAddress = ejendomme.some((e) => !e.adresse);
+    const cacheHeader = anyMissingAddress
+      ? 'public, s-maxage=60, stale-while-revalidate=30'
+      : 'public, s-maxage=1800, stale-while-revalidate=300';
+
     return NextResponse.json(
       {
         ejendomme,
@@ -976,7 +984,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
         fejl: null,
       },
       {
-        headers: { 'Cache-Control': 'public, s-maxage=1800, stale-while-revalidate=300' },
+        headers: { 'Cache-Control': cacheHeader },
       }
     );
   } catch (err) {

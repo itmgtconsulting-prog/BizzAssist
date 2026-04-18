@@ -554,12 +554,12 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
    * Separate arrays for ejer- og kreditor-rolle. Lazy-loaded samtidig med
    * Personbogen når Tinglysning-tab'en aktiveres.
    */
-  const [fastEjendomEjer, setFastEjendomEjer] = useState<VirksomhedEjendomsrolle[]>([]);
+  // Kun kreditor-rækken bruges i UI'en (ejer-listen dubletterer Ejendomme-tab).
   const [fastEjendomKreditor, setFastEjendomKreditor] = useState<VirksomhedEjendomsrolle[]>([]);
   const [fastEjendomLoading, setFastEjendomLoading] = useState(false);
   const [fastEjendomFejl, setFastEjendomFejl] = useState<string | null>(null);
   const fastEjendomFetchedRef = useRef(false);
-  /** Hvilke af Fast ejendom-underrækkerne der er udfoldet (ejer/kreditor) */
+  /** Hvilke af Fast ejendom-underrækkerne der er udfoldet (pt. kun kreditor) */
   const [fastEjendomOpen, setFastEjendomOpen] = useState<Set<'ejer' | 'kreditor'>>(new Set());
 
   /**
@@ -945,7 +945,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
         return;
       }
 
-      setFastEjendomEjer(json.ejer ?? []);
+      // json.ejer droppes bevidst — listen er duplikeret med Ejendomme-tab
       setFastEjendomKreditor(json.kreditor ?? []);
     } catch {
       setFastEjendomFejl(c.fastEjendomError);
@@ -3901,10 +3901,15 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                   <Download size={15} className="text-slate-700 opacity-40" />
                 </div>
 
-                {/* ── Fast ejendom (BIZZ-521) — expandabel med rigtige data ── */}
+                {/*
+                  Fast ejendom (BIZZ-521) — kun kreditor-sektionen vises her.
+                  "Ejer" er duplikeret med Ejendomme-fanen der bruger EJF som
+                  sandhedskilde for nuværende ejerskab; tinglysningens
+                  ejer-liste er historisk og forvirrer. Kreditor er
+                  tinglysnings-specifik (pantebreve) og hører til her.
+                */}
                 {(
                   [
-                    { rolle: 'ejer', rows: fastEjendomEjer, label: c.fastEjendomEjer },
                     { rolle: 'kreditor', rows: fastEjendomKreditor, label: c.fastEjendomKreditor },
                   ] as const
                 ).map(({ rolle, rows, label }) => {

@@ -324,8 +324,64 @@ async function hentAdresseByBfe(bfe: number, extra?: BfeExtraInfo): Promise<Adre
         }
       }
     } catch {
-      // Fald igennem til tom
+      // Fald igennem til VP
     }
+  }
+
+  // Trin 3: Vurderingsportalen Elasticsearch — samme fallback som
+  // /api/ejendomme-by-owner bruger (BIZZ-450). Dækker gamle BFE'er der
+  // ikke længere er i DAWA's indeks.
+  try {
+    const res = await fetch('https://api-fs.vurderingsportalen.dk/preliminaryproperties/_search', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
+      },
+      body: JSON.stringify({
+        query: { term: { bfeNumbers: bfe } },
+        size: 1,
+        _source: [
+          'roadName',
+          'houseNumber',
+          'zipcode',
+          'postDistrict',
+          'adgangsAdresseID',
+          'juridiskKategori',
+        ],
+      }),
+      signal: AbortSignal.timeout(6000),
+    });
+    if (res.ok) {
+      const data = (await res.json()) as {
+        hits?: {
+          hits?: Array<{
+            _source?: {
+              roadName?: string;
+              houseNumber?: string;
+              zipcode?: string;
+              postDistrict?: string;
+              adgangsAdresseID?: string;
+              juridiskKategori?: string;
+            };
+          }>;
+        };
+      };
+      const src = data.hits?.hits?.[0]?._source;
+      if (src?.roadName) {
+        return {
+          adresse: `${src.roadName} ${src.houseNumber ?? ''}`.trim(),
+          postnr: src.zipcode ?? null,
+          by: src.postDistrict ?? null,
+          kommune: null,
+          dawaId: src.adgangsAdresseID ?? null,
+          ejendomstype: src.juridiskKategori ?? null,
+        };
+      }
+    }
+  } catch {
+    // Fald igennem
   }
 
   return EMPTY_ADRESSE;

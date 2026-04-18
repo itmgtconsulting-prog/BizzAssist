@@ -2626,8 +2626,22 @@ export default function EjendomDetaljeClient({
                   })()}
                 </div>
 
-                {/* Lejligheder er flyttet til ejerskabs-tab for hovedejendomme */}
-                {!(lejligheder !== null && lejligheder.length > 0) && (
+                {/*
+                  BIZZ-473 follow-up: "Virksomheder på adressen"-sektionen blinkede
+                  kort op og forsvandt igen fordi synlighed afhang af et race:
+                    - Initial: lejligheder=null → sektion synlig → CVR-fetch
+                      kunne færdiggøre først → sektion rendret med data
+                    - Senere: lejligheder-fetch afsluttede med .length > 0 →
+                      ydre betingelse blev false → sektion forsvandt
+                  Beslut i stedet deterministisk på "erModer" (hovedejendom,
+                  opdelt i ejerlejligheder). For hovedejendomme skjuler vi
+                  sektionen fra start; for andre viser vi den. Ingen race,
+                  ingen flash.
+                */}
+                {(() => {
+                  const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
+                  return !erModer;
+                })() && (
                   <>
                     {/* Virksomheder på adressen — CVR OpenData (skjult for ejerlejlighedsejendomme).
                         BIZZ-473: Don't render anything until fetch is complete, to avoid

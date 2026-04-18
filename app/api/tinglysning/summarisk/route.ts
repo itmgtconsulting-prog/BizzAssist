@@ -837,10 +837,10 @@ export async function GET(req: NextRequest) {
     // ── Berig servitutter med tillægstekst fra dokument-detaljer ──
     // BIZZ-474: Hovedejendomme kan have mange servitutter (20+); per-dokument
     // enrichment serielt i batches af 5 gav timeout (>30s client). Parallelisér
-    // mere aggressivt, og cap antallet for at undgå at enkelte ejendomme med
-    // 50+ servitutter rammer serverless-loftet. Resterende viser bare den
-    // summariske tillægstekst fra ejdsummarisk-XML'en (ikke dybde-beriget).
-    const ENRICH_CAP = 30;
+    // mere aggressivt, og cap antallet aggressivt for at undgå 60s Vercel-loft
+    // når både primær + moderejendom-sti henter dokumenter. Resterende viser
+    // bare den summariske tillægstekst fra ejdsummarisk-XML'en.
+    const ENRICH_CAP = 8;
     const servitutterToEnrich = servitutter.filter((s) => s.dokumentId).slice(0, ENRICH_CAP);
     await batchParallel(
       servitutterToEnrich,
@@ -1099,10 +1099,11 @@ export async function GET(req: NextRequest) {
                 }
 
                 // ── Berig moderejendommens servitutter med tillægstekst fra dokumenter ──
-                // Spejler den eksisterende dokument-berigelse for lejlighedens servitutter.
-                // BIZZ-474: Same cap + bumpet batchSize som primær enrichment for
-                // at undgå 30s client-timeout når hovedejendom har mange servitutter.
-                const ENRICH_CAP_HOVED = 30;
+                // BIZZ-474: Cap endnu strammere på moder-siden fordi denne sti
+                // kører PÅ TOP af den primære enrichment for ejerlejligheder —
+                // to enrichment-runder mod samme e-TL må sammenlagt ikke ramme
+                // 60s serverless-loftet.
+                const ENRICH_CAP_HOVED = 5;
                 await batchParallel(
                   servitutterFraHoved.filter((s) => s.dokumentId).slice(0, ENRICH_CAP_HOVED),
                   async (s) => {

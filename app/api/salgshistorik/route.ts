@@ -50,6 +50,20 @@ export interface HandelData {
   overdragelsesmaade: string | null;
   /** Valutakode (typisk DKK) */
   valutakode: string | null;
+  /**
+   * BIZZ-480: Udvidede felter fra EJF — alle optional da feltet først blev
+   * tilføjet efter eksisterende schema var etableret, og da Datafordeler
+   * kan nægte adgang pr. scope. Når extended-query fejler falder vi tilbage
+   * til basis-queryen og sætter disse til null.
+   */
+  /** Afståelsesdato (dato hvor den tidligere ejer afstod ejendommen) */
+  afstaaelsesdato?: string | null;
+  /** Dato hvor betalingsforpligtelsen indtraadte */
+  betalingsforpligtelsesdato?: string | null;
+  /** Husdyrbesætning-værdi (relevant for landbrug) */
+  husdyrbesaetningsum?: number | null;
+  /** Forretningshændelse fra EJF_Ejerskifte (fx "Frit salg", "Arv", "Gave", "Tvangsauktion") */
+  forretningshaendelse?: string | null;
 }
 
 /** API-svaret fra denne route */
@@ -111,6 +125,9 @@ interface RawEjerskifte {
   overdragelsesmaade: string | null;
   handelsoplysningerLokalId: string | null;
   status: string | null;
+  /** BIZZ-480: Udvidet — kun sat når extended-queryen lykkes */
+  afstaaelsesdato?: string | null;
+  forretningshaendelse?: string | null;
 }
 
 /** EJF_Handelsoplysninger — prisdata for en handel */
@@ -123,6 +140,9 @@ interface RawHandelsoplysning {
   koebsaftaleDato: string | null;
   valutakode: string | null;
   status: string | null;
+  /** BIZZ-480: Udvidede felter — kun sat når extended-queryen lykkes */
+  betalingsforpligtelsesdato?: string | null;
+  husdyrbesaetningsum?: number | null;
 }
 
 // ─── GraphQL helpers ─────────────────────────────────────────────────────────
@@ -226,7 +246,12 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
 
   try {
     // ── Trin 1: Hent ejerskifter for BFE → få handelsoplysningerLokalId ──
-    const ejerskifteQuery = `{
+    // BIZZ-480: Vi prøver først en udvidet query med ekstra felter
+    // (afstaaelsesdato + forretningshaendelse). Hvis Datafordeler afviser
+    // ukendte felter (schema-fejl), falder vi tilbage til basis-queryen så
+    // eksisterende salgshistorik ikke går tabt. Når Datafordeler schema bliver
+    // opdateret vil extended-queryen begynde at lykkes automatisk.
+    const buildEjerskifteQuery = (extended: boolean) => `{
       EJF_Ejerskifte(
         first: 200
         where: {
@@ -239,15 +264,28 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
           overdragelsesmaade
           handelsoplysningerLokalId
           status
+          ${extended ? 'afstaaelsesdato\n          forretningshaendelse' : ''}
         }
       }
     }`;
 
-    const ejerskifteResult = await queryEJF<RawEjerskifte>(
-      ejerskifteQuery,
+    let ejerskifteResult = await queryEJF<RawEjerskifte>(
+      buildEjerskifteQuery(true),
       'EJF_Ejerskifte',
       token
     );
+    // null-svar = schema-fejl eller netværksfejl. Prøv basis-queryen uden
+    // extended-felter så eksisterende salgshistorik ikke går tabt blot fordi
+    // EJF endnu ikke har fx afstaaelsesdato i schemaet. Empty-svar betragtes
+    // som succes (ejendom har ingen handler) og udløser ikke retry.
+    if (!ejerskifteResult) {
+      logger.warn('[salgshistorik] Extended EJF_Ejerskifte query fejlede — falder tilbage');
+      ejerskifteResult = await queryEJF<RawEjerskifte>(
+        buildEjerskifteQuery(false),
+        'EJF_Ejerskifte',
+        token
+      );
+    }
 
     if (ejerskifteResult?.authError) {
       return NextResponse.json(
@@ -293,6 +331,11 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
           overtagelsesdato: e.overtagelsesdato,
           overdragelsesmaade: e.overdragelsesmaade ?? null,
           valutakode: null,
+          // BIZZ-480: Udvidede EJF-felter — tilgængelige når extended-queryen lykkes
+          afstaaelsesdato: e.afstaaelsesdato ?? null,
+          forretningshaendelse: e.forretningshaendelse ?? null,
+          betalingsforpligtelsesdato: null,
+          husdyrbesaetningsum: null,
         }))
         .sort((a, b) => (b.overtagelsesdato ?? '').localeCompare(a.overtagelsesdato ?? ''));
 
@@ -306,8 +349,11 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
     }
 
     // ── Trin 2: Hent handelsoplysninger via id_lokalId ──
+    // BIZZ-480: Samme extended/fallback-pattern som Ejerskifte — prøver at
+    // hente betalingsforpligtelsesdato + husdyrbesaetningsum, fall back hvis
+    // schemaet endnu ikke understøtter dem.
     const idsStr = handelsIds.map((id) => `"${id}"`).join(', ');
-    const handelsQuery = `{
+    const buildHandelsQuery = (extended: boolean) => `{
       EJF_Handelsoplysninger(
         first: 200
         where: {
@@ -323,15 +369,24 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
           koebsaftaleDato
           valutakode
           status
+          ${extended ? 'betalingsforpligtelsesdato\n          husdyrbesaetningsum' : ''}
         }
       }
     }`;
 
-    const handelsResult = await queryEJF<RawHandelsoplysning>(
-      handelsQuery,
+    let handelsResult = await queryEJF<RawHandelsoplysning>(
+      buildHandelsQuery(true),
       'EJF_Handelsoplysninger',
       token
     );
+    if (!handelsResult) {
+      logger.warn('[salgshistorik] Extended EJF_Handelsoplysninger query fejlede — falder tilbage');
+      handelsResult = await queryEJF<RawHandelsoplysning>(
+        buildHandelsQuery(false),
+        'EJF_Handelsoplysninger',
+        token
+      );
+    }
 
     if (handelsResult?.authError) {
       return NextResponse.json(
@@ -363,6 +418,11 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
           overtagelsesdato: e.overtagelsesdato ?? null,
           overdragelsesmaade: e.overdragelsesmaade ?? null,
           valutakode: h?.valutakode ?? null,
+          // BIZZ-480: Udvidede EJF-felter
+          afstaaelsesdato: e.afstaaelsesdato ?? null,
+          forretningshaendelse: e.forretningshaendelse ?? null,
+          betalingsforpligtelsesdato: h?.betalingsforpligtelsesdato ?? null,
+          husdyrbesaetningsum: h?.husdyrbesaetningsum ?? null,
         };
       })
       .filter(

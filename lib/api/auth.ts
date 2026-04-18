@@ -20,28 +20,46 @@ export interface AuthContext {
  * @returns AuthContext if authenticated with a tenant, null otherwise
  */
 export async function resolveTenantId(): Promise<AuthContext | null> {
+  // NOTE: This shared helper was consistently returning 401 from all callers
+  // on the deployed develop build while byte-identical INLINED copies of the
+  // same logic (see app/api/tracked/route.ts + app/api/notifications/route.ts)
+  // continued to work. The only difference was this module's `catch (err)`
+  // block with console.error — diagnostic tracked here.
+  // Explicitly marking each step so if a future recurrence happens the trace
+  // points to the failing stage.
   try {
     const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    let user;
+    try {
+      const result = await supabase.auth.getUser();
+      user = result.data?.user;
+    } catch (authErr) {
+      console.error(
+        '[auth] getUser threw:',
+        authErr instanceof Error ? authErr.message : String(authErr)
+      );
+      return null;
+    }
     if (!user) return null;
 
-    const { data } = (await supabase
-      .from('tenant_memberships')
-      .select('tenant_id')
-      .eq('user_id', user.id)
-      .limit(1)
-      .single()) as { data: { tenant_id: string } | null };
-    if (!data?.tenant_id) return null;
-    return { tenantId: data.tenant_id, userId: user.id };
-  } catch (err) {
-    // Log infra-level errors (e.g. Supabase timeout) so they appear in server logs.
-    // Never log PII — only the error message which comes from internal infra.
-    console.error(
-      '[auth] resolveTenantId failed:',
-      err instanceof Error ? err.message : String(err)
-    );
+    try {
+      const { data } = (await supabase
+        .from('tenant_memberships')
+        .select('tenant_id')
+        .eq('user_id', user.id)
+        .limit(1)
+        .single()) as { data: { tenant_id: string } | null };
+      if (!data?.tenant_id) return null;
+      return { tenantId: data.tenant_id, userId: user.id };
+    } catch (dbErr) {
+      console.error(
+        '[auth] tenant_memberships query threw:',
+        dbErr instanceof Error ? dbErr.message : String(dbErr)
+      );
+      return null;
+    }
+  } catch {
+    // Supabase createClient failed — middleware should have caught this
     return null;
   }
 }

@@ -12,6 +12,7 @@
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { BBR_WFS_ENDPOINT, BBR_GQL_ENDPOINT, DAWA_BASE_URL } from '@/app/lib/serviceEndpoints';
 import { fetchDawa } from '@/app/lib/dawa';
+import { darHentAdresserBatch } from '@/app/lib/dar';
 import {
   tagMaterialeTekst,
   ydervaegMaterialeTekst,
@@ -798,11 +799,15 @@ const ENHED_BY_BYGNING_QUERY = `
 `;
 
 /**
- * Batch-henter DAWA-adressedata for en liste af adresse-UUIDs.
- * Returnerer et map fra UUID → { etage, doer, adressebetegnelse }.
- * Bruger DAWA's bulk-endpoint (kommaseparerede IDs) for effektivitet.
+ * Batch-henter adresse-data (etage, dør, adressebetegnelse) for en liste
+ * af adresse-UUIDs. Bruges til at berige BBR-enheder (ejerlejligheder).
  *
- * @param ids - Array af DAWA adresse-UUIDs (fra BBR_Enhed.adresseIdentificerer)
+ * BIZZ-507: Primært via Datafordeler DAR_Adresse med `in:[…]` filter for
+ * at batch'e hele bygninger i ét kald. Falder tilbage til DAWA for
+ * manglende UUIDs (der sker f.eks. når nye adresser ikke er i DAR endnu,
+ * eller når DATAFORDELER_API_KEY ikke er sat lokalt).
+ *
+ * @param ids - Array af adresse-UUIDs (fra BBR_Enhed.adresseIdentificerer)
  */
 async function fetchDAWAEnhedAdresser(
   ids: string[]
@@ -814,12 +819,26 @@ async function fetchDAWAEnhedAdresser(
   const uuids = ids.filter((id) => UUID_RE.test(id));
   if (uuids.length === 0) return result;
 
+  // ── Primær: DAR_Adresse batch ───────────────────────────────────────────
   try {
-    const params = uuids.map((id) => `id=${encodeURIComponent(id)}`).join('&');
+    const darMap = await darHentAdresserBatch(uuids);
+    for (const [id, unit] of darMap) {
+      result.set(id, unit);
+    }
+  } catch {
+    // darHentAdresserBatch never throws, but guard anyway
+  }
+
+  // ── Fallback: DAWA for UUIDs DAR didn't know about ──────────────────────
+  const missing = uuids.filter((id) => !result.has(id));
+  if (missing.length === 0) return result;
+
+  try {
+    const params = missing.map((id) => `id=${encodeURIComponent(id)}`).join('&');
     const res = await fetchDawa(
       `${DAWA_BASE_URL}/adresser?${params}&struktur=mini`,
       { signal: AbortSignal.timeout(8000), next: { revalidate: 3600 } },
-      { caller: 'fetchBbrData.adresser.batch' }
+      { caller: 'fetchBbrData.adresser.batch.fallback' }
     );
     if (!res.ok) return result;
     const data = (await res.json()) as Array<Record<string, unknown>>;

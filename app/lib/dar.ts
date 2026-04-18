@@ -1009,6 +1009,101 @@ export async function darReverseGeocode(
 }
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ * BIZZ-507: DAR GraphQL — batch resolve etage/dør for BBR_Enhed UUIDs
+ * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+/**
+ * BIZZ-507: Per-adresse-UUID minimal shape used by BBR enhed enrichment.
+ * Keeps the same keys the legacy DAWA batch returned so callers can swap
+ * the implementation without further changes.
+ */
+export interface DarAdresseUnit {
+  etage: string | null;
+  doer: string | null;
+  adressebetegnelse: string;
+}
+
+/**
+ * BIZZ-507: Batch-resolve `etagebetegnelse` + `doerbetegnelse` for a list
+ * of DAR adresse UUIDs (typically `BBR_Enhed.adresseIdentificerer`).
+ *
+ * Uses DAR GraphQL's `in: [...]` filter so a whole block of flats comes
+ * back in one query. This replaces the DAWA batch call
+ * `/adresser?id=…&id=…&struktur=mini` — that endpoint dies 2026-07-01.
+ *
+ * Returns:
+ *   - Map<uuid, DarAdresseUnit> with one entry per UUID DAR knows about
+ *   - Empty map on any error / missing API key so callers can fall back
+ *     to DAWA without a null-check branch
+ *
+ * Never throws.
+ *
+ * @param ids - Array of DAR adresse UUIDs
+ */
+export async function darHentAdresserBatch(
+  ids: readonly string[]
+): Promise<Map<string, DarAdresseUnit>> {
+  const result = new Map<string, DarAdresseUnit>();
+  if (!process.env.DATAFORDELER_API_KEY) {
+    logger.warn(
+      'darHentAdresserBatch: DATAFORDELER_API_KEY not set — returning empty map, caller should fall back to DAWA'
+    );
+    return result;
+  }
+
+  // Filter to real UUID shape + dedupe. Empty / malformed IDs short-circuit
+  // so we never send a bogus `in:[]` query.
+  const uniqueUuids = Array.from(
+    new Set(
+      ids.filter((id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))
+    )
+  );
+  if (uniqueUuids.length === 0) return result;
+
+  const ts = nowTs();
+  const quotedIds = uniqueUuids.map((id) => `"${id.replace(/"/g, '\\"')}"`).join(', ');
+  // DAR caps `first` at some internal limit; request more than we have so
+  // the whole batch fits. The typical caller passes ≤50 UUIDs.
+  const first = Math.max(uniqueUuids.length, 50);
+
+  const data = await darQuery<{
+    DAR_Adresse: {
+      nodes: Array<{
+        id_lokalId: string;
+        adressebetegnelse?: string;
+        etagebetegnelse?: string;
+        doerbetegnelse?: string;
+      }>;
+    };
+  }>(`{
+    DAR_Adresse(
+      where: { id_lokalId: { in: [${quotedIds}] } }
+      virkningstid: "${ts}"
+      registreringstid: "${ts}"
+      first: ${first}
+    ) {
+      nodes {
+        id_lokalId
+        adressebetegnelse
+        etagebetegnelse
+        doerbetegnelse
+      }
+    }
+  }`);
+
+  for (const node of data?.DAR_Adresse?.nodes ?? []) {
+    if (!node.id_lokalId) continue;
+    result.set(node.id_lokalId, {
+      etage: node.etagebetegnelse && node.etagebetegnelse.length > 0 ? node.etagebetegnelse : null,
+      doer: node.doerbetegnelse && node.doerbetegnelse.length > 0 ? node.doerbetegnelse : null,
+      adressebetegnelse: node.adressebetegnelse ?? '',
+    });
+  }
+
+  return result;
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  * BIZZ-510: MAT WFS — paginated bulk jordstykker for sitemap generation
  * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 

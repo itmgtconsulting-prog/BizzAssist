@@ -1009,6 +1009,114 @@ export async function darReverseGeocode(
 }
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ * BIZZ-510: MAT WFS — paginated bulk jordstykker for sitemap generation
+ * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+/**
+ * Minimal jordstykke-shape used for sitemap generation.
+ * Covers the subset of fields the cron job needs — no geometry, no
+ * fredning/strandbeskyttelse, since slug + BFE is all it writes.
+ */
+export interface MatJordstykkeBulk {
+  bfenummer: number;
+  matrikelnr: string;
+  ejerlavsnavn: string;
+  ejerlavskode: number;
+}
+
+/**
+ * BIZZ-510: Page through Datafordeler MAT WFS `Jordstykke_Gaeldende` to
+ * enumerate every jordstykke with a BFE number. Used by the sitemap cron
+ * job to replace the DAWA `/jordstykker` endpoint before the 2026-07-01
+ * shutdown.
+ *
+ * WFS pagination uses `startIndex` (0-based) + `count` (page size). An
+ * empty feature array signals the end of the dataset. Field names are
+ * read defensively — MatGaeld662 has historically varied between
+ * `bfenummer` / `bfeNummer`, `matrikelnr` / `matrnr`, etc.
+ *
+ * Returns `null` on any fetch / parse failure so the caller can fall back
+ * to DAWA. Never throws.
+ *
+ * @param startIndex - 0-based offset into the jordstykker dataset
+ * @param count      - Max features to return (MatGaeld662 caps at 1000)
+ */
+export async function matListJordstykker(
+  startIndex: number,
+  count: number
+): Promise<MatJordstykkeBulk[] | null> {
+  const apiKey = process.env.DATAFORDELER_API_KEY;
+  if (!apiKey) {
+    logger.warn(
+      'matListJordstykker: DATAFORDELER_API_KEY not set — skipping MAT, caller should fall back to DAWA'
+    );
+    return null;
+  }
+
+  try {
+    const params = new URLSearchParams({
+      service: 'WFS',
+      version: '2.0.0',
+      request: 'GetFeature',
+      typeNames: 'mat:Jordstykke_Gaeldende',
+      srsName: 'EPSG:4326',
+      outputFormat: 'json',
+      count: String(count),
+      startIndex: String(startIndex),
+      apiKey,
+    });
+
+    const res = await fetch(proxyUrl(`${MAT_WFS_ENDPOINT}?${params.toString()}`), {
+      headers: { ...proxyHeaders() },
+      signal: AbortSignal.timeout(proxyTimeout()),
+    });
+
+    if (!res.ok) {
+      logger.warn(`matListJordstykker MAT WFS fejl: ${res.status} ${res.statusText}`);
+      return null;
+    }
+
+    const geojson = (await res.json()) as {
+      features?: Array<{ properties?: Record<string, unknown> }>;
+    };
+
+    if (!Array.isArray(geojson.features)) return null;
+
+    const result: MatJordstykkeBulk[] = [];
+    for (const f of geojson.features) {
+      const p = f.properties;
+      if (!p) continue;
+      const bfeRaw = p.bfenummer ?? p.bfeNummer ?? p.BFEnummer;
+      const bfe =
+        typeof bfeRaw === 'number' ? bfeRaw : typeof bfeRaw === 'string' ? Number(bfeRaw) : NaN;
+      if (!bfe || !Number.isFinite(bfe)) continue;
+
+      const matrikelnr = String(p.matrikelnummer ?? p.matrnr ?? p.matrikelnr ?? '');
+      const ejerlavsnavn = String(p.ejerlavsnavn ?? p.ejerlavsNavn ?? '');
+      const ejerlavskodeRaw = p.ejerlavskode ?? p.ejerlavsKode ?? p.ejerlav_kode ?? 0;
+      const ejerlavskode =
+        typeof ejerlavskodeRaw === 'number'
+          ? ejerlavskodeRaw
+          : typeof ejerlavskodeRaw === 'string'
+            ? Number(ejerlavskodeRaw) || 0
+            : 0;
+
+      if (!matrikelnr && !ejerlavsnavn) continue;
+
+      result.push({ bfenummer: bfe, matrikelnr, ejerlavsnavn, ejerlavskode });
+    }
+
+    return result;
+  } catch (err) {
+    logger.error(
+      'matListJordstykker MAT WFS fetch failed:',
+      err instanceof Error ? err.message : err
+    );
+    return null;
+  }
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  * BIZZ-506: DAR GraphQL — resolve full adresse UUID for ejerlejligheder
  * (adgangsadresse + etage + dør combination)
  * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */

@@ -399,6 +399,8 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
 
   /** Om modervirksomheds-sektionen er udfoldet (default: collapsed) */
   const [parentSectionOpen, setParentSectionOpen] = useState(false);
+  /** BIZZ-475: Vis historiske datterselskaber (ophørte/solgte). Default off. */
+  const [visHistorik, setVisHistorik] = useState(false);
 
   /** Om datterselskabs-sektionen er udfoldet (default: open) */
   const [childSectionOpen, setChildSectionOpen] = useState(true);
@@ -2708,6 +2710,12 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                 (() => {
                   /** Aktive relaterede virksomheder (ophørte filtreres fra) */
                   const aktive = relatedCompanies.filter((v) => v.aktiv);
+                  /**
+                   * BIZZ-475: Historiske (ophørte/solgte) datterselskaber. Vises
+                   * kun når brugeren toggler "Vis historik" — beholdes som flad
+                   * liste for at undgå at rode gruppestrukturen til.
+                   */
+                  const historiske = relatedCompanies.filter((v) => !v.aktiv);
                   /** Rod-virksomheder (ejet direkte af den valgte, eller ingen anden ejer på listen) */
                   const rodVirksomheder = aktive.filter((v) => v.ejetAfCvr == null);
                   /** Børn grupperet efter ejer-CVR */
@@ -3189,8 +3197,36 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                         </>
                       )}
 
+                      {/* BIZZ-475: Historiske datterselskaber — toggle-drevet */}
+                      {historiske.length > 0 && (
+                        <div className="pt-2">
+                          <button
+                            type="button"
+                            onClick={() => setVisHistorik((prev) => !prev)}
+                            className="flex items-center gap-2 w-full group cursor-pointer"
+                            aria-expanded={visHistorik}
+                          >
+                            <ChevronDown
+                              size={14}
+                              className={`text-slate-500 group-hover:text-slate-400 transition-all duration-200 shrink-0 ${visHistorik ? '' : '-rotate-90'}`}
+                            />
+                            <span className="text-sm text-slate-400 group-hover:text-slate-300 font-medium transition-colors whitespace-nowrap">
+                              {lang === 'da'
+                                ? `Vis historik (${historiske.length} ophørt${historiske.length > 1 ? 'e' : ''})`
+                                : `Show history (${historiske.length} dissolved)`}
+                            </span>
+                            <div className="h-px flex-1 bg-slate-700/60 group-hover:bg-slate-600 transition-colors" />
+                          </button>
+                          {visHistorik && (
+                            <div className="grid gap-3 mt-2 opacity-75">
+                              {historiske.map((rel) => renderCard(rel, 0))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
                       {/* No related companies */}
-                      {aktive.length === 0 && (
+                      {aktive.length === 0 && historiske.length === 0 && (
                         <div className="text-center py-8">
                           <Building2 size={32} className="mx-auto text-slate-600 mb-2" />
                           <p className="text-slate-500 text-sm">{c.noCompanies}</p>

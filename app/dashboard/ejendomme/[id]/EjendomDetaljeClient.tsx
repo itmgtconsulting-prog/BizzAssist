@@ -3321,50 +3321,6 @@ export default function EjendomDetaljeClient({
                   );
                 })()}
 
-                {/* BIZZ-484: Tekniske anlæg (solceller, varmepumper, olietanke m.m.)
-                    Skjules helt når bbrData mangler eller der ikke er nogen anlæg —
-                    undgår tom "ingen anlæg" sektion på ejendomme uden grøn teknologi. */}
-                {(() => {
-                  const anlaeg = bbrData?.tekniskeAnlaeg ?? [];
-                  if (anlaeg.length === 0) return null;
-                  return (
-                    <div>
-                      <SectionTitle title={da ? 'Tekniske anlæg' : 'Technical installations'} />
-                      <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
-                        <div className="grid grid-cols-[1fr_90px_90px_90px] gap-x-3 px-3 py-2 bg-slate-900/40 border-b border-slate-700/40 text-[10px] uppercase tracking-wider text-slate-500 font-medium">
-                          <span>{da ? 'Type' : 'Type'}</span>
-                          <span className="text-right">{da ? 'Etableret' : 'Installed'}</span>
-                          <span className="text-right">{da ? 'Kapacitet' : 'Capacity'}</span>
-                          <span className="text-right">{da ? 'Status' : 'Status'}</span>
-                        </div>
-                        {anlaeg.map((a) => (
-                          <div
-                            key={a.id}
-                            className="grid grid-cols-[1fr_90px_90px_90px] gap-x-3 px-3 py-2 text-xs border-b border-slate-700/20 last:border-0"
-                          >
-                            <span className="text-slate-200 font-medium truncate">
-                              {a.klassifikation ?? '–'}
-                            </span>
-                            <span className="text-slate-400 tabular-nums text-right">
-                              {a.etableringsAar ?? a.fabrikationsAar ?? '–'}
-                            </span>
-                            <span className="text-slate-400 tabular-nums text-right">
-                              {a.kapacitet != null
-                                ? a.kapacitet.toLocaleString(da ? 'da-DK' : 'en-GB')
-                                : a.rumfang != null
-                                  ? `${a.rumfang.toLocaleString(da ? 'da-DK' : 'en-GB')} L`
-                                  : '–'}
-                            </span>
-                            <span className="text-slate-400 text-right truncate">
-                              {a.driftStatus ?? a.status ?? '–'}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })()}
-
                 {/* Ingen BBR-data */}
                 {!bbrLoader && !bbrData?.bbr && (
                   <div className="bg-orange-500/8 border border-orange-500/20 rounded-xl p-5">

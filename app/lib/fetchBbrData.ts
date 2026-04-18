@@ -180,33 +180,6 @@ export interface BBRBygningPunkt {
   ejerforholdskode: string | null;
 }
 
-/**
- * BIZZ-484: BBR teknisk anlæg (solceller, varmepumper, olietanke m.m.).
- * Hentes via BBR_TekniskAnlaeg-entiteten og vises i en egen sektion så
- * brugeren kan se ejendommens energi/miljø-profil.
- */
-export interface LiveBBRTekniskAnlaeg {
-  id: string;
-  /** Klassifikation af anlægget (tek020) — fx "Solcelleanlæg", "Varmepumpe", "Olietank" */
-  klassifikation: string | null;
-  /** Rå klassifikationskode (tek020ClassificationText) — stabil maskinlæsbar identifier */
-  klassifikationKode: string | null;
-  /** Etableringsår — hvornår anlægget blev installeret */
-  etableringsAar: number | null;
-  /** Driftsstatus (tek013DriftStatus) — fx "I drift", "Midlertidigt ude af drift" */
-  driftStatus: string | null;
-  /** Fabrikationsår (kan afvige fra etableringsår) */
-  fabrikationsAar: number | null;
-  /** Kapacitet/størrelse (tek032) — enhedsfri da BBR har flere units afhængigt af type */
-  kapacitet: number | null;
-  /** Rumfang/volumen (tek109) — relevant for olietanke m.m. */
-  rumfang: number | null;
-  /** Relateret bygnings-UUID (når anlægget er koblet til en specifik bygning) */
-  bygningId: string | null;
-  /** Rå BBR-status (fx "Aktiv", "Fjernet") */
-  status: string | null;
-}
-
 /** BBR Ejendomsrelation — kobler husnummer til BFEnummer og matrikelinfo */
 export interface BBREjendomsrelation {
   bfeNummer: number | null;
@@ -229,8 +202,6 @@ export interface EjendomApiResponse {
   ejerlejlighedBfe: number | null;
   /** BFE-nummer for moderejendommen (null hvis det ikke er en ejerlejlighed) */
   moderBfe: number | null;
-  /** BIZZ-484: Tekniske anlæg (solceller, varmepumper m.m.) — null ved fejl */
-  tekniskeAnlaeg: LiveBBRTekniskAnlaeg[] | null;
   bbrFejl: string | null;
 }
 
@@ -745,65 +716,6 @@ export function normaliseEnhed(raw: RawBBREnhed): LiveBBREnhed {
   };
 }
 
-/**
- * BIZZ-484: Rå TekniskAnlaeg-node fra Datafordeler BBR.
- */
-interface RawBBRTekniskAnlaeg {
-  id_lokalId?: string;
-  tek020Klassifikation?: string;
-  tek109Rumfang?: number | string | null;
-  tek032Kapacitet?: number | string | null;
-  tek013DriftStatus?: string;
-  tek016EtableringsAar?: number | string | null;
-  tek017Fabrikationsaar?: number | string | null;
-  bygning?: string;
-  status?: string;
-}
-
-/** BBR tek020-klassifikationskoder → læsbar dansk tekst */
-const TEKNISK_KLASSIFIKATION_MAP: Record<string, string> = {
-  '1': 'Olietank',
-  '2': 'Kølekompressor',
-  '3': 'Vindmølle',
-  '4': 'Solvarmeanlæg',
-  '5': 'Solcelleanlæg',
-  '6': 'Varmepumpe',
-  '7': 'Biogasanlæg',
-  '8': 'Vandindvindingsanlæg',
-  '10': 'Fjernvarmeanlæg',
-  '11': 'Øvrige tekniske anlæg',
-};
-
-/**
- * BIZZ-484: Normaliser rå BBR_TekniskAnlaeg til den form der eksponeres
- * til klienten. tek020 er ofte en kode (1–11) som vi slår op i
- * TEKNISK_KLASSIFIKATION_MAP — rå værdi returneres uændret hvis ikke
- * genkendt så UI ikke mister data.
- *
- * @param raw - Rå node fra Datafordeler BBR GraphQL
- */
-export function normaliseTekniskAnlaeg(raw: RawBBRTekniskAnlaeg): LiveBBRTekniskAnlaeg {
-  const kode = raw.tek020Klassifikation ?? null;
-  const klassifikation = kode ? (TEKNISK_KLASSIFIKATION_MAP[kode] ?? kode) : null;
-  const toNum = (v: number | string | null | undefined): number | null => {
-    if (v == null) return null;
-    const n = typeof v === 'number' ? v : parseFloat(v);
-    return Number.isFinite(n) ? n : null;
-  };
-  return {
-    id: raw.id_lokalId ?? '',
-    klassifikation,
-    klassifikationKode: kode,
-    etableringsAar: toNum(raw.tek016EtableringsAar),
-    fabrikationsAar: toNum(raw.tek017Fabrikationsaar),
-    driftStatus: raw.tek013DriftStatus ?? null,
-    kapacitet: toNum(raw.tek032Kapacitet),
-    rumfang: toNum(raw.tek109Rumfang),
-    bygningId: raw.bygning ?? null,
-    status: raw.status ?? null,
-  };
-}
-
 // ─── GraphQL queries ────────────────────────────────────────────────────────
 
 const BYGNING_QUERY = `
@@ -871,47 +783,6 @@ const BYGNING_BY_ID_QUERY = `
         byg094Revisionsdato
         status
         husnummer
-      }
-    }
-  }
-`;
-
-/**
- * BIZZ-484: BBR_TekniskAnlaeg-query for en given bygnings-UUID.
- * Returnerer solceller, varmepumper, olietanke, biogas m.m. koblet til
- * bygningen. Alle felter valgfri — hvis Datafordeler ikke eksponerer
- * specifikke feltnavne falder queryen tilbage til basis (se buildTekniskQuery).
- */
-const TEKNISK_ANLAEG_BY_BYGNING_QUERY = `
-  query($vt: DafDateTime!, $id: String!) {
-    BBR_TekniskAnlaeg(first: 100, virkningstid: $vt, where: { bygning: { eq: $id } }) {
-      nodes {
-        id_lokalId
-        tek020Klassifikation
-        tek109Rumfang
-        tek032Kapacitet
-        tek013DriftStatus
-        tek016EtableringsAar
-        tek017Fabrikationsaar
-        bygning
-        status
-      }
-    }
-  }
-`;
-
-/**
- * Fallback-query uden de optional teknisk-felter. Bruges hvis Datafordeler
- * schema endnu ikke eksponerer kapacitet/rumfang/etc. på TekniskAnlaeg.
- */
-const TEKNISK_ANLAEG_BY_BYGNING_BASIC_QUERY = `
-  query($vt: DafDateTime!, $id: String!) {
-    BBR_TekniskAnlaeg(first: 100, virkningstid: $vt, where: { bygning: { eq: $id } }) {
-      nodes {
-        id_lokalId
-        tek020Klassifikation
-        bygning
-        status
       }
     }
   }
@@ -1303,48 +1174,6 @@ export async function fetchBbrForAddress(
         ]
       : null;
 
-  // ── BIZZ-484: Hent tekniske anlæg for hver kendt bygning ──
-  // Solceller, varmepumper, olietanke m.m. hører til bygninger. For at
-  // kunne vise sektionen pr. ejendom samler vi alle anlæg på tværs af
-  // ejendommens bygninger. Schema-fejl på extended-queryen triggers
-  // fallback til basis. Fejl på en enkelt bygning er ikke-fatalt — vi
-  // udelader blot den bygnings anlæg fra listen.
-  let tekniskeAnlaeg: LiveBBRTekniskAnlaeg[] | null = null;
-  if (bygningIds.length > 0) {
-    try {
-      const resultater = await Promise.allSettled(
-        bygningIds.map(async (bygId) => {
-          let raw = await fetchBBRGraphQL(TEKNISK_ANLAEG_BY_BYGNING_QUERY, { vt, id: bygId });
-          if (!raw) {
-            // Schema-fejl — prøv basis-query
-            raw = await fetchBBRGraphQL(TEKNISK_ANLAEG_BY_BYGNING_BASIC_QUERY, {
-              vt,
-              id: bygId,
-            });
-          }
-          return (raw ?? []) as RawBBRTekniskAnlaeg[];
-        })
-      );
-      const flade = resultater.flatMap((r) => (r.status === 'fulfilled' ? r.value : []));
-      // Deduplikér på id_lokalId — samme anlæg kan returneres flere gange
-      // hvis en bygning-liste indeholder duplikater.
-      const seen = new Set<string>();
-      const unique = flade.filter((a) => {
-        const id = a.id_lokalId ?? '';
-        if (!id || seen.has(id)) return false;
-        seen.add(id);
-        return true;
-      });
-      tekniskeAnlaeg = unique.map(normaliseTekniskAnlaeg);
-    } catch (err) {
-      logger.warn(
-        '[fetchBBR] TekniskAnlaeg fetch fejlede:',
-        err instanceof Error ? err.message : err
-      );
-      tekniskeAnlaeg = null;
-    }
-  }
-
   const bbrFejl = !(process.env.DATAFORDELER_API_KEY ?? '')
     ? 'Datafordeler API-nøgle ikke konfigureret.'
     : bbr === null
@@ -1358,7 +1187,6 @@ export async function fetchBbrForAddress(
     ejendomsrelationer,
     ejerlejlighedBfe,
     moderBfe,
-    tekniskeAnlaeg,
     bbrFejl,
   };
 }

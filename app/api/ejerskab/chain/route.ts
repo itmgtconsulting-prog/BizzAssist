@@ -599,11 +599,6 @@ export async function GET(req: NextRequest) {
                 id,
                 label: ejer.personNavn,
                 type: 'person',
-                // BIZZ-483: Link til dedikeret detaljeside når fiktivtPVnummer
-                // er kendt. Uden nummer falder vi tilbage til ren label-node.
-                link: ejer.fiktivtPVnummer
-                  ? `/dashboard/pvoplys/${ejer.fiktivtPVnummer}`
-                  : undefined,
               });
             }
             edges.push({ from: id, to: mainId, ejerandel: andel });

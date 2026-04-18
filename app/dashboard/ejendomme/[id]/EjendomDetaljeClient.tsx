@@ -3024,6 +3024,18 @@ export default function EjendomDetaljeClient({
                                 ],
                                 [t.preservation, b.fredning || null],
                                 [t.conservationValue, b.bevaringsvaerdighed || null],
+                                // BIZZ-488: Revisionsdato — diskret metadata så brugeren ved
+                                // hvor aktuel BBR-registreringen er. Formateres som dansk/engelsk
+                                // lokal dato når feltet er sat.
+                                [
+                                  da ? 'Data sidst revideret' : 'Data last revised',
+                                  b.revisionsdato
+                                    ? new Date(b.revisionsdato).toLocaleDateString(
+                                        da ? 'da-DK' : 'en-GB',
+                                        { year: 'numeric', month: 'short', day: 'numeric' }
+                                      )
+                                    : null,
+                                ],
                               ] as [string, string | null][]
                             ).filter((row): row is [string, string] => row[1] !== null);
                             return (
@@ -3097,6 +3109,32 @@ export default function EjendomDetaljeClient({
                                           {da ? 'Ældre træ' : 'Old wood'}
                                         </span>
                                       )}
+                                    {/* BIZZ-488: Fredet og bevaringsværdig badge — inline på bygning-rækken.
+                                        Fredet (byg070Fredning) vinder over bevaringsværdig (byg071SAVE-score)
+                                        hvis begge er sat, da fredning er en stærkere juridisk kategori. */}
+                                    {b.fredning ? (
+                                      <span
+                                        className="flex-shrink-0 text-[9px] px-1 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30"
+                                        title={
+                                          da
+                                            ? `Fredet bygning: ${b.fredning}`
+                                            : `Protected building: ${b.fredning}`
+                                        }
+                                      >
+                                        {da ? 'Fredet' : 'Protected'}
+                                      </span>
+                                    ) : b.bevaringsvaerdighed ? (
+                                      <span
+                                        className="flex-shrink-0 text-[9px] px-1 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/30"
+                                        title={
+                                          da
+                                            ? `Bevaringsværdig (SAVE): ${b.bevaringsvaerdighed}`
+                                            : `Conservation value (SAVE): ${b.bevaringsvaerdighed}`
+                                        }
+                                      >
+                                        SAVE
+                                      </span>
+                                    ) : null}
                                   </span>
                                   <span className="text-slate-400 text-right">
                                     {b.opfoerelsesaar ?? '–'}

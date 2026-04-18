@@ -60,5 +60,6 @@ docs/legal/signed/*.pdf
 test-results/
 
 # Local Playwright verification scripts (don't commit)
+probe-*.mjs
 verify-all-recent.mjs
 verify-hotfix*.mjs

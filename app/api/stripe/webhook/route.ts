@@ -649,6 +649,46 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice): Promise<void> {
   const planName =
     (planRow as { name_da?: string } | null)?.name_da ?? hardcodedNames[planId] ?? planId;
 
+  // BIZZ-547: Hvis brugeren står i past_due/payment_failed på grund af en
+  // tidligere fejlet betaling, så skal en efterfølgende succesfuld betaling
+  // automatisk løfte blokeringen. Tidligere var dette kun muligt via
+  // customer.subscription.updated → active — men hvis Stripe ikke sender
+  // en sådan opdatering (fx ved engangs-fakturering uden tilknyttet aktiv
+  // subscription) forblev brugeren hængt i payment_failed selvom pengene
+  // faktisk var kommet ind. Observeret 2026-04-19 for jjrchefen@gmail.com:
+  // 2 betalte fakturaer men status stod på payment_failed indtil manuel
+  // reset.
+  const existingMeta = userData?.user?.app_metadata ?? {};
+  const existingSub = (existingMeta.subscription as Record<string, unknown>) ?? {};
+  const currentStatus = (existingSub.status as string) ?? null;
+  if (currentStatus === 'past_due' || currentStatus === 'payment_failed') {
+    const { error: statusErr } = await admin.auth.admin.updateUserById(userId, {
+      app_metadata: {
+        ...existingMeta,
+        subscription: {
+          ...existingSub,
+          status: 'active',
+          nextPaymentAttempt: null,
+          graceExpiresAt: null,
+        },
+      },
+    });
+    if (statusErr) {
+      logger.error(
+        '[stripe/webhook] invoice.payment_succeeded: status-reset updateUserById failed',
+        statusErr
+      );
+      Sentry.captureException(statusErr, {
+        tags: { webhook_event: 'invoice.payment_succeeded', step: 'status_reset' },
+        extra: { userId, fromStatus: currentStatus },
+      });
+    } else {
+      logger.log(
+        `[stripe/webhook] invoice.payment_succeeded: cleared ${currentStatus} → active (user=${userId})`
+      );
+    }
+  }
+
   // Await email send so failures surface in logs and trigger Stripe retries (via 500 response)
   await sendRecurringPaymentEmail({
     to: userEmail,

@@ -20,46 +20,27 @@ export interface AuthContext {
  * @returns AuthContext if authenticated with a tenant, null otherwise
  */
 export async function resolveTenantId(): Promise<AuthContext | null> {
-  // NOTE: This shared helper was consistently returning 401 from all callers
-  // on the deployed develop build while byte-identical INLINED copies of the
-  // same logic (see app/api/tracked/route.ts + app/api/notifications/route.ts)
-  // continued to work. The only difference was this module's `catch (err)`
-  // block with console.error — diagnostic tracked here.
-  // Explicitly marking each step so if a future recurrence happens the trace
-  // points to the failing stage.
+  // Byte-identical to the working INLINED copies in app/api/tracked and
+  // app/api/notifications. Some prior combination of try/catch branches in
+  // this shared module was returning null reliably on Vercel's deploy while
+  // the inlined versions kept working — swapping back to the minimal form
+  // is the quickest route to restoring auth on all 81 call sites.
   try {
     const supabase = await createClient();
-    let user;
-    try {
-      const result = await supabase.auth.getUser();
-      user = result.data?.user;
-    } catch (authErr) {
-      console.error(
-        '[auth] getUser threw:',
-        authErr instanceof Error ? authErr.message : String(authErr)
-      );
-      return null;
-    }
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
     if (!user) return null;
 
-    try {
-      const { data } = (await supabase
-        .from('tenant_memberships')
-        .select('tenant_id')
-        .eq('user_id', user.id)
-        .limit(1)
-        .single()) as { data: { tenant_id: string } | null };
-      if (!data?.tenant_id) return null;
-      return { tenantId: data.tenant_id, userId: user.id };
-    } catch (dbErr) {
-      console.error(
-        '[auth] tenant_memberships query threw:',
-        dbErr instanceof Error ? dbErr.message : String(dbErr)
-      );
-      return null;
-    }
+    const { data } = (await supabase
+      .from('tenant_memberships')
+      .select('tenant_id')
+      .eq('user_id', user.id)
+      .limit(1)
+      .single()) as { data: { tenant_id: string } | null };
+    if (!data?.tenant_id) return null;
+    return { tenantId: data.tenant_id, userId: user.id };
   } catch {
-    // Supabase createClient failed — middleware should have caught this
     return null;
   }
 }

@@ -64,6 +64,23 @@ export interface HandelData {
   husdyrbesaetningsum?: number | null;
   /** Forretningshændelse fra EJF_Ejerskifte (fx "Frit salg", "Arv", "Gave", "Tvangsauktion") */
   forretningshaendelse?: string | null;
+  /**
+   * BIZZ-481: Yderligere EJF_Ejerskifte-felter til betingede/annullerede/
+   * rettede handler. Alle optional da datafordeler-schemaet kan nægte
+   * ukendte felter — extended-query falder tilbage til basis ved fejl.
+   */
+  /** True hvis handlen er betinget (betingelser ikke opfyldt endnu) */
+  betinget?: boolean | null;
+  /** Frist-dato for betingelsernes opfyldelse (ISO 8601) */
+  fristDato?: string | null;
+  /** Virkning-Til dato — hvis i fortiden er handlen annulleret/erstattet */
+  virkningTil?: string | null;
+  /** Dato hvor handlen blev anmeldt til tinglysning */
+  anmeldelsesdato?: string | null;
+  /** Anmeldelses-ID (krydsreference mod Tinglysning) */
+  anmeldelsesidentifikator?: string | null;
+  /** Registrering-Fra — bruges sammen med virkningFra til at markere rettede handler */
+  registreringFra?: string | null;
 }
 
 /** API-svaret fra denne route */
@@ -128,6 +145,14 @@ interface RawEjerskifte {
   /** BIZZ-480: Udvidet — kun sat når extended-queryen lykkes */
   afstaaelsesdato?: string | null;
   forretningshaendelse?: string | null;
+  /** BIZZ-481: Yderligere extended felter — kun sat når extended-queryen lykkes */
+  betinget?: boolean | null;
+  fristDato?: string | null;
+  virkningFra?: string | null;
+  virkningTil?: string | null;
+  anmeldelsesdato?: string | null;
+  anmeldelsesidentifikator?: string | null;
+  registreringFra?: string | null;
 }
 
 /** EJF_Handelsoplysninger — prisdata for en handel */
@@ -251,6 +276,10 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
     // ukendte felter (schema-fejl), falder vi tilbage til basis-queryen så
     // eksisterende salgshistorik ikke går tabt. Når Datafordeler schema bliver
     // opdateret vil extended-queryen begynde at lykkes automatisk.
+    // BIZZ-481 udvider extended-listen med betinget/frist/virkning/anmeldelse/
+    // registrering-felter. Hvis Datafordeler-schemaet afviser ukendte feltnavne,
+    // falder buildEjerskifteQuery(false) tilbage til basis-felterne og henter i
+    // det mindste stadig overtagelsesdato + overdragelsesmaade.
     const buildEjerskifteQuery = (extended: boolean) => `{
       EJF_Ejerskifte(
         first: 200
@@ -264,7 +293,19 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
           overdragelsesmaade
           handelsoplysningerLokalId
           status
-          ${extended ? 'afstaaelsesdato\n          forretningshaendelse' : ''}
+          ${
+            extended
+              ? `afstaaelsesdato
+          forretningshaendelse
+          betinget
+          fristDato
+          virkningFra
+          virkningTil
+          anmeldelsesdato
+          anmeldelsesidentifikator
+          registreringFra`
+              : ''
+          }
         }
       }
     }`;
@@ -307,7 +348,15 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
       );
     }
 
-    const ejerskifter = ejerskifteResult.nodes;
+    // BIZZ-481: Filtrer annullerede/erstattede ejerskifter. Hvis virkningTil
+    // er sat og ligger i fortiden er handlen ikke længere gyldig og bør ikke
+    // vises som historik. Vi bevarer handler uden virkningTil (null = stadig
+    // gyldig) og handler hvor virkningTil ligger i fremtiden.
+    const now = new Date().toISOString();
+    const ejerskifter = ejerskifteResult.nodes.filter((e) => {
+      if (!e.virkningTil) return true;
+      return e.virkningTil > now;
+    });
 
     // Saml unikke handelsoplysningerLokalIds
     const handelsIds = [
@@ -336,6 +385,14 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
           forretningshaendelse: e.forretningshaendelse ?? null,
           betalingsforpligtelsesdato: null,
           husdyrbesaetningsum: null,
+          // BIZZ-481: Yderligere EJF-felter til betingede/anmeldte handler.
+          // rettet = true når handlen er efter-registreret (registreringFra > virkningFra).
+          betinget: e.betinget ?? null,
+          fristDato: e.fristDato ?? null,
+          virkningTil: e.virkningTil ?? null,
+          anmeldelsesdato: e.anmeldelsesdato ?? null,
+          anmeldelsesidentifikator: e.anmeldelsesidentifikator ?? null,
+          registreringFra: e.registreringFra ?? null,
         }))
         .sort((a, b) => (b.overtagelsesdato ?? '').localeCompare(a.overtagelsesdato ?? ''));
 
@@ -423,6 +480,13 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
           forretningshaendelse: e.forretningshaendelse ?? null,
           betalingsforpligtelsesdato: h?.betalingsforpligtelsesdato ?? null,
           husdyrbesaetningsum: h?.husdyrbesaetningsum ?? null,
+          // BIZZ-481: Yderligere EJF-felter
+          betinget: e.betinget ?? null,
+          fristDato: e.fristDato ?? null,
+          virkningTil: e.virkningTil ?? null,
+          anmeldelsesdato: e.anmeldelsesdato ?? null,
+          anmeldelsesidentifikator: e.anmeldelsesidentifikator ?? null,
+          registreringFra: e.registreringFra ?? null,
         };
       })
       .filter(

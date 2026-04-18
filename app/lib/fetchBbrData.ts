@@ -527,9 +527,10 @@ async function fetchBFENummer(dawaId: string): Promise<{
               // BFE op via DAWA jordstykker for at bekræfte kommunekoden stemmer.
               if (adgKommunekode) {
                 try {
-                  const verifyRes = await fetch(
+                  const verifyRes = await fetchDawa(
                     `${DAWA_BASE_URL}/jordstykker?bfenummer=${candidate}&per_side=1`,
-                    { signal: AbortSignal.timeout(3000), next: { revalidate: 3600 } }
+                    { signal: AbortSignal.timeout(3000), next: { revalidate: 3600 } },
+                    { caller: 'fetchBbrData.jordstykker.verify' }
                   );
                   if (verifyRes.ok) {
                     const verifyData = (await verifyRes.json()) as Array<{
@@ -920,9 +921,10 @@ export async function fetchBbrForAddress(
 
       // Trin 2: Ingen grund? Find andre adgangsadresser på samme matrikel via DAWA
       if (!grundId && ejerlavKode && matrikelnr) {
-        const adgRes = await fetch(
+        const adgRes = await fetchDawa(
           `${DAWA_BASE_URL}/adgangsadresser?ejerlavkode=${ejerlavKode}&matrikelnr=${encodeURIComponent(matrikelnr)}&per_side=10`,
-          { signal: AbortSignal.timeout(5000), next: { revalidate: 3600 } }
+          { signal: AbortSignal.timeout(5000), next: { revalidate: 3600 } },
+          { caller: 'fetchBbrData.adgangsadresser.samme-matrikel' }
         );
         if (adgRes.ok) {
           const adgangsadresser = (await adgRes.json()) as { id: string }[];

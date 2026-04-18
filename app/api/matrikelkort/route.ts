@@ -717,9 +717,10 @@ export async function GET(request: NextRequest): Promise<Response> {
       // NB: DAWA /jordstykker?bbox=... ignorerer bbox og returnerer alfabetisk — brug cirkel i stedet.
       const cirkelCx = hoved.visueltcenter?.[0] ?? (primærBounds.xMin + primærBounds.xMax) / 2;
       const cirkelCy = hoved.visueltcenter?.[1] ?? (primærBounds.yMin + primærBounds.yMax) / 2;
-      const naboListRes = await fetch(
+      const naboListRes = await fetchDawa(
         `${DAWA_BASE_URL}/jordstykker?cirkel=${cirkelCx.toFixed(7)},${cirkelCy.toFixed(7)},200&per_side=40`,
-        { signal: AbortSignal.timeout(8000) }
+        { signal: AbortSignal.timeout(8000) },
+        { caller: 'matrikelkort.jordstykker.naboer' }
       );
       if (naboListRes.ok) {
         const flatListe = (await naboListRes.json()) as DawaJordstykkeFlat[];
@@ -751,9 +752,10 @@ export async function GET(request: NextRequest): Promise<Response> {
             udvalgte.map((n) => {
               const eKode = n.ejerlav?.kode;
               if (!eKode) return Promise.resolve(null);
-              return fetch(
+              return fetchDawa(
                 `${DAWA_BASE_URL}/jordstykker/${eKode}/${encodeURIComponent(n.matrikelnr)}?format=geojson`,
-                { signal: AbortSignal.timeout(5000) }
+                { signal: AbortSignal.timeout(5000) },
+                { caller: 'matrikelkort.jordstykker.nabo-geojson' }
               ).then((r) => (r.ok ? (r.json() as Promise<DawaGeoJsonFeature>) : null));
             })
           );

@@ -158,6 +158,12 @@ export interface TLServitut {
   dokumentAlias: string | null;
   /** Original PDF bilagsreferencer (UUID'er der kan hentes via /bilag/{id}) */
   bilagRefs: string[];
+  /**
+   * BIZZ-474: Bilag med læsbar beskrivelse fra tingbogsattestens
+   * TekstAngivelse-bilagsreferencer, matchet pr. UUID. Erstatter de rå
+   * UUID'er når de skal vises i UI.
+   */
+  bilag: { id: string; tekst: string }[];
   ogsaaLystPaa: number | null;
   /** True hvis servitutten er hentet fra hovedejendommen (for ejerlejligheder) */
   fraHovedejendom?: boolean;
@@ -759,6 +765,24 @@ export async function GET(req: NextRequest) {
     // aware prefix fanges via (?:(?:[a-zA-Z0-9]+):)? foran tag-navnet.
     const SERVITUT_TAG_RE =
       /<(?:[a-zA-Z0-9]+:)?([A-Za-z]*ServitutSummarisk)>([\s\S]*?)<\/(?:[a-zA-Z0-9]+:)?\1>/g;
+
+    // BIZZ-474 follow-up: Forhåndsbyg uuid→beskrivelse map fra tingbogsattestens
+    // bilag-TekstAngivelse-entries. Hver bilag optræder som
+    //   <Overskrift>Bilagsreference</Overskrift><Afsnit>{uuid} - {beskrivelse}</Afsnit>
+    // UUID-delen matcher de <Bilagsreference>-elementer der allerede ligger
+    // inde i servitut/hæftelse/adkomst-blokkene, så vi kan attachere hver
+    // bilag-beskrivelse til det dokument den reelt hører under.
+    const bilagTekstByUuid = new Map<string, string>();
+    const BILAG_UUID_RE =
+      /TekstGruppe>[\s\S]*?Overskrift[^>]*>Bilagsreference<[\s\S]*?Afsnit[^>]*>([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\s*-\s*([^<]*))?</g;
+    for (const m of xml.matchAll(BILAG_UUID_RE)) {
+      const uuid = m[1];
+      const beskrivelse = (m[2] ?? '').trim();
+      if (!bilagTekstByUuid.has(uuid)) {
+        bilagTekstByUuid.set(uuid, beskrivelse || 'Bilag');
+      }
+    }
+
     const servitutter: TLServitut[] = [];
     const servitutEntries = [...xml.matchAll(SERVITUT_TAG_RE)].map((m) => [m[0], m[2]] as const);
     for (const [, entry] of servitutEntries) {
@@ -830,6 +854,12 @@ export async function GET(req: NextRequest) {
         dokumentId,
         dokumentAlias,
         bilagRefs: allBilag,
+        // BIZZ-474: Attach bilag med læsbar beskrivelse fra tingbogsattestens
+        // TekstAngivelse-map. UI kan vise fx "relaksation" i stedet for rå UUID.
+        bilag: allBilag.map((id) => ({
+          id,
+          tekst: bilagTekstByUuid.get(id) ?? 'Bilag',
+        })),
         ogsaaLystPaa,
       });
     }
@@ -941,24 +971,20 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // ── Saml alle bilagsreferencer (UUIDs der kan hentes som original PDF) ──
+    // ── Saml orphan bilag (UUIDs som IKKE er knyttet til et dokument) ──
+    // BIZZ-474: Tidligere blev ALLE tingbog-level bilag dumpet i en separat
+    // sektion uanset om de reelt hørte til en servitut/hæftelse/adkomst. Nu
+    // viser vi kun de bilag der IKKE kan matches til et dokument — de andre
+    // rendres direkte under deres ejer-dokument via .bilag-feltet.
+    // Kun servitutter har bilagRefs i deres type pt. — ejere/haeftelser
+    // eksponerer ikke bilag-refs som felt, så de kan ikke "eje" et bilag.
+    const attachedBilagIds = new Set<string>();
+    for (const s of servitutter) for (const id of s.bilagRefs) attachedBilagIds.add(id);
+
     const bilagRefs: { id: string; tekst: string }[] = [];
-    for (const t of tillaegEntries) {
-      const entry = t[1];
-      const overskrift = entry.match(/Overskrift[^>]*>([^<]+)/)?.[1] ?? '';
-      if (overskrift.toLowerCase().includes('bilagsreference')) {
-        const afsnit = entry.match(/Afsnit[^>]*>([^<]+)/)?.[1] ?? '';
-        // UUID kan være i afsnit-teksten
-        const uuidMatch = afsnit.match(
-          /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/
-        );
-        if (uuidMatch) {
-          const beskrivelse = afsnit
-            .replace(uuidMatch[0], '')
-            .replace(/^\s*-\s*/, '')
-            .trim();
-          bilagRefs.push({ id: uuidMatch[1], tekst: beskrivelse || 'Bilag' });
-        }
+    for (const [uuid, tekst] of bilagTekstByUuid) {
+      if (!attachedBilagIds.has(uuid)) {
+        bilagRefs.push({ id: uuid, tekst });
       }
     }
 
@@ -1093,6 +1119,11 @@ export async function GET(req: NextRequest) {
                     dokumentId,
                     dokumentAlias,
                     bilagRefs: allBilag,
+                    // BIZZ-474: Moderejendoms bilag-tekster ligger i hovedXml's
+                    // egen tingbogsattest, ikke i den primære bilagTekstByUuid.
+                    // Her falder vi tilbage til "Bilag" som beskrivelse — kan
+                    // udvides hvis moderejendom ofte har navngivne bilag.
+                    bilag: allBilag.map((id) => ({ id, tekst: 'Bilag' })),
                     ogsaaLystPaa,
                     fraHovedejendom: true,
                   });

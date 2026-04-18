@@ -8348,28 +8348,46 @@ function TinglysningTab({
                           Dok: {String(s.dokumentAlias)}
                         </p>
                       )}
-                      {/* ── Tilknyttede bilag til denne servitut ── */}
-                      {servitutBilag.length > 0 && (
-                        <div className="mt-2 pt-2 border-t border-slate-700/20">
-                          <p className="text-slate-500 text-[10px] uppercase mb-1.5">
-                            {da ? 'Tilknyttede bilag' : 'Attachments'} ({servitutBilag.length})
-                          </p>
-                          <div className="space-y-1">
-                            {servitutBilag.map((bilagId, bi) => (
-                              <a
-                                key={bi}
-                                href={`/api/tinglysning/dokument?bilag=${bilagId}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 transition-colors"
-                              >
-                                <FileText size={10} className="flex-shrink-0" />
-                                {da ? `Bilag ${bi + 1}` : `Attachment ${bi + 1}`}
-                              </a>
-                            ))}
+                      {/*
+                        ── Tilknyttede bilag til denne servitut ──
+                        BIZZ-474: Bilag har nu læsbar beskrivelse via s.bilag
+                        (fx "relaksation", "tillæg til servitutten findes i
+                        bilag") fra tingbogsattestens TekstAngivelse-map.
+                        Falder tilbage til "Bilag N" for ældre data uden tekst.
+                      */}
+                      {(() => {
+                        const bilagMedTekst =
+                          (s.bilag as Array<{ id: string; tekst: string }> | undefined) ?? [];
+                        const visBilag =
+                          bilagMedTekst.length > 0
+                            ? bilagMedTekst
+                            : servitutBilag.map((id, i) => ({
+                                id,
+                                tekst: `${da ? 'Bilag' : 'Attachment'} ${i + 1}`,
+                              }));
+                        if (visBilag.length === 0) return null;
+                        return (
+                          <div className="mt-2 pt-2 border-t border-slate-700/20">
+                            <p className="text-slate-500 text-[10px] uppercase mb-1.5">
+                              {da ? 'Tilknyttede bilag' : 'Attachments'} ({visBilag.length})
+                            </p>
+                            <div className="space-y-1">
+                              {visBilag.map((b, bi) => (
+                                <a
+                                  key={bi}
+                                  href={`/api/tinglysning/dokument?bilag=${b.id}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                                >
+                                  <FileText size={10} className="flex-shrink-0" />
+                                  <span className="truncate">{b.tekst}</span>
+                                </a>
+                              ))}
+                            </div>
                           </div>
-                        </div>
-                      )}
+                        );
+                      })()}
                     </div>
                   )}
                 </div>

@@ -227,31 +227,36 @@ const RecentEntityTagBar = React.memo(function RecentEntityTagBar({
   function renderTag(tag: RecentTag): React.ReactElement {
     const cfg = TYPE_CONFIG[tag.type];
     const isCurrent = tag.href === currentPath;
+    // BIZZ-458: Hele pillen (bg/border/padding) skal være klikbar, ikke kun
+    // icon+label. Tidligere var Link kun wrapper om span'ene, så padding
+    // omkring teksten var inaktiv. Nu er Link selv den ydre container; X-
+    // knappen stopper event-propagation så den ikke trigger navigation.
     return (
-      <div
+      <Link
         key={tag.key}
+        href={tag.href}
+        title={tag.label}
         className={`flex items-center gap-0.5 ${cfg.bg} border ${
           isCurrent ? cfg.text.replace('text-', 'border-') : cfg.border
         } rounded-full pl-1.5 pr-0.5 py-px shrink-0 ${
           isCurrent ? 'ring-1 ring-current opacity-100' : 'opacity-80 hover:opacity-100'
-        } transition-opacity`}
+        } transition-opacity ${cfg.text} text-[9px] leading-tight font-medium max-w-[160px]`}
       >
-        <Link
-          href={tag.href}
-          className={`flex items-center gap-0.5 ${cfg.text} text-[9px] leading-tight font-medium transition-opacity max-w-[120px]`}
-          title={tag.label}
-        >
-          <span className="shrink-0">{cfg.icon}</span>
-          <span className="truncate">{tag.label}</span>
-        </Link>
+        <span className="shrink-0">{cfg.icon}</span>
+        <span className="truncate">{tag.label}</span>
         <button
-          onClick={() => dismiss(tag.key)}
+          type="button"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dismiss(tag.key);
+          }}
           className={`ml-0.5 ${cfg.text} opacity-40 hover:opacity-100 transition-opacity rounded-full p-px`}
           aria-label={`Fjern ${cfg.rowLabel ?? tag.type} tag`}
         >
           <X size={7} />
         </button>
-      </div>
+      </Link>
     );
   }
 

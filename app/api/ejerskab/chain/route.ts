@@ -78,7 +78,7 @@ export interface ChainEjerDetalje {
   navn: string;
   cvr: string | null;
   enhedsNummer: number | null;
-  type: 'person' | 'selskab' | 'status';
+  type: 'person' | 'selskab' | 'status' | 'pvoplys';
   andel: string | null;
   adresse: string | null;
   overtagelsesdato: string | null;
@@ -86,6 +86,15 @@ export interface ChainEjerDetalje {
   koebesum: number | null;
   /** True when the owning company is ceased/dissolved — shown as warning in UI */
   isCeased?: boolean;
+  /**
+   * BIZZ-482: PV-oplys-felter for dødsboer, udenlandske ejere, fonde m.m.
+   * Kun sat når typen er 'pvoplys'. fiktivtPVnummer bruges til link til
+   * dedikeret detaljeside (se BIZZ-483).
+   */
+  fiktivtPVnummer?: string | null;
+  landekode?: string | null;
+  udlandsadresse?: string | null;
+  administrator?: string | null;
 }
 
 export interface OwnershipChainResponse {
@@ -575,6 +584,38 @@ export async function GET(req: NextRequest) {
               overtagelsesdato: ejer.virkningFra ?? null,
               adkomstType: null,
               koebesum: null,
+            });
+          } else if (ejer.ejertype === 'pvoplys' && ejer.personNavn) {
+            // BIZZ-482: Parter uden CVR/CPR (dødsboer, udenlandske selskaber,
+            // fonde, administratorer). Disse renderes som diagrammets 'person'-
+            // node (samme visuelle udtryk) men ejerDetaljer beholder
+            // type='pvoplys' og de udvidede felter så UI'en kan vise flag,
+            // udlandsadresse og administrator. Springer enhedsNummer-lookup
+            // over — PV-parter findes ikke i CVR ES.
+            const id = `pvoplys-${ejer.fiktivtPVnummer ?? nodes.length}`;
+            if (!seenIds.has(id)) {
+              seenIds.add(id);
+              nodes.push({
+                id,
+                label: ejer.personNavn,
+                type: 'person',
+              });
+            }
+            edges.push({ from: id, to: mainId, ejerandel: andel });
+            ejerDetaljer.push({
+              navn: ejer.personNavn,
+              cvr: null,
+              enhedsNummer: null,
+              type: 'pvoplys',
+              andel: andel ?? null,
+              adresse: ejer.udlandsadresse ?? null,
+              overtagelsesdato: ejer.virkningFra ?? null,
+              adkomstType: null,
+              koebesum: null,
+              fiktivtPVnummer: ejer.fiktivtPVnummer ?? null,
+              landekode: ejer.landekode ?? null,
+              udlandsadresse: ejer.udlandsadresse ?? null,
+              administrator: ejer.administrator ?? null,
             });
           } else if (ejer.personNavn) {
             const id = `person-ejf-${nodes.length}`;

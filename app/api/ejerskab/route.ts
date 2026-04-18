@@ -49,8 +49,8 @@ export interface EjerData {
   ejerandel_naevner: number | null;
   /** Ejerskab-type kode fra EJF */
   ejerforholdskode: string | null;
-  /** "selskab" | "person" | "ukendt" */
-  ejertype: 'selskab' | 'person' | 'ukendt';
+  /** "selskab" | "person" | "pvoplys" | "ukendt" — 'pvoplys' = parter uden CVR/CPR (dødsboer, udenlandske ejere, fonde) */
+  ejertype: 'selskab' | 'person' | 'pvoplys' | 'ukendt';
   /** ISO 8601 dato for hvornår ejerskab trådte i kraft */
   virkningFra: string | null;
   /**
@@ -58,6 +58,27 @@ export interface EjerData {
    * Undgår at UI'en viser rå "CVR 12345678" som eneste identifikation.
    */
   virksomhedsnavn?: string | null;
+  /**
+   * BIZZ-482: EJF_PersonVirksomhedsoplys-felter — parter uden CVR/CPR
+   * (dødsboer, udenlandske selskaber/personer, fonde, stiftelser, ejer-
+   * foreninger, kommunale enheder). Kun udfyldt når ejertype='pvoplys'
+   * og extended-queryen mod EJF lykkedes.
+   */
+  /** Persistent identifikator for parter uden CVR/CPR */
+  fiktivtPVnummer?: string | null;
+  /** Landekode (numerisk ISO 3166-1) for udenlandske ejere */
+  landekode?: string | null;
+  /**
+   * Samlet udlandsadresse (adresselinje 1–10 fra EJF). Når dansk adresse
+   * bruges adresseLokalId (koblet DAR-ID) i stedet, men det er ikke
+   * eksponeret i dette svar endnu.
+   */
+  udlandsadresse?: string | null;
+  /**
+   * Navn på administrator der handler på vegne af ejeren (advokat,
+   * bobestyrer m.fl.). Vises separat i UI'en under ejeren når sat.
+   */
+  administrator?: string | null;
 }
 
 /** API-svaret fra denne route */
@@ -129,6 +150,25 @@ interface RawEJFEjerskab {
   faktiskEjerandel_naevner: number | null;
   status: string | null;
   virkningFra: string | null;
+  /**
+   * BIZZ-482: EJF_PersonVirksomhedsoplys inline via oplysningerEjesAfEjerskab-
+   * relationen. Optional fordi felterne først blev tilføjet extended-query'en
+   * og kan mangle hvis Datafordeler-schemaet endnu ikke eksponerer dem.
+   */
+  oplysningerEjesAfEjerskab?: {
+    fiktivtPVnummer?: string | null;
+    navn?: string | null;
+    landeKodeNumerisk?: string | null;
+    adresselinje1?: string | null;
+    adresselinje2?: string | null;
+    adresselinje3?: string | null;
+    adresselinje4?: string | null;
+    adresselinje5?: string | null;
+  } | null;
+  /** Administrator (advokat/bobestyrer m.fl.) der handler på vegne af ejeren */
+  ejerskabAdministreresAfPersonEllerVirksomhedsoplysninger?: {
+    navn?: string | null;
+  } | null;
 }
 
 // ─── Hjælpefunktioner ─────────────────────────────────────────────────────────
@@ -158,14 +198,18 @@ export function parseEjertype(kode?: string): 'selskab' | 'person' | 'ukendt' {
 /**
  * Bestemmer ejertype fra en rå EJF_Ejerskab node.
  * Bruger CVR/CPR-tilstedeværelse som primær indikator,
- * ejerforholdskode som fallback.
+ * oplysningerEjesAfEjerskab (PV-relationen) som næste, og
+ * ejerforholdskode som sidste fallback.
+ *
+ * BIZZ-482: Nu med 'pvoplys'-case for dødsboer, udenlandske ejere, fonde m.m.
  *
  * @param raw - Rå EJF_Ejerskab node fra GraphQL
- * @returns "selskab" | "person" | "ukendt"
+ * @returns "selskab" | "person" | "pvoplys" | "ukendt"
  */
-function parseEjertypeFraNode(raw: RawEJFEjerskab): 'selskab' | 'person' | 'ukendt' {
+function parseEjertypeFraNode(raw: RawEJFEjerskab): 'selskab' | 'person' | 'pvoplys' | 'ukendt' {
   if (raw.ejendeVirksomhedCVRNr != null) return 'selskab';
   if (raw.ejendePersonBegraenset != null) return 'person';
+  if (raw.oplysningerEjesAfEjerskab?.fiktivtPVnummer) return 'pvoplys';
   return parseEjertype(raw.ejerforholdskode ?? undefined);
 }
 
@@ -185,7 +229,14 @@ type EJFQueryResult =
 async function queryEJF(bfeNummer: number, token: string): Promise<EJFQueryResult> {
   const virkningstid = new Date().toISOString();
 
-  const query = `{
+  /**
+   * BIZZ-482: Extended query inkluderer oplysningerEjesAfEjerskab (for parter
+   * uden CVR/CPR — dødsboer, udenlandske, fonde m.fl.) og
+   * ejerskabAdministreresAfPersonEllerVirksomhedsoplysninger (administrator).
+   * Hvis Datafordeler afviser disse relationsnavne pga. schema-version eller
+   * scope, kører vi basis-queryen så eksisterende ejer-data bevares.
+   */
+  const buildQuery = (extended: boolean) => `{
     EJFCustom_EjerskabBegraenset(
       first: 500
       virkningstid: "${virkningstid}"
@@ -202,21 +253,41 @@ async function queryEJF(bfeNummer: number, token: string): Promise<EJFQueryResul
         faktiskEjerandel_naevner
         status
         virkningFra
+        ${
+          extended
+            ? `oplysningerEjesAfEjerskab {
+          fiktivtPVnummer
+          navn
+          landeKodeNumerisk
+          adresselinje1
+          adresselinje2
+          adresselinje3
+          adresselinje4
+          adresselinje5
+        }
+        ejerskabAdministreresAfPersonEllerVirksomhedsoplysninger {
+          navn
+        }`
+            : ''
+        }
       }
     }
   }`;
 
-  const res = await fetch(proxyUrl(EJF_GQL_URL), {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-      ...proxyHeaders(),
-    },
-    body: JSON.stringify({ query }),
-    signal: AbortSignal.timeout(proxyTimeout()),
-    next: { revalidate: 3600 },
-  });
+  const doFetch = async (query: string) =>
+    fetch(proxyUrl(EJF_GQL_URL), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        ...proxyHeaders(),
+      },
+      body: JSON.stringify({ query }),
+      signal: AbortSignal.timeout(proxyTimeout()),
+      next: { revalidate: 3600 },
+    });
+
+  let res = await doFetch(buildQuery(true));
 
   if (res.status === 403) {
     return { ok: false, manglerAdgang: true, fejl: null };
@@ -232,7 +303,7 @@ async function queryEJF(bfeNummer: number, token: string): Promise<EJFQueryResul
     };
   }
 
-  const json = (await res.json()) as {
+  let json = (await res.json()) as {
     data?: { EJFCustom_EjerskabBegraenset?: { nodes: RawEJFEjerskab[] } };
     errors?: { message: string; extensions?: { code?: string } }[];
   };
@@ -240,6 +311,21 @@ async function queryEJF(bfeNummer: number, token: string): Promise<EJFQueryResul
   const authError = json.errors?.find((e) => e.extensions?.code === 'DAF-AUTH-0001');
   if (authError) {
     return { ok: false, manglerAdgang: true, fejl: null };
+  }
+
+  // BIZZ-482: Hvis extended-queryen fejler pga. ukendte felter/relationer,
+  // falder vi tilbage til basis-queryen. Schema-fejl resulterer typisk i
+  // enten errors[] uden data eller tom data-node.
+  const hasSchemaFejl = (json.errors?.length ?? 0) > 0 && !json.data?.EJFCustom_EjerskabBegraenset;
+  if (hasSchemaFejl) {
+    logger.warn('[ejerskab] Extended EJF query fejlede — falder tilbage til basis');
+    res = await doFetch(buildQuery(false));
+    if (!res.ok) {
+      return { ok: false, manglerAdgang: false, fejl: 'Ekstern API fejl' };
+    }
+    json = (await res.json()) as typeof json;
+    const authErr2 = json.errors?.find((e) => e.extensions?.code === 'DAF-AUTH-0001');
+    if (authErr2) return { ok: false, manglerAdgang: true, fejl: null };
   }
 
   return { ok: true, nodes: json.data?.EJFCustom_EjerskabBegraenset?.nodes ?? [] };
@@ -366,15 +452,34 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjerskabRe
     );
   }
 
-  const raaEjere: EjerData[] = nodes.map((n) => ({
-    cvr: n.ejendeVirksomhedCVRNr != null ? String(n.ejendeVirksomhedCVRNr) : null,
-    personNavn: n.ejendePersonBegraenset?.navn?.navn ?? null,
-    ejerandel_taeller: n.faktiskEjerandel_taeller ?? null,
-    ejerandel_naevner: n.faktiskEjerandel_naevner ?? null,
-    ejerforholdskode: n.ejerforholdskode ?? null,
-    ejertype: parseEjertypeFraNode(n),
-    virkningFra: n.virkningFra ?? null,
-  }));
+  const raaEjere: EjerData[] = nodes.map((n) => {
+    const ejertype = parseEjertypeFraNode(n);
+    const pv = n.oplysningerEjesAfEjerskab ?? null;
+    // BIZZ-482: Saml udlandsadresse fra linje 1–5. Tomme linjer filtreres
+    // væk så strengen ikke får uønskede kommaer/line-breaks.
+    const adresseLinjer = pv
+      ? [pv.adresselinje1, pv.adresselinje2, pv.adresselinje3, pv.adresselinje4, pv.adresselinje5]
+          .map((l) => (typeof l === 'string' ? l.trim() : ''))
+          .filter((l) => l.length > 0)
+      : [];
+    // For pvoplys-ejere bruger vi PV-navnet som personNavn så UI kan
+    // rendere "Boet efter X" / "Udenlandsk selskab Y" uden specialtegn.
+    const pvNavn = ejertype === 'pvoplys' ? (pv?.navn ?? null) : null;
+    return {
+      cvr: n.ejendeVirksomhedCVRNr != null ? String(n.ejendeVirksomhedCVRNr) : null,
+      personNavn: n.ejendePersonBegraenset?.navn?.navn ?? pvNavn,
+      ejerandel_taeller: n.faktiskEjerandel_taeller ?? null,
+      ejerandel_naevner: n.faktiskEjerandel_naevner ?? null,
+      ejerforholdskode: n.ejerforholdskode ?? null,
+      ejertype,
+      virkningFra: n.virkningFra ?? null,
+      // BIZZ-482: PV-oplys felter — kun meningsfulde for ejertype='pvoplys'
+      fiktivtPVnummer: pv?.fiktivtPVnummer ?? null,
+      landekode: pv?.landeKodeNumerisk ?? null,
+      udlandsadresse: adresseLinjer.length > 0 ? adresseLinjer.join(', ') : null,
+      administrator: n.ejerskabAdministreresAfPersonEllerVirksomhedsoplysninger?.navn ?? null,
+    };
+  });
 
   // BIZZ-477: Filtrér ophørte selskabsejere og berig med virksomhedsnavn.
   // EJF registrerer ofte at et selskab "ejer" en ejendom længe efter

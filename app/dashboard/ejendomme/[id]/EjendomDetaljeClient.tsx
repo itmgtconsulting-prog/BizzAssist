@@ -7350,7 +7350,21 @@ function TinglysningTab({
       </div>
     );
 
-  const visServitutter = showAllServitutter ? servitutter : servitutter.slice(0, 5);
+  /**
+   * BIZZ-472: Sortér servitutter så ejendommens egne kommer først, dernæst
+   * servitutter arvet fra hovedejendommen. På en ejerlejlighed fortæller
+   * rækkefølgen hvilke byrder der er tinglyst direkte på lejligheden og
+   * hvilke der hviler på hele komplekset.
+   */
+  const sorteredeServitutter = [...servitutter].sort((a, b) => {
+    const aHoved = a.fraHovedejendom ? 1 : 0;
+    const bHoved = b.fraHovedejendom ? 1 : 0;
+    return aHoved - bHoved;
+  });
+  const visServitutter = showAllServitutter
+    ? sorteredeServitutter
+    : sorteredeServitutter.slice(0, 5);
+  const antalFraHovedejendom = servitutter.filter((s) => s.fraHovedejendom).length;
 
   /**
    * Gruppér adkomst-entries efter dokumentId — to ejere på samme skøde deler dokumentId
@@ -8189,10 +8203,49 @@ function TinglysningTab({
         )}
         {servitutter.length > 0 && (
           <>
-            <div className="px-4 py-1.5 bg-teal-500/5 border-b border-slate-700/20">
+            <div className="px-4 py-1.5 bg-teal-500/5 border-b border-slate-700/20 flex items-center gap-2">
               <span className="text-[10px] font-semibold text-teal-400 uppercase tracking-wider">
                 {da ? 'Servitutter' : 'Easements'} ({servitutter.length})
               </span>
+              {/* BIZZ-472: Fortæl hvor mange af servitutterne der er arvet fra hovedejendommen.
+                  Klik åbner hovedejendommens side så brugeren kan se fuld kontekst. */}
+              {antalFraHovedejendom > 0 &&
+                (moderBfe ? (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const js = await fetch(`/api/adresse/jordstykke?bfe=${moderBfe}`);
+                        if (!js.ok) return;
+                        const { adgangsadresseId } = (await js.json()) as {
+                          adgangsadresseId?: string;
+                        };
+                        if (adgangsadresseId) {
+                          router.push(`/dashboard/ejendomme/${adgangsadresseId}`);
+                        }
+                      } catch {
+                        /* ignore */
+                      }
+                    }}
+                    className="text-[10px] font-medium text-amber-400 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded hover:bg-amber-500/20 transition-colors inline-flex items-center gap-1"
+                    title={
+                      da
+                        ? `Se hovedejendommen (BFE ${moderBfe})`
+                        : `View parent property (BFE ${moderBfe})`
+                    }
+                  >
+                    <Building2 size={9} />
+                    {da
+                      ? `${antalFraHovedejendom} fra hovedejendom →`
+                      : `${antalFraHovedejendom} from parent →`}
+                  </button>
+                ) : (
+                  <span className="text-[10px] font-medium text-amber-400/90 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded">
+                    {da
+                      ? `${antalFraHovedejendom} fra hovedejendom`
+                      : `${antalFraHovedejendom} from parent property`}
+                  </span>
+                ))}
             </div>
             {visServitutter.map((s, i) => {
               const docId = String(s.dokumentId ?? '');
@@ -8244,6 +8297,20 @@ function TinglysningTab({
                           </span>
                         )}
                       </span>
+                      {/* BIZZ-472: Marker servitutter arvet fra hovedejendommen */}
+                      {s.fraHovedejendom && (
+                        <span
+                          className="flex-shrink-0 inline-flex items-center gap-0.5 text-[10px] text-amber-400 bg-amber-500/10 border border-amber-500/20 px-1 py-0.5 rounded"
+                          title={
+                            da
+                              ? 'Denne servitut er tinglyst på hovedejendommen og gælder for alle ejerlejligheder i komplekset'
+                              : 'This easement is registered on the parent property and applies to all units in the complex'
+                          }
+                        >
+                          <Building2 size={9} />
+                          {da ? 'Hovedejendom' : 'Parent'}
+                        </span>
+                      )}
                       {servitutBilag.length > 0 && (
                         <span className="flex-shrink-0 inline-flex items-center gap-0.5 text-[10px] text-teal-500/80 bg-teal-500/10 px-1 py-0.5 rounded">
                           <FileText size={9} />

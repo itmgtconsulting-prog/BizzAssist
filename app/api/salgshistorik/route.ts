@@ -50,37 +50,6 @@ export interface HandelData {
   overdragelsesmaade: string | null;
   /** Valutakode (typisk DKK) */
   valutakode: string | null;
-  /**
-   * BIZZ-480: Udvidede felter fra EJF — alle optional da feltet først blev
-   * tilføjet efter eksisterende schema var etableret, og da Datafordeler
-   * kan nægte adgang pr. scope. Når extended-query fejler falder vi tilbage
-   * til basis-queryen og sætter disse til null.
-   */
-  /** Afståelsesdato (dato hvor den tidligere ejer afstod ejendommen) */
-  afstaaelsesdato?: string | null;
-  /** Dato hvor betalingsforpligtelsen indtraadte */
-  betalingsforpligtelsesdato?: string | null;
-  /** Husdyrbesætning-værdi (relevant for landbrug) */
-  husdyrbesaetningsum?: number | null;
-  /** Forretningshændelse fra EJF_Ejerskifte (fx "Frit salg", "Arv", "Gave", "Tvangsauktion") */
-  forretningshaendelse?: string | null;
-  /**
-   * BIZZ-481: Yderligere EJF_Ejerskifte-felter til betingede/annullerede/
-   * rettede handler. Alle optional da datafordeler-schemaet kan nægte
-   * ukendte felter — extended-query falder tilbage til basis ved fejl.
-   */
-  /** True hvis handlen er betinget (betingelser ikke opfyldt endnu) */
-  betinget?: boolean | null;
-  /** Frist-dato for betingelsernes opfyldelse (ISO 8601) */
-  fristDato?: string | null;
-  /** Virkning-Til dato — hvis i fortiden er handlen annulleret/erstattet */
-  virkningTil?: string | null;
-  /** Dato hvor handlen blev anmeldt til tinglysning */
-  anmeldelsesdato?: string | null;
-  /** Anmeldelses-ID (krydsreference mod Tinglysning) */
-  anmeldelsesidentifikator?: string | null;
-  /** Registrering-Fra — bruges sammen med virkningFra til at markere rettede handler */
-  registreringFra?: string | null;
 }
 
 /** API-svaret fra denne route */
@@ -142,17 +111,6 @@ interface RawEjerskifte {
   overdragelsesmaade: string | null;
   handelsoplysningerLokalId: string | null;
   status: string | null;
-  /** BIZZ-480: Udvidet — kun sat når extended-queryen lykkes */
-  afstaaelsesdato?: string | null;
-  forretningshaendelse?: string | null;
-  /** BIZZ-481: Yderligere extended felter — kun sat når extended-queryen lykkes */
-  betinget?: boolean | null;
-  fristDato?: string | null;
-  virkningFra?: string | null;
-  virkningTil?: string | null;
-  anmeldelsesdato?: string | null;
-  anmeldelsesidentifikator?: string | null;
-  registreringFra?: string | null;
 }
 
 /** EJF_Handelsoplysninger — prisdata for en handel */
@@ -165,9 +123,6 @@ interface RawHandelsoplysning {
   koebsaftaleDato: string | null;
   valutakode: string | null;
   status: string | null;
-  /** BIZZ-480: Udvidede felter — kun sat når extended-queryen lykkes */
-  betalingsforpligtelsesdato?: string | null;
-  husdyrbesaetningsum?: number | null;
 }
 
 // ─── GraphQL helpers ─────────────────────────────────────────────────────────
@@ -271,16 +226,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
 
   try {
     // ── Trin 1: Hent ejerskifter for BFE → få handelsoplysningerLokalId ──
-    // BIZZ-480: Vi prøver først en udvidet query med ekstra felter
-    // (afstaaelsesdato + forretningshaendelse). Hvis Datafordeler afviser
-    // ukendte felter (schema-fejl), falder vi tilbage til basis-queryen så
-    // eksisterende salgshistorik ikke går tabt. Når Datafordeler schema bliver
-    // opdateret vil extended-queryen begynde at lykkes automatisk.
-    // BIZZ-481 udvider extended-listen med betinget/frist/virkning/anmeldelse/
-    // registrering-felter. Hvis Datafordeler-schemaet afviser ukendte feltnavne,
-    // falder buildEjerskifteQuery(false) tilbage til basis-felterne og henter i
-    // det mindste stadig overtagelsesdato + overdragelsesmaade.
-    const buildEjerskifteQuery = (extended: boolean) => `{
+    const ejerskifteQuery = `{
       EJF_Ejerskifte(
         first: 200
         where: {
@@ -293,40 +239,15 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
           overdragelsesmaade
           handelsoplysningerLokalId
           status
-          ${
-            extended
-              ? `afstaaelsesdato
-          forretningshaendelse
-          betinget
-          fristDato
-          virkningFra
-          virkningTil
-          anmeldelsesdato
-          anmeldelsesidentifikator
-          registreringFra`
-              : ''
-          }
         }
       }
     }`;
 
-    let ejerskifteResult = await queryEJF<RawEjerskifte>(
-      buildEjerskifteQuery(true),
+    const ejerskifteResult = await queryEJF<RawEjerskifte>(
+      ejerskifteQuery,
       'EJF_Ejerskifte',
       token
     );
-    // null-svar = schema-fejl eller netværksfejl. Prøv basis-queryen uden
-    // extended-felter så eksisterende salgshistorik ikke går tabt blot fordi
-    // EJF endnu ikke har fx afstaaelsesdato i schemaet. Empty-svar betragtes
-    // som succes (ejendom har ingen handler) og udløser ikke retry.
-    if (!ejerskifteResult) {
-      logger.warn('[salgshistorik] Extended EJF_Ejerskifte query fejlede — falder tilbage');
-      ejerskifteResult = await queryEJF<RawEjerskifte>(
-        buildEjerskifteQuery(false),
-        'EJF_Ejerskifte',
-        token
-      );
-    }
 
     if (ejerskifteResult?.authError) {
       return NextResponse.json(
@@ -348,15 +269,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
       );
     }
 
-    // BIZZ-481: Filtrer annullerede/erstattede ejerskifter. Hvis virkningTil
-    // er sat og ligger i fortiden er handlen ikke længere gyldig og bør ikke
-    // vises som historik. Vi bevarer handler uden virkningTil (null = stadig
-    // gyldig) og handler hvor virkningTil ligger i fremtiden.
-    const now = new Date().toISOString();
-    const ejerskifter = ejerskifteResult.nodes.filter((e) => {
-      if (!e.virkningTil) return true;
-      return e.virkningTil > now;
-    });
+    const ejerskifter = ejerskifteResult.nodes;
 
     // Saml unikke handelsoplysningerLokalIds
     const handelsIds = [
@@ -380,19 +293,6 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
           overtagelsesdato: e.overtagelsesdato,
           overdragelsesmaade: e.overdragelsesmaade ?? null,
           valutakode: null,
-          // BIZZ-480: Udvidede EJF-felter — tilgængelige når extended-queryen lykkes
-          afstaaelsesdato: e.afstaaelsesdato ?? null,
-          forretningshaendelse: e.forretningshaendelse ?? null,
-          betalingsforpligtelsesdato: null,
-          husdyrbesaetningsum: null,
-          // BIZZ-481: Yderligere EJF-felter til betingede/anmeldte handler.
-          // rettet = true når handlen er efter-registreret (registreringFra > virkningFra).
-          betinget: e.betinget ?? null,
-          fristDato: e.fristDato ?? null,
-          virkningTil: e.virkningTil ?? null,
-          anmeldelsesdato: e.anmeldelsesdato ?? null,
-          anmeldelsesidentifikator: e.anmeldelsesidentifikator ?? null,
-          registreringFra: e.registreringFra ?? null,
         }))
         .sort((a, b) => (b.overtagelsesdato ?? '').localeCompare(a.overtagelsesdato ?? ''));
 
@@ -406,11 +306,8 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
     }
 
     // ── Trin 2: Hent handelsoplysninger via id_lokalId ──
-    // BIZZ-480: Samme extended/fallback-pattern som Ejerskifte — prøver at
-    // hente betalingsforpligtelsesdato + husdyrbesaetningsum, fall back hvis
-    // schemaet endnu ikke understøtter dem.
     const idsStr = handelsIds.map((id) => `"${id}"`).join(', ');
-    const buildHandelsQuery = (extended: boolean) => `{
+    const handelsQuery = `{
       EJF_Handelsoplysninger(
         first: 200
         where: {
@@ -426,24 +323,15 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
           koebsaftaleDato
           valutakode
           status
-          ${extended ? 'betalingsforpligtelsesdato\n          husdyrbesaetningsum' : ''}
         }
       }
     }`;
 
-    let handelsResult = await queryEJF<RawHandelsoplysning>(
-      buildHandelsQuery(true),
+    const handelsResult = await queryEJF<RawHandelsoplysning>(
+      handelsQuery,
       'EJF_Handelsoplysninger',
       token
     );
-    if (!handelsResult) {
-      logger.warn('[salgshistorik] Extended EJF_Handelsoplysninger query fejlede — falder tilbage');
-      handelsResult = await queryEJF<RawHandelsoplysning>(
-        buildHandelsQuery(false),
-        'EJF_Handelsoplysninger',
-        token
-      );
-    }
 
     if (handelsResult?.authError) {
       return NextResponse.json(
@@ -475,18 +363,6 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
           overtagelsesdato: e.overtagelsesdato ?? null,
           overdragelsesmaade: e.overdragelsesmaade ?? null,
           valutakode: h?.valutakode ?? null,
-          // BIZZ-480: Udvidede EJF-felter
-          afstaaelsesdato: e.afstaaelsesdato ?? null,
-          forretningshaendelse: e.forretningshaendelse ?? null,
-          betalingsforpligtelsesdato: h?.betalingsforpligtelsesdato ?? null,
-          husdyrbesaetningsum: h?.husdyrbesaetningsum ?? null,
-          // BIZZ-481: Yderligere EJF-felter
-          betinget: e.betinget ?? null,
-          fristDato: e.fristDato ?? null,
-          virkningTil: e.virkningTil ?? null,
-          anmeldelsesdato: e.anmeldelsesdato ?? null,
-          anmeldelsesidentifikator: e.anmeldelsesidentifikator ?? null,
-          registreringFra: e.registreringFra ?? null,
         };
       })
       .filter(

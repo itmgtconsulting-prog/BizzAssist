@@ -1766,24 +1766,6 @@ export default function EjendomDetaljeClient({
     tinglysningsafgift: number | null;
     kilde: 'ejf' | 'tinglysning' | 'begge';
     /**
-     * BIZZ-480: Udvidede felter fra EJF_Ejerskifte + EJF_Handelsoplysninger.
-     * Kan være null hvis extended-queryen fejlede eller hvis EJF ikke har
-     * data for feltet på denne specifikke handel.
-     */
-    afstaaelsesdato?: string | null;
-    betalingsforpligtelsesdato?: string | null;
-    husdyrbesaetningsum?: number | null;
-    forretningshaendelse?: string | null;
-    /**
-     * BIZZ-481: Yderligere EJF_Ejerskifte-felter — markering af betingede
-     * handler, anmeldelsesdato og rettede/efter-registrerede handler.
-     */
-    betinget?: boolean | null;
-    fristDato?: string | null;
-    anmeldelsesdato?: string | null;
-    /** Registrering-Fra — rettet/efter-registreret handel når senere end virkningFra */
-    registreringFra?: string | null;
-    /**
      * BIZZ-468: Struktureret liste af alle købere i denne handel med hver
      * deres andel. Bruges af render-laget i stedet for den concatenerede
      * `koeber`-streng så hver navn kan få sin egen andel-suffix (ikke kun
@@ -1838,16 +1820,6 @@ export default function EjendomDetaljeClient({
         tinglysningsdato: bestMatch?.tinglysningsdato ?? null,
         tinglysningsafgift: bestMatch?.tinglysningsafgift ?? null,
         kilde: bestMatch ? 'begge' : 'ejf',
-        // BIZZ-480: udvidede EJF-felter
-        afstaaelsesdato: h.afstaaelsesdato ?? null,
-        betalingsforpligtelsesdato: h.betalingsforpligtelsesdato ?? null,
-        husdyrbesaetningsum: h.husdyrbesaetningsum ?? null,
-        forretningshaendelse: h.forretningshaendelse ?? null,
-        // BIZZ-481: Yderligere EJF_Ejerskifte-felter
-        betinget: h.betinget ?? null,
-        fristDato: h.fristDato ?? null,
-        anmeldelsesdato: h.anmeldelsesdato ?? null,
-        registreringFra: h.registreringFra ?? null,
       });
     }
 
@@ -3866,11 +3838,7 @@ export default function EjendomDetaljeClient({
                             {mergedSalgshistorik.map((h, i) => {
                               /** Primær dato: købsaftaledato foretrukkes, ellers overtagelsesdato */
                               const dato = h.koebsaftaleDato ?? h.overtagelsesdato;
-                              // BIZZ-480: forretningshaendelse er EJF's officielle handelstype
-                              // (Frit salg, Arv, Gave, Tvangsauktion m.fl.) og foretrækkes
-                              // over den mere generiske overdragelsesmaade når tilgængelig.
-                              const overdragelse =
-                                h.forretningshaendelse ?? h.overdragelsesmaade ?? h.adkomstType;
+                              const overdragelse = h.overdragelsesmaade ?? h.adkomstType;
                               return (
                                 <tr
                                   key={i}
@@ -3891,40 +3859,6 @@ export default function EjendomDetaljeClient({
                                         <p className="text-slate-600 text-[10px] mt-0.5">
                                           {t.overtagelsesdato}:{' '}
                                           {new Date(h.overtagelsesdato).toLocaleDateString(
-                                            da ? 'da-DK' : 'en-GB',
-                                            {
-                                              year: 'numeric',
-                                              month: 'short',
-                                              day: 'numeric',
-                                            }
-                                          )}
-                                        </p>
-                                      )}
-                                    {/* BIZZ-480: Afståelsesdato vises når forskellig fra overtagelsesdato
-                                        — normalt falder de sammen, men kan adskille sig ved betingede handler. */}
-                                    {h.afstaaelsesdato &&
-                                      h.afstaaelsesdato !== h.overtagelsesdato && (
-                                        <p className="text-slate-600 text-[10px] mt-0.5">
-                                          {da ? 'Afstået' : 'Ceded'}:{' '}
-                                          {new Date(h.afstaaelsesdato).toLocaleDateString(
-                                            da ? 'da-DK' : 'en-GB',
-                                            {
-                                              year: 'numeric',
-                                              month: 'short',
-                                              day: 'numeric',
-                                            }
-                                          )}
-                                        </p>
-                                      )}
-                                    {/* BIZZ-481: Anmeldelsesdato — hvornår handlen blev anmeldt
-                                        til tinglysning. Vises kun når forskellig fra dato vi allerede
-                                        viser og fra tinglysningsdato så vi ikke gentager info. */}
-                                    {h.anmeldelsesdato &&
-                                      h.anmeldelsesdato !== dato &&
-                                      h.anmeldelsesdato !== h.tinglysningsdato && (
-                                        <p className="text-slate-600 text-[10px] mt-0.5">
-                                          {da ? 'Anmeldt' : 'Notified'}:{' '}
-                                          {new Date(h.anmeldelsesdato).toLocaleDateString(
                                             da ? 'da-DK' : 'en-GB',
                                             {
                                               year: 'numeric',
@@ -3961,64 +3895,17 @@ export default function EjendomDetaljeClient({
                                     )}
                                   </td>
                                   <td className="px-4 py-2.5">
-                                    <div className="flex flex-col gap-1 items-start">
-                                      <span
-                                        className={`text-xs px-2 py-0.5 rounded-full ${
-                                          overdragelse?.toLowerCase().includes('frit')
-                                            ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20'
-                                            : overdragelse?.toLowerCase().includes('tvang')
-                                              ? 'text-red-400 bg-red-500/10 border border-red-500/20'
-                                              : 'text-slate-400 bg-slate-500/10 border border-slate-500/20'
-                                        }`}
-                                      >
-                                        {overdragelse ?? '—'}
-                                      </span>
-                                      {/* BIZZ-481: Betinget handel med frist-dato */}
-                                      {h.betinget && (
-                                        <span
-                                          className="text-[10px] px-1.5 py-0.5 rounded text-amber-400 bg-amber-500/10 border border-amber-500/20 whitespace-nowrap"
-                                          title={
-                                            da
-                                              ? 'Betingede skøder — betingelser ikke opfyldt endnu'
-                                              : 'Conditional deed — conditions not yet met'
-                                          }
-                                        >
-                                          {h.fristDato
-                                            ? `${da ? 'Betinget' : 'Conditional'} (${da ? 'frist' : 'deadline'}: ${new Date(
-                                                h.fristDato
-                                              ).toLocaleDateString(da ? 'da-DK' : 'en-GB', {
-                                                year: 'numeric',
-                                                month: 'short',
-                                                day: 'numeric',
-                                              })})`
-                                            : da
-                                              ? 'Betinget'
-                                              : 'Conditional'}
-                                        </span>
-                                      )}
-                                      {/* BIZZ-481: Rettet/efter-registreret handel — markér når
-                                          registreringFra ligger mere end et døgn efter overtagelsesdato,
-                                          hvilket indikerer at registreringen er sket efterfølgende. */}
-                                      {(() => {
-                                        if (!h.registreringFra || !h.overtagelsesdato) return null;
-                                        const reg = new Date(h.registreringFra).getTime();
-                                        const ove = new Date(h.overtagelsesdato).getTime();
-                                        if (isNaN(reg) || isNaN(ove)) return null;
-                                        if (reg - ove < 24 * 60 * 60 * 1000) return null;
-                                        return (
-                                          <span
-                                            className="text-[10px] px-1.5 py-0.5 rounded text-blue-400 bg-blue-500/10 border border-blue-500/20 whitespace-nowrap"
-                                            title={
-                                              da
-                                                ? `Efter-registreret ${new Date(h.registreringFra).toLocaleDateString('da-DK')}`
-                                                : `Post-registered ${new Date(h.registreringFra).toLocaleDateString('en-GB')}`
-                                            }
-                                          >
-                                            {da ? 'Rettet' : 'Amended'}
-                                          </span>
-                                        );
-                                      })()}
-                                    </div>
+                                    <span
+                                      className={`text-xs px-2 py-0.5 rounded-full ${
+                                        overdragelse?.toLowerCase().includes('frit')
+                                          ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20'
+                                          : overdragelse?.toLowerCase().includes('tvang')
+                                            ? 'text-red-400 bg-red-500/10 border border-red-500/20'
+                                            : 'text-slate-400 bg-slate-500/10 border border-slate-500/20'
+                                      }`}
+                                    >
+                                      {overdragelse ?? '—'}
+                                    </span>
                                   </td>
                                   <td className="px-4 py-2.5 text-right text-white font-medium tabular-nums">
                                     {h.samletKoebesum != null
@@ -4034,20 +3921,6 @@ export default function EjendomDetaljeClient({
                                     {h.loesoeresum != null
                                       ? `${h.loesoeresum.toLocaleString(da ? 'da-DK' : 'en-GB')} kr.`
                                       : '—'}
-                                    {/* BIZZ-480: Husdyrbesætning for landbrugsejendomme — under løsøresum-kolonnen
-                                        fordi begge er supplerende beløb ud over den rene ejendomshandel. */}
-                                    {h.husdyrbesaetningsum != null && h.husdyrbesaetningsum > 0 && (
-                                      <p
-                                        className="text-slate-600 text-[10px] mt-0.5"
-                                        title={da ? 'Husdyrbesætning' : 'Livestock'}
-                                      >
-                                        {da ? 'Husdyr' : 'Livestock'}:{' '}
-                                        {h.husdyrbesaetningsum.toLocaleString(
-                                          da ? 'da-DK' : 'en-GB'
-                                        )}{' '}
-                                        kr.
-                                      </p>
-                                    )}
                                   </td>
                                   <td className="px-4 py-2.5 text-right text-slate-400 tabular-nums text-xs">
                                     {h.entreprisesum != null

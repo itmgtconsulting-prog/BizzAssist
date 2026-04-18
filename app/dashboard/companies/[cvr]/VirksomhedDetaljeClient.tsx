@@ -63,6 +63,7 @@ import type { RelateretVirksomhed } from '@/app/api/cvr-public/related/route';
 import type { CvrHandelData } from '@/app/api/salgshistorik/cvr/route';
 import type { EjendomSummary } from '@/app/api/ejendomme-by-owner/route';
 import type { PersonbogHaeftelse } from '@/app/api/tinglysning/personbog/route';
+import type { VirksomhedEjendomsrolle } from '@/app/api/tinglysning/virksomhed/route';
 import PropertyOwnerCard from '@/app/components/ejendomme/PropertyOwnerCard';
 import { saveRecentCompany } from '@/app/lib/recentCompanies';
 import { recordRecentVisit } from '@/app/lib/recordRecentVisit';
@@ -547,6 +548,19 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
   /** Tinglysning-tab: om Personbogen-rækken er udfoldet */
   const [personbogRowOpen, setPersonbogRowOpen] = useState(false);
 
+  /**
+   * BIZZ-521 — Fast ejendom data fra e-TL soegvirksomhed (bog=1).
+   * Separate arrays for ejer- og kreditor-rolle. Lazy-loaded samtidig med
+   * Personbogen når Tinglysning-tab'en aktiveres.
+   */
+  const [fastEjendomEjer, setFastEjendomEjer] = useState<VirksomhedEjendomsrolle[]>([]);
+  const [fastEjendomKreditor, setFastEjendomKreditor] = useState<VirksomhedEjendomsrolle[]>([]);
+  const [fastEjendomLoading, setFastEjendomLoading] = useState(false);
+  const [fastEjendomFejl, setFastEjendomFejl] = useState<string | null>(null);
+  const fastEjendomFetchedRef = useRef(false);
+  /** Hvilke af Fast ejendom-underrækkerne der er udfoldet (ejer/kreditor) */
+  const [fastEjendomOpen, setFastEjendomOpen] = useState<Set<'ejer' | 'kreditor'>>(new Set());
+
   // Auto-åbn Personbogen-rækken når data loader ind og der er hæftelser
 
   useEffect(() => {
@@ -897,6 +911,38 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
     }
   }, [cvr, c.personbogError]);
 
+  /**
+   * BIZZ-521 — Lazy-loader Fast ejendom-data (ejer + kreditor) når
+   * Tinglysning-tab'en aktiveres. Fetcher kun én gang per CVR.
+   */
+  const fetchFastEjendom = useCallback(async () => {
+    if (fastEjendomFetchedRef.current) return;
+    fastEjendomFetchedRef.current = true;
+    setFastEjendomLoading(true);
+    setFastEjendomFejl(null);
+
+    try {
+      const res = await fetch(`/api/tinglysning/virksomhed?cvr=${encodeURIComponent(cvr)}`);
+      const json = await res.json();
+
+      if (!res.ok) {
+        setFastEjendomFejl(json.error ?? c.fastEjendomError);
+        return;
+      }
+      if (json.fejl) {
+        setFastEjendomFejl(json.fejl);
+        return;
+      }
+
+      setFastEjendomEjer(json.ejer ?? []);
+      setFastEjendomKreditor(json.kreditor ?? []);
+    } catch {
+      setFastEjendomFejl(c.fastEjendomError);
+    } finally {
+      setFastEjendomLoading(false);
+    }
+  }, [cvr, c.fastEjendomError]);
+
   /** Trigger regnskab-fetch når financials-tab aktiveres */
   useEffect(() => {
     if (aktivTab === 'financials') {
@@ -918,6 +964,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
     }
     if (aktivTab === 'liens') {
       fetchPersonbog();
+      fetchFastEjendom();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aktivTab]);
@@ -3692,12 +3739,8 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                   )}
                 </div>
 
-                {/* ── Bilbog, Andelsbog, Fast ejendom — placeholder (0 ind til API tilsluttes) ── */}
-                {[
-                  { label: c.carBook },
-                  { label: c.cooperativeBook },
-                  { label: c.realProperty },
-                ].map((item) => (
+                {/* ── Bilbog, Andelsbog — placeholder (0 ind til BIZZ-529/530 er implementeret) ── */}
+                {[{ label: c.carBook }, { label: c.cooperativeBook }].map((item) => (
                   <div key={item.label} className="flex items-center justify-between px-4 py-2.5">
                     <div className="flex items-center gap-3">
                       {/* Spacer — matcher chevron-bredde fra Personbogen-række */}
@@ -3708,6 +3751,93 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                     <Download size={15} className="text-slate-700 opacity-40" />
                   </div>
                 ))}
+
+                {/* ── Fast ejendom (BIZZ-521) — expandabel med rigtige data ── */}
+                {(
+                  [
+                    { rolle: 'ejer', rows: fastEjendomEjer, label: c.fastEjendomEjer },
+                    { rolle: 'kreditor', rows: fastEjendomKreditor, label: c.fastEjendomKreditor },
+                  ] as const
+                ).map(({ rolle, rows, label }) => {
+                  const open = fastEjendomOpen.has(rolle);
+                  return (
+                    <div key={rolle}>
+                      <div className="flex items-center justify-between px-4 py-2.5 hover:bg-slate-800/30 transition-colors">
+                        <button
+                          onClick={() =>
+                            setFastEjendomOpen((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(rolle)) next.delete(rolle);
+                              else next.add(rolle);
+                              return next;
+                            })
+                          }
+                          className="flex items-center gap-3 flex-1 text-left min-w-0"
+                          disabled={rows.length === 0 && !fastEjendomLoading}
+                        >
+                          <span className="flex-shrink-0 w-4">
+                            {fastEjendomLoading ? (
+                              <Loader2 size={12} className="animate-spin text-slate-500" />
+                            ) : rows.length === 0 ? (
+                              <span />
+                            ) : open ? (
+                              <ChevronDown size={13} className="text-slate-500" />
+                            ) : (
+                              <ChevronRight size={13} className="text-slate-500" />
+                            )}
+                          </span>
+                          <FileText
+                            size={15}
+                            className={rows.length > 0 ? 'text-slate-500' : 'text-slate-600'}
+                          />
+                          <span
+                            className={
+                              rows.length > 0 ? 'text-slate-200 text-sm' : 'text-slate-400 text-sm'
+                            }
+                          >
+                            {label}
+                            <span className="text-slate-500 text-xs ml-1">
+                              ({fastEjendomLoading ? '…' : rows.length})
+                            </span>
+                          </span>
+                        </button>
+                      </div>
+                      {open && rows.length > 0 && (
+                        <div className="border-t border-slate-700/20 bg-slate-900/30 px-4 py-3">
+                          {fastEjendomFejl && (
+                            <div className="text-xs text-red-400 mb-2">{fastEjendomFejl}</div>
+                          )}
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                            {rows.map((row, idx) => (
+                              <a
+                                key={`${row.bfe}-${row.dokumentId ?? idx}`}
+                                href={`/dashboard/ejendomme/${row.bfe}`}
+                                className="block bg-slate-800/40 hover:bg-slate-800/80 border border-slate-700/40 rounded-lg px-3 py-2 text-xs text-slate-300 transition-colors"
+                              >
+                                <div className="font-medium text-slate-100">BFE {row.bfe}</div>
+                                {row.matrikel && (
+                                  <div className="text-slate-400 mt-0.5 truncate">
+                                    {row.matrikel}
+                                  </div>
+                                )}
+                                {row.adkomstType && (
+                                  <div className="text-slate-500 mt-0.5">
+                                    {c.fastEjendomAdkomst}: {row.adkomstType}
+                                  </div>
+                                )}
+                                {row.dokumentAlias && (
+                                  <div className="text-slate-600 mt-0.5 font-mono text-[10px]">
+                                    {row.dokumentAlias}
+                                  </div>
+                                )}
+                              </a>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}

@@ -454,6 +454,13 @@ export const translations = {
       personbogDriftsinventar: 'Driftsinventar',
       personbogFordringer: 'Fordringer',
       personbogImmaterielleRettigheder: 'Immaterielle rettigheder',
+      // BIZZ-521 — Fast ejendom sektion på Tinglysning-tab
+      fastEjendomEjer: 'Ejendomme ejet af virksomheden',
+      fastEjendomKreditor: 'Ejendomme hvor virksomheden er kreditor',
+      fastEjendomError: 'Kunne ikke hente tinglysningsdata for fast ejendom',
+      fastEjendomEmpty: 'Ingen tinglyste ejendomme fundet',
+      fastEjendomAdkomst: 'Adkomst',
+      fastEjendomMatrikel: 'Matrikel',
     },
 
     /* ─── Person page ─────────────────────────────────────────────── */
@@ -1010,6 +1017,13 @@ export const translations = {
       personbogDriftsinventar: 'Operating equipment',
       personbogFordringer: 'Claims',
       personbogImmaterielleRettigheder: 'Intangible rights',
+      // BIZZ-521 — Real property section on Tinglysning tab
+      fastEjendomEjer: 'Properties owned by the company',
+      fastEjendomKreditor: 'Properties where the company is creditor',
+      fastEjendomError: 'Could not load land registry data for real property',
+      fastEjendomEmpty: 'No registered real properties found',
+      fastEjendomAdkomst: 'Title type',
+      fastEjendomMatrikel: 'Cadastre',
     },
 
     /* ─── Person page ─────────────────────────────────────────────── */

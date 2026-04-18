@@ -21,6 +21,7 @@ import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { resolveTenantId } from '@/lib/api/auth';
 import { parseQuery } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
+import { selectPrimaryOwner, type EjerCandidate } from './selectPrimaryOwner';
 
 export const runtime = 'nodejs';
 export const maxDuration = 15;
@@ -83,14 +84,35 @@ export async function GET(request: NextRequest) {
         };
       }),
       // Ejerskab (ejer-navn + seneste handel)
+      // BIZZ-460: Vælg den ejer der reelt har størst andel i stedet for
+      // blindt at tage ejere[0]. Slå virksomhedsnavn op når CVR-ejer så
+      // kortet ikke bare viser "CVR 12345678".
       fetch(`${baseUrl}/api/ejerskab?bfeNummer=${bfe}`, fetchOpts).then(async (r) => {
         if (!r.ok) return null;
         const d = await r.json();
-        const ejere = d?.ejere ?? [];
-        const foerste = ejere[0];
-        return {
-          ejerNavn: foerste?.personNavn ?? (foerste?.cvr ? `CVR ${foerste.cvr}` : null),
-        };
+        const ejere = (d?.ejere ?? []) as EjerCandidate[];
+        const primary = selectPrimaryOwner(ejere);
+        if (!primary) return { ejerNavn: null };
+
+        if (primary.cvr) {
+          // Slå virksomhedsnavn op via CVR proxy. Falder tilbage til rå CVR
+          // hvis opslag fejler — bedre at vise CVR end ingenting.
+          try {
+            const nameRes = await fetch(
+              `${baseUrl}/api/cvr-public?vat=${encodeURIComponent(primary.cvr)}`,
+              fetchOpts
+            );
+            if (nameRes.ok) {
+              const nameData = (await nameRes.json()) as { name?: string };
+              if (nameData.name) return { ejerNavn: nameData.name };
+            }
+          } catch {
+            // Fald igennem til rå CVR
+          }
+          return { ejerNavn: `CVR ${primary.cvr}` };
+        }
+
+        return { ejerNavn: primary.personNavn };
       }),
     ]);
 

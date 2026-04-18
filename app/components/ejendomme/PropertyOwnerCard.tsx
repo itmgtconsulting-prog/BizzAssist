@@ -13,7 +13,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Home, ExternalLink, Building2, MapPin, Ruler, TrendingUp, User } from 'lucide-react';
+import { Home, ExternalLink, Building2, Ruler, TrendingUp, User, ShoppingCart } from 'lucide-react';
 import type { EjendomSummary } from '@/app/api/ejendomme-by-owner/route';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -76,12 +76,15 @@ export default function PropertyOwnerCard({
   const { label: typeLabel, color: typeColor } = mapEjendomstype(ejendom.ejendomstype);
   const da = lang === 'da';
 
-  // Progressive enrichment state
+  // Progressive enrichment state. BIZZ-465 extends with koebesum + koebsdato
+  // så nuværende kort kan vise seneste handel uden ekstra UI-kald.
   const [enriched, setEnriched] = useState<{
     areal: number | null;
     vurdering: number | null;
     vurderingsaar: number | null;
     ejerNavn: string | null;
+    koebesum: number | null;
+    koebsdato: string | null;
   } | null>(
     ejendom.areal != null
       ? {
@@ -89,6 +92,8 @@ export default function PropertyOwnerCard({
           vurdering: ejendom.vurdering ?? null,
           vurderingsaar: ejendom.vurderingsaar ?? null,
           ejerNavn: ejendom.ejerNavn ?? null,
+          koebesum: ejendom.koebesum ?? null,
+          koebsdato: ejendom.koebsdato ?? null,
         }
       : null
   );
@@ -133,9 +138,9 @@ export default function PropertyOwnerCard({
       />
 
       <div className="p-4 flex flex-col gap-2.5 flex-1">
-        {/* Adresse — hovedtekst (BIZZ-454: green MapPin for property context) */}
+        {/* Adresse — hovedtekst. BIZZ-465: Home-ikon (ejendoms-kontekst) */}
         <div className="flex items-start gap-2">
-          <MapPin
+          <Home
             size={14}
             className={`mt-0.5 flex-shrink-0 ${aktiv ? 'text-emerald-500' : 'text-slate-500'}`}
           />
@@ -163,36 +168,56 @@ export default function PropertyOwnerCard({
           )}
         </div>
 
-        {/* BIZZ-397: Enriched data — areal, vurdering, ejer */}
-        {enriched && (enriched.areal || enriched.vurdering || enriched.ejerNavn) && (
-          <div className="grid grid-cols-2 gap-x-3 gap-y-1 pt-1 border-t border-slate-700/30">
-            {enriched.areal && (
-              <div className="flex items-center gap-1.5">
-                <Ruler size={10} className="text-slate-500" />
-                <span className="text-slate-300 text-[11px]">
-                  {enriched.areal.toLocaleString('da-DK')} m²
-                </span>
-              </div>
-            )}
-            {enriched.vurdering && (
-              <div className="flex items-center gap-1.5">
-                <TrendingUp size={10} className="text-slate-500" />
-                <span className="text-slate-300 text-[11px]">
-                  {formatDkkShort(enriched.vurdering)} DKK
-                  {enriched.vurderingsaar && (
-                    <span className="text-slate-500 ml-0.5">({enriched.vurderingsaar})</span>
-                  )}
-                </span>
-              </div>
-            )}
-            {enriched.ejerNavn && (
-              <div className="flex items-center gap-1.5 col-span-2">
-                <User size={10} className="text-slate-500" />
-                <span className="text-slate-400 text-[11px] truncate">{enriched.ejerNavn}</span>
-              </div>
-            )}
-          </div>
-        )}
+        {/* BIZZ-397/465: Enriched data — areal, vurdering, køb, ejer */}
+        {enriched &&
+          (enriched.areal || enriched.vurdering || enriched.koebesum || enriched.ejerNavn) && (
+            <div className="grid grid-cols-2 gap-x-3 gap-y-1 pt-1 border-t border-slate-700/30">
+              {enriched.areal && (
+                <div className="flex items-center gap-1.5">
+                  <Ruler size={10} className="text-slate-500" />
+                  <span className="text-slate-300 text-[11px]">
+                    {enriched.areal.toLocaleString('da-DK')} m²
+                  </span>
+                </div>
+              )}
+              {enriched.vurdering && (
+                <div className="flex items-center gap-1.5">
+                  <TrendingUp size={10} className="text-slate-500" />
+                  <span className="text-slate-300 text-[11px]">
+                    {formatDkkShort(enriched.vurdering)} DKK
+                    {enriched.vurderingsaar && (
+                      <span className="text-slate-500 ml-0.5">({enriched.vurderingsaar})</span>
+                    )}
+                  </span>
+                </div>
+              )}
+              {/* BIZZ-465: Købspris + -dato fra seneste handel (EJF Ejerskifte) */}
+              {enriched.koebesum != null && enriched.koebesum > 0 && (
+                <div className="flex items-center gap-1.5 col-span-2">
+                  <ShoppingCart size={10} className="text-slate-500" />
+                  <span className="text-slate-300 text-[11px]">
+                    {formatDkkShort(enriched.koebesum)} DKK
+                    {enriched.koebsdato && (
+                      <span className="text-slate-500 ml-0.5">
+                        (
+                        {new Date(enriched.koebsdato).toLocaleDateString('da-DK', {
+                          year: 'numeric',
+                          month: 'short',
+                        })}
+                        )
+                      </span>
+                    )}
+                  </span>
+                </div>
+              )}
+              {enriched.ejerNavn && (
+                <div className="flex items-center gap-1.5 col-span-2">
+                  <User size={10} className="text-slate-500" />
+                  <span className="text-slate-400 text-[11px] truncate">{enriched.ejerNavn}</span>
+                </div>
+              )}
+            </div>
+          )}
 
         {/* Loading shimmer while enriching */}
         {!enriched && (

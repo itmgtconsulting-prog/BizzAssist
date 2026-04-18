@@ -85,12 +85,6 @@ export interface EjendomSummary {
   koebesum?: number | null;
   /** Overtagelsesdato fra seneste handel */
   koebsdato?: string | null;
-  /**
-   * BIZZ-461: BFE-nummer på moderejendommen (grunden) når denne ejendom er en
-   * ejerlejlighed. Bruges til at gruppere ejerlejligheder i samme
-   * kompleks visuelt. null for ikke-ejerlejligheder eller hvis opslaget fejler.
-   */
-  moderejendomBFE?: number | null;
 }
 
 /** API-svaret fra denne route */
@@ -340,13 +334,6 @@ interface DawaBfeAdresse {
   kommuneKode: string | null;
   ejendomstype: string | null;
   dawaId: string | null;
-  /**
-   * BIZZ-461: Ejerlav-kode + matrikelnr fra jordstykket. Bruges i andet trin
-   * til at slå moderejendommens BFE op via /jordstykker/{kode}/{matrikelnr}.
-   * Kun populeret når DAWA returnerer jordstykke-metadata.
-   */
-  ejerlavKode?: number | null;
-  matrikelnr?: string | null;
 }
 
 /**
@@ -388,18 +375,10 @@ async function _hentDawaBfeDataImpl(bfe: number): Promise<DawaBfeAdresse> {
       };
       jordstykker?: Array<{
         husnumre?: Array<{ id?: string }>;
-        ejerlav?: { navn?: string; kode?: number };
-        matrikelnr?: string;
+        ejerlav?: { navn?: string };
         kommune?: { kode?: string; navn?: string };
       }>;
     };
-
-    // BIZZ-461: Træk ejerlav-kode + matrikelnr ud en gang — bruges af
-    // moderejendoms-opslaget (uafhængigt af hvilken grenaf addresse-fallback
-    // vi ender i).
-    const jsMeta = json.jordstykker?.[0];
-    const ejerlavKode = typeof jsMeta?.ejerlav?.kode === 'number' ? jsMeta.ejerlav.kode : null;
-    const matrikelnr = typeof jsMeta?.matrikelnr === 'string' ? jsMeta.matrikelnr : null;
 
     const bel = json.beliggenhedsadresse;
     if (bel) {
@@ -416,8 +395,6 @@ async function _hentDawaBfeDataImpl(bfe: number): Promise<DawaBfeAdresse> {
         kommuneKode: bel.kommunekode ?? null,
         ejendomstype: json.ejendomstype ?? null,
         dawaId: dawaId ?? null,
-        ejerlavKode,
-        matrikelnr,
       };
     }
 
@@ -453,8 +430,6 @@ async function _hentDawaBfeDataImpl(bfe: number): Promise<DawaBfeAdresse> {
               kommuneKode: addr.kommunekode ?? null,
               ejendomstype: json.ejendomstype ?? null,
               dawaId: addr.id ?? husnumreId,
-              ejerlavKode,
-              matrikelnr,
             };
           }
         }
@@ -473,8 +448,6 @@ async function _hentDawaBfeDataImpl(bfe: number): Promise<DawaBfeAdresse> {
         kommuneKode: js.kommune?.kode ?? null,
         ejendomstype: json.ejendomstype ?? null,
         dawaId: husnumreId ?? null,
-        ejerlavKode,
-        matrikelnr,
       };
     }
 
@@ -593,39 +566,6 @@ async function _hentVPAdresseForBfe(bfe: number): Promise<DawaBfeAdresse> {
     };
   } catch {
     return empty;
-  }
-}
-
-// ─── BIZZ-461: Moderejendom lookup ──────────────────────────────────────────
-
-/**
- * BIZZ-461: Slår moderejendommens BFE op for en ejerlejlighed via DAWA
- * /jordstykker/{ejerlavKode}/{matrikelnr}. Ejerlejligheder deler jordstykke
- * med moderejendommen, og jordstykkets `bfenummer` peger netop på grundens
- * samle-BFE — det vi har brug for til at gruppere enheder i et kompleks.
- *
- * Resultater memoiseres pr. ejerlav+matrikel så flere ejerlejligheder i
- * samme kompleks kun koster ét DAWA-opslag.
- *
- * @param ejerlavKode - Ejerlav-kode fra jordstykket
- * @param matrikelnr - Matrikelnr fra jordstykket
- * @returns moderejendommens BFE eller null ved fejl / manglende data
- */
-async function hentModerejendomBfe(
-  ejerlavKode: number,
-  matrikelnr: string
-): Promise<number | null> {
-  try {
-    const res = await fetchDawa(
-      `${DAWA_BASE_URL}/jordstykker/${ejerlavKode}/${encodeURIComponent(matrikelnr)}`,
-      { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
-      { caller: 'ejendomme-by-owner.jordstykker.moder' }
-    );
-    if (!res.ok) return null;
-    const js = (await res.json()) as { bfenummer?: number };
-    return typeof js?.bfenummer === 'number' ? js.bfenummer : null;
-  } catch {
-    return null;
   }
 }
 
@@ -1007,66 +947,15 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
     /* ── Trin 2: Hent adressedata for hvert BFE (begrænset parallelisme) ── */
     const adresseData = await pMap(begransetBfe, DAWA_CONCURRENCY, hentDawaBfeData);
 
-    /* ── Trin 2b: BIZZ-461 — slå moderejendommens BFE op for at gruppere
-     * enheder på samme grund. Trigger-regel:
-     *   (a) ejendomstype indeholder "ejerlejlighed" (klassisk boliglejlighed),
-     *       ELLER
-     *   (b) mindst 2 BFE i denne batch deler samme ejerlav+matrikel.
-     * Regel (b) fanger erhvervsejerlejligheder (juridisk kategori
-     * "Erhvervsejendom eller øvrig ejendom") som Arnbo 62 ApS' 62A/62B —
-     * ikke klassificeret som ejerlejlighed i DAWA, men deler jordstykke og
-     * bør vises som ét kompleks. Deduplikering på ejerlav+matrikel sikrer
-     * at et kompleks med N enheder kun koster ét DAWA-opslag.
-     */
-    const jordstykkeCount = new Map<string, number>();
-    for (let i = 0; i < begransetBfe.length; i++) {
-      const ad = adresseData[i];
-      if (!ad.ejerlavKode || !ad.matrikelnr) continue;
-      const key = `${ad.ejerlavKode}:${ad.matrikelnr}`;
-      jordstykkeCount.set(key, (jordstykkeCount.get(key) ?? 0) + 1);
-    }
-    const moderByJordstykke = new Map<string, number | null>();
-    const jordstykkeLookups: Array<{ key: string; kode: number; matrikel: string }> = [];
-    for (let i = 0; i < begransetBfe.length; i++) {
-      const ad = adresseData[i];
-      if (!ad.ejerlavKode || !ad.matrikelnr) continue;
-      const key = `${ad.ejerlavKode}:${ad.matrikelnr}`;
-      const erEjerlejlighed = /ejerlejlighed/i.test(ad.ejendomstype ?? '');
-      const delerJordstykke = (jordstykkeCount.get(key) ?? 0) >= 2;
-      if (!erEjerlejlighed && !delerJordstykke) continue;
-      if (moderByJordstykke.has(key)) continue;
-      moderByJordstykke.set(key, null); // placeholder
-      jordstykkeLookups.push({ key, kode: ad.ejerlavKode, matrikel: ad.matrikelnr });
-    }
-    if (jordstykkeLookups.length > 0) {
-      const resolved = await pMap(jordstykkeLookups, DAWA_CONCURRENCY, (l) =>
-        hentModerejendomBfe(l.kode, l.matrikel).then((bfe) => ({ key: l.key, bfe }))
-      );
-      for (const r of resolved) moderByJordstykke.set(r.key, r.bfe);
-    }
-
     /* ── Trin 3: Saml resultater ── */
-    const ejendomme: EjendomSummary[] = begransetBfe.map((bfe, idx) => {
-      const ad = adresseData[idx];
-      // ejerlavKode/matrikelnr er interne hjælpefelter — fjern dem fra svaret.
-      const { ejerlavKode: _ek, matrikelnr: _mn, ...adPublic } = ad;
-      const moderKey =
-        ad.ejerlavKode && ad.matrikelnr ? `${ad.ejerlavKode}:${ad.matrikelnr}` : null;
-      const moderBfe = moderKey ? (moderByJordstykke.get(moderKey) ?? null) : null;
-      // Moderejendommen deler BFE med selve ejerlejligheden i sjældne edge-cases
-      // (fx når ejerlav.kode/matrikelnr peger på samme grund som en almindelig
-      // ejendom). Undgå at gruppere en ejendom med sig selv.
-      const moderejendomBFE = moderBfe && moderBfe !== bfe ? moderBfe : null;
-      return {
-        bfeNummer: bfe,
-        ownerCvr: bfeTilCvr.get(bfe) ?? '',
-        ...adPublic,
-        ejerandel: bfeTilEjerandel.get(bfe) ?? null,
-        aktiv: aktivByBfe.get(bfe) ?? true,
-        solgtDato: solgtDatoByBfe.get(bfe) ?? null,
-        moderejendomBFE,
-      };
-    });
+    const ejendomme: EjendomSummary[] = begransetBfe.map((bfe, idx) => ({
+      bfeNummer: bfe,
+      ownerCvr: bfeTilCvr.get(bfe) ?? '',
+      ...adresseData[idx],
+      ejerandel: bfeTilEjerandel.get(bfe) ?? null,
+      aktiv: aktivByBfe.get(bfe) ?? true,
+      solgtDato: solgtDatoByBfe.get(bfe) ?? null,
+    }));
 
     /* Sortér: adresser først, derefter BFE-numre */
     ejendomme.sort((a, b) => {

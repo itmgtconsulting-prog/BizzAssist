@@ -64,6 +64,7 @@ import type { CvrHandelData } from '@/app/api/salgshistorik/cvr/route';
 import type { EjendomSummary } from '@/app/api/ejendomme-by-owner/route';
 import type { PersonbogHaeftelse } from '@/app/api/tinglysning/personbog/route';
 import type { VirksomhedEjendomsrolle } from '@/app/api/tinglysning/virksomhed/route';
+import type { BilbogBil } from '@/app/api/tinglysning/bilbog/route';
 import PropertyOwnerCard from '@/app/components/ejendomme/PropertyOwnerCard';
 import { saveRecentCompany } from '@/app/lib/recentCompanies';
 import { recordRecentVisit } from '@/app/lib/recordRecentVisit';
@@ -561,6 +562,16 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
   /** Hvilke af Fast ejendom-underrækkerne der er udfoldet (ejer/kreditor) */
   const [fastEjendomOpen, setFastEjendomOpen] = useState<Set<'ejer' | 'kreditor'>>(new Set());
 
+  /**
+   * BIZZ-529 — Bilbog data fra e-TL soegbil + bil/uuid.
+   * Lazy-loadet sammen med personbog når Tinglysning-tab'en aktiveres.
+   */
+  const [bilbogData, setBilbogData] = useState<BilbogBil[]>([]);
+  const [bilbogLoading, setBilbogLoading] = useState(false);
+  const [bilbogFejl, setBilbogFejl] = useState<string | null>(null);
+  const [bilbogOpen, setBilbogOpen] = useState(false);
+  const bilbogFetchedRef = useRef(false);
+
   // Auto-åbn Personbogen-rækken når data loader ind og der er hæftelser
 
   useEffect(() => {
@@ -943,6 +954,36 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
     }
   }, [cvr, c.fastEjendomError]);
 
+  /**
+   * BIZZ-529 — Lazy-loader bilbogsdata når Tinglysning-tab aktiveres.
+   * Hver bil kommer med egen liste af hæftelser (virksomhedspant,
+   * ejendomsforbehold, leasing m.fl.). Fetcher kun én gang per CVR.
+   */
+  const fetchBilbog = useCallback(async () => {
+    if (bilbogFetchedRef.current) return;
+    bilbogFetchedRef.current = true;
+    setBilbogLoading(true);
+    setBilbogFejl(null);
+
+    try {
+      const res = await fetch(`/api/tinglysning/bilbog?cvr=${encodeURIComponent(cvr)}`);
+      const json = await res.json();
+      if (!res.ok) {
+        setBilbogFejl(json.error ?? c.bilbogError);
+        return;
+      }
+      if (json.fejl) {
+        setBilbogFejl(json.fejl);
+        return;
+      }
+      setBilbogData(json.biler ?? []);
+    } catch {
+      setBilbogFejl(c.bilbogError);
+    } finally {
+      setBilbogLoading(false);
+    }
+  }, [cvr, c.bilbogError]);
+
   /** Trigger regnskab-fetch når financials-tab aktiveres */
   useEffect(() => {
     if (aktivTab === 'financials') {
@@ -965,6 +1006,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
     if (aktivTab === 'liens') {
       fetchPersonbog();
       fetchFastEjendom();
+      fetchBilbog();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aktivTab]);
@@ -3739,18 +3781,125 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                   )}
                 </div>
 
-                {/* ── Bilbog, Andelsbog — placeholder (0 ind til BIZZ-529/530 er implementeret) ── */}
-                {[{ label: c.carBook }, { label: c.cooperativeBook }].map((item) => (
-                  <div key={item.label} className="flex items-center justify-between px-4 py-2.5">
-                    <div className="flex items-center gap-3">
-                      {/* Spacer — matcher chevron-bredde fra Personbogen-række */}
-                      <span className="w-4 flex-shrink-0" />
-                      <FileText size={15} className="text-slate-600" />
-                      <span className="text-slate-400 text-sm">{item.label} (0)</span>
-                    </div>
-                    <Download size={15} className="text-slate-700 opacity-40" />
+                {/* ── Bilbogen (BIZZ-529) — expandabel med rigtige data ── */}
+                <div>
+                  <div className="flex items-center justify-between px-4 py-2.5 hover:bg-slate-800/30 transition-colors">
+                    <button
+                      onClick={() => setBilbogOpen((prev) => !prev)}
+                      className="flex items-center gap-3 flex-1 text-left min-w-0"
+                      disabled={bilbogData.length === 0 && !bilbogLoading}
+                    >
+                      <span className="flex-shrink-0 w-4">
+                        {bilbogLoading ? (
+                          <Loader2 size={12} className="animate-spin text-slate-500" />
+                        ) : bilbogData.length === 0 ? (
+                          <span />
+                        ) : bilbogOpen ? (
+                          <ChevronDown size={13} className="text-slate-500" />
+                        ) : (
+                          <ChevronRight size={13} className="text-slate-500" />
+                        )}
+                      </span>
+                      <FileText
+                        size={15}
+                        className={bilbogData.length > 0 ? 'text-slate-500' : 'text-slate-600'}
+                      />
+                      <span
+                        className={
+                          bilbogData.length > 0
+                            ? 'text-slate-200 text-sm'
+                            : 'text-slate-400 text-sm'
+                        }
+                      >
+                        {c.carBook}
+                        <span className="text-slate-500 text-xs ml-1">
+                          ({bilbogLoading ? '…' : bilbogData.length})
+                        </span>
+                      </span>
+                    </button>
                   </div>
-                ))}
+                  {bilbogOpen && bilbogData.length > 0 && (
+                    <div className="border-t border-slate-700/20 bg-slate-900/30 px-4 py-3 space-y-3">
+                      {bilbogFejl && <div className="text-xs text-red-400">{bilbogFejl}</div>}
+                      {bilbogData.map((bil) => (
+                        <div
+                          key={bil.uuid}
+                          className="bg-slate-800/40 border border-slate-700/40 rounded-lg p-3"
+                        >
+                          <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-xs">
+                            <span className="text-slate-100 font-medium">
+                              {bil.fabrikat ?? '—'}
+                            </span>
+                            {bil.aargang && (
+                              <span className="text-slate-400">
+                                {c.bilbogAargang}: {bil.aargang}
+                              </span>
+                            )}
+                            {bil.registreringsnummer && (
+                              <span className="text-slate-400">
+                                {c.bilbogRegnr}: {bil.registreringsnummer}
+                              </span>
+                            )}
+                            {bil.stelnummer && (
+                              <span className="text-slate-500 font-mono">
+                                {c.bilbogStelnummer}: {bil.stelnummer}
+                              </span>
+                            )}
+                          </div>
+                          {bil.haeftelser.length === 0 ? (
+                            <div className="mt-2 text-xs text-slate-500">
+                              {c.bilbogIngenHaeftelser}
+                            </div>
+                          ) : (
+                            <ul className="mt-2 space-y-1">
+                              {bil.haeftelser.map((h, i) => (
+                                <li
+                                  key={`${bil.uuid}-${h.dokumentId ?? i}`}
+                                  className="text-xs text-slate-400 flex flex-wrap items-baseline gap-x-3"
+                                >
+                                  <span className="text-slate-300">{h.type}</span>
+                                  {h.hovedstol != null && (
+                                    <span>
+                                      {h.hovedstol.toLocaleString('da-DK')} {h.valuta}
+                                    </span>
+                                  )}
+                                  {h.kreditor && (
+                                    <span className="text-slate-500">
+                                      {c.personbogKreditor}: {h.kreditor}
+                                    </span>
+                                  )}
+                                  {h.tinglysningsdato && (
+                                    <span className="text-slate-600">{h.tinglysningsdato}</span>
+                                  )}
+                                  {h.dokumentId && (
+                                    <a
+                                      href={`/api/tinglysning/dokument?uuid=${h.dokumentId}`}
+                                      download
+                                      className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300"
+                                    >
+                                      <Download size={10} />
+                                      PDF
+                                    </a>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* ── Andelsbogen — placeholder (0 ind til BIZZ-530 er implementeret) ── */}
+                <div className="flex items-center justify-between px-4 py-2.5">
+                  <div className="flex items-center gap-3">
+                    <span className="w-4 flex-shrink-0" />
+                    <FileText size={15} className="text-slate-600" />
+                    <span className="text-slate-400 text-sm">{c.cooperativeBook} (0)</span>
+                  </div>
+                  <Download size={15} className="text-slate-700 opacity-40" />
+                </div>
 
                 {/* ── Fast ejendom (BIZZ-521) — expandabel med rigtige data ── */}
                 {(
@@ -3807,31 +3956,43 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                           {fastEjendomFejl && (
                             <div className="text-xs text-red-400 mb-2">{fastEjendomFejl}</div>
                           )}
-                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                            {rows.map((row, idx) => (
-                              <a
-                                key={`${row.bfe}-${row.dokumentId ?? idx}`}
-                                href={`/dashboard/ejendomme/${row.bfe}`}
-                                className="block bg-slate-800/40 hover:bg-slate-800/80 border border-slate-700/40 rounded-lg px-3 py-2 text-xs text-slate-300 transition-colors"
-                              >
-                                <div className="font-medium text-slate-100">BFE {row.bfe}</div>
-                                {row.matrikel && (
-                                  <div className="text-slate-400 mt-0.5 truncate">
-                                    {row.matrikel}
-                                  </div>
-                                )}
-                                {row.adkomstType && (
-                                  <div className="text-slate-500 mt-0.5">
-                                    {c.fastEjendomAdkomst}: {row.adkomstType}
-                                  </div>
-                                )}
-                                {row.dokumentAlias && (
-                                  <div className="text-slate-600 mt-0.5 font-mono text-[10px]">
-                                    {row.dokumentAlias}
-                                  </div>
-                                )}
-                              </a>
-                            ))}
+                          {/*
+                            BIZZ-521 follow-up: Genbrug PropertyOwnerCard så kortene
+                            ser ud som i ejendoms-portefølje-tab'en og har adresse +
+                            postnummer som overskrift (ikke BFE-nummer).
+                            Mapper Tinglysnings-rækker til EjendomSummary-formen.
+                          */}
+                          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                            {(() => {
+                              // De-dupliker på BFE — én ejendom kan optræde flere
+                              // gange hvis der er flere dokumenter. Kortet
+                              // repræsenterer ejendommen, ikke dokumentet.
+                              const seen = new Set<number>();
+                              return rows
+                                .filter((r) => {
+                                  if (seen.has(r.bfe)) return false;
+                                  seen.add(r.bfe);
+                                  return true;
+                                })
+                                .map((row) => (
+                                  <PropertyOwnerCard
+                                    key={`${rolle}-${row.bfe}`}
+                                    ejendom={{
+                                      bfeNummer: row.bfe,
+                                      ownerCvr: cvr,
+                                      adresse: row.adresse,
+                                      postnr: row.postnr,
+                                      by: row.by,
+                                      kommune: row.kommune,
+                                      kommuneKode: null,
+                                      ejendomstype: row.ejendomstype,
+                                      dawaId: row.dawaId,
+                                    }}
+                                    showOwner={false}
+                                    lang={lang}
+                                  />
+                                ));
+                            })()}
                           </div>
                         </div>
                       )}

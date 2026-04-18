@@ -46,13 +46,20 @@ describe('parseVirksomhedSoegResultat', () => {
     const rows = parseVirksomhedSoegResultat(raw);
 
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toEqual({
+    expect(rows[0]).toMatchObject({
       bfe: 6020169,
       matrikel: 'Vigerslev, København, 3178',
       rolle: 'ejer',
       dokumentId: 'doc-uuid-1',
       dokumentAlias: '19921016-900131-01',
       adkomstType: 'skoede',
+      // Address-felter sættes af berigMedAdresser — parser-output er null
+      adresse: null,
+      postnr: null,
+      by: null,
+      kommune: null,
+      dawaId: null,
+      ejendomstype: null,
     });
   });
 

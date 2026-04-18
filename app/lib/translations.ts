@@ -461,6 +461,13 @@ export const translations = {
       fastEjendomEmpty: 'Ingen tinglyste ejendomme fundet',
       fastEjendomAdkomst: 'Adkomst',
       fastEjendomMatrikel: 'Matrikel',
+      // BIZZ-529 — Bilbog sektion på Tinglysning-tab
+      bilbogError: 'Kunne ikke hente bilbogsdata',
+      bilbogEmpty: 'Ingen tinglyste køretøjer fundet',
+      bilbogStelnummer: 'Stelnr.',
+      bilbogRegnr: 'Reg.nr.',
+      bilbogAargang: 'Årgang',
+      bilbogIngenHaeftelser: 'Ingen hæftelser',
     },
 
     /* ─── Person page ─────────────────────────────────────────────── */
@@ -1024,6 +1031,13 @@ export const translations = {
       fastEjendomEmpty: 'No registered real properties found',
       fastEjendomAdkomst: 'Title type',
       fastEjendomMatrikel: 'Cadastre',
+      // BIZZ-529 — Vehicle register section on Tinglysning tab
+      bilbogError: 'Could not load vehicle register data',
+      bilbogEmpty: 'No registered vehicles found',
+      bilbogStelnummer: 'VIN',
+      bilbogRegnr: 'Reg. no.',
+      bilbogAargang: 'Year',
+      bilbogIngenHaeftelser: 'No liens',
     },
 
     /* ─── Person page ─────────────────────────────────────────────── */

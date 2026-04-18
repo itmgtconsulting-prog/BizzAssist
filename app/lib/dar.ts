@@ -678,7 +678,10 @@ export async function darHentAdresse(id: string): Promise<DawaAdresse | null> {
       x: coords?.[0] ?? 0,
       y: coords?.[1] ?? 0,
       adressebetegnelse: rensAdresseStreng(hn.adgangsadressebetegnelse),
-      zone: undefined, // Zone kræver Plandata WFS — udeladt for nu
+      // BIZZ-509: Zone er en planloven-attribut og lever i Plandata.dk —
+      // ikke i DAR. Slå op i plandata WFS når vi har WGS84-koordinater.
+      // Ikke-kritisk: null hvis plandata er utilgængelig.
+      zone: coords ? ((await hentZoneFraPlandata(coords[0], coords[1])) ?? undefined) : undefined,
     };
   } catch (err) {
     // DAR fejlede — fallback til DAWA mens den stadig virker
@@ -1006,6 +1009,103 @@ export async function darReverseGeocode(
     );
     return null;
   }
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ * BIZZ-509: Plandata WFS — zone classification (Byzone/Landzone/Sommerhus)
+ * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+/**
+ * BIZZ-509: Zone data (Byzone / Landzone / Sommerhus) is a planloven
+ * concept and officially lives in Plandata.dk — not DAWA. We used to pull
+ * it from DAWA's `adgangsadresser.zone` field because that was the
+ * convenient path, but DAWA shuts down 2026-07-01 so we have to go to
+ * source.
+ *
+ * Plandata.dk's GeoServer WFS is the same one `/api/plandata` already
+ * uses for lokalplaner / kommuneplanrammer. No API key, SRID=4326 prefix
+ * required in CQL (otherwise coords are interpreted as EPSG:25832 and
+ * the spatial query returns nothing).
+ */
+const PLANDATA_WFS_ENDPOINT = 'https://geoserver.plandata.dk/geoserver/wfs';
+
+/**
+ * BIZZ-509: Resolve zone classification for a WGS84 coordinate via
+ * Plandata.dk WFS. Returns "Byzone", "Landzone", "Sommerhuszone" or null.
+ *
+ * The "zonekort_vedtaget_v" layer covers the entire country — a properly
+ * classified coordinate always hits one polygon. Layer naming is
+ * defensively tried against a small list of historical variants because
+ * plandata.dk has renamed layers in the past.
+ *
+ * Never throws. Returns null on any fetch/parse failure so `darHentAdresse`
+ * can continue without zone data.
+ *
+ * @param lng - Længdegrad (WGS84)
+ * @param lat - Breddegrad (WGS84)
+ */
+export async function hentZoneFraPlandata(lng: number, lat: number): Promise<string | null> {
+  // SRID=4326; prefix is load-bearing — without it GeoServer treats coords
+  // as EPSG:25832 (UTM32N) and returns zero features.
+  const cql = encodeURIComponent(`INTERSECTS(geometri,SRID=4326;POINT(${lng} ${lat}))`);
+
+  // Try layers in order. Stop at the first one that returns a feature.
+  // pdk: prefix is the current convention (matches other plandata layers).
+  const LAYERS = ['pdk:theme_pdk_zonekort_vedtaget_v', 'plandk:zonekort'];
+
+  for (const typeName of LAYERS) {
+    try {
+      const url =
+        `${PLANDATA_WFS_ENDPOINT}?service=WFS&version=1.0.0&request=GetFeature` +
+        `&typeName=${encodeURIComponent(typeName)}` +
+        `&outputFormat=application/json` +
+        `&CQL_FILTER=${cql}` +
+        `&maxFeatures=1`;
+
+      const res = await fetch(url, {
+        signal: AbortSignal.timeout(5000),
+        next: { revalidate: 86400 },
+      });
+      if (!res.ok) continue;
+
+      const json = (await res.json()) as {
+        features?: Array<{ properties?: Record<string, unknown> }>;
+      };
+      const props = json.features?.[0]?.properties;
+      if (!props) continue;
+
+      // Field name varies across layer versions. Try each in priority order.
+      const rawZone =
+        props.zone ?? props.zone_navn ?? props.zonekode ?? props.zoneKode ?? props.betegnelse;
+      if (typeof rawZone !== 'string' || rawZone.length === 0) continue;
+
+      return normaliseZone(rawZone);
+    } catch (err) {
+      logger.warn(
+        `hentZoneFraPlandata: layer=${typeName} failed`,
+        err instanceof Error ? err.message : err
+      );
+      // Try next layer
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Normalise zone label returned by plandata.dk to the canonical values
+ * the UI expects. Historically the service has returned numeric codes
+ * ("1"/"2"/"3"), short labels ("Byzone"), and longer phrases
+ * ("Sommerhusområde"). Map them to the trio used throughout the app.
+ *
+ * @param raw - Raw zone string or numeric code from plandata
+ */
+function normaliseZone(raw: string): string {
+  const t = raw.trim().toLowerCase();
+  if (t === '1' || t.startsWith('by')) return 'Byzone';
+  if (t === '2' || t.startsWith('sommerhus')) return 'Sommerhuszone';
+  if (t === '3' || t.startsWith('land')) return 'Landzone';
+  return raw; // pass through unrecognised values so the UI can show them
 }
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

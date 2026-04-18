@@ -370,12 +370,31 @@ async function hentAdresseByBfe(bfe: number, extra?: BfeExtraInfo): Promise<Adre
       };
       const src = data.hits?.hits?.[0]?._source;
       if (src?.roadName) {
+        // VP's adgangsAdresseID er ofte forældet — valider mod current DAWA
+        // så vi ikke linker til en død adresse-UUID. Drop hvis opslag fejler.
+        let freshDawaId: string | null = null;
+        if (src.houseNumber && src.zipcode) {
+          try {
+            const probe = await fetchDawa(
+              `${DAWA_BASE_URL}/adgangsadresser?vejnavn=${encodeURIComponent(src.roadName)}&husnr=${encodeURIComponent(src.houseNumber)}&postnr=${encodeURIComponent(src.zipcode)}&struktur=mini&per_side=1`,
+              { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
+              { caller: 'tinglysning.virksomhed.vp-fresh-dawa-id' }
+            );
+            if (probe.ok) {
+              const arr = (await probe.json()) as Array<{ id?: string }>;
+              freshDawaId = arr?.[0]?.id ?? null;
+            }
+          } catch {
+            // Lad freshDawaId være null
+          }
+        }
+
         return {
           adresse: `${src.roadName} ${src.houseNumber ?? ''}`.trim(),
           postnr: src.zipcode ?? null,
           by: src.postDistrict ?? null,
           kommune: null,
-          dawaId: src.adgangsAdresseID ?? null,
+          dawaId: freshDawaId,
           ejendomstype: src.juridiskKategori ?? null,
         };
       }

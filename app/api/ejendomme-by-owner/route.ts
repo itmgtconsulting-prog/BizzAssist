@@ -530,6 +530,29 @@ async function _hentVPAdresseForBfe(bfe: number): Promise<DawaBfeAdresse> {
         ? `${src.roadName} ${src.houseNumber}`.trim()
         : (src.address.split(',')[0]?.trim() ?? null);
 
+    // BIZZ-521 follow-up: VP's adgangsAdresseID er ofte forældet og
+    // returnerer 404 mod current DAWA — links bliver brudt. Valider mod
+    // DAWA og brug i stedet current adgangsadresse-UUID når muligt.
+    // Hvis opslaget fejler, dropper vi dawaId helt så UI ikke linker til
+    // en død ressource.
+    let freshDawaId: string | null = null;
+    if (src.roadName && src.houseNumber && src.zipcode) {
+      try {
+        const probeUrl = `${DAWA_BASE_URL}/adgangsadresser?vejnavn=${encodeURIComponent(src.roadName)}&husnr=${encodeURIComponent(src.houseNumber)}&postnr=${encodeURIComponent(src.zipcode)}&struktur=mini&per_side=1`;
+        const probeRes = await fetchDawa(
+          probeUrl,
+          { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
+          { caller: 'ejendomme-by-owner.vp-fresh-dawa-id' }
+        );
+        if (probeRes.ok) {
+          const arr = (await probeRes.json()) as Array<{ id?: string }>;
+          freshDawaId = arr?.[0]?.id ?? null;
+        }
+      } catch {
+        // Lad freshDawaId være null
+      }
+    }
+
     return {
       adresse,
       postnr: src.zipcode ?? null,
@@ -537,7 +560,9 @@ async function _hentVPAdresseForBfe(bfe: number): Promise<DawaBfeAdresse> {
       kommune: null,
       kommuneKode: src.municipalityNumber ? String(src.municipalityNumber).padStart(4, '0') : null,
       ejendomstype: src.juridiskKategori ?? null,
-      dawaId: src.adgangsAdresseID ?? null,
+      // Kun behold dawaId hvis current DAWA kender den — ellers null så
+      // UI falder tilbage til ikke-klikbart kort i stedet for brudt link.
+      dawaId: freshDawaId,
     };
   } catch {
     return empty;

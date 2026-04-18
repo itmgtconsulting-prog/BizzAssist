@@ -8225,22 +8225,38 @@ function TinglysningTab({
                         const bilagRefs = Array.isArray(s.bilagRefs)
                           ? (s.bilagRefs as string[])
                           : [];
-                        const pdfUrl =
-                          bilagRefs.length > 0
+                        // BIZZ-474: Når vi har både dokument OG bilag, slå dem
+                        // sammen til én merged PDF via ?uuid=X&bilag=a,b,c.
+                        // Fallback til rent bilag hvis dokumentet mangler (typisk
+                        // for pre-digitale servitutter).
+                        const pdfUrl = docId
+                          ? bilagRefs.length > 0
+                            ? `/api/tinglysning/dokument?uuid=${docId}&bilag=${bilagRefs.join(',')}`
+                            : `/api/tinglysning/dokument?uuid=${docId}`
+                          : bilagRefs.length > 0
                             ? `/api/tinglysning/dokument?bilag=${bilagRefs[0]}`
-                            : docId
-                              ? `/api/tinglysning/dokument?uuid=${docId}`
-                              : null;
+                            : null;
+                        const label =
+                          docId && bilagRefs.length > 0
+                            ? `PDF + ${bilagRefs.length} ${bilagRefs.length === 1 ? 'bilag' : 'bilag'}`
+                            : 'PDF';
                         return (
                           pdfUrl && (
                             <a
                               href={pdfUrl}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="inline-flex items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
+                              className="inline-flex items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300 whitespace-nowrap"
+                              title={
+                                docId && bilagRefs.length > 0
+                                  ? da
+                                    ? 'Dokument + alle bilag i én samlet PDF'
+                                    : 'Document + all attachments in one combined PDF'
+                                  : undefined
+                              }
                             >
                               <FileText size={11} />
-                              PDF
+                              {label}
                             </a>
                           )
                         );

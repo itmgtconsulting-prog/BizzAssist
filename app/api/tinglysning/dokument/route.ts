@@ -12,6 +12,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import https from 'https';
 import fs from 'fs';
 import PDFDocument from 'pdfkit';
+import { PDFDocument as PdfLibDocument } from 'pdf-lib';
 import { logger } from '@/app/lib/logger';
 import { companyInfo } from '@/app/lib/companyInfo';
 import { resolveTenantId } from '@/lib/api/auth';
@@ -87,6 +88,81 @@ async function tlFetch(urlPath: string): Promise<string> {
   const result = await tlFetchShared(urlPath, { accept: 'application/xml' });
   if (result.status !== 200) throw new Error(`HTTP ${result.status}`);
   return result.body;
+}
+
+/**
+ * BIZZ-474: Henter original bilag-PDF fra Tinglysning via mTLS.
+ * Returnerer Buffer ved succes, null ved fejl så merge kan fortsætte med
+ * resterende bilag uden at hele download-flowet fejler.
+ *
+ * @param bilagUuid - Bilagsreference-UUID
+ */
+async function fetchBilagPdf(bilagUuid: string): Promise<Buffer | null> {
+  try {
+    const pfx = loadCert();
+    return await new Promise<Buffer>((resolve, reject) => {
+      const url = new URL(TL_BASE + `/tinglysning/ssl/bilag/${bilagUuid}`);
+      const r = https.request(
+        {
+          hostname: url.hostname,
+          port: 443,
+          path: url.pathname,
+          method: 'GET',
+          pfx,
+          passphrase: CERT_PASSWORD,
+          rejectUnauthorized: false,
+          timeout: 30000,
+          headers: { Accept: 'application/pdf' },
+        },
+        (res) => {
+          const chunks: Buffer[] = [];
+          res.on('data', (d) => chunks.push(d));
+          res.on('end', () =>
+            res.statusCode === 200
+              ? resolve(Buffer.concat(chunks))
+              : reject(new Error(`HTTP ${res.statusCode}`))
+          );
+        }
+      );
+      r.on('error', reject);
+      r.on('timeout', () => {
+        r.destroy();
+        reject(new Error('Timeout'));
+      });
+      r.end();
+    });
+  } catch (err) {
+    logger.warn(`[tinglysning/dokument] bilag ${bilagUuid} fetch fejlede:`, err);
+    return null;
+  }
+}
+
+/**
+ * BIZZ-474: Fletter flere PDF-buffere til én via pdf-lib. Bruges til at
+ * samle hoveddokumentet med alle tilknyttede bilag i én download.
+ * Malformede bilag springes over (logges), så et enkelt ødelagt bilag
+ * ikke blokkerer hele flettet.
+ *
+ * @param main   - Primær PDF (dokumentet)
+ * @param extras - Bilag-PDF'er, i rækkefølge de skal appendes
+ */
+async function mergePdfs(main: Buffer, extras: Buffer[]): Promise<Buffer> {
+  const merged = await PdfLibDocument.create();
+  const mainDoc = await PdfLibDocument.load(main, { ignoreEncryption: true });
+  const mainPages = await merged.copyPages(mainDoc, mainDoc.getPageIndices());
+  mainPages.forEach((p) => merged.addPage(p));
+
+  for (const extra of extras) {
+    try {
+      const doc = await PdfLibDocument.load(extra, { ignoreEncryption: true });
+      const pages = await merged.copyPages(doc, doc.getPageIndices());
+      pages.forEach((p) => merged.addPage(p));
+    } catch (err) {
+      logger.warn('[tinglysning/dokument] bilag kunne ikke flettes:', err);
+    }
+  }
+
+  return Buffer.from(await merged.save());
 }
 
 /** Parser XML og udtrækker alle felter med læsbare labels */
@@ -819,11 +895,47 @@ export async function GET(req: NextRequest) {
     const alias = xml.match(/DokumentAliasIdentifikator[^>]*>([^<]+)/)?.[1] ?? uuid;
     const filename = `tinglysning-${alias}.pdf`;
 
-    return new NextResponse(new Uint8Array(pdfBuffer), {
+    // BIZZ-474: Hvis klienten har sendt bilag=uuid1,uuid2,... med requesten,
+    // hent hver bilag-PDF via mTLS og flet til én samlet download. Dokumentet
+    // kommer først, derefter bilagene i samme rækkefølge som klient-siden
+    // sender dem. Fejlede bilag springes over (logges), så ét ødelagt bilag
+    // ikke blokkerer hele flettet.
+    const bilagParam = req.nextUrl.searchParams.get('bilag');
+    const bilagUuids = bilagParam
+      ? bilagParam
+          .split(',')
+          .map((s) => s.trim())
+          .filter((s) => /^[0-9a-f-]{36}$/.test(s))
+      : [];
+
+    if (bilagUuids.length === 0) {
+      return new NextResponse(new Uint8Array(pdfBuffer), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/pdf',
+          'Content-Disposition': `inline; filename="${filename}"`,
+        },
+      });
+    }
+
+    // Hent alle bilag parallelt (capped så vi ikke rammer Tinglysnings endpoint for hårdt)
+    const CONCURRENCY = 4;
+    const bilagPdfs: Buffer[] = [];
+    for (let i = 0; i < bilagUuids.length; i += CONCURRENCY) {
+      const batch = bilagUuids.slice(i, i + CONCURRENCY);
+      const results = await Promise.all(batch.map((id) => fetchBilagPdf(id)));
+      for (const r of results) if (r) bilagPdfs.push(r);
+    }
+
+    const mergedBuffer = await mergePdfs(pdfBuffer, bilagPdfs);
+    const mergedFilename = `tinglysning-${alias}-med-bilag.pdf`;
+    return new NextResponse(new Uint8Array(mergedBuffer), {
       status: 200,
       headers: {
         'Content-Type': 'application/pdf',
-        'Content-Disposition': `inline; filename="${filename}"`,
+        'Content-Disposition': `inline; filename="${mergedFilename}"`,
+        'X-Bilag-Merged': String(bilagPdfs.length),
+        'X-Bilag-Requested': String(bilagUuids.length),
       },
     });
   } catch (err) {

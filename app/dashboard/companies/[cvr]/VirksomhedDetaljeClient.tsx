@@ -65,6 +65,7 @@ import type { EjendomSummary } from '@/app/api/ejendomme-by-owner/route';
 import type { PersonbogHaeftelse } from '@/app/api/tinglysning/personbog/route';
 import type { VirksomhedEjendomsrolle } from '@/app/api/tinglysning/virksomhed/route';
 import type { BilbogBil } from '@/app/api/tinglysning/bilbog/route';
+import type { AndelsbogBolig } from '@/app/api/tinglysning/andelsbog/route';
 import PropertyOwnerCard from '@/app/components/ejendomme/PropertyOwnerCard';
 import { saveRecentCompany } from '@/app/lib/recentCompanies';
 import { recordRecentVisit } from '@/app/lib/recordRecentVisit';
@@ -572,6 +573,16 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
   const [bilbogOpen, setBilbogOpen] = useState(false);
   const bilbogFetchedRef = useRef(false);
 
+  /**
+   * BIZZ-530 — Andelsbog data fra e-TL andelsbolig/virksomhed + andelsbolig/{uuid}.
+   * Lazy-loadet sammen med personbog når Tinglysning-tab'en aktiveres.
+   */
+  const [andelsbogData, setAndelsbogData] = useState<AndelsbogBolig[]>([]);
+  const [andelsbogLoading, setAndelsbogLoading] = useState(false);
+  const [andelsbogFejl, setAndelsbogFejl] = useState<string | null>(null);
+  const [andelsbogOpen, setAndelsbogOpen] = useState(false);
+  const andelsbogFetchedRef = useRef(false);
+
   // Auto-åbn Personbogen-rækken når data loader ind og der er hæftelser
 
   useEffect(() => {
@@ -984,6 +995,35 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
     }
   }, [cvr, c.bilbogError]);
 
+  /**
+   * BIZZ-530 — Lazy-loader andelsbogsdata når Tinglysning-tab aktiveres.
+   * Fetcher kun én gang per CVR.
+   */
+  const fetchAndelsbog = useCallback(async () => {
+    if (andelsbogFetchedRef.current) return;
+    andelsbogFetchedRef.current = true;
+    setAndelsbogLoading(true);
+    setAndelsbogFejl(null);
+
+    try {
+      const res = await fetch(`/api/tinglysning/andelsbog?cvr=${encodeURIComponent(cvr)}`);
+      const json = await res.json();
+      if (!res.ok) {
+        setAndelsbogFejl(json.error ?? c.andelsbogError);
+        return;
+      }
+      if (json.fejl) {
+        setAndelsbogFejl(json.fejl);
+        return;
+      }
+      setAndelsbogData(json.andele ?? []);
+    } catch {
+      setAndelsbogFejl(c.andelsbogError);
+    } finally {
+      setAndelsbogLoading(false);
+    }
+  }, [cvr, c.andelsbogError]);
+
   /** Trigger regnskab-fetch når financials-tab aktiveres */
   useEffect(() => {
     if (aktivTab === 'financials') {
@@ -1007,6 +1047,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
       fetchPersonbog();
       fetchFastEjendom();
       fetchBilbog();
+      fetchAndelsbog();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aktivTab]);
@@ -3891,14 +3932,102 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                   )}
                 </div>
 
-                {/* ── Andelsbogen — placeholder (0 ind til BIZZ-530 er implementeret) ── */}
-                <div className="flex items-center justify-between px-4 py-2.5">
-                  <div className="flex items-center gap-3">
-                    <span className="w-4 flex-shrink-0" />
-                    <FileText size={15} className="text-slate-600" />
-                    <span className="text-slate-400 text-sm">{c.cooperativeBook} (0)</span>
+                {/* ── Andelsbogen (BIZZ-530) — expandabel med rigtige data ── */}
+                <div>
+                  <div className="flex items-center justify-between px-4 py-2.5 hover:bg-slate-800/30 transition-colors">
+                    <button
+                      onClick={() => setAndelsbogOpen((prev) => !prev)}
+                      className="flex items-center gap-3 flex-1 text-left min-w-0"
+                      disabled={andelsbogData.length === 0 && !andelsbogLoading}
+                    >
+                      <span className="flex-shrink-0 w-4">
+                        {andelsbogLoading ? (
+                          <Loader2 size={12} className="animate-spin text-slate-500" />
+                        ) : andelsbogData.length === 0 ? (
+                          <span />
+                        ) : andelsbogOpen ? (
+                          <ChevronDown size={13} className="text-slate-500" />
+                        ) : (
+                          <ChevronRight size={13} className="text-slate-500" />
+                        )}
+                      </span>
+                      <FileText
+                        size={15}
+                        className={andelsbogData.length > 0 ? 'text-slate-500' : 'text-slate-600'}
+                      />
+                      <span
+                        className={
+                          andelsbogData.length > 0
+                            ? 'text-slate-200 text-sm'
+                            : 'text-slate-400 text-sm'
+                        }
+                      >
+                        {c.cooperativeBook}
+                        <span className="text-slate-500 text-xs ml-1">
+                          ({andelsbogLoading ? '…' : andelsbogData.length})
+                        </span>
+                      </span>
+                    </button>
                   </div>
-                  <Download size={15} className="text-slate-700 opacity-40" />
+                  {andelsbogOpen && andelsbogData.length > 0 && (
+                    <div className="border-t border-slate-700/20 bg-slate-900/30 px-4 py-3 space-y-3">
+                      {andelsbogFejl && <div className="text-xs text-red-400">{andelsbogFejl}</div>}
+                      {andelsbogData.map((andel) => (
+                        <div
+                          key={andel.uuid}
+                          className="bg-slate-800/40 border border-slate-700/40 rounded-lg p-3"
+                        >
+                          <div className="text-sm text-slate-100 font-medium">
+                            {andel.adresse ?? '—'}
+                          </div>
+                          {(andel.postnr || andel.by) && (
+                            <div className="text-xs text-slate-400 mt-0.5">
+                              {[andel.postnr, andel.by].filter(Boolean).join(' ')}
+                            </div>
+                          )}
+                          {andel.haeftelser.length === 0 ? (
+                            <div className="mt-2 text-xs text-slate-500">
+                              {c.andelsbogIngenHaeftelser}
+                            </div>
+                          ) : (
+                            <ul className="mt-2 space-y-1">
+                              {andel.haeftelser.map((h, i) => (
+                                <li
+                                  key={`${andel.uuid}-${h.dokumentId ?? i}`}
+                                  className="text-xs text-slate-400 flex flex-wrap items-baseline gap-x-3"
+                                >
+                                  <span className="text-slate-300">{h.type}</span>
+                                  {h.hovedstol != null && (
+                                    <span>
+                                      {h.hovedstol.toLocaleString('da-DK')} {h.valuta}
+                                    </span>
+                                  )}
+                                  {h.kreditor && (
+                                    <span className="text-slate-500">
+                                      {c.personbogKreditor}: {h.kreditor}
+                                    </span>
+                                  )}
+                                  {h.tinglysningsdato && (
+                                    <span className="text-slate-600">{h.tinglysningsdato}</span>
+                                  )}
+                                  {h.dokumentId && (
+                                    <a
+                                      href={`/api/tinglysning/dokument?uuid=${h.dokumentId}`}
+                                      download
+                                      className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300"
+                                    >
+                                      <Download size={10} />
+                                      PDF
+                                    </a>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {/*

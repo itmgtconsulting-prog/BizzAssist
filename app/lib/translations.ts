@@ -468,6 +468,12 @@ export const translations = {
       bilbogRegnr: 'Reg.nr.',
       bilbogAargang: 'Årgang',
       bilbogIngenHaeftelser: 'Ingen hæftelser',
+      // BIZZ-530 — Andelsbog sektion på Tinglysning-tab
+      andelsbogError: 'Kunne ikke hente andelsbogsdata',
+      andelsbogEmpty: 'Ingen tinglyste andele fundet',
+      andelsbogEtage: 'Etage',
+      andelsbogSide: 'Side',
+      andelsbogIngenHaeftelser: 'Ingen hæftelser',
     },
 
     /* ─── Person page ─────────────────────────────────────────────── */
@@ -1038,6 +1044,12 @@ export const translations = {
       bilbogRegnr: 'Reg. no.',
       bilbogAargang: 'Year',
       bilbogIngenHaeftelser: 'No liens',
+      // BIZZ-530 — Cooperative register section on Tinglysning tab
+      andelsbogError: 'Could not load cooperative register data',
+      andelsbogEmpty: 'No registered cooperative units found',
+      andelsbogEtage: 'Floor',
+      andelsbogSide: 'Side',
+      andelsbogIngenHaeftelser: 'No liens',
     },
 
     /* ─── Person page ─────────────────────────────────────────────── */

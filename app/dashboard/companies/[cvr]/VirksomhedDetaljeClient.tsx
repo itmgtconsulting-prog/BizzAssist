@@ -3957,41 +3957,113 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                             <div className="text-xs text-red-400 mb-2">{fastEjendomFejl}</div>
                           )}
                           {/*
-                            BIZZ-521 follow-up: Genbrug PropertyOwnerCard så kortene
-                            ser ud som i ejendoms-portefølje-tab'en og har adresse +
-                            postnummer som overskrift (ikke BFE-nummer).
-                            Mapper Tinglysnings-rækker til EjendomSummary-formen.
+                            BIZZ-521 follow-up: Brug tinglysnings-specifik kort-variant.
+                            PropertyOwnerCard's auto-enrichment (current ejer, vurdering)
+                            er misvisende i tinglysnings-kontekst fordi vi viser
+                            historiske adkomster — ikke den aktuelle ejer.
                           */}
                           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
                             {(() => {
-                              // De-dupliker på BFE — én ejendom kan optræde flere
-                              // gange hvis der er flere dokumenter. Kortet
-                              // repræsenterer ejendommen, ikke dokumentet.
-                              const seen = new Set<number>();
-                              return rows
-                                .filter((r) => {
-                                  if (seen.has(r.bfe)) return false;
-                                  seen.add(r.bfe);
-                                  return true;
-                                })
-                                .map((row) => (
-                                  <PropertyOwnerCard
-                                    key={`${rolle}-${row.bfe}`}
-                                    ejendom={{
-                                      bfeNummer: row.bfe,
-                                      ownerCvr: cvr,
-                                      adresse: row.adresse,
-                                      postnr: row.postnr,
-                                      by: row.by,
-                                      kommune: row.kommune,
-                                      kommuneKode: null,
-                                      ejendomstype: row.ejendomstype,
-                                      dawaId: row.dawaId,
-                                    }}
-                                    showOwner={false}
-                                    lang={lang}
-                                  />
-                                ));
+                              // De-dupliker på BFE: samler alle dokumenter for samme
+                              // ejendom i ét kort, så én ejendom = ét kort (med evt.
+                              // flere adkomst-typer listet).
+                              const groups = new Map<
+                                number,
+                                { first: VirksomhedEjendomsrolle; all: VirksomhedEjendomsrolle[] }
+                              >();
+                              for (const r of rows) {
+                                const g = groups.get(r.bfe);
+                                if (g) g.all.push(r);
+                                else groups.set(r.bfe, { first: r, all: [r] });
+                              }
+                              return Array.from(groups.values()).map(({ first, all }) => {
+                                const heading =
+                                  first.adresse ??
+                                  first.matrikel ??
+                                  `BFE ${first.bfe.toLocaleString('da-DK')}`;
+                                const subLine =
+                                  first.postnr && first.by
+                                    ? `${first.postnr} ${first.by}`
+                                    : first.adresse
+                                      ? first.matrikel
+                                      : first.kommune;
+                                const detailHref = first.dawaId
+                                  ? `/dashboard/ejendomme/${first.dawaId}`
+                                  : null;
+                                const adkomster = Array.from(
+                                  new Set(
+                                    all.map((r) => r.adkomstType).filter((x): x is string => !!x)
+                                  )
+                                );
+                                const CardBody = (
+                                  <div
+                                    className={`group relative flex flex-col bg-slate-800/60 border rounded-xl overflow-hidden transition-all ${
+                                      detailHref
+                                        ? 'border-slate-700/50 hover:border-emerald-500/40 hover:bg-slate-800/80'
+                                        : 'border-slate-700/40'
+                                    }`}
+                                  >
+                                    <div className="h-1 flex-shrink-0 bg-gradient-to-r from-emerald-600/60 to-emerald-500/20" />
+                                    <div className="p-4 flex flex-col gap-2">
+                                      <div className="flex items-start gap-2">
+                                        <MapPin
+                                          size={14}
+                                          className="mt-0.5 flex-shrink-0 text-emerald-500"
+                                        />
+                                        <div className="min-w-0">
+                                          <p className="text-white font-medium text-sm leading-snug truncate">
+                                            {heading}
+                                          </p>
+                                          {subLine && (
+                                            <p className="text-slate-400 text-xs mt-0.5 truncate">
+                                              {subLine}
+                                            </p>
+                                          )}
+                                        </div>
+                                      </div>
+                                      <div className="flex flex-wrap gap-1.5">
+                                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] text-slate-400 bg-slate-900/60 font-mono">
+                                          BFE {first.bfe.toLocaleString('da-DK')}
+                                        </span>
+                                        {first.ejendomstype && (
+                                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] text-slate-300 bg-slate-900/60">
+                                            {first.ejendomstype}
+                                          </span>
+                                        )}
+                                        {adkomster.map((a) => (
+                                          <span
+                                            key={a}
+                                            className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] text-emerald-300 bg-emerald-900/30"
+                                          >
+                                            {c.fastEjendomAdkomst}: {a}
+                                          </span>
+                                        ))}
+                                      </div>
+                                      {all.some((r) => r.dokumentAlias) && (
+                                        <div className="text-[10px] text-slate-500 font-mono pt-1 border-t border-slate-700/30">
+                                          {all
+                                            .map((r) => r.dokumentAlias)
+                                            .filter((a): a is string => !!a)
+                                            .slice(0, 3)
+                                            .join(' · ')}
+                                          {all.filter((r) => r.dokumentAlias).length > 3 && ' …'}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                                return detailHref ? (
+                                  <Link
+                                    key={`${rolle}-${first.bfe}`}
+                                    href={detailHref}
+                                    className="block"
+                                  >
+                                    {CardBody}
+                                  </Link>
+                                ) : (
+                                  <div key={`${rolle}-${first.bfe}`}>{CardBody}</div>
+                                );
+                              });
                             })()}
                           </div>
                         </div>

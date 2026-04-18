@@ -113,6 +113,16 @@ interface RawInfo {
   }>;
 }
 
+/**
+ * Intern cache-nøgle per BFE — holder både primary-matrikel og ejerlavskode
+ * fra e-TL svaret så vi kan falde tilbage til DAWA /adgangsadresser-opslag
+ * hvis /bfe/{bfe} er tom.
+ */
+interface BfeExtraInfo {
+  ejerlavKode: number | null;
+  matrikelnr: string | null;
+}
+
 // ─── Parsing ────────────────────────────────────────────────────────────────
 
 /**
@@ -143,7 +153,10 @@ function formatMatrikel(matrikler?: Matrikel[]): string {
  * @param raw - Raw JSON fra soegvirksomhed-endpointet
  * @returns Liste af flade ejendomsrolle-rækker
  */
-export function parseVirksomhedSoegResultat(raw: unknown): VirksomhedEjendomsrolle[] {
+export function parseVirksomhedSoegResultat(
+  raw: unknown,
+  extraOut?: Map<number, BfeExtraInfo>
+): VirksomhedEjendomsrolle[] {
   const resultat = (raw as RawSoegResultat | null)?.VirksomhedSoegResultat;
   const samling = resultat?.VirksomhedSoegningInformationSamling ?? [];
   const out: VirksomhedEjendomsrolle[] = [];
@@ -156,6 +169,23 @@ export function parseVirksomhedSoegResultat(raw: unknown): VirksomhedEjendomsrol
     const matrikel = formatMatrikel(info.EjendomIdentifikator?.Matrikel);
     const rolle = info.RolleTypeIdentifikator ?? 'ukendt';
     const dokumenter = info.DokumentRettighedSamling ?? [];
+
+    // Saml ejerlavskode + matrikelnr til fallback-adresse-opslag.
+    // Første matrikel-entry vinder — overwriter ikke hvis BFE allerede set.
+    if (extraOut && !extraOut.has(bfe)) {
+      const m = info.EjendomIdentifikator?.Matrikel?.[0];
+      const kodeRaw = m?.CadastralDistrictIdentifier;
+      const ejerlavKode =
+        typeof kodeRaw === 'number'
+          ? kodeRaw
+          : typeof kodeRaw === 'string'
+            ? Number(kodeRaw) || null
+            : null;
+      const matrikelnr = m?.Matrikelnummer != null ? String(m.Matrikelnummer) : null;
+      if (ejerlavKode || matrikelnr) {
+        extraOut.set(bfe, { ejerlavKode, matrikelnr });
+      }
+    }
 
     if (dokumenter.length === 0) {
       // Ingen dokumenter — stadig en gyldig række (fx ved manglende data)
@@ -197,64 +227,108 @@ export function parseVirksomhedSoegResultat(raw: unknown): VirksomhedEjendomsrol
   return out;
 }
 
-/**
- * Slår adresseoplysninger op for ét BFE via DAWA /bfe/{bfe} endpointet.
- * Samme shape som /api/ejendomme-by-owner bruger — holder UI'en konsistent.
- * Returnerer null-felter ved fejl, så caller kan falde tilbage til BFE-vis.
- */
-async function hentAdresseByBfe(bfe: number): Promise<{
+type AdresseOplysninger = {
   adresse: string | null;
   postnr: string | null;
   by: string | null;
   kommune: string | null;
   dawaId: string | null;
   ejendomstype: string | null;
-}> {
-  const empty = {
-    adresse: null,
-    postnr: null,
-    by: null,
-    kommune: null,
-    dawaId: null,
-    ejendomstype: null,
-  };
+};
 
+const EMPTY_ADRESSE: AdresseOplysninger = {
+  adresse: null,
+  postnr: null,
+  by: null,
+  kommune: null,
+  dawaId: null,
+  ejendomstype: null,
+};
+
+/**
+ * Slår adresseoplysninger op for ét BFE. Tre-trins strategi:
+ *   1. DAWA /bfe/{bfe} — fungerer for nuværende "samlet fast ejendom"
+ *   2. Fallback: DAWA /adgangsadresser?ejerlavkode=X&matrikelnr=Y — dækker
+ *      ældre/omnummererede BFE'er så længe matriklen stadig er aktiv
+ *   3. Giv op — UI falder tilbage til matrikel-strengen fra e-TL
+ *
+ * Samme shape som /api/ejendomme-by-owner bruger — holder UI'en konsistent.
+ */
+async function hentAdresseByBfe(bfe: number, extra?: BfeExtraInfo): Promise<AdresseOplysninger> {
+  // Trin 1: DAWA /bfe/{bfe}
   try {
     const res = await fetchDawa(
       `${DAWA_BASE_URL}/bfe/${bfe}`,
       { signal: AbortSignal.timeout(8000), next: { revalidate: 86400 } },
       { caller: 'tinglysning.virksomhed.bfe' }
     );
-    if (!res.ok) return empty;
-
-    const json = (await res.json()) as {
-      ejendomstype?: string;
-      beliggenhedsadresse?: {
-        id?: string;
-        vejnavn?: string;
-        husnr?: string;
-        postnr?: string;
-        postnrnavn?: string;
-        kommunenavn?: string;
+    if (res.ok) {
+      const json = (await res.json()) as {
+        ejendomstype?: string;
+        beliggenhedsadresse?: {
+          id?: string;
+          vejnavn?: string;
+          husnr?: string;
+          postnr?: string;
+          postnrnavn?: string;
+          kommunenavn?: string;
+        };
+        jordstykker?: Array<{ husnumre?: Array<{ id?: string }> }>;
       };
-      jordstykker?: Array<{ husnumre?: Array<{ id?: string }> }>;
-    };
-
-    const bel = json.beliggenhedsadresse;
-    const adresse = bel?.vejnavn ? `${bel.vejnavn} ${bel.husnr ?? ''}`.trim() : null;
-    const dawaId = bel?.id ?? json.jordstykker?.[0]?.husnumre?.[0]?.id ?? null;
-
-    return {
-      adresse,
-      postnr: bel?.postnr ?? null,
-      by: bel?.postnrnavn ?? null,
-      kommune: bel?.kommunenavn ?? null,
-      dawaId,
-      ejendomstype: json.ejendomstype ?? null,
-    };
+      const bel = json.beliggenhedsadresse;
+      if (bel?.vejnavn) {
+        return {
+          adresse: `${bel.vejnavn} ${bel.husnr ?? ''}`.trim(),
+          postnr: bel.postnr ?? null,
+          by: bel.postnrnavn ?? null,
+          kommune: bel.kommunenavn ?? null,
+          dawaId: bel.id ?? json.jordstykker?.[0]?.husnumre?.[0]?.id ?? null,
+          ejendomstype: json.ejendomstype ?? null,
+        };
+      }
+    }
   } catch {
-    return empty;
+    // Fald igennem til trin 2
   }
+
+  // Trin 2: Fallback via ejerlav + matrikelnr fra e-TL svaret. Mange
+  // historiske BFE'er kender DAWA ikke, men adgangsadresser-endpointet
+  // accepterer ejerlavkode + matrikelnr og returnerer nuværende adresse.
+  if (extra?.ejerlavKode && extra.matrikelnr) {
+    try {
+      const url = `${DAWA_BASE_URL}/adgangsadresser?ejerlavkode=${extra.ejerlavKode}&matrikelnr=${encodeURIComponent(extra.matrikelnr)}&struktur=mini&per_side=1`;
+      const res = await fetchDawa(
+        url,
+        { signal: AbortSignal.timeout(6000), next: { revalidate: 86400 } },
+        { caller: 'tinglysning.virksomhed.adgangsadresser-fallback' }
+      );
+      if (res.ok) {
+        const arr = (await res.json()) as Array<{
+          id?: string;
+          vejnavn?: string;
+          husnr?: string;
+          postnr?: string;
+          postnrnavn?: string;
+          kommunenavn?: string;
+        }>;
+        const a = arr?.[0];
+        if (a?.vejnavn) {
+          return {
+            adresse: `${a.vejnavn} ${a.husnr ?? ''}`.trim(),
+            postnr: a.postnr ?? null,
+            by: a.postnrnavn ?? null,
+            kommune: a.kommunenavn ?? null,
+            dawaId: a.id ?? null,
+            ejendomstype: null,
+          };
+        }
+      }
+    } catch {
+      // Fald igennem til tom
+    }
+  }
+
+  return EMPTY_ADRESSE;
 }
 
 /**
@@ -266,15 +340,18 @@ async function hentAdresseByBfe(bfe: number): Promise<{
  * hamre DAWA når en virksomhed har mange ejendomme.
  */
 async function berigMedAdresser(
-  rows: VirksomhedEjendomsrolle[]
+  rows: VirksomhedEjendomsrolle[],
+  extraByBfe: Map<number, BfeExtraInfo>
 ): Promise<VirksomhedEjendomsrolle[]> {
   const unikkeBfeer = Array.from(new Set(rows.map((r) => r.bfe)));
   const CONCURRENCY = 8;
-  const cache = new Map<number, Awaited<ReturnType<typeof hentAdresseByBfe>>>();
+  const cache = new Map<number, AdresseOplysninger>();
 
   for (let i = 0; i < unikkeBfeer.length; i += CONCURRENCY) {
     const chunk = unikkeBfeer.slice(i, i + CONCURRENCY);
-    const results = await Promise.all(chunk.map((bfe) => hentAdresseByBfe(bfe)));
+    const results = await Promise.all(
+      chunk.map((bfe) => hentAdresseByBfe(bfe, extraByBfe.get(bfe)))
+    );
     chunk.forEach((bfe, idx) => cache.set(bfe, results[idx]));
   }
 
@@ -296,7 +373,8 @@ async function berigMedAdresser(
  */
 async function hentAllePagenerede(
   cvr: string,
-  rolle: 'ejer' | 'kreditor'
+  rolle: 'ejer' | 'kreditor',
+  extraOut: Map<number, BfeExtraInfo>
 ): Promise<VirksomhedEjendomsrolle[]> {
   const ANTAL = 25;
   const PAGE_LIMIT = 20; // safety cap — 500 dokumenter er rigeligt
@@ -323,7 +401,7 @@ async function hentAllePagenerede(
       break;
     }
 
-    const side = parseVirksomhedSoegResultat(parsed);
+    const side = parseVirksomhedSoegResultat(parsed, extraOut);
     resultater.push(...side);
 
     // Færre end antal per side = sidste side
@@ -369,17 +447,18 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
     // Hent ejer + kreditor i parallel — hver egen paginerings-løkke.
     // Anmoder/debitor/andre roller er ude af scope for BIZZ-521.
+    // extraByBfe samler ejerlav+matrikel per BFE til fallback-opslag.
+    const extraByBfe = new Map<number, BfeExtraInfo>();
     const [ejerRaw, kreditorRaw] = await Promise.all([
-      hentAllePagenerede(cvr, 'ejer'),
-      hentAllePagenerede(cvr, 'kreditor'),
+      hentAllePagenerede(cvr, 'ejer', extraByBfe),
+      hentAllePagenerede(cvr, 'kreditor', extraByBfe),
     ]);
 
-    // Berig BFE'er med adresseoplysninger fra DAWA så UI kan vise adresse
-    // som overskrift (samme kort-design som ejendoms-portefølje). Én enkelt
-    // deduplikeret runde dækker både ejer- og kreditor-rækker.
+    // Berig BFE'er med adresseoplysninger: DAWA /bfe/{bfe} → fallback til
+    // /adgangsadresser?ejerlavkode=X&matrikelnr=Y for ældre BFE'er.
     const [ejer, kreditor] = await Promise.all([
-      berigMedAdresser(ejerRaw),
-      berigMedAdresser(kreditorRaw),
+      berigMedAdresser(ejerRaw, extraByBfe),
+      berigMedAdresser(kreditorRaw, extraByBfe),
     ]);
 
     const result: VirksomhedTinglysningData = { cvr, ejer, kreditor };

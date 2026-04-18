@@ -71,6 +71,13 @@ export interface CVRPublicData {
     zipcode: string;
     city: string;
     industrydesc: string | null;
+    /**
+     * BIZZ-514: Bibrancher per produktionsenhed. Kun sat når mindst én
+     * bibranche findes.
+     */
+    secondaryIndustries?: { code: number | null; desc: string | null }[];
+    /** BIZZ-514: Antal ansatte per P-enhed (eksakt tal eller interval "10-19") */
+    employees?: string | null;
     /** Telefonnummer for produktionsenheden */
     phone: string | null;
     /** Email for produktionsenheden */
@@ -812,6 +819,10 @@ async function fetchProduktionsenheder(
         'VrproduktionsEnhed.navne',
         'VrproduktionsEnhed.beliggenhedsadresse',
         'VrproduktionsEnhed.hovedbranche',
+        // BIZZ-514: Bibrancher per P-enhed (samme mønster som hoved-virksomhed)
+        'VrproduktionsEnhed.bibranche1',
+        'VrproduktionsEnhed.bibranche2',
+        'VrproduktionsEnhed.bibranche3',
         'VrproduktionsEnhed.produktionsEnhedMetadata',
         'VrproduktionsEnhed.telefonNummer',
         'VrproduktionsEnhed.elektroniskPost',
@@ -871,11 +882,43 @@ async function fetchProduktionsenheder(
           : [];
         const peBranche = gyldigNu(peBrancher)?.branchetekst ?? null;
 
-        // Metadata — sammensatStatus + hovedafdeling
+        // BIZZ-514: Bibrancher per P-enhed
+        const peSecondary: { code: number | null; desc: string | null }[] = [];
+        for (const key of ['bibranche1', 'bibranche2', 'bibranche3']) {
+          const raw = Array.isArray(pe[key])
+            ? (pe[key] as (Periodic & { branchekode?: string | number; branchetekst?: string })[])
+            : [];
+          const nu = gyldigNu(raw);
+          if (!nu) continue;
+          const code =
+            nu.branchekode != null
+              ? typeof nu.branchekode === 'number'
+                ? nu.branchekode
+                : parseInt(String(nu.branchekode), 10)
+              : null;
+          const desc = typeof nu.branchetekst === 'string' ? nu.branchetekst : null;
+          if (code != null || desc) peSecondary.push({ code, desc });
+        }
+
+        // Metadata — sammensatStatus + hovedafdeling + ansatte
         const peMeta = pe.produktionsEnhedMetadata as Record<string, unknown> | undefined;
         const peStatus =
           typeof peMeta?.sammensatStatus === 'string' ? peMeta.sammensatStatus : null;
         const peAktiv = peStatus !== 'Ophørt';
+        // BIZZ-514: hovedProduktionsEnhed-flag fra metadata (tidligere hardcoded false)
+        const peMain =
+          typeof peMeta?.hovedProduktionsEnhed === 'boolean' ? peMeta.hovedProduktionsEnhed : false;
+        // BIZZ-514: Antal ansatte — nyesteErstMaanedsbeskaeftigelse.antalAnsatte
+        // eller interval-kode hvis ikke eksakt tal. Matcher virksomhedens ansatte-logik.
+        const peMaaned = peMeta?.nyesteErstMaanedsbeskaeftigelse as
+          | Record<string, unknown>
+          | undefined;
+        const peEmployees =
+          peMaaned?.antalAnsatte != null
+            ? String(peMaaned.antalAnsatte)
+            : typeof peMaaned?.intervalKodeAntalAnsatte === 'string'
+              ? (intervalKodeMap[peMaaned.intervalKodeAntalAnsatte as string] ?? null)
+              : null;
 
         // Telefon
         const peTelefoner = Array.isArray(pe.telefonNummer)
@@ -891,12 +934,14 @@ async function fetchProduktionsenheder(
 
         return {
           pno,
-          main: false,
+          main: peMain,
           name: peName,
           address: `${peVej} ${peHus}${peBog}`.trim(),
           zipcode: pePost,
           city: peBy,
           industrydesc: peBranche,
+          secondaryIndustries: peSecondary.length > 0 ? peSecondary : undefined,
+          employees: peEmployees,
           phone: peTlf,
           email: peEmail,
           active: peAktiv,

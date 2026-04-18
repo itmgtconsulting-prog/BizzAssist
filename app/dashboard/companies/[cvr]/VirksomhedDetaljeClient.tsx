@@ -2205,6 +2205,8 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                             <th className="pb-2 pr-4">{c.name}</th>
                             <th className="pb-2 pr-4">{c.address}</th>
                             <th className="pb-2 pr-4">{c.industry}</th>
+                            {/* BIZZ-514: Ansatte-kolonne per P-enhed */}
+                            <th className="pb-2 pr-4">{c.employeesShort}</th>
                             <th className="pb-2">Status</th>
                           </tr>
                         </thead>
@@ -2213,13 +2215,49 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                             <tr key={pu.pno} className="border-b border-slate-700/20 text-white">
                               <td className="py-2 pr-4 text-slate-400 font-mono text-xs">
                                 {pu.pno}
+                                {/* BIZZ-514: Hoved-P-enhed markering */}
+                                {pu.main && (
+                                  <span
+                                    className="ml-1.5 text-[9px] px-1 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30"
+                                    title={
+                                      lang === 'da'
+                                        ? 'Hovedproduktionsenhed'
+                                        : 'Main production unit'
+                                    }
+                                  >
+                                    {lang === 'da' ? 'Hoved' : 'Main'}
+                                  </span>
+                                )}
                               </td>
                               <td className="py-2 pr-4">{pu.name}</td>
                               <td className="py-2 pr-4 text-slate-300 text-xs">
                                 {pu.address}, {pu.zipcode} {pu.city}
                               </td>
                               <td className="py-2 pr-4 text-slate-400 text-xs">
-                                {pu.industrydesc ?? '—'}
+                                <div className="flex flex-col gap-0.5">
+                                  <span>{pu.industrydesc ?? '—'}</span>
+                                  {/* BIZZ-514: Bibrancher per P-enhed som små tags under hovedbranchen */}
+                                  {pu.secondaryIndustries && pu.secondaryIndustries.length > 0 && (
+                                    <div className="flex flex-wrap gap-0.5">
+                                      {pu.secondaryIndustries.map((b, i) => (
+                                        <span
+                                          key={i}
+                                          className="text-[9px] px-1 py-0.5 rounded bg-slate-700/40 border border-slate-600/40 text-slate-400"
+                                          title={
+                                            b.code != null
+                                              ? `${b.code} — ${b.desc ?? '—'}`
+                                              : (b.desc ?? '')
+                                          }
+                                        >
+                                          {b.desc ?? '—'}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="py-2 pr-4 text-slate-300 text-xs tabular-nums">
+                                {pu.employees ?? '—'}
                               </td>
                               <td className="py-2">
                                 <span

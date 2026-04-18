@@ -3006,9 +3006,21 @@ export default function EjendomDetaljeClient({
                           {bygninger.map((b, i) => {
                             const rowId = b.id || String(i);
                             const aaben = expandedBygninger.has(rowId);
+                            // BIZZ-485: Risk-badges for materiale-risici
+                            const risks = b.risks ?? {
+                              asbestTag: false,
+                              asbestYdervaeg: false,
+                              traeYdervaeg: false,
+                            };
                             const detaljer: [string, string][] = (
                               [
                                 [t.outerWall, b.ydervaeg || null],
+                                [
+                                  da ? 'Tagkonstruktion' : 'Roof construction',
+                                  b.tagkonstruktion && b.tagkonstruktion !== '–'
+                                    ? b.tagkonstruktion
+                                    : null,
+                                ],
                                 [t.roofMaterial, b.tagmateriale || null],
                                 [t.heatingInstallation, b.varmeinstallation || null],
                                 [t.heatingForm, b.opvarmningsform || null],
@@ -3070,8 +3082,49 @@ export default function EjendomDetaljeClient({
                                   <span className="text-slate-500 text-xs text-center font-mono">
                                     {b.bygningsnr ?? '–'}
                                   </span>
-                                  <span className="text-slate-200 truncate pr-2">
-                                    {b.anvendelse || '–'}
+                                  <span className="text-slate-200 truncate pr-2 flex items-center gap-1.5">
+                                    <span className="truncate">{b.anvendelse || '–'}</span>
+                                    {/* BIZZ-485: Risk-badges — asbest har højeste prioritet (rød).
+                                        Træ-ydervæg vises kun hvis bygning er +40 år uden kendt ombygning. */}
+                                    {risks.asbestTag && (
+                                      <span
+                                        className="flex-shrink-0 text-[9px] px-1 py-0.5 rounded bg-red-500/15 text-red-400 border border-red-500/30"
+                                        title={
+                                          da
+                                            ? 'Asbest i tagmateriale (fibercement pre-1986)'
+                                            : 'Asbestos in roof (pre-1986 fibre cement)'
+                                        }
+                                      >
+                                        {da ? 'Asbest tag' : 'Asbestos roof'}
+                                      </span>
+                                    )}
+                                    {risks.asbestYdervaeg && (
+                                      <span
+                                        className="flex-shrink-0 text-[9px] px-1 py-0.5 rounded bg-red-500/15 text-red-400 border border-red-500/30"
+                                        title={
+                                          da
+                                            ? 'Asbest i ydervæg (eternit pre-1986)'
+                                            : 'Asbestos in outer wall (pre-1986 eternit)'
+                                        }
+                                      >
+                                        {da ? 'Asbest væg' : 'Asbestos wall'}
+                                      </span>
+                                    )}
+                                    {risks.traeYdervaeg &&
+                                      b.opfoerelsesaar != null &&
+                                      new Date().getFullYear() - b.opfoerelsesaar > 40 &&
+                                      !b.ombygningsaar && (
+                                        <span
+                                          className="flex-shrink-0 text-[9px] px-1 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                                          title={
+                                            da
+                                              ? 'Træydervæg uden kendt ombygning — tjek efterisolering'
+                                              : 'Wooden exterior without known renovation — check insulation'
+                                          }
+                                        >
+                                          {da ? 'Ældre træ' : 'Old wood'}
+                                        </span>
+                                      )}
                                   </span>
                                   <span className="text-slate-400 text-right">
                                     {b.opfoerelsesaar ?? '–'}

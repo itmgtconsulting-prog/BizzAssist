@@ -14,6 +14,7 @@ import { BBR_WFS_ENDPOINT, BBR_GQL_ENDPOINT, DAWA_BASE_URL } from '@/app/lib/ser
 import { fetchDawa } from '@/app/lib/dawa';
 import { darHentAdresserBatch } from '@/app/lib/dar';
 import {
+  tagKonstruktionTekst,
   tagMaterialeTekst,
   ydervaegMaterialeTekst,
   varmeInstallationTekst,
@@ -45,6 +46,11 @@ export interface RawBBRBygning {
   byg054AntalEtager?: number;
   byg033Tagdaekningsmateriale?: string;
   byg032YdervaeggensMateriale?: string;
+  /**
+   * BIZZ-485: Tagkonstruktionskode (byg034) — 1=fladt, 2=ensidig, 3=sadel,
+   * 4=valmet, 5=mansard, 6=andet. Bruges til detaljeret materialevisning.
+   */
+  byg034Tagkonstruktion?: string;
   byg056Varmeinstallation?: string;
   byg057Opvarmningsmiddel?: string;
   byg058SupplerendeVarme?: string;
@@ -113,6 +119,25 @@ export interface LiveBBRBygning {
   revisionsdato: string | null;
   /** Ejerforholdskode (byg066) — rå kode, f.eks. "50"=andelsboligforening */
   ejerforholdskode: string | null;
+  /**
+   * BIZZ-485: Rå materiale-koder bevares så UI kan lave risk-scoring uden
+   * at skulle oversætte tekst tilbage til kode. Kan være null hvis BBR
+   * ikke har registreret materialet.
+   */
+  tagkonstruktionKode: number | null;
+  tagmaterialeKode: number | null;
+  ydervaegKode: number | null;
+  /**
+   * BIZZ-485: Risk-flags udledt af materialekoderne.
+   * - asbestTag: tagmateriale = 3 (fibercement/asbest)
+   * - asbestYdervaeg: ydervaeg = 3 (fibercement/eternit asbest)
+   * - traeYdervaeg: ydervaeg = 5 (træ) — lavere prioritet, kun info
+   */
+  risks: {
+    asbestTag: boolean;
+    asbestYdervaeg: boolean;
+    traeYdervaeg: boolean;
+  };
 }
 
 /** Normalised BBR enhed returned to client */
@@ -632,6 +657,10 @@ function nowDafDateTime(): string {
 export function normaliseBygning(raw: RawBBRBygning): LiveBBRBygning {
   const parseCode = (v: string | undefined) => (v != null ? parseInt(v, 10) : undefined);
 
+  const tagkonstruktionKode = parseCode(raw.byg034Tagkonstruktion) ?? null;
+  const tagmaterialeKode = parseCode(raw.byg033Tagdaekningsmateriale) ?? null;
+  const ydervaegKode = parseCode(raw.byg032YdervaeggensMateriale) ?? null;
+
   return {
     id: raw.id_lokalId ?? '',
     opfoerelsesaar: raw.byg026Opfoerelsesaar ?? null,
@@ -647,9 +676,10 @@ export function normaliseBygning(raw: RawBBRBygning): LiveBBRBygning {
     antalEtager: raw.byg054AntalEtager ?? null,
     kaelder: null,
     tagetage: null,
-    tagkonstruktion: '–',
-    tagmateriale: tagMaterialeTekst(parseCode(raw.byg033Tagdaekningsmateriale)),
-    ydervaeg: ydervaegMaterialeTekst(parseCode(raw.byg032YdervaeggensMateriale)),
+    // BIZZ-485: Tagkonstruktion hentes nu fra byg034 i stedet for hårdkodet '–'
+    tagkonstruktion: tagKonstruktionTekst(tagkonstruktionKode),
+    tagmateriale: tagMaterialeTekst(tagmaterialeKode),
+    ydervaeg: ydervaegMaterialeTekst(ydervaegKode),
     varmeinstallation: varmeInstallationTekst(parseCode(raw.byg056Varmeinstallation)),
     opvarmningsform: opvarmningsmiddelTekst(parseCode(raw.byg057Opvarmningsmiddel)),
     vandforsyning: vandforsyningTekst(parseCode(raw.byg030Vandforsyning)),
@@ -666,6 +696,17 @@ export function normaliseBygning(raw: RawBBRBygning): LiveBBRBygning {
     bygningsnr: null, // udfyldes fra WFS bygningPunkter efter fetch
     revisionsdato: raw.byg094Revisionsdato ?? null,
     ejerforholdskode: raw.byg066Ejerforhold ?? null,
+    // BIZZ-485: Rå materialekoder + udledte risk-flags til UI-badges.
+    // Asbest-kode 3 for både tagmateriale og ydervæg flagger sundhedsrisiko
+    // (asbestforbud siden 1986, men stadig tilladt i eksisterende byggeri).
+    tagkonstruktionKode,
+    tagmaterialeKode,
+    ydervaegKode,
+    risks: {
+      asbestTag: tagmaterialeKode === 3,
+      asbestYdervaeg: ydervaegKode === 3,
+      traeYdervaeg: ydervaegKode === 5,
+    },
   };
 }
 
@@ -778,6 +819,7 @@ const BYGNING_QUERY = `
         byg025AntalLejlighederUdenKoekken
         byg054AntalEtager
         byg033Tagdaekningsmateriale
+        byg034Tagkonstruktion
         byg032YdervaeggensMateriale
         byg056Varmeinstallation
         byg057Opvarmningsmiddel
@@ -816,6 +858,7 @@ const BYGNING_BY_ID_QUERY = `
         byg025AntalLejlighederUdenKoekken
         byg054AntalEtager
         byg033Tagdaekningsmateriale
+        byg034Tagkonstruktion
         byg032YdervaeggensMateriale
         byg056Varmeinstallation
         byg057Opvarmningsmiddel

@@ -47,10 +47,11 @@ export interface RawBBRBygning {
   byg033Tagdaekningsmateriale?: string;
   byg032YdervaeggensMateriale?: string;
   /**
-   * BIZZ-485: Tagkonstruktionskode (byg034) — 1=fladt, 2=ensidig, 3=sadel,
-   * 4=valmet, 5=mansard, 6=andet. Bruges til detaljeret materialevisning.
+   * BIZZ-485 (reverted): byg034Tagkonstruktion blev fjernet fra GraphQL-
+   * queryen da feltnavnet fik hele BBR-queryen til at fejle i produktion
+   * (fikseret 2026-04-19 efter rapport om tom BBR-tab). Tagkonstruktion
+   * forbliver '–' i UI indtil korrekt schema-feltnavn er verificeret.
    */
-  byg034Tagkonstruktion?: string;
   byg056Varmeinstallation?: string;
   byg057Opvarmningsmiddel?: string;
   byg058SupplerendeVarme?: string;
@@ -657,7 +658,8 @@ function nowDafDateTime(): string {
 export function normaliseBygning(raw: RawBBRBygning): LiveBBRBygning {
   const parseCode = (v: string | undefined) => (v != null ? parseInt(v, 10) : undefined);
 
-  const tagkonstruktionKode = parseCode(raw.byg034Tagkonstruktion) ?? null;
+  // BIZZ-485 (reverted): tagkonstruktion fjernet fra query — sættes til null.
+  const tagkonstruktionKode = null;
   const tagmaterialeKode = parseCode(raw.byg033Tagdaekningsmateriale) ?? null;
   const ydervaegKode = parseCode(raw.byg032YdervaeggensMateriale) ?? null;
 
@@ -819,7 +821,6 @@ const BYGNING_QUERY = `
         byg025AntalLejlighederUdenKoekken
         byg054AntalEtager
         byg033Tagdaekningsmateriale
-        byg034Tagkonstruktion
         byg032YdervaeggensMateriale
         byg056Varmeinstallation
         byg057Opvarmningsmiddel
@@ -858,7 +859,6 @@ const BYGNING_BY_ID_QUERY = `
         byg025AntalLejlighederUdenKoekken
         byg054AntalEtager
         byg033Tagdaekningsmateriale
-        byg034Tagkonstruktion
         byg032YdervaeggensMateriale
         byg056Varmeinstallation
         byg057Opvarmningsmiddel

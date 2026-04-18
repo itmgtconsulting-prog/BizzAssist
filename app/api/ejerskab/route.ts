@@ -230,13 +230,15 @@ async function queryEJF(bfeNummer: number, token: string): Promise<EJFQueryResul
   const virkningstid = new Date().toISOString();
 
   /**
-   * BIZZ-482: Extended query inkluderer oplysningerEjesAfEjerskab (for parter
-   * uden CVR/CPR — dødsboer, udenlandske, fonde m.fl.) og
-   * ejerskabAdministreresAfPersonEllerVirksomhedsoplysninger (administrator).
-   * Hvis Datafordeler afviser disse relationsnavne pga. schema-version eller
-   * scope, kører vi basis-queryen så eksisterende ejer-data bevares.
+   * BIZZ-482 (reverted 2026-04-19): Extended-queryen med
+   * oplysningerEjesAfEjerskab + ejerskabAdministreresAf… fik hele EJF-
+   * opslaget til at fejle i produktion (tom Ejerskab-tab). Fallbacken
+   * ramte ikke — muligvis fordi Datafordeler returnerer partielle data
+   * i stedet for errors-only. Roll back til basis-query til schemaet er
+   * verificeret via Datafordeler support. EjerData-typen beholder
+   * pvoplys-relaterede felter men de forbliver null.
    */
-  const buildQuery = (extended: boolean) => `{
+  const query = `{
     EJFCustom_EjerskabBegraenset(
       first: 500
       virkningstid: "${virkningstid}"
@@ -253,41 +255,21 @@ async function queryEJF(bfeNummer: number, token: string): Promise<EJFQueryResul
         faktiskEjerandel_naevner
         status
         virkningFra
-        ${
-          extended
-            ? `oplysningerEjesAfEjerskab {
-          fiktivtPVnummer
-          navn
-          landeKodeNumerisk
-          adresselinje1
-          adresselinje2
-          adresselinje3
-          adresselinje4
-          adresselinje5
-        }
-        ejerskabAdministreresAfPersonEllerVirksomhedsoplysninger {
-          navn
-        }`
-            : ''
-        }
       }
     }
   }`;
 
-  const doFetch = async (query: string) =>
-    fetch(proxyUrl(EJF_GQL_URL), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-        ...proxyHeaders(),
-      },
-      body: JSON.stringify({ query }),
-      signal: AbortSignal.timeout(proxyTimeout()),
-      next: { revalidate: 3600 },
-    });
-
-  let res = await doFetch(buildQuery(true));
+  const res = await fetch(proxyUrl(EJF_GQL_URL), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+      ...proxyHeaders(),
+    },
+    body: JSON.stringify({ query }),
+    signal: AbortSignal.timeout(proxyTimeout()),
+    next: { revalidate: 3600 },
+  });
 
   if (res.status === 403) {
     return { ok: false, manglerAdgang: true, fejl: null };
@@ -303,7 +285,7 @@ async function queryEJF(bfeNummer: number, token: string): Promise<EJFQueryResul
     };
   }
 
-  let json = (await res.json()) as {
+  const json = (await res.json()) as {
     data?: { EJFCustom_EjerskabBegraenset?: { nodes: RawEJFEjerskab[] } };
     errors?: { message: string; extensions?: { code?: string } }[];
   };
@@ -311,21 +293,6 @@ async function queryEJF(bfeNummer: number, token: string): Promise<EJFQueryResul
   const authError = json.errors?.find((e) => e.extensions?.code === 'DAF-AUTH-0001');
   if (authError) {
     return { ok: false, manglerAdgang: true, fejl: null };
-  }
-
-  // BIZZ-482: Hvis extended-queryen fejler pga. ukendte felter/relationer,
-  // falder vi tilbage til basis-queryen. Schema-fejl resulterer typisk i
-  // enten errors[] uden data eller tom data-node.
-  const hasSchemaFejl = (json.errors?.length ?? 0) > 0 && !json.data?.EJFCustom_EjerskabBegraenset;
-  if (hasSchemaFejl) {
-    logger.warn('[ejerskab] Extended EJF query fejlede — falder tilbage til basis');
-    res = await doFetch(buildQuery(false));
-    if (!res.ok) {
-      return { ok: false, manglerAdgang: false, fejl: 'Ekstern API fejl' };
-    }
-    json = (await res.json()) as typeof json;
-    const authErr2 = json.errors?.find((e) => e.extensions?.code === 'DAF-AUTH-0001');
-    if (authErr2) return { ok: false, manglerAdgang: true, fejl: null };
   }
 
   return { ok: true, nodes: json.data?.EJFCustom_EjerskabBegraenset?.nodes ?? [] };

@@ -1768,12 +1768,36 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                           Info
                         </h2>
                         {data.industrydesc && (
-                          <p className="text-slate-400 text-xs mt-1 mb-3">
+                          <p className="text-slate-400 text-xs mt-1">
                             {data.industrycode ? `${data.industrycode} — ` : ''}
                             {data.industrydesc}
                           </p>
                         )}
-                        {!data.industrydesc && <div className="mb-3" />}
+                        {/* BIZZ-512: Sekundære brancher (bibranche1/2/3). For holdinger
+                            og blandede virksomheder er bibrancherne ofte mere retvisende
+                            end hovedbranchen alene. */}
+                        {data.secondaryIndustries && data.secondaryIndustries.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-1 mb-3">
+                            {data.secondaryIndustries.map((b, i) => (
+                              <span
+                                key={i}
+                                className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-slate-700/40 border border-slate-600/40 text-slate-300"
+                                title={
+                                  b.code != null ? `${b.code} — ${b.desc ?? '—'}` : (b.desc ?? '')
+                                }
+                              >
+                                {b.code != null && (
+                                  <span className="text-slate-500 mr-1">{b.code}</span>
+                                )}
+                                {b.desc ?? '—'}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {!data.industrydesc &&
+                          !(data.secondaryIndustries && data.secondaryIndustries.length > 0) && (
+                            <div className="mb-3" />
+                          )}
 
                         {/* ── Stamdata — 2-kolonne grid, label over værdi ── */}
                         <div className="grid grid-cols-2 gap-x-4 gap-y-3">

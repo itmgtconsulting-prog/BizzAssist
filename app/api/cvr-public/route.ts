@@ -48,6 +48,12 @@ export interface CVRPublicData {
   email: string | null;
   industrycode: number | null;
   industrydesc: string | null;
+  /**
+   * BIZZ-512: Sekundære brancher (bibranche1/2/3). Op til 3 bibrancher
+   * udover hovedbranchen. Ofte mere retvisende end hovedbranchen alene
+   * for holdingselskaber og blandede virksomheder.
+   */
+  secondaryIndustries?: { code: number | null; desc: string | null }[];
   companycode: number | null;
   companydesc: string | null;
   startdate: string | null;
@@ -284,6 +290,27 @@ function mapESHit(hit: Record<string, unknown>): CVRPublicData | null {
         : parseInt(String(brancheNu.branchekode), 10)
       : null;
   const branche = typeof brancheNu?.branchetekst === 'string' ? brancheNu.branchetekst : null;
+
+  // BIZZ-512: Sekundære brancher (bibranche1/2/3). Ofte meget retvisende
+  // for holdingselskaber og blandede virksomheder hvor hovedbranchen er
+  // generisk (fx "Ikke-finansielle holdingselskaber"). Returnerer max 3
+  // aktive bibrancher i rækkefølge.
+  const sekundaereBrancher: { code: number | null; desc: string | null }[] = [];
+  for (const key of ['bibranche1', 'bibranche2', 'bibranche3']) {
+    const raw = Array.isArray(src[key])
+      ? (src[key] as (Periodic & { branchekode?: string | number; branchetekst?: string })[])
+      : [];
+    const nu = gyldigNu(raw);
+    if (!nu) continue;
+    const code =
+      nu.branchekode != null
+        ? typeof nu.branchekode === 'number'
+          ? nu.branchekode
+          : parseInt(String(nu.branchekode), 10)
+        : null;
+    const desc = typeof nu.branchetekst === 'string' ? nu.branchetekst : null;
+    if (code != null || desc) sekundaereBrancher.push({ code, desc });
+  }
 
   // ── Virksomhedsform ──
   const former = Array.isArray(src.virksomhedsform)
@@ -712,6 +739,9 @@ function mapESHit(hit: Record<string, unknown>): CVRPublicData | null {
     email,
     industrycode: branchekode,
     industrydesc: branche,
+    // BIZZ-512: udfyldt kun hvis mindst én bibranche fundet — undgår
+    // at klienten renderer et tomt "Sekundære brancher"-afsnit.
+    secondaryIndustries: sekundaereBrancher.length > 0 ? sekundaereBrancher : undefined,
     companycode,
     companydesc,
     startdate,

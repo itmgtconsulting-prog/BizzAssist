@@ -867,6 +867,13 @@ export default function EjendomDetaljeClient({
   const [vurdering, setVurdering] = useState<VurderingData | null>(null);
   /** Alle vurderinger fra Datafordeler — bruges til historiktabel */
   const [alleVurderinger, setAlleVurderinger] = useState<VurderingData[]>([]);
+  /**
+   * BIZZ-490: Loftansættelse (grundskatteloft efter ESL §45) for nyeste
+   * vurdering. Tomt array hvis ejendommen ikke er omfattet af loftet.
+   */
+  const [loftansaettelser, setLoftansaettelser] = useState<
+    import('@/app/api/vurdering/route').LoftansaettelseData[]
+  >([]);
   /** True mens vurderingsdata hentes — starter som true når prefetch giver BBR data med det samme */
   const [vurderingLoader, setVurderingLoader] = useState(!!prefetched?.bbrData);
   /** True = vis fuld vurderingshistorik-tabel */
@@ -1355,11 +1362,14 @@ export default function EjendomDetaljeClient({
         if (signal.aborted) return;
         setVurdering(data?.vurdering ?? null);
         setAlleVurderinger(data?.alle ?? []);
+        // BIZZ-490: gemt til SKAT-fanens Grundskatteloft-kort
+        setLoftansaettelser(data?.loft ?? []);
       })
       .catch((err) => {
         if (err.name === 'AbortError') return;
         logger.error('[ejendom] Vurdering fetch error:', err);
         setVurdering(null);
+        setLoftansaettelser([]);
       })
       .finally(() => {
         if (!signal.aborted) setVurderingLoader(false);
@@ -3969,6 +3979,55 @@ export default function EjendomDetaljeClient({
             {/* ══ SKAT ══ */}
             {aktivTab === 'skatter' && (
               <div className="space-y-5">
+                {/* BIZZ-490: Grundskatteloft-kort (ESL §45, typisk 4.75% stigningsloft).
+                    Vises kun når VUR_Loftansaettelse returnerer en aktiv loft-post.
+                    Forklarer diskrepansen mellem faktisk grundskyld og
+                    promille × grundværdi, som ellers kan virke uforklarlig. */}
+                {loftansaettelser.length > 0 &&
+                  (() => {
+                    const loft = loftansaettelser[0];
+                    if (!loft.basisaar && !loft.grundvaerdi) return null;
+                    return (
+                      <div className="bg-amber-500/5 border border-amber-500/30 rounded-xl p-4">
+                        <div className="flex items-start gap-3">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium bg-amber-500/15 text-amber-300 border border-amber-500/30 flex-shrink-0">
+                            {da ? 'Grundskatteloft aktivt' : 'Land tax ceiling active'}
+                          </span>
+                          <div className="min-w-0">
+                            <p className="text-slate-200 text-sm leading-snug">
+                              {da
+                                ? 'Den faktiske grundskyld reguleres af §45-loftet (typisk 4,75% årlig stigning).'
+                                : 'Actual land tax is capped by the ESL §45 ceiling (typically 4.75% annual rise).'}
+                            </p>
+                            <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-400">
+                              {loft.basisaar != null && (
+                                <span>
+                                  {da ? 'Basisår' : 'Base year'}:{' '}
+                                  <span className="text-slate-200 tabular-nums">
+                                    {loft.basisaar}
+                                  </span>
+                                </span>
+                              )}
+                              {loft.grundvaerdi != null && (
+                                <span>
+                                  {da ? 'Loftværdi' : 'Ceiling value'}:{' '}
+                                  <span className="text-slate-200 tabular-nums">
+                                    {loft.grundvaerdi.toLocaleString(da ? 'da-DK' : 'en-GB')} DKK
+                                  </span>
+                                </span>
+                              )}
+                              {loft.pgf11 && (
+                                <span>
+                                  §: <span className="text-slate-300 font-mono">{loft.pgf11}</span>
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
                 {/* ── Ejendomsskatter — baseret på foreløbige + estimerede data ── */}
                 <div>
                   <SectionTitle title={t.propertyTaxes} />

@@ -745,10 +745,22 @@ export async function GET(req: NextRequest) {
     });
 
     // ── Parse servitutter ──
+    // BIZZ-474: e-TL udstiller servitut-blokke med flere lokale navne afhængigt
+    // af ejendomstypen. Traditionel samlet fast ejendom bruger <ServitutSummarisk>,
+    // ejerlejligheder <EjerlejlighedServitutSummarisk>, og hovedejendomme for
+    // ejerlejlighedsudstykninger (Thorvald Bindesbølls Plads 18 m.fl.) kan bruge
+    // <EjendomServitutSummarisk>. Den gamle regex matchede kun den korteste
+    // variant fordi `[^:]*` stoppede ved et kolon — så close-tag for
+    // EjerlejlighedServitutSummarisk aldrig matchede, og servitut-blokke
+    // på hovedejendomme blev silently droppet.
+    //
+    // Ny regex bruger backreference på det fulde lokale tag-navn (inkl.
+    // evt. prefix) så åbne- og lukke-tag matcher som par. Den namespace-
+    // aware prefix fanges via (?:(?:[a-zA-Z0-9]+):)? foran tag-navnet.
+    const SERVITUT_TAG_RE =
+      /<(?:[a-zA-Z0-9]+:)?([A-Za-z]*ServitutSummarisk)>([\s\S]*?)<\/(?:[a-zA-Z0-9]+:)?\1>/g;
     const servitutter: TLServitut[] = [];
-    const servitutEntries = [
-      ...xml.matchAll(/ServitutSummarisk>([\s\S]*?)<\/[^:]*:?ServitutSummarisk>/g),
-    ];
+    const servitutEntries = [...xml.matchAll(SERVITUT_TAG_RE)].map((m) => [m[0], m[2]] as const);
     for (const [, entry] of servitutEntries) {
       const type = entry.match(/ServitutType[^>]*>([^<]+)/)?.[1] ?? 'ukendt';
       const dato = entry.match(/TinglysningsDato[^>]*>([^<]+)/)?.[1]?.split('T')[0] ?? null;
@@ -995,9 +1007,12 @@ export async function GET(req: NextRequest) {
                 // ── Fuld parsing af servitutter fra moderejendommen ──
                 // Spejler den eksisterende parsing-logik for lejlighedens egne servitutter,
                 // men markerer hver post med fraHovedejendom: true.
-                const hovedServitutEntries = [
-                  ...hovedXml.matchAll(/ServitutSummarisk>([\s\S]*?)<\/[^:]*:?ServitutSummarisk>/g),
-                ];
+                // BIZZ-474: samme backreference-baserede regex som primær
+                // parser — matcher alle servitut-varianter (ServitutSummarisk,
+                // EjerlejlighedServitutSummarisk, EjendomServitutSummarisk).
+                const hovedServitutEntries = [...hovedXml.matchAll(SERVITUT_TAG_RE)].map(
+                  (m) => [m[0], m[2]] as const
+                );
                 const servitutterFraHoved: TLServitut[] = [];
                 for (const [, entry] of hovedServitutEntries) {
                   const type = entry.match(/ServitutType[^>]*>([^<]+)/)?.[1] ?? 'ukendt';

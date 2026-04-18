@@ -66,6 +66,7 @@ import type { PersonbogHaeftelse } from '@/app/api/tinglysning/personbog/route';
 import type { VirksomhedEjendomsrolle } from '@/app/api/tinglysning/virksomhed/route';
 import type { BilbogBil } from '@/app/api/tinglysning/bilbog/route';
 import type { AndelsbogBolig } from '@/app/api/tinglysning/andelsbog/route';
+import PaategningTimeline from '@/app/components/tinglysning/PaategningTimeline';
 import PropertyOwnerCard from '@/app/components/ejendomme/PropertyOwnerCard';
 import { saveRecentCompany } from '@/app/lib/recentCompanies';
 import { recordRecentVisit } from '@/app/lib/recordRecentVisit';
@@ -3892,35 +3893,43 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                               {c.bilbogIngenHaeftelser}
                             </div>
                           ) : (
-                            <ul className="mt-2 space-y-1">
+                            <ul className="mt-2 space-y-2">
                               {bil.haeftelser.map((h, i) => (
                                 <li
                                   key={`${bil.uuid}-${h.dokumentId ?? i}`}
-                                  className="text-xs text-slate-400 flex flex-wrap items-baseline gap-x-3"
+                                  className="text-xs text-slate-400"
                                 >
-                                  <span className="text-slate-300">{h.type}</span>
-                                  {h.hovedstol != null && (
-                                    <span>
-                                      {h.hovedstol.toLocaleString('da-DK')} {h.valuta}
-                                    </span>
-                                  )}
-                                  {h.kreditor && (
-                                    <span className="text-slate-500">
-                                      {c.personbogKreditor}: {h.kreditor}
-                                    </span>
-                                  )}
-                                  {h.tinglysningsdato && (
-                                    <span className="text-slate-600">{h.tinglysningsdato}</span>
-                                  )}
+                                  <div className="flex flex-wrap items-baseline gap-x-3">
+                                    <span className="text-slate-300">{h.type}</span>
+                                    {h.hovedstol != null && (
+                                      <span>
+                                        {h.hovedstol.toLocaleString('da-DK')} {h.valuta}
+                                      </span>
+                                    )}
+                                    {h.kreditor && (
+                                      <span className="text-slate-500">
+                                        {c.personbogKreditor}: {h.kreditor}
+                                      </span>
+                                    )}
+                                    {h.tinglysningsdato && (
+                                      <span className="text-slate-600">{h.tinglysningsdato}</span>
+                                    )}
+                                    {h.dokumentId && (
+                                      <a
+                                        href={`/api/tinglysning/dokument?uuid=${h.dokumentId}`}
+                                        download
+                                        className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300"
+                                      >
+                                        <Download size={10} />
+                                        PDF
+                                      </a>
+                                    )}
+                                  </div>
+                                  {/* BIZZ-522: revisionshistorik pr. dokument */}
                                   {h.dokumentId && (
-                                    <a
-                                      href={`/api/tinglysning/dokument?uuid=${h.dokumentId}`}
-                                      download
-                                      className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300"
-                                    >
-                                      <Download size={10} />
-                                      PDF
-                                    </a>
+                                    <div className="mt-1">
+                                      <PaategningTimeline dokumentId={h.dokumentId} lang={lang} />
+                                    </div>
                                   )}
                                 </li>
                               ))}
@@ -3990,35 +3999,43 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                               {c.andelsbogIngenHaeftelser}
                             </div>
                           ) : (
-                            <ul className="mt-2 space-y-1">
+                            <ul className="mt-2 space-y-2">
                               {andel.haeftelser.map((h, i) => (
                                 <li
                                   key={`${andel.uuid}-${h.dokumentId ?? i}`}
-                                  className="text-xs text-slate-400 flex flex-wrap items-baseline gap-x-3"
+                                  className="text-xs text-slate-400"
                                 >
-                                  <span className="text-slate-300">{h.type}</span>
-                                  {h.hovedstol != null && (
-                                    <span>
-                                      {h.hovedstol.toLocaleString('da-DK')} {h.valuta}
-                                    </span>
-                                  )}
-                                  {h.kreditor && (
-                                    <span className="text-slate-500">
-                                      {c.personbogKreditor}: {h.kreditor}
-                                    </span>
-                                  )}
-                                  {h.tinglysningsdato && (
-                                    <span className="text-slate-600">{h.tinglysningsdato}</span>
-                                  )}
+                                  <div className="flex flex-wrap items-baseline gap-x-3">
+                                    <span className="text-slate-300">{h.type}</span>
+                                    {h.hovedstol != null && (
+                                      <span>
+                                        {h.hovedstol.toLocaleString('da-DK')} {h.valuta}
+                                      </span>
+                                    )}
+                                    {h.kreditor && (
+                                      <span className="text-slate-500">
+                                        {c.personbogKreditor}: {h.kreditor}
+                                      </span>
+                                    )}
+                                    {h.tinglysningsdato && (
+                                      <span className="text-slate-600">{h.tinglysningsdato}</span>
+                                    )}
+                                    {h.dokumentId && (
+                                      <a
+                                        href={`/api/tinglysning/dokument?uuid=${h.dokumentId}`}
+                                        download
+                                        className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300"
+                                      >
+                                        <Download size={10} />
+                                        PDF
+                                      </a>
+                                    )}
+                                  </div>
+                                  {/* BIZZ-522: revisionshistorik pr. dokument */}
                                   {h.dokumentId && (
-                                    <a
-                                      href={`/api/tinglysning/dokument?uuid=${h.dokumentId}`}
-                                      download
-                                      className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300"
-                                    >
-                                      <Download size={10} />
-                                      PDF
-                                    </a>
+                                    <div className="mt-1">
+                                      <PaategningTimeline dokumentId={h.dokumentId} lang={lang} />
+                                    </div>
                                   )}
                                 </li>
                               ))}
@@ -5361,6 +5378,13 @@ function PersonbogSection({
                               h.anmelderNavn
                             )}
                           </p>
+                        </div>
+                      )}
+
+                      {/* BIZZ-522: revisionshistorik (påtegninger) pr. dokument */}
+                      {h.dokumentId && (
+                        <div className="mt-2 pt-2 border-t border-slate-700/20">
+                          <PaategningTimeline dokumentId={h.dokumentId} lang={da ? 'da' : 'en'} />
                         </div>
                       )}
                     </div>

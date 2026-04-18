@@ -269,6 +269,16 @@ export async function GET(req: NextRequest) {
 
   const bfe = req.nextUrl.searchParams.get('bfe');
   const adresse = req.nextUrl.searchParams.get('adresse') ?? 'Ejendom';
+  /**
+   * BIZZ-470: Klienten sender type=ejerlejlighed når ejendommen er en
+   * ejerlejlighed. I så fald springer vi Tinglysning-kaldene over — for
+   * ejerlejligheder returnerer Tinglysning-adkomst typisk kun "Opdelt i
+   * ejerlejligheder" som status, og de faktiske ejere ligger alligevel i
+   * EJF. At undvære de to sekventielle Tinglysning-runde-trips (search +
+   * summarisk XML) sparer ~2-4 sek på koldstart.
+   */
+  const ejendomstypeHint = (req.nextUrl.searchParams.get('type') ?? '').toLowerCase();
+  const skipTinglysning = ejendomstypeHint.includes('ejerlejlighed');
 
   if (!bfe) {
     return NextResponse.json({ nodes: [], edges: [], mainId: '', fejl: 'bfe er påkrævet' });
@@ -312,142 +322,150 @@ export async function GET(req: NextRequest) {
     .then((r) => (r.ok ? r.json() : null))
     .catch(() => null);
 
-  // Trin 1: Prøv Tinglysning API — har navne, adkomsttype, evt. CVR
-  try {
-    const tlRes = await fetch(`${req.nextUrl.origin}/api/tinglysning?bfe=${bfe}`, {
-      headers: { cookie: cookieHeader },
-      signal: AbortSignal.timeout(30000),
-    });
-    if (tlRes.ok) {
-      const tlData = await tlRes.json();
-      if (tlData.uuid && !tlData.error) {
-        // Hent KUN ejere-sektion fra summarisk (undgår at parse 90KB+ XML for servitutter)
-        const tlSumRes = await fetch(
-          `${req.nextUrl.origin}/api/tinglysning/summarisk?uuid=${tlData.uuid}&section=ejere`,
-          {
-            headers: { cookie: cookieHeader },
-            signal: AbortSignal.timeout(30000),
-          }
-        );
-        if (tlSumRes.ok) {
-          const sumData = await tlSumRes.json();
-          const ejere = sumData.ejere ?? [];
-          for (const ejer of ejere) {
-            if (ejer.cvr) {
-              const id = `cvr-${ejer.cvr}`;
-              if (!seenIds.has(id)) {
-                seenIds.add(id);
-                nodes.push({
-                  id,
-                  label: ejer.navn || `CVR ${ejer.cvr}`,
-                  type: 'company',
-                  cvr: parseInt(ejer.cvr, 10),
-                  link: `/dashboard/companies/${ejer.cvr}`,
-                });
-                companyOwnersToResolve.push({ nodeId: id, cvr: parseInt(ejer.cvr, 10), depth: 0 });
-              }
-              edges.push({ from: id, to: mainId, ejerandel: ejer.andel ?? undefined });
-              ejerDetaljer.push({
-                navn: ejer.navn,
-                cvr: ejer.cvr,
-                enhedsNummer: null,
-                type: 'selskab',
-                andel: ejer.andel,
-                adresse: ejer.adresse ?? null,
-                overtagelsesdato: ejer.overtagelsesdato ?? null,
-                adkomstType: ejer.adkomstType ?? null,
-                koebesum: ejer.koebesum ?? null,
-              });
-            } else {
-              // Tjek om "ejeren" egentlig er en status-tekst (fx "Opdelt i ejerlejligheder")
-              const erStatus = STATUS_TEKSTER.some((s) =>
-                (ejer.navn ?? '').toLowerCase().includes(s)
-              );
-
-              if (erStatus) {
-                const id = `status-${nodes.length}`;
-                nodes.push({ id, label: ejer.navn, type: 'status' });
-                edges.push({ from: id, to: mainId });
-                ejerDetaljer.push({
-                  navn: ejer.navn,
-                  cvr: null,
-                  enhedsNummer: null,
-                  type: 'status' as 'person',
-                  andel: null,
-                  adresse: null,
-                  overtagelsesdato: null,
-                  adkomstType: null,
-                  koebesum: null,
-                });
-              } else {
-                const id = `person-${nodes.length}`;
-                // BIZZ-386: Push node immediately (without enhedsNummer) so id is stable,
-                // then batch-resolve enhedsNummer for all persons after the loop.
-                nodes.push({
-                  id,
-                  label: ejer.navn || 'Person',
-                  type: 'person',
-                });
+  // Trin 1: Prøv Tinglysning API — har navne, adkomsttype, evt. CVR.
+  // BIZZ-470: For ejerlejligheder (identificeret via ?type=ejerlejlighed)
+  // springer vi helt over — Tinglysning returnerer ikke de reelle ejere
+  // alligevel, og EJF-fallbacken henter dem hurtigt via ejfPromise.
+  if (!skipTinglysning)
+    try {
+      const tlRes = await fetch(`${req.nextUrl.origin}/api/tinglysning?bfe=${bfe}`, {
+        headers: { cookie: cookieHeader },
+        signal: AbortSignal.timeout(30000),
+      });
+      if (tlRes.ok) {
+        const tlData = await tlRes.json();
+        if (tlData.uuid && !tlData.error) {
+          // Hent KUN ejere-sektion fra summarisk (undgår at parse 90KB+ XML for servitutter)
+          const tlSumRes = await fetch(
+            `${req.nextUrl.origin}/api/tinglysning/summarisk?uuid=${tlData.uuid}&section=ejere`,
+            {
+              headers: { cookie: cookieHeader },
+              signal: AbortSignal.timeout(30000),
+            }
+          );
+          if (tlSumRes.ok) {
+            const sumData = await tlSumRes.json();
+            const ejere = sumData.ejere ?? [];
+            for (const ejer of ejere) {
+              if (ejer.cvr) {
+                const id = `cvr-${ejer.cvr}`;
+                if (!seenIds.has(id)) {
+                  seenIds.add(id);
+                  nodes.push({
+                    id,
+                    label: ejer.navn || `CVR ${ejer.cvr}`,
+                    type: 'company',
+                    cvr: parseInt(ejer.cvr, 10),
+                    link: `/dashboard/companies/${ejer.cvr}`,
+                  });
+                  companyOwnersToResolve.push({
+                    nodeId: id,
+                    cvr: parseInt(ejer.cvr, 10),
+                    depth: 0,
+                  });
+                }
                 edges.push({ from: id, to: mainId, ejerandel: ejer.andel ?? undefined });
                 ejerDetaljer.push({
                   navn: ejer.navn,
-                  cvr: null,
-                  type: 'person',
+                  cvr: ejer.cvr,
+                  enhedsNummer: null,
+                  type: 'selskab',
                   andel: ejer.andel,
                   adresse: ejer.adresse ?? null,
                   overtagelsesdato: ejer.overtagelsesdato ?? null,
                   adkomstType: ejer.adkomstType ?? null,
                   koebesum: ejer.koebesum ?? null,
-                  enhedsNummer: null,
                 });
-                // Track node/detaljer indices so we can patch them after batch lookup
-                tlPersonsToResolve.push({
-                  navn: ejer.navn,
-                  nodeIdx: nodes.length - 1,
-                  detaljeIdx: ejerDetaljer.length - 1,
-                });
+              } else {
+                // Tjek om "ejeren" egentlig er en status-tekst (fx "Opdelt i ejerlejligheder")
+                const erStatus = STATUS_TEKSTER.some((s) =>
+                  (ejer.navn ?? '').toLowerCase().includes(s)
+                );
+
+                if (erStatus) {
+                  const id = `status-${nodes.length}`;
+                  nodes.push({ id, label: ejer.navn, type: 'status' });
+                  edges.push({ from: id, to: mainId });
+                  ejerDetaljer.push({
+                    navn: ejer.navn,
+                    cvr: null,
+                    enhedsNummer: null,
+                    type: 'status' as 'person',
+                    andel: null,
+                    adresse: null,
+                    overtagelsesdato: null,
+                    adkomstType: null,
+                    koebesum: null,
+                  });
+                } else {
+                  const id = `person-${nodes.length}`;
+                  // BIZZ-386: Push node immediately (without enhedsNummer) so id is stable,
+                  // then batch-resolve enhedsNummer for all persons after the loop.
+                  nodes.push({
+                    id,
+                    label: ejer.navn || 'Person',
+                    type: 'person',
+                  });
+                  edges.push({ from: id, to: mainId, ejerandel: ejer.andel ?? undefined });
+                  ejerDetaljer.push({
+                    navn: ejer.navn,
+                    cvr: null,
+                    type: 'person',
+                    andel: ejer.andel,
+                    adresse: ejer.adresse ?? null,
+                    overtagelsesdato: ejer.overtagelsesdato ?? null,
+                    adkomstType: ejer.adkomstType ?? null,
+                    koebesum: ejer.koebesum ?? null,
+                    enhedsNummer: null,
+                  });
+                  // Track node/detaljer indices so we can patch them after batch lookup
+                  tlPersonsToResolve.push({
+                    navn: ejer.navn,
+                    nodeIdx: nodes.length - 1,
+                    detaljeIdx: ejerDetaljer.length - 1,
+                  });
+                }
               }
             }
           }
         }
       }
-    }
 
-    // BIZZ-386: Batch-resolve enhedsNummer for all Tinglysning person owners in parallel
-    if (tlPersonsToResolve.length > 0 && CVR_ES_USER && CVR_ES_PASS) {
-      const auth = Buffer.from(`${CVR_ES_USER}:${CVR_ES_PASS}`).toString('base64');
-      const results = await Promise.allSettled(
-        tlPersonsToResolve.map(({ navn }) =>
-          navn
-            ? fetch(`${CVR_ES_BASE}/deltager/_search`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: `Basic ${auth}` },
-                body: JSON.stringify({
-                  query: { match: { 'Vrdeltagerperson.navne.navn': navn } },
-                  _source: ['Vrdeltagerperson.enhedsNummer'],
-                  size: 1,
-                }),
-                signal: AbortSignal.timeout(5000),
-              })
-                .then((r) => (r.ok ? r.json() : null))
-                .catch(() => null)
-            : Promise.resolve(null)
-        )
-      );
-      for (let i = 0; i < tlPersonsToResolve.length; i++) {
-        const result = results[i];
-        if (result.status !== 'fulfilled' || !result.value) continue;
-        const enr = result.value?.hits?.hits?.[0]?._source?.Vrdeltagerperson?.enhedsNummer;
-        if (typeof enr !== 'number') continue;
-        const { nodeIdx, detaljeIdx } = tlPersonsToResolve[i];
-        nodes[nodeIdx].enhedsNummer = enr;
-        nodes[nodeIdx].link = `/dashboard/owners/${enr}`;
-        ejerDetaljer[detaljeIdx].enhedsNummer = enr;
+      // BIZZ-386: Batch-resolve enhedsNummer for all Tinglysning person owners in parallel
+      if (tlPersonsToResolve.length > 0 && CVR_ES_USER && CVR_ES_PASS) {
+        const auth = Buffer.from(`${CVR_ES_USER}:${CVR_ES_PASS}`).toString('base64');
+        const results = await Promise.allSettled(
+          tlPersonsToResolve.map(({ navn }) =>
+            navn
+              ? fetch(`${CVR_ES_BASE}/deltager/_search`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', Authorization: `Basic ${auth}` },
+                  body: JSON.stringify({
+                    query: { match: { 'Vrdeltagerperson.navne.navn': navn } },
+                    _source: ['Vrdeltagerperson.enhedsNummer'],
+                    size: 1,
+                  }),
+                  signal: AbortSignal.timeout(5000),
+                })
+                  .then((r) => (r.ok ? r.json() : null))
+                  .catch(() => null)
+              : Promise.resolve(null)
+          )
+        );
+        for (let i = 0; i < tlPersonsToResolve.length; i++) {
+          const result = results[i];
+          if (result.status !== 'fulfilled' || !result.value) continue;
+          const enr = result.value?.hits?.hits?.[0]?._source?.Vrdeltagerperson?.enhedsNummer;
+          if (typeof enr !== 'number') continue;
+          const { nodeIdx, detaljeIdx } = tlPersonsToResolve[i];
+          nodes[nodeIdx].enhedsNummer = enr;
+          nodes[nodeIdx].link = `/dashboard/owners/${enr}`;
+          ejerDetaljer[detaljeIdx].enhedsNummer = enr;
+        }
       }
+    } catch {
+      /* Tinglysning valgfri */
     }
-  } catch {
-    /* Tinglysning valgfri */
-  }
 
   // ── EJF fallback — bruges når Tinglysning ikke returnerer faktiske ejere ──
   // For ejerlejligheder returnerer Tinglysning typisk kun "Opdelt i ejerlejlighed"

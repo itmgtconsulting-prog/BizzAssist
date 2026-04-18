@@ -3520,6 +3520,7 @@ export default function EjendomDetaljeClient({
                               : `BFE ${bfeForDiagram}`
                           }
                           lang={lang}
+                          erEjerlejlighed={!!bbrData?.ejerlejlighedBfe}
                         />
                       </div>
                     );
@@ -6035,6 +6036,7 @@ export default function EjendomDetaljeClient({
                             : `BFE ${bfe}`
                         }
                         lang={lang}
+                        erEjerlejlighed={!!bbrData?.ejerlejlighedBfe}
                       />
                     </div>
                   );
@@ -6863,10 +6865,18 @@ function PropertyOwnerDiagram({
   bfe,
   adresse,
   lang,
+  erEjerlejlighed = false,
 }: {
   bfe: number;
   adresse: string;
   lang: 'da' | 'en';
+  /**
+   * BIZZ-470: True når ejendommen er en ejerlejlighed. Signalerer til
+   * /api/ejerskab/chain at Tinglysning-opslagene kan springes over —
+   * Tinglysning returnerer alligevel kun "Opdelt i ejerlejlighed" som
+   * status, og EJF leverer de faktiske ejere meget hurtigere.
+   */
+  erEjerlejlighed?: boolean;
 }) {
   const _router = useRouter();
   const da = lang === 'da';
@@ -6883,7 +6893,8 @@ function PropertyOwnerDiagram({
 
     const controller = new AbortController();
 
-    fetch(`/api/ejerskab/chain?bfe=${bfe}&adresse=${encodeURIComponent(adresse)}`, {
+    const typeParam = erEjerlejlighed ? '&type=ejerlejlighed' : '';
+    fetch(`/api/ejerskab/chain?bfe=${bfe}&adresse=${encodeURIComponent(adresse)}${typeParam}`, {
       signal: controller.signal,
     })
       .then((r) => (r.ok ? r.json() : null))
@@ -6919,7 +6930,7 @@ function PropertyOwnerDiagram({
       .finally(() => setLoading(false));
 
     return () => controller.abort();
-  }, [bfe, adresse]);
+  }, [bfe, adresse, erEjerlejlighed]);
 
   if (loading)
     return (

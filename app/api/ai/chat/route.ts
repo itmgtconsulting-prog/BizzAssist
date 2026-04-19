@@ -280,6 +280,25 @@ const TOOLS: Anthropic.Tool[] = [
       required: ['bfeNummer'],
     },
   },
+  {
+    name: 'hent_ejendomme_for_virksomhed',
+    // BIZZ-591: Giver AI'en samme overblik som Virksomhed → Ejendomme-fanen.
+    // Uden dette har AI kun BBR per-adresse og kan ikke liste en virksomheds
+    // portefølje — AI svarer fejlagtigt "selskabet ejer ingen ejendomme".
+    description:
+      'Lister alle ejendomme ejet af et CVR-nummer (eller flere kommasepareret). Returnerer BFE, adresse, postnr, by, ejendomstype og ejerandel per ejendom. Brug dette ved spørgsmål om en virksomheds ejendomsportefølje eller samlet matrikel-areal. For holdingselskaber: kald først hent_datterselskaber for at få datterselskabs-CVR, dernæst dette tool med alle CVR (kommasepareret) for at få hele koncernens portefølje.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        cvr: {
+          type: 'string',
+          description:
+            '8-cifret CVR-nummer, eller kommasepareret liste (f.eks. "44878704,43924931") for at hente portefølje på tværs af flere selskaber.',
+        },
+      },
+      required: ['cvr'],
+    },
+  },
 ];
 
 // ─── Tool labels (for status messages) ──────────────────────────────────────
@@ -301,6 +320,7 @@ const TOOL_STATUS: Record<string, string> = {
   hent_datterselskaber: 'Henter datterselskaber…',
   soeg_person_cvr: 'Søger efter person i CVR…',
   hent_tinglysning: 'Henter tinglysningsdata…',
+  hent_ejendomme_for_virksomhed: 'Henter ejendomme for virksomhed…',
 };
 
 // ─── System prompt ──────────────────────────────────────────────────────────
@@ -340,6 +360,15 @@ VIGTIGT: Kald så mange tools som muligt i SAMME runde for at spare tid. Vent ik
 - Hvis et tool returnerer fejl eller manglende data, nævn det kort og fortsæt med de øvrige data
 - Kald gerne flere tools for at give et komplet billede
 - BFE-nummer findes i resultatet fra hent_bbr_data (feltet "bfeNummer" i ejendomsrelationer). Kald altid hent_bbr_data efter dawa_adresse_detaljer for at få BFE-nummeret.
+
+## Ærlighed om ukendte felter
+- Hvis du ikke kender betydningen af et teknisk felt (fx plandata-zonekategori, BBR-kode), sig at du ikke kender det — OPFIND IKKE forklaringer.
+- Spekulér ikke om hvorfor et felt har en bestemt værdi; rapportér kun den registrerede værdi og lad brugeren tolke den.
+- Eksempler på felter der IKKE skal forklares spekulativt: zone=Udfaset, ejendomstype=X, juridiskKategori-koder. Rapportér som-er.
+
+## Virksomheds-ejendomme
+- Brug hent_ejendomme_for_virksomhed(cvr) til at liste ALLE ejendomme ejet af et CVR (samme data som Virksomhed → Ejendomme-fanen).
+- For holdingselskaber der selv ikke ejer ejendomme direkte: kald først hent_datterselskaber, dernæst hent_ejendomme_for_virksomhed med alle datter-CVR kommasepareret for at få koncernens samlede portefølje.
 
 ## Workflow ved formueanalyse for en person
 
@@ -1004,6 +1033,63 @@ async function executeTool(
           break;
         }
         result = await sumRes.json();
+        break;
+      }
+
+      case 'hent_ejendomme_for_virksomhed': {
+        // BIZZ-591: Wraps /api/ejendomme-by-owner så AI kan liste en virksomheds
+        // ejendomsportefølje (samme som Virksomhed → Ejendomme-fanen).
+        const res = await fetch(
+          `${baseUrl}/api/ejendomme-by-owner?cvr=${encodeURIComponent(input.cvr)}`,
+          internalFetchOpts
+        );
+        if (!res.ok) {
+          result = { fejl: toolErrorMessage('Ejendomme-by-owner', res.status) };
+          break;
+        }
+        const data = (await res.json()) as {
+          ejendomme?: Array<{
+            bfeNummer: number;
+            ownerCvr: string;
+            adresse: string | null;
+            postnr: string | null;
+            by: string | null;
+            kommune: string | null;
+            ejendomstype: string | null;
+            etage: string | null;
+            doer: string | null;
+            ejerandel?: string | null;
+            aktiv?: boolean;
+          }>;
+          totalBfe?: number;
+          fejl?: string | null;
+        };
+        if (data.fejl) {
+          result = { fejl: data.fejl };
+          break;
+        }
+        // Begræns til maks 20 ejendomme i AI-svar så tool-result forbliver kompakt.
+        // Fuld liste kan tilgås via Ejendomme-fanen i UI.
+        const ejendomme = (data.ejendomme ?? [])
+          .filter((e) => e.aktiv !== false)
+          .slice(0, 20)
+          .map((e) => ({
+            bfe: e.bfeNummer,
+            ownerCvr: e.ownerCvr,
+            adresse: e.etage && e.doer ? `${e.adresse ?? ''}, ${e.etage}. ${e.doer}` : e.adresse,
+            postnr: e.postnr,
+            by: e.by,
+            kommune: e.kommune,
+            type: e.ejendomstype,
+            ejerandel: e.ejerandel,
+          }));
+        result = {
+          cvr: input.cvr,
+          antal: ejendomme.length,
+          total: data.totalBfe ?? ejendomme.length,
+          afkortet: (data.ejendomme ?? []).length > 20,
+          ejendomme,
+        };
         break;
       }
 

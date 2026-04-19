@@ -1484,7 +1484,12 @@ export async function POST(request: NextRequest): Promise<Response> {
         // får 0 chars output. Når vi rammer SOFT_DEADLINE_MS giver vi Claude
         // én sidste runde UDEN tools så AI kan syntetisere det allerede
         // indsamlede data til et delvist svar inden serverless-timeout.
-        const SOFT_DEADLINE_MS = 90_000;
+        //
+        // Sat til 60s for at efterlade ~60s buffer til final Claude-kaldet +
+        // streaming. Ved multi-tool analyser (Q12: 16 tools) bruger hver runde
+        // ~5-8s, så 60s dækker typisk 8-10 runders data-indsamling — nok til
+        // en meningsfuld syntese selv for komplekse cross-source queries.
+        const SOFT_DEADLINE_MS = 60_000;
         const startedAt = Date.now();
         const elapsed = () => Date.now() - startedAt;
         let forceFinalSynthesis = false;

@@ -2141,6 +2141,8 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
                         <g
                           className="cursor-pointer"
                           style={{ pointerEvents: 'auto' }}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onTouchStart={(e) => e.stopPropagation()}
                           onClick={(e) => {
                             e.stopPropagation();
                             if (personLoading) return;
@@ -2177,6 +2179,8 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
             {hasExpandable && (
               <g
                 className="cursor-pointer"
+                onMouseDown={(e) => e.stopPropagation()}
+                onTouchStart={(e) => e.stopPropagation()}
                 onClick={(e) => {
                   e.stopPropagation();
                   toggleExpand(node.id);

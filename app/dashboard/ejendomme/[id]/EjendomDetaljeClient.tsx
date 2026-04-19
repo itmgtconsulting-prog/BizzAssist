@@ -3110,6 +3110,23 @@ export default function EjendomDetaljeClient({
                               asbestYdervaeg: false,
                               traeYdervaeg: false,
                             };
+                            // BIZZ-486: Opgang/etage data for denne bygning
+                            const bygOpgange = (bbrData?.opgange ?? []).filter(
+                              (o) =>
+                                o.bygningId === b.id &&
+                                o.status !== '7' &&
+                                o.status !== 'Nedrevet/slettet'
+                            );
+                            const bygEtager = (bbrData?.etager ?? []).filter(
+                              (e) =>
+                                e.bygningId === b.id &&
+                                e.status !== '7' &&
+                                e.status !== 'Nedrevet/slettet'
+                            );
+                            const harElevator = bygOpgange.some((o) => o.elevator === true);
+                            const etageBetegnelser = [
+                              ...new Set(bygEtager.map((e) => e.etagebetegnelse).filter(Boolean)),
+                            ].join(', ');
                             const detaljer: [string, string][] = (
                               [
                                 [t.outerWall, b.ydervaeg || null],
@@ -3126,6 +3143,15 @@ export default function EjendomDetaljeClient({
                                 [t.waterSupply, b.vandforsyning || null],
                                 [t.drainage, b.afloeb || null],
                                 [t.floors, b.antalEtager != null ? `${b.antalEtager}` : null],
+                                // BIZZ-486: Opgange + elevator
+                                [
+                                  da ? 'Opgange' : 'Stairwells',
+                                  bygOpgange.length > 0
+                                    ? `${bygOpgange.length}${harElevator ? ` (${da ? 'med elevator' : 'with elevator'})` : ''}`
+                                    : null,
+                                ],
+                                // BIZZ-486: Etage-betegnelser
+                                [da ? 'Etager (BBR)' : 'Floors (BBR)', etageBetegnelser || null],
                                 [
                                   'Boligareal',
                                   b.samletBoligareal

@@ -154,6 +154,43 @@ export interface LiveBBRBygning {
   };
 }
 
+/** BIZZ-486: Raw BBR opgang (stairwell) from GraphQL */
+interface RawBBROpgang {
+  id_lokalId?: string;
+  bygning?: string;
+  opg020Elevator?: string;
+  status?: string;
+}
+
+/** BIZZ-486: Raw BBR etage (floor) from GraphQL */
+interface RawBBREtage {
+  id_lokalId?: string;
+  bygning?: string;
+  eta006BygningensEtagebetegnelse?: string;
+  eta020SamletArealAfEtage?: number;
+  status?: string;
+}
+
+/** BIZZ-486: Normalised BBR opgang returned to client */
+export interface LiveBBROpgang {
+  id: string;
+  bygningId: string | null;
+  /** Elevator (opg020): "0"=ingen, "1"=ja */
+  elevator: boolean | null;
+  status: string | null;
+}
+
+/** BIZZ-486: Normalised BBR etage returned to client */
+export interface LiveBBREtage {
+  id: string;
+  bygningId: string | null;
+  /** Etagebetegnelse fra BBR (eta006), f.eks. "kl", "st", "1", "2" */
+  etagebetegnelse: string | null;
+  /** Samlet areal af etagen (eta020) i m² */
+  samletAreal: number | null;
+  status: string | null;
+}
+
 /** Normalised BBR enhed returned to client */
 export interface LiveBBREnhed {
   id: string;
@@ -221,6 +258,10 @@ export interface EjendomApiResponse {
   ejerlejlighedBfe: number | null;
   /** BFE-nummer for moderejendommen (null hvis det ikke er en ejerlejlighed) */
   moderBfe: number | null;
+  /** BIZZ-486: Opgange (stairwells) per bygning */
+  opgange: LiveBBROpgang[] | null;
+  /** BIZZ-486: Etager (floors) per bygning */
+  etager: LiveBBREtage[] | null;
   bbrFejl: string | null;
 }
 
@@ -742,6 +783,33 @@ export function normaliseEnhed(raw: RawBBREnhed): LiveBBREnhed {
   };
 }
 
+// ─── BIZZ-486: Opgang/Etage normalisation ──────────────────────────────────
+
+/**
+ * Normalises raw BBR opgang. Elevator kode: "1"=ja, "0"=ingen, andet=ukendt.
+ */
+function normaliseOpgang(raw: RawBBROpgang): LiveBBROpgang {
+  return {
+    id: raw.id_lokalId ?? '',
+    bygningId: raw.bygning ?? null,
+    elevator: raw.opg020Elevator === '1' ? true : raw.opg020Elevator === '0' ? false : null,
+    status: raw.status ?? null,
+  };
+}
+
+/**
+ * Normalises raw BBR etage.
+ */
+function normaliseEtage(raw: RawBBREtage): LiveBBREtage {
+  return {
+    id: raw.id_lokalId ?? '',
+    bygningId: raw.bygning ?? null,
+    etagebetegnelse: raw.eta006BygningensEtagebetegnelse ?? null,
+    samletAreal: raw.eta020SamletArealAfEtage ?? null,
+    status: raw.status ?? null,
+  };
+}
+
 // ─── GraphQL queries ────────────────────────────────────────────────────────
 
 const BYGNING_QUERY = `
@@ -872,6 +940,35 @@ const ENHED_BY_BYGNING_QUERY = `
         enh052Opvarmningsmiddel
         bygning
         etage
+        status
+      }
+    }
+  }
+`;
+
+/** BIZZ-486: Hent opgange for en bygning (schema verificeret 2026-04-19 probe) */
+const OPGANG_BY_BYGNING_QUERY = `
+  query($vt: DafDateTime!, $id: String!) {
+    BBR_Opgang(first: 50, virkningstid: $vt, where: { bygning: { eq: $id } }) {
+      nodes {
+        id_lokalId
+        bygning
+        opg020Elevator
+        status
+      }
+    }
+  }
+`;
+
+/** BIZZ-486: Hent etager for en bygning (schema verificeret 2026-04-19 probe) */
+const ETAGE_BY_BYGNING_QUERY = `
+  query($vt: DafDateTime!, $id: String!) {
+    BBR_Etage(first: 50, virkningstid: $vt, where: { bygning: { eq: $id } }) {
+      nodes {
+        id_lokalId
+        bygning
+        eta006BygningensEtagebetegnelse
+        eta020SamletArealAfEtage
         status
       }
     }
@@ -1210,6 +1307,40 @@ export async function fetchBbrForAddress(
         ]
       : null;
 
+  // BIZZ-486: Hent opgange + etager parallelt for alle byggninger.
+  // Fejl her er ikke-fatale — enhedstabellen fungerer uden denne data.
+  let opgange: LiveBBROpgang[] | null = null;
+  let etager: LiveBBREtage[] | null = null;
+  if (bbr && bbr.length > 0) {
+    try {
+      const bygIds = bbr.map((b) => b.id).filter((id): id is string => !!id);
+      const [rawOpgangResults, rawEtageResults] = await Promise.all([
+        Promise.all(
+          bygIds.map((bygId) =>
+            fetchBBRGraphQL(OPGANG_BY_BYGNING_QUERY, { vt, id: bygId }).catch(() => null)
+          )
+        ),
+        Promise.all(
+          bygIds.map((bygId) =>
+            fetchBBRGraphQL(ETAGE_BY_BYGNING_QUERY, { vt, id: bygId }).catch(() => null)
+          )
+        ),
+      ]);
+      const rawOpgange = rawOpgangResults.flatMap((r) => (r ?? []) as RawBBROpgang[]);
+      const rawEtager = rawEtageResults.flatMap((r) => (r ?? []) as RawBBREtage[]);
+      // Dedupliker — BBR returnerer nogle gange duplikater for samme id_lokalId
+      const dedupeOpg = new Map<string, RawBBROpgang>();
+      for (const o of rawOpgange) if (o.id_lokalId) dedupeOpg.set(o.id_lokalId, o);
+      const dedupeEta = new Map<string, RawBBREtage>();
+      for (const e of rawEtager) if (e.id_lokalId) dedupeEta.set(e.id_lokalId, e);
+      opgange = [...dedupeOpg.values()].map(normaliseOpgang);
+      etager = [...dedupeEta.values()].map(normaliseEtage);
+    } catch (err) {
+      logger.warn('[fetchBBR] Opgang/Etage fetch fejlede:', err);
+      // Ikke-fatal — fortsæt med null
+    }
+  }
+
   const bbrFejl = !(process.env.DATAFORDELER_API_KEY ?? '')
     ? 'Datafordeler API-nøgle ikke konfigureret.'
     : bbr === null
@@ -1223,6 +1354,8 @@ export async function fetchBbrForAddress(
     ejendomsrelationer,
     ejerlejlighedBfe,
     moderBfe,
+    opgange,
+    etager,
     bbrFejl,
   };
 }

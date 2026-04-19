@@ -63,6 +63,7 @@ import {
 } from '@/app/lib/mock/ejendomme';
 import { erDawaId, type DawaAdresse, type DawaJordstykke } from '@/app/lib/dawa';
 import { formatBenyttelseOgByggeaar } from '@/app/lib/benyttelseskoder';
+import { tekniskAnlaegTekst, tekniskAnlaegKategori } from '@/app/lib/bbrTekniskAnlaegKoder';
 import type { EjendomApiResponse, LiveBBRBygning } from '@/app/api/ejendom/[id]/route';
 import type { CVRVirksomhed, CVRResponse } from '@/app/api/cvr/route';
 import type { VurderingData, VurderingResponse } from '@/app/api/vurdering/route';
@@ -3602,6 +3603,51 @@ export default function EjendomDetaljeClient({
                     <p className="text-slate-400 text-xs leading-relaxed">
                       {bbrData?.bbrFejl ?? t.bbrSubscriptionRequired}
                     </p>
+                  </div>
+                )}
+
+                {/* BIZZ-484: Tekniske anlæg (solceller, varmepumper, oliefyr,
+                    tanke etc.) — vises hvis nogen findes på adressen. */}
+                {!bbrLoader && bbrData?.tekniskeAnlaeg && bbrData.tekniskeAnlaeg.length > 0 && (
+                  <div className="mt-5">
+                    <SectionTitle title={da ? 'Tekniske anlæg' : 'Technical installations'} />
+                    <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
+                      <div className="divide-y divide-slate-700/30">
+                        {bbrData.tekniskeAnlaeg.map((t) => {
+                          const tekst = tekniskAnlaegTekst(t.tek020Klassifikation);
+                          const kategori = tekniskAnlaegKategori(t.tek020Klassifikation);
+                          const farve =
+                            kategori === 'energi'
+                              ? 'text-emerald-300 bg-emerald-500/10 border-emerald-500/20'
+                              : kategori === 'tank'
+                                ? 'text-amber-300 bg-amber-500/10 border-amber-500/20'
+                                : 'text-slate-300 bg-slate-700/30 border-slate-600/30';
+                          return (
+                            <div
+                              key={t.id_lokalId}
+                              className="px-4 py-2.5 flex items-center justify-between gap-3"
+                            >
+                              <span className="text-slate-200 text-sm">{tekst}</span>
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-medium border ${farve}`}
+                              >
+                                {kategori === 'energi'
+                                  ? da
+                                    ? 'Energi'
+                                    : 'Energy'
+                                  : kategori === 'tank'
+                                    ? da
+                                      ? 'Tank'
+                                      : 'Tank'
+                                    : da
+                                      ? 'Andet'
+                                      : 'Other'}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
                   </div>
                 )}
 

@@ -243,6 +243,16 @@ export interface EjendomApiResponse {
   opgange: LiveBBROpgang[] | null;
   /** BIZZ-486: Etager (floors) per bygning */
   etager: LiveBBREtage[] | null;
+  /**
+   * BIZZ-484: Tekniske anlæg på adressen — solceller, varmepumper, oliefyr,
+   * tanke etc. tek020Klassifikation mappes via bbrTekniskAnlaegKoder til
+   * læsbar tekst på UI.
+   */
+  tekniskeAnlaeg: Array<{
+    id_lokalId: string;
+    tek020Klassifikation: string | null;
+    status: string | null;
+  }> | null;
   bbrFejl: string | null;
 }
 
@@ -737,6 +747,60 @@ export async function fetchBbrAreasByBfe(
     erhvervsAreal: erhverv > 0 ? erhverv : null,
     samletBygningsareal: samlet > 0 ? samlet : null,
   };
+}
+
+/**
+ * BIZZ-484: Hentet liste af tekniske anlæg (solceller, varmepumper, oliefyr,
+ * etc.) for en adgangsadresse. Returnerer rå BBR_TekniskAnlaeg-noder med
+ * id_lokalId, tek020Klassifikation, status. Klassifikationskode mappes
+ * til læsbar tekst via bbrTekniskAnlaegKoder.ts på UI-siden.
+ *
+ * @param dawaId - DAWA adgangsadresse-UUID (husnummer-feltet)
+ * @returns Array af tekniske anlæg, eller null ved fejl
+ */
+export async function fetchBbrTekniskAnlaegByDawaId(dawaId: string): Promise<Array<{
+  id_lokalId: string;
+  tek020Klassifikation: string | null;
+  status: string | null;
+}> | null> {
+  if (!dawaId) return null;
+  const vt = nowDafDateTime();
+  const nodes = await fetchBBRGraphQL(
+    `query($vt: DafDateTime!, $id: String!) {
+      BBR_TekniskAnlaeg(first: 100, virkningstid: $vt, where: { husnummer: { eq: $id } }) {
+        nodes {
+          id_lokalId
+          tek020Klassifikation
+          status
+        }
+      }
+    }`,
+    { vt, id: dawaId }
+  );
+  if (!Array.isArray(nodes)) return null;
+  // Dedupliker på id_lokalId (samme issue som BBR_Bygning — virkningsperioder)
+  const seen = new Set<string>();
+  const unique: Array<{
+    id_lokalId: string;
+    tek020Klassifikation: string | null;
+    status: string | null;
+  }> = [];
+  for (const raw of nodes as Array<{
+    id_lokalId?: string;
+    tek020Klassifikation?: string;
+    status?: string;
+  }>) {
+    if (!raw.id_lokalId || seen.has(raw.id_lokalId)) continue;
+    // Skip status=7 (nedrevet/slettet)
+    if (raw.status != null && String(raw.status) === '7') continue;
+    seen.add(raw.id_lokalId);
+    unique.push({
+      id_lokalId: raw.id_lokalId,
+      tek020Klassifikation: raw.tek020Klassifikation ?? null,
+      status: raw.status ?? null,
+    });
+  }
+  return unique;
 }
 
 /**
@@ -1469,6 +1533,18 @@ export async function fetchBbrForAddress(
     }
   }
 
+  // BIZZ-484: Hent tekniske anlæg parallelt — non-fatal hvis det fejler.
+  let tekniskeAnlaeg: Array<{
+    id_lokalId: string;
+    tek020Klassifikation: string | null;
+    status: string | null;
+  }> | null = null;
+  try {
+    tekniskeAnlaeg = await fetchBbrTekniskAnlaegByDawaId(adgangsadresseId);
+  } catch (err) {
+    logger.warn('[fetchBBR] TekniskAnlaeg fetch fejlede:', err);
+  }
+
   const bbrFejl = !(process.env.DATAFORDELER_API_KEY ?? '')
     ? 'Datafordeler API-nøgle ikke konfigureret.'
     : bbr === null
@@ -1484,6 +1560,7 @@ export async function fetchBbrForAddress(
     moderBfe,
     opgange,
     etager,
+    tekniskeAnlaeg,
     bbrFejl,
   };
 }

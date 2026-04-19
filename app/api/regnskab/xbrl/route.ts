@@ -437,32 +437,39 @@ function extractText(xml: string, tagNames: readonly string[]): string | null {
     // Skip Substainability-varianter eksplicit — de er ESG-revisor, ikke
     // den finansielle hovedrevisor som dette ticket dækker
     const escapedTag = tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    // BIZZ-559 v2: ESEF iXBRL embedder ofte HTML formatering (span, br) midt
-    // i text-værdier (fx "EY Godk<span>endt</span> Revisionspartnerselskab"
-    // eller "30<span class='nbsp'>&nbsp;</span>700228"). Ændret fra [^<]+ til
-    // [\s\S]*? så vi fanger HELE indholdet mellem opening/closing tag, og
-    // stripper inline HTML i normaliseInline.
+    // BIZZ-559 v3 (BIZZ-562 fix): ESEF iXBRL kan inkludere SAMME tag flere
+    // gange — typisk:
+    //   - en TRUNCATED version med continuedAt-attribut (visible HTML chunk)
+    //   - en FULD version (hidden complete value, ofte i ix:hidden-section)
+    // Tidligere returnerede vi første match → fik truncated. Nu samler vi
+    // ALLE matches og returnerer den længste (= den fulde værdi).
     const patterns: RegExp[] = [
       // Standard XBRL: <ns:Tag attrs>text</ns:Tag>
-      new RegExp(`<[a-z-]+:${escapedTag}\\s+[^>]*>([\\s\\S]*?)<\\/[a-z-]+:${escapedTag}>`, 'i'),
+      new RegExp(`<[a-z-]+:${escapedTag}\\s+[^>]*>([\\s\\S]*?)<\\/[a-z-]+:${escapedTag}>`, 'gi'),
       // iXBRL nonNumeric: <ix:nonNumeric name="ns:Tag" ...>text</ix:nonNumeric>
       new RegExp(
         `<ix:nonNumeric\\s+[^>]*name="[^"]*:${escapedTag}"[^>]*>([\\s\\S]*?)<\\/ix:nonNumeric>`,
-        'i'
+        'gi'
       ),
       // iXBRL nonFraction (CVR-numre etc.) — bruger closing tag for at få fuld bredde
       new RegExp(
         `<ix:nonFraction\\s+[^>]*name="[^"]*:${escapedTag}"[^>]*>([\\s\\S]*?)<\\/ix:nonFraction>`,
-        'i'
+        'gi'
       ),
     ];
+    let longestText: string | null = null;
     for (const re of patterns) {
-      const m = xml.match(re);
-      if (m && m[1]) {
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(xml)) !== null) {
+        if (!m[1]) continue;
         const text = normaliseInline(m[1]);
-        if (text) return text;
+        if (!text) continue;
+        if (longestText == null || text.length > longestText.length) {
+          longestText = text;
+        }
       }
     }
+    if (longestText) return longestText;
   }
   return null;
 }
@@ -857,8 +864,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // Seneste offentliggørelsestidspunkt — bruges som cache-nøgle
     // BIZZ-449: Append parser version to timestamp so cache is invalidated when
     // the XBRL parser logic changes (e.g. decimals attribute handling fix).
-    // v5: BIZZ-559 v2 — extractText håndterer nu inline HTML (ESEF iXBRL spans)
-    const PARSER_VERSION = 'v5';
+    // v6: BIZZ-562 — extractText vælger LÆNGSTE match for ESEF continuation cases
+    const PARSER_VERSION = 'v6';
     const latestTimestamp =
       (regnskabData.regnskaber[0]?.offentliggjort ?? '') + `_${PARSER_VERSION}`;
 

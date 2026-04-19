@@ -66,6 +66,27 @@ export function clearXmlCache(): void {
 }
 
 /**
+ * BIZZ-528: Henter dokaktuel via uuid, med fallback til alias-opslag hvis
+ * uuid-stien returnerer 404/non-200. Tinglysning kan i visse tilfælde
+ * kun finde et dokument via alias-stien (dato-løbenummer), specielt for
+ * ældre dokumenter eller når uuid-mapping er flyttet.
+ *
+ * @param uuid    Dokument-UUID (primært opslag)
+ * @param alias   DokumentAliasIdentifikator/AktHistoriskIdentifikator
+ *                (dato-løbenummer-format), bruges hvis uuid-opslag fejler.
+ * @returns Resultatet fra tlFetch — selv ved fallback bevares samme shape.
+ */
+async function fetchDokaktuel(
+  uuid: string,
+  alias: string | null
+): Promise<{ status: number; body: string; truncated: boolean }> {
+  const primary = await tlFetch(`/dokaktuel/uuid/${uuid}`);
+  if (primary.status === 200 || !alias) return primary;
+  // Non-200 + alias tilgængeligt → prøv alias-stien
+  return tlFetch(`/dokaktuel/alias/${alias}`);
+}
+
+/**
  * Run async tasks in parallel batches to avoid overwhelming the external API.
  * @param items - Array of items to process
  * @param fn - Async function to call for each item
@@ -339,7 +360,8 @@ export async function GET(req: NextRequest) {
       ejere.filter((e) => e.dokumentId),
       async (ejer) => {
         try {
-          const dokRes = await tlFetch(`/dokaktuel/uuid/${ejer.dokumentId}`);
+          // BIZZ-528: Brug fetchDokaktuel med alias-fallback
+          const dokRes = await fetchDokaktuel(ejer.dokumentId!, ejer.dokumentAlias);
           if (dokRes.status === 200) {
             const dok = dokRes.body;
             // Anmelder
@@ -600,7 +622,8 @@ export async function GET(req: NextRequest) {
     });
     await batchParallel(haeftelserToEnrich, async (h) => {
       try {
-        const dokRes = await tlFetch(`/dokaktuel/uuid/${h.dokumentId}`);
+        // BIZZ-528: Brug fetchDokaktuel med alias-fallback
+        const dokRes = await fetchDokaktuel(h.dokumentId!, h.dokumentAlias);
         if (dokRes.status === 200) {
           const dok = dokRes.body;
           // Debitorer (fra dokument hvis summarisk ikke har dem)
@@ -893,7 +916,8 @@ export async function GET(req: NextRequest) {
           if (cached && Date.now() - cached.ts < DOK_CACHE_TTL) {
             dok = cached.body;
           } else {
-            const dokRes = await tlFetch(dokPath);
+            // BIZZ-528: Brug fetchDokaktuel med alias-fallback
+            const dokRes = await fetchDokaktuel(s.dokumentId!, s.dokumentAlias);
             if (dokRes.status !== 200) return;
             dok = dokRes.body;
             dokCache.set(dokPath, { body: dok, ts: Date.now() });

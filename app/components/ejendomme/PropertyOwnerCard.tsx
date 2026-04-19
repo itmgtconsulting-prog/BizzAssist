@@ -13,7 +13,16 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Home, ExternalLink, Building2, Ruler, TrendingUp, User, ShoppingCart } from 'lucide-react';
+import {
+  Home,
+  ExternalLink,
+  Building2,
+  Ruler,
+  TrendingUp,
+  User,
+  ShoppingCart,
+  Map as MapIcon,
+} from 'lucide-react';
 import type { EjendomSummary } from '@/app/api/ejendomme-by-owner/route';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -85,6 +94,9 @@ export default function PropertyOwnerCard({
     ejerNavn: string | null;
     koebesum: number | null;
     koebsdato: string | null;
+    boligAreal: number | null;
+    erhvervsAreal: number | null;
+    matrikelAreal: number | null;
   } | null>(
     ejendom.areal != null
       ? {
@@ -94,6 +106,9 @@ export default function PropertyOwnerCard({
           ejerNavn: ejendom.ejerNavn ?? null,
           koebesum: ejendom.koebesum ?? null,
           koebsdato: ejendom.koebsdato ?? null,
+          boligAreal: ejendom.boligAreal ?? null,
+          erhvervsAreal: ejendom.erhvervsAreal ?? null,
+          matrikelAreal: ejendom.matrikelAreal ?? null,
         }
       : null
   );
@@ -101,7 +116,12 @@ export default function PropertyOwnerCard({
   useEffect(() => {
     if (enriched) return; // Already have data
     let ignore = false;
-    fetch(`/api/ejendomme-by-owner/enrich?bfe=${ejendom.bfeNummer}`)
+    // BIZZ-569: Send dawaId med så enrich-endpoint kan slå BBR-areal op
+    // direkte (uden dawaId returneres null for bolig/erhverv m²).
+    const url = ejendom.dawaId
+      ? `/api/ejendomme-by-owner/enrich?bfe=${ejendom.bfeNummer}&dawaId=${ejendom.dawaId}`
+      : `/api/ejendomme-by-owner/enrich?bfe=${ejendom.bfeNummer}`;
+    fetch(url)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (!ignore && d) setEnriched(d);
@@ -110,7 +130,7 @@ export default function PropertyOwnerCard({
     return () => {
       ignore = true;
     };
-  }, [ejendom.bfeNummer, enriched]);
+  }, [ejendom.bfeNummer, ejendom.dawaId, enriched]);
 
   const detailHref = ejendom.dawaId ? `/dashboard/ejendomme/${ejendom.dawaId}` : null;
   /* BIZZ-551: Append etage + dør for ejerlejligheder (e.g. "Vej 10A, 3. tv") */
@@ -173,15 +193,60 @@ export default function PropertyOwnerCard({
           )}
         </div>
 
-        {/* BIZZ-397/465: Enriched data — areal, vurdering, køb, ejer */}
+        {/* BIZZ-397/465/569: Enriched data — areal, vurdering, køb, ejer, m²-felter */}
         {enriched &&
-          (enriched.areal || enriched.vurdering || enriched.koebesum || enriched.ejerNavn) && (
+          (enriched.areal ||
+            enriched.vurdering ||
+            enriched.koebesum ||
+            enriched.ejerNavn ||
+            enriched.boligAreal ||
+            enriched.erhvervsAreal ||
+            enriched.matrikelAreal) && (
             <div className="grid grid-cols-2 gap-x-3 gap-y-1 pt-1 border-t border-slate-700/30">
-              {enriched.areal && (
+              {/* BIZZ-569: Hvis vi har splittede bolig/erhverv felter, vises de
+                  i stedet for samletBygningsareal — mere informativt. Fallback
+                  til samlet areal hvis kun det er tilgængeligt. */}
+              {!enriched.boligAreal && !enriched.erhvervsAreal && enriched.areal && (
                 <div className="flex items-center gap-1.5">
                   <Ruler size={10} className="text-slate-500" />
                   <span className="text-slate-300 text-[11px]">
                     {enriched.areal.toLocaleString('da-DK')} m²
+                  </span>
+                </div>
+              )}
+              {enriched.boligAreal != null && enriched.boligAreal > 0 && (
+                <div
+                  className="flex items-center gap-1.5"
+                  title={da ? 'Bolig-areal fra BBR' : 'Residential area from BBR'}
+                >
+                  <Home size={10} className="text-slate-500" />
+                  <span className="text-slate-300 text-[11px]">
+                    <span className="text-slate-500">{da ? 'Bolig:' : 'Resi:'}</span>{' '}
+                    {enriched.boligAreal.toLocaleString('da-DK')} m²
+                  </span>
+                </div>
+              )}
+              {enriched.erhvervsAreal != null && enriched.erhvervsAreal > 0 && (
+                <div
+                  className="flex items-center gap-1.5"
+                  title={da ? 'Erhvervs-areal fra BBR' : 'Commercial area from BBR'}
+                >
+                  <Building2 size={10} className="text-slate-500" />
+                  <span className="text-slate-300 text-[11px]">
+                    <span className="text-slate-500">{da ? 'Erhv:' : 'Comm:'}</span>{' '}
+                    {enriched.erhvervsAreal.toLocaleString('da-DK')} m²
+                  </span>
+                </div>
+              )}
+              {enriched.matrikelAreal != null && enriched.matrikelAreal > 0 && (
+                <div
+                  className="flex items-center gap-1.5"
+                  title={da ? 'Matrikel-areal fra DAWA' : 'Cadastral area from DAWA'}
+                >
+                  <MapIcon size={10} className="text-slate-500" />
+                  <span className="text-slate-300 text-[11px]">
+                    <span className="text-slate-500">{da ? 'Matr:' : 'Cad:'}</span>{' '}
+                    {enriched.matrikelAreal.toLocaleString('da-DK')} m²
                   </span>
                 </div>
               )}

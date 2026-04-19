@@ -89,6 +89,12 @@ export interface EjendomSummary {
   koebesum?: number | null;
   /** Overtagelsesdato fra seneste handel */
   koebsdato?: string | null;
+  /** BIZZ-569: Bolig m² fra BBR (sum over bygninger) */
+  boligAreal?: number | null;
+  /** BIZZ-569: Erhverv m² fra BBR (sum over bygninger) */
+  erhvervsAreal?: number | null;
+  /** BIZZ-569: Matrikel m² fra DAWA jordstykker (registreret_areal) */
+  matrikelAreal?: number | null;
 }
 
 /** API-svaret fra denne route */

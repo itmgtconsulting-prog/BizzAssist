@@ -652,6 +652,63 @@ async function fetchBFENummer(dawaId: string): Promise<{
 
 // ─── Date helper ─────────────────────────────────────────────────────────────
 
+/**
+ * BIZZ-569: Lightweight BBR-area fetch by adgangsadresse-UUID.
+ *
+ * Bruges af /api/ejendomme-by-owner/enrich til at berige property-cards med
+ * bolig/erhverv m² uden at fetche den fulde BBR-payload (bygninger, enheder,
+ * opgange, etager, materialer m.m.). Summerer areal-felter på tværs af alle
+ * bygninger på adressen.
+ *
+ * @param dawaId - DAWA adgangsadresse-UUID (husnummer-feltet i BBR_Bygning)
+ * @returns { boligAreal, erhvervsAreal, samletBygningsareal } — null hvis BBR ikke svarer
+ */
+export async function fetchBbrAreasByDawaId(dawaId: string): Promise<{
+  boligAreal: number | null;
+  erhvervsAreal: number | null;
+  samletBygningsareal: number | null;
+} | null> {
+  if (!dawaId) return null;
+  const vt = nowDafDateTime();
+  const query = `
+    query($vt: DafDateTime!, $id: String!) {
+      BBR_Bygning(first: 100, virkningstid: $vt, where: { husnummer: { eq: $id } }) {
+        nodes {
+          byg038SamletBygningsareal
+          byg039BygningensSamledeBoligAreal
+          byg040BygningensSamledeErhvervsAreal
+        }
+      }
+    }
+  `;
+  const nodes = await fetchBBRGraphQL(query, { vt, id: dawaId });
+  if (!Array.isArray(nodes) || nodes.length === 0) return null;
+  let bolig = 0;
+  let erhverv = 0;
+  let samlet = 0;
+  let any = false;
+  for (const n of nodes as RawBBRBygning[]) {
+    if (n.byg039BygningensSamledeBoligAreal != null) {
+      bolig += Number(n.byg039BygningensSamledeBoligAreal);
+      any = true;
+    }
+    if (n.byg040BygningensSamledeErhvervsAreal != null) {
+      erhverv += Number(n.byg040BygningensSamledeErhvervsAreal);
+      any = true;
+    }
+    if (n.byg038SamletBygningsareal != null) {
+      samlet += Number(n.byg038SamletBygningsareal);
+      any = true;
+    }
+  }
+  if (!any) return null;
+  return {
+    boligAreal: bolig > 0 ? bolig : null,
+    erhvervsAreal: erhverv > 0 ? erhverv : null,
+    samletBygningsareal: samlet > 0 ? samlet : null,
+  };
+}
+
 /** Returns a DafDateTime string for the current moment (CET/CEST). */
 function nowDafDateTime(): string {
   // Datafordeler requires timezone offset format: 2026-03-23T12:00:00+01:00

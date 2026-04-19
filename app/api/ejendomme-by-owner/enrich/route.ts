@@ -22,12 +22,18 @@ import { resolveTenantId } from '@/lib/api/auth';
 import { parseQuery } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
 import { selectPrimaryOwner, type EjerCandidate } from './selectPrimaryOwner';
+import { fetchBbrAreasByDawaId } from '@/app/lib/fetchBbrData';
+import { DAWA_BASE_URL } from '@/app/lib/serviceEndpoints';
 
 export const runtime = 'nodejs';
 export const maxDuration = 15;
 
 const enrichSchema = z.object({
   bfe: z.string().regex(/^\d+$/, 'bfe skal være numerisk'),
+  // BIZZ-569: Klienten sender også dawaId så vi kan slå BBR-bygningsareal op
+  // direkte. Tidligere blev der kaldt /api/bbr/bbox?bfe=X som ikke understøtter
+  // bfe-param og returnerede tom (areal var derfor altid null på cards).
+  dawaId: z.string().uuid().optional().or(z.literal('')),
 });
 
 export async function GET(request: NextRequest) {
@@ -39,7 +45,7 @@ export async function GET(request: NextRequest) {
 
   const parsed = parseQuery(request, enrichSchema);
   if (!parsed.success) return parsed.response;
-  const { bfe } = parsed.data;
+  const { bfe, dawaId } = parsed.data;
 
   const result: {
     areal: number | null;
@@ -48,6 +54,12 @@ export async function GET(request: NextRequest) {
     ejerNavn: string | null;
     koebesum: number | null;
     koebsdato: string | null;
+    /** BIZZ-569: Bolig m² fra BBR (sum over bygninger på adressen) */
+    boligAreal: number | null;
+    /** BIZZ-569: Erhverv m² fra BBR (sum over bygninger på adressen) */
+    erhvervsAreal: number | null;
+    /** BIZZ-569: Matrikel-areal fra DAWA jordstykker (registreret_areal) */
+    matrikelAreal: number | null;
   } = {
     areal: null,
     vurdering: null,
@@ -55,6 +67,9 @@ export async function GET(request: NextRequest) {
     ejerNavn: null,
     koebesum: null,
     koebsdato: null,
+    boligAreal: null,
+    erhvervsAreal: null,
+    matrikelAreal: null,
   };
 
   const baseUrl = request.nextUrl.origin;
@@ -65,14 +80,22 @@ export async function GET(request: NextRequest) {
   };
 
   try {
-    // Parallel: BBR (areal) + vurdering + ejerskab + salgshistorik (købspris/dato)
-    const [bbrRes, vurRes, ejRes, salgRes] = await Promise.allSettled([
-      // BBR for areal
-      fetch(`${baseUrl}/api/bbr/bbox?bfe=${bfe}`, fetchOpts).then(async (r) => {
+    // Parallel: BBR areal + vurdering + ejerskab + salgshistorik + matrikel
+    // BIZZ-569: BBR-areal henter bolig + erhverv + samlet bygningsareal i ÉT
+    // GraphQL-kald via fetchBbrAreasByDawaId (kræver dawaId). Tidligere kald
+    // til /api/bbr/bbox?bfe=X virkede ikke (bbox forventer bbox-koords).
+    // Matrikel-areal hentes via DAWA jordstykker.
+    const [bbrAreasRes, matrikelRes, vurRes, ejRes, salgRes] = await Promise.allSettled([
+      // BBR-areal direkte via dawaId (skip hvis vi ikke har dawaId)
+      dawaId ? fetchBbrAreasByDawaId(dawaId) : Promise.resolve(null),
+      // Matrikel-areal fra DAWA jordstykker (registreret_areal i m²)
+      fetch(`${DAWA_BASE_URL}/jordstykker?bfenummer=${bfe}&per_side=1`, {
+        signal: AbortSignal.timeout(5000),
+        next: { revalidate: 86400 },
+      }).then(async (r) => {
         if (!r.ok) return null;
-        const d = await r.json();
-        const byg = d?.bygninger?.[0];
-        return byg?.bygningsareal ?? byg?.samletBygningsareal ?? null;
+        const arr = (await r.json()) as Array<{ registreretareal?: number }>;
+        return arr[0]?.registreretareal ?? null;
       }),
       // Vurdering
       fetch(`${baseUrl}/api/vurdering?bfeNummer=${bfe}`, fetchOpts).then(async (r) => {
@@ -136,8 +159,19 @@ export async function GET(request: NextRequest) {
       }),
     ]);
 
-    if (bbrRes.status === 'fulfilled' && bbrRes.value != null) {
-      result.areal = bbrRes.value as number;
+    if (bbrAreasRes.status === 'fulfilled' && bbrAreasRes.value) {
+      const a = bbrAreasRes.value as {
+        boligAreal: number | null;
+        erhvervsAreal: number | null;
+        samletBygningsareal: number | null;
+      };
+      result.boligAreal = a.boligAreal;
+      result.erhvervsAreal = a.erhvervsAreal;
+      // Behold result.areal for backwards-compat (bruges fortsat i andre kort)
+      result.areal = a.samletBygningsareal;
+    }
+    if (matrikelRes.status === 'fulfilled' && matrikelRes.value != null) {
+      result.matrikelAreal = matrikelRes.value as number;
     }
     if (vurRes.status === 'fulfilled' && vurRes.value) {
       const v = vurRes.value as { vurdering: number | null; aar: number | null };

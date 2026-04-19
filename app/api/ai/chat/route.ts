@@ -1479,6 +1479,15 @@ export async function POST(request: NextRequest): Promise<Response> {
     async start(controller) {
       try {
         const MAX_TOOL_ROUNDS = 15;
+        // BIZZ-590: Soft time-budget. Vercel hard-kill ved maxDuration (120s)
+        // afbryder streamen uden at nå MAX_TOOL_ROUNDS-exit branch, og brugeren
+        // får 0 chars output. Når vi rammer SOFT_DEADLINE_MS giver vi Claude
+        // én sidste runde UDEN tools så AI kan syntetisere det allerede
+        // indsamlede data til et delvist svar inden serverless-timeout.
+        const SOFT_DEADLINE_MS = 90_000;
+        const startedAt = Date.now();
+        const elapsed = () => Date.now() - startedAt;
+        let forceFinalSynthesis = false;
         let round = 0;
 
         /** Track total token usage across all Claude API calls in this request */
@@ -1488,12 +1497,26 @@ export async function POST(request: NextRequest): Promise<Response> {
         while (round < MAX_TOOL_ROUNDS) {
           round++;
 
+          // Ved soft-deadline: suppress tools så Claude afslutter med tekst
+          // baseret på allerede hentede data (giver partial svar i stedet for
+          // 0-chars timeout). Efter denne runde exit'es while-loop via
+          // if (toolUseBlocks.length === 0).
+          if (!forceFinalSynthesis && elapsed() > SOFT_DEADLINE_MS) {
+            forceFinalSynthesis = true;
+            sse(controller, JSON.stringify({ status: 'Samler data til svar…' }));
+            anthropicMessages.push({
+              role: 'user',
+              content:
+                'Tiden er ved at løbe ud — afslut nu med et struktureret svar baseret på de data du allerede har hentet. Stil gerne opfølgningsspørgsmål, men skriv et svar i stedet for at kalde flere tools.',
+            });
+          }
+
           // Call Claude (non-streaming for tool rounds, streaming for final)
           const response = await client.messages.create({
             model: 'claude-sonnet-4-6',
             max_tokens: 4096,
             system: systemPrompt,
-            tools: TOOLS,
+            tools: forceFinalSynthesis ? undefined : TOOLS,
             messages: anthropicMessages,
           });
 

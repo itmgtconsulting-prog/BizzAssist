@@ -289,33 +289,39 @@ export default function PropertyOwnerCard({
                 </span>
               </div>
             )}
-            {/* BIZZ-465: Købspris + -dato fra seneste handel (EJF Ejerskifte). BIZZ-556: Eksplicit "Købt"-label. */}
-            {enriched.koebesum != null && enriched.koebesum > 0 && (
-              <div
-                className="flex items-center gap-1.5 col-span-2"
-                title={
-                  da
-                    ? 'Seneste købesum fra tinglysning'
-                    : 'Latest purchase price from land registry'
-                }
-              >
-                <ShoppingCart size={10} className="text-slate-500" aria-hidden="true" />
-                <span className="text-slate-300 text-[11px]">
-                  <span className="text-slate-500">{da ? 'Købt' : 'Purchased'}:</span>{' '}
-                  {formatDkkShort(enriched.koebesum)} DKK
-                  {enriched.koebsdato && (
-                    <span className="text-slate-500 ml-0.5">
-                      (
-                      {new Date(enriched.koebsdato).toLocaleDateString('da-DK', {
-                        year: 'numeric',
-                        month: 'short',
-                      })}
-                      )
-                    </span>
-                  )}
-                </span>
-              </div>
-            )}
+            {/* BIZZ-465: Købspris + -dato fra seneste handel (EJF Ejerskifte).
+                BIZZ-575 v4: Vis ALTID rækken — "—" når ingen handel er
+                registreret, så layoutet er konsistent på tværs af kort. */}
+            <div
+              className="flex items-center gap-1.5 col-span-2"
+              title={
+                da
+                  ? 'Seneste købesum fra tinglysning (EJF Ejerskifte)'
+                  : 'Latest purchase price from land registry (EJF Ejerskifte)'
+              }
+            >
+              <ShoppingCart size={10} className="text-slate-500" aria-hidden="true" />
+              <span className="text-slate-300 text-[11px]">
+                <span className="text-slate-500">{da ? 'Købt' : 'Purchased'}:</span>{' '}
+                {enriched.koebesum != null && enriched.koebesum > 0 ? (
+                  <>
+                    {formatDkkShort(enriched.koebesum)} DKK
+                    {enriched.koebsdato && (
+                      <span className="text-slate-500 ml-0.5">
+                        (
+                        {new Date(enriched.koebsdato).toLocaleDateString('da-DK', {
+                          year: 'numeric',
+                          month: 'short',
+                        })}
+                        )
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <span className="text-slate-600">{da ? '— ingen handel' : '— no sale'}</span>
+                )}
+              </span>
+            </div>
             {/* BIZZ-556: Eksplicit "Ejer"-label så brugeren ikke er i tvivl om navnet er ejer, administrator eller bygherre */}
             {enriched.ejerNavn && (
               <div

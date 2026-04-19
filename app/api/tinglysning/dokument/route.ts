@@ -488,7 +488,13 @@ export async function GET(req: NextRequest) {
   // hele strengen sendt som ét bilag-ID til Tinglysning som returnerede
   // 'Ekstern API fejl'. Nu split'es UUIDerne, hvert bilag hentes via
   // fetchBilagPdf, og resultatet flettes med mergePdfs til én download.
-  if (bilagId) {
+  //
+  // BIZZ-567 v2: Kun aktivér bilag-only-pathen når uuid IKKE er sat. Hvis
+  // klienten sender BÅDE ?uuid=X&bilag=a,b,c forventes en samlet PDF med
+  // servitut-dokumentet først og bilagene bagefter — det håndteres af
+  // uuid-pathen længere nede (se line ~905). Tidligere returnerede bilag-
+  // pathen først og servitut-dokumentet manglede helt i download.
+  if (bilagId && !uuid) {
     // UUID validation: 8-4-4-4-12 hex chars
     const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     const bilagUuids = bilagId

@@ -1,11 +1,17 @@
 /**
  * GET /api/tinglysning/personbog?cvr=12345678
+ * GET /api/tinglysning/personbog?navn=Jens%20Jensen&fdato=DDMMYY  (BIZZ-531)
+ * GET /api/tinglysning/personbog?navn=Jens%20Jensen&udenfdato=true  (BIZZ-531)
  *
  * Henter personbogsdata (virksomhedspant, løsørepant, fordringspant, ejendomsforbehold)
- * for en virksomhed via Tinglysningsrettens HTTP API.
- * Bruger 2-vejs SSL med OCES systemcertifikat (NemID/MitID).
+ * via Tinglysningsrettens HTTP API. Bruger 2-vejs SSL med OCES systemcertifikat.
  *
- * @param cvr - CVR-nummer (8 cifre)
+ * To søgemodes:
+ *   1. cvr: Slå op på virksomhed eller person via deres CVR-nummer
+ *   2. navn+fdato (BIZZ-531): Slå op på person der ikke har CVR. fdato i
+ *      DDMMYY-format. Sæt udenfdato=true for at søge på navn alene (mange
+ *      false positives — kun til brug når fødselsdato er ukendt).
+ *
  * @returns PersonbogData med hæftelser fra Personbogen
  */
 
@@ -99,7 +105,10 @@ export interface PersonbogDokument {
 }
 
 export interface PersonbogData {
-  /** CVR-nummer */
+  /**
+   * Søge-identifier: enten CVR-nummer (8 cifre) eller "navn|fdato"-streng
+   * (BIZZ-531) for personer uden CVR. UI-logik bør acceptere begge formater.
+   */
   cvr: string;
   /** Personbog-UUID (til videre opslag) */
   uuid: string | null;
@@ -373,20 +382,46 @@ function normalizeType(raw: string): string {
 export async function GET(req: NextRequest) {
   const auth = await resolveTenantId();
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  /** Zod schema for personbog query params */
-  const personbogSchema = z.object({
-    cvr: z.string().regex(/^\d{8}$/, 'cvr parameter er påkrævet (8 cifre)'),
-  });
+  /**
+   * Zod schema for personbog query params (BIZZ-531).
+   * Accepterer enten: cvr, navn+fdato, eller navn+udenfdato=true.
+   */
+  const personbogSchema = z
+    .object({
+      cvr: z
+        .string()
+        .regex(/^\d{8}$/)
+        .optional(),
+      navn: z.string().min(2).optional(),
+      fdato: z
+        .string()
+        .regex(/^\d{6}$/, 'fdato skal være DDMMYY (6 cifre)')
+        .optional(),
+      udenfdato: z.enum(['true', 'false']).optional(),
+    })
+    .refine(
+      (d) => d.cvr != null || (d.navn != null && (d.fdato != null || d.udenfdato === 'true')),
+      {
+        message:
+          'Angiv enten cvr (8 cifre) eller navn + fdato (DDMMYY) — eller navn + udenfdato=true',
+      }
+    );
 
   const parsed = parseQuery(req, personbogSchema);
   if (!parsed.success) {
-    return NextResponse.json({ error: 'cvr parameter er påkrævet (8 cifre)' }, { status: 400 });
+    return NextResponse.json(
+      { error: 'cvr eller navn+fdato parameter er påkrævet' },
+      { status: 400 }
+    );
   }
-  const { cvr } = parsed.data;
+  // udenfdato bruges implicit via schema-refine (krav når fdato mangler) — destruktureres ikke
+  const { cvr, navn, fdato } = parsed.data;
+  // Søge-identifier til response (cvr eller "navn|fdato")
+  const searchId = cvr ?? `${navn}${fdato ? '|' + fdato : '|udenfdato'}`;
 
   if ((!CERT_PATH && !CERT_B64) || !CERT_PASSWORD) {
     return NextResponse.json({
-      cvr,
+      cvr: searchId,
       uuid: null,
       haeftelser: [],
       vedtaegter: [],
@@ -397,10 +432,23 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    // Trin 1: Søg i Personbogen med CVR-nummer
-    // Endpoint: /tinglysning/unsecuressl/soegpersonbogcvr?cvr=...
+    // Trin 1: Søg i Personbogen
+    // BIZZ-531: To søgemodes — cvr eller navn+fdato (eller navn+udenfdato).
+    // Endpoint i begge tilfælde: /tinglysning/unsecuressl/soegpersonbogcvr
     // Se http_api_beskrivelse v1.12, afsnit 4.4.1
-    const searchRes = await tlFetch(`/soegpersonbogcvr?cvr=${cvr}`);
+    let searchUrl: string;
+    if (cvr) {
+      searchUrl = `/soegpersonbogcvr?cvr=${cvr}`;
+    } else {
+      // navn+fdato eller navn+udenfdato — sikr URL-encoding for navn
+      const navnEnc = encodeURIComponent(navn!);
+      if (fdato) {
+        searchUrl = `/soegpersonbogcvr?fdato=${fdato}&navn=${navnEnc}&udenfdato=false`;
+      } else {
+        searchUrl = `/soegpersonbogcvr?navn=${navnEnc}&udenfdato=true`;
+      }
+    }
+    const searchRes = await tlFetch(searchUrl);
 
     let items: { uuid: string; navn?: string; cvr?: string }[] = [];
 
@@ -420,7 +468,7 @@ export async function GET(req: NextRequest) {
 
     if (items.length === 0) {
       const result: PersonbogData = {
-        cvr,
+        cvr: searchId,
         uuid: null,
         haeftelser: [],
         vedtaegter: [],
@@ -481,7 +529,7 @@ export async function GET(req: NextRequest) {
     }
 
     const result: PersonbogData = {
-      cvr,
+      cvr: searchId,
       uuid: primaryUuid,
       haeftelser: allHaeftelser,
       vedtaegter: allVedtaegter,

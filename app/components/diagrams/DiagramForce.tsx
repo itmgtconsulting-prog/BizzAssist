@@ -2280,9 +2280,11 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
                       {node.label.length > 44 ? node.label.slice(0, 44) + '…' : node.label}
                     </text>
                   )}
-                  {/* Person dynamic expand — fetch this person's other owned companies */}
+                  {/* Person dynamic expand — fetch this person's other owned companies.
+                      BIZZ-586: Tilladt OGSAA paa root-person-noder (isMain) saa
+                      personligt ejede virksomheder + ejendomme kan vises paa
+                      person-side-diagrammet. Tidligere udelukket via !isMain. */}
                   {isPerson &&
-                    !isMain &&
                     node.enhedsNummer != null &&
                     (() => {
                       const personLoading = loadingExpansion.has(node.id);

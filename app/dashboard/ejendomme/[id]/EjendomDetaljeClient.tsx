@@ -5255,11 +5255,16 @@ export default function EjendomDetaljeClient({
 
                     {energimaerker && energimaerker.length > 0 && (
                       <div>
-                        {/* BIZZ-565 v3: Kolonne-rækkefølge per bruger-spec:
-                            år | adresse | klasse | gyldig fra | gyldig til | status | rapport | ☐
-                            Status/Rapport/Checkbox højrejusteret så de aligner med
-                            Status/Dok./Checkbox i Dokumenter+Planer-sektionerne ovenfor. */}
-                        <div className="min-w-[760px] grid grid-cols-[72px_1fr_60px_100px_100px_120px_80px_28px] gap-x-3 px-4 py-1.5 border-b border-slate-700/20">
+                        {/* BIZZ-565 v4: Grid alignet med Dokumenter+Planer-sektionerne
+                            ovenfor: 28px leading (matches chevron-kolonne) +
+                            72px ÅR + 1fr ADRESSE + 60px KLASSE + 100px GF +
+                            100px GT + 120px STATUS + 80px RAPPORT (PDF +
+                            checkbox slået sammen som i Planer-sektionen). Det
+                            sikrer at ÅR, STATUS og RAPPORT-kolonnerne ligger
+                            præcis under tilsvarende kolonner i de øvrige
+                            dokument-sektioner. */}
+                        <div className="min-w-[760px] grid grid-cols-[28px_72px_1fr_60px_100px_100px_120px_80px] gap-x-3 px-4 py-1.5 border-b border-slate-700/20">
+                          <span />
                           <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
                             {da ? 'År' : 'Year'}
                           </span>
@@ -5281,7 +5286,6 @@ export default function EjendomDetaljeClient({
                           <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
                             {da ? 'Rapport' : 'Report'}
                           </span>
-                          <span />
                         </div>
                         {energimaerker.map((m) => {
                           // Officielle EU energimærke farver (Building Energy Performance Directive)
@@ -5316,8 +5320,10 @@ export default function EjendomDetaljeClient({
                           return (
                             <div
                               key={m.serialId}
-                              className="min-w-[760px] grid grid-cols-[72px_1fr_60px_100px_100px_120px_80px_28px] gap-x-3 px-4 py-2 border-b border-slate-700/15 hover:bg-slate-700/10 transition-colors items-center"
+                              className="min-w-[760px] grid grid-cols-[28px_72px_1fr_60px_100px_100px_120px_80px] gap-x-3 px-4 py-2 border-b border-slate-700/15 hover:bg-slate-700/10 transition-colors items-center"
                             >
+                              {/* 0. (tom — matcher chevron-kolonne i Dokumenter/Planer) */}
+                              <span />
                               {/* 1. ÅR */}
                               <span className="text-sm tabular-nums text-slate-300">{aar}</span>
                               {/* 2. ADRESSE */}
@@ -5358,7 +5364,8 @@ export default function EjendomDetaljeClient({
                               >
                                 {m.status ?? '—'}
                               </span>
-                              <div>
+                              {/* 7. RAPPORT — PDF + checkbox samme celle som Planer-sektionen */}
+                              <div className="flex items-center gap-1.5 self-start">
                                 {m.pdfUrl ? (
                                   <a
                                     href={m.pdfUrl}
@@ -5372,38 +5379,35 @@ export default function EjendomDetaljeClient({
                                 ) : (
                                   <span className="text-xs text-slate-600">—</span>
                                 )}
-                              </div>
-                              {/* Bulk-download checkbox — uses valgteDoc shared with the rest of the Dokumenter tab */}
-                              {m.pdfUrl ? (
-                                <label
-                                  className="flex items-center cursor-pointer flex-shrink-0"
-                                  onClick={(ev) => ev.stopPropagation()}
-                                >
-                                  <input
-                                    type="checkbox"
-                                    className="sr-only"
-                                    checked={valgteDoc.has(`energi-${m.serialId}`)}
-                                    onChange={() => toggleDoc(`energi-${m.serialId}`)}
-                                  />
-                                  <span
-                                    className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors ${valgteDoc.has(`energi-${m.serialId}`) ? 'bg-blue-500 border-blue-500' : 'bg-[#0a1020] border-slate-400'}`}
+                                {m.pdfUrl && (
+                                  <label
+                                    className="flex items-center cursor-pointer flex-shrink-0"
+                                    onClick={(ev) => ev.stopPropagation()}
                                   >
-                                    {valgteDoc.has(`energi-${m.serialId}`) && (
-                                      <svg
-                                        viewBox="0 0 10 10"
-                                        className="w-2 h-2 text-white"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        strokeWidth="2.5"
-                                      >
-                                        <path d="M1.5 5.5l2.5 2.5 4.5-4.5" />
-                                      </svg>
-                                    )}
-                                  </span>
-                                </label>
-                              ) : (
-                                <span />
-                              )}
+                                    <input
+                                      type="checkbox"
+                                      className="sr-only"
+                                      checked={valgteDoc.has(`energi-${m.serialId}`)}
+                                      onChange={() => toggleDoc(`energi-${m.serialId}`)}
+                                    />
+                                    <span
+                                      className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors ${valgteDoc.has(`energi-${m.serialId}`) ? 'bg-blue-500 border-blue-500' : 'bg-[#0a1020] border-slate-400'}`}
+                                    >
+                                      {valgteDoc.has(`energi-${m.serialId}`) && (
+                                        <svg
+                                          viewBox="0 0 10 10"
+                                          className="w-2 h-2 text-white"
+                                          fill="none"
+                                          stroke="currentColor"
+                                          strokeWidth="2.5"
+                                        >
+                                          <path d="M1.5 5.5l2.5 2.5 4.5-4.5" />
+                                        </svg>
+                                      )}
+                                    </span>
+                                  </label>
+                                )}
+                              </div>
                             </div>
                           );
                         })}

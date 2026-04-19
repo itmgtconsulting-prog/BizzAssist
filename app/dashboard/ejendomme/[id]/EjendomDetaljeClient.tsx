@@ -5255,10 +5255,11 @@ export default function EjendomDetaljeClient({
 
                     {energimaerker && energimaerker.length > 0 && (
                       <div>
-                        {/* BIZZ-565: Aligneret med Planer-sektionens kolonne-layout
-                            (ÅR | TYPE/ADRESSE | ...) for visuel konsistens.
-                            Klasse-badge flyttet til 3. kolonne. */}
-                        <div className="min-w-[680px] grid grid-cols-[72px_1fr_60px_120px_120px_80px_28px] gap-x-3 px-4 py-1.5 border-b border-slate-700/20">
+                        {/* BIZZ-565 v3: Kolonne-rækkefølge per bruger-spec:
+                            år | adresse | klasse | gyldig fra | gyldig til | status | rapport | ☐
+                            Status/Rapport/Checkbox højrejusteret så de aligner med
+                            Status/Dok./Checkbox i Dokumenter+Planer-sektionerne ovenfor. */}
+                        <div className="min-w-[760px] grid grid-cols-[72px_1fr_60px_100px_100px_120px_80px_28px] gap-x-3 px-4 py-1.5 border-b border-slate-700/20">
                           <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
                             {da ? 'År' : 'Year'}
                           </span>
@@ -5269,10 +5270,13 @@ export default function EjendomDetaljeClient({
                             Klasse
                           </span>
                           <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
-                            Status
+                            {da ? 'Gyldig fra' : 'Valid from'}
                           </span>
                           <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
                             {da ? 'Gyldig til' : 'Valid until'}
+                          </span>
+                          <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
+                            Status
                           </span>
                           <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
                             {da ? 'Rapport' : 'Report'}
@@ -5303,7 +5307,7 @@ export default function EjendomDetaljeClient({
                                   : 'bg-slate-700/40 text-slate-400';
                           // BIZZ-565: Udtræk år fra gyldigFra til ÅR-kolonne.
                           // Format kan være "19. jul. 2022", "2022-07-19" eller andet —
-                          // grab de første 4 cifre fra højre (årstal-mønster) som fallback.
+                          // grab første 4 cifre (årstal-mønster) som fallback.
                           const aar = (() => {
                             const s = m.gyldigFra ?? '';
                             const m4 = s.match(/(\d{4})/);
@@ -5312,9 +5316,11 @@ export default function EjendomDetaljeClient({
                           return (
                             <div
                               key={m.serialId}
-                              className="min-w-[680px] grid grid-cols-[72px_1fr_60px_120px_120px_80px_28px] gap-x-3 px-4 py-2 border-b border-slate-700/15 hover:bg-slate-700/10 transition-colors items-center"
+                              className="min-w-[760px] grid grid-cols-[72px_1fr_60px_100px_100px_120px_80px_28px] gap-x-3 px-4 py-2 border-b border-slate-700/15 hover:bg-slate-700/10 transition-colors items-center"
                             >
+                              {/* 1. ÅR */}
                               <span className="text-sm tabular-nums text-slate-300">{aar}</span>
+                              {/* 2. ADRESSE */}
                               <div>
                                 <p className="text-sm text-slate-200">{m.adresse ?? '—'}</p>
                                 {m.bygninger.length > 0 && (
@@ -5329,21 +5335,28 @@ export default function EjendomDetaljeClient({
                                   </p>
                                 )}
                               </div>
+                              {/* 3. KLASSE */}
                               <span
                                 style={klasseStyle}
                                 className="inline-flex items-center justify-center w-7 h-7 rounded-md text-xs font-bold"
                               >
                                 {m.klasse}
                               </span>
-                              <span
-                                className={`inline-flex items-center self-start px-2 py-0.5 rounded text-xs font-medium ${statusKlasse}`}
-                              >
-                                {m.status ?? '—'}
+                              {/* 4. GYLDIG FRA */}
+                              <span className="text-sm tabular-nums text-slate-400">
+                                {m.gyldigFra ?? '—'}
                               </span>
+                              {/* 5. GYLDIG TIL */}
                               <span
                                 className={`text-sm tabular-nums ${m.status === 'Ugyldig' ? 'text-red-400' : 'text-slate-300'}`}
                               >
                                 {m.udloeber ?? '—'}
+                              </span>
+                              {/* 6. STATUS */}
+                              <span
+                                className={`inline-flex items-center self-start px-2 py-0.5 rounded text-xs font-medium ${statusKlasse}`}
+                              >
+                                {m.status ?? '—'}
                               </span>
                               <div>
                                 {m.pdfUrl ? (

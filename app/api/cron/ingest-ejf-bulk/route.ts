@@ -225,7 +225,10 @@ function mapNodeToRow(node: RawEjfNode): EjfRow | null {
 }
 
 /**
- * Batch-upsert rækker til ejf_ejerskab. Returnerer antal upserted og failed.
+ * Batch-upsert rækker til ejf_ejerskab. Dedupliker først på PK-composite
+ * (bfe_nummer, ejer_ejf_id, virkning_fra) — Postgres ON CONFLICT kan ikke
+ * håndtere samme key to gange i én statement. Sidste forekomst vinder.
+ * Returnerer antal upserted og failed.
  */
 async function flushBatch(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -233,7 +236,18 @@ async function flushBatch(
   batch: EjfRow[]
 ): Promise<{ upserted: number; failed: number }> {
   if (batch.length === 0) return { upserted: 0, failed: 0 };
-  const { error } = await table.upsert(batch, {
+
+  // Dedupliker på composite PK — EJF returnerer samme ejerskab flere gange
+  // hvis der er historiske virkning_til-ændringer for samme (bfe, ejer, virkningFra)
+  const seen = new Map<string, EjfRow>();
+  for (const row of batch) {
+    const key = `${row.bfe_nummer}|${row.ejer_ejf_id}|${row.virkning_fra}`;
+    seen.set(key, row);
+  }
+  const deduped = Array.from(seen.values());
+  const dupesRemoved = batch.length - deduped.length;
+
+  const { error } = await table.upsert(deduped, {
     onConflict: 'bfe_nummer,ejer_ejf_id,virkning_fra',
     ignoreDuplicates: false,
   });
@@ -241,7 +255,9 @@ async function flushBatch(
     logger.error('[ingest-ejf-bulk] Batch upsert fejl:', error.message);
     return { upserted: 0, failed: batch.length };
   }
-  return { upserted: batch.length, failed: 0 };
+  // Tæller dupes som upserted (de repræsenterer de samme records) så statistik
+  // afspejler processed-count korrekt
+  return { upserted: deduped.length + dupesRemoved, failed: 0 };
 }
 
 // ─── Ingestion: Bulk file download ─────────────────────────────────────────

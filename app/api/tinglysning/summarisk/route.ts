@@ -1203,8 +1203,25 @@ export async function GET(req: NextRequest) {
                   10 // batchSize bumpet fra 5 → 10
                 );
 
-                // Tilføj moderejendommens servitutter til svaret
-                servitutter.push(...servitutterFraHoved);
+                // BIZZ-566: Dedupliker servitutter mellem lejlighed og hovedejendom.
+                // Samme dokument kan være tinglyst på begge — uden dedup vises
+                // det to gange. Behold lejlighedens version (mere specifik) og
+                // filtrer hovedejendoms-versionen fra.
+                // Primær nøgle: dokumentId (e-TL UUID — globalt unik).
+                // Fallback (når dokumentId mangler): composite (dato|type|tekst-hash).
+                const eksisterendeDokIds = new Set(
+                  servitutter.filter((s) => s.dokumentId).map((s) => s.dokumentId as string)
+                );
+                const compositeKey = (s: TLServitut): string =>
+                  `${s.dato ?? ''}|${s.type}|${(s.tekst ?? '').slice(0, 80)}`;
+                const eksisterendeComposite = new Set(servitutter.map(compositeKey));
+                const dedupedFraHoved = servitutterFraHoved.filter((s) => {
+                  if (s.dokumentId && eksisterendeDokIds.has(s.dokumentId)) return false;
+                  if (eksisterendeComposite.has(compositeKey(s))) return false;
+                  return true;
+                });
+                // Tilføj kun de UNIKKE moderejendoms-servitutter
+                servitutter.push(...dedupedFraHoved);
               }
             }
           }

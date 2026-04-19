@@ -1148,7 +1148,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<CVRPublicData 
     // For vat-lookup, return single result
     if (vat) {
       // TEMP debug: return raw hit to inspect ES structure (BIZZ-516)
-      if (request.nextUrl.searchParams.get('__debugRaw') === '1') {
+      if (req.nextUrl.searchParams.get('__debugRaw') === '1') {
         const src = (hits[0]._source as Record<string, unknown>)?.Vrvirksomhed as Record<
           string,
           unknown
@@ -1158,7 +1158,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<CVRPublicData 
         for (const k of ['hjemsted', 'hjemstedsadresse', 'fusioner', 'spaltninger']) {
           if (src?.[k] !== undefined) sample[k] = src[k];
         }
-        return NextResponse.json(sample);
+        return NextResponse.json(sample as unknown as CVRPublicData);
       }
       const mapped = mapESHit(hits[0]);
       if (!mapped) {

@@ -875,6 +875,8 @@ export default function EjendomDetaljeClient({
   const [vurGrundvaerdispec, setVurGrundvaerdispec] = useState<
     VurderingResponse['grundvaerdispec']
   >([]);
+  /** BIZZ-491: Skattefritagelser for nyeste vurdering */
+  const [vurFritagelser, setVurFritagelser] = useState<VurderingResponse['fritagelser']>([]);
   /** True mens vurderingsdata hentes — starter som true når prefetch giver BBR data med det samme */
   const [vurderingLoader, setVurderingLoader] = useState(!!prefetched?.bbrData);
   /** True = vis fuld vurderingshistorik-tabel */
@@ -1366,6 +1368,7 @@ export default function EjendomDetaljeClient({
         setVurFradrag(data?.fradrag ?? null);
         setVurFordeling(data?.fordeling ?? []);
         setVurGrundvaerdispec(data?.grundvaerdispec ?? []);
+        setVurFritagelser(data?.fritagelser ?? []);
       })
       .catch((err) => {
         if (err.name === 'AbortError') return;
@@ -4381,6 +4384,35 @@ export default function EjendomDetaljeClient({
                       </div>
                     );
                   })()}
+
+                {/* BIZZ-491: Skattefritagelser */}
+                {vurFritagelser.length > 0 && (
+                  <div>
+                    <SectionTitle title={da ? 'Skattefritagelser' : 'Tax exemptions'} />
+                    <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
+                      {vurFritagelser.map((f) => (
+                        <div
+                          key={f.loebenummer}
+                          className="px-4 py-3 border-b border-slate-700/20 last:border-b-0 flex items-center justify-between"
+                        >
+                          <div>
+                            <p className="text-slate-300 text-sm">
+                              {f.artKode ?? `#${f.loebenummer}`}
+                            </p>
+                            {f.omfangKode && (
+                              <p className="text-slate-500 text-xs">
+                                {da ? 'Omfang' : 'Scope'}: {f.omfangKode}
+                              </p>
+                            )}
+                          </div>
+                          <p className="text-white text-sm font-medium tabular-nums">
+                            {f.beloeb != null ? formatDKK(f.beloeb) : '—'}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

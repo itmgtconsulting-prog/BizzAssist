@@ -39,6 +39,7 @@ import {
   CheckCircle,
   XCircle,
   Info,
+  Zap,
 } from 'lucide-react';
 /** Recharts — single dynamic import keeps recharts in one chunk */
 const EjendomPrisChart = dynamic(() => import('./EjendomPrisChart'), { ssr: false });
@@ -5210,10 +5211,14 @@ export default function EjendomDetaljeClient({
                   </div>
                   {/* end planer subsection */}
 
-                  {/* ── Energimærker subsection ── */}
-                  <div>
+                  {/* ── Energimærker subsection ──
+                      BIZZ-565: Header alignet med Planer-sektionen ovenover
+                      (ikon-style + text-color/size). Tidligere brugte vi en
+                      emoji-prefix der gjorde sektionen visuelt anderledes
+                      end de øvrige dokument-sektioner. */}
+                  <div className="border-t border-slate-700/30">
                     <div className="px-4 py-2 flex items-center gap-2">
-                      <span className="text-sm leading-none">⚡</span>
+                      <Zap size={13} className="text-slate-500" />
                       <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">
                         {t.energyReports}
                       </span>

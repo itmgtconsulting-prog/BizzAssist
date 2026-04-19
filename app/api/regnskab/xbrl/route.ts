@@ -437,26 +437,52 @@ function extractText(xml: string, tagNames: readonly string[]): string | null {
     // Skip Substainability-varianter eksplicit — de er ESG-revisor, ikke
     // den finansielle hovedrevisor som dette ticket dækker
     const escapedTag = tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // BIZZ-559 v2: ESEF iXBRL embedder ofte HTML formatering (span, br) midt
+    // i text-værdier (fx "EY Godk<span>endt</span> Revisionspartnerselskab"
+    // eller "30<span class='nbsp'>&nbsp;</span>700228"). Ændret fra [^<]+ til
+    // [\s\S]*? så vi fanger HELE indholdet mellem opening/closing tag, og
+    // stripper inline HTML i normaliseInline.
     const patterns: RegExp[] = [
       // Standard XBRL: <ns:Tag attrs>text</ns:Tag>
-      new RegExp(`<[a-z-]+:${escapedTag}\\s+[^>]*>([^<]+)<\\/[a-z-]+:${escapedTag}>`, 'i'),
+      new RegExp(`<[a-z-]+:${escapedTag}\\s+[^>]*>([\\s\\S]*?)<\\/[a-z-]+:${escapedTag}>`, 'i'),
       // iXBRL nonNumeric: <ix:nonNumeric name="ns:Tag" ...>text</ix:nonNumeric>
       new RegExp(
-        `<ix:nonNumeric\\s+[^>]*name="[^"]*:${escapedTag}"[^>]*>([^<]+)<\\/ix:nonNumeric>`,
+        `<ix:nonNumeric\\s+[^>]*name="[^"]*:${escapedTag}"[^>]*>([\\s\\S]*?)<\\/ix:nonNumeric>`,
         'i'
       ),
-      // iXBRL nonFraction (for CVR-numre etc. som er numeriske men vi vil have rå-streng)
-      new RegExp(`<ix:nonFraction\\s+[^>]*name="[^"]*:${escapedTag}"[^>]*>([^<]+)<`, 'i'),
+      // iXBRL nonFraction (CVR-numre etc.) — bruger closing tag for at få fuld bredde
+      new RegExp(
+        `<ix:nonFraction\\s+[^>]*name="[^"]*:${escapedTag}"[^>]*>([\\s\\S]*?)<\\/ix:nonFraction>`,
+        'i'
+      ),
     ];
     for (const re of patterns) {
       const m = xml.match(re);
       if (m && m[1]) {
-        const text = m[1].trim();
+        const text = normaliseInline(m[1]);
         if (text) return text;
       }
     }
   }
   return null;
+}
+
+/**
+ * BIZZ-559 v2: Normaliserer en text-værdi der kan indeholde inline HTML
+ * fra ESEF iXBRL (span, br, &nbsp;). Stripper alle tags og dekoder de
+ * mest almindelige HTML-entities + numeriske character references.
+ */
+function normaliseInline(raw: string): string {
+  return raw
+    .replace(/<[^>]+>/g, '') // strip all HTML tags
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 /**
@@ -534,6 +560,9 @@ function parseXbrl(xml: string, periodeStart: string, periodeSlut: string): Regn
   // vi accepterer ALLE contexts via extractText. Trim trailing tegn (komma etc.)
   // som nogle ESEF-renderers tilføjer.
   const trim = (s: string | null) => s?.replace(/[\s,;.]+$/, '').trim() || null;
+  // BIZZ-559 v2: CVR-numre kan have whitespace fra ESEF iXBRL spans (fx "30 700228").
+  // Strip alt whitespace så vi får ren 8-cifret string til /companies/{cvr}-link.
+  const cvrClean = (s: string | null) => s?.replace(/\s+/g, '') || null;
   const forbeholdRaw = extractText(xml, REVISOR_TEXT_TAGS.forbeholdType);
   // ESEF-enum-værdier: "Opinion" = ren konklusion (ikke modificeret).
   // Modificerede typer: QualifiedOpinion, AdverseOpinion, DisclaimerOfOpinion.
@@ -541,7 +570,7 @@ function parseXbrl(xml: string, periodeStart: string, periodeSlut: string): Regn
     forbeholdRaw != null && forbeholdRaw !== '' && !/^opinion$/i.test(forbeholdRaw);
   const revisorRaw: Revisor = {
     firmanavn: trim(extractText(xml, REVISOR_TEXT_TAGS.firmanavn)),
-    firmaCvr: extractText(xml, REVISOR_TEXT_TAGS.firmaCvr),
+    firmaCvr: cvrClean(extractText(xml, REVISOR_TEXT_TAGS.firmaCvr)),
     revisorNavn: trim(extractText(xml, REVISOR_TEXT_TAGS.revisorNavn)),
     revisorMNE: extractText(xml, REVISOR_TEXT_TAGS.revisorMNE),
     signaturSted: trim(extractText(xml, REVISOR_TEXT_TAGS.signaturSted)),
@@ -828,8 +857,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // Seneste offentliggørelsestidspunkt — bruges som cache-nøgle
     // BIZZ-449: Append parser version to timestamp so cache is invalidated when
     // the XBRL parser logic changes (e.g. decimals attribute handling fix).
-    // v4: BIZZ-559 — tilføjet revisor-felt (parser-output ændret igen)
-    const PARSER_VERSION = 'v4';
+    // v5: BIZZ-559 v2 — extractText håndterer nu inline HTML (ESEF iXBRL spans)
+    const PARSER_VERSION = 'v5';
     const latestTimestamp =
       (regnskabData.regnskaber[0]?.offentliggjort ?? '') + `_${PARSER_VERSION}`;
 

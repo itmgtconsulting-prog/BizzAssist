@@ -3026,6 +3026,9 @@ export default function EjendomDetaljeClient({
                   const totAreal = bygninger.reduce((s, b) => s + (b.samletBygningsareal ?? 0), 0);
                   const boligAreal = bygninger.reduce((s, b) => s + (b.samletBoligareal ?? 0), 0);
                   const erhvAreal = bygninger.reduce((s, b) => s + (b.samletErhvervsareal ?? 0), 0);
+                  // BIZZ-487: Kælder + tagetage udledt fra BBR_Etage i fetchBbrData.ts
+                  const kaelderAreal = bygninger.reduce((s, b) => s + (b.kaelder ?? 0), 0);
+                  const tagetageAreal = bygninger.reduce((s, b) => s + (b.tagetage ?? 0), 0);
                   return (
                     <div>
                       <SectionTitle title={t.buildings} />
@@ -3056,6 +3059,20 @@ export default function EjendomDetaljeClient({
                               : '–'
                           }
                         />
+                        {/* BIZZ-487: Kælder vises kun når der er et areal > 0 */}
+                        {kaelderAreal > 0 && (
+                          <DataKort
+                            label={t.basement}
+                            value={`${kaelderAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`}
+                          />
+                        )}
+                        {/* BIZZ-487: Tagetage vises kun når der er et areal > 0 */}
+                        {tagetageAreal > 0 && (
+                          <DataKort
+                            label={da ? 'Tagetage' : 'Attic'}
+                            value={`${tagetageAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`}
+                          />
+                        )}
                       </div>
                       {bbrLoader ? (
                         <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden animate-pulse">
@@ -5817,6 +5834,9 @@ export default function EjendomDetaljeClient({
                   const totAreal = bygninger.reduce((s, b) => s + (b.samletBygningsareal ?? 0), 0);
                   const boligAreal = bygninger.reduce((s, b) => s + (b.samletBoligareal ?? 0), 0);
                   const erhvAreal = bygninger.reduce((s, b) => s + (b.samletErhvervsareal ?? 0), 0);
+                  // BIZZ-487: Kælder + tagetage udledt fra BBR_Etage i fetchBbrData.ts
+                  const kaelderAreal = bygninger.reduce((s, b) => s + (b.kaelder ?? 0), 0);
+                  const tagetageAreal = bygninger.reduce((s, b) => s + (b.tagetage ?? 0), 0);
                   return (
                     <div>
                       <SectionTitle title={t.buildings} />
@@ -5847,6 +5867,20 @@ export default function EjendomDetaljeClient({
                               : '–'
                           }
                         />
+                        {/* BIZZ-487: Kælder vises kun når der er et areal > 0 */}
+                        {kaelderAreal > 0 && (
+                          <DataKort
+                            label={t.basement}
+                            value={`${kaelderAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`}
+                          />
+                        )}
+                        {/* BIZZ-487: Tagetage vises kun når der er et areal > 0 */}
+                        {tagetageAreal > 0 && (
+                          <DataKort
+                            label={da ? 'Tagetage' : 'Attic'}
+                            value={`${tagetageAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`}
+                          />
+                        )}
                       </div>
 
                       {bbrLoader ? (

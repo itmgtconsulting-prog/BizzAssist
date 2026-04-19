@@ -13,7 +13,7 @@
  * @param params.cvr - 8-cifret CVR-nummer fra URL
  */
 
-import { useState, useEffect, use, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, use, useCallback, useRef, useMemo, Fragment } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -1922,6 +1922,37 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                             </div>
                           )}
                         </div>
+
+                        {/* BIZZ-513: Beskæftigelseshistorik */}
+                        {data.aarsbeskaeftigelse && data.aarsbeskaeftigelse.length > 0 && (
+                          <div className="mt-4 pt-3 border-t border-slate-700/30">
+                            <p className="text-slate-500 text-[10px] uppercase tracking-wider font-medium mb-2">
+                              {lang === 'da' ? 'Beskæftigelseshistorik' : 'Employment history'}
+                            </p>
+                            <div className="grid grid-cols-[auto_1fr_1fr] gap-x-4 gap-y-1 text-xs">
+                              <span className="text-slate-500 font-medium">
+                                {lang === 'da' ? 'År' : 'Year'}
+                              </span>
+                              <span className="text-slate-500 font-medium text-right">
+                                {lang === 'da' ? 'Ansatte' : 'Employees'}
+                              </span>
+                              <span className="text-slate-500 font-medium text-right">
+                                {lang === 'da' ? 'Årsværk' : 'FTE'}
+                              </span>
+                              {data.aarsbeskaeftigelse.slice(0, 8).map((a, idx) => (
+                                <Fragment key={a.aar ?? idx}>
+                                  <span className="text-slate-400 tabular-nums">{a.aar}</span>
+                                  <span className="text-white text-right tabular-nums">
+                                    {a.antalAnsatte ?? '—'}
+                                  </span>
+                                  <span className="text-slate-300 text-right tabular-nums">
+                                    {a.antalAarsvaerk ?? '—'}
+                                  </span>
+                                </Fragment>
+                              ))}
+                            </div>
+                          </div>
+                        )}
 
                         {/* ── Ledelse, Ejere & Kontakt — 2-kolonne grid ── */}
                         <div className="mt-4 pt-3 border-t border-slate-700/30 grid grid-cols-1 sm:grid-cols-2 gap-4">

@@ -124,6 +124,13 @@ export interface CVRPublicData {
   /** Tegningsregel — hvem der tegner selskabet */
   tegningsregel: string | null;
 
+  /** BIZZ-513: Årlig beskæftigelseshistorik — sorteret nyeste først */
+  aarsbeskaeftigelse: Array<{
+    aar: number;
+    antalAnsatte: number | null;
+    antalAarsvaerk: number | null;
+  }>;
+
   /**
    * Historiske ændringer fra tidsbestemte arrays (navne, adresse, form, status, branche).
    * Indeholder ALLE perioder — ikke kun gyldigNu.
@@ -770,6 +777,22 @@ function mapESHit(hit: Record<string, unknown>): CVRPublicData | null {
     regnskabsaar,
     senesteVedtaegtsdato,
     tegningsregel,
+    aarsbeskaeftigelse: Array.isArray(src.aarsbeskaeftigelse)
+      ? (
+          src.aarsbeskaeftigelse as Array<{
+            aar?: number;
+            antalAnsatte?: number;
+            antalAarsvaerk?: number;
+          }>
+        )
+          .filter((a) => a.aar != null)
+          .map((a) => ({
+            aar: a.aar!,
+            antalAnsatte: a.antalAnsatte ?? null,
+            antalAarsvaerk: a.antalAarsvaerk ?? null,
+          }))
+          .sort((a, b) => b.aar - a.aar)
+      : [],
     historik,
     deltagere,
   };

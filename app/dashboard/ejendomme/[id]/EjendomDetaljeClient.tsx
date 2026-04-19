@@ -2249,17 +2249,27 @@ export default function EjendomDetaljeClient({
                     {dawaJordstykke.ejerlav.navn}
                   </span>
                 )}
-                {(dawaAdresse.zone === 'Byzone' ||
-                  dawaAdresse.zone === 'Landzone' ||
-                  dawaAdresse.zone === 'Sommerhuszone') && (
+                {/* BIZZ-498: vis zone-badge for ALLE non-empty zone-værdier.
+                    Plandata returnerer fx også "Udfaset" (zone-status under
+                    udfasning) og diverse historiske kategorier — disse må
+                    også vises, ikke kun de 3 standard. Standard 3 har
+                    farve-kodet badge, øvrige får neutral slate-style. */}
+                {dawaAdresse.zone && (
                   <span
                     className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border ${
                       dawaAdresse.zone === 'Byzone'
                         ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
                         : dawaAdresse.zone === 'Landzone'
                           ? 'bg-amber-500/10 border-amber-500/20 text-amber-400'
-                          : 'bg-orange-500/10 border-orange-500/20 text-orange-400'
+                          : dawaAdresse.zone === 'Sommerhuszone'
+                            ? 'bg-orange-500/10 border-orange-500/20 text-orange-400'
+                            : 'bg-slate-800 border-slate-700/50 text-slate-300'
                     }`}
+                    title={
+                      da
+                        ? 'Zone-klassifikation fra Plandata.dk'
+                        : 'Zone classification from Plandata.dk'
+                    }
                   >
                     {dawaAdresse.zone}
                   </span>

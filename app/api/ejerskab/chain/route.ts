@@ -220,14 +220,17 @@ async function fetchCompanyOwners(cvr: number): Promise<{
         const orgNavne = Array.isArray(org.organisationsNavn)
           ? (org.organisationsNavn as (Periodic & { navn?: string })[])
           : [];
-        const erEjerOrg = orgNavne.some(
-          (n) =>
-            n.navn &&
-            (n.navn.toUpperCase().includes('EJER') ||
-              n.navn.toUpperCase().includes('LEGALE') ||
-              n.navn.toUpperCase().includes('REEL')) &&
-            n.periode?.gyldigTil == null
-        );
+        // BIZZ-564: Reel ejer (RBE — Real Beneficial Owner) er KAP-anmeldelse
+        // og IKKE legalt ejerskab. Inkluderes den i ejerkæden får vi duplikater
+        // og ejerandel summer over 100% (en person kan være BÅDE legal ejer OG
+        // reel ejer af samme virksomhed). Ekskluder REEL eksplicit.
+        const erEjerOrg = orgNavne.some((n) => {
+          const upper = n.navn?.toUpperCase() ?? '';
+          if (!upper) return false;
+          if (n.periode?.gyldigTil != null) return false; // kun aktive
+          if (upper.includes('REEL')) return false; // RBE — ikke legalt ejerskab
+          return upper.includes('EJER') || upper.includes('LEGALE');
+        });
         if (!erEjerOrg) continue;
         erEjer = true;
 

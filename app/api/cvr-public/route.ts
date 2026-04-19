@@ -793,17 +793,21 @@ function mapESHit(hit: Record<string, unknown>): CVRPublicData | null {
   }
 
   // Byg owners fra deltagere med aktive ejerroller (EJERREGISTER med til == null)
+  // BIZZ-564: Reel ejer (RBE — Real Beneficial Owner fra hvidvasklov) er IKKE
+  // legalt ejerskab og MÅ IKKE inkluderes i owners-array (bruges til diagram +
+  // ejerandel-summering). En person kan være BÅDE legal ejer OG reel ejer af
+  // samme virksomhed → tælles dobbelt → ejerandel summer over 100%.
   for (const d of deltagere) {
     const harAktivEjerRolle = d.roller.some((r) => {
       const upper = r.rolle.toUpperCase();
+      if (r.til !== null) return false; // kun aktive
+      if (upper.includes('REEL')) return false; // RBE — ikke legalt ejerskab
       return (
-        (upper.includes('EJER') ||
-          upper.includes('LEGALE') ||
-          upper.includes('REEL') ||
-          upper.includes('INTERESSENT') ||
-          // CVR ES role names use spaces: "Fuldt ansvarlig deltager" — match both forms
-          (upper.includes('FULDT') && upper.includes('ANSVARLIG'))) &&
-        r.til === null
+        upper.includes('EJER') ||
+        upper.includes('LEGALE') ||
+        upper.includes('INTERESSENT') ||
+        // CVR ES role names use spaces: "Fuldt ansvarlig deltager" — match both forms
+        (upper.includes('FULDT') && upper.includes('ANSVARLIG'))
       );
     });
     if (harAktivEjerRolle) {

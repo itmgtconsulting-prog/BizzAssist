@@ -256,6 +256,30 @@ interface OwnerChainNode {
  * @param deltagere - Deltagere-array fra CVRPublicData
  * @returns Ejere med navn, enhedsNummer, erVirksomhed, ejerandel
  */
+/**
+ * BIZZ-564: Identificér LEGALE ejere — IKKE Reelle Ejere (RBE).
+ *
+ * "Reel ejer" (Real Beneficial Owner / RBE) er en KAP-anmeldelse-konstruktion
+ * fra hvidvasklovgivningen og repræsenterer NOT direkte juridisk ejerskab.
+ * Diagram + ejerandels-summering må KUN inkludere legalt ejerskab (EJERREGISTER,
+ * LEGALE_EJERE, INTERESSENT, FULDT_ANSVARLIG) — ellers fås duplikater og
+ * ejerandel summer over 100% (en person kan både være legal ejer OG reel ejer
+ * af samme virksomhed → tælles 2x).
+ */
+function erLegalEjerRolle(rolle: string): boolean {
+  const role = rolle.toUpperCase();
+  // Eksklusiv check: "REEL EJER" matcher .includes('EJER') så vi MÅ filtrere
+  // den fra eksplicit. Ditto "REELLE_EJERE" (variant brugt i CVR ES).
+  if (role.includes('REEL')) return false;
+  return (
+    role.includes('EJER') ||
+    role.includes('LEGALE') ||
+    role.includes('INTERESSENT') ||
+    // CVR ES bruger mellemrum: "Fuldt ansvarlig deltager" — matcher begge former
+    (role.includes('FULDT') && role.includes('ANSVARLIG'))
+  );
+}
+
 function extractOwners(deltagere: CVRPublicData['deltagere']): {
   navn: string;
   enhedsNummer: number | null;
@@ -263,33 +287,9 @@ function extractOwners(deltagere: CVRPublicData['deltagere']): {
   ejerandel: string | null;
 }[] {
   return (deltagere ?? [])
-    .filter((d) =>
-      d.roller.some((r) => {
-        const role = r.rolle.toUpperCase();
-        return (
-          (role.includes('EJER') ||
-            role.includes('LEGALE') ||
-            role.includes('REEL') ||
-            role.includes('INTERESSENT') ||
-            // CVR ES uses spaces: "Fuldt ansvarlig deltager" — match both space and underscore forms
-            (role.includes('FULDT') && role.includes('ANSVARLIG'))) &&
-          !r.til
-        );
-      })
-    )
+    .filter((d) => d.roller.some((r) => erLegalEjerRolle(r.rolle) && !r.til))
     .map((d) => {
-      const ejerRolle = d.roller.find((r) => {
-        const role = r.rolle.toUpperCase();
-        return (
-          (role.includes('EJER') ||
-            role.includes('LEGALE') ||
-            role.includes('REEL') ||
-            role.includes('INTERESSENT') ||
-            // CVR ES uses spaces: "Fuldt ansvarlig deltager" — match both space and underscore forms
-            (role.includes('FULDT') && role.includes('ANSVARLIG'))) &&
-          !r.til
-        );
-      });
+      const ejerRolle = d.roller.find((r) => erLegalEjerRolle(r.rolle) && !r.til);
       return {
         navn: d.navn,
         enhedsNummer: d.enhedsNummer,

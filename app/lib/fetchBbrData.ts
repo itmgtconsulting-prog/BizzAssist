@@ -27,6 +27,9 @@ import {
   enhedAnvendelseTekst,
   boligtypeTekst,
   energiforsyningTekst,
+  koekkforholdTekst,
+  toiletforholdTekst,
+  badeforholdTekst,
 } from '@/app/lib/bbrKoder';
 import { logger } from '@/app/lib/logger';
 
@@ -62,6 +65,10 @@ export interface RawBBRBygning {
   byg066Ejerforhold?: string;
   byg070Fredning?: string;
   byg071BevaringsvaerdighedReference?: string;
+  /** BIZZ-487: Kælderareal i m² */
+  byg077KaelderAreal?: number;
+  /** BIZZ-487: Tagetage-areal i m² */
+  byg078TagetageAreal?: number;
   byg094Revisionsdato?: string;
   status?: string;
   husnummer?: string;
@@ -77,6 +84,12 @@ interface RawBBREnhed {
   enh027ArealTilBeboelse?: number;
   enh028ArealTilErhverv?: number;
   enh031AntalVaerelser?: number;
+  /** BIZZ-487: Køkkenforhold */
+  enh029KoekkenForhold?: string;
+  /** BIZZ-487: Toiletforhold */
+  enh030ToiletForhold?: string;
+  /** BIZZ-487: Badeforhold */
+  enh032BadeForhold?: string;
   enh035Energiforsyning?: string;
   enh051Varmeinstallation?: string;
   enh052Opvarmningsmiddel?: string;
@@ -163,6 +176,12 @@ export interface LiveBBREnhed {
   status: string | null;
   energimaerke: string | null;
   varmeinstallation: string;
+  /** BIZZ-487: Køkkenforhold (enh029), f.eks. "Eget køkken med afløb og kogeinstallation" */
+  koekkenforhold: string | null;
+  /** BIZZ-487: Toiletforhold (enh030), f.eks. "Eget toilet" */
+  toiletforhold: string | null;
+  /** BIZZ-487: Badeforhold (enh032), f.eks. "Eget bad" */
+  badeforhold: string | null;
 }
 
 /** A single BBR building point for map display */
@@ -647,8 +666,8 @@ export function normaliseBygning(raw: RawBBRBygning): LiveBBRBygning {
       null,
     antalErhvervsenheder: null,
     antalEtager: raw.byg054AntalEtager ?? null,
-    kaelder: null,
-    tagetage: null,
+    kaelder: raw.byg077KaelderAreal ?? null,
+    tagetage: raw.byg078TagetageAreal ?? null,
     // BIZZ-485: Tagkonstruktion hentes nu fra byg034 i stedet for hårdkodet '–'
     tagkonstruktion: tagKonstruktionTekst(tagkonstruktionKode),
     tagmateriale: tagMaterialeTekst(tagmaterialeKode),
@@ -713,6 +732,13 @@ export function normaliseEnhed(raw: RawBBREnhed): LiveBBREnhed {
     status: raw.status ?? null,
     energimaerke: null,
     varmeinstallation: varmeInstallationTekst(parseCode(raw.enh051Varmeinstallation)),
+    koekkenforhold: raw.enh029KoekkenForhold
+      ? koekkforholdTekst(parseCode(raw.enh029KoekkenForhold))
+      : null,
+    toiletforhold: raw.enh030ToiletForhold
+      ? toiletforholdTekst(parseCode(raw.enh030ToiletForhold))
+      : null,
+    badeforhold: raw.enh032BadeForhold ? badeforholdTekst(parseCode(raw.enh032BadeForhold)) : null,
   };
 }
 
@@ -742,6 +768,8 @@ const BYGNING_QUERY = `
         byg021BygningensAnvendelse
         byg070Fredning
         byg071BevaringsvaerdighedReference
+        byg077KaelderAreal
+        byg078TagetageAreal
         byg094Revisionsdato
         status
         husnummer
@@ -780,6 +808,8 @@ const BYGNING_BY_ID_QUERY = `
         byg021BygningensAnvendelse
         byg070Fredning
         byg071BevaringsvaerdighedReference
+        byg077KaelderAreal
+        byg078TagetageAreal
         byg094Revisionsdato
         status
         husnummer
@@ -801,6 +831,9 @@ const ENHED_QUERY = `
         enh028ArealTilErhverv
         enh031AntalVaerelser
         enh035Energiforsyning
+        enh029KoekkenForhold
+        enh030ToiletForhold
+        enh032BadeForhold
         enh051Varmeinstallation
         enh052Opvarmningsmiddel
         bygning
@@ -832,6 +865,9 @@ const ENHED_BY_BYGNING_QUERY = `
         enh028ArealTilErhverv
         enh031AntalVaerelser
         enh035Energiforsyning
+        enh029KoekkenForhold
+        enh030ToiletForhold
+        enh032BadeForhold
         enh051Varmeinstallation
         enh052Opvarmningsmiddel
         bygning

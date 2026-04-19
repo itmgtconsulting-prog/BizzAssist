@@ -2575,6 +2575,7 @@ export default function EjendomDetaljeClient({
                       0
                     );
                     const kaelder = bygninger.reduce((s, b) => s + (b.kaelder ?? 0), 0);
+                    const tagetage = bygninger.reduce((s, b) => s + (b.tagetage ?? 0), 0);
                     return (
                       <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-2.5 self-start">
                         <div className="flex items-baseline gap-1 mb-1.5">
@@ -2624,6 +2625,17 @@ export default function EjendomDetaljeClient({
                                 : '0 m²'}
                             </p>
                           </div>
+                          {/* BIZZ-487: Tagetage-areal */}
+                          {tagetage > 0 && (
+                            <div>
+                              <p className="text-slate-500 text-xs leading-none mb-0.5">
+                                {da ? 'Tagetage' : 'Attic'}
+                              </p>
+                              <p className="text-white text-sm font-medium">
+                                {`${tagetage.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`}
+                              </p>
+                            </div>
+                          )}
                         </div>
                       </div>
                     );
@@ -3367,6 +3379,9 @@ export default function EjendomDetaljeClient({
                                   e.varmeinstallation !== '–' ? e.varmeinstallation : null,
                                 ],
                                 [t.energySupply, e.energiforsyning || null],
+                                [da ? 'Køkken' : 'Kitchen', e.koekkenforhold || null],
+                                [da ? 'Toilet' : 'Toilet', e.toiletforhold || null],
+                                [da ? 'Bad' : 'Bathroom', e.badeforhold || null],
                               ] as [string, string | null][]
                             ).filter((row): row is [string, string] => row[1] !== null);
                             return (

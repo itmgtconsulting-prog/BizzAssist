@@ -29,7 +29,6 @@ import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { resolveTenantId } from '@/lib/api/auth';
 import { parseQuery } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
-import { selectPrimaryOwner, type EjerCandidate } from '../enrich/selectPrimaryOwner';
 import { fetchBbrAreasByDawaId } from '@/app/lib/fetchBbrData';
 import { DAWA_BASE_URL } from '@/app/lib/serviceEndpoints';
 
@@ -82,11 +81,15 @@ async function enrichOne(
   const result = empty();
   const fetchOpts: RequestInit = {
     headers: cookieHeader ? { cookie: cookieHeader } : undefined,
-    signal: AbortSignal.timeout(8000),
+    signal: AbortSignal.timeout(6000),
   };
 
+  // BIZZ-569 v2 perf: Drop ejerskab + salgshistorik fra batch — disse var de
+  // langsomste sub-fetches (intern HTTP-roundtrip × N) og ejerNavn er
+  // redundant på virksomhed-side (vi er på virksomhedens side, ejerNavn ER
+  // virksomheden). Card kan stadig hente disse on-demand hvis nødvendigt.
   try {
-    const [bbrAreasRes, matrikelRes, vurRes, ejRes, salgRes] = await Promise.allSettled([
+    const [bbrAreasRes, matrikelRes, vurRes] = await Promise.allSettled([
       dawaId ? fetchBbrAreasByDawaId(dawaId) : Promise.resolve(null),
       fetch(`${DAWA_BASE_URL}/jordstykker?bfenummer=${bfe}&per_side=1`, {
         signal: AbortSignal.timeout(5000),
@@ -113,46 +116,6 @@ async function enrichOne(
             : (nyeste.grundvaerdi ?? null);
         return v && v > 0 ? { vurdering: v, aar: nyeste.vurderingsaar } : null;
       }),
-      fetch(`${baseUrl}/api/ejerskab?bfeNummer=${bfe}`, fetchOpts).then(async (r) => {
-        if (!r.ok) return null;
-        const d = await r.json();
-        const ejere = (d?.ejere ?? []) as EjerCandidate[];
-        const primary = selectPrimaryOwner(ejere);
-        if (!primary) return { ejerNavn: null };
-        if (primary.cvr) {
-          try {
-            const nameRes = await fetch(
-              `${baseUrl}/api/cvr-public?vat=${encodeURIComponent(primary.cvr)}`,
-              fetchOpts
-            );
-            if (nameRes.ok) {
-              const nameData = (await nameRes.json()) as { name?: string };
-              if (nameData.name) return { ejerNavn: nameData.name };
-            }
-          } catch {
-            /* fall through */
-          }
-          return { ejerNavn: `CVR ${primary.cvr}` };
-        }
-        return { ejerNavn: primary.personNavn };
-      }),
-      fetch(`${baseUrl}/api/salgshistorik?bfeNummer=${bfe}`, fetchOpts).then(async (r) => {
-        if (!r.ok) return null;
-        const d = (await r.json()) as {
-          handler?: Array<{
-            kontantKoebesum?: number | null;
-            samletKoebesum?: number | null;
-            overtagelsesdato?: string | null;
-            koebsaftaleDato?: string | null;
-          }>;
-        };
-        const latest = (d.handler ?? [])[0];
-        if (!latest) return null;
-        return {
-          koebesum: latest.kontantKoebesum ?? latest.samletKoebesum ?? null,
-          koebsdato: latest.overtagelsesdato ?? latest.koebsaftaleDato ?? null,
-        };
-      }),
     ]);
 
     if (bbrAreasRes.status === 'fulfilled' && bbrAreasRes.value) {
@@ -172,15 +135,6 @@ async function enrichOne(
       const v = vurRes.value as { vurdering: number | null; aar: number | null };
       result.vurdering = v.vurdering;
       result.vurderingsaar = v.aar;
-    }
-    if (ejRes.status === 'fulfilled' && ejRes.value) {
-      const e = ejRes.value as { ejerNavn: string | null };
-      result.ejerNavn = e.ejerNavn;
-    }
-    if (salgRes.status === 'fulfilled' && salgRes.value) {
-      const s = salgRes.value as { koebesum: number | null; koebsdato: string | null };
-      result.koebesum = s.koebesum;
-      result.koebsdato = s.koebsdato;
     }
   } catch (err) {
     logger.error(`[enrich-batch] BFE ${bfe} fejl:`, err);

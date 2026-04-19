@@ -91,17 +91,47 @@ export function benyttelsekodeTekst(kode: string | null | undefined): string | n
 }
 
 /**
+ * Returnerer true hvis benyttelseskode-teksten signalerer "fritids-/sommerhus"-
+ * kategorien — dvs. en kategori der ikke giver mening i byzone.
+ */
+function erFritidsKategori(tekst: string | null): boolean {
+  if (!tekst) return false;
+  const t = tekst.toLowerCase();
+  return (
+    t.includes('sommerhus') ||
+    t.includes('kolonihave') ||
+    t.includes('fritidsbolig') ||
+    t.includes('feriehus')
+  );
+}
+
+/**
  * Bygger "Værksted (1955)" tekst til visning på ejendomsbadge.
+ *
+ * BIZZ-574: Tilføjet zone-sanity-check — hvis property er i Byzone, ignorér
+ * fritids-kategorier (Sommerhus, Kolonihave, Fritidsbolig, Feriehus). Det
+ * hindrer falske "Sommerhus"-badges på ejerlejligheder i centrum (fx
+ * Thorvald Bindesbølls Plads 18, 3. th hvor VUR-data har en arvet/forkert
+ * benyttelseskode). Returnerer kun byggeaar i så tilfælde — hellere mindre
+ * data end forkerte data.
  *
  * @param benyttelseskode - VUR benyttelseskode
  * @param byggeaar - Opførelsesår fra BBR
+ * @param zone - Plandata-zone ('Byzone' | 'Landzone' | 'Sommerhuszone' | null)
  * @returns Formateret streng "Betegnelse (År)" eller null hvis begge mangler
  */
 export function formatBenyttelseOgByggeaar(
   benyttelseskode: string | null | undefined,
-  byggeaar: number | null | undefined
+  byggeaar: number | null | undefined,
+  zone?: string | null
 ): string | null {
-  const tekst = benyttelsekodeTekst(benyttelseskode);
+  let tekst = benyttelsekodeTekst(benyttelseskode);
+  // BIZZ-574: Suppress fritids-kategori i Byzone — VUR-data kan have arvede
+  // koder fra moder-ejendom eller fejlregistreringer; zone er den autoritative
+  // klassifikation for "er det fritidsbolig eller almindelig bolig".
+  if (zone === 'Byzone' && erFritidsKategori(tekst)) {
+    tekst = null;
+  }
   if (!tekst && !byggeaar) return null;
   if (tekst && byggeaar) return `${tekst} (${byggeaar})`;
   if (tekst) return tekst;

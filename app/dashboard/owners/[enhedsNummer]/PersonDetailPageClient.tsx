@@ -782,6 +782,8 @@ export default function PersonDetailPageClient({
 
   /** BIZZ-399: Ejendomshandler (salgshistorik) — lazy-loaded fra /api/salgshistorik/cvr */
   const [ejendommeFilter, setEjendommeFilter] = useState<string | null>(null);
+  /** BIZZ-580: Toggle for visning af tidligere ejede (solgte) ejendomme — default skjult, matcher virksomhedsfanen */
+  const [visSolgteEjendomme, setVisSolgteEjendomme] = useState(false);
   const [ejendomshandler, setEjendomshandler] = useState<
     Array<{
       dato: string;
@@ -2130,11 +2132,148 @@ export default function PersonDetailPageClient({
                       })()}
                     </span>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-                    {ejendommeData.map((ej) => (
-                      <PropertyOwnerCard key={ej.bfeNummer} ejendom={ej} showOwner lang={lang} />
-                    ))}
-                  </div>
+                  {/* BIZZ-580: Align layout med virksomhedsfanen — gruppér ejendomme
+                      efter ejer-CVR, brug samme grid (lg:cols-3), og tilføj
+                      "Vis historik"-toggle for solgte. */}
+                  {(() => {
+                    // Build virksomheds-navn lookup
+                    const nameByCvr = new Map<number, string>();
+                    for (const v of [
+                      ...(derived?.ejerVirksomheder ?? []),
+                      ...(derived?.andreVirksomheder ?? []),
+                    ]) {
+                      nameByCvr.set(v.cvr, v.navn);
+                    }
+                    for (const [, related] of relatedCompanies) {
+                      for (const r of related) nameByCvr.set(r.cvr, r.navn);
+                    }
+
+                    const aktive = ejendommeData.filter((e) => e.aktiv !== false);
+                    const solgte = ejendommeData.filter((e) => e.aktiv === false);
+
+                    // Group active by ownerCvr
+                    const groupedActive = new Map<number, typeof aktive>();
+                    for (const e of aktive) {
+                      const cvrNum = parseInt(e.ownerCvr, 10);
+                      if (!groupedActive.has(cvrNum)) groupedActive.set(cvrNum, []);
+                      groupedActive.get(cvrNum)!.push(e);
+                    }
+                    const cvrOrder = Array.from(groupedActive.keys());
+
+                    return (
+                      <div className="space-y-4">
+                        {cvrOrder.map((cvr) => {
+                          const props = groupedActive.get(cvr);
+                          if (!props || props.length === 0) return null;
+                          const name = nameByCvr.get(cvr) ?? `CVR ${cvr}`;
+                          return (
+                            <div key={cvr} className="space-y-2">
+                              <Link
+                                href={`/dashboard/companies/${cvr}`}
+                                className="inline-flex items-center gap-2 group"
+                              >
+                                <Building2
+                                  size={14}
+                                  className="text-slate-500 group-hover:text-blue-400 transition-colors"
+                                />
+                                <h3 className="text-sm font-semibold text-slate-200 group-hover:text-blue-400 transition-colors">
+                                  {name}
+                                </h3>
+                                <span className="text-[10px] text-slate-500 font-mono">
+                                  CVR {cvr}
+                                </span>
+                                <span className="text-[10px] text-slate-500">
+                                  · {props.length}{' '}
+                                  {lang === 'da'
+                                    ? props.length === 1
+                                      ? 'ejendom'
+                                      : 'ejendomme'
+                                    : props.length === 1
+                                      ? 'property'
+                                      : 'properties'}
+                                </span>
+                              </Link>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                {props.map((ej) => (
+                                  <PropertyOwnerCard
+                                    key={ej.bfeNummer}
+                                    ejendom={ej}
+                                    showOwner={false}
+                                    lang={lang}
+                                  />
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
+                        {/* Vis historik-toggle for solgte */}
+                        {solgte.length > 0 && (
+                          <div className="pt-4 border-t border-slate-700/30">
+                            <button
+                              type="button"
+                              onClick={() => setVisSolgteEjendomme((v) => !v)}
+                              className="flex items-center gap-2 text-xs text-slate-400 hover:text-slate-200 transition-colors"
+                            >
+                              {visSolgteEjendomme ? (
+                                <ChevronDown size={14} />
+                              ) : (
+                                <ChevronRight size={14} />
+                              )}
+                              {lang === 'da'
+                                ? `${visSolgteEjendomme ? 'Skjul' : 'Vis'} ${solgte.length} tidligere ejendom${solgte.length !== 1 ? 'me' : ''}`
+                                : `${visSolgteEjendomme ? 'Hide' : 'Show'} ${solgte.length} former propert${solgte.length !== 1 ? 'ies' : 'y'}`}
+                            </button>
+                            {visSolgteEjendomme &&
+                              (() => {
+                                const groupedSold = new Map<number, typeof solgte>();
+                                for (const e of solgte) {
+                                  const cvrN = parseInt(e.ownerCvr, 10);
+                                  if (!groupedSold.has(cvrN)) groupedSold.set(cvrN, []);
+                                  groupedSold.get(cvrN)!.push(e);
+                                }
+                                return (
+                                  <div className="space-y-4 mt-3">
+                                    {Array.from(groupedSold.keys()).map((c) => {
+                                      const ps = groupedSold.get(c) ?? [];
+                                      const n = nameByCvr.get(c) ?? `CVR ${c}`;
+                                      return (
+                                        <div key={c} className="space-y-2">
+                                          <Link
+                                            href={`/dashboard/companies/${c}`}
+                                            className="inline-flex items-center gap-2 group"
+                                          >
+                                            <Building2
+                                              size={14}
+                                              className="text-slate-500 group-hover:text-blue-400 transition-colors"
+                                            />
+                                            <h3 className="text-sm font-semibold text-slate-400 group-hover:text-blue-400 transition-colors">
+                                              {n}
+                                            </h3>
+                                            <span className="text-[10px] text-slate-500 font-mono">
+                                              CVR {c}
+                                            </span>
+                                          </Link>
+                                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                            {ps.map((ej) => (
+                                              <PropertyOwnerCard
+                                                key={ej.bfeNummer}
+                                                ejendom={ej}
+                                                showOwner={false}
+                                                lang={lang}
+                                              />
+                                            ))}
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                );
+                              })()}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   {/* Progressiv loading-indikator i bunden */}
                   {ejendommeLoadingMore && (

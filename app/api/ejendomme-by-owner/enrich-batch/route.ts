@@ -131,15 +131,30 @@ async function enrichOne(
           handler?: Array<{
             kontantKoebesum?: number | null;
             samletKoebesum?: number | null;
+            loesoeresum?: number | null;
+            entreprisesum?: number | null;
             overtagelsesdato?: string | null;
             koebsaftaleDato?: string | null;
           }>;
         };
-        const latest = (d.handler ?? [])[0];
-        if (!latest) return null;
+        // BIZZ-575 v5: Find seneste handel med faktisk købspris (ikke bare
+        // første entry der ofte er prisløs ejerskifte fra arv/gaver/skifte).
+        // Hvis ingen handel har pris, returnér seneste dato uden pris så
+        // kortet kan vise "Overtaget DATE (pris ej oplyst)".
+        const handler = d.handler ?? [];
+        if (handler.length === 0) return null;
+        const findPrice = (h: (typeof handler)[number]): number | null => {
+          const v =
+            h.kontantKoebesum ??
+            h.samletKoebesum ??
+            ((h.loesoeresum ?? 0) + (h.entreprisesum ?? 0) || null);
+          return v && v > 0 ? v : null;
+        };
+        const medPris = handler.find((h) => findPrice(h) != null);
+        const seneste = medPris ?? handler[0];
         return {
-          koebesum: latest.kontantKoebesum ?? latest.samletKoebesum ?? null,
-          koebsdato: latest.overtagelsesdato ?? latest.koebsaftaleDato ?? null,
+          koebesum: medPris ? findPrice(medPris) : null,
+          koebsdato: seneste.overtagelsesdato ?? seneste.koebsaftaleDato ?? null,
         };
       }),
     ]);

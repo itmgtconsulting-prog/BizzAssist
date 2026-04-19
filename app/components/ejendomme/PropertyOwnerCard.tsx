@@ -317,6 +317,21 @@ export default function PropertyOwnerCard({
                       </span>
                     )}
                   </>
+                ) : enriched.koebsdato ? (
+                  // BIZZ-575 v5: Handel registreret men uden pris-oplysning
+                  // (typisk arv/gave/tvangsauktion eller ældre handel uden
+                  // tinglyst købspris). Vis dato så brugeren ved at der HAR
+                  // været en transaktion.
+                  <span className="text-slate-400">
+                    {da ? 'Overtaget' : 'Acquired'}{' '}
+                    {new Date(enriched.koebsdato).toLocaleDateString('da-DK', {
+                      year: 'numeric',
+                      month: 'short',
+                    })}{' '}
+                    <span className="text-slate-600">
+                      ({da ? 'pris ej oplyst' : 'price not disclosed'})
+                    </span>
+                  </span>
                 ) : (
                   <span className="text-slate-600">{da ? '— ingen handel' : '— no sale'}</span>
                 )}

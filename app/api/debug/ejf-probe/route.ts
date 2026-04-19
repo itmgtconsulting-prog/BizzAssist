@@ -8,7 +8,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { getSharedOAuthToken } from '@/app/lib/dfTokenCache';
-import { proxyUrl } from '@/app/lib/dfProxy';
+import { proxyUrl, proxyHeaders } from '@/app/lib/dfProxy';
 import { EJF_GQL_ENDPOINT } from '@/app/lib/serviceEndpoints';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
@@ -56,7 +56,10 @@ function verifyAuth(req: NextRequest): boolean {
  */
 async function probeUrl(url: string, auth: string | null): Promise<Record<string, unknown>> {
   try {
-    const headers: Record<string, string> = { Accept: 'application/json' };
+    const headers: Record<string, string> = {
+      Accept: 'application/json',
+      ...proxyHeaders(),
+    };
     if (auth) headers['Authorization'] = auth;
     const res = await fetch(proxyUrl(url), {
       method: 'GET',
@@ -102,6 +105,7 @@ async function probeGraphQL(
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
+        ...proxyHeaders(),
       },
       body: JSON.stringify({ query }),
       signal: AbortSignal.timeout(10_000),
@@ -115,11 +119,15 @@ async function probeGraphQL(
     if (json.errors?.length) {
       return {
         httpStatus,
+        ok: false,
         errors: json.errors.map((e) => ({
           message: e.message,
           code: e.extensions?.code,
         })),
       };
+    }
+    if (httpStatus >= 400) {
+      return { httpStatus, ok: false, body: JSON.stringify(json).slice(0, 300) };
     }
     const firstKey = Object.keys(json.data ?? {})[0];
     const count = firstKey ? (json.data?.[firstKey]?.nodes?.length ?? 0) : 0;

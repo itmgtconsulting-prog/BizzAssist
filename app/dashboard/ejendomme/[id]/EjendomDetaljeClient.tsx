@@ -869,6 +869,8 @@ export default function EjendomDetaljeClient({
   const [alleVurderinger, setAlleVurderinger] = useState<VurderingData[]>([]);
   /** BIZZ-494: Fradrag for forbedringer (vej/kloak) — vises under Grundværdi i Økonomi-tab */
   const [vurFradrag, setVurFradrag] = useState<VurderingResponse['fradrag']>(null);
+  /** BIZZ-493: Ejerboligfordeling — vises som kort i Økonomi-tab for ejerlejlighedskomplekser */
+  const [vurFordeling, setVurFordeling] = useState<VurderingResponse['fordeling']>([]);
   /** True mens vurderingsdata hentes — starter som true når prefetch giver BBR data med det samme */
   const [vurderingLoader, setVurderingLoader] = useState(!!prefetched?.bbrData);
   /** True = vis fuld vurderingshistorik-tabel */
@@ -1358,6 +1360,7 @@ export default function EjendomDetaljeClient({
         setVurdering(data?.vurdering ?? null);
         setAlleVurderinger(data?.alle ?? []);
         setVurFradrag(data?.fradrag ?? null);
+        setVurFordeling(data?.fordeling ?? []);
       })
       .catch((err) => {
         if (err.name === 'AbortError') return;
@@ -3781,6 +3784,41 @@ export default function EjendomDetaljeClient({
                               ))}
                             </div>
                           )}
+                        </div>
+                      )}
+
+                      {/* BIZZ-493: Ejerboligfordeling — skjult for enfamiliehuse */}
+                      {vurFordeling.length > 0 && (
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4 mb-3">
+                          <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-2">
+                            {da ? 'Ejerboligfordeling' : 'Owner-occupied allocation'}
+                          </p>
+                          <div className="space-y-2">
+                            {vurFordeling.map((f, i) => (
+                              <div key={i} className="grid grid-cols-2 gap-3">
+                                {f.ejerboligvaerdi != null && (
+                                  <div>
+                                    <p className="text-slate-500 text-[10px] uppercase">
+                                      {da ? 'Ejerboligværdi' : 'Owner-occupied value'}
+                                    </p>
+                                    <p className="text-white text-sm font-medium">
+                                      {formatDKK(f.ejerboligvaerdi)}
+                                    </p>
+                                  </div>
+                                )}
+                                {f.ejerboliggrundvaerdi != null && (
+                                  <div>
+                                    <p className="text-slate-500 text-[10px] uppercase">
+                                      {da ? 'Ejerboliggrundværdi' : 'Owner-occupied land value'}
+                                    </p>
+                                    <p className="text-white text-sm font-medium">
+                                      {formatDKK(f.ejerboliggrundvaerdi)}
+                                    </p>
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       )}
 

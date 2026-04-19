@@ -22,7 +22,7 @@ import { resolveTenantId } from '@/lib/api/auth';
 import { parseQuery } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
 import { selectPrimaryOwner, type EjerCandidate } from './selectPrimaryOwner';
-import { fetchBbrAreasByDawaId } from '@/app/lib/fetchBbrData';
+import { fetchBbrAreasByBfe } from '@/app/lib/fetchBbrData';
 import { DAWA_BASE_URL } from '@/app/lib/serviceEndpoints';
 
 export const runtime = 'nodejs';
@@ -51,6 +51,8 @@ export async function GET(request: NextRequest) {
     areal: number | null;
     vurdering: number | null;
     vurderingsaar: number | null;
+    /** BIZZ-575: True hvis 'vurdering' er grundværdi (ejendomsværdi var 0) */
+    erGrundvaerdi: boolean;
     ejerNavn: string | null;
     koebesum: number | null;
     koebsdato: string | null;
@@ -64,6 +66,7 @@ export async function GET(request: NextRequest) {
     areal: null,
     vurdering: null,
     vurderingsaar: null,
+    erGrundvaerdi: false,
     ejerNavn: null,
     koebesum: null,
     koebsdato: null,
@@ -86,8 +89,10 @@ export async function GET(request: NextRequest) {
     // til /api/bbr/bbox?bfe=X virkede ikke (bbox forventer bbox-koords).
     // Matrikel-areal hentes via DAWA jordstykker.
     const [bbrAreasRes, matrikelRes, vurRes, ejRes, salgRes] = await Promise.allSettled([
-      // BBR-areal direkte via dawaId (skip hvis vi ikke har dawaId)
-      dawaId ? fetchBbrAreasByDawaId(dawaId) : Promise.resolve(null),
+      // BIZZ-575: BBR-areal filtreret på BFE (ikke kun husnummer) +
+      // status=7-eksklusion. dawaId bruges som fallback hvis BBR_Grund-
+      // opslag ikke giver match (sjældent).
+      fetchBbrAreasByBfe(parseInt(bfe, 10), dawaId ?? null),
       // Matrikel-areal fra DAWA jordstykker (registreret_areal i m²)
       fetch(`${DAWA_BASE_URL}/jordstykker?bfenummer=${bfe}&per_side=1`, {
         signal: AbortSignal.timeout(5000),
@@ -112,11 +117,14 @@ export async function GET(request: NextRequest) {
         };
         const nyeste = d.forelobige?.[0];
         if (!nyeste) return null;
-        const v =
-          nyeste.ejendomsvaerdi && nyeste.ejendomsvaerdi > 0
-            ? nyeste.ejendomsvaerdi
-            : (nyeste.grundvaerdi ?? null);
-        return v && v > 0 ? { vurdering: v, aar: nyeste.vurderingsaar } : null;
+        // BIZZ-575: Track om vi viser ejendomsværdi eller grundværdi så UI
+        // kan label korrekt. Erhvervsejendomme får typisk ejendomsvaerdi=0
+        // og kun grundvaerdi.
+        const erEjendomsvaerdi = !!(nyeste.ejendomsvaerdi && nyeste.ejendomsvaerdi > 0);
+        const v = erEjendomsvaerdi ? nyeste.ejendomsvaerdi! : (nyeste.grundvaerdi ?? null);
+        return v && v > 0
+          ? { vurdering: v, aar: nyeste.vurderingsaar, erGrundvaerdi: !erEjendomsvaerdi }
+          : null;
       }),
       // Ejerskab (ejer-navn + seneste handel)
       // BIZZ-460: Vælg den ejer der reelt har størst andel i stedet for
@@ -186,9 +194,14 @@ export async function GET(request: NextRequest) {
       result.matrikelAreal = matrikelRes.value as number;
     }
     if (vurRes.status === 'fulfilled' && vurRes.value) {
-      const v = vurRes.value as { vurdering: number | null; aar: number | null };
+      const v = vurRes.value as {
+        vurdering: number | null;
+        aar: number | null;
+        erGrundvaerdi: boolean;
+      };
       result.vurdering = v.vurdering;
       result.vurderingsaar = v.aar;
+      result.erGrundvaerdi = v.erGrundvaerdi;
     }
     if (ejRes.status === 'fulfilled' && ejRes.value) {
       const e = ejRes.value as { ejerNavn: string | null };

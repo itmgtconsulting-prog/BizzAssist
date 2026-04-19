@@ -29,7 +29,7 @@ import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { resolveTenantId } from '@/lib/api/auth';
 import { parseQuery } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
-import { fetchBbrAreasByDawaId } from '@/app/lib/fetchBbrData';
+import { fetchBbrAreasByBfe } from '@/app/lib/fetchBbrData';
 import { DAWA_BASE_URL } from '@/app/lib/serviceEndpoints';
 
 export const runtime = 'nodejs';
@@ -48,6 +48,8 @@ interface EnrichedRow {
   areal: number | null;
   vurdering: number | null;
   vurderingsaar: number | null;
+  /** BIZZ-575: True hvis 'vurdering' er grundværdi (ejendomsværdi var 0) */
+  erGrundvaerdi: boolean;
   ejerNavn: string | null;
   koebesum: number | null;
   koebsdato: string | null;
@@ -60,6 +62,7 @@ const empty = (): EnrichedRow => ({
   areal: null,
   vurdering: null,
   vurderingsaar: null,
+  erGrundvaerdi: false,
   ejerNavn: null,
   koebesum: null,
   koebsdato: null,
@@ -90,7 +93,9 @@ async function enrichOne(
   // virksomheden). Card kan stadig hente disse on-demand hvis nødvendigt.
   try {
     const [bbrAreasRes, matrikelRes, vurRes] = await Promise.allSettled([
-      dawaId ? fetchBbrAreasByDawaId(dawaId) : Promise.resolve(null),
+      // BIZZ-575: Filtrér på BFE (ikke kun husnummer) så bygninger fra
+      // andre BFE'er på samme adresse ikke summes med + ekskluder status=7.
+      fetchBbrAreasByBfe(parseInt(bfe, 10), dawaId ?? null),
       fetch(`${DAWA_BASE_URL}/jordstykker?bfenummer=${bfe}&per_side=1`, {
         signal: AbortSignal.timeout(5000),
         next: { revalidate: 86400 },
@@ -110,11 +115,11 @@ async function enrichOne(
         };
         const nyeste = d.forelobige?.[0];
         if (!nyeste) return null;
-        const v =
-          nyeste.ejendomsvaerdi && nyeste.ejendomsvaerdi > 0
-            ? nyeste.ejendomsvaerdi
-            : (nyeste.grundvaerdi ?? null);
-        return v && v > 0 ? { vurdering: v, aar: nyeste.vurderingsaar } : null;
+        const erEjendomsvaerdi = !!(nyeste.ejendomsvaerdi && nyeste.ejendomsvaerdi > 0);
+        const v = erEjendomsvaerdi ? nyeste.ejendomsvaerdi! : (nyeste.grundvaerdi ?? null);
+        return v && v > 0
+          ? { vurdering: v, aar: nyeste.vurderingsaar, erGrundvaerdi: !erEjendomsvaerdi }
+          : null;
       }),
     ]);
 
@@ -132,9 +137,14 @@ async function enrichOne(
       result.matrikelAreal = matrikelRes.value as number;
     }
     if (vurRes.status === 'fulfilled' && vurRes.value) {
-      const v = vurRes.value as { vurdering: number | null; aar: number | null };
+      const v = vurRes.value as {
+        vurdering: number | null;
+        aar: number | null;
+        erGrundvaerdi: boolean;
+      };
       result.vurdering = v.vurdering;
       result.vurderingsaar = v.aar;
+      result.erGrundvaerdi = v.erGrundvaerdi;
     }
   } catch (err) {
     logger.error(`[enrich-batch] BFE ${bfe} fejl:`, err);

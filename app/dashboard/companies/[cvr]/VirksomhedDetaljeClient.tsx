@@ -520,6 +520,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
         areal: number | null;
         vurdering: number | null;
         vurderingsaar: number | null;
+        erGrundvaerdi?: boolean;
         ejerNavn: string | null;
         koebesum: number | null;
         koebsdato: string | null;

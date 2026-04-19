@@ -122,40 +122,97 @@ async function enrichOne(
           : null;
       }),
       // Salgshistorik (seneste købspris) — 5s timeout så slow EJF ikke blokerer
-      fetch(`${baseUrl}/api/salgshistorik?bfeNummer=${bfe}`, {
-        ...fetchOpts,
-        signal: AbortSignal.timeout(5000),
-      }).then(async (r) => {
-        if (!r.ok) return null;
-        const d = (await r.json()) as {
-          handler?: Array<{
-            kontantKoebesum?: number | null;
-            samletKoebesum?: number | null;
-            loesoeresum?: number | null;
-            entreprisesum?: number | null;
-            overtagelsesdato?: string | null;
-            koebsaftaleDato?: string | null;
-          }>;
-        };
-        // BIZZ-575 v5: Find seneste handel med faktisk købspris (ikke bare
-        // første entry der ofte er prisløs ejerskifte fra arv/gaver/skifte).
-        // Hvis ingen handel har pris, returnér seneste dato uden pris så
-        // kortet kan vise "Overtaget DATE (pris ej oplyst)".
-        const handler = d.handler ?? [];
-        if (handler.length === 0) return null;
-        const findPrice = (h: (typeof handler)[number]): number | null => {
-          const v =
-            h.kontantKoebesum ??
-            h.samletKoebesum ??
-            ((h.loesoeresum ?? 0) + (h.entreprisesum ?? 0) || null);
-          return v && v > 0 ? v : null;
-        };
-        const medPris = handler.find((h) => findPrice(h) != null);
-        const seneste = medPris ?? handler[0];
-        return {
-          koebesum: medPris ? findPrice(medPris) : null,
-          koebsdato: seneste.overtagelsesdato ?? seneste.koebsaftaleDato ?? null,
-        };
+      // BIZZ-575 v6: Salgspris kan komme fra to kilder:
+      // (1) EJF (Ejerfortegnelsen) Handelsoplysninger — kræver DAF-grant der
+      //     vi ikke altid har på test-env. Returnerer ofte null på pris.
+      // (2) Tinglysning summarisk (adkomst-dokumenter) — har den TINGLYSTE
+      //     købesum direkte. Bruges som fallback når EJF mangler pris.
+      // Hvis begge kommer tilbage, foretræk EJF (mere strukturerede data).
+      Promise.allSettled([
+        fetch(`${baseUrl}/api/salgshistorik?bfeNummer=${bfe}`, {
+          ...fetchOpts,
+          signal: AbortSignal.timeout(5000),
+        }).then(async (r) => {
+          if (!r.ok) return null;
+          const d = (await r.json()) as {
+            handler?: Array<{
+              kontantKoebesum?: number | null;
+              samletKoebesum?: number | null;
+              loesoeresum?: number | null;
+              entreprisesum?: number | null;
+              overtagelsesdato?: string | null;
+              koebsaftaleDato?: string | null;
+            }>;
+          };
+          const handler = d.handler ?? [];
+          if (handler.length === 0) return null;
+          const findPrice = (h: (typeof handler)[number]): number | null => {
+            const v =
+              h.kontantKoebesum ??
+              h.samletKoebesum ??
+              ((h.loesoeresum ?? 0) + (h.entreprisesum ?? 0) || null);
+            return v && v > 0 ? v : null;
+          };
+          const medPris = handler.find((h) => findPrice(h) != null);
+          const seneste = medPris ?? handler[0];
+          return {
+            koebesum: medPris ? findPrice(medPris) : null,
+            koebsdato: seneste.overtagelsesdato ?? seneste.koebsaftaleDato ?? null,
+          };
+        }),
+        // Tinglysning fallback: bfe → uuid → summarisk?section=ejere → koebesum
+        (async () => {
+          try {
+            const tlRes = await fetch(`${baseUrl}/api/tinglysning?bfe=${bfe}`, {
+              ...fetchOpts,
+              signal: AbortSignal.timeout(5000),
+            });
+            if (!tlRes.ok) return null;
+            const tlData = (await tlRes.json()) as { uuid?: string; error?: string };
+            if (!tlData.uuid || tlData.error) return null;
+
+            const sumRes = await fetch(
+              `${baseUrl}/api/tinglysning/summarisk?uuid=${tlData.uuid}&section=ejere`,
+              { ...fetchOpts, signal: AbortSignal.timeout(8000) }
+            );
+            if (!sumRes.ok) return null;
+            const sumData = (await sumRes.json()) as {
+              ejere?: Array<{
+                koebesum?: number | null;
+                overtagelsesdato?: string | null;
+              }>;
+            };
+            const ejere = sumData.ejere ?? [];
+            const medPris = ejere.find((e) => e.koebesum && e.koebesum > 0);
+            if (!medPris) return null;
+            return {
+              koebesum: medPris.koebesum ?? null,
+              koebsdato: medPris.overtagelsesdato ?? null,
+            };
+          } catch {
+            return null;
+          }
+        })(),
+      ]).then((results) => {
+        // Foretræk EJF-resultat hvis det har pris; ellers brug Tinglysning;
+        // ellers behold EJF (kan have dato uden pris).
+        const ejf =
+          results[0].status === 'fulfilled'
+            ? (results[0].value as {
+                koebesum: number | null;
+                koebsdato: string | null;
+              } | null)
+            : null;
+        const tl =
+          results[1].status === 'fulfilled'
+            ? (results[1].value as {
+                koebesum: number | null;
+                koebsdato: string | null;
+              } | null)
+            : null;
+        if (ejf?.koebesum) return ejf;
+        if (tl?.koebesum) return tl;
+        return ejf ?? tl;
       }),
     ]);
 

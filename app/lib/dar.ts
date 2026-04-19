@@ -145,6 +145,8 @@ interface DarHusnummerRaw {
   navngivenVej: string; // UUID → DAR_NavngivenVej
   postnummer: string; // UUID → DAR_Postnummer
   kommuneinddeling: string; // UUID → DAR_Kommuneinddeling (NOT a 4-digit code)
+  /** BIZZ-508: UUID → DAR_SupplerendeBynavn (null hvis adressen ikke har et supplerende bynavn) */
+  supplerendeBynavn?: string | null;
 }
 
 /**
@@ -553,6 +555,7 @@ export async function darHentAdresse(id: string): Promise<DawaAdresse | null> {
           navngivenVej
           postnummer
           kommuneinddeling
+          supplerendeBynavn
         }
       }
     }`;
@@ -568,8 +571,9 @@ export async function darHentAdresse(id: string): Promise<DawaAdresse | null> {
       return _dawaHentAdresse(id);
     }
 
-    // Step 2: Parallelle opslag for Adgangspunkt, Postnummer, NavngivenVej og Kommuneinddeling
-    const [apData, pnData, vejData, komData] = await Promise.all([
+    // Step 2: Parallelle opslag for Adgangspunkt, Postnummer, NavngivenVej,
+    // Kommuneinddeling og BIZZ-508 SupplerendeBynavn
+    const [apData, pnData, vejData, komData, sbData] = await Promise.all([
       // Adressepunkt → koordinater (EPSG:25832 WKT)
       // NB: Typen hedder DAR_Adressepunkt i GraphQL (ikke DAR_Adgangspunkt).
       // position er SpatialPointEpsg25832Type med { wkt } underfelt.
@@ -616,6 +620,17 @@ export async function darHentAdresse(id: string): Promise<DawaAdresse | null> {
               virkningstid: "${ts}"
               registreringstid: "${ts}"
             ) { nodes { kommunekode navn } }
+          }`)
+        : Promise.resolve(null),
+
+      // BIZZ-508: SupplerendeBynavn → navn (fx "Vejlgårde")
+      hn.supplerendeBynavn
+        ? darQuery<{ DAR_SupplerendeBynavn: { nodes: Array<{ navn: string }> } }>(`{
+            DAR_SupplerendeBynavn(
+              where: { id_lokalId: { eq: "${hn.supplerendeBynavn}" } }
+              virkningstid: "${ts}"
+              registreringstid: "${ts}"
+            ) { nodes { navn } }
           }`)
         : Promise.resolve(null),
     ]);
@@ -667,6 +682,9 @@ export async function darHentAdresse(id: string): Promise<DawaAdresse | null> {
       resolveKommunenavnFromRawCode(hn.kommuneinddeling) ||
       '';
 
+    // BIZZ-508: Udtræk supplerendeBynavn-navn (fx "Vejlgårde")
+    const sbNode = sbData?.DAR_SupplerendeBynavn?.nodes?.[0];
+
     return {
       id: hn.id_lokalId,
       vejnavn: vejNode?.vejnavn ?? parsed.vejnavn,
@@ -682,6 +700,8 @@ export async function darHentAdresse(id: string): Promise<DawaAdresse | null> {
       // ikke i DAR. Slå op i plandata WFS når vi har WGS84-koordinater.
       // Ikke-kritisk: null hvis plandata er utilgængelig.
       zone: coords ? ((await hentZoneFraPlandata(coords[0], coords[1])) ?? undefined) : undefined,
+      // BIZZ-508: Supplerende bynavn fra DAR (fx "Vejlgårde")
+      supplerendebynavn: sbNode?.navn ?? undefined,
     };
   } catch (err) {
     // DAR fejlede — fallback til DAWA mens den stadig virker

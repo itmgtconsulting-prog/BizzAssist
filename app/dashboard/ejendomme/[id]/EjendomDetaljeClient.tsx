@@ -2236,6 +2236,27 @@ export default function EjendomDetaljeClient({
                     ESR: {esrNummer}
                   </span>
                 )}
+                {/* BIZZ-496: Frednings/beskyttelses-badges fra matrikeldata */}
+                {matrikelData?.jordstykker?.some((js) => js.fredskov) && (
+                  <span className="px-2 py-0.5 bg-green-900/50 border border-green-800/40 rounded-full text-[10px] font-semibold text-green-400">
+                    {t.protectedForest}
+                  </span>
+                )}
+                {matrikelData?.jordstykker?.some((js) => js.strandbeskyttelse) && (
+                  <span className="px-2 py-0.5 bg-blue-900/50 border border-blue-800/40 rounded-full text-[10px] font-semibold text-blue-400">
+                    {t.coastalProtection}
+                  </span>
+                )}
+                {matrikelData?.jordstykker?.some((js) => js.klitfredning) && (
+                  <span className="px-2 py-0.5 bg-amber-900/50 border border-amber-800/40 rounded-full text-[10px] font-semibold text-amber-400">
+                    {t.duneProtection}
+                  </span>
+                )}
+                {matrikelData?.jordstykker?.some((js) => js.jordrente) && (
+                  <span className="px-2 py-0.5 bg-purple-900/50 border border-purple-800/40 rounded-full text-[10px] font-semibold text-purple-400">
+                    {t.groundRent}
+                  </span>
+                )}
               </div>
             </div>
 

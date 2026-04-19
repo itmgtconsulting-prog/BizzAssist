@@ -147,6 +147,8 @@ interface DarHusnummerRaw {
   kommuneinddeling: string; // UUID → DAR_Kommuneinddeling (NOT a 4-digit code)
   /** BIZZ-508: UUID → DAR_SupplerendeBynavn (null hvis adressen ikke har et supplerende bynavn) */
   supplerendeBynavn?: string | null;
+  /** BIZZ-508: UUID → DAR_NavngivenVejKommunedel (knytter vej til specifik kommune ved vejnavne der krydser kommunegrænser) */
+  navngivenVejKommunedel?: string | null;
 }
 
 /**
@@ -556,6 +558,7 @@ export async function darHentAdresse(id: string): Promise<DawaAdresse | null> {
           postnummer
           kommuneinddeling
           supplerendeBynavn
+          navngivenVejKommunedel
         }
       }
     }`;
@@ -572,8 +575,8 @@ export async function darHentAdresse(id: string): Promise<DawaAdresse | null> {
     }
 
     // Step 2: Parallelle opslag for Adgangspunkt, Postnummer, NavngivenVej,
-    // Kommuneinddeling og BIZZ-508 SupplerendeBynavn
-    const [apData, pnData, vejData, komData, sbData] = await Promise.all([
+    // Kommuneinddeling, BIZZ-508 SupplerendeBynavn og BIZZ-508 NavngivenVejKommunedel
+    const [apData, pnData, vejData, komData, sbData, nvkData] = await Promise.all([
       // Adressepunkt → koordinater (EPSG:25832 WKT)
       // NB: Typen hedder DAR_Adressepunkt i GraphQL (ikke DAR_Adgangspunkt).
       // position er SpatialPointEpsg25832Type med { wkt } underfelt.
@@ -633,6 +636,25 @@ export async function darHentAdresse(id: string): Promise<DawaAdresse | null> {
             ) { nodes { navn } }
           }`)
         : Promise.resolve(null),
+
+      // BIZZ-508: NavngivenVejKommunedel → kommuneinddeling-UUID
+      // Relevant når en navngiven vej strækker sig over flere kommuner
+      // (sjælden edge case) — vi henter kommune-referencen herfra for at
+      // kende den KORREKTE kommunetilhørighed for netop dette husnummer,
+      // frem for blot husnummer.kommuneinddeling.
+      hn.navngivenVejKommunedel
+        ? darQuery<{
+            DAR_NavngivenVejKommunedel: {
+              nodes: Array<{ kommune: string | null; vejkode: string | null }>;
+            };
+          }>(`{
+            DAR_NavngivenVejKommunedel(
+              where: { id_lokalId: { eq: "${hn.navngivenVejKommunedel}" } }
+              virkningstid: "${ts}"
+              registreringstid: "${ts}"
+            ) { nodes { kommune vejkode } }
+          }`)
+        : Promise.resolve(null),
     ]);
 
     // Parse koordinater fra WKT POINT (EPSG:25832 → WGS84)
@@ -685,6 +707,17 @@ export async function darHentAdresse(id: string): Promise<DawaAdresse | null> {
     // BIZZ-508: Udtræk supplerendeBynavn-navn (fx "Vejlgårde")
     const sbNode = sbData?.DAR_SupplerendeBynavn?.nodes?.[0];
 
+    // BIZZ-508: Udtræk vejkode fra NavngivenVejKommunedel.
+    // Log warning hvis nvkNode.kommune afviger fra hn.kommuneinddeling (edge case for
+    // vejnavne der krydser kommunegrænser) så vi er klar over data-diskrepansen.
+    const nvkNode = nvkData?.DAR_NavngivenVejKommunedel?.nodes?.[0];
+    if (nvkNode?.kommune && hn.kommuneinddeling && nvkNode.kommune !== hn.kommuneinddeling) {
+      logger.warn(
+        '[darHentAdresse] NavngivenVejKommunedel.kommune afviger fra Husnummer.kommuneinddeling ' +
+          `(${nvkNode.kommune} vs ${hn.kommuneinddeling}) — cross-kommune vej detekteret for ${hn.id_lokalId}`
+      );
+    }
+
     return {
       id: hn.id_lokalId,
       vejnavn: vejNode?.vejnavn ?? parsed.vejnavn,
@@ -702,6 +735,8 @@ export async function darHentAdresse(id: string): Promise<DawaAdresse | null> {
       zone: coords ? ((await hentZoneFraPlandata(coords[0], coords[1])) ?? undefined) : undefined,
       // BIZZ-508: Supplerende bynavn fra DAR (fx "Vejlgårde")
       supplerendebynavn: sbNode?.navn ?? undefined,
+      // BIZZ-508: Vejkode fra NavngivenVejKommunedel — kommunens lokale vejnummer
+      vejkode: nvkNode?.vejkode ?? undefined,
     };
   } catch (err) {
     // DAR fejlede — fallback til DAWA mens den stadig virker

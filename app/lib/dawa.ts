@@ -107,6 +107,13 @@ export interface DawaAdresse {
    * ligger i et DAGI-registreret supplerende bynavn-område.
    */
   supplerendebynavn?: string;
+  /**
+   * BIZZ-508: Vejkode (3-4 cifret kode) fra NavngivenVejKommunedel. Vejkoden
+   * er kommunens lokale nummerering af den navngivne vej — fx "1234" — og
+   * bruges bl.a. ved opslag i kommunale systemer. Hvis vejen krydser flere
+   * kommuner har vejen separate vejkoder pr. kommunedel.
+   */
+  vejkode?: string;
 }
 
 /** Et jordstykke (matrikel) fra DAWA */

@@ -48,14 +48,22 @@ const EJF_GQL_PROBES = [
     name: 'CustomPersonEllerVirksomhedsadminiBegraenset',
     query: `{ CustomPersonEllerVirksomhedsadminiBegraenset(first: 1, virkningstid: "${VT}") { nodes { id_lokalId status } } }`,
   },
-  // PersonSimpel
+  // PersonSimpel — prøv forskellige navne-varianter
   {
     name: 'EJFCustom_PersonSimpelBegraenset',
-    query: `{ EJFCustom_PersonSimpelBegraenset(first: 1, virkningstid: "${VT}") { nodes { id_lokalId status } } }`,
+    query: `{ EJFCustom_PersonSimpelBegraenset(first: 1, virkningstid: "${VT}") { nodes { id_lokalId } } }`,
   },
   {
-    name: 'CustomPersonSimpelBegraenset',
-    query: `{ CustomPersonSimpelBegraenset(first: 1, virkningstid: "${VT}") { nodes { id_lokalId status } } }`,
+    name: 'EJFCustom_PersonBegraenset',
+    query: `{ EJFCustom_PersonBegraenset(first: 1, virkningstid: "${VT}") { nodes { id_lokalId } } }`,
+  },
+  {
+    name: 'EJFCustom_PersonSimpel',
+    query: `{ EJFCustom_PersonSimpel(first: 1, virkningstid: "${VT}") { nodes { id_lokalId } } }`,
+  },
+  {
+    name: 'EJFCustom_SimpelPersonBegraenset',
+    query: `{ EJFCustom_SimpelPersonBegraenset(first: 1, virkningstid: "${VT}") { nodes { id_lokalId } } }`,
   },
   // Entitetsbaserede — forventes at fejle (support siger vi ikke har adgang)
   {

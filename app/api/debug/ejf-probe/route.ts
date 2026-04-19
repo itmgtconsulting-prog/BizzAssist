@@ -16,21 +16,28 @@ import { logger } from '@/app/lib/logger';
 export const runtime = 'nodejs';
 export const maxDuration = 30;
 
+const VT = new Date().toISOString();
 const EJF_GQL_PROBES = [
   {
     name: 'EJFCustom_EjerskabBegraenset',
-    query: '{ EJFCustom_EjerskabBegraenset(first: 1) { nodes { bestemtFastEjendomBFENr } } }',
+    query: `{ EJFCustom_EjerskabBegraenset(first: 1, virkningstid: "${VT}") { nodes { bestemtFastEjendomBFENr } } }`,
   },
-  { name: 'EJF_Ejerskab', query: '{ EJF_Ejerskab(first: 1) { nodes { id_lokalId status } } }' },
+  {
+    name: 'EJF_Ejerskab',
+    query: `{ EJF_Ejerskab(first: 1, virkningstid: "${VT}") { nodes { id_lokalId status } } }`,
+  },
   {
     name: 'EJF_PersonVirksomhedsoplys',
-    query: '{ EJF_PersonVirksomhedsoplys(first: 1) { nodes { id_lokalId status } } }',
+    query: `{ EJF_PersonVirksomhedsoplys(first: 1, virkningstid: "${VT}") { nodes { id_lokalId status } } }`,
   },
   {
     name: 'EJF_Handelsoplysninger',
-    query: '{ EJF_Handelsoplysninger(first: 1) { nodes { id_lokalId status } } }',
+    query: `{ EJF_Handelsoplysninger(first: 1, virkningstid: "${VT}") { nodes { id_lokalId status } } }`,
   },
-  { name: 'EJF_Ejerskifte', query: '{ EJF_Ejerskifte(first: 1) { nodes { id_lokalId status } } }' },
+  {
+    name: 'EJF_Ejerskifte',
+    query: `{ EJF_Ejerskifte(first: 1, virkningstid: "${VT}") { nodes { id_lokalId status } } }`,
+  },
 ];
 
 const FIL_URL_PATTERNS = [

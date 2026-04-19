@@ -3500,6 +3500,12 @@ export default function EjendomDetaljeClient({
                                   {js.ejerlavsnavn && (
                                     <p className="text-slate-500 text-xs">{js.ejerlavsnavn}</p>
                                   )}
+                                  {/* BIZZ-499: Vis arealtype fra MAT */}
+                                  {js.arealtype && (
+                                    <p className="text-slate-500 text-[10px]">
+                                      {da ? 'Arealtype' : 'Area type'}: {js.arealtype}
+                                    </p>
+                                  )}
                                 </div>
                                 <p className="text-slate-300 text-sm tabular-nums text-right">
                                   {js.registreretAreal != null
@@ -5937,6 +5943,12 @@ export default function EjendomDetaljeClient({
                                   </p>
                                   {js.ejerlavsnavn && (
                                     <p className="text-slate-500 text-xs">{js.ejerlavsnavn}</p>
+                                  )}
+                                  {/* BIZZ-499: Vis arealtype fra MAT */}
+                                  {js.arealtype && (
+                                    <p className="text-slate-500 text-[10px]">
+                                      {da ? 'Arealtype' : 'Area type'}: {js.arealtype}
+                                    </p>
                                   )}
                                 </div>
                                 <p className="text-slate-300 text-sm tabular-nums text-right">

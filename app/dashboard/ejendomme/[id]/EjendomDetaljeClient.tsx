@@ -3305,6 +3305,23 @@ export default function EjendomDetaljeClient({
                                     <span className="truncate">{b.anvendelse || '–'}</span>
                                     {/* BIZZ-485: Risk-badges — asbest har højeste prioritet (rød).
                                         Træ-ydervæg vises kun hvis bygning er +40 år uden kendt ombygning. */}
+                                    {/* BIZZ-485 v2: BBR's eksplicitte asbest-flag (byg036) —
+                                        viser badge selv hvis tagmateriale-koden ikke er 3.
+                                        Højere prioritet end udledte flags. */}
+                                    {risks.asbestEksplicit &&
+                                      !risks.asbestTag &&
+                                      !risks.asbestYdervaeg && (
+                                        <span
+                                          className="flex-shrink-0 text-[9px] px-1 py-0.5 rounded bg-red-500/15 text-red-400 border border-red-500/30"
+                                          title={
+                                            da
+                                              ? 'BBR har bekræftet asbestholdigt materiale (byg036)'
+                                              : 'BBR confirmed asbestos-containing material (byg036)'
+                                          }
+                                        >
+                                          {da ? 'Asbest (BBR)' : 'Asbestos (BBR)'}
+                                        </span>
+                                      )}
                                     {risks.asbestTag && (
                                       <span
                                         className="flex-shrink-0 text-[9px] px-1 py-0.5 rounded bg-red-500/15 text-red-400 border border-red-500/30"

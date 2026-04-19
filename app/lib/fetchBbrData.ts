@@ -47,11 +47,12 @@ export interface RawBBRBygning {
   byg033Tagdaekningsmateriale?: string;
   byg032YdervaeggensMateriale?: string;
   /**
-   * BIZZ-485 (reverted): byg034Tagkonstruktion blev fjernet fra GraphQL-
-   * queryen da feltnavnet fik hele BBR-queryen til at fejle i produktion
-   * (fikseret 2026-04-19 efter rapport om tom BBR-tab). Tagkonstruktion
-   * forbliver '–' i UI indtil korrekt schema-feltnavn er verificeret.
+   * BIZZ-485 v2: Asbestholdigt materiale-flag fra BBR. Bruges til
+   * risk-scoring på BBR-tab (rødt badge ved 'asbest').
+   * NB: byg034Tagkonstruktion findes IKKE i BBR v2-schemaet (verificeret
+   * 2026-04-19 — query-fejl kostede produktions-incident). Forbliver '–'.
    */
+  byg036AsbestholdigtMateriale?: string;
   byg056Varmeinstallation?: string;
   byg057Opvarmningsmiddel?: string;
   byg058SupplerendeVarme?: string;
@@ -133,11 +134,13 @@ export interface LiveBBRBygning {
    * - asbestTag: tagmateriale = 3 (fibercement/asbest)
    * - asbestYdervaeg: ydervaeg = 3 (fibercement/eternit asbest)
    * - traeYdervaeg: ydervaeg = 5 (træ) — lavere prioritet, kun info
+   * - asbestEksplicit: byg036AsbestholdigtMateriale = '1' (BBR-bekræftet)
    */
   risks: {
     asbestTag: boolean;
     asbestYdervaeg: boolean;
     traeYdervaeg: boolean;
+    asbestEksplicit: boolean;
   };
 }
 
@@ -931,6 +934,9 @@ export function normaliseBygning(raw: RawBBRBygning): LiveBBRBygning {
       asbestTag: tagmaterialeKode === 3,
       asbestYdervaeg: ydervaegKode === 3,
       traeYdervaeg: ydervaegKode === 5,
+      // BIZZ-485 v2: BBR's eksplicitte asbest-flag (byg036). Værdien '1' =
+      // bekræftet asbestholdigt materiale (sundhedsrisiko).
+      asbestEksplicit: raw.byg036AsbestholdigtMateriale === '1',
     },
   };
 }
@@ -1013,6 +1019,7 @@ const BYGNING_QUERY = `
         byg054AntalEtager
         byg033Tagdaekningsmateriale
         byg032YdervaeggensMateriale
+        byg036AsbestholdigtMateriale
         byg056Varmeinstallation
         byg057Opvarmningsmiddel
         byg058SupplerendeVarme
@@ -1051,6 +1058,7 @@ const BYGNING_BY_ID_QUERY = `
         byg054AntalEtager
         byg033Tagdaekningsmateriale
         byg032YdervaeggensMateriale
+        byg036AsbestholdigtMateriale
         byg056Varmeinstallation
         byg057Opvarmningsmiddel
         byg058SupplerendeVarme

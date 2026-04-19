@@ -867,6 +867,8 @@ export default function EjendomDetaljeClient({
   const [vurdering, setVurdering] = useState<VurderingData | null>(null);
   /** Alle vurderinger fra Datafordeler — bruges til historiktabel */
   const [alleVurderinger, setAlleVurderinger] = useState<VurderingData[]>([]);
+  /** BIZZ-494: Fradrag for forbedringer (vej/kloak) — vises under Grundværdi i Økonomi-tab */
+  const [vurFradrag, setVurFradrag] = useState<VurderingResponse['fradrag']>(null);
   /** True mens vurderingsdata hentes — starter som true når prefetch giver BBR data med det samme */
   const [vurderingLoader, setVurderingLoader] = useState(!!prefetched?.bbrData);
   /** True = vis fuld vurderingshistorik-tabel */
@@ -1355,6 +1357,7 @@ export default function EjendomDetaljeClient({
         if (signal.aborted) return;
         setVurdering(data?.vurdering ?? null);
         setAlleVurderinger(data?.alle ?? []);
+        setVurFradrag(data?.fradrag ?? null);
       })
       .catch((err) => {
         if (err.name === 'AbortError') return;
@@ -3746,6 +3749,40 @@ export default function EjendomDetaljeClient({
                           </p>
                         </div>
                       </div>
+
+                      {/* BIZZ-494: Fradrag for forbedringer — vises under Grundværdi */}
+                      {vurFradrag && vurFradrag.vaerdiSum != null && vurFradrag.vaerdiSum > 0 && (
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4 mb-3">
+                          <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-2">
+                            {da ? 'Fradrag for forbedringer' : 'Improvement deductions'}
+                          </p>
+                          <p className="text-white text-sm font-bold mb-2">
+                            {formatDKK(vurFradrag.vaerdiSum)}
+                            {vurFradrag.foersteGangAar && (
+                              <span className="text-slate-500 text-xs font-normal ml-2">
+                                {da ? 'fra' : 'from'} {vurFradrag.foersteGangAar}
+                              </span>
+                            )}
+                          </p>
+                          {vurFradrag.poster.length > 0 && (
+                            <div className="space-y-1">
+                              {vurFradrag.poster.map((post, i) => (
+                                <div key={i} className="flex items-center justify-between text-xs">
+                                  <span className="text-slate-400">
+                                    {post.tekst ?? (da ? 'Fradrag' : 'Deduction')}
+                                    {post.aar && (
+                                      <span className="text-slate-500 ml-1">({post.aar})</span>
+                                    )}
+                                  </span>
+                                  <span className="text-slate-300 tabular-nums">
+                                    {post.vaerdi != null ? formatDKK(post.vaerdi) : '—'}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
 
                       {/* Vurderingshistorik — collapsible tabel med forelobige prepended */}
                       {(alleVurderinger.length > 1 || forelobige.length > 0) && (

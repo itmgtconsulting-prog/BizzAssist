@@ -1167,16 +1167,18 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
       const cH = c.clientHeight;
       if (cW < 50 || cH < 50) return;
 
-      const fit = Math.min((cW - 40) / viewBox.w, (cH - 40) / viewBox.h, 1.5);
+      // BIZZ-552: Tillad højere max-zoom (2.5x) så små grafer (2-3 noder)
+      // fylder canvas i stedet for at flyde ude i hjørnet. Cap'et på 1.5x
+      // efterlod for meget tom plads.
+      const fit = Math.min((cW - 40) / viewBox.w, (cH - 40) / viewBox.h, 2.5);
       const z = Math.max(fit, 0.15);
       const scaledW = viewBox.w * z + 32;
       const scaledH = viewBox.h * z + 32;
       const panX = Math.round((cW - scaledW) / 2);
-      // Always top-align the diagram with a small top margin. Previously we
-      // centred vertically for small diagrams which wasted screen real-estate
-      // and pushed the first node far below the fold.
-      void scaledH;
-      const panY = 8;
+      // BIZZ-552: Center vertikalt når indhold passer ind i canvas. Store
+      // diagrammer (scaledH > cH) top-alignes med 8px så scrolling/panning
+      // afslører resten — undgår at brugeren mister starten af træet.
+      const panY = scaledH < cH ? Math.round((cH - scaledH) / 2) : 8;
       setZoom(z);
       setPanOffset({ x: panX, y: panY });
       initialFitDone.current = true;
@@ -2228,6 +2230,11 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
       onDoubleClick={handleDoubleClick}
+      // BIZZ-555: Pan-handler er flyttet fra <svg> til ydre <div> så hele
+      // canvas-området kan trækkes — ikke kun området hvor SVG-indholdets
+      // bounding-box ligger. Node-mousedown stopPropagation så klik på
+      // noder ikke trigger pan.
+      onMouseDown={handleSvgMouseDown}
     >
       <div
         style={{
@@ -2242,7 +2249,6 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
           height={viewBox.h}
           viewBox={`${viewBox.minX} ${viewBox.minY} ${viewBox.w} ${viewBox.h}`}
           style={{ overflow: 'visible' }}
-          onMouseDown={handleSvgMouseDown}
         >
           {svgContent}
         </svg>

@@ -8842,12 +8842,9 @@ function TinglysningTab({
                           {da ? 'Hovedejendom' : 'Parent'}
                         </span>
                       )}
-                      {servitutBilag.length > 0 && (
-                        <span className="flex-shrink-0 inline-flex items-center gap-0.5 text-[10px] text-teal-500/80 bg-teal-500/10 px-1 py-0.5 rounded">
-                          <FileText size={9} />
-                          {servitutBilag.length}
-                        </span>
-                      )}
+                      {/* BIZZ-553: Inline bilag-badge fjernet — overlappede med
+                          PDF/download-kolonnen. Antallet vises allerede via
+                          'PDF +N bag' i bilag-kolonnen til højre. */}
                     </span>
                     <span />
                     <span className="text-xs text-slate-500 truncate">

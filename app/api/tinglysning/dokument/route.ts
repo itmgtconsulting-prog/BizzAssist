@@ -483,46 +483,56 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Certifikat ikke konfigureret' }, { status: 503 });
 
   // ── Original PDF bilag — hent direkte fra Tinglysning ──
+  // BIZZ-554: Bilag-parameteren kan indeholde flere komma-separerede UUIDer
+  // (fx fra ekspanderet servitut-detalje med flere bilag). Tidligere blev
+  // hele strengen sendt som ét bilag-ID til Tinglysning som returnerede
+  // 'Ekstern API fejl'. Nu split'es UUIDerne, hvert bilag hentes via
+  // fetchBilagPdf, og resultatet flettes med mergePdfs til én download.
   if (bilagId) {
+    // UUID validation: 8-4-4-4-12 hex chars
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const bilagUuids = bilagId
+      .split(',')
+      .map((u) => u.trim())
+      .filter((u) => u.length > 0);
+
+    // Reject hvis nogen segment ikke er gyldig UUID — undgå at sende skrald
+    // til det eksterne API (gav generisk 'Ekstern API fejl' i prod, BIZZ-554)
+    const invalid = bilagUuids.filter((u) => !UUID_RE.test(u));
+    if (invalid.length > 0) {
+      return NextResponse.json({ error: 'Ugyldigt bilag-UUID format' }, { status: 400 });
+    }
+
+    if (bilagUuids.length === 0) {
+      return NextResponse.json({ error: 'bilag parameter tom' }, { status: 400 });
+    }
+
     try {
-      const pfx = loadCert();
-      const url = new URL(TL_BASE + `/tinglysning/ssl/bilag/${bilagId}`);
-      const pdfData = await new Promise<Buffer>((resolve, reject) => {
-        const r = https.request(
-          {
-            hostname: url.hostname,
-            port: 443,
-            path: url.pathname,
-            method: 'GET',
-            pfx,
-            passphrase: CERT_PASSWORD,
-            rejectUnauthorized: false,
-            timeout: 55000, // Turbopack dev + test mTLS
-            headers: { Accept: 'application/pdf' },
-          },
-          (res) => {
-            const chunks: Buffer[] = [];
-            res.on('data', (d) => chunks.push(d));
-            res.on('end', () =>
-              res.statusCode === 200
-                ? resolve(Buffer.concat(chunks))
-                : reject(new Error(`HTTP ${res.statusCode}`))
-            );
-          }
-        );
-        r.on('error', reject);
-        r.on('timeout', () => {
-          r.destroy();
-          reject(new Error('Timeout'));
-        });
-        r.end();
-      });
+      // Hent alle bilag parallelt; failed bilag returnerer null og springes over
+      const buffers = await Promise.all(bilagUuids.map((u) => fetchBilagPdf(u)));
+      const validBuffers = buffers.filter((b): b is Buffer => b !== null);
+
+      if (validBuffers.length === 0) {
+        // Ingen bilag kunne hentes — ekstern fejl ramte alle
+        return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 502 });
+      }
+
+      // Single-bilag-fast-path: returner direkte uden mergePdfs-omkostning
+      const pdfData =
+        validBuffers.length === 1
+          ? validBuffers[0]
+          : await mergePdfs(validBuffers[0], validBuffers.slice(1));
+
+      const filenameSuffix =
+        bilagUuids.length === 1
+          ? bilagUuids[0].slice(0, 8)
+          : `${bilagUuids.length}-bilag-${bilagUuids[0].slice(0, 8)}`;
 
       return new NextResponse(new Uint8Array(pdfData), {
         status: 200,
         headers: {
           'Content-Type': 'application/pdf',
-          'Content-Disposition': `inline; filename="tinglysning-bilag-${bilagId.slice(0, 8)}.pdf"`,
+          'Content-Disposition': `inline; filename="tinglysning-bilag-${filenameSuffix}.pdf"`,
         },
       });
     } catch (err) {

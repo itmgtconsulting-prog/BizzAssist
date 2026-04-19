@@ -72,6 +72,15 @@ export interface VirksomhedEjendomsrolle {
   dawaId: string | null;
   /** Ejendomstype fra DAWA (Normal ejendom / Ejerlejlighed / Landbrug m.fl.) */
   ejendomstype: string | null;
+  // ─── BIZZ-570: Hæftelse-data (kun sat for rolle=kreditor) ──────────────────
+  /** Hovedstol/beløb fra haeftelse-dokumentet (i hele DKK) */
+  haeftelseBeloeb?: number | null;
+  /** Hæftelses-type (Realkreditpantebrev / Ejerpantebrev / etc.) */
+  haeftelseType?: string | null;
+  /** Tinglysningsdato for haeftelsen (ISO yyyy-mm-dd) */
+  haeftelseDato?: string | null;
+  /** Valuta-kode (typisk DKK) */
+  haeftelseValuta?: string | null;
 }
 
 export interface VirksomhedTinglysningData {
@@ -492,6 +501,49 @@ const querySchema = z.object({
   cvr: z.string().regex(/^\d{8}$/, 'cvr parameter er påkrævet (8 cifre)'),
 });
 
+/**
+ * BIZZ-570: Henter haeftelse-beløb + type + dato fra dokaktuel-XML for hver
+ * kreditor-række (mutates rows in-place). Capped parallelisme for at undgå
+ * at presse Tinglysning's API. Fejl pr. dokument logges men blokerer ikke.
+ */
+async function berigMedHaeftelseBeloeb(rows: VirksomhedEjendomsrolle[]): Promise<void> {
+  const CONCURRENCY = 5;
+  const targets = rows.filter((r) => r.dokumentId);
+  for (let i = 0; i < targets.length; i += CONCURRENCY) {
+    const batch = targets.slice(i, i + CONCURRENCY);
+    await Promise.all(
+      batch.map(async (r) => {
+        try {
+          const result = await tlFetch(`/dokaktuel/uuid/${r.dokumentId}`, {
+            accept: 'application/xml',
+            timeout: 10000,
+          });
+          if (result.status !== 200) return;
+          const xml = result.body;
+          // Beløb: BeloebVaerdi (hovedstol)
+          const beloebStr = xml.match(/BeloebVaerdi[^>]*>(\d+)/)?.[1];
+          const beloeb = beloebStr ? parseInt(beloebStr, 10) : null;
+          // Type: HaeftelseType
+          const type = xml.match(/HaeftelseType[^>]*>([^<]+)/)?.[1] ?? null;
+          // Dato
+          const dato = xml.match(/TinglysningsDato[^>]*>([^<]+)/)?.[1]?.split('T')[0] ?? null;
+          // Valuta
+          const valuta = xml.match(/ValutaKode[^>]*>([^<]+)/)?.[1] ?? null;
+          if (beloeb != null) r.haeftelseBeloeb = beloeb;
+          if (type) r.haeftelseType = type;
+          if (dato) r.haeftelseDato = dato;
+          if (valuta) r.haeftelseValuta = valuta;
+        } catch (err) {
+          logger.warn(
+            `[tinglysning/virksomhed] haeftelse-beriging fejlede for ${r.dokumentId}:`,
+            err instanceof Error ? err.message : err
+          );
+        }
+      })
+    );
+  }
+}
+
 export async function GET(req: NextRequest): Promise<NextResponse> {
   const auth = await resolveTenantId();
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -535,6 +587,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       berigMedAdresser(ejerRaw, extraByBfe),
       berigMedAdresser(kreditorRaw, extraByBfe),
     ]);
+
+    // BIZZ-570: Berig kreditor-rækker med hæftelse-beløb fra dokumentet.
+    // Capped concurrency så mange ejendomme ikke overbelaster Tinglysning.
+    await berigMedHaeftelseBeloeb(kreditor);
 
     const result: VirksomhedTinglysningData = { cvr, ejer, kreditor };
 

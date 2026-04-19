@@ -4530,6 +4530,46 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                                           </span>
                                         ))}
                                       </div>
+                                      {/* BIZZ-570: Vis hæftelse-beløb øverst på kreditor-kort.
+                                          Sum hvis flere haeftelser på samme BFE. */}
+                                      {(() => {
+                                        if (rolle !== 'kreditor') return null;
+                                        const haeftelser = all.filter(
+                                          (r) => r.haeftelseBeloeb != null && r.haeftelseBeloeb > 0
+                                        );
+                                        if (haeftelser.length === 0) return null;
+                                        const sumBeloeb = haeftelser.reduce(
+                                          (s, r) => s + (r.haeftelseBeloeb ?? 0),
+                                          0
+                                        );
+                                        const types = Array.from(
+                                          new Set(
+                                            haeftelser
+                                              .map((r) => r.haeftelseType)
+                                              .filter((t): t is string => !!t)
+                                          )
+                                        );
+                                        return (
+                                          <div className="pt-1.5 border-t border-slate-700/30">
+                                            <div className="flex items-baseline gap-2">
+                                              <span className="text-amber-400 text-sm font-semibold">
+                                                {sumBeloeb.toLocaleString('da-DK')} DKK
+                                              </span>
+                                              <span className="text-[10px] text-slate-500 uppercase tracking-wide">
+                                                {lang === 'da' ? 'Hæftelse' : 'Lien'}
+                                                {haeftelser.length > 1
+                                                  ? ` × ${haeftelser.length}`
+                                                  : ''}
+                                              </span>
+                                            </div>
+                                            {types.length > 0 && (
+                                              <p className="text-[10px] text-slate-400 mt-0.5">
+                                                {types.join(' · ')}
+                                              </p>
+                                            )}
+                                          </div>
+                                        );
+                                      })()}
                                       {all.some((r) => r.dokumentAlias) && (
                                         <div className="text-[10px] text-slate-500 font-mono pt-1 border-t border-slate-700/30">
                                           {all

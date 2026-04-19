@@ -17,7 +17,6 @@ import {
   Home,
   ExternalLink,
   Building2,
-  Ruler,
   TrendingUp,
   User,
   ShoppingCart,
@@ -223,136 +222,115 @@ export default function PropertyOwnerCard({
           )}
         </div>
 
-        {/* BIZZ-397/465/569: Enriched data — areal, vurdering, køb, ejer, m²-felter */}
-        {enriched &&
-          (enriched.areal ||
-            enriched.vurdering ||
-            enriched.koebesum ||
-            enriched.ejerNavn ||
-            enriched.boligAreal ||
-            enriched.erhvervsAreal ||
-            enriched.matrikelAreal) && (
-            <div className="grid grid-cols-2 gap-x-3 gap-y-1 pt-1 border-t border-slate-700/30">
-              {/* BIZZ-569: Hvis vi har splittede bolig/erhverv felter, vises de
-                  i stedet for samletBygningsareal — mere informativt. Fallback
-                  til samlet areal hvis kun det er tilgængeligt. */}
-              {!enriched.boligAreal && !enriched.erhvervsAreal && enriched.areal && (
-                <div className="flex items-center gap-1.5">
-                  <Ruler size={10} className="text-slate-500" />
-                  <span className="text-slate-300 text-[11px]">
-                    {enriched.areal.toLocaleString('da-DK')} m²
-                  </span>
-                </div>
-              )}
-              {enriched.boligAreal != null && enriched.boligAreal > 0 && (
-                <div
-                  className="flex items-center gap-1.5"
-                  title={da ? 'Bolig-areal fra BBR' : 'Residential area from BBR'}
-                >
-                  <Home size={10} className="text-slate-500" />
-                  <span className="text-slate-300 text-[11px]">
-                    <span className="text-slate-500">{da ? 'Bolig:' : 'Resi:'}</span>{' '}
-                    {enriched.boligAreal.toLocaleString('da-DK')} m²
-                  </span>
-                </div>
-              )}
-              {enriched.erhvervsAreal != null && enriched.erhvervsAreal > 0 && (
-                <div
-                  className="flex items-center gap-1.5"
-                  title={da ? 'Erhvervs-areal fra BBR' : 'Commercial area from BBR'}
-                >
-                  <Building2 size={10} className="text-slate-500" />
-                  <span className="text-slate-300 text-[11px]">
-                    <span className="text-slate-500">{da ? 'Erhv:' : 'Comm:'}</span>{' '}
-                    {enriched.erhvervsAreal.toLocaleString('da-DK')} m²
-                  </span>
-                </div>
-              )}
-              {enriched.matrikelAreal != null && enriched.matrikelAreal > 0 && (
-                <div
-                  className="flex items-center gap-1.5"
-                  title={da ? 'Matrikel-areal fra DAWA' : 'Cadastral area from DAWA'}
-                >
-                  <MapIcon size={10} className="text-slate-500" />
-                  <span className="text-slate-300 text-[11px]">
-                    <span className="text-slate-500">{da ? 'Matr:' : 'Cad:'}</span>{' '}
-                    {enriched.matrikelAreal.toLocaleString('da-DK')} m²
-                  </span>
-                </div>
-              )}
-              {/* BIZZ-556: Eksplicit "Vurdering"-label så brugeren ved om tallet er vurdering, købesum eller grundværdi */}
-              {/* BIZZ-569: Foreløbig vurdering fremhæves med GUL tekst-farve så
+        {/* BIZZ-397/465/569/575: Enriched data — areal, vurdering, køb, ejer, m²-felter */}
+        {enriched && (
+          <div className="grid grid-cols-2 gap-x-3 gap-y-1 pt-1 border-t border-slate-700/30">
+            {/* BIZZ-575 v3: Vis ALTID Bolig, Erhverv og Matrikel rækker så
+                kortene har konsistent layout — værdien er "0 m²" når data
+                mangler. Det gør det nemt at sammenligne på tværs af kort. */}
+            <div
+              className="flex items-center gap-1.5"
+              title={da ? 'Bolig-areal fra BBR' : 'Residential area from BBR'}
+            >
+              <Home size={10} className="text-slate-500" />
+              <span className="text-slate-300 text-[11px]">
+                <span className="text-slate-500">{da ? 'Bolig:' : 'Resi:'}</span>{' '}
+                {(enriched.boligAreal ?? 0).toLocaleString('da-DK')} m²
+              </span>
+            </div>
+            <div
+              className="flex items-center gap-1.5"
+              title={da ? 'Erhvervs-areal fra BBR' : 'Commercial area from BBR'}
+            >
+              <Building2 size={10} className="text-slate-500" />
+              <span className="text-slate-300 text-[11px]">
+                <span className="text-slate-500">{da ? 'Erhv:' : 'Comm:'}</span>{' '}
+                {(enriched.erhvervsAreal ?? 0).toLocaleString('da-DK')} m²
+              </span>
+            </div>
+            <div
+              className="flex items-center gap-1.5"
+              title={da ? 'Matrikel-areal fra DAWA' : 'Cadastral area from DAWA'}
+            >
+              <MapIcon size={10} className="text-slate-500" />
+              <span className="text-slate-300 text-[11px]">
+                <span className="text-slate-500">{da ? 'Matr:' : 'Cad:'}</span>{' '}
+                {(enriched.matrikelAreal ?? 0).toLocaleString('da-DK')} m²
+              </span>
+            </div>
+            {/* BIZZ-556: Eksplicit "Vurdering"-label så brugeren ved om tallet er vurdering, købesum eller grundværdi */}
+            {/* BIZZ-569: Foreløbig vurdering fremhæves med GUL tekst-farve så
                   brugeren straks kan se at det er en ikke-endelig vurdering.
                   BIZZ-575: Vis "Grundv." label når vi viser grundværdi i
                   stedet for ejendomsværdi (typisk for erhverv hvor
                   ejendomsværdi=0). */}
-              {enriched.vurdering && (
-                <div
-                  className="flex items-center gap-1.5"
-                  title={
-                    enriched.erGrundvaerdi
-                      ? da
-                        ? 'Foreløbig grundværdi (ejendomsværdi er 0 — typisk erhverv)'
-                        : 'Preliminary land value (property value is 0 — typically commercial)'
-                      : da
-                        ? 'Foreløbig ejendomsvurdering fra Vurderingsstyrelsen'
-                        : 'Preliminary property valuation'
-                  }
-                >
-                  <TrendingUp size={10} className="text-amber-400" aria-hidden="true" />
-                  <span className="text-amber-300 text-[11px]">
-                    <span className="text-amber-500/80">
-                      {enriched.erGrundvaerdi ? (da ? 'Grundv.' : 'Land:') : da ? 'Vurd.' : 'Val.'}:
-                    </span>{' '}
-                    {formatDkkShort(enriched.vurdering)} DKK
-                    {enriched.vurderingsaar && (
-                      <span className="text-amber-500/70 ml-0.5">({enriched.vurderingsaar})</span>
-                    )}
-                  </span>
-                </div>
-              )}
-              {/* BIZZ-465: Købspris + -dato fra seneste handel (EJF Ejerskifte). BIZZ-556: Eksplicit "Købt"-label. */}
-              {enriched.koebesum != null && enriched.koebesum > 0 && (
-                <div
-                  className="flex items-center gap-1.5 col-span-2"
-                  title={
-                    da
-                      ? 'Seneste købesum fra tinglysning'
-                      : 'Latest purchase price from land registry'
-                  }
-                >
-                  <ShoppingCart size={10} className="text-slate-500" aria-hidden="true" />
-                  <span className="text-slate-300 text-[11px]">
-                    <span className="text-slate-500">{da ? 'Købt' : 'Purchased'}:</span>{' '}
-                    {formatDkkShort(enriched.koebesum)} DKK
-                    {enriched.koebsdato && (
-                      <span className="text-slate-500 ml-0.5">
-                        (
-                        {new Date(enriched.koebsdato).toLocaleDateString('da-DK', {
-                          year: 'numeric',
-                          month: 'short',
-                        })}
-                        )
-                      </span>
-                    )}
-                  </span>
-                </div>
-              )}
-              {/* BIZZ-556: Eksplicit "Ejer"-label så brugeren ikke er i tvivl om navnet er ejer, administrator eller bygherre */}
-              {enriched.ejerNavn && (
-                <div
-                  className="flex items-center gap-1.5 col-span-2"
-                  title={da ? 'Tinglyst ejer' : 'Registered owner'}
-                >
-                  <User size={10} className="text-slate-500" aria-hidden="true" />
-                  <span className="text-slate-400 text-[11px] truncate">
-                    <span className="text-slate-500">{da ? 'Ejer' : 'Owner'}:</span>{' '}
-                    {enriched.ejerNavn}
-                  </span>
-                </div>
-              )}
-            </div>
-          )}
+            {enriched.vurdering && (
+              <div
+                className="flex items-center gap-1.5"
+                title={
+                  enriched.erGrundvaerdi
+                    ? da
+                      ? 'Foreløbig grundværdi (ejendomsværdi er 0 — typisk erhverv)'
+                      : 'Preliminary land value (property value is 0 — typically commercial)'
+                    : da
+                      ? 'Foreløbig ejendomsvurdering fra Vurderingsstyrelsen'
+                      : 'Preliminary property valuation'
+                }
+              >
+                <TrendingUp size={10} className="text-amber-400" aria-hidden="true" />
+                <span className="text-amber-300 text-[11px]">
+                  <span className="text-amber-500/80">
+                    {enriched.erGrundvaerdi ? (da ? 'Grundv.' : 'Land:') : da ? 'Vurd.' : 'Val.'}:
+                  </span>{' '}
+                  {formatDkkShort(enriched.vurdering)} DKK
+                  {enriched.vurderingsaar && (
+                    <span className="text-amber-500/70 ml-0.5">({enriched.vurderingsaar})</span>
+                  )}
+                </span>
+              </div>
+            )}
+            {/* BIZZ-465: Købspris + -dato fra seneste handel (EJF Ejerskifte). BIZZ-556: Eksplicit "Købt"-label. */}
+            {enriched.koebesum != null && enriched.koebesum > 0 && (
+              <div
+                className="flex items-center gap-1.5 col-span-2"
+                title={
+                  da
+                    ? 'Seneste købesum fra tinglysning'
+                    : 'Latest purchase price from land registry'
+                }
+              >
+                <ShoppingCart size={10} className="text-slate-500" aria-hidden="true" />
+                <span className="text-slate-300 text-[11px]">
+                  <span className="text-slate-500">{da ? 'Købt' : 'Purchased'}:</span>{' '}
+                  {formatDkkShort(enriched.koebesum)} DKK
+                  {enriched.koebsdato && (
+                    <span className="text-slate-500 ml-0.5">
+                      (
+                      {new Date(enriched.koebsdato).toLocaleDateString('da-DK', {
+                        year: 'numeric',
+                        month: 'short',
+                      })}
+                      )
+                    </span>
+                  )}
+                </span>
+              </div>
+            )}
+            {/* BIZZ-556: Eksplicit "Ejer"-label så brugeren ikke er i tvivl om navnet er ejer, administrator eller bygherre */}
+            {enriched.ejerNavn && (
+              <div
+                className="flex items-center gap-1.5 col-span-2"
+                title={da ? 'Tinglyst ejer' : 'Registered owner'}
+              >
+                <User size={10} className="text-slate-500" aria-hidden="true" />
+                <span className="text-slate-400 text-[11px] truncate">
+                  <span className="text-slate-500">{da ? 'Ejer' : 'Owner'}:</span>{' '}
+                  {enriched.ejerNavn}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Loading shimmer while enriching */}
         {!enriched && (

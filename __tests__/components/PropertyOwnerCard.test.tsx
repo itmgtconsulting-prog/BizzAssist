@@ -48,6 +48,8 @@ const baseEjendom: EjendomSummary = {
   kommuneKode: '0101',
   ejendomstype: 'Normal ejendom',
   dawaId: 'b84b7e12-b8a1-4601-87d5-000000000001',
+  etage: null,
+  doer: null,
 };
 
 const ejendomNoAdresse: EjendomSummary = {

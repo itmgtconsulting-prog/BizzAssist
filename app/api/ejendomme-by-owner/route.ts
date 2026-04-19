@@ -66,6 +66,10 @@ export interface EjendomSummary {
   ejendomstype: string | null;
   /** DAWA adgangsadresse UUID — bruges til link til ejendomsdetaljeside */
   dawaId: string | null;
+  /** Etage (f.eks. "1", "st") — kun for ejerlejligheder (BIZZ-551) */
+  etage: string | null;
+  /** Dør (f.eks. "tv", "th", "1") — kun for ejerlejligheder (BIZZ-551) */
+  doer: string | null;
   /** Ejer-andel (faktisk ejerandel fra EJF, f.eks. "100%") */
   ejerandel?: string | null;
   /** BIZZ-455: false hvis ejendommen er solgt (CVR ikke længere aktuel ejer) */
@@ -334,6 +338,10 @@ interface DawaBfeAdresse {
   kommuneKode: string | null;
   ejendomstype: string | null;
   dawaId: string | null;
+  /** Etage (f.eks. "1", "st") — kun for ejerlejligheder */
+  etage: string | null;
+  /** Dør (f.eks. "tv", "th", "1") — kun for ejerlejligheder */
+  doer: string | null;
 }
 
 /**
@@ -352,6 +360,8 @@ async function _hentDawaBfeDataImpl(bfe: number): Promise<DawaBfeAdresse> {
     kommuneKode: null,
     ejendomstype: null,
     dawaId: null,
+    etage: null,
+    doer: null,
   };
 
   try {
@@ -368,6 +378,8 @@ async function _hentDawaBfeDataImpl(bfe: number): Promise<DawaBfeAdresse> {
         id?: string;
         vejnavn?: string;
         husnr?: string;
+        etage?: string;
+        dør?: string;
         postnr?: string;
         postnrnavn?: string;
         kommunekode?: string;
@@ -395,6 +407,8 @@ async function _hentDawaBfeDataImpl(bfe: number): Promise<DawaBfeAdresse> {
         kommuneKode: bel.kommunekode ?? null,
         ejendomstype: json.ejendomstype ?? null,
         dawaId: dawaId ?? null,
+        etage: bel.etage ?? null,
+        doer: bel.dør ?? null,
       };
     }
 
@@ -430,6 +444,8 @@ async function _hentDawaBfeDataImpl(bfe: number): Promise<DawaBfeAdresse> {
               kommuneKode: addr.kommunekode ?? null,
               ejendomstype: json.ejendomstype ?? null,
               dawaId: addr.id ?? husnumreId,
+              etage: null,
+              doer: null,
             };
           }
         }
@@ -448,6 +464,8 @@ async function _hentDawaBfeDataImpl(bfe: number): Promise<DawaBfeAdresse> {
         kommuneKode: js.kommune?.kode ?? null,
         ejendomstype: json.ejendomstype ?? null,
         dawaId: husnumreId ?? null,
+        etage: null,
+        doer: null,
       };
     }
 
@@ -476,6 +494,8 @@ async function _hentVPAdresseForBfe(bfe: number): Promise<DawaBfeAdresse> {
     kommuneKode: null,
     ejendomstype: null,
     dawaId: null,
+    etage: null,
+    doer: null,
   };
 
   try {
@@ -563,6 +583,8 @@ async function _hentVPAdresseForBfe(bfe: number): Promise<DawaBfeAdresse> {
       // Kun behold dawaId hvis current DAWA kender den — ellers null så
       // UI falder tilbage til ikke-klikbart kort i stedet for brudt link.
       dawaId: freshDawaId,
+      etage: null,
+      doer: null,
     };
   } catch {
     return empty;

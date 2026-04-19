@@ -113,7 +113,12 @@ export default function PropertyOwnerCard({
   }, [ejendom.bfeNummer, enriched]);
 
   const detailHref = ejendom.dawaId ? `/dashboard/ejendomme/${ejendom.dawaId}` : null;
-  const adresselinje = ejendom.adresse ?? `BFE ${formatBfe(ejendom.bfeNummer)}`;
+  /* BIZZ-551: Append etage + dør for ejerlejligheder (e.g. "Vej 10A, 3. tv") */
+  const adresselinje = ejendom.adresse
+    ? ejendom.etage
+      ? `${ejendom.adresse}, ${ejendom.etage}.${ejendom.doer ? ` ${ejendom.doer}` : ''}`
+      : ejendom.adresse
+    : `BFE ${formatBfe(ejendom.bfeNummer)}`;
   const postalLinje =
     ejendom.postnr && ejendom.by ? `${ejendom.postnr} ${ejendom.by}` : (ejendom.kommune ?? null);
 

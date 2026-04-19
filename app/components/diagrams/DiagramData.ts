@@ -56,6 +56,10 @@ export interface DiagramPropertySummary {
   ejendomstype: string | null;
   /** DAWA adgangsadresse UUID — til link til detaljeside */
   dawaId: string | null;
+  /** Etage (f.eks. "1", "st") — kun for ejerlejligheder (BIZZ-551) */
+  etage?: string | null;
+  /** Dør (f.eks. "tv", "th") — kun for ejerlejligheder (BIZZ-551) */
+  doer?: string | null;
   /** Ejer-andel (f.eks. "50%", "100%") */
   ejerandel?: string | null;
 }
@@ -405,8 +409,10 @@ export function buildDiagramGraph(
         // Link to property detail page via DAWA adgangsadresse UUID
         const link = p.dawaId ? `/dashboard/ejendomme/${p.dawaId}` : undefined;
         // Merge address + postnr+by into main label (e.g. "Arnold Nielsens Boulevard 64A, 2650 Hvidovre")
+        // BIZZ-551: Append etage + dør for ejerlejligheder
         const postBy = [p.postnr, p.by].filter(Boolean).join(' ');
-        const baseAddr = p.adresse ?? `BFE ${p.bfeNummer}`;
+        const rawAddr = p.adresse ?? `BFE ${p.bfeNummer}`;
+        const baseAddr = p.etage ? `${rawAddr}, ${p.etage}.${p.doer ? ` ${p.doer}` : ''}` : rawAddr;
         const mainLabel = postBy ? `${baseAddr}, ${postBy}` : baseAddr;
         nodes.push({
           id: propId,
@@ -431,7 +437,10 @@ export function buildDiagramGraph(
           type: 'property',
           overflowItems: overflowProps.map((p) => {
             const postBy = [p.postnr, p.by].filter(Boolean).join(' ');
-            const baseAddr = p.adresse ?? `BFE ${p.bfeNummer}`;
+            const rawAddr = p.adresse ?? `BFE ${p.bfeNummer}`;
+            const baseAddr = p.etage
+              ? `${rawAddr}, ${p.etage}.${p.doer ? ` ${p.doer}` : ''}`
+              : rawAddr;
             return {
               label: postBy ? `${baseAddr}, ${postBy}` : baseAddr,
               link: p.dawaId ? `/dashboard/ejendomme/${p.dawaId}` : undefined,
@@ -748,8 +757,10 @@ export function buildPersonDiagramGraph(
         // Link to property detail page via DAWA adgangsadresse UUID
         const link = p.dawaId ? `/dashboard/ejendomme/${p.dawaId}` : undefined;
         // Merge address + postnr+by into main label (e.g. "Arnold Nielsens Boulevard 64A, 2650 Hvidovre")
+        // BIZZ-551: Append etage + dør for ejerlejligheder
         const postBy = [p.postnr, p.by].filter(Boolean).join(' ');
-        const baseAddr = p.adresse ?? `BFE ${p.bfeNummer}`;
+        const rawAddr = p.adresse ?? `BFE ${p.bfeNummer}`;
+        const baseAddr = p.etage ? `${rawAddr}, ${p.etage}.${p.doer ? ` ${p.doer}` : ''}` : rawAddr;
         const mainLabel = postBy ? `${baseAddr}, ${postBy}` : baseAddr;
         nodes.push({
           id: propId,

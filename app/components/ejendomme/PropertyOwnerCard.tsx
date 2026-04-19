@@ -185,10 +185,15 @@ export default function PropertyOwnerCard({
                   </span>
                 </div>
               )}
+              {/* BIZZ-556: Eksplicit "Vurdering"-label så brugeren ved om tallet er vurdering, købesum eller grundværdi */}
               {enriched.vurdering && (
-                <div className="flex items-center gap-1.5">
-                  <TrendingUp size={10} className="text-slate-500" />
+                <div
+                  className="flex items-center gap-1.5"
+                  title={da ? 'Ejendomsværdi fra VUR' : 'Property valuation from VUR'}
+                >
+                  <TrendingUp size={10} className="text-slate-500" aria-hidden="true" />
                   <span className="text-slate-300 text-[11px]">
+                    <span className="text-slate-500">{da ? 'Vurd.' : 'Val.'}:</span>{' '}
                     {formatDkkShort(enriched.vurdering)} DKK
                     {enriched.vurderingsaar && (
                       <span className="text-slate-500 ml-0.5">({enriched.vurderingsaar})</span>
@@ -196,11 +201,19 @@ export default function PropertyOwnerCard({
                   </span>
                 </div>
               )}
-              {/* BIZZ-465: Købspris + -dato fra seneste handel (EJF Ejerskifte) */}
+              {/* BIZZ-465: Købspris + -dato fra seneste handel (EJF Ejerskifte). BIZZ-556: Eksplicit "Købt"-label. */}
               {enriched.koebesum != null && enriched.koebesum > 0 && (
-                <div className="flex items-center gap-1.5 col-span-2">
-                  <ShoppingCart size={10} className="text-slate-500" />
+                <div
+                  className="flex items-center gap-1.5 col-span-2"
+                  title={
+                    da
+                      ? 'Seneste købesum fra tinglysning'
+                      : 'Latest purchase price from land registry'
+                  }
+                >
+                  <ShoppingCart size={10} className="text-slate-500" aria-hidden="true" />
                   <span className="text-slate-300 text-[11px]">
+                    <span className="text-slate-500">{da ? 'Købt' : 'Purchased'}:</span>{' '}
                     {formatDkkShort(enriched.koebesum)} DKK
                     {enriched.koebsdato && (
                       <span className="text-slate-500 ml-0.5">
@@ -215,10 +228,17 @@ export default function PropertyOwnerCard({
                   </span>
                 </div>
               )}
+              {/* BIZZ-556: Eksplicit "Ejer"-label så brugeren ikke er i tvivl om navnet er ejer, administrator eller bygherre */}
               {enriched.ejerNavn && (
-                <div className="flex items-center gap-1.5 col-span-2">
-                  <User size={10} className="text-slate-500" />
-                  <span className="text-slate-400 text-[11px] truncate">{enriched.ejerNavn}</span>
+                <div
+                  className="flex items-center gap-1.5 col-span-2"
+                  title={da ? 'Tinglyst ejer' : 'Registered owner'}
+                >
+                  <User size={10} className="text-slate-500" aria-hidden="true" />
+                  <span className="text-slate-400 text-[11px] truncate">
+                    <span className="text-slate-500">{da ? 'Ejer' : 'Owner'}:</span>{' '}
+                    {enriched.ejerNavn}
+                  </span>
                 </div>
               )}
             </div>

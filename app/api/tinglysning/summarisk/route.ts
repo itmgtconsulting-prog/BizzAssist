@@ -46,13 +46,23 @@ export interface TLEjer {
   dato: string | null;
 }
 
-/** In-memory cache for summarisk XML — avoids re-fetching large responses */
+/** In-memory cache for summarisk XML — avoids re-fetching large responses.
+ * BIZZ-547: Bumped from 5min → 30min. Tinglysning data changes very rarely
+ * (new documents added at most a few times per year). Longer TTL significantly
+ * reduces cold-start latency for ejerlejligheder where multiple units in the
+ * same building share the same hovedejendom servitutter. */
 const xmlCache = new Map<string, { status: number; body: string; ts: number }>();
-const XML_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const XML_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+
+/** BIZZ-547: In-memory cache for dokaktuel responses — documents are immutable,
+ * so a long TTL is safe. Shared across servitut enrichment calls. */
+const dokCache = new Map<string, { body: string; ts: number }>();
+const DOK_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 
 /** Exposed for test teardown only — clears the in-memory XML cache. */
 export function clearXmlCache(): void {
   xmlCache.clear();
+  dokCache.clear();
 }
 
 /**
@@ -876,9 +886,19 @@ export async function GET(req: NextRequest) {
       servitutterToEnrich,
       async (s) => {
         try {
-          const dokRes = await tlFetch(`/dokaktuel/uuid/${s.dokumentId}`);
-          if (dokRes.status === 200) {
-            const dok = dokRes.body;
+          const dokPath = `/dokaktuel/uuid/${s.dokumentId}`;
+          // BIZZ-547: Check dokaktuel cache first — documents are immutable
+          const cached = dokCache.get(dokPath);
+          let dok: string;
+          if (cached && Date.now() - cached.ts < DOK_CACHE_TTL) {
+            dok = cached.body;
+          } else {
+            const dokRes = await tlFetch(dokPath);
+            if (dokRes.status !== 200) return;
+            dok = dokRes.body;
+            dokCache.set(dokPath, { body: dok, ts: Date.now() });
+          }
+          {
             const dokAfsnit = [...dok.matchAll(/Afsnit[^>]*>([^<]{3,})/g)]
               .map((m) => m[1].trim())
               .filter((v) => v.length > 0 && !v.match(/^[0-9a-f-]{36}$/));

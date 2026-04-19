@@ -5464,6 +5464,42 @@ function PersonbogSection({
                           </div>
                         )}
 
+                        {/* BIZZ-532: Referencerente + tillæg */}
+                        {h.referenceRenteNavn && (
+                          <div>
+                            <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                              {da ? 'Referencerente' : 'Reference rate'}
+                            </p>
+                            <p className="text-white">
+                              {h.referenceRenteNavn}
+                              {h.referenceRenteSats != null && ` (${h.referenceRenteSats}%)`}
+                              {h.renteTillaeg != null && ` + ${h.renteTillaeg}%`}
+                            </p>
+                          </div>
+                        )}
+
+                        {/* BIZZ-532: Kreditorbetegnelse */}
+                        {h.kreditorbetegnelse && (
+                          <div>
+                            <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                              {da ? 'Kreditorbetegnelse' : 'Creditor designation'}
+                            </p>
+                            <p className="text-white">{h.kreditorbetegnelse}</p>
+                          </div>
+                        )}
+
+                        {/* BIZZ-532: Låntype + pantebrevformular */}
+                        {(h.laantype || h.pantebrevFormular) && (
+                          <div>
+                            <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                              {da ? 'Låntype' : 'Loan type'}
+                            </p>
+                            <p className="text-white">
+                              {[h.laantype, h.pantebrevFormular].filter(Boolean).join(' · ')}
+                            </p>
+                          </div>
+                        )}
+
                         {/* Tinglysningsdato */}
                         {h.tinglysningsdato && (
                           <div>

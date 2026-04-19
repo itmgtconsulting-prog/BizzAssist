@@ -68,6 +68,20 @@ export interface PersonbogHaeftelse {
   loebetid: string | null;
   /** Lånevilkår-beskrivelse */
   vilkaar: string | null;
+  /** BIZZ-532: Referencerente-navn (f.eks. "CIBOR3M") */
+  referenceRenteNavn: string | null;
+  /** BIZZ-532: Referencerente-sats */
+  referenceRenteSats: number | null;
+  /** BIZZ-532: Rentetillæg-sats */
+  renteTillaeg: number | null;
+  /** BIZZ-532: Tillægstype ("Variabel" | "Fast") */
+  renteTillaegType: string | null;
+  /** BIZZ-532: Låntype-kode */
+  laantype: string | null;
+  /** BIZZ-532: Pantebrevformular-kode */
+  pantebrevFormular: string | null;
+  /** BIZZ-532: Kreditorbetegnelse (intern betegnelse) */
+  kreditorbetegnelse: string | null;
 }
 
 export interface PersonbogData {
@@ -226,6 +240,29 @@ function parsePersonbogXml(xml: string): PersonbogHaeftelse[] {
       .filter((v) => v.length > 0);
     const vilkaar = vilkaarAfsnit.length > 0 ? vilkaarAfsnit.join('\n') : null;
 
+    // BIZZ-532: Porte felter fra summarisk-parseren
+    const referenceRenteNavn =
+      entry.match(/(?:Haeftelse)?ReferenceRenteNavn[^>]*>([^<]+)/)?.[1] ??
+      entry.match(/ReferenceRenteNavn[^>]*>([^<]+)/)?.[1] ??
+      null;
+    const refSatsStr =
+      entry.match(/(?:Haeftelse)?ReferenceRenteSats[^>]*>([^<]+)/)?.[1] ??
+      entry.match(/ReferenceRenteSats[^>]*>([^<]+)/)?.[1];
+    const referenceRenteSats = refSatsStr ? parseFloat(refSatsStr) : null;
+    const tillaegStr =
+      entry.match(/(?:Haeftelse)?RenteTillaegSats[^>]*>([^<]+)/)?.[1] ??
+      entry.match(/RenteTillaeg[^>]*>([0-9.,]+)/)?.[1];
+    const renteTillaeg = tillaegStr ? parseFloat(tillaegStr) : null;
+    const renteTillaegType =
+      entry.match(/(?:Haeftelse)?RenteTillaegType(?:Kode)?[^>]*>([^<]+)/)?.[1] ?? null;
+    const laantype = entry.match(/(?:Haeftelse)?LaantypeKode[^>]*>([^<]+)/)?.[1] ?? null;
+    const pantebrevFormular =
+      entry.match(/(?:Haeftelse)?PantebrevFormularLovpligtigKode[^>]*>([^<]+)/)?.[1] ?? null;
+    const kreditorbetegnelse =
+      entry.match(/KreditorBetegnelse[^>]*>([^<]+)/)?.[1] ??
+      entry.match(/Kreditorbetegnelse[^>]*>([^<]+)/)?.[1] ??
+      null;
+
     haeftelser.push({
       type,
       pantTyper,
@@ -247,6 +284,13 @@ function parsePersonbogXml(xml: string): PersonbogHaeftelse[] {
       anmelderCvr: null,
       loebetid,
       vilkaar,
+      referenceRenteNavn,
+      referenceRenteSats,
+      renteTillaeg,
+      renteTillaegType,
+      laantype,
+      pantebrevFormular,
+      kreditorbetegnelse,
     });
   }
 

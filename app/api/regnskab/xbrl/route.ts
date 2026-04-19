@@ -873,7 +873,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const supabase = getSupabase();
     let cachedYears: RegnskabsAar[] = [];
 
-    if (supabase && latestTimestamp) {
+    // BIZZ-561: debug=1 bypasser Supabase-cache så vi altid re-parser og kan se intermediate state
+    const skipCache = searchParams.get('debug') === '1';
+
+    if (supabase && latestTimestamp && !skipCache) {
       try {
         const { data: cached } = await supabase
           .from('regnskab_cache')
@@ -931,7 +934,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     const years: RegnskabsAar[] = [];
 
-    const fetchPromises = regnskaberMedXbrl.map(async (regnsk) => {
+    // BIZZ-561 debug mode: return intermediate state for first regnskab when ?debug=1
+    const debugMode = searchParams.get('debug') === '1';
+    const debugInfo: Record<string, unknown> = {};
+
+    const fetchPromises = regnskaberMedXbrl.map(async (regnsk, idx) => {
       const xbrlDok =
         regnsk.dokumenter.find((d) => d.dokumentMimeType?.includes('xhtml')) ??
         regnsk.dokumenter.find((d) => d.dokumentMimeType?.includes('xml'));
@@ -944,8 +951,38 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         });
         if (!xbrlRes.ok) return null;
         const xml = await xbrlRes.text();
-        return parseXbrl(xml, regnsk.periodeStart, regnsk.periodeSlut);
-      } catch {
+
+        // BIZZ-561 debug: capture state for first regnskab only
+        if (debugMode && idx === 0) {
+          debugInfo.docUrl = xbrlDok.dokumentUrl;
+          debugInfo.docMimeType = xbrlDok.dokumentMimeType;
+          debugInfo.xmlLength = xml.length;
+          debugInfo.periodeStart = regnsk.periodeStart;
+          debugInfo.periodeSlut = regnsk.periodeSlut;
+          // Check tag presence in raw XML
+          debugInfo.hasCashFlowOperating =
+            /CashFlowsFromUsedInOperatingActivities|CashFlowsFromOperatingActivities/i.test(xml);
+          debugInfo.hasRevenue = /:Revenue["\s>]/i.test(xml);
+          debugInfo.hasNameOfAuditFirm = /:NameOfAuditFirm["\s>]/i.test(xml);
+          // Sample of cashflow tag (first 500 chars around it)
+          const cfMatch = xml.match(
+            /[\s\S]{0,200}CashFlowsFromUsedInOperatingActivities[\s\S]{0,500}/
+          );
+          debugInfo.cashFlowSample = cfMatch ? cfMatch[0].slice(0, 700) : null;
+        }
+
+        const parsed = parseXbrl(xml, regnsk.periodeStart, regnsk.periodeSlut);
+        if (debugMode && idx === 0 && parsed) {
+          debugInfo.parsedYear = parsed.aar;
+          debugInfo.parsedPengestroemme = parsed.pengestroemme;
+          debugInfo.parsedRevisor = parsed.revisor;
+          debugInfo.parsedRevenue = parsed.resultat.omsaetning;
+        }
+        return parsed;
+      } catch (err) {
+        if (debugMode && idx === 0) {
+          debugInfo.error = err instanceof Error ? err.message : String(err);
+        }
         return null;
       }
     });
@@ -954,6 +991,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     for (const result of results) {
       if (result) years.push(result);
     }
+    if (debugMode) debugInfo.totalYearsParsed = years.length;
 
     // Merge nye parsede data med cached data
     const allYears = [...cachedYears, ...years];
@@ -980,10 +1018,14 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     }
 
     return NextResponse.json(
-      { years: uniqueYears, total },
+      { years: uniqueYears, total, ...(debugMode ? { _debug: debugInfo } : {}) },
       {
         status: 200,
-        headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
+        headers: {
+          'Cache-Control': debugMode
+            ? 'no-store'
+            : 'public, s-maxage=3600, stale-while-revalidate=600',
+        },
       }
     );
   } catch (err) {

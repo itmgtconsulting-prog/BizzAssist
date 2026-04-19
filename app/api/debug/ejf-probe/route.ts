@@ -48,22 +48,57 @@ const EJF_GQL_PROBES = [
     name: 'CustomPersonEllerVirksomhedsadminiBegraenset',
     query: `{ CustomPersonEllerVirksomhedsadminiBegraenset(first: 1, virkningstid: "${VT}") { nodes { id_lokalId status } } }`,
   },
-  // PersonSimpel — prøv forskellige navne-varianter
+  // PersonSimpel — flere navne-varianter
   {
     name: 'EJFCustom_PersonSimpelBegraenset',
     query: `{ EJFCustom_PersonSimpelBegraenset(first: 1, virkningstid: "${VT}") { nodes { id_lokalId } } }`,
   },
   {
-    name: 'EJFCustom_PersonBegraenset',
-    query: `{ EJFCustom_PersonBegraenset(first: 1, virkningstid: "${VT}") { nodes { id_lokalId } } }`,
+    name: 'EJFCustom_SimpelPerson',
+    query: `{ EJFCustom_SimpelPerson(first: 1, virkningstid: "${VT}") { nodes { id_lokalId } } }`,
   },
   {
-    name: 'EJFCustom_PersonSimpel',
-    query: `{ EJFCustom_PersonSimpel(first: 1, virkningstid: "${VT}") { nodes { id_lokalId } } }`,
+    name: 'EJFCustom_PersonSimpleBegraenset',
+    query: `{ EJFCustom_PersonSimpleBegraenset(first: 1, virkningstid: "${VT}") { nodes { id_lokalId } } }`,
   },
   {
-    name: 'EJFCustom_SimpelPersonBegraenset',
-    query: `{ EJFCustom_SimpelPersonBegraenset(first: 1, virkningstid: "${VT}") { nodes { id_lokalId } } }`,
+    name: 'EJFCustom_Person',
+    query: `{ EJFCustom_Person(first: 1, virkningstid: "${VT}") { nodes { id_lokalId } } }`,
+  },
+  {
+    name: 'EJFCustom_PersonBasisBegraenset',
+    query: `{ EJFCustom_PersonBasisBegraenset(first: 1, virkningstid: "${VT}") { nodes { id_lokalId } } }`,
+  },
+  {
+    name: 'EJFCustom_PersonEjerskabBegraenset',
+    query: `{ EJFCustom_PersonEjerskabBegraenset(first: 1, virkningstid: "${VT}") { nodes { id_lokalId } } }`,
+  },
+  // Inspect fields on confirmed services to understand schema
+  {
+    name: 'EjerskabBegraenset — rig felt-probe',
+    query: `{ EJFCustom_EjerskabBegraenset(first: 1, virkningstid: "${VT}") { nodes {
+      bestemtFastEjendomBFENr
+      ejerforholdskode
+      faktiskEjerandel_taeller
+      faktiskEjerandel_naevner
+      virkningFra
+      virkningTil
+      status
+      ejendePersonBegraenset { id navn { navn } foedselsdato }
+      ejendeVirksomhedCVRNr_20_Virksomhed_CVRNummer_ref { CVRNummer }
+    } } }`,
+  },
+  {
+    name: 'EjendomsadministratorBegraenset — rig felt-probe',
+    query: `{ EJFCustom_EjendomsadministratorBegraenset(first: 1, virkningstid: "${VT}") { nodes {
+      id_lokalId status virkningFra virkningTil
+    } } }`,
+  },
+  {
+    name: 'PersonEllerVirksomhedsadmini — rig felt-probe',
+    query: `{ EJFCustom_PersonEllerVirksomhedsadminiBegraenset(first: 1, virkningstid: "${VT}") { nodes {
+      id_lokalId status virkningFra virkningTil
+    } } }`,
   },
   // Entitetsbaserede — forventes at fejle (support siger vi ikke har adgang)
   {

@@ -71,6 +71,32 @@ export interface Pengestroemme {
   likviderUltimo: number | null;
 }
 
+/**
+ * Revisor + revisionspåtegning — auditor info (BIZZ-559).
+ *
+ * Hentes via cmn:/arr: tags. Alle felter er nullable da små regnskabsklasse B-
+ * selskaber kan have fravalgt revision, og fordi forskellige taksonomier bruger
+ * forskellige felter (sustainability-revisor for ESG-rapporter etc.).
+ */
+export interface Revisor {
+  /** Revisionsfirmaets navn (fx "PricewaterhouseCoopers Statsautoriseret Revisionspartnerselskab") */
+  firmanavn: string | null;
+  /** Revisionsfirmaets CVR-nummer (8 cifre, link til virksomhedsside) */
+  firmaCvr: string | null;
+  /** Underskrivende revisors navn */
+  revisorNavn: string | null;
+  /** Revisorens MNE-nummer (Member Number i Erhvervsstyrelsen) */
+  revisorMNE: string | null;
+  /** Underskriftssted (by) */
+  signaturSted: string | null;
+  /** Underskriftsdato (ISO format YYYY-MM-DD) */
+  signaturDato: string | null;
+  /** True hvis revisor har afgivet modificeret konklusion (forbehold) */
+  harForbehold: boolean;
+  /** Type forbehold hvis modificeret (fx "QualifiedOpinion", "AdverseOpinion") */
+  forbeholdType: string | null;
+}
+
 /** Beregnede nøgletal — calculated key ratios */
 export interface Noegletal {
   // ── Rentabilitet ──
@@ -110,6 +136,8 @@ export interface RegnskabsAar {
   noegletal: Noegletal;
   /** BIZZ-517a: Pengestrømsopgørelse (null hvis selskabet ikke aflægger en) */
   pengestroemme: Pengestroemme | null;
+  /** BIZZ-559: Revisor + revisionspåtegning (null hvis revision fravalgt) */
+  revisor: Revisor | null;
 }
 
 /** Response shape */
@@ -181,6 +209,28 @@ const BALANCE_TAGS: Record<keyof Balance, string[]> = {
 const NOEGLETAL_TAGS: Partial<Record<keyof Noegletal, string[]>> = {
   antalAnsatte: ['AverageNumberOfEmployees', 'NumberOfEmployees'],
 };
+
+/**
+ * BIZZ-559: Revisor-tags (cmn: + arr: namespace).
+ *
+ * cmn: = common (basis-info som navn, CVR). arr: = audit-related-report
+ * (revisorerklæring, forbehold, key audit matters). Alle tags er text-blokke
+ * der ofte indeholder HTML-formateret indhold — vi udtrækker kun rå-tekst
+ * eller bool-flags her; sanitering/render er UI'ens ansvar.
+ *
+ * Bemærk: NameOfAuditFirm er i cmn: namespace, ikke fsa:.
+ * Sustainability-varianter (NameOfAuditFirmSubstainability) ignoreres da
+ * vi fokuserer på finansiel revisor.
+ */
+const REVISOR_TEXT_TAGS = {
+  firmanavn: ['NameOfAuditFirm'],
+  firmaCvr: ['IdentificationNumberCvrOfAuditFirm'],
+  revisorNavn: ['NameAndSurnameOfAuditor'],
+  revisorMNE: ['IdentificationNumberOfAuditor'],
+  signaturSted: ['SignatureOfAuditorsPlace'],
+  signaturDato: ['SignatureOfAuditorsDate'],
+  forbeholdType: ['TypeOfModifiedOpinionOnAuditedFinancialStatements'],
+} as const;
 
 /**
  * BIZZ-517a: Pengestrøm-tags (fsa + IFRS-taksonomi).
@@ -368,6 +418,48 @@ function extractValue(xml: string, tagNames: string[], validCtxIds?: Set<string>
 }
 
 /**
+ * BIZZ-559: Udtager en TEKST-værdi fra XBRL for et tag-navn.
+ *
+ * Handles both standard XBRL (<ns:Tag>text</ns:Tag>) og iXBRL inline
+ * (<ix:nonNumeric name="ns:Tag">text</ix:nonNumeric>). Bruges til
+ * revisor-info, noter, og andre ikke-numeriske felter.
+ *
+ * Vi accepterer ALLE contexts (ingen filter) — revisor-info bruger ofte
+ * dimensions for primary auditor vs sustainability auditor og en separat
+ * audit-context der ikke matcher regnskabs-perioden. Vi tager den FØRSTE
+ * non-Substainability variant så vi får hovedrevisoren.
+ *
+ * @param xml - Rå XBRL/iXBRL-streng
+ * @param tagNames - Mulige tag-navne at søge efter (uden namespace)
+ */
+function extractText(xml: string, tagNames: readonly string[]): string | null {
+  for (const tag of tagNames) {
+    // Skip Substainability-varianter eksplicit — de er ESG-revisor, ikke
+    // den finansielle hovedrevisor som dette ticket dækker
+    const escapedTag = tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const patterns: RegExp[] = [
+      // Standard XBRL: <ns:Tag attrs>text</ns:Tag>
+      new RegExp(`<[a-z-]+:${escapedTag}\\s+[^>]*>([^<]+)<\\/[a-z-]+:${escapedTag}>`, 'i'),
+      // iXBRL nonNumeric: <ix:nonNumeric name="ns:Tag" ...>text</ix:nonNumeric>
+      new RegExp(
+        `<ix:nonNumeric\\s+[^>]*name="[^"]*:${escapedTag}"[^>]*>([^<]+)<\\/ix:nonNumeric>`,
+        'i'
+      ),
+      // iXBRL nonFraction (for CVR-numre etc. som er numeriske men vi vil have rå-streng)
+      new RegExp(`<ix:nonFraction\\s+[^>]*name="[^"]*:${escapedTag}"[^>]*>([^<]+)<`, 'i'),
+    ];
+    for (const re of patterns) {
+      const m = xml.match(re);
+      if (m && m[1]) {
+        const text = m[1].trim();
+        if (text) return text;
+      }
+    }
+  }
+  return null;
+}
+
+/**
  * Parser XBRL XML og returnerer strukturerede regnskabsdata.
  *
  * @param xml - Rå XBRL XML-streng
@@ -436,6 +528,32 @@ function parseXbrl(xml: string, periodeStart: string, periodeSlut: string): Regn
   // (typisk små regnskabsklasse B-selskaber). Returnér null så UI kan skjule sektionen.
   const harPengestroem = Object.values(pengestroemmeRaw).some((v) => v != null);
   const pengestroemme: Pengestroemme | null = harPengestroem ? pengestroemmeRaw : null;
+
+  // BIZZ-559: Revisor + revisionspåtegning.
+  // Tags ligger typisk i en separat audit-context (ikke regnskabs-perioden) så
+  // vi accepterer ALLE contexts via extractText. Trim trailing tegn (komma etc.)
+  // som nogle ESEF-renderers tilføjer.
+  const trim = (s: string | null) => s?.replace(/[\s,;.]+$/, '').trim() || null;
+  const forbeholdRaw = extractText(xml, REVISOR_TEXT_TAGS.forbeholdType);
+  // ESEF-enum-værdier: "Opinion" = ren konklusion (ikke modificeret).
+  // Modificerede typer: QualifiedOpinion, AdverseOpinion, DisclaimerOfOpinion.
+  const harForbehold =
+    forbeholdRaw != null && forbeholdRaw !== '' && !/^opinion$/i.test(forbeholdRaw);
+  const revisorRaw: Revisor = {
+    firmanavn: trim(extractText(xml, REVISOR_TEXT_TAGS.firmanavn)),
+    firmaCvr: extractText(xml, REVISOR_TEXT_TAGS.firmaCvr),
+    revisorNavn: trim(extractText(xml, REVISOR_TEXT_TAGS.revisorNavn)),
+    revisorMNE: extractText(xml, REVISOR_TEXT_TAGS.revisorMNE),
+    signaturSted: trim(extractText(xml, REVISOR_TEXT_TAGS.signaturSted)),
+    signaturDato: extractText(xml, REVISOR_TEXT_TAGS.signaturDato),
+    harForbehold,
+    forbeholdType: harForbehold ? forbeholdRaw : null,
+  };
+  // Hvis ingen revisor-felter findes (revision fravalgt eller selskabet er
+  // udenlandsk uden dansk revisor-tagging), returnér null så UI skjuler sektionen.
+  const harRevisor =
+    revisorRaw.firmanavn != null || revisorRaw.revisorNavn != null || revisorRaw.firmaCvr != null;
+  const revisor: Revisor | null = harRevisor ? revisorRaw : null;
 
   // Nøgletal — direkte fra XBRL + beregnede
   const antalAnsatte = extractValue(xml, NOEGLETAL_TAGS.antalAnsatte ?? [], anyCtx);
@@ -535,7 +653,7 @@ function parseXbrl(xml: string, periodeStart: string, periodeSlut: string): Regn
     antalAnsatte,
   };
 
-  return { aar, periodeStart, periodeSlut, resultat, balance, noegletal, pengestroemme };
+  return { aar, periodeStart, periodeSlut, resultat, balance, noegletal, pengestroemme, revisor };
 }
 
 // ─── Route Handler ────────────────────────────────────────────────────────────
@@ -710,8 +828,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // Seneste offentliggørelsestidspunkt — bruges som cache-nøgle
     // BIZZ-449: Append parser version to timestamp so cache is invalidated when
     // the XBRL parser logic changes (e.g. decimals attribute handling fix).
-    // v3: BIZZ-517a — tilføjet pengestrømme-felt (parser-output ændret)
-    const PARSER_VERSION = 'v3';
+    // v4: BIZZ-559 — tilføjet revisor-felt (parser-output ændret igen)
+    const PARSER_VERSION = 'v4';
     const latestTimestamp =
       (regnskabData.regnskaber[0]?.offentliggjort ?? '') + `_${PARSER_VERSION}`;
 

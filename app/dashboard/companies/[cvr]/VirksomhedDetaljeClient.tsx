@@ -7441,6 +7441,73 @@ function RegnskabstalTable({ years, lang, regnskaber = [] }: RegnskabstalTablePr
       {harPengestrom && renderSection(da ? 'Pengestrømme' : 'Cash Flow', pengestromRows)}
       {renderSection(da ? 'Nøgletal' : 'Key Ratios', noegletalsRows)}
 
+      {/* BIZZ-559: Revisor + revisionspåtegning fra seneste regnskabsår.
+          Skjules hvis ingen revisor-info findes (revision fravalgt). */}
+      {(() => {
+        const senesteRevisor = visteAar.find((y) => y.revisor != null)?.revisor;
+        if (!senesteRevisor) return null;
+        return (
+          <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700/30">
+              <div className="flex items-center gap-2">
+                <CheckCircle size={15} className="text-amber-400" />
+                <span className="text-sm font-semibold text-slate-200">
+                  {da ? 'Revisor' : 'Auditor'}
+                </span>
+              </div>
+              {senesteRevisor.harForbehold ? (
+                <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-red-500/15 text-red-400 border border-red-500/30">
+                  {da
+                    ? `Forbehold: ${senesteRevisor.forbeholdType}`
+                    : `Modified: ${senesteRevisor.forbeholdType}`}
+                </span>
+              ) : (
+                <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                  {da ? 'Ren konklusion' : 'Unmodified opinion'}
+                </span>
+              )}
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 p-4">
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">
+                  {da ? 'Revisionsfirma' : 'Audit firm'}
+                </p>
+                <p className="text-sm text-slate-200">
+                  {senesteRevisor.firmaCvr ? (
+                    <a
+                      href={`/dashboard/companies/${senesteRevisor.firmaCvr}`}
+                      className="text-blue-400 hover:underline"
+                    >
+                      {senesteRevisor.firmanavn ?? `CVR ${senesteRevisor.firmaCvr}`}
+                    </a>
+                  ) : (
+                    (senesteRevisor.firmanavn ?? '—')
+                  )}
+                </p>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">
+                  {da ? 'Revisor' : 'Auditor'}
+                </p>
+                <p className="text-sm text-slate-200">{senesteRevisor.revisorNavn ?? '—'}</p>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">
+                  {da ? 'Underskriftssted' : 'Signed at'}
+                </p>
+                <p className="text-sm text-slate-200">{senesteRevisor.signaturSted ?? '—'}</p>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">
+                  {da ? 'Underskriftsdato' : 'Signed date'}
+                </p>
+                <p className="text-sm text-slate-200">{senesteRevisor.signaturDato ?? '—'}</p>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Graf — vises nederst når mindst én række er valgt */}
       {chartRows.size > 0 && (
         <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden p-4">

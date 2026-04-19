@@ -41,6 +41,7 @@ import {
   Info,
   Zap,
   Clock,
+  Paperclip,
 } from 'lucide-react';
 /** Recharts — single dynamic import keeps recharts in one chunk */
 const EjendomPrisChart = dynamic(() => import('./EjendomPrisChart'), { ssr: false });
@@ -9192,9 +9193,24 @@ function TinglysningTab({
                           {da ? 'Hovedejendom' : 'Parent'}
                         </span>
                       )}
-                      {/* BIZZ-553: Inline bilag-badge fjernet — overlappede med
-                          PDF/download-kolonnen. Antallet vises allerede via
-                          'PDF +N bag' i bilag-kolonnen til højre. */}
+                      {/* BIZZ-567: Bilag-tælling som diskret badge efter titlen.
+                          Tidligere lå antallet i DOK-kolonnen som "PDF +N bilag"
+                          hvilket støjede og overlappede download-knappen
+                          (BIZZ-553). Badge vises kun når der ER bilag. */}
+                      {servitutBilag.length > 0 && (
+                        <span
+                          className="flex-shrink-0 inline-flex items-center gap-0.5 text-[10px] text-slate-300 bg-slate-700/40 border border-slate-600/30 px-1 py-0.5 rounded"
+                          title={
+                            da
+                              ? `${servitutBilag.length} ${servitutBilag.length === 1 ? 'bilag' : 'bilag'} tilknyttet`
+                              : `${servitutBilag.length} ${servitutBilag.length === 1 ? 'attachment' : 'attachments'}`
+                          }
+                        >
+                          <Paperclip size={9} />
+                          {servitutBilag.length}{' '}
+                          {da ? 'bilag' : servitutBilag.length === 1 ? 'attachment' : 'attachments'}
+                        </span>
+                      )}
                     </span>
                     <span />
                     <span className="text-xs text-slate-500 truncate">
@@ -9219,10 +9235,12 @@ function TinglysningTab({
                           : bilagRefs.length > 0
                             ? `/api/tinglysning/dokument?bilag=${bilagRefs[0]}`
                             : null;
-                        const label =
-                          docId && bilagRefs.length > 0
-                            ? `PDF + ${bilagRefs.length} ${bilagRefs.length === 1 ? 'bilag' : 'bilag'}`
-                            : 'PDF';
+                        // BIZZ-567: Label er nu altid "PDF" — bilag-tælling er
+                        // flyttet til badge efter servitut-titlen for at holde
+                        // DOK-kolonnen ren og ensartet med øvrige sektioner.
+                        // Den genererede PDF inkluderer stadig alle bilag når
+                        // bilagRefs er sat (URL-konstruktion uændret ovenfor).
+                        const label = 'PDF';
                         return (
                           pdfUrl && (
                             <a

@@ -1198,7 +1198,22 @@ export default function EjendomDetaljeClient({
     const signal = controller.signal;
     setTlSumLoader(true);
     fetch(`/api/tinglysning?bfe=${bfe}`, { signal })
-      .then((r) => (r.ok ? r.json() : null))
+      .then(async (r) => {
+        if (r.ok) return r.json();
+        // BIZZ-525: Adresse-fallback når BFE-opslag returnerer 404
+        if (r.status === 404 && dawaAdresse?.vejnavn && dawaAdresse?.husnr && dawaAdresse?.postnr) {
+          const params = new URLSearchParams({
+            vejnavn: dawaAdresse.vejnavn,
+            husnummer: dawaAdresse.husnr,
+            postnummer: dawaAdresse.postnr,
+            ...(dawaAdresse.etage ? { etage: dawaAdresse.etage } : {}),
+            ...(dawaAdresse.dør ? { sidedoer: dawaAdresse.dør } : {}),
+          });
+          const fallbackRes = await fetch(`/api/tinglysning?${params.toString()}`, { signal });
+          return fallbackRes.ok ? fallbackRes.json() : null;
+        }
+        return null;
+      })
       .then(async (data) => {
         if (signal.aborted) return;
         if (data && !data.error) {

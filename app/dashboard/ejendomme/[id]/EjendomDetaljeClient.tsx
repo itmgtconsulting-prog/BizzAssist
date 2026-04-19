@@ -877,6 +877,8 @@ export default function EjendomDetaljeClient({
   >([]);
   /** BIZZ-491: Skattefritagelser for nyeste vurdering */
   const [vurFritagelser, setVurFritagelser] = useState<VurderingResponse['fritagelser']>([]);
+  /** BIZZ-490: Loftansættelse (grundskatteloft, ESL §45 4,75%-loft) — vises i SKAT-tab */
+  const [vurLoft, setVurLoft] = useState<VurderingResponse['loft']>([]);
   /** True mens vurderingsdata hentes — starter som true når prefetch giver BBR data med det samme */
   const [vurderingLoader, setVurderingLoader] = useState(!!prefetched?.bbrData);
   /** True = vis fuld vurderingshistorik-tabel */
@@ -1398,6 +1400,7 @@ export default function EjendomDetaljeClient({
         setVurFordeling(data?.fordeling ?? []);
         setVurGrundvaerdispec(data?.grundvaerdispec ?? []);
         setVurFritagelser(data?.fritagelser ?? []);
+        setVurLoft(data?.loft ?? []);
       })
       .catch((err) => {
         if (err.name === 'AbortError') return;
@@ -4479,6 +4482,77 @@ export default function EjendomDetaljeClient({
                               ))}
                             </tbody>
                           </table>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                {/* BIZZ-490: Grundskatteloft (Loftansættelse, ESL §45 4,75%-regulering).
+                    Vises som info-kort mellem historik og fritagelser så brugeren kan se
+                    at grundskylden er begrænset af loftet — ellers fremstår den som en
+                    uforklaret diskrepans i forhold til "promille × grundværdi". */}
+                {vurLoft.length > 0 &&
+                  (() => {
+                    const aktivLoft =
+                      vurLoft.find((l) => l.basisaar != null && l.grundvaerdi != null) ??
+                      vurLoft[0];
+                    if (
+                      !aktivLoft ||
+                      (aktivLoft.basisaar == null && aktivLoft.grundvaerdi == null)
+                    ) {
+                      return null;
+                    }
+                    return (
+                      <div className="bg-amber-500/5 border border-amber-500/30 rounded-xl p-4">
+                        <div className="flex items-start gap-3">
+                          <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-amber-500/15 border border-amber-500/30 flex items-center justify-center">
+                            <Landmark size={16} className="text-amber-300" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="text-amber-200 text-sm font-semibold">
+                                {da ? 'Grundskatteloft aktiv' : 'Land-tax ceiling active'}
+                              </p>
+                              <span className="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                                {da ? 'ESL §45' : 'ESL §45'}
+                              </span>
+                            </div>
+                            <p className="text-slate-400 text-xs mt-1 leading-snug">
+                              {da
+                                ? 'Grundskylden kan maksimalt stige 4,75% om året (loftreguleret grundværdi). Når loftet er aktivt, beregnes skatten af den regulerede grundværdi, ikke den fulde offentlige vurdering.'
+                                : 'Land tax can rise by at most 4.75% per year (capped land value). When the ceiling is active, tax is calculated from the capped value — not the full public valuation.'}
+                            </p>
+                            <div className="grid grid-cols-2 gap-x-6 gap-y-1 mt-3 text-xs">
+                              {aktivLoft.basisaar != null && (
+                                <div className="flex justify-between gap-2">
+                                  <span className="text-slate-500">
+                                    {da ? 'Basisår' : 'Base year'}
+                                  </span>
+                                  <span className="text-slate-300 tabular-nums">
+                                    {aktivLoft.basisaar}
+                                  </span>
+                                </div>
+                              )}
+                              {aktivLoft.grundvaerdi != null && (
+                                <div className="flex justify-between gap-2">
+                                  <span className="text-slate-500">
+                                    {da ? 'Loftværdi' : 'Capped value'}
+                                  </span>
+                                  <span className="text-slate-300 tabular-nums">
+                                    {formatDKK(aktivLoft.grundvaerdi)}
+                                  </span>
+                                </div>
+                              )}
+                              {aktivLoft.pgf11 && (
+                                <div className="flex justify-between gap-2 col-span-2">
+                                  <span className="text-slate-500">
+                                    {da ? 'Beregningsgrundlag' : 'Calculation basis'}
+                                  </span>
+                                  <span className="text-slate-300">{aktivLoft.pgf11}</span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
                         </div>
                       </div>
                     );

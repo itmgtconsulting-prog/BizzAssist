@@ -62,7 +62,7 @@ import type { RegnskabsAar } from '@/app/api/regnskab/xbrl/route';
 import type { RelateretVirksomhed } from '@/app/api/cvr-public/related/route';
 import type { CvrHandelData } from '@/app/api/salgshistorik/cvr/route';
 import type { EjendomSummary } from '@/app/api/ejendomme-by-owner/route';
-import type { PersonbogHaeftelse } from '@/app/api/tinglysning/personbog/route';
+import type { PersonbogHaeftelse, PersonbogDokument } from '@/app/api/tinglysning/personbog/route';
 import type { VirksomhedEjendomsrolle } from '@/app/api/tinglysning/virksomhed/route';
 import type { BilbogBil } from '@/app/api/tinglysning/bilbog/route';
 import type { AndelsbogBolig } from '@/app/api/tinglysning/andelsbog/route';
@@ -555,6 +555,12 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
 
   /** Personbog (tinglysning) — lazy-loaded when liens tab is activated */
   const [personbogData, setPersonbogData] = useState<PersonbogHaeftelse[]>([]);
+  /** BIZZ-533: Tinglyste dokumenter (vedtægter, fusioner, ejerpantebreve) fra Personbog */
+  const [personbogDokumenter, setPersonbogDokumenter] = useState<{
+    vedtaegter: PersonbogDokument[];
+    fusioner: PersonbogDokument[];
+    ejerpantebreve: PersonbogDokument[];
+  }>({ vedtaegter: [], fusioner: [], ejerpantebreve: [] });
   const [personbogLoading, setPersonbogLoading] = useState(false);
   const [personbogFejl, setPersonbogFejl] = useState<string | null>(null);
   const [expandedPant, setExpandedPant] = useState<Set<number>>(new Set());
@@ -940,6 +946,12 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
       }
 
       setPersonbogData(json.haeftelser ?? []);
+      // BIZZ-533: Gem tinglyste dokumenter (vedtægter/fusioner/ejerpantebreve)
+      setPersonbogDokumenter({
+        vedtaegter: json.vedtaegter ?? [],
+        fusioner: json.fusioner ?? [],
+        ejerpantebreve: json.ejerpantebreve ?? [],
+      });
     } catch {
       setPersonbogFejl(c.personbogError);
     } finally {
@@ -3987,6 +3999,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                         setExpandedPant={setExpandedPant}
                         selectedPantDocs={selectedPantDocs}
                         setSelectedPantDocs={setSelectedPantDocs}
+                        dokumenter={personbogDokumenter}
                       />
                     </div>
                   )}
@@ -5169,6 +5182,12 @@ interface PersonbogSectionProps {
   setExpandedPant: React.Dispatch<React.SetStateAction<Set<number>>>;
   selectedPantDocs: Set<string>;
   setSelectedPantDocs: React.Dispatch<React.SetStateAction<Set<string>>>;
+  /** BIZZ-533: Tinglyste dokumenter (vedtægter/fusioner/ejerpantebreve) */
+  dokumenter?: {
+    vedtaegter: PersonbogDokument[];
+    fusioner: PersonbogDokument[];
+    ejerpantebreve: PersonbogDokument[];
+  };
 }
 
 /**
@@ -5188,6 +5207,7 @@ function PersonbogSection({
   setExpandedPant,
   selectedPantDocs,
   setSelectedPantDocs,
+  dokumenter,
 }: PersonbogSectionProps) {
   /** Loading state — inline compact (vises inde i den ekspanderede personbog-række) */
   if (loading) {
@@ -5727,6 +5747,63 @@ function PersonbogSection({
           </div>
         ));
       })()}
+
+      {/* BIZZ-533: Tinglyste dokumenter (vedtægter, fusioner, ejerpantebreve) */}
+      {dokumenter &&
+        (dokumenter.vedtaegter.length > 0 ||
+          dokumenter.fusioner.length > 0 ||
+          dokumenter.ejerpantebreve.length > 0) && (
+          <div className="px-4 py-3 border-t border-slate-700/20 space-y-2">
+            <p className="text-slate-500 text-[10px] uppercase tracking-wider font-semibold">
+              {da ? 'Øvrige tinglyste dokumenter' : 'Other registered documents'}
+            </p>
+            {dokumenter.vedtaegter.length > 0 && (
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-slate-400">
+                  {da ? 'Vedtægter' : 'Articles of association'}:
+                </span>
+                <span className="text-white font-medium">{dokumenter.vedtaegter.length}</span>
+                <span className="text-slate-500">
+                  {dokumenter.vedtaegter
+                    .map((d) => d.tinglysningsdato)
+                    .filter(Boolean)
+                    .slice(0, 3)
+                    .join(', ')}
+                </span>
+              </div>
+            )}
+            {dokumenter.fusioner.length > 0 && (
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-slate-400">
+                  {da ? 'Fusioner/spaltninger' : 'Mergers/demergers'}:
+                </span>
+                <span className="text-white font-medium">{dokumenter.fusioner.length}</span>
+                <span className="text-slate-500">
+                  {dokumenter.fusioner
+                    .map((d) => d.tinglysningsdato)
+                    .filter(Boolean)
+                    .slice(0, 3)
+                    .join(', ')}
+                </span>
+              </div>
+            )}
+            {dokumenter.ejerpantebreve.length > 0 && (
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-slate-400">
+                  {da ? 'Ejerpantebreve i løsøre' : 'Owner mortgage in chattels'}:
+                </span>
+                <span className="text-white font-medium">{dokumenter.ejerpantebreve.length}</span>
+                <span className="text-slate-500">
+                  {dokumenter.ejerpantebreve
+                    .map((d) => d.tinglysningsdato)
+                    .filter(Boolean)
+                    .slice(0, 3)
+                    .join(', ')}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
     </>
   );
 }

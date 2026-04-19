@@ -84,6 +84,20 @@ export interface PersonbogHaeftelse {
   kreditorbetegnelse: string | null;
 }
 
+/** BIZZ-533: Minimal metadata for tinglyste dokumenter (vedtægt, fusion, ejerpantebrev) */
+export interface PersonbogDokument {
+  /** Dokumentets UUID til PDF-opslag via dokaktuel */
+  dokumentId: string | null;
+  /** Menneskeligt læsbart dokumentalias (fx "2024-0123456") */
+  dokumentAlias: string | null;
+  /** Tinglysningsdato (ISO) */
+  tinglysningsdato: string | null;
+  /** Registreringsdato (ISO) */
+  registreringsdato: string | null;
+  /** Prioritetsnummer hvis angivet */
+  prioritet: number | null;
+}
+
 export interface PersonbogData {
   /** CVR-nummer */
   cvr: string;
@@ -91,6 +105,12 @@ export interface PersonbogData {
   uuid: string | null;
   /** Alle hæftelser registreret i Personbogen */
   haeftelser: PersonbogHaeftelse[];
+  /** BIZZ-533: Tinglyste vedtægter (kan afvige fra CVR-vedtægter) */
+  vedtaegter: PersonbogDokument[];
+  /** BIZZ-533: Tinglyste fusioner og spaltninger */
+  fusioner: PersonbogDokument[];
+  /** BIZZ-533: Ejerpantebrev i løsøre (adskilt fra almindelig løsørepant) */
+  ejerpantebreve: PersonbogDokument[];
   /** Sandt hvis test-miljø fallback blev brugt */
   testFallback?: boolean;
 }
@@ -298,6 +318,38 @@ function parsePersonbogXml(xml: string): PersonbogHaeftelse[] {
 }
 
 /**
+ * BIZZ-533: Parser tinglyste dokumenter (vedtægter/fusioner/ejerpantebreve)
+ * fra Personbog-summarisk XML.
+ *
+ * @param xml - Rå XML fra personsummarisk endpoint
+ * @param blockName - XML-blok at matche (fx "VedtaegtSummarisk")
+ * @returns Array af PersonbogDokument med basis-metadata
+ */
+function parsePersonbogDokumenter(xml: string, blockName: string): PersonbogDokument[] {
+  const docs: PersonbogDokument[] = [];
+  const re = new RegExp(`<(?:ns:)?${blockName}>([\\s\\S]*?)<\\/(?:ns:)?${blockName}>`, 'g');
+  const entries = [...xml.matchAll(re)];
+
+  for (const [, entry] of entries) {
+    const dokumentId = entry.match(/DokumentIdentifikator[^>]*>([^<]+)/)?.[1] ?? null;
+    const dokumentAlias =
+      entry.match(/DokumentAliasIdentifikator[^>]*>([^<]+)/)?.[1] ??
+      entry.match(/AktHistoriskIdentifikator[^>]*>([^<]+)/)?.[1] ??
+      null;
+    const tinglysningsdato =
+      entry.match(/TinglysningsDato[^>]*>([^<]+)/)?.[1]?.split('T')[0] ?? null;
+    const registreringsdato =
+      entry.match(/RegistreringsDato[^>]*>([^<]+)/)?.[1]?.split('T')[0] ?? tinglysningsdato;
+    const prioritetStr = entry.match(/PrioritetNummer[^>]*>([^<]+)/)?.[1];
+    const prioritet = prioritetStr ? parseInt(prioritetStr, 10) : null;
+
+    docs.push({ dokumentId, dokumentAlias, tinglysningsdato, registreringsdato, prioritet });
+  }
+
+  return docs;
+}
+
+/**
  * Normaliserer XML-hæftelsestyper til vores standardtyper.
  * Faktiske værdier fra XML: LoesoereHaeftelseTypeSummariskTekst
  *   - "skadesloesbrevLoesoere" → løsørepant/skadesløsbrev
@@ -337,6 +389,9 @@ export async function GET(req: NextRequest) {
       cvr,
       uuid: null,
       haeftelser: [],
+      vedtaegter: [],
+      fusioner: [],
+      ejerpantebreve: [],
       fejl: 'Tinglysning certifikat ikke konfigureret',
     });
   }
@@ -364,7 +419,14 @@ export async function GET(req: NextRequest) {
     // en anden virksomheds pantdata, da det er misvisende for brugeren.
 
     if (items.length === 0) {
-      const result: PersonbogData = { cvr, uuid: null, haeftelser: [] };
+      const result: PersonbogData = {
+        cvr,
+        uuid: null,
+        haeftelser: [],
+        vedtaegter: [],
+        fusioner: [],
+        ejerpantebreve: [],
+      };
       return NextResponse.json(result, {
         headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
       });
@@ -372,6 +434,10 @@ export async function GET(req: NextRequest) {
 
     // Trin 2: Hent summariske oplysninger for hvert personbog-item
     const allHaeftelser: PersonbogHaeftelse[] = [];
+    // BIZZ-533: Akkumulér tinglyste dokumenter (vedtægter, fusioner, ejerpantebreve)
+    const allVedtaegter: PersonbogDokument[] = [];
+    const allFusioner: PersonbogDokument[] = [];
+    const allEjerpantebreve: PersonbogDokument[] = [];
     const primaryUuid = items[0].uuid;
 
     for (const item of items) {
@@ -404,6 +470,13 @@ export async function GET(req: NextRequest) {
         }
 
         allHaeftelser.push(...parsed);
+
+        // BIZZ-533: Parse tinglyste dokumenter fra samme XML
+        allVedtaegter.push(...parsePersonbogDokumenter(detailRes.body, 'VedtaegtSummarisk'));
+        allFusioner.push(...parsePersonbogDokumenter(detailRes.body, 'FusionSummarisk'));
+        allEjerpantebreve.push(
+          ...parsePersonbogDokumenter(detailRes.body, 'EjerpantebrevSummarisk')
+        );
       }
     }
 
@@ -411,6 +484,9 @@ export async function GET(req: NextRequest) {
       cvr,
       uuid: primaryUuid,
       haeftelser: allHaeftelser,
+      vedtaegter: allVedtaegter,
+      fusioner: allFusioner,
+      ejerpantebreve: allEjerpantebreve,
     };
 
     return NextResponse.json(result, {

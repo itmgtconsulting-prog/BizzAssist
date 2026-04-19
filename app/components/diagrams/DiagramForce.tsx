@@ -33,6 +33,12 @@ import type { PersonPublicData } from '@/app/api/cvr-public/person/route';
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const NODE_W = 320;
+/**
+ * BIZZ-558: Overflow-bokse er bredere end almindelige noder så de lange
+ * adresselinjer (fx "Niels Steensens Vej 7, 2820 Gentofte") kan være inden
+ * for boks-bredden i stedet for at flyde ud i naboejendoms-spalten.
+ */
+const NODE_W_OVERFLOW = 400;
 /** Narrower width for property nodes — tighter box around address text */
 const NODE_W_PROPERTY = 260;
 const NODE_H = 64;
@@ -870,8 +876,16 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
     // MAX_PER_ROW), all of that owner's properties go on the NEXT line instead of
     // being split. Owners are grouped first by their Y (depth sub-row), then per Y
     // group we assign properties to lines in owner-order.
+    //
+    // BIZZ-558: Overflow-noder (id starter med "props-overflow-") placeres på en
+    // dedikeret linje EFTER alle almindelige properties — ellers bryder deres
+    // bredere boks (NODE_W_OVERFLOW=400) ind over naboejendoms-spalten på samme
+    // linje. Hver overflow-boks får sin egen Y så de aldrig sidder ved siden af
+    // andre properties/overflow.
     const PROPERTY_ROW_GAP = 95;
     const PROPERTY_SUBROW_GAP = 70;
+    /** BIZZ-558: Overflow-rækker er højere — indeholder typisk 5+ liste-linjer */
+    const OVERFLOW_SUBROW_GAP = 150;
     // Group owners by their own Y (sub-row of depth)
     const ownersByY = new Map<number, string[]>();
     for (const ownerId of propertiesByOwner.keys()) {
@@ -886,8 +900,17 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
       const propBaseY = ownerY + PROPERTY_ROW_GAP;
       let currentLine = 0;
       let countOnLine = 0;
+      // BIZZ-558: Saml alle overflow-noder fra denne Y for separat placering
+      const overflowNodesInY: string[] = [];
       for (const ownerId of ownerIds) {
-        const props = propertiesByOwner.get(ownerId) ?? [];
+        const propsAll = propertiesByOwner.get(ownerId) ?? [];
+        if (propsAll.length === 0) continue;
+        // Split: regular properties placeres på almindelige linjer; overflow-
+        // noder samles og placeres på dedikerede linjer EFTER alle properties.
+        const props = propsAll.filter((id) => !id.startsWith('props-overflow-'));
+        const ownerOverflow = propsAll.filter((id) => id.startsWith('props-overflow-'));
+        overflowNodesInY.push(...ownerOverflow);
+
         if (props.length === 0) continue;
         // If this owner's properties don't all fit on current line, start new line
         if (countOnLine > 0 && countOnLine + props.length > MAX_PER_ROW) {
@@ -908,6 +931,22 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
         } else {
           countOnLine += props.length;
         }
+      }
+      // BIZZ-558: Placer overflow-noder på dedikerede linjer EFTER properties.
+      // Hver overflow-node får sin egen linje (ingen MAX_PER_ROW-pakning) så
+      // den bredere boks (NODE_W_OVERFLOW=400) ikke kolliderer horisontalt.
+      // Næste linje starter efter den sidste property-linje + ekstra gap.
+      const overflowStartLine = currentLine + (countOnLine > 0 ? 1 : 0);
+      for (let i = 0; i < overflowNodesInY.length; i++) {
+        const overflowLine = overflowStartLine + i;
+        // Brug PROPERTY_SUBROW_GAP for almindelige linjer + OVERFLOW_SUBROW_GAP
+        // for overflow-rækker (de er højere så vi skal bruge større gap)
+        yMap.set(
+          overflowNodesInY[i],
+          propBaseY +
+            overflowStartLine * PROPERTY_SUBROW_GAP +
+            (overflowLine - overflowStartLine) * OVERFLOW_SUBROW_GAP
+        );
       }
     }
 
@@ -1745,8 +1784,9 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
         }
 
         const rx = isPerson ? h / 2 : isProperty ? 16 : 12;
-        // Property nodes are narrower (less wasted space around short addresses)
-        const w = isProperty ? NODE_W_PROPERTY : NODE_W;
+        // BIZZ-558: Overflow-noder bruger NODE_W_OVERFLOW (bredere) så
+        // adresseindhold passer ind. Property-noder er smallere; resten bruger NODE_W.
+        const w = node.overflowItems ? NODE_W_OVERFLOW : isProperty ? NODE_W_PROPERTY : NODE_W;
         const x = pos.x - w / 2;
         // Overflow-noder: forankr fra toppen (brug kollapseret højde) så de udvider nedad
         const collapsedH = node.overflowItems
@@ -1777,7 +1817,7 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
               <rect
                 x={x}
                 y={y}
-                width={NODE_W}
+                width={w}
                 height={h}
                 rx={12}
                 fill="rgba(30,41,59,0.6)"
@@ -1809,7 +1849,9 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
                     if (item.link) window.location.href = item.link;
                   }}
                 >
-                  {'•'} {item.label.length > 42 ? item.label.slice(0, 42) + '…' : item.label}
+                  {/* BIZZ-558: Truncate-grænse hævet 42→58 så længere adresser
+                      passer ind i den bredere overflow-boks (NODE_W_OVERFLOW=400) */}
+                  {'•'} {item.label.length > 58 ? item.label.slice(0, 58) + '…' : item.label}
                 </text>
               ))}
               {node.overflowItems.length > OVERFLOW_INITIAL_SHOW && (
@@ -1825,7 +1867,7 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
                   }}
                 >
                   <rect
-                    x={x + NODE_W / 2 - 50}
+                    x={x + w / 2 - 50}
                     y={y + h - 18}
                     width={100}
                     height={15}
@@ -1835,7 +1877,7 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
                     strokeWidth="0.5"
                   />
                   <text
-                    x={x + NODE_W / 2}
+                    x={x + w / 2}
                     y={y + h - 8}
                     textAnchor="middle"
                     fill="rgba(148,163,184,0.9)"

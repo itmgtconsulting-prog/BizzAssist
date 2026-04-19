@@ -23,6 +23,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantId } from '@/lib/api/auth';
 import { fetchDawa } from '@/app/lib/dawa';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { logger } from '@/app/lib/logger';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -245,6 +247,59 @@ export async function GET(req: NextRequest) {
   });
 
   if (!match?.ejendePersonBegraenset?.id) {
+    // BIZZ-534 fallback: Personen er ikke direkte ejer af hjem-adressen
+    // (f.eks. fordi et holdingselskab ejer bopælen). Søg i bulk-data
+    // efter unik navne-match for at finde fødselsdato. Hvis præcis én
+    // (navn, fdato)-kombination matcher, returner den — ellers fejl.
+    try {
+      const admin = createAdminClient();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: rows, error } = await (admin as any)
+        .from('ejf_ejerskab')
+        .select('ejer_navn, ejer_foedselsdato')
+        .ilike('ejer_navn', person.navn)
+        .eq('ejer_type', 'person')
+        .eq('status', 'gældende')
+        .not('ejer_foedselsdato', 'is', null);
+
+      if (!error && Array.isArray(rows) && rows.length > 0) {
+        // Distinct (navn, foedselsdato)-kombinationer
+        const distinct = Array.from(
+          new Set(rows.map((r) => `${r.ejer_navn}|${r.ejer_foedselsdato}`))
+        ).map((k) => {
+          const [navn, fdato] = k.split('|');
+          return { navn, fdato };
+        });
+
+        if (distinct.length === 1) {
+          return NextResponse.json(
+            {
+              cvrEnhedsNummer: enhedsNr,
+              navn: person.navn,
+              ejfPersonId: null, // bulk-data har ikke EJF person-id direkte
+              foedselsdato: distinct[0].fdato,
+              viaBfe: bfeNummer,
+              viaAdresse,
+              fejl: null,
+            } satisfies PersonBridgeResponse,
+            {
+              status: 200,
+              headers: { 'Cache-Control': 'private, s-maxage=3600' },
+            }
+          );
+        }
+        // Flere distinct — kan ikke entydigt bestemme fdato uden kommune-filter
+        logger.warn(
+          `[person-bridge] ${distinct.length} distinct fdato for navn="${person.navn}" — kan ikke disambiguere`
+        );
+      }
+    } catch (err) {
+      logger.error(
+        '[person-bridge] Bulk-data fallback fejlede:',
+        err instanceof Error ? err.message : err
+      );
+    }
+
     return NextResponse.json({
       cvrEnhedsNummer: enhedsNr,
       navn: person.navn,

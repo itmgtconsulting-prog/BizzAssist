@@ -3911,6 +3911,22 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                                         ? ` — ${entry.til}`
                                         : ` — ${lang === 'da' ? 'nu' : 'present'}`}
                                     </p>
+                                    {/* BIZZ-516: Modpart-link for fusion/spaltning — link til owners-siden
+                                        hvor enhedsNummer kan slås op (fælles namespace for virksomheder og
+                                        personer i CVR). Giver brugeren en direkte genvej til modparten. */}
+                                    {(entry.type === 'fusion' || entry.type === 'spaltning') &&
+                                      entry.modpartEnhedsNummer && (
+                                        <Link
+                                          href={`/dashboard/owners/${entry.modpartEnhedsNummer}`}
+                                          className="inline-flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 mt-2 transition-colors"
+                                        >
+                                          <ExternalLink size={10} />
+                                          {lang === 'da' ? 'Se modpart' : 'View counterparty'}{' '}
+                                          <span className="font-mono text-slate-500">
+                                            (#{entry.modpartEnhedsNummer})
+                                          </span>
+                                        </Link>
+                                      )}
                                   </div>
                                 </li>
                               ))}

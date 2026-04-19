@@ -136,7 +136,7 @@ export interface CVRPublicData {
    * Indeholder ALLE perioder — ikke kun gyldigNu.
    */
   historik: Array<{
-    /** Ændringstype: 'navn' | 'adresse' | 'form' | 'status' | 'branche' */
+    /** Ændringstype: 'navn' | 'adresse' | 'form' | 'status' | 'branche' | 'fusion' | 'spaltning' */
     type: string;
     /** Startdato for perioden (ISO) */
     fra: string;
@@ -144,6 +144,17 @@ export interface CVRPublicData {
     til: string | null;
     /** Værdien i den pågældende periode */
     vaerdi: string;
+    /**
+     * BIZZ-516: For fusion/spaltning — modpartens enhedsNummer (CVR-internt id
+     * for den anden virksomhed i transaktionen). Null hvis ikke oplyst i ES.
+     */
+    modpartEnhedsNummer?: number | null;
+    /**
+     * BIZZ-516: For fusion/spaltning — 'ind' når denne virksomhed er modtageren
+     * (optagende/fortsættende), 'ud' når denne virksomhed er ophørt/spaltet ud,
+     * null hvis retningen ikke kan udledes entydigt.
+     */
+    retning?: 'ind' | 'ud' | null;
   }>;
 
   /**
@@ -485,7 +496,7 @@ function mapESHit(hit: Record<string, unknown>): CVRPublicData | null {
   const formaalFraAttr = getAttrValue('FORMÅL');
 
   // ── Historik (alle perioder fra tidsbestemte arrays) ──
-  const historik: Array<{ type: string; fra: string; til: string | null; vaerdi: string }> = [];
+  const historik: CVRPublicData['historik'] = [];
 
   // Navne-historik
   for (const entry of navne) {
@@ -560,13 +571,38 @@ function mapESHit(hit: Record<string, unknown>): CVRPublicData | null {
     }
   }
 
-  // BIZZ-516: Fusioner + spaltninger → historik
+  // BIZZ-516: Fusioner + spaltninger → historik med modpart-enhedsNummer og retning
+  // CVR ES Vrvirksomhed.fusioner/spaltninger indeholder indgaaende[]/udgaaende[] arrays
+  // der fortæller om denne virksomhed modtog/afgav i transaktionen:
+  //   indgaaende populated  → retning 'ind' (denne virksomhed var modtager)
+  //   udgaaende populated   → retning 'ud'  (denne virksomhed afgav)
+  // enhedsNummerOrganisation er modpartens CVR-interne enhedsnummer.
+  const extractRetning = (entry: Record<string, unknown>): 'ind' | 'ud' | null => {
+    const ind = Array.isArray(entry.indgaaende) && entry.indgaaende.length > 0;
+    const ud = Array.isArray(entry.udgaaende) && entry.udgaaende.length > 0;
+    if (ind && !ud) return 'ind';
+    if (ud && !ind) return 'ud';
+    return null; // begge eller ingen — kan ikke skelnes
+  };
   const fusioner = Array.isArray(src.fusioner) ? (src.fusioner as Record<string, unknown>[]) : [];
   for (const f of fusioner) {
     const navne = Array.isArray(f.organisationsNavn) ? (f.organisationsNavn as Periodic[]) : [];
     const fra = navne[0]?.periode?.gyldigFra ?? '';
     const til = navne[0]?.periode?.gyldigTil ?? null;
-    if (fra) historik.push({ type: 'fusion', fra, til, vaerdi: 'Fusion' });
+    if (!fra) continue;
+    const modpart =
+      typeof f.enhedsNummerOrganisation === 'number' ? f.enhedsNummerOrganisation : null;
+    const retning = extractRetning(f);
+    const label =
+      retning === 'ind' ? 'Fusion (optagende)' : retning === 'ud' ? 'Fusion (ophørt)' : 'Fusion';
+    historik.push({
+      type: 'fusion',
+      fra,
+      til,
+      vaerdi: label,
+      modpartEnhedsNummer: modpart,
+      retning,
+    });
   }
   const spaltninger = Array.isArray(src.spaltninger)
     ? (src.spaltninger as Record<string, unknown>[])
@@ -575,7 +611,24 @@ function mapESHit(hit: Record<string, unknown>): CVRPublicData | null {
     const navne = Array.isArray(s.organisationsNavn) ? (s.organisationsNavn as Periodic[]) : [];
     const fra = navne[0]?.periode?.gyldigFra ?? '';
     const til = navne[0]?.periode?.gyldigTil ?? null;
-    if (fra) historik.push({ type: 'spaltning', fra, til, vaerdi: 'Spaltning' });
+    if (!fra) continue;
+    const modpart =
+      typeof s.enhedsNummerOrganisation === 'number' ? s.enhedsNummerOrganisation : null;
+    const retning = extractRetning(s);
+    const label =
+      retning === 'ind'
+        ? 'Spaltning (modtagende)'
+        : retning === 'ud'
+          ? 'Spaltning (afgivende)'
+          : 'Spaltning';
+    historik.push({
+      type: 'spaltning',
+      fra,
+      til,
+      vaerdi: label,
+      modpartEnhedsNummer: modpart,
+      retning,
+    });
   }
 
   // ── Ejere / Deltagere (deltagerRelation) ──
@@ -1147,19 +1200,6 @@ export async function GET(req: NextRequest): Promise<NextResponse<CVRPublicData 
 
     // For vat-lookup, return single result
     if (vat) {
-      // TEMP debug: return raw hit to inspect ES structure (BIZZ-516)
-      if (req.nextUrl.searchParams.get('__debugRaw') === '1') {
-        const src = (hits[0]._source as Record<string, unknown>)?.Vrvirksomhed as Record<
-          string,
-          unknown
-        >;
-        const keys = Object.keys(src || {}).sort();
-        const sample: Record<string, unknown> = { __keys: keys };
-        for (const k of ['hjemsted', 'hjemstedsadresse', 'fusioner', 'spaltninger']) {
-          if (src?.[k] !== undefined) sample[k] = src[k];
-        }
-        return NextResponse.json(sample as unknown as CVRPublicData);
-      }
       const mapped = mapESHit(hits[0]);
       if (!mapped) {
         return NextResponse.json({ error: 'Kunne ikke parse virksomhedsdata' }, { status: 500 });

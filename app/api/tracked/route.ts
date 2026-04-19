@@ -60,7 +60,7 @@ async function enrichBbrTrackedObjects(tenantId: string, dawaId: string): Promis
       tenant_id: string;
       bfe_nummer: string;
       bbr_object_id: string;
-      bbr_object_type: 'Bygning' | 'Grund' | 'Enhed';
+      bbr_object_type: 'Bygning' | 'Grund' | 'Enhed' | 'Etage' | 'OpgangDørenhed';
     }[] = [];
 
     // Indeksér alle bygning-UUIDs
@@ -71,6 +71,41 @@ async function enrichBbrTrackedObjects(tenantId: string, dawaId: string): Promis
           bfe_nummer: bfeNummer,
           bbr_object_id: bygning.id,
           bbr_object_type: 'Bygning',
+        });
+      }
+    }
+
+    // BIZZ-489: Indeksér også enheder, opgange og etager så fulgte ejendomme
+    // får besked når disse ændrer sig. Schema-constraint tillader Bygning/Grund/
+    // Enhed/Etage/OpgangDørenhed (Opgang fra Datafordeler mappes til
+    // OpgangDørenhed som er det officielle navn i bbr_tracked_objects-tabellen).
+    for (const enhed of bbrData.enheder ?? []) {
+      if (enhed.id) {
+        rows.push({
+          tenant_id: tenantId,
+          bfe_nummer: bfeNummer,
+          bbr_object_id: enhed.id,
+          bbr_object_type: 'Enhed',
+        });
+      }
+    }
+    for (const opgang of bbrData.opgange ?? []) {
+      if (opgang.id) {
+        rows.push({
+          tenant_id: tenantId,
+          bfe_nummer: bfeNummer,
+          bbr_object_id: opgang.id,
+          bbr_object_type: 'OpgangDørenhed',
+        });
+      }
+    }
+    for (const etage of bbrData.etager ?? []) {
+      if (etage.id) {
+        rows.push({
+          tenant_id: tenantId,
+          bfe_nummer: bfeNummer,
+          bbr_object_id: etage.id,
+          bbr_object_type: 'Etage',
         });
       }
     }

@@ -35,8 +35,15 @@ const MAX_EVENTS = 500;
 /** Sideindlæsning — Datafordeler maks pagesize */
 const PAGE_SIZE = 100;
 
-/** BBR objekt-typer vi overvåger */
-const BBR_TYPER = ['Bygning', 'Grund', 'Enhed'] as const;
+/**
+ * BBR objekt-typer vi overvåger.
+ * BIZZ-489: Udvidet med TekniskAnlaeg, Opgang og Etage så fulgte ejendomme
+ * får besked når der fx tilføjes solceller, ændres etageopdeling, eller
+ * bygningens trapperums-struktur opdateres. Disse entiteter blev
+ * integreret i datamodellen via BIZZ-486 (Opgang/Etage) og findes som
+ * BBR_Opgang, BBR_Etage, BBR_TekniskAnlaeg i Datafordeler.
+ */
+const BBR_TYPER = ['Bygning', 'Grund', 'Enhed', 'TekniskAnlaeg', 'Opgang', 'Etage'] as const;
 type BbrObjekttype = (typeof BBR_TYPER)[number];
 
 /** Datafordeler BBR hændelse */
@@ -218,8 +225,17 @@ export async function GET(request: NextRequest) {
     const tenantMatches = objectToTenants.get(evt.entitetUUID);
     if (!tenantMatches) continue;
 
-    const eventLabel =
-      evt.objekttype === 'Bygning' ? 'Bygning' : evt.objekttype === 'Grund' ? 'Grund' : 'Enhed';
+    // BIZZ-489: Map objekttype til læsbar dansk label.
+    // TekniskAnlaeg får mere beskrivende label fordi brugere ikke kender termen.
+    const eventLabelMap: Record<string, string> = {
+      Bygning: 'Bygning',
+      Grund: 'Grund',
+      Enhed: 'Enhed',
+      TekniskAnlaeg: 'Teknisk anlæg',
+      Opgang: 'Opgang',
+      Etage: 'Etage',
+    };
+    const eventLabel = eventLabelMap[evt.objekttype] ?? evt.objekttype;
 
     const changeLabel =
       evt.eventtype === 'Oprettelse'

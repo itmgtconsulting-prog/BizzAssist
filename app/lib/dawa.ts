@@ -101,6 +101,12 @@ export interface DawaAdresse {
    * Afgørende for bygge- og anvendelsesregler.
    */
   zone?: string;
+  /**
+   * BIZZ-508: Supplerende bynavn (fx "Vejlgårde", "Vanløse") — lokalt anvendt
+   * bydelsnavn der supplerer det officielle postnrnavn. Kun sat når adressen
+   * ligger i et DAGI-registreret supplerende bynavn-område.
+   */
+  supplerendebynavn?: string;
 }
 
 /** Et jordstykke (matrikel) fra DAWA */
@@ -286,6 +292,8 @@ export async function dawaHentAdresse(id: string): Promise<DawaAdresse | null> {
           `${raw.vejnavn} ${raw.husnr}, ${raw.postnr} ${raw.postnrnavn}`
       ),
       zone,
+      // BIZZ-508: Supplerende bynavn direkte fra DAWA (fx "Vejlgårde")
+      supplerendebynavn: (raw.supplerendebynavn as string | null) ?? undefined,
     };
   };
 

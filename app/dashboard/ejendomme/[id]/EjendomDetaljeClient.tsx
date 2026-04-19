@@ -2220,6 +2220,12 @@ export default function EjendomDetaljeClient({
                   <MapPin size={11} />
                   {(dawaAdresse.kommunenavn || null) ?? dawaJordstykke?.kommune.navn ?? '–'}
                 </span>
+                {/* BIZZ-508: Supplerende bynavn (fx "Vejlgårde") */}
+                {dawaAdresse.supplerendebynavn && (
+                  <span className="flex items-center gap-1 px-2 py-0.5 bg-slate-800 border border-slate-700/50 rounded-full text-xs text-slate-400">
+                    {dawaAdresse.supplerendebynavn}
+                  </span>
+                )}
                 {dawaJordstykke && (
                   <span className="flex items-center gap-1 px-2 py-0.5 bg-slate-800 border border-slate-700/50 rounded-full text-xs text-slate-300">
                     <Building2 size={11} /> {dawaJordstykke.matrikelnr},{' '}

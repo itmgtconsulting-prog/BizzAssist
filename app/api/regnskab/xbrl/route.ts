@@ -900,9 +900,19 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         }
 
         // Delvis cache — vi har ældre data, men ES har nyt. Behold det gamle.
-        if (cached?.years) {
+        // BIZZ-561: MEN kun hvis kun offentliggjort-tidsstempel ændret — ikke
+        // hvis PARSER_VERSION er bumpet. Hvis parser-versionen er ændret er
+        // cachet data struktur-mæssigt forældet (mangler nye felter som
+        // pengestroemme/revisor) og skal IKKE genbruges — ellers skipper
+        // nyeRegnskaber-filtret allerede-cachede år, og deduplicateYears
+        // taber pga. tie-break på countFields. Fuld re-parse kræves.
+        const cachedVersion = (cached?.es_timestamp as string | undefined)?.split('_').pop();
+        const versionMismatch = cachedVersion != null && cachedVersion !== PARSER_VERSION;
+        if (cached?.years && !versionMismatch) {
           cachedYears = cached.years as RegnskabsAar[];
         }
+        // versionMismatch = true → cachedYears forbliver tom → ALLE år re-parses
+        // med ny parser-logik. Cache opdateres efter re-parse.
       } catch {
         // Cache-fejl — fortsæt med XBRL-fetch
       }

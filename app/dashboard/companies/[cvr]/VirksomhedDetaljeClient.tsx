@@ -7093,6 +7093,8 @@ function RegnskabstalTable({ years, lang, regnskaber = [] }: RegnskabstalTablePr
         da ? 'Nøgletal' : 'Key Ratios',
       ])
   );
+  /** BIZZ-560: Tracking af hvilke noter der er udfoldet (default: alle kollapsede med preview) */
+  const [aabneNoter, setAabneNoter] = useState<Set<string>>(() => new Set());
 
   /** Viste år — 5 default, alle hvis udfoldet */
   const visteAar = visAlleAar ? years : years.slice(0, 5);
@@ -7685,6 +7687,84 @@ function RegnskabstalTable({ years, lang, regnskaber = [] }: RegnskabstalTablePr
                 </p>
                 <p className="text-sm text-slate-200">{senesteRevisor.signaturDato ?? '—'}</p>
               </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* BIZZ-560: Note-tekstblokke fra seneste regnskabsår — formål, anvendt
+          regnskabspraksis, begivenheder efter balancedag, going concern.
+          Hver note collapsible med kort preview. */}
+      {(() => {
+        const senesteNoter = visteAar.find((y) => y.noter != null)?.noter;
+        if (!senesteNoter) return null;
+        const noteFelter: Array<{
+          key: string;
+          label: string;
+          value: string | null;
+        }> = [
+          { key: 'formaal', label: da ? 'Formål' : 'Purpose', value: senesteNoter.formaal },
+          {
+            key: 'regnskabspraksis',
+            label: da ? 'Anvendt regnskabspraksis' : 'Accounting policies',
+            value: senesteNoter.regnskabspraksis,
+          },
+          {
+            key: 'begivenhederEfterBalancedag',
+            label: da ? 'Begivenheder efter balancedag' : 'Events after reporting period',
+            value: senesteNoter.begivenhederEfterBalancedag,
+          },
+          {
+            key: 'goingConcern',
+            label: da ? 'Going concern' : 'Going concern',
+            value: senesteNoter.goingConcern,
+          },
+        ];
+        const aktive = noteFelter.filter((n) => n.value && n.value.length > 0);
+        if (aktive.length === 0) return null;
+        return (
+          <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden">
+            <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-700/30">
+              <FileText size={15} className="text-slate-400" />
+              <span className="text-sm font-semibold text-slate-200">{da ? 'Noter' : 'Notes'}</span>
+              <span className="text-[10px] text-slate-500">({aktive.length})</span>
+            </div>
+            <div className="divide-y divide-slate-700/20">
+              {aktive.map((n) => {
+                const isExpanded = aabneNoter.has(n.key);
+                const text = n.value!;
+                const erLang = text.length > 280;
+                return (
+                  <div key={n.key} className="p-4">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setAabneNoter((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(n.key)) next.delete(n.key);
+                          else next.add(n.key);
+                          return next;
+                        })
+                      }
+                      className="flex items-center gap-2 w-full text-left mb-2 hover:text-blue-400 transition-colors"
+                      disabled={!erLang}
+                    >
+                      {erLang &&
+                        (isExpanded ? (
+                          <ChevronDown size={13} className="text-slate-500 flex-shrink-0" />
+                        ) : (
+                          <ChevronRight size={13} className="text-slate-500 flex-shrink-0" />
+                        ))}
+                      <span className="text-[10px] uppercase tracking-wider text-slate-500 font-medium">
+                        {n.label}
+                      </span>
+                    </button>
+                    <p className="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">
+                      {erLang && !isExpanded ? `${text.slice(0, 280)}…` : text}
+                    </p>
+                  </div>
+                );
+              })}
             </div>
           </div>
         );

@@ -120,6 +120,22 @@ export interface Noegletal {
   antalAnsatte: number | null;
 }
 
+/**
+ * BIZZ-560: Tekst-noter fra årsregnskabet (HTML-strippet til ren tekst).
+ * Alle felter er nullable — XBRL-noter er ikke obligatoriske og mange små
+ * selskaber undlader dem helt.
+ */
+export interface RegnskabNoter {
+  /** Virksomhedens formål / hovedaktivitet */
+  formaal: string | null;
+  /** Anvendt regnskabspraksis */
+  regnskabspraksis: string | null;
+  /** Begivenheder efter balancedagen */
+  begivenhederEfterBalancedag: string | null;
+  /** Going concern-vurdering */
+  goingConcern: string | null;
+}
+
 /** Et regnskabsår med alle data */
 export interface RegnskabsAar {
   /** Regnskabsår (f.eks. 2024) */
@@ -138,6 +154,8 @@ export interface RegnskabsAar {
   pengestroemme: Pengestroemme | null;
   /** BIZZ-559: Revisor + revisionspåtegning (null hvis revision fravalgt) */
   revisor: Revisor | null;
+  /** BIZZ-560: Note-tekstblokke (formål, praksis, begivenheder, going concern) */
+  noter: RegnskabNoter | null;
 }
 
 /** Response shape */
@@ -230,6 +248,38 @@ const REVISOR_TEXT_TAGS = {
   signaturSted: ['SignatureOfAuditorsPlace'],
   signaturDato: ['SignatureOfAuditorsDate'],
   forbeholdType: ['TypeOfModifiedOpinionOnAuditedFinancialStatements'],
+} as const;
+
+/**
+ * BIZZ-560: Note-tekstblokke fra fsa: + ifrs-full: namespace.
+ *
+ * Tekstblokke er typisk fri-tekst HTML der beskriver virksomhedens formål,
+ * regnskabspraksis, begivenheder efter balancedag etc. extractText
+ * normaliserer HTML-stripping så vi får ren tekst tilbage.
+ *
+ * NB: Ingen Substainability-varianter — fokus er finansielle noter.
+ */
+const NOTER_TEXT_TAGS = {
+  /** Virksomhedens hovedaktivitet/formål */
+  formaal: [
+    'DescriptionOfPrincipalActivities',
+    'DescriptionOfActivities',
+    'DescriptionOfNatureOfEntitysOperationsAndPrincipalActivities',
+  ],
+  /** Anvendt regnskabspraksis */
+  regnskabspraksis: [
+    'DisclosureOfAccountingPolicies',
+    'DescriptionOfAccountingPolicies',
+    'DisclosureOfSummaryOfSignificantAccountingPoliciesExplanatory',
+  ],
+  /** Begivenheder efter balancedagen */
+  begivenhederEfterBalancedag: [
+    'InformationAboutSubsequentEvents',
+    'DisclosureOfNonadjustingEventsAfterReportingPeriodExplanatory',
+    'DisclosureOfEventsAfterReportingPeriodExplanatory',
+  ],
+  /** Going concern-vurdering */
+  goingConcern: ['InformationOnGoingConcernAssumption', 'DisclosureOfGoingConcernExplanatory'],
 } as const;
 
 /**
@@ -591,6 +641,18 @@ function parseXbrl(xml: string, periodeStart: string, periodeSlut: string): Regn
     revisorRaw.firmanavn != null || revisorRaw.revisorNavn != null || revisorRaw.firmaCvr != null;
   const revisor: Revisor | null = harRevisor ? revisorRaw : null;
 
+  // BIZZ-560: Note-tekstblokke (formål, regnskabspraksis, begivenheder, going concern).
+  // Brug extractText som allerede håndterer iXBRL HTML-stripping via normaliseInline.
+  // Returnér null-objekt når INGEN noter er fundet — UI skjuler hele sektionen.
+  const noterRaw: RegnskabNoter = {
+    formaal: extractText(xml, NOTER_TEXT_TAGS.formaal),
+    regnskabspraksis: extractText(xml, NOTER_TEXT_TAGS.regnskabspraksis),
+    begivenhederEfterBalancedag: extractText(xml, NOTER_TEXT_TAGS.begivenhederEfterBalancedag),
+    goingConcern: extractText(xml, NOTER_TEXT_TAGS.goingConcern),
+  };
+  const harNoter = Object.values(noterRaw).some((v) => v != null && v.length > 0);
+  const noter: RegnskabNoter | null = harNoter ? noterRaw : null;
+
   // Nøgletal — direkte fra XBRL + beregnede
   const antalAnsatte = extractValue(xml, NOEGLETAL_TAGS.antalAnsatte ?? [], anyCtx);
 
@@ -689,7 +751,17 @@ function parseXbrl(xml: string, periodeStart: string, periodeSlut: string): Regn
     antalAnsatte,
   };
 
-  return { aar, periodeStart, periodeSlut, resultat, balance, noegletal, pengestroemme, revisor };
+  return {
+    aar,
+    periodeStart,
+    periodeSlut,
+    resultat,
+    balance,
+    noegletal,
+    pengestroemme,
+    revisor,
+    noter,
+  };
 }
 
 // ─── Route Handler ────────────────────────────────────────────────────────────

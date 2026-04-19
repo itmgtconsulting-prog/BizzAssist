@@ -1890,6 +1890,37 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                               <p className="text-white text-sm font-medium">{data.statusTekst}</p>
                             </div>
                           )}
+                          {/* BIZZ-520: P-enheder count */}
+                          {data.productionunits && data.productionunits.length > 0 && (
+                            <div>
+                              <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                                {lang === 'da' ? 'Produktionsenheder' : 'Production units'}
+                              </p>
+                              <p className="text-white text-sm font-medium">
+                                {data.productionunits.filter((p) => p.active).length}
+                                {data.productionunits.some((p) => !p.active) && (
+                                  <span className="text-slate-500 text-xs ml-1">
+                                    ({data.productionunits.length}{' '}
+                                    {lang === 'da' ? 'i alt' : 'total'})
+                                  </span>
+                                )}
+                              </p>
+                            </div>
+                          )}
+                          {/* BIZZ-520: sidstOpdateret — CVR data freshness */}
+                          {data.sidstOpdateret && (
+                            <div className="col-span-2">
+                              <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                                {lang === 'da' ? 'Data opdateret' : 'Data updated'}
+                              </p>
+                              <p className="text-slate-400 text-xs">
+                                {new Date(data.sidstOpdateret).toLocaleDateString(
+                                  lang === 'da' ? 'da-DK' : 'en-GB',
+                                  { year: 'numeric', month: 'long', day: 'numeric' }
+                                )}
+                              </p>
+                            </div>
+                          )}
                         </div>
 
                         {/* ── Ledelse, Ejere & Kontakt — 2-kolonne grid ── */}

@@ -599,19 +599,56 @@ async function _hentVPAdresseForBfe(bfe: number): Promise<DawaBfeAdresse> {
         // Fall through
       }
     }
-    // BIZZ-521 follow-up: VP's UUIDs er ofte forældet og returnerer 404 mod
-    // current DAWA — fallback til adresse-search via vej/husnr/postnr.
+    // BIZZ-576 v2: VP's UUIDs er ofte forældet og returnerer 404 mod current
+    // DAWA. Fallback-search-strategy:
+    //  - Ejerlejlighed (har floor): søg /adresser med etage+dør så vi rammer
+    //    den SPECIFIKKE lejlighed (ikke moderejendommens adgangsadresse).
+    //    Eksempel: Kaffevej 31 1.tv har lejlighed-ID a89e... og adgangs-ID
+    //    7e66... — uden etage/dør-filter rammer vi adgangs-ID (moderen).
+    //  - Ikke-ejerlejlighed: søg /adgangsadresser som før.
     if (!freshDawaId && src.roadName && src.houseNumber && src.zipcode) {
       try {
-        const probeUrl = `${DAWA_BASE_URL}/adgangsadresser?vejnavn=${encodeURIComponent(src.roadName)}&husnr=${encodeURIComponent(src.houseNumber)}&postnr=${encodeURIComponent(src.zipcode)}&struktur=mini&per_side=1`;
-        const probeRes = await fetchDawa(
-          probeUrl,
-          { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
-          { caller: 'ejendomme-by-owner.vp-fresh-dawa-id' }
-        );
-        if (probeRes.ok) {
-          const arr = (await probeRes.json()) as Array<{ id?: string }>;
-          freshDawaId = arr?.[0]?.id ?? null;
+        if (erEjerlejlighed) {
+          // Søg /adresser med etage + dør for at få den specifikke lejlighed
+          const params = new URLSearchParams({
+            vejnavn: src.roadName,
+            husnr: src.houseNumber,
+            postnr: src.zipcode,
+            struktur: 'mini',
+            per_side: '5',
+          });
+          if (src.floor) params.set('etage', src.floor);
+          if (src.door) params.set('dør', src.door);
+          const probeRes = await fetchDawa(
+            `${DAWA_BASE_URL}/adresser?${params.toString()}`,
+            { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
+            { caller: 'ejendomme-by-owner.vp-adresse-search' }
+          );
+          if (probeRes.ok) {
+            const arr = (await probeRes.json()) as Array<{
+              id?: string;
+              etage?: string;
+              dør?: string;
+            }>;
+            // Foretræk eksakt match på etage+dør hvis flere hits
+            const exact = arr.find(
+              (a) =>
+                (a.etage ?? '').toLowerCase() === (src.floor ?? '').toLowerCase() &&
+                (a.dør ?? '').toLowerCase() === (src.door ?? '').toLowerCase()
+            );
+            freshDawaId = exact?.id ?? arr?.[0]?.id ?? null;
+          }
+        } else {
+          // Ikke-ejerlejlighed: adgangsadresse-search som før
+          const probeRes = await fetchDawa(
+            `${DAWA_BASE_URL}/adgangsadresser?vejnavn=${encodeURIComponent(src.roadName)}&husnr=${encodeURIComponent(src.houseNumber)}&postnr=${encodeURIComponent(src.zipcode)}&struktur=mini&per_side=1`,
+            { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
+            { caller: 'ejendomme-by-owner.vp-fresh-dawa-id' }
+          );
+          if (probeRes.ok) {
+            const arr = (await probeRes.json()) as Array<{ id?: string }>;
+            freshDawaId = arr?.[0]?.id ?? null;
+          }
         }
       } catch {
         // Lad freshDawaId være null

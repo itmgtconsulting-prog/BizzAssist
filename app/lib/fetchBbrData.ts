@@ -497,6 +497,7 @@ async function fetchBFENummer(dawaId: string): Promise<{
         adgangsadresse?: {
           id?: string;
           jordstykke?: { ejerlav?: { kode?: number }; matrikelnr?: string };
+          kommune?: { kode?: string };
         };
         adressebetegnelse?: string;
       };
@@ -507,6 +508,12 @@ async function fetchBFENummer(dawaId: string): Promise<{
       adresseTekst = adr?.adressebetegnelse ?? null;
       etage = adr?.etage ?? null;
       doer = adr?.dør ?? null;
+      // BIZZ: Sæt adgKommunekode også her — uden denne springer cross-kommune-
+      // validering over når property kun har et adresse-id (med etage/dør) i
+      // stedet for et adgangsadresse-id. Det førte til at Vurderingsportalen-
+      // hits fra andre kommuner blev accepteret som ejerlejligheds-BFE
+      // (f.eks. Søbyvej 11 i Hvidovre fik BFE 4050546 fra Skive).
+      adgKommunekode = adr?.adgangsadresse?.kommune?.kode ?? null;
     }
 
     if (!ejerlavKode || !matrikelnr) {

@@ -1210,7 +1210,21 @@ export default function EjendomDetaljeClient({
             ...(dawaAdresse.dør ? { sidedoer: dawaAdresse.dør } : {}),
           });
           const fallbackRes = await fetch(`/api/tinglysning?${params.toString()}`, { signal });
-          return fallbackRes.ok ? fallbackRes.json() : null;
+          if (fallbackRes.ok) return fallbackRes.json();
+
+          // BIZZ-527: Tertiær fallback — landsejerlav + matrikel fra DAWA jordstykke
+          if (
+            fallbackRes.status === 404 &&
+            dawaJordstykke?.ejerlav?.kode &&
+            dawaJordstykke?.matrikelnr
+          ) {
+            const matParams = new URLSearchParams({
+              landsejerlavid: String(dawaJordstykke.ejerlav.kode),
+              matrikelnr: dawaJordstykke.matrikelnr,
+            });
+            const matRes = await fetch(`/api/tinglysning?${matParams.toString()}`, { signal });
+            return matRes.ok ? matRes.json() : null;
+          }
         }
         return null;
       })

@@ -33,11 +33,37 @@ export async function GET() {
     return NextResponse.json(result);
   }
 
-  // Test minimal BBR query
+  // Test FULL BYGNING_QUERY (same as app) with new BIZZ-487 fields
   const now = new Date().toISOString();
   const query = `{
-    BBR_Bygning(first: 1, virkningstid: "${now}", where: { husnummer: { eq: "0a3f507c-b879-32b8-e044-0003ba298018" } }) {
-      nodes { id_lokalId }
+    BBR_Bygning(first: 100, virkningstid: "${now}", where: { husnummer: { eq: "0a3f507c-b879-32b8-e044-0003ba298018" } }) {
+      nodes {
+        id_lokalId
+        byg026Opfoerelsesaar
+        byg027OmTilbygningsaar
+        byg038SamletBygningsareal
+        byg039BygningensSamledeBoligAreal
+        byg040BygningensSamledeErhvervsAreal
+        byg041BebyggetAreal
+        byg024AntalLejlighederMedKoekken
+        byg025AntalLejlighederUdenKoekken
+        byg054AntalEtager
+        byg033Tagdaekningsmateriale
+        byg032YdervaeggensMateriale
+        byg056Varmeinstallation
+        byg057Opvarmningsmiddel
+        byg058SupplerendeVarme
+        byg030Vandforsyning
+        byg031Afloebsforhold
+        byg021BygningensAnvendelse
+        byg070Fredning
+        byg071BevaringsvaerdighedReference
+        byg077KaelderAreal
+        byg078TagetageAreal
+        byg094Revisionsdato
+        status
+        husnummer
+      }
     }
   }`;
 

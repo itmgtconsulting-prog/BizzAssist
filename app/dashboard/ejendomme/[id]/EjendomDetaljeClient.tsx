@@ -2102,6 +2102,13 @@ export default function EjendomDetaljeClient({
                     {lang === 'da' ? 'Ejerlejlighed' : 'Condominium'}
                   </span>
                 )}
+                {/* BIZZ-550: Juridisk kategori (VUR) som primær ejendomstype-badge */}
+                {vurdering?.juridiskKategori && (
+                  <span className="flex items-center gap-1 px-2.5 py-0.5 bg-blue-500/15 border border-blue-500/30 rounded-full text-blue-300 text-xs font-medium flex-shrink-0">
+                    <Home size={11} />
+                    {vurdering.juridiskKategori}
+                  </span>
+                )}
                 {/* BIZZ-457: Benyttelse (VUR) + byggeår (BBR) — "Værksted (1955)" */}
                 {(() => {
                   const nyesteByg = bbrData?.bbr?.reduce<number | null>((latest, b) => {
@@ -2116,7 +2123,6 @@ export default function EjendomDetaljeClient({
                   if (!label) return null;
                   return (
                     <span className="flex items-center gap-1 px-2.5 py-0.5 bg-emerald-500/15 border border-emerald-500/30 rounded-full text-emerald-300 text-xs font-medium flex-shrink-0">
-                      <Home size={11} />
                       {label}
                     </span>
                   );

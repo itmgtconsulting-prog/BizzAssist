@@ -6904,7 +6904,12 @@ function RegnskabstalTable({ years, lang, regnskaber = [] }: RegnskabstalTablePr
   );
   /** Balance og Nøgletal sammenklappet som default — Resultatopgørelse åben */
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(
-    () => new Set([da ? 'Balance' : 'Balance Sheet', da ? 'Nøgletal' : 'Key Ratios'])
+    () =>
+      new Set([
+        da ? 'Balance' : 'Balance Sheet',
+        da ? 'Pengestrømme' : 'Cash Flow',
+        da ? 'Nøgletal' : 'Key Ratios',
+      ])
   );
 
   /** Viste år — 5 default, alle hvis udfoldet */
@@ -7183,8 +7188,50 @@ function RegnskabstalTable({ years, lang, regnskaber = [] }: RegnskabstalTablePr
     },
   ];
 
+  /**
+   * BIZZ-517a: Pengestrømsopgørelse-rækker.
+   * Skjules på sektionsniveau hvis ingen af de viste år har pengestrøm-data
+   * (typisk fordi små regnskabsklasse B-selskaber ikke aflægger en).
+   */
+  const pengestromRows: FinRow[] = [
+    {
+      id: 'p-drift',
+      label: da ? 'Drift' : 'Operating',
+      getValue: (y) => y.pengestroemme?.fraDrift ?? null,
+      bold: true,
+    },
+    {
+      id: 'p-invest',
+      label: da ? 'Investering' : 'Investing',
+      getValue: (y) => y.pengestroemme?.fraInvestering ?? null,
+    },
+    {
+      id: 'p-finans',
+      label: da ? 'Finansiering' : 'Financing',
+      getValue: (y) => y.pengestroemme?.fraFinansiering ?? null,
+    },
+    {
+      id: 'p-forskyd',
+      label: da ? 'Årets forskydning' : 'Net Change',
+      getValue: (y) => y.pengestroemme?.aaretsForskydning ?? null,
+      bold: true,
+    },
+    {
+      id: 'p-primo',
+      label: da ? 'Likvider primo' : 'Cash Beginning of Period',
+      getValue: (y) => y.pengestroemme?.likviderPrimo ?? null,
+    },
+    {
+      id: 'p-ultimo',
+      label: da ? 'Likvider ultimo' : 'Cash End of Period',
+      getValue: (y) => y.pengestroemme?.likviderUltimo ?? null,
+    },
+  ];
+  /** True hvis mindst ét år har pengestrøm-data — skjuler sektion ellers */
+  const harPengestrom = visteAar.some((y) => y.pengestroemme != null);
+
   /** Alle rækker samlet — bruges til chart-opslag */
-  const alleRows = [...resultatRows, ...balanceRows, ...noegletalsRows];
+  const alleRows = [...resultatRows, ...balanceRows, ...noegletalsRows, ...pengestromRows];
 
   /** Bygger chart data — kun år hvor mindst én valgt række har data */
   const chartData = [...years]
@@ -7390,6 +7437,8 @@ function RegnskabstalTable({ years, lang, regnskaber = [] }: RegnskabstalTablePr
 
       {renderSection(da ? 'Resultatopgørelse' : 'Income Statement', resultatRows)}
       {renderSection(da ? 'Balance' : 'Balance Sheet', balanceRows)}
+      {/* BIZZ-517a: Pengestrømsopgørelse — vises kun hvis selskabet har aflagt en */}
+      {harPengestrom && renderSection(da ? 'Pengestrømme' : 'Cash Flow', pengestromRows)}
       {renderSection(da ? 'Nøgletal' : 'Key Ratios', noegletalsRows)}
 
       {/* Graf — vises nederst når mindst én række er valgt */}

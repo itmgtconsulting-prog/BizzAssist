@@ -49,6 +49,28 @@ export interface Balance {
   investeringsejendomme: number | null;
 }
 
+/**
+ * Pengestrømsopgørelse — cash flow statement (BIZZ-517a).
+ *
+ * Hentes via fsa: + ifrs-full: tags. Alle felter er nullable da mange
+ * små selskaber ikke aflægger pengestrømsopgørelse (kun krævet for
+ * regnskabsklasse C+).
+ */
+export interface Pengestroemme {
+  /** Pengestrømme fra driftsaktivitet (operating activities) */
+  fraDrift: number | null;
+  /** Pengestrømme fra investeringsaktivitet (investing activities) — typisk negativ */
+  fraInvestering: number | null;
+  /** Pengestrømme fra finansieringsaktivitet (financing activities) */
+  fraFinansiering: number | null;
+  /** Årets samlede ændring i likvider */
+  aaretsForskydning: number | null;
+  /** Likvider primo (start af perioden) */
+  likviderPrimo: number | null;
+  /** Likvider ultimo (slut af perioden) */
+  likviderUltimo: number | null;
+}
+
 /** Beregnede nøgletal — calculated key ratios */
 export interface Noegletal {
   // ── Rentabilitet ──
@@ -86,6 +108,8 @@ export interface RegnskabsAar {
   balance: Balance;
   /** Beregnede nøgletal */
   noegletal: Noegletal;
+  /** BIZZ-517a: Pengestrømsopgørelse (null hvis selskabet ikke aflægger en) */
+  pengestroemme: Pengestroemme | null;
 }
 
 /** Response shape */
@@ -156,6 +180,52 @@ const BALANCE_TAGS: Record<keyof Balance, string[]> = {
 /** Nøgletal tags (direkte fra XBRL, ikke beregnede) */
 const NOEGLETAL_TAGS: Partial<Record<keyof Noegletal, string[]>> = {
   antalAnsatte: ['AverageNumberOfEmployees', 'NumberOfEmployees'],
+};
+
+/**
+ * BIZZ-517a: Pengestrøm-tags (fsa + IFRS-taksonomi).
+ *
+ * fsa-tags følger Danish FSA taxonomy fra Erhvervsstyrelsen — bruges af
+ * små/mellemstore danske selskaber. ifrs-full-tags bruges af børsnoterede
+ * og store selskaber der aflægger regnskab efter IFRS.
+ *
+ * Alle tags er duration-context (regnskabsperioden), undtagen
+ * likviderPrimo + likviderUltimo som er instant-context (pr. dato).
+ */
+const PENGESTROM_TAGS: Record<keyof Pengestroemme, string[]> = {
+  fraDrift: [
+    'CashFlowsFromUsedInOperatingActivities',
+    'CashFlowsFromOperatingActivities',
+    'CashFlowFromOperatingActivities',
+    'NetCashFlowsFromUsedInOperatingActivities',
+  ],
+  fraInvestering: [
+    'CashFlowsFromUsedInInvestingActivities',
+    'CashFlowsFromInvestingActivities',
+    'CashFlowFromInvestingActivities',
+    'NetCashFlowsFromUsedInInvestingActivities',
+  ],
+  fraFinansiering: [
+    'CashFlowsFromUsedInFinancingActivities',
+    'CashFlowsFromFinancingActivities',
+    'CashFlowFromFinancingActivities',
+    'NetCashFlowsFromUsedInFinancingActivities',
+  ],
+  aaretsForskydning: [
+    'IncreaseDecreaseInCashAndCashEquivalents',
+    'IncreaseDecreaseInCashAndCashEquivalentsBeforeEffectOfExchangeRateChanges',
+    'CashFlowForPeriodIncreaseDecrease',
+  ],
+  likviderPrimo: [
+    'CashAndCashEquivalentsAtBeginningOfPeriod',
+    'CashAndCashEquivalentsBeginningOfPeriod',
+  ],
+  likviderUltimo: [
+    'CashAndCashEquivalentsAtEndOfPeriod',
+    'CashAndCashEquivalentsEndOfPeriod',
+    // Fallback til Balance-tag hvis pengestrøm-specifikt ultimo mangler
+    'CashAndCashEquivalents',
+  ],
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -351,6 +421,22 @@ function parseXbrl(xml: string, periodeStart: string, periodeSlut: string): Regn
     investeringsejendomme: extractValue(xml, BALANCE_TAGS.investeringsejendomme, instCtx),
   };
 
+  // BIZZ-517a: Pengestrømsopgørelse.
+  // fraDrift/Investering/Finansiering + aaretsForskydning er duration-context.
+  // likviderPrimo/Ultimo er instant-context (start/slut af perioden).
+  const pengestroemmeRaw: Pengestroemme = {
+    fraDrift: extractValue(xml, PENGESTROM_TAGS.fraDrift, durCtx),
+    fraInvestering: extractValue(xml, PENGESTROM_TAGS.fraInvestering, durCtx),
+    fraFinansiering: extractValue(xml, PENGESTROM_TAGS.fraFinansiering, durCtx),
+    aaretsForskydning: extractValue(xml, PENGESTROM_TAGS.aaretsForskydning, durCtx),
+    likviderPrimo: extractValue(xml, PENGESTROM_TAGS.likviderPrimo, instCtx),
+    likviderUltimo: extractValue(xml, PENGESTROM_TAGS.likviderUltimo, instCtx),
+  };
+  // Hvis ALLE pengestrøm-felter er null, har selskabet ikke aflagt en pengestrømsopgørelse
+  // (typisk små regnskabsklasse B-selskaber). Returnér null så UI kan skjule sektionen.
+  const harPengestroem = Object.values(pengestroemmeRaw).some((v) => v != null);
+  const pengestroemme: Pengestroemme | null = harPengestroem ? pengestroemmeRaw : null;
+
   // Nøgletal — direkte fra XBRL + beregnede
   const antalAnsatte = extractValue(xml, NOEGLETAL_TAGS.antalAnsatte ?? [], anyCtx);
 
@@ -449,7 +535,7 @@ function parseXbrl(xml: string, periodeStart: string, periodeSlut: string): Regn
     antalAnsatte,
   };
 
-  return { aar, periodeStart, periodeSlut, resultat, balance, noegletal };
+  return { aar, periodeStart, periodeSlut, resultat, balance, noegletal, pengestroemme };
 }
 
 // ─── Route Handler ────────────────────────────────────────────────────────────
@@ -502,6 +588,8 @@ function normaliserTilTDKK(year: RegnskabsAar): RegnskabsAar {
     ...Object.values(year.resultat),
     ...Object.values(year.balance),
     year.noegletal.nettoGaeld,
+    // BIZZ-517a: Pengestrøm-felter er også monetære og skal med i T DKK-detektion
+    ...(year.pengestroemme ? Object.values(year.pengestroemme) : []),
   ].filter((v): v is number => typeof v === 'number');
   if (monetaereFelter.length === 0) return year;
 
@@ -531,6 +619,12 @@ function normaliserTilTDKK(year: RegnskabsAar): RegnskabsAar {
       // Kun nettoGaeld er et monetært tal — resten er procenter/forhold
       nettoGaeld: divider(year.noegletal.nettoGaeld),
     },
+    // BIZZ-517a: Pengestrøm-felter er alle monetære — divider med 1.000 hvis fuld DKK
+    pengestroemme: year.pengestroemme
+      ? (divideAll(
+          year.pengestroemme as unknown as Record<string, number | null>
+        ) as unknown as Pengestroemme)
+      : null,
   };
 }
 
@@ -616,7 +710,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     // Seneste offentliggørelsestidspunkt — bruges som cache-nøgle
     // BIZZ-449: Append parser version to timestamp so cache is invalidated when
     // the XBRL parser logic changes (e.g. decimals attribute handling fix).
-    const PARSER_VERSION = 'v2';
+    // v3: BIZZ-517a — tilføjet pengestrømme-felt (parser-output ændret)
+    const PARSER_VERSION = 'v3';
     const latestTimestamp =
       (regnskabData.regnskaber[0]?.offentliggjort ?? '') + `_${PARSER_VERSION}`;
 

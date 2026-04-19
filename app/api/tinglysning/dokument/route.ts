@@ -917,11 +917,14 @@ export async function GET(req: NextRequest) {
     // sender dem. Fejlede bilag springes over (logges), så ét ødelagt bilag
     // ikke blokkerer hele flettet.
     const bilagParam = req.nextUrl.searchParams.get('bilag');
+    // BIZZ-567 v3: Case-INSENSITIVE UUID-regex. Bilag-only-pathen brugte /i
+    // men uuid-pathen var strict lowercase — uppercase UUIDs blev filtreret
+    // ud → 0 bilag → kun servitut downloadet uden bilag.
     const bilagUuids = bilagParam
       ? bilagParam
           .split(',')
           .map((s) => s.trim())
-          .filter((s) => /^[0-9a-f-]{36}$/.test(s))
+          .filter((s) => /^[0-9a-f-]{36}$/i.test(s))
       : [];
 
     if (bilagUuids.length === 0) {

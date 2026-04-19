@@ -7288,6 +7288,8 @@ function TinglysningTab({
   const [showAllServitutter, setShowAllServitutter] = useState(false);
   /** True when the servitut fetch was aborted by the 30 s timeout — used to show a timeout warning in the UI. */
   const [servituterTimedOut, setServituterTimedOut] = useState(false);
+  /** BIZZ-548: True when the servitut fetch failed (non-timeout) — shows error state with retry */
+  const [servituterError, setServituterError] = useState(false);
   const [expandedAdkomst, setExpandedAdkomst] = useState<Set<number>>(new Set());
   const [expandedHaeftelser, setExpandedHaeftelser] = useState<Set<number>>(new Set());
   const [expandedServitutter, setExpandedServitutter] = useState<Set<number>>(new Set());
@@ -7319,6 +7321,7 @@ function TinglysningTab({
     setEjereLoading(true);
     setHaeftelserLoading(true);
     setServituterLoading(true);
+    setServituterError(false);
     setFejl(null);
     setEjere([]);
     setHaeftelser([]);
@@ -7393,7 +7396,13 @@ function TinglysningTab({
           // need enough headroom for per-document enrichment even with
           // concurrency=10 and cap=30.
           fetch(servituterUrl, { signal: AbortSignal.any([signal, AbortSignal.timeout(45000)]) })
-            .then((r) => (r.ok ? r.json() : null))
+            .then((r) => {
+              if (!r.ok) {
+                setServituterError(true);
+                return null;
+              }
+              return r.json();
+            })
             .then((res) => {
               if (res) {
                 setServitutter(res.servitutter ?? []);
@@ -7403,10 +7412,11 @@ function TinglysningTab({
             })
             .catch((err) => {
               if (err.name === 'AbortError') {
-                // Timed out (30 s) — surface a warning so the user knows the list is incomplete.
+                // Timed out (45 s) — surface a warning so the user knows the list is incomplete.
                 setServituterTimedOut(true);
               } else {
                 logger.error('[tinglysning] Servitut fetch fejlede:', err);
+                setServituterError(true);
               }
               setServituterLoading(false);
             }),
@@ -8334,6 +8344,40 @@ function TinglysningTab({
             </span>
           </div>
         )}
+        {/* BIZZ-548: Error state with retry button */}
+        {servituterError &&
+          !servituterLoading &&
+          servitutter.length === 0 &&
+          !servituterTimedOut && (
+            <div className="mx-4 my-3 flex items-start gap-2 rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2">
+              <span className="mt-0.5 text-red-400 text-sm">✕</span>
+              <span className="text-red-300 text-sm flex-1">
+                {da
+                  ? 'Servitutter kunne ikke hentes. Tjek forbindelsen og prøv igen.'
+                  : 'Easements could not be loaded. Check your connection and try again.'}
+              </span>
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                className="text-xs text-red-300 border border-red-500/30 px-2 py-0.5 rounded hover:bg-red-500/20 transition-colors"
+              >
+                {da ? 'Prøv igen' : 'Retry'}
+              </button>
+            </div>
+          )}
+        {/* BIZZ-548: Empty state — no servitutter found (not loading, no error, no timeout) */}
+        {!servituterLoading &&
+          !servituterError &&
+          !servituterTimedOut &&
+          servitutter.length === 0 && (
+            <div className="mx-4 my-3 flex items-center gap-2 rounded-md border border-slate-700/30 bg-slate-800/40 px-3 py-2">
+              <span className="text-slate-500 text-sm">
+                {da
+                  ? 'Ingen servitutter fundet for denne ejendom.'
+                  : 'No easements found for this property.'}
+              </span>
+            </div>
+          )}
         {servitutter.length > 0 && (
           <>
             <div className="px-4 py-1.5 bg-teal-500/5 border-b border-slate-700/20 flex items-center gap-2">

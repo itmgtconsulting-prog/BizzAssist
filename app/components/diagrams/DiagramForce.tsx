@@ -33,12 +33,9 @@ import type { PersonPublicData } from '@/app/api/cvr-public/person/route';
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const NODE_W = 320;
-/**
- * BIZZ-558: Overflow-bokse er bredere end almindelige noder så de lange
- * adresselinjer (fx "Niels Steensens Vej 7, 2820 Gentofte") kan være inden
- * for boks-bredden i stedet for at flyde ud i naboejendoms-spalten.
- */
-const NODE_W_OVERFLOW = 400;
+// BIZZ-558 + BIZZ-563: NODE_W_OVERFLOW (400) blev fjernet da overflow-bokse
+// nu er kompakte (count-only) og bruger NODE_W_PROPERTY (260) i stedet.
+// Ingen adresse-preview inline → fuld liste i modal (BIZZ-479).
 /** Narrower width for property nodes — tighter box around address text */
 const NODE_W_PROPERTY = 260;
 const NODE_H = 64;
@@ -59,13 +56,20 @@ function getNodeH(node: DiagramNode, expandedOverflowIds?: Set<string>): number 
   if (node.type === 'person') return NODE_H_PERSON;
   if (node.type === 'property') return NODE_H_PROPERTY;
   // Overflow list node
+  // BIZZ-563: Kollapseret overflow-boks viser KUN count + "Vis alle"-knap nu
+  // (ingen address-preview). Det reducerer højde fra ~130px → ~46px og
+  // eliminerer overlap-risici med sibling-noder. Fuld liste vises i modal
+  // (BIZZ-479-mønster). isExpanded bevares for evt. fremtidige inline-cases
+  // men er aldrig sand i normal brug pga. modal-tilgangen.
   if (node.overflowItems) {
     const isExpanded = expandedOverflowIds?.has(node.id) ?? false;
-    const showCount = isExpanded
-      ? node.overflowItems.length
-      : Math.min(node.overflowItems.length, OVERFLOW_INITIAL_SHOW);
-    const hasToggle = node.overflowItems.length > OVERFLOW_INITIAL_SHOW;
-    return 30 + showCount * 16 + (hasToggle ? 20 : 0);
+    if (!isExpanded) {
+      // Compact: header (24px) + Vis alle-knap (22px)
+      return 46;
+    }
+    // Expanded (legacy code path — pt. ikke aktivt brugt)
+    const showCount = node.overflowItems.length;
+    return 30 + showCount * 16 + 20;
   }
   const personCount = Math.min(node.noeglePersoner?.length ?? 0, 5);
   if (personCount > 0) {
@@ -1784,9 +1788,11 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
         }
 
         const rx = isPerson ? h / 2 : isProperty ? 16 : 12;
-        // BIZZ-558: Overflow-noder bruger NODE_W_OVERFLOW (bredere) så
-        // adresseindhold passer ind. Property-noder er smallere; resten bruger NODE_W.
-        const w = node.overflowItems ? NODE_W_OVERFLOW : isProperty ? NODE_W_PROPERTY : NODE_W;
+        // BIZZ-563: Overflow-noder bruger nu NODE_W_PROPERTY (260px) i kollapseret
+        // tilstand — kun count + "Vis alle" vises, ingen adresse-liste. Den bredere
+        // NODE_W_OVERFLOW (400) var overkill for kompakt indhold og bidrag til
+        // overlap med sibling-noder. Modal viser fuld liste (BIZZ-479).
+        const w = node.overflowItems ? NODE_W_PROPERTY : isProperty ? NODE_W_PROPERTY : NODE_W;
         const x = pos.x - w / 2;
         // Overflow-noder: forankr fra toppen (brug kollapseret højde) så de udvider nedad
         const collapsedH = node.overflowItems
@@ -1796,13 +1802,12 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
           : h;
         const y = pos.y - collapsedH / 2;
 
-        // ── Overflow list node (expandable list of companies) ──
+        // ── Overflow list node — BIZZ-563: kompakt count-only visning ──
+        // Tidligere viste vi de første 5 adresser inline, men det gjorde boksen
+        // ~130px høj og overlappede sibling-noder selv med dedikeret sub-row
+        // (BIZZ-558). Nu viser vi kun antal + "Vis alle"-knap. Fuld liste i
+        // modal (BIZZ-479).
         if (node.overflowItems) {
-          const isOvExpanded = expandedOverflow.has(node.id);
-          const items = isOvExpanded
-            ? node.overflowItems
-            : node.overflowItems.slice(0, OVERFLOW_INITIAL_SHOW);
-
           return (
             <g
               key={node.id}
@@ -1826,35 +1831,17 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
                 strokeDasharray="4 3"
               />
               <text
-                x={x + 14}
+                x={x + w / 2}
                 y={y + 18}
-                fill="rgba(165,180,200,0.9)"
-                fontSize="10"
-                fontWeight="500"
+                textAnchor="middle"
+                fill="rgba(165,180,200,0.95)"
+                fontSize="11"
+                fontWeight="600"
                 className="pointer-events-none"
               >
                 {node.label}
               </text>
-              {items.map((item, idx) => (
-                <text
-                  key={idx}
-                  x={x + 18}
-                  y={y + 34 + idx * 16}
-                  fill="rgba(96,165,250,0.8)"
-                  fontSize="9"
-                  className="cursor-pointer"
-                  style={{ cursor: 'pointer', pointerEvents: 'auto' }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (item.link) window.location.href = item.link;
-                  }}
-                >
-                  {/* BIZZ-558: Truncate-grænse hævet 42→58 så længere adresser
-                      passer ind i den bredere overflow-boks (NODE_W_OVERFLOW=400) */}
-                  {'•'} {item.label.length > 58 ? item.label.slice(0, 58) + '…' : item.label}
-                </text>
-              ))}
-              {node.overflowItems.length > OVERFLOW_INITIAL_SHOW && (
+              {node.overflowItems.length > 0 && (
                 <g
                   className="cursor-pointer"
                   style={{ pointerEvents: 'auto' }}

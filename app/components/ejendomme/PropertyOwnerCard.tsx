@@ -71,6 +71,22 @@ interface PropertyOwnerCardProps {
   ejendom: EjendomSummary;
   showOwner?: boolean;
   lang: 'da' | 'en';
+  /**
+   * BIZZ-569: Pre-enriched data fra parent (typisk via batch-enrich endpoint).
+   * Hvis sat, skipper kortet sin egen per-card fetch — eliminerer N round-trips
+   * når mange kort renderes samtidigt på fx virksomhedssidens Ejendomme-tab.
+   */
+  preEnriched?: {
+    areal: number | null;
+    vurdering: number | null;
+    vurderingsaar: number | null;
+    ejerNavn: string | null;
+    koebesum: number | null;
+    koebsdato: string | null;
+    boligAreal: number | null;
+    erhvervsAreal: number | null;
+    matrikelAreal: number | null;
+  } | null;
 }
 
 /**
@@ -81,6 +97,7 @@ export default function PropertyOwnerCard({
   ejendom,
   showOwner = false,
   lang,
+  preEnriched,
 }: PropertyOwnerCardProps) {
   const { label: typeLabel, color: typeColor } = mapEjendomstype(ejendom.ejendomstype);
   const da = lang === 'da';
@@ -98,23 +115,33 @@ export default function PropertyOwnerCard({
     erhvervsAreal: number | null;
     matrikelAreal: number | null;
   } | null>(
-    ejendom.areal != null
-      ? {
-          areal: ejendom.areal,
-          vurdering: ejendom.vurdering ?? null,
-          vurderingsaar: ejendom.vurderingsaar ?? null,
-          ejerNavn: ejendom.ejerNavn ?? null,
-          koebesum: ejendom.koebesum ?? null,
-          koebsdato: ejendom.koebsdato ?? null,
-          boligAreal: ejendom.boligAreal ?? null,
-          erhvervsAreal: ejendom.erhvervsAreal ?? null,
-          matrikelAreal: ejendom.matrikelAreal ?? null,
-        }
-      : null
+    // BIZZ-569: Brug preEnriched fra parent hvis sat — undgår per-card fetch.
+    preEnriched
+      ? preEnriched
+      : ejendom.areal != null
+        ? {
+            areal: ejendom.areal,
+            vurdering: ejendom.vurdering ?? null,
+            vurderingsaar: ejendom.vurderingsaar ?? null,
+            ejerNavn: ejendom.ejerNavn ?? null,
+            koebesum: ejendom.koebesum ?? null,
+            koebsdato: ejendom.koebsdato ?? null,
+            boligAreal: ejendom.boligAreal ?? null,
+            erhvervsAreal: ejendom.erhvervsAreal ?? null,
+            matrikelAreal: ejendom.matrikelAreal ?? null,
+          }
+        : null
   );
+
+  // Sync preEnriched-prop til state hvis den dukker op senere (parent kan
+  // levere data asynkront efter første render).
+  useEffect(() => {
+    if (preEnriched && !enriched) setEnriched(preEnriched);
+  }, [preEnriched, enriched]);
 
   useEffect(() => {
     if (enriched) return; // Already have data
+    if (preEnriched !== undefined) return; // Parent håndterer enrichment
     let ignore = false;
     // BIZZ-569: Send dawaId med så enrich-endpoint kan slå BBR-areal op
     // direkte (uden dawaId returneres null for bolig/erhverv m²).
@@ -130,7 +157,7 @@ export default function PropertyOwnerCard({
     return () => {
       ignore = true;
     };
-  }, [ejendom.bfeNummer, ejendom.dawaId, enriched]);
+  }, [ejendom.bfeNummer, ejendom.dawaId, enriched, preEnriched]);
 
   const detailHref = ejendom.dawaId ? `/dashboard/ejendomme/${ejendom.dawaId}` : null;
   /* BIZZ-551: Append etage + dør for ejerlejligheder (e.g. "Vej 10A, 3. tv") */

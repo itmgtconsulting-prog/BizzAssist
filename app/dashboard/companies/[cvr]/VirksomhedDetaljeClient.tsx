@@ -507,6 +507,28 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
   const [ejendommeLoading, setEjendommeLoading] = useState(false);
   const [ejendommeLoadingMore, setEjendommeLoadingMore] = useState(false);
   const [ejendommeFetchComplete, setEjendommeFetchComplete] = useState(false);
+
+  /**
+   * BIZZ-569: Pre-enriched data per BFE fra batch-endpoint.
+   * Map<bfeNummer, EnrichedRow>. Bruges af PropertyOwnerCard via preEnriched-prop
+   * for at undgå N parallelle per-card-fetches (hver med Vercel cold-start).
+   */
+  const [preEnrichedByBfe, setPreEnrichedByBfe] = useState<
+    Map<
+      number,
+      {
+        areal: number | null;
+        vurdering: number | null;
+        vurderingsaar: number | null;
+        ejerNavn: string | null;
+        koebesum: number | null;
+        koebsdato: string | null;
+        boligAreal: number | null;
+        erhvervsAreal: number | null;
+        matrikelAreal: number | null;
+      }
+    >
+  >(new Map());
   const [ejendommeManglerNoegle, setEjendommeManglerNoegle] = useState(false);
   const [ejendommeManglerAdgang, setEjendommeManglerAdgang] = useState(false);
   const [ejendommeTotalBfe, setEjendommeTotalBfe] = useState(0);
@@ -1163,6 +1185,43 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
     },
     []
   );
+
+  /**
+   * BIZZ-569: Batch-enrich alle BFE'er i ÉT endpoint-kald i stedet for ét
+   * per kort. Sparer N × Vercel cold-start og giver dramatisk hurtigere
+   * card-rendering på sider med mange ejendomme.
+   */
+  useEffect(() => {
+    if (aktivTab !== 'properties') return;
+    if (ejendommeData.length === 0) return;
+
+    // Find BFE'er der mangler enriched data
+    const missing = ejendommeData.filter((e) => !preEnrichedByBfe.has(e.bfeNummer));
+    if (missing.length === 0) return;
+
+    const controller = new AbortController();
+    const bfes = missing.map((e) => e.bfeNummer).join(',');
+    const dawaIds = missing.map((e) => e.dawaId ?? '').join(',');
+
+    fetch(`/api/ejendomme-by-owner/enrich-batch?bfes=${bfes}&dawaIds=${dawaIds}`, {
+      signal: controller.signal,
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!data || controller.signal.aborted) return;
+        setPreEnrichedByBfe((prev) => {
+          const next = new Map(prev);
+          for (const [bfe, row] of Object.entries(data)) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            next.set(parseInt(bfe, 10), row as any);
+          }
+          return next;
+        });
+      })
+      .catch(() => {});
+
+    return () => controller.abort();
+  }, [aktivTab, ejendommeData, preEnrichedByBfe]);
 
   /**
    * Trigger progressiv ejendomshentning når properties-tab aktiveres eller CVR-sæt ændres.
@@ -2537,6 +2596,9 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                                                 ejendom={ej}
                                                 showOwner={false}
                                                 lang={lang}
+                                                preEnriched={
+                                                  preEnrichedByBfe.get(ej.bfeNummer) ?? null
+                                                }
                                               />
                                             ))}
                                           </div>
@@ -2571,6 +2633,9 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                                                     ejendom={ej}
                                                     showOwner={false}
                                                     lang={lang}
+                                                    preEnriched={
+                                                      preEnrichedByBfe.get(ej.bfeNummer) ?? null
+                                                    }
                                                   />
                                                 ))}
                                               </div>
@@ -2654,6 +2719,9 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                                                     ejendom={ej}
                                                     showOwner={false}
                                                     lang={lang}
+                                                    preEnriched={
+                                                      preEnrichedByBfe.get(ej.bfeNummer) ?? null
+                                                    }
                                                   />
                                                 ))}
                                               </div>

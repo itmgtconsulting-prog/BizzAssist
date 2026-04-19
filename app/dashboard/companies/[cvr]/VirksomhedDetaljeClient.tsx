@@ -2516,25 +2516,33 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                                       }
                                       groups.get(key)!.push(ej);
                                     }
+                                    // BIZZ-569: Saml ALLE single-properties (ikke-kompleks)
+                                    // i ÉN delt grid så de flow'er horisontalt på desktop.
+                                    // Tidligere fik hver enkelt sit eget grid-wrapper hvilket
+                                    // tvang dem til at stack vertikalt selv på brede skærme.
+                                    // Bumpet bredde til lg:3 og xl:4 kolonner per spec.
+                                    const singleEjendomme = order
+                                      .filter((k) => groups.get(k)!.length === 1)
+                                      .map((k) => groups.get(k)![0]);
+                                    const komplekser = order.filter(
+                                      (k) => groups.get(k)!.length > 1
+                                    );
                                     return (
-                                      <div className="space-y-3">
-                                        {order.map((key) => {
+                                      <div className="space-y-4">
+                                        {singleEjendomme.length > 0 && (
+                                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                                            {singleEjendomme.map((ej) => (
+                                              <PropertyOwnerCard
+                                                key={ej.bfeNummer}
+                                                ejendom={ej}
+                                                showOwner={false}
+                                                lang={lang}
+                                              />
+                                            ))}
+                                          </div>
+                                        )}
+                                        {komplekser.map((key) => {
                                           const grp = groups.get(key)!;
-                                          const isKompleks = grp.length > 1;
-                                          if (!isKompleks) {
-                                            return (
-                                              <div
-                                                key={key}
-                                                className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3"
-                                              >
-                                                <PropertyOwnerCard
-                                                  ejendom={grp[0]}
-                                                  showOwner={false}
-                                                  lang={lang}
-                                                />
-                                              </div>
-                                            );
-                                          }
                                           // Kompleks: header + indented grid
                                           return (
                                             <div
@@ -2556,7 +2564,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                                                     : `Complex · ${grp.length} units`}
                                                 </span>
                                               </div>
-                                              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                                              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
                                                 {grp.map((ej) => (
                                                   <PropertyOwnerCard
                                                     key={ej.bfeNummer}

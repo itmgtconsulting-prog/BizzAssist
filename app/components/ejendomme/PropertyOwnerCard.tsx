@@ -186,17 +186,24 @@ export default function PropertyOwnerCard({
                 </div>
               )}
               {/* BIZZ-556: Eksplicit "Vurdering"-label så brugeren ved om tallet er vurdering, købesum eller grundværdi */}
+              {/* BIZZ-569: Foreløbig vurdering fremhæves med GUL tekst-farve så
+                  brugeren straks kan se at det er en ikke-endelig vurdering
+                  (samme amber-tone som "FORELØBIG"-badges andre steder). */}
               {enriched.vurdering && (
                 <div
                   className="flex items-center gap-1.5"
-                  title={da ? 'Ejendomsværdi fra VUR' : 'Property valuation from VUR'}
+                  title={
+                    da
+                      ? 'Foreløbig ejendomsvurdering fra Vurderingsstyrelsen'
+                      : 'Preliminary property valuation'
+                  }
                 >
-                  <TrendingUp size={10} className="text-slate-500" aria-hidden="true" />
-                  <span className="text-slate-300 text-[11px]">
-                    <span className="text-slate-500">{da ? 'Vurd.' : 'Val.'}:</span>{' '}
+                  <TrendingUp size={10} className="text-amber-400" aria-hidden="true" />
+                  <span className="text-amber-300 text-[11px]">
+                    <span className="text-amber-500/80">{da ? 'Vurd.' : 'Val.'}:</span>{' '}
                     {formatDkkShort(enriched.vurdering)} DKK
                     {enriched.vurderingsaar && (
-                      <span className="text-slate-500 ml-0.5">({enriched.vurderingsaar})</span>
+                      <span className="text-amber-500/70 ml-0.5">({enriched.vurderingsaar})</span>
                     )}
                   </span>
                 </div>

@@ -524,6 +524,12 @@ async function _hentVPAdresseForBfe(bfe: number): Promise<DawaBfeAdresse> {
           'zipcode',
           'postDistrict',
           'adgangsAdresseID',
+          // BIZZ-576: Tilføjet adresseID + floor + door så ejerlejligheder
+          // kan vise korrekt etage/dør og linke til den specifikke
+          // lejligheds-side (ikke moderejendommen).
+          'adresseID',
+          'floor',
+          'door',
           'juridiskKategori',
           'municipalityNumber',
         ],
@@ -542,6 +548,9 @@ async function _hentVPAdresseForBfe(bfe: number): Promise<DawaBfeAdresse> {
             zipcode?: string;
             postDistrict?: string;
             adgangsAdresseID?: string;
+            adresseID?: string;
+            floor?: string;
+            door?: string;
             juridiskKategori?: string;
             municipalityNumber?: string;
           };
@@ -556,13 +565,31 @@ async function _hentVPAdresseForBfe(bfe: number): Promise<DawaBfeAdresse> {
         ? `${src.roadName} ${src.houseNumber}`.trim()
         : (src.address.split(',')[0]?.trim() ?? null);
 
-    // BIZZ-521 follow-up: VP's adgangsAdresseID er ofte forældet og
-    // returnerer 404 mod current DAWA — links bliver brudt. Valider mod
-    // DAWA og brug i stedet current adgangsadresse-UUID når muligt.
-    // Hvis opslaget fejler, dropper vi dawaId helt så UI ikke linker til
-    // en død ressource.
+    // BIZZ-576: Foretræk VP's adresseID (hvis tilgængelig) — for
+    // ejerlejligheder peger den på den specifikke lejligheds DAWA-adresse
+    // (med etage/dør) i stedet for moderejendommens adgangsadresse. Det
+    // gør at kort linker til den korrekte lejligheds-detaljeside.
+    // Falder tilbage til adresse-baseret opslag hvis adresseID ikke
+    // valideres via DAWA.
     let freshDawaId: string | null = null;
-    if (src.roadName && src.houseNumber && src.zipcode) {
+    if (src.adresseID) {
+      try {
+        const probeRes = await fetchDawa(
+          `${DAWA_BASE_URL}/adresser/${src.adresseID}?struktur=mini`,
+          { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
+          { caller: 'ejendomme-by-owner.vp-adresse-id' }
+        );
+        if (probeRes.ok) {
+          freshDawaId = src.adresseID;
+        }
+      } catch {
+        // Fall through til adresse-baseret opslag
+      }
+    }
+    // BIZZ-521 follow-up: VP's adgangsAdresseID er ofte forældet og
+    // returnerer 404 mod current DAWA — fallback til adresse-search
+    // når adresseID ikke er valid.
+    if (!freshDawaId && src.roadName && src.houseNumber && src.zipcode) {
       try {
         const probeUrl = `${DAWA_BASE_URL}/adgangsadresser?vejnavn=${encodeURIComponent(src.roadName)}&husnr=${encodeURIComponent(src.houseNumber)}&postnr=${encodeURIComponent(src.zipcode)}&struktur=mini&per_side=1`;
         const probeRes = await fetchDawa(
@@ -589,8 +616,11 @@ async function _hentVPAdresseForBfe(bfe: number): Promise<DawaBfeAdresse> {
       // Kun behold dawaId hvis current DAWA kender den — ellers null så
       // UI falder tilbage til ikke-klikbart kort i stedet for brudt link.
       dawaId: freshDawaId,
-      etage: null,
-      doer: null,
+      // BIZZ-576: Sæt etage/dør fra VP for ejerlejligheder så kortets
+      // adresselinje viser fx "Kaffevej 31, 1. tv" i stedet for kun
+      // "Kaffevej 31" (moderejendommens adresse).
+      etage: src.floor && src.floor.length > 0 ? src.floor : null,
+      doer: src.door && src.door.length > 0 ? src.door : null,
     };
   } catch {
     return empty;

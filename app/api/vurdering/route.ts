@@ -472,6 +472,7 @@ async function fetchVURGraphQL(
  */
 async function fetchUdvidedeData(
   vurId: number,
+  allVurIds: number[],
   token: string
 ): Promise<{
   fordeling: FordelingData[];
@@ -503,8 +504,11 @@ async function fetchUdvidedeData(
         }}`,
         token
       ),
+      // BIZZ-490: Loft henter fra ALLE vurderinger, ikke kun nyeste, da
+      // VUR_Loftansaettelse ofte kun eksisterer på den igangværende vurdering
+      // (ikke foreløbige). Hvis flere findes vælges nyeste af UI-kodet.
       fetchVURGraphQL(
-        `{ VUR_Loftansaettelse(first: 10, where: { fkEjendomsvurderingID: { eq: ${vurId} } }) {
+        `{ VUR_Loftansaettelse(first: 50, where: { fkEjendomsvurderingID: { in: [${allVurIds.join(', ')}] } }) {
           nodes { basisaar grundvaerdi pgf11 }
         }}`,
         token
@@ -793,7 +797,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<VurderingR
     };
 
     // Trin 3: Hent udvidede data for den nyeste vurdering parallelt
-    const udvidede = await fetchUdvidedeData(nyesteNode.id, token);
+    const udvidede = await fetchUdvidedeData(nyesteNode.id, ids, token);
 
     const vurdering = mapNode(nyesteNode);
     const alle = sorted.map(mapNode);

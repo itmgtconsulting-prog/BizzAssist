@@ -1299,6 +1299,23 @@ export async function fetchBbrForAddress(
       for (const e of rawEtager) if (e.id_lokalId) dedupeEta.set(e.id_lokalId, e);
       opgange = [...dedupeOpg.values()].map(normaliseOpgang);
       etager = [...dedupeEta.values()].map(normaliseEtage);
+
+      // BIZZ-487 (re-implemented 2026-04-19): Aggregér kælder/tagetage-areal
+      // pr. bygning fra BBR_Etage. byg077KaelderAreal/byg078TagetageAreal
+      // eksisterer IKKE i skemaet — vi udleder fra eta006BygningensEtagebetegnelse.
+      for (const b of bbr) {
+        const bygEtager = etager.filter(
+          (e) => e.bygningId === b.id && e.status !== '7' && e.samletAreal != null
+        );
+        const kaelderSum = bygEtager
+          .filter((e) => e.etagebetegnelse === 'kl')
+          .reduce((sum, e) => sum + (e.samletAreal ?? 0), 0);
+        const tagetageSum = bygEtager
+          .filter((e) => e.etagebetegnelse === 'tag')
+          .reduce((sum, e) => sum + (e.samletAreal ?? 0), 0);
+        if (kaelderSum > 0) b.kaelder = kaelderSum;
+        if (tagetageSum > 0) b.tagetage = tagetageSum;
+      }
     } catch (err) {
       logger.warn('[fetchBBR] Opgang/Etage fetch fejlede:', err);
       // Ikke-fatal — fortsæt med null

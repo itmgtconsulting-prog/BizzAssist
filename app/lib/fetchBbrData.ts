@@ -653,102 +653,68 @@ async function fetchBFENummer(dawaId: string): Promise<{
 // ─── Date helper ─────────────────────────────────────────────────────────────
 
 /**
- * BIZZ-569 / BIZZ-575: Lightweight BBR-area fetch by BFE-nummer.
+ * BIZZ-569 / BIZZ-575 v2: Lightweight BBR-area fetch by BFE-nummer.
  *
  * Bruges af /api/ejendomme-by-owner/enrich(-batch) til at berige property-
  * cards med bolig/erhverv m² uden at fetche den fulde BBR-payload (enheder,
  * opgange, materialer m.m.).
  *
- * BIZZ-575 fix: tidligere version (fetchBbrAreasByDawaId) summerede
- * bygninger per husnummer på tværs af ALLE BFE'er på adressen — gav 4×
- * oppustede tal på Bibliotekvej 58 hvor flere BFE'er deler husnummer.
- * Nu filtreres bygninger via BBR_Grund(bfeNummer) → grundId →
- * BBR_Bygning(grund) så kun den specifikke ejendoms bygninger summes.
- * Filtrerer også status=7 (nedrevet/slettet) fra.
+ * BIZZ-575 v2 root cause: BBR-API returnerer DUPLIKATER af samme bygning
+ * (identisk id_lokalId optræder N gange — fx 4× for Bibliotekvej 58).
+ * Den oprindelige sum gav derfor 4× det rigtige tal (1.149 × 4 = 4.596).
+ * Schema'en understøtter IKKE bfeNummer-filter på hverken BBR_Grund
+ * eller BBR_Bygning (verificeret via probe), så filtrering må ske via
+ * id_lokalId-deduplikering + status-filter (status=7 = nedrevet).
  *
- * @param bfe     - BFE-nummer (primær filter)
- * @param dawaId  - DAWA adgangsadresse-UUID (fallback når BBR_Grund-opslag fejler)
+ * @param bfe     - BFE-nummer (kun til logging — filtrering sker via dawaId)
+ * @param dawaId  - DAWA adgangsadresse-UUID (husnummer i BBR_Bygning)
  * @returns { boligAreal, erhvervsAreal, samletBygningsareal } — null hvis BBR ikke svarer
  */
 export async function fetchBbrAreasByBfe(
-  bfe: number,
+  _bfe: number,
   dawaId?: string | null
 ): Promise<{
   boligAreal: number | null;
   erhvervsAreal: number | null;
   samletBygningsareal: number | null;
 } | null> {
-  if (!bfe) return null;
+  if (!dawaId) return null;
   const vt = nowDafDateTime();
 
-  // Trin 1: Find grundId via BBR_Grund(bfeNummer = $bfe). Hvis BBR-schema
-  // ikke understøtter bfeNummer-filter, falder vi tilbage til husnummer.
-  let grundIds: string[] = [];
-  try {
-    const grundResult = await fetchBBRGraphQL(
-      `query($vt: DafDateTime!, $bfe: Int!) {
-        BBR_Grund(first: 10, virkningstid: $vt, where: { bfeNummer: { eq: $bfe } }) {
-          nodes { id_lokalId }
+  const nodes = await fetchBBRGraphQL(
+    `query($vt: DafDateTime!, $id: String!) {
+      BBR_Bygning(first: 100, virkningstid: $vt, where: { husnummer: { eq: $id } }) {
+        nodes {
+          id_lokalId
+          byg038SamletBygningsareal
+          byg039BygningensSamledeBoligAreal
+          byg040BygningensSamledeErhvervsAreal
+          status
         }
-      }`,
-      { vt, bfe: String(bfe) }
-    );
-    if (Array.isArray(grundResult)) {
-      grundIds = grundResult
-        .map((g) => (g as { id_lokalId?: string }).id_lokalId)
-        .filter((id): id is string => typeof id === 'string' && id.length > 0);
-    }
-  } catch {
-    // Schema understøtter måske ikke bfeNummer-filter — falder gennem til dawaId-fallback
-  }
-
-  // Trin 2: Hent bygninger
-  let nodes: unknown[] | null = null;
-  if (grundIds.length > 0) {
-    // Kør parallelt per grund-id (typisk 1, men kan være flere fx ved samlet ejendom)
-    const results = await Promise.all(
-      grundIds.map((gid) =>
-        fetchBBRGraphQL(
-          `query($vt: DafDateTime!, $id: String!) {
-            BBR_Bygning(first: 100, virkningstid: $vt, where: { grund: { eq: $id } }) {
-              nodes {
-                byg038SamletBygningsareal
-                byg039BygningensSamledeBoligAreal
-                byg040BygningensSamledeErhvervsAreal
-                status
-              }
-            }
-          }`,
-          { vt, id: gid }
-        )
-      )
-    );
-    nodes = results.flatMap((r) => r ?? []);
-  } else if (dawaId) {
-    // Fallback: husnummer-baseret (gammel adfærd) — bruges kun hvis BBR_Grund-
-    // opslag returnerede 0 eller fejlede. Status-filtrering anvendes stadig.
-    nodes = await fetchBBRGraphQL(
-      `query($vt: DafDateTime!, $id: String!) {
-        BBR_Bygning(first: 100, virkningstid: $vt, where: { husnummer: { eq: $id } }) {
-          nodes {
-            byg038SamletBygningsareal
-            byg039BygningensSamledeBoligAreal
-            byg040BygningensSamledeErhvervsAreal
-            status
-          }
-        }
-      }`,
-      { vt, id: dawaId }
-    );
-  }
+      }
+    }`,
+    { vt, id: dawaId }
+  );
 
   if (!Array.isArray(nodes) || nodes.length === 0) return null;
+
+  // BIZZ-575 v2: Dedupliker på id_lokalId. BBR returnerer ofte samme bygning
+  // flere gange (formentlig pga. flere virkningsperioder, ejer-relationer
+  // eller adresse-relationer). Uden dedup summerer vi kunstigt × N.
+  const seen = new Set<string>();
+  const unique: RawBBRBygning[] = [];
+  for (const raw of nodes as RawBBRBygning[]) {
+    const id = raw.id_lokalId;
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    unique.push(raw);
+  }
 
   let bolig = 0;
   let erhverv = 0;
   let samlet = 0;
   let any = false;
-  for (const n of nodes as RawBBRBygning[]) {
+  for (const n of unique) {
     // BIZZ-575: Status "7" = nedrevet/slettet — skip så aflyste bygninger
     // ikke pumper arealet kunstigt op.
     if (n.status != null && String(n.status) === '7') continue;

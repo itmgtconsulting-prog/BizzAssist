@@ -87,14 +87,14 @@ async function enrichOne(
     signal: AbortSignal.timeout(6000),
   };
 
-  // BIZZ-569 v2 perf: Drop ejerskab + salgshistorik fra batch — disse var de
-  // langsomste sub-fetches (intern HTTP-roundtrip × N) og ejerNavn er
-  // redundant på virksomhed-side (vi er på virksomhedens side, ejerNavn ER
-  // virksomheden). Card kan stadig hente disse on-demand hvis nødvendigt.
+  // BIZZ-575 v2: Re-tilføjet salgshistorik (købspris) — bruger eksplicit
+  // ønsker det på kortene. Ejerskab forbliver skipped da ejerNavn er redundant
+  // på virksomhed-side. Salgshistorik har 5s timeout så slow-cases ikke
+  // blokerer hele batchen.
   try {
-    const [bbrAreasRes, matrikelRes, vurRes] = await Promise.allSettled([
-      // BIZZ-575: Filtrér på BFE (ikke kun husnummer) så bygninger fra
-      // andre BFE'er på samme adresse ikke summes med + ekskluder status=7.
+    const [bbrAreasRes, matrikelRes, vurRes, salgRes] = await Promise.allSettled([
+      // BIZZ-575: Dedupliker BBR-bygninger på id_lokalId (BBR returnerer ofte
+      // samme bygning N gange) + ekskluder status=7 (nedrevet).
       fetchBbrAreasByBfe(parseInt(bfe, 10), dawaId ?? null),
       fetch(`${DAWA_BASE_URL}/jordstykker?bfenummer=${bfe}&per_side=1`, {
         signal: AbortSignal.timeout(5000),
@@ -121,6 +121,27 @@ async function enrichOne(
           ? { vurdering: v, aar: nyeste.vurderingsaar, erGrundvaerdi: !erEjendomsvaerdi }
           : null;
       }),
+      // Salgshistorik (seneste købspris) — 5s timeout så slow EJF ikke blokerer
+      fetch(`${baseUrl}/api/salgshistorik?bfeNummer=${bfe}`, {
+        ...fetchOpts,
+        signal: AbortSignal.timeout(5000),
+      }).then(async (r) => {
+        if (!r.ok) return null;
+        const d = (await r.json()) as {
+          handler?: Array<{
+            kontantKoebesum?: number | null;
+            samletKoebesum?: number | null;
+            overtagelsesdato?: string | null;
+            koebsaftaleDato?: string | null;
+          }>;
+        };
+        const latest = (d.handler ?? [])[0];
+        if (!latest) return null;
+        return {
+          koebesum: latest.kontantKoebesum ?? latest.samletKoebesum ?? null,
+          koebsdato: latest.overtagelsesdato ?? latest.koebsaftaleDato ?? null,
+        };
+      }),
     ]);
 
     if (bbrAreasRes.status === 'fulfilled' && bbrAreasRes.value) {
@@ -145,6 +166,11 @@ async function enrichOne(
       result.vurdering = v.vurdering;
       result.vurderingsaar = v.aar;
       result.erGrundvaerdi = v.erGrundvaerdi;
+    }
+    if (salgRes.status === 'fulfilled' && salgRes.value) {
+      const s = salgRes.value as { koebesum: number | null; koebsdato: string | null };
+      result.koebesum = s.koebesum;
+      result.koebsdato = s.koebsdato;
     }
   } catch (err) {
     logger.error(`[enrich-batch] BFE ${bfe} fejl:`, err);

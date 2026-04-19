@@ -142,7 +142,19 @@ function mapEjerandel(val: number): string {
 async function fetchCompanyOwners(cvr: number): Promise<{
   companyName: string;
   isCeased: boolean;
-  owners: { navn: string; enhedsNummer: number; erVirksomhed: boolean; ejerandel: string | null }[];
+  owners: {
+    navn: string;
+    enhedsNummer: number;
+    /**
+     * BIZZ-564 v3: CVR-nummer (kun for virksomheder). For deltager-virksomheder
+     * er enhedsNummer en intern 10-cifret CVR-ES-id som IKKE kan bruges til
+     * cvrNummer-opslag. Den rigtige CVR ligger i deltager.forretningsnoegle
+     * — uden denne kunne recursion ikke forfølge ejerkæden videre op.
+     */
+    cvrNummer: number | null;
+    erVirksomhed: boolean;
+    ejerandel: string | null;
+  }[];
 }> {
   if (!CVR_ES_USER || !CVR_ES_PASS)
     return { companyName: `CVR ${cvr}`, isCeased: false, owners: [] };
@@ -189,6 +201,7 @@ async function fetchCompanyOwners(cvr: number): Promise<{
     const owners: {
       navn: string;
       enhedsNummer: number;
+      cvrNummer: number | null;
       erVirksomhed: boolean;
       ejerandel: string | null;
     }[] = [];
@@ -208,6 +221,19 @@ async function fetchCompanyOwners(cvr: number): Promise<{
         : [];
       const navn = gyldigNu(dNavne)?.navn;
       if (!navn) continue;
+
+      // BIZZ-564 v3: For virksomheds-deltagere er forretningsnoegle CVR-nr
+      // (8-cifret). enhedsNummer er CVR-ES intern 10-cifret id og kan IKKE
+      // bruges til at slå virksomheden op via cvrNummer-term-query. Uden
+      // denne mapping stopper recursion fordi det "fake CVR" returnerer 0
+      // hits når næste fetchCompanyOwners-iteration kører.
+      const forretningsnoegle =
+        typeof deltager.forretningsnoegle === 'number'
+          ? deltager.forretningsnoegle
+          : typeof deltager.forretningsnoegle === 'string'
+            ? parseInt(deltager.forretningsnoegle, 10)
+            : null;
+      const cvrNummer = erVirksomhed && forretningsnoegle ? forretningsnoegle : null;
 
       // Check for ejer-roller
       const orgs = Array.isArray(rel.organisationer)
@@ -277,7 +303,7 @@ async function fetchCompanyOwners(cvr: number): Promise<{
       }
 
       if (erEjer) {
-        owners.push({ navn, enhedsNummer, erVirksomhed, ejerandel });
+        owners.push({ navn, enhedsNummer, cvrNummer, erVirksomhed, ejerandel });
       }
     }
 
@@ -742,9 +768,14 @@ export async function GET(req: NextRequest) {
       }
 
       for (const owner of owners) {
-        const ownerId = owner.erVirksomhed
-          ? `cvr-${owner.enhedsNummer}`
-          : `en-${owner.enhedsNummer}`;
+        // BIZZ-564 v3: For virksomheder skal vi ID'e via det rigtige CVR-nummer
+        // (forretningsnoegle), ikke det interne CVR-ES enhedsNummer. Hvis vi
+        // brugte enhedsNummer som "cvr" stoppede recursion fordi næste
+        // fetchCompanyOwners-iteration ikke kunne finde virksomheden via
+        // term-query på cvrNummer.
+        const effectiveCvr =
+          owner.erVirksomhed && owner.cvrNummer ? owner.cvrNummer : owner.enhedsNummer;
+        const ownerId = owner.erVirksomhed ? `cvr-${effectiveCvr}` : `en-${owner.enhedsNummer}`;
 
         if (!seenIds.has(ownerId)) {
           seenIds.add(ownerId);
@@ -753,14 +784,18 @@ export async function GET(req: NextRequest) {
               id: ownerId,
               label: owner.navn,
               type: 'company',
-              cvr: owner.enhedsNummer,
-              link: `/dashboard/companies/${owner.enhedsNummer}`,
+              cvr: effectiveCvr,
+              link: `/dashboard/companies/${effectiveCvr}`,
             });
-            nextLevel.push({
-              nodeId: ownerId,
-              cvr: owner.enhedsNummer,
-              depth: depth + 1,
-            });
+            // Kun push til next-level hvis vi har en gyldig CVR — ellers kan
+            // vi alligevel ikke recurse (f.eks. udenlandske ejere uden DK-CVR).
+            if (owner.cvrNummer) {
+              nextLevel.push({
+                nodeId: ownerId,
+                cvr: owner.cvrNummer,
+                depth: depth + 1,
+              });
+            }
           } else {
             nodes.push({
               id: ownerId,

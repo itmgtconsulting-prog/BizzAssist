@@ -871,6 +871,10 @@ export default function EjendomDetaljeClient({
   const [vurFradrag, setVurFradrag] = useState<VurderingResponse['fradrag']>(null);
   /** BIZZ-493: Ejerboligfordeling — vises som kort i Økonomi-tab for ejerlejlighedskomplekser */
   const [vurFordeling, setVurFordeling] = useState<VurderingResponse['fordeling']>([]);
+  /** BIZZ-492: Grundværdispecifikation — nedbrydning af grundværdiberegning */
+  const [vurGrundvaerdispec, setVurGrundvaerdispec] = useState<
+    VurderingResponse['grundvaerdispec']
+  >([]);
   /** True mens vurderingsdata hentes — starter som true når prefetch giver BBR data med det samme */
   const [vurderingLoader, setVurderingLoader] = useState(!!prefetched?.bbrData);
   /** True = vis fuld vurderingshistorik-tabel */
@@ -1361,6 +1365,7 @@ export default function EjendomDetaljeClient({
         setAlleVurderinger(data?.alle ?? []);
         setVurFradrag(data?.fradrag ?? null);
         setVurFordeling(data?.fordeling ?? []);
+        setVurGrundvaerdispec(data?.grundvaerdispec ?? []);
       })
       .catch((err) => {
         if (err.name === 'AbortError') return;
@@ -3816,6 +3821,46 @@ export default function EjendomDetaljeClient({
                                     </p>
                                   </div>
                                 )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* BIZZ-492: Grundværdispecifikation — nedbrydning af grundværdiberegning */}
+                      {vurGrundvaerdispec.length > 0 && (
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden overflow-x-auto mb-3">
+                          <div className="px-4 py-2.5 border-b border-slate-700/30">
+                            <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider">
+                              {da ? 'Grundværdispecifikation' : 'Land value specification'}
+                            </p>
+                          </div>
+                          <div className="min-w-[400px]">
+                            <div className="grid grid-cols-[1fr_80px_90px_90px] px-4 py-1.5 text-slate-500 text-[10px] font-medium uppercase bg-slate-900/30">
+                              <span>{da ? 'Beskrivelse' : 'Description'}</span>
+                              <span className="text-right">{da ? 'Areal' : 'Area'}</span>
+                              <span className="text-right">{da ? 'Enhedspris' : 'Unit price'}</span>
+                              <span className="text-right">{da ? 'Beløb' : 'Amount'}</span>
+                            </div>
+                            {vurGrundvaerdispec.map((spec) => (
+                              <div
+                                key={spec.loebenummer}
+                                className="grid grid-cols-[1fr_80px_90px_90px] px-4 py-2 text-sm border-t border-slate-700/20 items-center"
+                              >
+                                <span className="text-slate-300 text-xs">
+                                  {spec.tekst ?? `#${spec.loebenummer}`}
+                                </span>
+                                <span className="text-slate-400 text-xs text-right tabular-nums">
+                                  {spec.areal != null
+                                    ? `${spec.areal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
+                                    : '—'}
+                                </span>
+                                <span className="text-slate-400 text-xs text-right tabular-nums">
+                                  {spec.enhedBeloeb != null ? formatDKK(spec.enhedBeloeb) : '—'}
+                                </span>
+                                <span className="text-white text-xs text-right tabular-nums font-medium">
+                                  {spec.beloeb != null ? formatDKK(spec.beloeb) : '—'}
+                                </span>
                               </div>
                             ))}
                           </div>

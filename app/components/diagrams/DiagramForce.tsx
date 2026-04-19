@@ -183,16 +183,22 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
       if (expandedDynamic.has(personId) || loadingExpansion.has(personId)) return;
       setLoadingExpansion((prev) => new Set(prev).add(personId));
       try {
-        // Henter personens virksomheder fra CVR + evt. direkte personejede
-        // ejendomme via enhedsNummer (BIZZ-264). Person→ejendomme er begrænset
-        // til dem EJF matcher på enhedsNummer — for fuld dækning af personligt
-        // ejede ejendomme (inkl. bopæl der ikke er i en virksomhed) er bulk-
-        // ingestion-sporet (BIZZ-XXX) den langsigtede løsning.
-        const [personRes, ejendommeRes] = await Promise.all([
+        // Henter personens virksomheder fra CVR, direkte personejede ejendomme
+        // via enhedsNummer (BIZZ-264), OG bulk-indekserede ejendomme via
+        // person-bridge + person-properties (BIZZ-534). De to ejendoms-kilder
+        // komplementerer hinanden: enhedsNummer-sporet dækker EJF-matchede
+        // deltagere, mens bulk-sporet dækker ALLE personligt ejede ejendomme
+        // via deterministisk (navn, fødselsdato)-lookup.
+        const [personRes, ejendommeRes, bridgeRes] = await Promise.all([
           fetch(`/api/cvr-public/person?enhedsNummer=${enhedsNummer}`, {
             signal: AbortSignal.timeout(15000),
           }).catch(() => null),
           fetch(`/api/ejendomme-by-owner?enhedsNummer=${enhedsNummer}&limit=50&offset=0`, {
+            signal: AbortSignal.timeout(15000),
+          }).catch(() => null),
+          // BIZZ-534: Person-bridge resolver enhedsNummer → (navn, fødselsdato)
+          // via hjemadresse-anker. Bruges til bulk-data person-properties lookup.
+          fetch(`/api/ejerskab/person-bridge?enhedsNummer=${enhedsNummer}`, {
             signal: AbortSignal.timeout(15000),
           }).catch(() => null),
         ]);
@@ -258,7 +264,7 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
           }
         }
 
-        // ── Personligt ejede ejendomme (direkte via EJF) ──
+        // ── Personligt ejede ejendomme (direkte via EJF enhedsNummer) ──
         if (ejendommeRes?.ok) {
           const ejData = await ejendommeRes.json();
           const ejendomme = Array.isArray(ejData.ejendomme) ? ejData.ejendomme : [];
@@ -283,6 +289,46 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
               to: bfeId,
               ejerandel: p.ejerandel ?? undefined,
             });
+          }
+        }
+
+        // ── BIZZ-534: Bulk-indekserede ejendomme via person-bridge ──
+        // Person-bridge giver (navn, fødselsdato), som bruges til at slå op i
+        // den dagligt-opdaterede ejf_ejerskab-tabel. Dette fanger ejendomme
+        // som enhedsNummer-sporet ovenfor misser (typisk bopæl-ejendomme og
+        // ejendomme købt som privatperson uden CVR-tilknytning).
+        if (bridgeRes?.ok) {
+          const bridge = await bridgeRes.json();
+          const navn = bridge?.navn as string | undefined;
+          const fdato = bridge?.foedselsdato as string | undefined;
+          if (navn && fdato) {
+            const ppRes = await fetch(
+              `/api/ejerskab/person-properties?navn=${encodeURIComponent(navn)}&fdato=${fdato}`,
+              { signal: AbortSignal.timeout(10000) }
+            ).catch(() => null);
+            if (ppRes?.ok) {
+              const ppData = await ppRes.json();
+              const bulkBfes: number[] = Array.isArray(ppData.bfes) ? ppData.bfes : [];
+              // Tilføj BFEs der ikke allerede er i diagrammet (dedup mod existingIds)
+              for (const bfe of bulkBfes) {
+                const bfeId = `bfe-${bfe}`;
+                if (existingIds.has(bfeId)) continue;
+                existingIds.add(bfeId);
+                // Minimal node — adresse-enrichment sker via DAWA når
+                // brugeren navigerer til ejendomsdetaljerne
+                newNodes.push({
+                  id: bfeId,
+                  label: `BFE ${bfe}`,
+                  sublabel: 'Personligt ejet',
+                  type: 'property',
+                  bfeNummer: bfe,
+                });
+                newEdges.push({
+                  from: personId,
+                  to: bfeId,
+                });
+              }
+            }
           }
         }
 

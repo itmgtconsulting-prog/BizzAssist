@@ -900,9 +900,8 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
       ownersByY.get(y)!.push(ownerId);
     }
     // Saml ALLE overflow-noder på tværs af hele diagrammet for placering på
-    // absolut bottom-row. Track maks property-Y for at finde bottom.
+    // absolut bottom-row efter ALLE andre noder.
     const allOverflowNodes: string[] = [];
-    let maxPropertyY = 0;
     // Sort owners within each Y by their X position (initialX not set yet — use
     // byDepth order as a proxy, which matches visual left-to-right)
     for (const [ownerY, ownerIds] of ownersByY) {
@@ -930,7 +929,6 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
           const line = currentLine + withinOwnerLine;
           const propY = propBaseY + line * PROPERTY_SUBROW_GAP;
           yMap.set(props[i], propY);
-          if (propY > maxPropertyY) maxPropertyY = propY;
         }
         // Update counters: if owner fills multiple lines, advance past all but last
         const ownerLines = Math.ceil(props.length / MAX_PER_ROW);
@@ -941,17 +939,24 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
           countOnLine += props.length;
         }
       }
-      // BIZZ-563 v2: overflow-noder placeres NU globalt EFTER property-loop
-      // (se nedenfor) i stedet for per-owner-Y.
+      // BIZZ-563 v3: overflow-noder placeres NU globalt EFTER ALLE noder
+      // (se nedenfor) i stedet for per-owner-Y eller maxPropertyY.
     }
 
-    // BIZZ-563 v2: Placer ALLE overflow-noder på en absolut bottom-row efter
-    // ALLE property-rows. Garanterer ingen overlap med property-noder uanset
-    // hvilken owner-Y de oprindeligt hørte til. Hver overflow-node får sin
-    // egen Y-linje (ingen MAX_PER_ROW-pakning) så vandret afstand til andre
-    // overflow-bokse også er sikret.
+    // BIZZ-563 v3: Placer ALLE overflow-noder på en absolut bottom-row efter
+    // ALLE andre noder i diagrammet. Tidligere version (v2) brugte
+    // maxPropertyY men oversaa at companies/datterselskaber ofte sidder på
+    // dybere depth-rows END properties (fx Novo Nordisk Denmark sidder under
+    // property-rækken). Nu finder vi maks Y på tværs af HELE yMap (ekskl.
+    // overflow-noder selv) før placering.
     if (allOverflowNodes.length > 0) {
-      const overflowBaseY = maxPropertyY + OVERFLOW_BOTTOM_GAP;
+      const overflowSet = new Set(allOverflowNodes);
+      let maxY = 0;
+      for (const [id, yVal] of yMap) {
+        if (overflowSet.has(id)) continue;
+        if (yVal > maxY) maxY = yVal;
+      }
+      const overflowBaseY = maxY + OVERFLOW_BOTTOM_GAP;
       for (let i = 0; i < allOverflowNodes.length; i++) {
         yMap.set(allOverflowNodes[i], overflowBaseY + i * PROPERTY_SUBROW_GAP);
       }

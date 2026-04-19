@@ -2102,13 +2102,71 @@ export default function EjendomDetaljeClient({
                     {lang === 'da' ? 'Ejerlejlighed' : 'Condominium'}
                   </span>
                 )}
-                {/* BIZZ-550: Juridisk kategori (VUR) som primær ejendomstype-badge */}
-                {vurdering?.juridiskKategori && (
-                  <span className="flex items-center gap-1 px-2.5 py-0.5 bg-blue-500/15 border border-blue-500/30 rounded-full text-blue-300 text-xs font-medium flex-shrink-0">
-                    <Home size={11} />
-                    {vurdering.juridiskKategori}
-                  </span>
-                )}
+                {/* BIZZ-550: Ejendomstype-badge — primær kilde: VUR juridiskKategori,
+                     fallback: udledt fra BBR bygningsanvendelser */}
+                {(() => {
+                  // 1. VUR juridiskKategori (nyt vurderingssystem)
+                  if (vurdering?.juridiskKategori) {
+                    return (
+                      <span className="flex items-center gap-1 px-2.5 py-0.5 bg-blue-500/15 border border-blue-500/30 rounded-full text-blue-300 text-xs font-medium flex-shrink-0">
+                        <Home size={11} />
+                        {vurdering.juridiskKategori}
+                      </span>
+                    );
+                  }
+                  // 2. Udled fra BBR bygningsanvendelser (gammelt VUR system)
+                  const bygninger = bbrData?.bbr?.filter(
+                    (b) => b.status !== 'Nedrevet/slettet' && b.status !== 'Ikke opført'
+                  );
+                  if (!bygninger?.length) return null;
+                  let harBolig = false;
+                  let harErhverv = false;
+                  for (const b of bygninger) {
+                    const a = b.anvendelse.toLowerCase();
+                    if (
+                      a.includes('bolig') ||
+                      a.includes('enfamilie') ||
+                      a.includes('rækkehus') ||
+                      a.includes('kædehus') ||
+                      a.includes('dobbelthus') ||
+                      a.includes('beboelse') ||
+                      a.includes('kollegium') ||
+                      a.includes('stuehus') ||
+                      a.includes('fritliggende')
+                    ) {
+                      harBolig = true;
+                    } else if (
+                      a.includes('kontor') ||
+                      a.includes('handel') ||
+                      a.includes('lager') ||
+                      a.includes('erhverv') ||
+                      a.includes('industri') ||
+                      a.includes('fabrik') ||
+                      a.includes('værksted') ||
+                      a.includes('butik') ||
+                      a.includes('hotel') ||
+                      a.includes('produktion') ||
+                      a.includes('transport')
+                    ) {
+                      harErhverv = true;
+                    }
+                  }
+                  const kategori =
+                    harBolig && harErhverv
+                      ? 'Blandet bolig/erhverv'
+                      : harErhverv
+                        ? 'Erhvervsejendom'
+                        : harBolig
+                          ? 'Beboelsesejendom'
+                          : null;
+                  if (!kategori) return null;
+                  return (
+                    <span className="flex items-center gap-1 px-2.5 py-0.5 bg-blue-500/15 border border-blue-500/30 rounded-full text-blue-300 text-xs font-medium flex-shrink-0">
+                      <Home size={11} />
+                      {kategori}
+                    </span>
+                  );
+                })()}
                 {/* BIZZ-457: Benyttelse (VUR) + byggeår (BBR) — "Værksted (1955)" */}
                 {(() => {
                   const nyesteByg = bbrData?.bbr?.reduce<number | null>((latest, b) => {

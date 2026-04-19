@@ -97,41 +97,26 @@ export async function GET(request: NextRequest) {
         const arr = (await r.json()) as Array<{ registreretareal?: number }>;
         return arr[0]?.registreretareal ?? null;
       }),
-      // Vurdering — BIZZ-569: Foretræk FORELØBIG vurdering (Vurderings-
-      // portalen 2025) over historisk VUR-data. Hvis foreloebig.ejendomsvaerdi
-      // er 0 (typisk for erhverv), fallback til foreloebig.grundvaerdi.
-      // Ellers fallback til ældre VUR-data.
-      Promise.allSettled([
-        fetch(`${baseUrl}/api/vurdering-forelobig?bfeNummer=${bfe}`, fetchOpts).then(async (r) => {
-          if (!r.ok) return null;
-          const d = (await r.json()) as {
-            forelobige?: Array<{
-              vurderingsaar: number;
-              ejendomsvaerdi: number | null;
-              grundvaerdi: number | null;
-            }>;
-          };
-          const nyeste = d.forelobige?.[0];
-          if (!nyeste) return null;
-          // Foretræk ejendomsvaerdi når > 0; ellers grundvaerdi (typisk
-          // erhvervsejendomme der får grundværdi i stedet for ejendomsværdi).
-          const v =
-            nyeste.ejendomsvaerdi && nyeste.ejendomsvaerdi > 0
-              ? nyeste.ejendomsvaerdi
-              : (nyeste.grundvaerdi ?? null);
-          return v && v > 0 ? { vurdering: v, aar: nyeste.vurderingsaar } : null;
-        }),
-        fetch(`${baseUrl}/api/vurdering?bfeNummer=${bfe}`, fetchOpts).then(async (r) => {
-          if (!r.ok) return null;
-          const d = await r.json();
-          const v = d?.vurdering?.ejendomsvaerdi;
-          return v && v > 0 ? { vurdering: v, aar: d?.vurdering?.aar ?? null } : null;
-        }),
-      ]).then((results) => {
-        const [foreloebig, vur] = results;
-        if (foreloebig.status === 'fulfilled' && foreloebig.value) return foreloebig.value;
-        if (vur.status === 'fulfilled' && vur.value) return vur.value;
-        return null;
+      // Vurdering — BIZZ-569: Hent FORELØBIG vurdering (Vurderingsportalen
+      // 2025). Card-kontekst behøver ikke historisk VUR-fallback — det ville
+      // doble vurdering-latency selvom vi kun bruger ÉN værdi. Hvis
+      // foreloebig.ejendomsvaerdi = 0 (typisk for erhverv), brug grundvaerdi.
+      fetch(`${baseUrl}/api/vurdering-forelobig?bfeNummer=${bfe}`, fetchOpts).then(async (r) => {
+        if (!r.ok) return null;
+        const d = (await r.json()) as {
+          forelobige?: Array<{
+            vurderingsaar: number;
+            ejendomsvaerdi: number | null;
+            grundvaerdi: number | null;
+          }>;
+        };
+        const nyeste = d.forelobige?.[0];
+        if (!nyeste) return null;
+        const v =
+          nyeste.ejendomsvaerdi && nyeste.ejendomsvaerdi > 0
+            ? nyeste.ejendomsvaerdi
+            : (nyeste.grundvaerdi ?? null);
+        return v && v > 0 ? { vurdering: v, aar: nyeste.vurderingsaar } : null;
       }),
       // Ejerskab (ejer-navn + seneste handel)
       // BIZZ-460: Vælg den ejer der reelt har størst andel i stedet for
@@ -219,6 +204,10 @@ export async function GET(request: NextRequest) {
   }
 
   return NextResponse.json(result, {
-    headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
+    headers: {
+      // BIZZ-569: Lang cache (24t + 6t SWR) — disse felter ændrer sig sjældent
+      // og kort-rendering er meget følsomt for repeated full-fetch latency.
+      'Cache-Control': 'public, s-maxage=86400, stale-while-revalidate=21600',
+    },
   });
 }

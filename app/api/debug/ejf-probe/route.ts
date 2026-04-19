@@ -70,6 +70,11 @@ const EJF_GQL_PROBES = [
     name: 'EJF_Ejerskab (entity — forventer fejl)',
     query: `{ EJF_Ejerskab(first: 1, virkningstid: "${VT}") { nodes { id_lokalId status } } }`,
   },
+  // Introspection — list alle tilgængelige query-fields
+  {
+    name: '__schema.Query fields (introspection)',
+    query: `{ __type(name: "Query") { fields { name } } }`,
+  },
 ];
 
 const FIL_URL_PATTERNS = [
@@ -167,6 +172,17 @@ async function probeGraphQL(
     }
     if (httpStatus >= 400) {
       return { httpStatus, ok: false, body: JSON.stringify(json).slice(0, 300) };
+    }
+    // Special-case: introspection response has nested fields[] array
+    if (json.data && '__type' in json.data) {
+      const fields = (json.data as { __type?: { fields?: Array<{ name: string }> } }).__type
+        ?.fields;
+      const ejfFields =
+        fields
+          ?.map((f) => f.name)
+          .filter((n) => /ejf|person|ejerskab|ejendom|admin/i.test(n))
+          .sort() ?? [];
+      return { httpStatus, ok: true, ejfFields };
     }
     const firstKey = Object.keys(json.data ?? {})[0];
     const count = firstKey ? (json.data?.[firstKey]?.nodes?.length ?? 0) : 0;

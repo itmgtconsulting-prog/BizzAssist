@@ -49,9 +49,20 @@ function formatDkkShort(val: number): string {
 /**
  * Mapper ejendomstype til kortere visningsform og farve.
  *
- * @param type - Rå ejendomstype fra DAWA
+ * BIZZ-577: Tilføjet etage-fallback — når VP returnerer juridiskKategori
+ * "Ejerbolig til vurdering i lige år" men ejendommen har etage/dør, er
+ * det reelt en ejerlejlighed. Etage-tilstedeværelse er stærkere signal end
+ * juridiskKategori-string for sub-BFE'er.
+ *
+ * @param type  - Rå ejendomstype fra DAWA / VP juridiskKategori
+ * @param etage - DAWA etage (når sat = ejerlejlighed)
  */
-function mapEjendomstype(type: string | null): { label: string; color: string } {
+function mapEjendomstype(
+  type: string | null,
+  etage?: string | null
+): { label: string; color: string } {
+  if (etage && etage.length > 0)
+    return { label: 'Ejerlejlighed', color: 'text-purple-300 bg-purple-900/40' };
   if (!type) return { label: 'Ukendt', color: 'text-slate-500 bg-slate-800' };
   const t = type.toLowerCase();
   if (t.includes('ejerlejlighed'))
@@ -100,7 +111,10 @@ export default function PropertyOwnerCard({
   lang,
   preEnriched,
 }: PropertyOwnerCardProps) {
-  const { label: typeLabel, color: typeColor } = mapEjendomstype(ejendom.ejendomstype);
+  const { label: typeLabel, color: typeColor } = mapEjendomstype(
+    ejendom.ejendomstype,
+    ejendom.etage
+  );
   const da = lang === 'da';
 
   // Progressive enrichment state. BIZZ-465 extends with koebesum + koebsdato

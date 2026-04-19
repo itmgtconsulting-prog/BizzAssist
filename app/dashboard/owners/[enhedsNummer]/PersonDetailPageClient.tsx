@@ -1971,9 +1971,12 @@ export default function PersonDetailPageClient({
           {/* ══ RELATIONSDIAGRAM — BIZZ-337: variant toggle matcher virksomhedssiden ══ */}
           {aktivTab === 'relations' &&
             (() => {
+              // BIZZ-571: Person-diagram ekskluderer solgte (historiske)
+              // ejendomme — samme regel som virksomheds-diagrammet.
+              const aktiveEjendomme = ejendommeData.filter((p) => p.aktiv !== false);
               const propertiesByCvr =
-                ejendommeData.length > 0
-                  ? ejendommeData.reduce((map, p) => {
+                aktiveEjendomme.length > 0
+                  ? aktiveEjendomme.reduce((map, p) => {
                       const cvrNum = parseInt(p.ownerCvr, 10);
                       if (!map.has(cvrNum)) map.set(cvrNum, []);
                       map.get(cvrNum)!.push(p as DiagramPropertySummary);

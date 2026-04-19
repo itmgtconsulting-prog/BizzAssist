@@ -20,13 +20,13 @@ const EMAIL = process.env.JIRA_EMAIL;
 const TOKEN = process.env.JIRA_API_TOKEN;
 const auth = Buffer.from(`${EMAIL}:${TOKEN}`).toString('base64');
 
+// EJF-tickets (480, 481, 534, 576) er FJERNET fra Blocked-listen 2026-04-19
+// efter bekræftet fuld EJF-adgang (REST + Filudtræk + Hændelser via selvbetjening.datafordeler.dk).
+// BIZZ-557 er allerede lukket (split i 576+577).
 const DEFAULT_KEYS = [
   'BIZZ-501', // MAT geometri
   'BIZZ-485', // BBR materiale-detaljer
   'BIZZ-484', // BBR_TekniskAnlaeg
-  'BIZZ-481', // EJF_Ejerskifte udvidelser
-  'BIZZ-480', // EJF_Handelsoplysninger udvidelser
-  'BIZZ-557', // Kaffevej BFE
   'BIZZ-560', // CVR XBRL noter
   'BIZZ-483', // PV-detaljeside
 ];
@@ -35,9 +35,6 @@ const BLOCKER_REASONS = {
   'BIZZ-501': 'MAT direkte geometri — probing viser at Datafordeler MAT WFS kræver polygon-parsing der ikke matcher DAWA-fallback; skal have adgang til nyt matrikel-format først.',
   'BIZZ-485': 'BBR materiale-detaljer — probing af BBR_Bygning GraphQL schema viser at tagkonstruktion/ydervæg-lag/isolering ikke eksponeres som separate felter, kun aggregeret byg033Tagmateriale.',
   'BIZZ-484': 'BBR_TekniskAnlaeg — probing viser at Datafordeler BBR v2 GraphQL kun eksponerer reference-felter (husnummer/bygning/grund/enhed/jordstykke) + metadata. Data-felter (anlægstype/fabrikat/ydelse) mangler. Kræver REST API-integration.',
-  'BIZZ-481': 'EJF_Ejerskifte udvidelser — kræver test-data med betinget/frist/anmeldelses-felter populeret. Nuværende test-properties har ikke disse felter udfyldt.',
-  'BIZZ-480': 'EJF_Handelsoplysninger udvidelser — kræver test-data med skødetekst/bygninger/afståelsesdato. Test-properties har kun basis-handelsoplysninger.',
-  'BIZZ-557': 'Kaffevej 31 — BFE-opslag returnerer "hovedejendom" selvom adressen er en specifik ejerlejlighed. Datafordeler-mapping mellem adresse og ejerlejlighed-BFE mangler.',
   'BIZZ-560': 'CVR XBRL noter — probing viser at noter-sektionen i XBRL-regnskaber ikke parses fra CVR regnskabs-API. Kræver separat XBRL parser-integration.',
   'BIZZ-483': 'PV-detaljeside for fiktivtPVnummer — blokeret af at dødsbo/fond/udenlandske ejere ikke har stabilt CVR/enhedsNummer, kræver ny datamodel for ikke-registrerede ejere.',
 };

@@ -108,29 +108,42 @@ function erFritidsKategori(tekst: string | null): boolean {
 /**
  * Bygger "Værksted (1955)" tekst til visning på ejendomsbadge.
  *
- * BIZZ-574: Tilføjet zone-sanity-check — hvis property er i Byzone, ignorér
- * fritids-kategorier (Sommerhus, Kolonihave, Fritidsbolig, Feriehus). Det
- * hindrer falske "Sommerhus"-badges på ejerlejligheder i centrum (fx
- * Thorvald Bindesbølls Plads 18, 3. th hvor VUR-data har en arvet/forkert
- * benyttelseskode). Returnerer kun byggeaar i så tilfælde — hellere mindre
- * data end forkerte data.
+ * BIZZ-574 v1: Suppress fritids-kategori i Byzone.
+ * BIZZ-574 v2: Udvidet til alle kendte ikke-sommerhus-zoner. Eksempel:
+ * Thorvald Bindesbølls Plads 18, 3. th har zone="Udfaset" (historisk
+ * zonestatus), ikke "Byzone" — v1-checken ramte derfor ikke. v2 vender
+ * logikken: hvis zone er kendt og IKKE "Sommerhuszone", er fritids-kategori
+ * per definition forkert. Fritids-badge vises kun når zone === Sommerhuszone
+ * ELLER zone er ukendt (null, ingen data — så stoler vi på VUR-koden).
+ *
+ * Derudover suppress for ejerlejligheder (en ejerlejlighed kan per definition
+ * ikke være et sommerhus — selv i sommerhuszone er de registreret som
+ * ferielejligheder/feriehuse-andelsbolig, ikke som "Sommerhus" kode 21).
  *
  * @param benyttelseskode - VUR benyttelseskode
  * @param byggeaar - Opførelsesår fra BBR
- * @param zone - Plandata-zone ('Byzone' | 'Landzone' | 'Sommerhuszone' | null)
+ * @param zone - Plandata-zone ('Byzone' | 'Landzone' | 'Sommerhuszone' | 'Udfaset' | null)
+ * @param erEjerlejlighed - True hvis ejendommen er registreret som ejerlejlighed
  * @returns Formateret streng "Betegnelse (År)" eller null hvis begge mangler
  */
 export function formatBenyttelseOgByggeaar(
   benyttelseskode: string | null | undefined,
   byggeaar: number | null | undefined,
-  zone?: string | null
+  zone?: string | null,
+  erEjerlejlighed?: boolean
 ): string | null {
   let tekst = benyttelsekodeTekst(benyttelseskode);
-  // BIZZ-574: Suppress fritids-kategori i Byzone — VUR-data kan have arvede
-  // koder fra moder-ejendom eller fejlregistreringer; zone er den autoritative
-  // klassifikation for "er det fritidsbolig eller almindelig bolig".
-  if (zone === 'Byzone' && erFritidsKategori(tekst)) {
-    tekst = null;
+  if (erFritidsKategori(tekst)) {
+    // Suppress hvis zone er kendt og IKKE Sommerhuszone.
+    // Bevarer badge hvis zone er null/ukendt (datamangel — stol på VUR-kode).
+    if (zone && zone !== 'Sommerhuszone') {
+      tekst = null;
+    }
+    // Suppress for ejerlejligheder uanset zone — en ejerlejlighed er aldrig
+    // et "Sommerhus" (kode 21), selv i sommerhuszone.
+    else if (erEjerlejlighed) {
+      tekst = null;
+    }
   }
   if (!tekst && !byggeaar) return null;
   if (tekst && byggeaar) return `${tekst} (${byggeaar})`;

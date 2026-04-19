@@ -2265,9 +2265,11 @@ export default function EjendomDetaljeClient({
                   const label = formatBenyttelseOgByggeaar(
                     vurdering?.benyttelseskode ?? null,
                     nyesteByg ?? null,
-                    // BIZZ-574: Pass zone så fritids-kategorier filtreres
-                    // i Byzone (forhindrer falsk "Sommerhus"-badge i byen).
-                    dawaAdresse?.zone ?? null
+                    // BIZZ-574: Pass zone og ejerlejlighed-flag så fritids-
+                    // kategorier filtreres uden for sommerhuszone (forhindrer
+                    // falsk "Sommerhus"-badge på ejerlejligheder i byen).
+                    dawaAdresse?.zone ?? null,
+                    !!bbrData?.ejerlejlighedBfe
                   );
                   if (!label) return null;
                   return (

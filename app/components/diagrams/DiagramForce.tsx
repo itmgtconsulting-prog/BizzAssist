@@ -1519,24 +1519,51 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
     () => effectiveGraph.nodes.filter((n) => (n.expandableChildren ?? 0) > 0).map((n) => n.id),
     [effectiveGraph.nodes]
   );
+  // BIZZ-582: Person-noder med enhedsNummer der ikke er udvidet endnu — kan
+  // udvides via expandPersonDynamic for at vise personligt ejede virksomheder
+  // og ejendomme.
+  const canExpandPersons = useMemo(() => {
+    return effectiveGraph.nodes.filter(
+      (n) =>
+        n.type === 'person' &&
+        n.enhedsNummer != null &&
+        !expandedDynamic.has(n.id) &&
+        !loadingExpansion.has(n.id)
+    );
+  }, [effectiveGraph.nodes, expandedDynamic, loadingExpansion]);
   // Currently visible expandable nodes that are NOT yet expanded (can expand next)
   const canExpandMore = useMemo(() => {
     const visibleIds = new Set(filteredGraph.nodes.map((n) => n.id));
     return allExpandableIds.filter((id) => visibleIds.has(id) && !expandedNodes.has(id));
   }, [allExpandableIds, filteredGraph.nodes, expandedNodes]);
-  // Whether anything is expanded at all
-  const canCollapseAny = expandedNodes.size > 0;
+  // Whether anything is expanded at all (co-owner OR person dynamic)
+  const canCollapseAny = expandedNodes.size > 0 || expandedDynamic.size > 0;
 
   /**
-   * Expand one level: expand all currently visible nodes that have co-owners but aren't expanded yet.
+   * BIZZ-582: Expand one level: expand co-owners on currently visible nodes,
+   * AND fire person-dynamic-expand for any person-node der ikke er udvidet
+   * endnu. Det betyder Udvid-knappen nu også henter personligt ejede
+   * virksomheder + ejendomme i ét klik.
    */
   function expandOneLevel() {
-    if (canExpandMore.length === 0) return;
-    setExpandedNodes((prev) => {
-      const next = new Set(prev);
-      for (const id of canExpandMore) next.add(id);
-      return next;
-    });
+    let didSomething = false;
+    if (canExpandMore.length > 0) {
+      setExpandedNodes((prev) => {
+        const next = new Set(prev);
+        for (const id of canExpandMore) next.add(id);
+        return next;
+      });
+      didSomething = true;
+    }
+    if (canExpandPersons.length > 0) {
+      for (const p of canExpandPersons) {
+        if (p.enhedsNummer != null) {
+          void expandPersonDynamic(p.id, p.enhedsNummer);
+        }
+      }
+      didSomething = true;
+    }
+    if (!didSomething) return;
   }
 
   /**

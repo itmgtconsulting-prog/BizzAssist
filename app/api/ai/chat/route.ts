@@ -773,6 +773,9 @@ async function executeTool(
 
       case 'hent_datterselskaber': {
         // Henter relaterede virksomheder (datterselskaber/kapitalandele) via CVR-public/related.
+        // BIZZ-588: /api/cvr-public/related returnerer { virksomheder: [...] }, ikke et
+        // plain array. Tidligere kode behandlede svaret som array og .filter() blev kaldt
+        // på et object — resulterede i AI-fejl "datterselskabs-opslaget returnerer en API-fejl".
         const relRes = await fetch(
           `${baseUrl}/api/cvr-public/related?cvr=${encodeURIComponent(input.cvr)}`,
           internalFetchOpts
@@ -781,13 +784,25 @@ async function executeTool(
           result = { fejl: toolErrorMessage('Related-API', relRes.status) };
           break;
         }
-        const relData = (await relRes.json()) as Array<{
-          cvr: number;
-          navn: string;
-          ejerandel?: string | null;
-          rolle?: string;
-          aktiv?: boolean;
-        }>;
+        const relJson = (await relRes.json()) as
+          | {
+              virksomheder?: Array<{
+                cvr: number;
+                navn: string;
+                form?: string | null;
+                branche?: string | null;
+                ejerandel?: string | null;
+                ejerandelNum?: number | null;
+                aktiv?: boolean;
+              }>;
+            }
+          | Array<{
+              cvr: number;
+              navn: string;
+              ejerandel?: string | null;
+              aktiv?: boolean;
+            }>;
+        const relData = Array.isArray(relJson) ? relJson : (relJson.virksomheder ?? []);
 
         // Filtrer til aktive datterselskaber med ejerandel
         const datterselskaber = relData
@@ -795,8 +810,9 @@ async function executeTool(
           .map((r) => ({
             cvr: r.cvr,
             navn: r.navn,
+            form: 'form' in r ? r.form : null,
+            branche: 'branche' in r ? r.branche : null,
             ejerandel: r.ejerandel,
-            rolle: r.rolle,
           }));
 
         result = {
@@ -811,6 +827,12 @@ async function executeTool(
       case 'soeg_person_cvr': {
         // Søger CVR ES deltager-indeks på navn med phrase-match.
         // Returnerer enhedsNummer + navnehistorik + aktuelle adresser.
+        //
+        // BIZZ-589: Fix field path. Dokumenterne i /cvr-permanent/deltager har
+        // person-felter nested under Vrdeltagerperson (og virksomheds-felter
+        // under Vrdeltagervirksomhed). Det gamle filter 'navne.navn' matchede
+        // intet, så AI'en kunne ikke finde selv kendte personer som
+        // Jakob Juul Rasmussen (bekræftet via direkte ES-probe).
         const cvrUser = process.env.CVR_ES_USER;
         const cvrPass = process.env.CVR_ES_PASS;
         if (!cvrUser || !cvrPass) {
@@ -823,15 +845,26 @@ async function executeTool(
           query: {
             bool: {
               should: [
-                // Exact phrase match — højest prioritet
-                { match_phrase: { 'navne.navn': { query: input.navn, boost: 3 } } },
-                // Fuzzy match for stavefejl
-                { match: { 'navne.navn': { query: input.navn, fuzziness: 'AUTO', boost: 1 } } },
+                // Person (Vrdeltagerperson) — exact phrase + fuzzy
+                {
+                  match_phrase: {
+                    'Vrdeltagerperson.navne.navn': { query: input.navn, boost: 3 },
+                  },
+                },
+                {
+                  match: {
+                    'Vrdeltagerperson.navne.navn': {
+                      query: input.navn,
+                      fuzziness: 'AUTO',
+                      boost: 1,
+                    },
+                  },
+                },
               ],
               minimum_should_match: 1,
             },
           },
-          _source: ['enhedsNummer', 'navne', 'beliggenhedsadresse'],
+          _source: ['Vrdeltagerperson'],
         };
 
         const res = await fetch('http://distribution.virk.dk/cvr-permanent/deltager/_search', {
@@ -851,18 +884,20 @@ async function executeTool(
 
         const data = (await res.json()) as {
           hits: {
-            total: { value: number };
+            total?: { value?: number };
             hits: Array<{
               _score: number;
               _source: {
-                enhedsNummer: number;
-                navne?: Array<{ navn: string; periode?: { gyldigTil: string | null } }>;
-                beliggenhedsadresse?: Array<{
-                  vejnavn?: string;
-                  husnummerFra?: number;
-                  postnummer?: number;
-                  postdistrikt?: string;
-                }>;
+                Vrdeltagerperson?: {
+                  enhedsNummer?: number;
+                  navne?: Array<{ navn: string; periode?: { gyldigTil: string | null } }>;
+                  beliggenhedsadresse?: Array<{
+                    vejnavn?: string;
+                    husnummerFra?: number;
+                    postnummer?: number;
+                    postdistrikt?: string;
+                  }>;
+                };
               };
             }>;
           };
@@ -870,25 +905,32 @@ async function executeTool(
 
         const hits = data.hits?.hits ?? [];
         result = {
-          antalFundet: data.hits?.total?.value ?? 0,
-          resultater: hits.map((h) => {
-            const src = h._source;
-            // Aktive navne (gyldigTil == null) — ellers seneste
-            const aktivtNavn =
-              src.navne?.find((n) => n.periode?.gyldigTil == null)?.navn ??
-              src.navne?.[src.navne.length - 1]?.navn ??
-              null;
-            const adresse = src.beliggenhedsadresse?.[0];
-            return {
-              enhedsNummer: String(src.enhedsNummer),
-              navn: aktivtNavn,
-              adresse: adresse
-                ? [adresse.vejnavn, adresse.husnummerFra, adresse.postnummer, adresse.postdistrikt]
-                    .filter(Boolean)
-                    .join(' ')
-                : null,
-            };
-          }),
+          antalFundet: data.hits?.total?.value ?? hits.length,
+          resultater: hits
+            .map((h) => {
+              const src = h._source?.Vrdeltagerperson;
+              if (!src?.enhedsNummer) return null;
+              const aktivtNavn =
+                src.navne?.find((n) => n.periode?.gyldigTil == null)?.navn ??
+                src.navne?.[src.navne.length - 1]?.navn ??
+                null;
+              const adresse = src.beliggenhedsadresse?.[0];
+              return {
+                enhedsNummer: String(src.enhedsNummer),
+                navn: aktivtNavn,
+                adresse: adresse
+                  ? [
+                      adresse.vejnavn,
+                      adresse.husnummerFra,
+                      adresse.postnummer,
+                      adresse.postdistrikt,
+                    ]
+                      .filter(Boolean)
+                      .join(' ')
+                  : null,
+              };
+            })
+            .filter((r) => r != null),
         };
         break;
       }

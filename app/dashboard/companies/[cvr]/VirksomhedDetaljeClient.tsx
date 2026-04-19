@@ -2497,16 +2497,81 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                                       </span>
                                     )}
                                   </Link>
-                                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-                                    {props.map((ej) => (
-                                      <PropertyOwnerCard
-                                        key={ej.bfeNummer}
-                                        ejendom={ej}
-                                        showOwner={false}
-                                        lang={lang}
-                                      />
-                                    ))}
-                                  </div>
+                                  {/* BIZZ-461: Gruppér ejendomme der deler adresse (typisk
+                                      ejerlejligheder i samme bygning) under en kompleks-header.
+                                      Kun grupper med 2+ ejendomme får header — single-ejendomme
+                                      vises som før. */}
+                                  {(() => {
+                                    type EjType = (typeof props)[number];
+                                    const groups = new Map<string, EjType[]>();
+                                    const order: string[] = [];
+                                    for (const ej of props) {
+                                      // Key = adresse + postnr; tom adresse = unikt fallback per BFE
+                                      const key = ej.adresse
+                                        ? `${ej.adresse}|${ej.postnr ?? ''}`
+                                        : `bfe-${ej.bfeNummer}`;
+                                      if (!groups.has(key)) {
+                                        groups.set(key, []);
+                                        order.push(key);
+                                      }
+                                      groups.get(key)!.push(ej);
+                                    }
+                                    return (
+                                      <div className="space-y-3">
+                                        {order.map((key) => {
+                                          const grp = groups.get(key)!;
+                                          const isKompleks = grp.length > 1;
+                                          if (!isKompleks) {
+                                            return (
+                                              <div
+                                                key={key}
+                                                className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3"
+                                              >
+                                                <PropertyOwnerCard
+                                                  ejendom={grp[0]}
+                                                  showOwner={false}
+                                                  lang={lang}
+                                                />
+                                              </div>
+                                            );
+                                          }
+                                          // Kompleks: header + indented grid
+                                          return (
+                                            <div
+                                              key={key}
+                                              className="border-l-2 border-emerald-500/30 pl-3"
+                                            >
+                                              <div className="flex items-center gap-2 mb-1.5">
+                                                <Building2
+                                                  size={12}
+                                                  className="text-emerald-400/70"
+                                                />
+                                                <span className="text-xs font-medium text-slate-300">
+                                                  {grp[0].adresse}
+                                                  {grp[0].postnr ? `, ${grp[0].postnr}` : ''}
+                                                </span>
+                                                <span className="text-[10px] text-emerald-400/70 px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20">
+                                                  {lang === 'da'
+                                                    ? `Kompleks · ${grp.length} ejerlejligheder`
+                                                    : `Complex · ${grp.length} units`}
+                                                </span>
+                                              </div>
+                                              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                                                {grp.map((ej) => (
+                                                  <PropertyOwnerCard
+                                                    key={ej.bfeNummer}
+                                                    ejendom={ej}
+                                                    showOwner={false}
+                                                    lang={lang}
+                                                  />
+                                                ))}
+                                              </div>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    );
+                                  })()}
                                 </div>
                               );
                             })}

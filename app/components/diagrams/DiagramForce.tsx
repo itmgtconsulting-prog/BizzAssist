@@ -881,15 +881,16 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
     // being split. Owners are grouped first by their Y (depth sub-row), then per Y
     // group we assign properties to lines in owner-order.
     //
-    // BIZZ-558: Overflow-noder (id starter med "props-overflow-") placeres på en
-    // dedikeret linje EFTER alle almindelige properties — ellers bryder deres
-    // bredere boks (NODE_W_OVERFLOW=400) ind over naboejendoms-spalten på samme
-    // linje. Hver overflow-boks får sin egen Y så de aldrig sidder ved siden af
-    // andre properties/overflow.
+    // BIZZ-563 v2: Overflow-noder (id starter med "props-overflow-") placeres
+    // ALLE på en absolut bottom-row efter ALLE properties i hele diagrammet —
+    // ikke længere per-owner-Y. Det eliminerer enhver overlap-risiko da bottom-
+    // row er garanteret tom. User-feedback efter BIZZ-563 v1 viste at per-owner-
+    // Y stadig kunne overlappe når overflow + properties fra forskellige owners
+    // havde tæt-pakkede Y-værdier.
     const PROPERTY_ROW_GAP = 95;
     const PROPERTY_SUBROW_GAP = 70;
-    /** BIZZ-558: Overflow-rækker er højere — indeholder typisk 5+ liste-linjer */
-    const OVERFLOW_SUBROW_GAP = 150;
+    /** BIZZ-563: Gap mellem sidste property-row og overflow-bottom-row */
+    const OVERFLOW_BOTTOM_GAP = 80;
     // Group owners by their own Y (sub-row of depth)
     const ownersByY = new Map<number, string[]>();
     for (const ownerId of propertiesByOwner.keys()) {
@@ -898,22 +899,24 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
       if (!ownersByY.has(y)) ownersByY.set(y, []);
       ownersByY.get(y)!.push(ownerId);
     }
+    // Saml ALLE overflow-noder på tværs af hele diagrammet for placering på
+    // absolut bottom-row. Track maks property-Y for at finde bottom.
+    const allOverflowNodes: string[] = [];
+    let maxPropertyY = 0;
     // Sort owners within each Y by their X position (initialX not set yet — use
     // byDepth order as a proxy, which matches visual left-to-right)
     for (const [ownerY, ownerIds] of ownersByY) {
       const propBaseY = ownerY + PROPERTY_ROW_GAP;
       let currentLine = 0;
       let countOnLine = 0;
-      // BIZZ-558: Saml alle overflow-noder fra denne Y for separat placering
-      const overflowNodesInY: string[] = [];
       for (const ownerId of ownerIds) {
         const propsAll = propertiesByOwner.get(ownerId) ?? [];
         if (propsAll.length === 0) continue;
         // Split: regular properties placeres på almindelige linjer; overflow-
-        // noder samles og placeres på dedikerede linjer EFTER alle properties.
+        // noder samles globalt og placeres på bottom-row efter ALLE properties.
         const props = propsAll.filter((id) => !id.startsWith('props-overflow-'));
         const ownerOverflow = propsAll.filter((id) => id.startsWith('props-overflow-'));
-        overflowNodesInY.push(...ownerOverflow);
+        allOverflowNodes.push(...ownerOverflow);
 
         if (props.length === 0) continue;
         // If this owner's properties don't all fit on current line, start new line
@@ -925,7 +928,9 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
         for (let i = 0; i < props.length; i++) {
           const withinOwnerLine = Math.floor(i / MAX_PER_ROW);
           const line = currentLine + withinOwnerLine;
-          yMap.set(props[i], propBaseY + line * PROPERTY_SUBROW_GAP);
+          const propY = propBaseY + line * PROPERTY_SUBROW_GAP;
+          yMap.set(props[i], propY);
+          if (propY > maxPropertyY) maxPropertyY = propY;
         }
         // Update counters: if owner fills multiple lines, advance past all but last
         const ownerLines = Math.ceil(props.length / MAX_PER_ROW);
@@ -936,21 +941,19 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
           countOnLine += props.length;
         }
       }
-      // BIZZ-558: Placer overflow-noder på dedikerede linjer EFTER properties.
-      // Hver overflow-node får sin egen linje (ingen MAX_PER_ROW-pakning) så
-      // den bredere boks (NODE_W_OVERFLOW=400) ikke kolliderer horisontalt.
-      // Næste linje starter efter den sidste property-linje + ekstra gap.
-      const overflowStartLine = currentLine + (countOnLine > 0 ? 1 : 0);
-      for (let i = 0; i < overflowNodesInY.length; i++) {
-        const overflowLine = overflowStartLine + i;
-        // Brug PROPERTY_SUBROW_GAP for almindelige linjer + OVERFLOW_SUBROW_GAP
-        // for overflow-rækker (de er højere så vi skal bruge større gap)
-        yMap.set(
-          overflowNodesInY[i],
-          propBaseY +
-            overflowStartLine * PROPERTY_SUBROW_GAP +
-            (overflowLine - overflowStartLine) * OVERFLOW_SUBROW_GAP
-        );
+      // BIZZ-563 v2: overflow-noder placeres NU globalt EFTER property-loop
+      // (se nedenfor) i stedet for per-owner-Y.
+    }
+
+    // BIZZ-563 v2: Placer ALLE overflow-noder på en absolut bottom-row efter
+    // ALLE property-rows. Garanterer ingen overlap med property-noder uanset
+    // hvilken owner-Y de oprindeligt hørte til. Hver overflow-node får sin
+    // egen Y-linje (ingen MAX_PER_ROW-pakning) så vandret afstand til andre
+    // overflow-bokse også er sikret.
+    if (allOverflowNodes.length > 0) {
+      const overflowBaseY = maxPropertyY + OVERFLOW_BOTTOM_GAP;
+      for (let i = 0; i < allOverflowNodes.length; i++) {
+        yMap.set(allOverflowNodes[i], overflowBaseY + i * PROPERTY_SUBROW_GAP);
       }
     }
 

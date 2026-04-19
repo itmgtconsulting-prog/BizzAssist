@@ -220,44 +220,60 @@ async function fetchCompanyOwners(cvr: number): Promise<{
         const orgNavne = Array.isArray(org.organisationsNavn)
           ? (org.organisationsNavn as (Periodic & { navn?: string })[])
           : [];
-        // BIZZ-564: Reel ejer (RBE — Real Beneficial Owner) er KAP-anmeldelse
-        // og IKKE legalt ejerskab. Inkluderes den i ejerkæden får vi duplikater
-        // og ejerandel summer over 100% (en person kan være BÅDE legal ejer OG
-        // reel ejer af samme virksomhed). Ekskluder REEL eksplicit.
-        const erEjerOrg = orgNavne.some((n) => {
+        // BIZZ-564 v2: Reel ejer (RBE) er KAP-anmeldelse og IKKE legalt ejerskab.
+        // Bemærk: orgNavne.periode.gyldigTil er ALTID null (CVR ES bruger kun
+        // perioden på orgNavn til at tracke navne-ændringer, ikke ejer-status).
+        // Den reelle ejer-status check sker via medlemsData attributter (vaerdier)
+        // hvor vi tjekker om ejerandel-vaerdi har en aktiv (gyldigTil=null) entry.
+        const erRolleType = orgNavne.some((n) => {
           const upper = n.navn?.toUpperCase() ?? '';
           if (!upper) return false;
-          if (n.periode?.gyldigTil != null) return false; // kun aktive
           if (upper.includes('REEL')) return false; // RBE — ikke legalt ejerskab
           return upper.includes('EJER') || upper.includes('LEGALE');
         });
-        if (!erEjerOrg) continue;
-        erEjer = true;
+        if (!erRolleType) continue;
 
-        // Find ejerandel
+        // Find ejerandel + AKTIV-check via medlemsData attributter.
+        // BIZZ-564 v2: Hvis EJERANDEL_PROCENT har vaerdier hvor ALLE er udløbet
+        // (alle gyldigTil != null), er ejerskabet historisk og skal IKKE med.
+        // Hvis mindst én vaerdi har gyldigTil = null → aktiv ejer.
         const medlemsData = Array.isArray(org.medlemsData)
           ? (org.medlemsData as Record<string, unknown>[])
           : [];
+        let aktivEjerandel: string | null = null;
+        let harEjerandelAttribut = false;
         for (const md of medlemsData) {
           const attrs = Array.isArray(md.attributter)
             ? (md.attributter as Record<string, unknown>[])
             : [];
           for (const attr of attrs) {
             if (attr.type === 'EJERANDEL_PROCENT') {
+              harEjerandelAttribut = true;
               const vaerdier = Array.isArray(attr.vaerdier)
                 ? (attr.vaerdier as (Periodic & { vaerdi?: number })[])
                 : [];
-              const gyldig = gyldigNu(vaerdier);
-              if (gyldig?.vaerdi != null) {
-                ejerandel = mapEjerandel(
-                  typeof gyldig.vaerdi === 'number'
-                    ? gyldig.vaerdi
-                    : parseFloat(String(gyldig.vaerdi))
+              // Find AKTIV vaerdi (gyldigTil == null) — IKKE bare seneste
+              const aktiv = vaerdier.find((v) => v.periode?.gyldigTil == null);
+              if (aktiv?.vaerdi != null) {
+                aktivEjerandel = mapEjerandel(
+                  typeof aktiv.vaerdi === 'number' ? aktiv.vaerdi : parseFloat(String(aktiv.vaerdi))
                 );
               }
             }
           }
         }
+        // Aktiv ejer-criteria:
+        //   1. Ingen EJERANDEL_PROCENT-attributter → fallback: behandl som aktiv
+        //      (sjælden case, men nogle ejer-typer fx INTERESSENTER har ikke
+        //      eksplicit ejerandel-kvantificering)
+        //   2. Har EJERANDEL_PROCENT MEN ingen aktiv vaerdi → historisk → skip
+        //   3. Har aktiv vaerdi → inkluder med den ejerandel
+        if (harEjerandelAttribut && aktivEjerandel == null) {
+          // Historisk ejer — skip helt
+          continue;
+        }
+        erEjer = true;
+        ejerandel = aktivEjerandel;
       }
 
       if (erEjer) {

@@ -42,8 +42,8 @@ export const maxDuration = 300; // 5 min — bulk-ingest kan tage tid
 /** Antal rækker per batch-upsert til Supabase */
 const BATCH_SIZE = 500;
 
-/** Antal EJF-noder per GraphQL-request */
-const GQL_PAGE_SIZE = 5000;
+/** Antal EJF-noder per GraphQL-request (max 1000 for EJFCustom_EjerskabBegraenset) */
+const GQL_PAGE_SIZE = 1000;
 
 /** Sikkerheds-margin i ms — stop pagination 30s før maxDuration */
 const SAFETY_MARGIN_MS = 30_000;

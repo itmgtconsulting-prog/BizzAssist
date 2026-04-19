@@ -560,6 +560,24 @@ function mapESHit(hit: Record<string, unknown>): CVRPublicData | null {
     }
   }
 
+  // BIZZ-516: Fusioner + spaltninger → historik
+  const fusioner = Array.isArray(src.fusioner) ? (src.fusioner as Record<string, unknown>[]) : [];
+  for (const f of fusioner) {
+    const navne = Array.isArray(f.organisationsNavn) ? (f.organisationsNavn as Periodic[]) : [];
+    const fra = navne[0]?.periode?.gyldigFra ?? '';
+    const til = navne[0]?.periode?.gyldigTil ?? null;
+    if (fra) historik.push({ type: 'fusion', fra, til, vaerdi: 'Fusion' });
+  }
+  const spaltninger = Array.isArray(src.spaltninger)
+    ? (src.spaltninger as Record<string, unknown>[])
+    : [];
+  for (const s of spaltninger) {
+    const navne = Array.isArray(s.organisationsNavn) ? (s.organisationsNavn as Periodic[]) : [];
+    const fra = navne[0]?.periode?.gyldigFra ?? '';
+    const til = navne[0]?.periode?.gyldigTil ?? null;
+    if (fra) historik.push({ type: 'spaltning', fra, til, vaerdi: 'Spaltning' });
+  }
+
   // ── Ejere / Deltagere (deltagerRelation) ──
   const relationer = Array.isArray(src.deltagerRelation)
     ? (src.deltagerRelation as Record<string, unknown>[])

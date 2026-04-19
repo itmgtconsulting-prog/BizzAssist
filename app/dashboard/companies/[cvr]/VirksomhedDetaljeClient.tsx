@@ -218,6 +218,8 @@ const historikTypeConfig: Record<string, { icon: React.ReactNode; color: string 
   status: { icon: <CheckCircle size={14} />, color: 'text-amber-400' },
   branche: { icon: <Factory size={14} />, color: 'text-cyan-400' },
   ejerskab: { icon: <Shield size={14} />, color: 'text-orange-400' },
+  fusion: { icon: <ArrowRightLeft size={14} />, color: 'text-rose-400' },
+  spaltning: { icon: <ArrowRightLeft size={14} />, color: 'text-pink-400' },
 };
 
 // ─── Types ────────────────────────────────────────────────────────────────────

@@ -40,6 +40,7 @@ import {
   XCircle,
   Info,
   Zap,
+  Clock,
 } from 'lucide-react';
 /** Recharts — single dynamic import keeps recharts in one chunk */
 const EjendomPrisChart = dynamic(() => import('./EjendomPrisChart'), { ssr: false });
@@ -75,6 +76,10 @@ import type {
   ForelobigVurderingResponse,
 } from '@/app/api/vurdering-forelobig/route';
 import type { MatrikelEjendom, MatrikelResponse } from '@/app/api/matrikel/route';
+import type {
+  MatrikelHistorikEvent,
+  MatrikelHistorikResponse,
+} from '@/app/api/matrikel/historik/route';
 import { gemRecentEjendom } from '@/app/lib/recentEjendomme';
 import { recordRecentVisit } from '@/app/lib/recordRecentVisit';
 import { erTracked, toggleTrackEjendom, fetchErTracked } from '@/app/lib/trackedEjendomme';
@@ -939,6 +944,12 @@ export default function EjendomDetaljeClient({
   const [matrikelData, setMatrikelData] = useState<MatrikelEjendom | null>(null);
   /** True mens matrikeldata hentes */
   const [matrikelLoader, setMatrikelLoader] = useState(false);
+  /** BIZZ-500: Matrikel-historik (udstykninger, sammenlægninger, arealændringer) */
+  const [matrikelHistorik, setMatrikelHistorik] = useState<MatrikelHistorikEvent[]>([]);
+  /** True mens matrikel-historik hentes */
+  const [historikLoader, setHistorikLoader] = useState(false);
+  /** Om matrikel-historik sektionen er åben (collapsible) */
+  const [historikOpen, setHistorikOpen] = useState(false);
   /** ID'er på jord-rækker der er foldet ud */
   const [expandedJord, setExpandedJord] = useState<Set<string>>(new Set());
 
@@ -1475,6 +1486,34 @@ export default function EjendomDetaljeClient({
       });
     return () => controller.abort();
   }, [erDAWA, bbrData]);
+
+  /**
+   * BIZZ-500: Lazy-loader matrikel-historik når brugeren åbner sektionen.
+   * Hentes kun én gang per BFE — caches i state.
+   */
+  useEffect(() => {
+    if (!historikOpen) return;
+    if (matrikelHistorik.length > 0 || historikLoader) return;
+    if (!erDAWA || !bbrData?.ejendomsrelationer?.length) return;
+    const bfeNummer = bbrData.ejendomsrelationer[0]?.bfeNummer;
+    if (!bfeNummer) return;
+    const controller = new AbortController();
+    setHistorikLoader(true);
+    fetch(`/api/matrikel/historik?bfeNummer=${bfeNummer}`, { signal: controller.signal })
+      .then((r) => r.json())
+      .then((data: MatrikelHistorikResponse) => {
+        if (controller.signal.aborted) return;
+        if (data.historik?.length) setMatrikelHistorik(data.historik);
+      })
+      .catch((err) => {
+        if (err.name === 'AbortError') return;
+        logger.error('[ejendom] Matrikel historik fetch error:', err);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setHistorikLoader(false);
+      });
+    return () => controller.abort();
+  }, [historikOpen, erDAWA, bbrData, matrikelHistorik.length, historikLoader]);
 
   /**
    * Henter forelobige ejendomsvurderinger fra Vurderingsportalen.
@@ -3671,6 +3710,141 @@ export default function EjendomDetaljeClient({
                           </div>
                         </div>
                       )}
+
+                      {/* ── BIZZ-500: Matrikel-historik (collapsible tidslinje) ── */}
+                      <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden">
+                        <button
+                          type="button"
+                          onClick={() => setHistorikOpen((prev) => !prev)}
+                          className="w-full px-4 py-2.5 flex items-center justify-between hover:bg-slate-700/20 transition-colors"
+                          aria-expanded={historikOpen}
+                        >
+                          <span className="text-slate-300 text-xs font-semibold uppercase tracking-wider flex items-center gap-1.5">
+                            <Clock size={12} className="text-slate-500" />
+                            {da ? 'Matrikel-historik' : 'Cadastre history'}
+                          </span>
+                          {historikOpen ? (
+                            <ChevronDown size={14} className="text-slate-500" />
+                          ) : (
+                            <ChevronRight size={14} className="text-slate-500" />
+                          )}
+                        </button>
+                        {historikOpen && (
+                          <div className="px-4 pb-4 border-t border-slate-700/20">
+                            {historikLoader ? (
+                              <div className="py-4 text-center">
+                                <div className="inline-block w-4 h-4 border-2 border-slate-600 border-t-blue-400 rounded-full animate-spin" />
+                                <p className="text-slate-500 text-xs mt-2">
+                                  {da ? 'Henter historik…' : 'Loading history…'}
+                                </p>
+                              </div>
+                            ) : matrikelHistorik.length > 0 ? (
+                              <div className="relative mt-3">
+                                <div className="absolute left-[7px] top-2 bottom-2 w-px bg-slate-700/50" />
+                                <div className="space-y-4">
+                                  {matrikelHistorik.map((evt, idx) => {
+                                    const typeColor =
+                                      {
+                                        oprettelse: 'bg-green-500',
+                                        udstykning: 'bg-orange-500',
+                                        sammenlægning: 'bg-blue-500',
+                                        arealændring: 'bg-yellow-500',
+                                        statusændring: 'bg-purple-500',
+                                      }[evt.type] ?? 'bg-slate-500';
+                                    const typeLabel = da
+                                      ? {
+                                          oprettelse: 'Oprettet',
+                                          udstykning: 'Udstykning',
+                                          sammenlægning: 'Sammenlægning',
+                                          arealændring: 'Arealændring',
+                                          statusændring: 'Statusændring',
+                                        }[evt.type]
+                                      : {
+                                          oprettelse: 'Created',
+                                          udstykning: 'Subdivision',
+                                          sammenlægning: 'Merger',
+                                          arealændring: 'Area change',
+                                          statusændring: 'Status change',
+                                        }[evt.type];
+                                    const formattedDate = (() => {
+                                      try {
+                                        return new Date(evt.dato).toLocaleDateString(
+                                          da ? 'da-DK' : 'en-GB',
+                                          { year: 'numeric', month: 'short', day: 'numeric' }
+                                        );
+                                      } catch {
+                                        return evt.dato;
+                                      }
+                                    })();
+                                    return (
+                                      <div
+                                        key={`${evt.dato}-${evt.type}-${idx}`}
+                                        className="relative pl-6"
+                                      >
+                                        <div
+                                          className={`absolute left-0.5 top-1 w-3 h-3 rounded-full border-2 border-slate-900 ${typeColor}`}
+                                        />
+                                        <div>
+                                          <div className="flex items-center gap-2 mb-0.5">
+                                            <span className="text-slate-400 text-[10px] tabular-nums">
+                                              {formattedDate}
+                                            </span>
+                                            <span
+                                              className={`px-1.5 py-0.5 text-[10px] font-semibold rounded ${typeColor}/20 text-white/80`}
+                                            >
+                                              {typeLabel}
+                                            </span>
+                                          </div>
+                                          <p className="text-slate-300 text-xs">
+                                            {evt.beskrivelse}
+                                          </p>
+                                          {evt.detaljer && (
+                                            <div className="mt-1 text-[10px] text-slate-500 space-y-0.5">
+                                              {evt.detaljer.arealFoer != null &&
+                                                evt.detaljer.arealEfter != null && (
+                                                  <p>
+                                                    {da ? 'Areal' : 'Area'}:{' '}
+                                                    {evt.detaljer.arealFoer.toLocaleString(
+                                                      da ? 'da-DK' : 'en-GB'
+                                                    )}{' '}
+                                                    m² →{' '}
+                                                    {evt.detaljer.arealEfter.toLocaleString(
+                                                      da ? 'da-DK' : 'en-GB'
+                                                    )}{' '}
+                                                    m²
+                                                  </p>
+                                                )}
+                                              {evt.detaljer.jordstykkerFoer &&
+                                                evt.detaljer.jordstykkerEfter && (
+                                                  <p>
+                                                    {da ? 'Jordstykker' : 'Parcels'}:{' '}
+                                                    {evt.detaljer.jordstykkerFoer.join(', ')} →{' '}
+                                                    {evt.detaljer.jordstykkerEfter.join(', ')}
+                                                  </p>
+                                                )}
+                                              {evt.detaljer.forretningshaendelse && (
+                                                <p className="italic">
+                                                  {evt.detaljer.forretningshaendelse}
+                                                </p>
+                                              )}
+                                            </div>
+                                          )}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ) : (
+                              <p className="py-3 text-slate-500 text-xs text-center">
+                                {da
+                                  ? 'Ingen historik fundet for denne ejendom'
+                                  : 'No history found for this property'}
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   ) : (
                     <div className="bg-slate-800/30 border border-slate-700/40 rounded-xl p-4 text-center">
@@ -6371,6 +6545,141 @@ export default function EjendomDetaljeClient({
                           </div>
                         </div>
                       )}
+
+                      {/* ── BIZZ-500: Matrikel-historik (collapsible tidslinje) — mobil ── */}
+                      <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden">
+                        <button
+                          type="button"
+                          onClick={() => setHistorikOpen((prev) => !prev)}
+                          className="w-full px-4 py-2.5 flex items-center justify-between hover:bg-slate-700/20 transition-colors"
+                          aria-expanded={historikOpen}
+                        >
+                          <span className="text-slate-300 text-xs font-semibold uppercase tracking-wider flex items-center gap-1.5">
+                            <Clock size={12} className="text-slate-500" />
+                            {da ? 'Matrikel-historik' : 'Cadastre history'}
+                          </span>
+                          {historikOpen ? (
+                            <ChevronDown size={14} className="text-slate-500" />
+                          ) : (
+                            <ChevronRight size={14} className="text-slate-500" />
+                          )}
+                        </button>
+                        {historikOpen && (
+                          <div className="px-4 pb-4 border-t border-slate-700/20">
+                            {historikLoader ? (
+                              <div className="py-4 text-center">
+                                <div className="inline-block w-4 h-4 border-2 border-slate-600 border-t-blue-400 rounded-full animate-spin" />
+                                <p className="text-slate-500 text-xs mt-2">
+                                  {da ? 'Henter historik…' : 'Loading history…'}
+                                </p>
+                              </div>
+                            ) : matrikelHistorik.length > 0 ? (
+                              <div className="relative mt-3">
+                                <div className="absolute left-[7px] top-2 bottom-2 w-px bg-slate-700/50" />
+                                <div className="space-y-4">
+                                  {matrikelHistorik.map((evt, idx) => {
+                                    const typeColor =
+                                      {
+                                        oprettelse: 'bg-green-500',
+                                        udstykning: 'bg-orange-500',
+                                        sammenlægning: 'bg-blue-500',
+                                        arealændring: 'bg-yellow-500',
+                                        statusændring: 'bg-purple-500',
+                                      }[evt.type] ?? 'bg-slate-500';
+                                    const typeLabel = da
+                                      ? {
+                                          oprettelse: 'Oprettet',
+                                          udstykning: 'Udstykning',
+                                          sammenlægning: 'Sammenlægning',
+                                          arealændring: 'Arealændring',
+                                          statusændring: 'Statusændring',
+                                        }[evt.type]
+                                      : {
+                                          oprettelse: 'Created',
+                                          udstykning: 'Subdivision',
+                                          sammenlægning: 'Merger',
+                                          arealændring: 'Area change',
+                                          statusændring: 'Status change',
+                                        }[evt.type];
+                                    const formattedDate = (() => {
+                                      try {
+                                        return new Date(evt.dato).toLocaleDateString(
+                                          da ? 'da-DK' : 'en-GB',
+                                          { year: 'numeric', month: 'short', day: 'numeric' }
+                                        );
+                                      } catch {
+                                        return evt.dato;
+                                      }
+                                    })();
+                                    return (
+                                      <div
+                                        key={`m-${evt.dato}-${evt.type}-${idx}`}
+                                        className="relative pl-6"
+                                      >
+                                        <div
+                                          className={`absolute left-0.5 top-1 w-3 h-3 rounded-full border-2 border-slate-900 ${typeColor}`}
+                                        />
+                                        <div>
+                                          <div className="flex items-center gap-2 mb-0.5">
+                                            <span className="text-slate-400 text-[10px] tabular-nums">
+                                              {formattedDate}
+                                            </span>
+                                            <span
+                                              className={`px-1.5 py-0.5 text-[10px] font-semibold rounded ${typeColor}/20 text-white/80`}
+                                            >
+                                              {typeLabel}
+                                            </span>
+                                          </div>
+                                          <p className="text-slate-300 text-xs">
+                                            {evt.beskrivelse}
+                                          </p>
+                                          {evt.detaljer && (
+                                            <div className="mt-1 text-[10px] text-slate-500 space-y-0.5">
+                                              {evt.detaljer.arealFoer != null &&
+                                                evt.detaljer.arealEfter != null && (
+                                                  <p>
+                                                    {da ? 'Areal' : 'Area'}:{' '}
+                                                    {evt.detaljer.arealFoer.toLocaleString(
+                                                      da ? 'da-DK' : 'en-GB'
+                                                    )}{' '}
+                                                    m² →{' '}
+                                                    {evt.detaljer.arealEfter.toLocaleString(
+                                                      da ? 'da-DK' : 'en-GB'
+                                                    )}{' '}
+                                                    m²
+                                                  </p>
+                                                )}
+                                              {evt.detaljer.jordstykkerFoer &&
+                                                evt.detaljer.jordstykkerEfter && (
+                                                  <p>
+                                                    {da ? 'Jordstykker' : 'Parcels'}:{' '}
+                                                    {evt.detaljer.jordstykkerFoer.join(', ')} →{' '}
+                                                    {evt.detaljer.jordstykkerEfter.join(', ')}
+                                                  </p>
+                                                )}
+                                              {evt.detaljer.forretningshaendelse && (
+                                                <p className="italic">
+                                                  {evt.detaljer.forretningshaendelse}
+                                                </p>
+                                              )}
+                                            </div>
+                                          )}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ) : (
+                              <p className="py-3 text-slate-500 text-xs text-center">
+                                {da
+                                  ? 'Ingen historik fundet for denne ejendom'
+                                  : 'No history found for this property'}
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   ) : (
                     <div className="bg-slate-800/30 border border-slate-700/40 rounded-xl p-4 text-center">

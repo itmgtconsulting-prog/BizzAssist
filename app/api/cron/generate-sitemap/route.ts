@@ -46,6 +46,8 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { generateSlug, generateVirksomhedSlug } from '@/app/lib/slug';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
+import { fetchDawa } from '@/app/lib/dawa';
+import { matListJordstykker, type MatJordstykkeBulk } from '@/app/lib/dar';
 
 // ─── Konstanter ────────────────────────────────────────────────────────────────
 
@@ -341,56 +343,89 @@ async function phaseProperties(
   let done = false;
 
   for (let i = 0; i < MAX_JORDSTYKKE_PAGES_PER_RUN; i++) {
-    // DAWA jordstykker returnerer bfenummer direkte — adgangsadresser gør ikke
-    const url =
-      `https://api.dataforsyningen.dk/jordstykker` +
-      `?per_side=${JORDSTYKKE_PAGE_SIZE}&side=${currentPage}`;
+    // BIZZ-510: Try MAT WFS (Datafordeler) first. Falls back to DAWA
+    // /jordstykker until DAWA shuts down 2026-07-01. Both paths are
+    // normalised to MatJordstykkeBulk[] so buildEjendomEntries handles a
+    // single shape regardless of source.
+    let items: MatJordstykkeBulk[] | null = null;
 
     try {
-      const res = await fetch(url, {
-        headers: { Accept: 'application/json' },
-        signal: AbortSignal.timeout(10000),
-      });
-
-      if (!res.ok) {
-        logger.error(
-          '[generate-sitemap] DAWA jordstykker side',
-          currentPage,
-          'fejlede:',
-          res.status
-        );
-        break;
-      }
-
-      const data = (await res.json()) as unknown[];
-
-      if (!Array.isArray(data) || data.length === 0) {
-        // Ingen flere data — fuld scan afsluttet, nulstil fremskridt
-        await saveProgress(admin, 1);
-        done = true;
-        break;
-      }
-
-      // Byg og upsert i batches
-      let batchStart = 0;
-      const entries = buildEjendomEntries(data, now);
-
-      while (batchStart < entries.length) {
-        const slice = entries.slice(batchStart, batchStart + UPSERT_BATCH_SIZE);
-        totalCount += await upsertBatch(admin, slice);
-        batchStart += UPSERT_BATCH_SIZE;
-      }
-
-      currentPage++;
-
-      if (data.length < JORDSTYKKE_PAGE_SIZE) {
-        // Kortere side = sidste side i datasættet
-        await saveProgress(admin, 1);
-        done = true;
-        break;
-      }
+      const startIndex = (currentPage - 1) * JORDSTYKKE_PAGE_SIZE;
+      items = await matListJordstykker(startIndex, JORDSTYKKE_PAGE_SIZE);
     } catch (err) {
-      logger.error('[generate-sitemap] DAWA jordstykker side', currentPage, 'fejl:', err);
+      logger.error(
+        '[generate-sitemap] MAT WFS side',
+        currentPage,
+        'kastede — falder tilbage til DAWA:',
+        err
+      );
+    }
+
+    if (items === null) {
+      // MAT failed or unavailable — fall back to DAWA for this page only.
+      try {
+        const url =
+          `https://api.dataforsyningen.dk/jordstykker` +
+          `?per_side=${JORDSTYKKE_PAGE_SIZE}&side=${currentPage}`;
+        const res = await fetchDawa(
+          url,
+          { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(10000) },
+          { caller: 'cron.generate-sitemap.jordstykker.fallback' }
+        );
+
+        if (!res.ok) {
+          logger.error(
+            '[generate-sitemap] DAWA jordstykker side',
+            currentPage,
+            'fejlede:',
+            res.status
+          );
+          break;
+        }
+
+        const data = (await res.json()) as unknown[];
+        if (!Array.isArray(data)) break;
+        items = data
+          .map((raw): MatJordstykkeBulk | null => {
+            const js = raw as DawaJordstykke;
+            const bfe = js.bfenummer;
+            if (!bfe) return null;
+            return {
+              bfenummer: bfe,
+              matrikelnr: js.matrikelnr ?? '',
+              ejerlavsnavn: js.ejerlav?.navn ?? '',
+              ejerlavskode: js.ejerlav?.kode ?? 0,
+            };
+          })
+          .filter((x): x is MatJordstykkeBulk => x !== null);
+      } catch (err) {
+        logger.error('[generate-sitemap] DAWA jordstykker side', currentPage, 'fejl:', err);
+        break;
+      }
+    }
+
+    if (items.length === 0) {
+      // No more data — full scan done, reset progress
+      await saveProgress(admin, 1);
+      done = true;
+      break;
+    }
+
+    // Build + upsert in batches
+    let batchStart = 0;
+    const entries = buildEjendomEntries(items, now);
+    while (batchStart < entries.length) {
+      const slice = entries.slice(batchStart, batchStart + UPSERT_BATCH_SIZE);
+      totalCount += await upsertBatch(admin, slice);
+      batchStart += UPSERT_BATCH_SIZE;
+    }
+
+    currentPage++;
+
+    if (items.length < JORDSTYKKE_PAGE_SIZE) {
+      // Shorter page = last page in dataset
+      await saveProgress(admin, 1);
+      done = true;
       break;
     }
   }
@@ -410,30 +445,30 @@ async function phaseProperties(
  * Slug genereres fra ejerlav.navn + matrikelnr da jordstykker ikke har
  * adressedata. Sluggen er dekorativ — BFE-nummeret er den funktionelle ID.
  *
- * @param data - Array af DAWA jordstykke-objekter
+ * BIZZ-510: Input er normaliseret MatJordstykkeBulk (flat shape), så både
+ * MAT WFS og DAWA fallback mappes til samme form før upsert.
+ *
+ * @param data - Array af normaliserede jordstykker
  * @param updatedAt - ISO-tidsstempel for updated_at-feltet
  * @returns Filtreret array af SitemapUpsert klar til upsert
  */
-function buildEjendomEntries(data: unknown[], updatedAt: string): SitemapUpsert[] {
+function buildEjendomEntries(data: MatJordstykkeBulk[], updatedAt: string): SitemapUpsert[] {
   const entries: SitemapUpsert[] = [];
 
-  for (const item of data) {
-    const js = item as DawaJordstykke;
-
-    const bfe = js.bfenummer;
-    if (!bfe) continue; // Skip jordstykker uden BFE
+  for (const js of data) {
+    if (!js.bfenummer) continue; // Skip jordstykker uden BFE
 
     // Brug ejerlav.navn + matrikelnr som slug-grundlag.
     // Sluggen er dekorativ — den offentlige side bruger kun BFE til opslag.
-    const ejerlavNavn = js.ejerlav?.navn ?? String(js.ejerlav?.kode ?? '');
-    const matrikelnr = js.matrikelnr ?? '';
+    const ejerlavNavn = js.ejerlavsnavn || String(js.ejerlavskode || '');
+    const matrikelnr = js.matrikelnr;
 
     if (!ejerlavNavn && !matrikelnr) continue;
 
     entries.push({
       type: 'ejendom',
       slug: generateSlug(`${ejerlavNavn} ${matrikelnr}`),
-      entity_id: String(bfe),
+      entity_id: String(js.bfenummer),
       updated_at: updatedAt,
     });
   }

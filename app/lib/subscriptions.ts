@@ -19,8 +19,22 @@
 /** Plan identifier */
 export type PlanId = 'demo' | 'basis' | 'professionel' | 'enterprise';
 
-/** Subscription status */
-export type SubStatus = 'pending' | 'active' | 'cancelled' | 'expired';
+/**
+ * Subscription status.
+ *
+ * BIZZ-541: `past_due` and `payment_failed` are distinct states.
+ *   - `past_due`     — Stripe is still retrying. User retains access during
+ *                      the configured grace window.
+ *   - `payment_failed` — All Stripe retries exhausted (or manually set).
+ *                      User is fully blocked.
+ */
+export type SubStatus =
+  | 'pending'
+  | 'active'
+  | 'cancelled'
+  | 'expired'
+  | 'past_due'
+  | 'payment_failed';
 
 /** Full plan definition with features and pricing */
 export interface PlanDef {
@@ -52,6 +66,14 @@ export interface PlanDef {
   tokenAccumulationCapMultiplier: number;
   /** Free trial days for new subscribers (0 = no trial, must pay immediately) */
   freeTrialDays: number;
+  /**
+   * BIZZ-541: Grace window in hours when a recurring payment fails.
+   * 0 (default) = payment failure immediately revokes access — same as unpaid.
+   * Non-zero = user retains access for that many hours while Stripe retries.
+   * Stored per-plan so cheap plans can have zero grace and enterprise plans
+   * can have longer windows.
+   */
+  paymentGraceHours: number;
   /** Maximum number of sales allowed (null/undefined = unlimited) */
   maxSales?: number | null;
   /** Current number of sales completed */
@@ -76,6 +98,7 @@ export const PLANS: Record<PlanId, PlanDef> = {
     durationDays: 0,
     tokenAccumulationCapMultiplier: 5,
     freeTrialDays: 0,
+    paymentGraceHours: 0,
     maxSales: null,
     salesCount: 0,
   },
@@ -94,6 +117,7 @@ export const PLANS: Record<PlanId, PlanDef> = {
     durationDays: 0,
     tokenAccumulationCapMultiplier: 5,
     freeTrialDays: 0,
+    paymentGraceHours: 0,
     maxSales: null,
     salesCount: 0,
   },
@@ -112,6 +136,7 @@ export const PLANS: Record<PlanId, PlanDef> = {
     durationDays: 0,
     tokenAccumulationCapMultiplier: 5,
     freeTrialDays: 0,
+    paymentGraceHours: 0,
     maxSales: null,
     salesCount: 0,
   },
@@ -130,6 +155,7 @@ export const PLANS: Record<PlanId, PlanDef> = {
     durationDays: 0,
     tokenAccumulationCapMultiplier: 5,
     freeTrialDays: 0,
+    paymentGraceHours: 0,
     maxSales: null,
     salesCount: 0,
   },
@@ -194,6 +220,7 @@ export function resolvePlan(planId: string): PlanDef {
     durationDays: 0,
     tokenAccumulationCapMultiplier: 5,
     freeTrialDays: 0,
+    paymentGraceHours: 0,
     maxSales: null,
     salesCount: 0,
   };
@@ -229,6 +256,18 @@ export interface UserSubscription {
   cancelAtPeriodEnd?: boolean;
   /** ISO date when the subscription will be cancelled */
   cancelAt?: string;
+  /**
+   * BIZZ-541: When Stripe will next attempt to charge after a failed payment.
+   * Set on `invoice.payment_failed`, cleared when status returns to `active`.
+   * ISO date string.
+   */
+  nextPaymentAttempt?: string;
+  /**
+   * BIZZ-541: Deadline after which a `past_due` subscription becomes
+   * functionally blocked. Calculated as first-failure-time + PAYMENT_GRACE_HOURS.
+   * ISO date string.
+   */
+  graceExpiresAt?: string;
 }
 
 // NOTE: localStorage-based getSubscription/saveSubscription/switchActiveUser/
@@ -275,6 +314,16 @@ export function isSubscriptionFunctional(
   plan: PlanDef | null
 ): boolean {
   if (!sub || !plan) return false;
+
+  // BIZZ-541: `past_due` means Stripe is still retrying. The plan decides
+  // whether the user retains access during retry. Default (paymentGraceHours=0)
+  // means a failed payment is treated identically to "not paid for the plan" —
+  // access is revoked immediately. Plans that opt in to a non-zero grace window
+  // keep access until graceExpiresAt.
+  if (sub.status === 'past_due') {
+    return isWithinPaymentGrace(sub, plan);
+  }
+
   if (sub.status !== 'active') return false;
   // BIZZ-431: Free plans that require approval only have access when explicitly approved (isPaid)
   // Free plans without approval requirement always have access
@@ -289,6 +338,34 @@ export function isSubscriptionFunctional(
     if (Date.now() < trialEnd) return true;
   }
   return false;
+}
+
+/**
+ * BIZZ-541: Check whether a `past_due` subscription is still within its grace
+ * window as defined by the plan. Returns true only when:
+ *   - subscription is `past_due`, AND
+ *   - the plan's `paymentGraceHours` is > 0, AND
+ *   - `graceExpiresAt` is in the future (or missing — fail open so old
+ *     records written before BIZZ-541 landed aren't retroactively blocked).
+ *
+ * When `paymentGraceHours` is 0, past_due immediately behaves like unpaid:
+ * the user loses access with no grace, matching Jakob's design intent
+ * ("if payment fails, functionality should be the same as not having paid").
+ *
+ * @param sub  - User's subscription
+ * @param plan - Plan definition (carries paymentGraceHours)
+ * @returns true when access should still be granted under grace
+ */
+export function isWithinPaymentGrace(sub: UserSubscription | null, plan: PlanDef | null): boolean {
+  if (!sub || !plan) return false;
+  if (sub.status !== 'past_due') return false;
+  // Zero grace = same behavior as unpaid — fail closed immediately.
+  if (!plan.paymentGraceHours || plan.paymentGraceHours <= 0) return false;
+  // Missing graceExpiresAt on a plan WITH grace = fail open. This happens
+  // for legacy records pre-BIZZ-541; we'd rather let them keep access than
+  // surprise-lock them out.
+  if (!sub.graceExpiresAt) return true;
+  return new Date(sub.graceExpiresAt).getTime() > Date.now();
 }
 
 // ─── Token helpers ──────────────────────────────────────────────────────────

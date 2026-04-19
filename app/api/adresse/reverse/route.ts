@@ -1,6 +1,12 @@
 /**
  * Reverse geocoding proxy — finder nærmeste adresse for en koordinat.
- * Erstatter direkte DAWA-kald fra client-side (DAWA lukker 1. juli 2026).
+ *
+ * Flow (BIZZ-503):
+ *   1. Datafordeler DAR WFS med CQL_FILTER DWITHIN (primær)
+ *   2. DAWA /adgangsadresser/reverse (fallback indtil DAWA lukker 2026-07-01)
+ *
+ * Erstatter direkte DAWA-kald fra client-side så vi ikke skal fjerne alle
+ * kald-sites samtidig med DAWA-nedlukningen.
  *
  * GET /api/adresse/reverse?lng=12.57&lat=55.68
  * @returns { adresse: string, id: string | null }
@@ -9,9 +15,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { resolveTenantId } from '@/lib/api/auth';
 import { parseQuery } from '@/app/lib/validate';
-
-// const DAR_ENDPOINT = 'https://graphql.datafordeler.dk/DAR/v1';
-// TODO(BIZZ-92): DAR GraphQL doesn't support spatial queries yet — enable when it does (before July 2026).
+import { fetchDawa } from '@/app/lib/dawa';
+import { darReverseGeocode } from '@/app/lib/dar';
+import { logger } from '@/app/lib/logger';
 
 /** Zod schema for reverse geocoding query params */
 const reverseSchema = z.object({
@@ -21,7 +27,10 @@ const reverseSchema = z.object({
 
 /**
  * Reverse geocoder — finder nærmeste adresse for koordinat.
- * Bruger DAWA (falder tilbage til DAR GraphQL når spatial queries understøttes).
+ *
+ * BIZZ-503: Forsøger Datafordeler DAR WFS først; falder tilbage til DAWA
+ * (som lukker 1. juli 2026). Fallbacken bevares som safety net indtil
+ * DAR-pathen er verificeret i produktion.
  *
  * @param request - NextRequest med lng og lat query params
  * @returns JSON med adresse-streng og DAR id
@@ -34,11 +43,21 @@ export async function GET(request: NextRequest) {
   if (!parsed.success) return NextResponse.json({ adresse: null, id: null }, { status: 400 });
   const { lng, lat } = parsed.data;
 
-  // DAWA fallback (virker til 1. juli 2026)
+  // ── Primær: Datafordeler DAR WFS ────────────────────────────────────────
+  const darResult = await darReverseGeocode(lng, lat);
+  if (darResult) {
+    return NextResponse.json(darResult);
+  }
+
+  // ── Fallback: DAWA (logget som deprecated via fetchDawa) ────────────────
+  logger.warn(
+    '[adresse/reverse] DAR WFS returned no result, falling back to DAWA (deadline 2026-07-01)'
+  );
   try {
-    const res = await fetch(
+    const res = await fetchDawa(
       `https://api.dataforsyningen.dk/adgangsadresser/reverse?x=${lng}&y=${lat}&struktur=mini`,
-      { signal: AbortSignal.timeout(5000) }
+      { signal: AbortSignal.timeout(5000) },
+      { caller: 'adresse.reverse.fallback' }
     );
     if (!res.ok) return NextResponse.json({ adresse: null, id: null });
     const d = (await res.json()) as Record<string, unknown>;

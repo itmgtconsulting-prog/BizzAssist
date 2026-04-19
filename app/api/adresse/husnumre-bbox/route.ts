@@ -1,9 +1,11 @@
 /**
  * Husnumre i bounding box — server-side proxy for kort-lag.
- * Erstatter direkte DAWA-kald fra kortsiden (DAWA lukker 1. juli 2026).
  *
- * Bruger DAR GraphQL med bbox-baseret filtrering.
- * Falder tilbage til DAWA hvis DAR fejler.
+ * Flow (BIZZ-504):
+ *   1. Datafordeler DAR WFS med bbox-filter (primær)
+ *   2. DAWA /adgangsadresser?polygon=… (fallback indtil DAWA lukker 2026-07-01)
+ *
+ * Bruges af KortPageClient.tsx til at vise adresseprikker på kortet.
  *
  * GET /api/adresse/husnumre-bbox?w=12.5&s=55.6&e=12.6&n=55.7
  * @returns GeoJSON FeatureCollection med adressepunkter (Point geometry)
@@ -13,6 +15,9 @@ import { z } from 'zod';
 import { resolveTenantId } from '@/lib/api/auth';
 import { parseQuery } from '@/app/lib/validate';
 import { DAWA_BASE_URL } from '@/app/lib/serviceEndpoints';
+import { fetchDawa } from '@/app/lib/dawa';
+import { darHusnumreBbox } from '@/app/lib/dar';
+import { logger } from '@/app/lib/logger';
 
 const emptyFc: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
 
@@ -26,7 +31,10 @@ const bboxSchema = z.object({
 
 /**
  * Henter husnumre i en bounding box som GeoJSON Point-features.
- * DAR GraphQL understøtter ikke spatial queries endnu, så vi bruger DAWA fallback.
+ *
+ * BIZZ-504: Forsøger Datafordeler DAR WFS først; falder tilbage til DAWA
+ * (som lukker 1. juli 2026). Fallbacken bevares som safety net indtil
+ * DAR-pathen er verificeret i produktion.
  *
  * @param request - NextRequest med w, s, e, n query params (WGS84 bbox)
  * @returns GeoJSON FeatureCollection med Point features
@@ -40,7 +48,8 @@ export async function GET(request: NextRequest) {
   const { w, s, e, n } = parsed.data;
 
   // Guard: reject oversized bounding boxes — husnumre are dense and large areas
-  // cause very slow DAWA responses or result sets that exceed the per_side limit
+  // cause very slow responses or result sets that exceed the count cap.
+  // Applies to both DAR WFS and DAWA (per_side cap).
   const lngSpan = Math.abs(e - w);
   const latSpan = Math.abs(n - s);
   if (lngSpan > 0.3 || latSpan > 0.3) {
@@ -53,8 +62,14 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // TODO(BIZZ-92): Replace with DAR GraphQL spatial query when supported (before July 2026)
-  // DAWA fallback
+  // ── Primær: Datafordeler DAR WFS ────────────────────────────────────────
+  const darResult = await darHusnumreBbox(w, s, e, n);
+  if (darResult) {
+    return NextResponse.json(darResult);
+  }
+
+  // ── Fallback: DAWA (logget som deprecated via fetchDawa) ────────────────
+  logger.warn('[husnumre-bbox] DAR WFS returned null, falling back to DAWA (deadline 2026-07-01)');
   try {
     const poly = encodeURIComponent(
       JSON.stringify([
@@ -67,9 +82,10 @@ export async function GET(request: NextRequest) {
         ],
       ])
     );
-    const res = await fetch(
+    const res = await fetchDawa(
       `${DAWA_BASE_URL}/adgangsadresser?polygon=${poly}&srid=4326&struktur=mini&per_side=1000`,
-      { signal: AbortSignal.timeout(8000) }
+      { signal: AbortSignal.timeout(8000) },
+      { caller: 'adresse.husnumre-bbox.fallback' }
     );
     if (!res.ok) return NextResponse.json(emptyFc);
     const items = (await res.json()) as Record<string, unknown>[];

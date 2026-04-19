@@ -1,11 +1,17 @@
 /**
  * GET /api/tinglysning/personbog?cvr=12345678
+ * GET /api/tinglysning/personbog?navn=Jens%20Jensen&fdato=DDMMYY  (BIZZ-531)
+ * GET /api/tinglysning/personbog?navn=Jens%20Jensen&udenfdato=true  (BIZZ-531)
  *
  * Henter personbogsdata (virksomhedspant, løsørepant, fordringspant, ejendomsforbehold)
- * for en virksomhed via Tinglysningsrettens HTTP API.
- * Bruger 2-vejs SSL med OCES systemcertifikat (NemID/MitID).
+ * via Tinglysningsrettens HTTP API. Bruger 2-vejs SSL med OCES systemcertifikat.
  *
- * @param cvr - CVR-nummer (8 cifre)
+ * To søgemodes:
+ *   1. cvr: Slå op på virksomhed eller person via deres CVR-nummer
+ *   2. navn+fdato (BIZZ-531): Slå op på person der ikke har CVR. fdato i
+ *      DDMMYY-format. Sæt udenfdato=true for at søge på navn alene (mange
+ *      false positives — kun til brug når fødselsdato er ukendt).
+ *
  * @returns PersonbogData med hæftelser fra Personbogen
  */
 
@@ -68,15 +74,52 @@ export interface PersonbogHaeftelse {
   loebetid: string | null;
   /** Lånevilkår-beskrivelse */
   vilkaar: string | null;
+  /** BIZZ-532: Referencerente-navn (f.eks. "CIBOR3M") */
+  referenceRenteNavn: string | null;
+  /** BIZZ-532: Referencerente-sats */
+  referenceRenteSats: number | null;
+  /** BIZZ-532: Rentetillæg-sats */
+  renteTillaeg: number | null;
+  /** BIZZ-532: Tillægstype ("Variabel" | "Fast") */
+  renteTillaegType: string | null;
+  /** BIZZ-532: Låntype-kode */
+  laantype: string | null;
+  /** BIZZ-532: Pantebrevformular-kode */
+  pantebrevFormular: string | null;
+  /** BIZZ-532: Kreditorbetegnelse (intern betegnelse) */
+  kreditorbetegnelse: string | null;
+}
+
+/** BIZZ-533: Minimal metadata for tinglyste dokumenter (vedtægt, fusion, ejerpantebrev) */
+export interface PersonbogDokument {
+  /** Dokumentets UUID til PDF-opslag via dokaktuel */
+  dokumentId: string | null;
+  /** Menneskeligt læsbart dokumentalias (fx "2024-0123456") */
+  dokumentAlias: string | null;
+  /** Tinglysningsdato (ISO) */
+  tinglysningsdato: string | null;
+  /** Registreringsdato (ISO) */
+  registreringsdato: string | null;
+  /** Prioritetsnummer hvis angivet */
+  prioritet: number | null;
 }
 
 export interface PersonbogData {
-  /** CVR-nummer */
+  /**
+   * Søge-identifier: enten CVR-nummer (8 cifre) eller "navn|fdato"-streng
+   * (BIZZ-531) for personer uden CVR. UI-logik bør acceptere begge formater.
+   */
   cvr: string;
   /** Personbog-UUID (til videre opslag) */
   uuid: string | null;
   /** Alle hæftelser registreret i Personbogen */
   haeftelser: PersonbogHaeftelse[];
+  /** BIZZ-533: Tinglyste vedtægter (kan afvige fra CVR-vedtægter) */
+  vedtaegter: PersonbogDokument[];
+  /** BIZZ-533: Tinglyste fusioner og spaltninger */
+  fusioner: PersonbogDokument[];
+  /** BIZZ-533: Ejerpantebrev i løsøre (adskilt fra almindelig løsørepant) */
+  ejerpantebreve: PersonbogDokument[];
   /** Sandt hvis test-miljø fallback blev brugt */
   testFallback?: boolean;
 }
@@ -226,6 +269,29 @@ function parsePersonbogXml(xml: string): PersonbogHaeftelse[] {
       .filter((v) => v.length > 0);
     const vilkaar = vilkaarAfsnit.length > 0 ? vilkaarAfsnit.join('\n') : null;
 
+    // BIZZ-532: Porte felter fra summarisk-parseren
+    const referenceRenteNavn =
+      entry.match(/(?:Haeftelse)?ReferenceRenteNavn[^>]*>([^<]+)/)?.[1] ??
+      entry.match(/ReferenceRenteNavn[^>]*>([^<]+)/)?.[1] ??
+      null;
+    const refSatsStr =
+      entry.match(/(?:Haeftelse)?ReferenceRenteSats[^>]*>([^<]+)/)?.[1] ??
+      entry.match(/ReferenceRenteSats[^>]*>([^<]+)/)?.[1];
+    const referenceRenteSats = refSatsStr ? parseFloat(refSatsStr) : null;
+    const tillaegStr =
+      entry.match(/(?:Haeftelse)?RenteTillaegSats[^>]*>([^<]+)/)?.[1] ??
+      entry.match(/RenteTillaeg[^>]*>([0-9.,]+)/)?.[1];
+    const renteTillaeg = tillaegStr ? parseFloat(tillaegStr) : null;
+    const renteTillaegType =
+      entry.match(/(?:Haeftelse)?RenteTillaegType(?:Kode)?[^>]*>([^<]+)/)?.[1] ?? null;
+    const laantype = entry.match(/(?:Haeftelse)?LaantypeKode[^>]*>([^<]+)/)?.[1] ?? null;
+    const pantebrevFormular =
+      entry.match(/(?:Haeftelse)?PantebrevFormularLovpligtigKode[^>]*>([^<]+)/)?.[1] ?? null;
+    const kreditorbetegnelse =
+      entry.match(/KreditorBetegnelse[^>]*>([^<]+)/)?.[1] ??
+      entry.match(/Kreditorbetegnelse[^>]*>([^<]+)/)?.[1] ??
+      null;
+
     haeftelser.push({
       type,
       pantTyper,
@@ -247,10 +313,49 @@ function parsePersonbogXml(xml: string): PersonbogHaeftelse[] {
       anmelderCvr: null,
       loebetid,
       vilkaar,
+      referenceRenteNavn,
+      referenceRenteSats,
+      renteTillaeg,
+      renteTillaegType,
+      laantype,
+      pantebrevFormular,
+      kreditorbetegnelse,
     });
   }
 
   return haeftelser;
+}
+
+/**
+ * BIZZ-533: Parser tinglyste dokumenter (vedtægter/fusioner/ejerpantebreve)
+ * fra Personbog-summarisk XML.
+ *
+ * @param xml - Rå XML fra personsummarisk endpoint
+ * @param blockName - XML-blok at matche (fx "VedtaegtSummarisk")
+ * @returns Array af PersonbogDokument med basis-metadata
+ */
+function parsePersonbogDokumenter(xml: string, blockName: string): PersonbogDokument[] {
+  const docs: PersonbogDokument[] = [];
+  const re = new RegExp(`<(?:ns:)?${blockName}>([\\s\\S]*?)<\\/(?:ns:)?${blockName}>`, 'g');
+  const entries = [...xml.matchAll(re)];
+
+  for (const [, entry] of entries) {
+    const dokumentId = entry.match(/DokumentIdentifikator[^>]*>([^<]+)/)?.[1] ?? null;
+    const dokumentAlias =
+      entry.match(/DokumentAliasIdentifikator[^>]*>([^<]+)/)?.[1] ??
+      entry.match(/AktHistoriskIdentifikator[^>]*>([^<]+)/)?.[1] ??
+      null;
+    const tinglysningsdato =
+      entry.match(/TinglysningsDato[^>]*>([^<]+)/)?.[1]?.split('T')[0] ?? null;
+    const registreringsdato =
+      entry.match(/RegistreringsDato[^>]*>([^<]+)/)?.[1]?.split('T')[0] ?? tinglysningsdato;
+    const prioritetStr = entry.match(/PrioritetNummer[^>]*>([^<]+)/)?.[1];
+    const prioritet = prioritetStr ? parseInt(prioritetStr, 10) : null;
+
+    docs.push({ dokumentId, dokumentAlias, tinglysningsdato, registreringsdato, prioritet });
+  }
+
+  return docs;
 }
 
 /**
@@ -277,31 +382,73 @@ function normalizeType(raw: string): string {
 export async function GET(req: NextRequest) {
   const auth = await resolveTenantId();
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  /** Zod schema for personbog query params */
-  const personbogSchema = z.object({
-    cvr: z.string().regex(/^\d{8}$/, 'cvr parameter er påkrævet (8 cifre)'),
-  });
+  /**
+   * Zod schema for personbog query params (BIZZ-531).
+   * Accepterer enten: cvr, navn+fdato, eller navn+udenfdato=true.
+   */
+  const personbogSchema = z
+    .object({
+      cvr: z
+        .string()
+        .regex(/^\d{8}$/)
+        .optional(),
+      navn: z.string().min(2).optional(),
+      fdato: z
+        .string()
+        .regex(/^\d{6}$/, 'fdato skal være DDMMYY (6 cifre)')
+        .optional(),
+      udenfdato: z.enum(['true', 'false']).optional(),
+    })
+    .refine(
+      (d) => d.cvr != null || (d.navn != null && (d.fdato != null || d.udenfdato === 'true')),
+      {
+        message:
+          'Angiv enten cvr (8 cifre) eller navn + fdato (DDMMYY) — eller navn + udenfdato=true',
+      }
+    );
 
   const parsed = parseQuery(req, personbogSchema);
   if (!parsed.success) {
-    return NextResponse.json({ error: 'cvr parameter er påkrævet (8 cifre)' }, { status: 400 });
+    return NextResponse.json(
+      { error: 'cvr eller navn+fdato parameter er påkrævet' },
+      { status: 400 }
+    );
   }
-  const { cvr } = parsed.data;
+  // udenfdato bruges implicit via schema-refine (krav når fdato mangler) — destruktureres ikke
+  const { cvr, navn, fdato } = parsed.data;
+  // Søge-identifier til response (cvr eller "navn|fdato")
+  const searchId = cvr ?? `${navn}${fdato ? '|' + fdato : '|udenfdato'}`;
 
   if ((!CERT_PATH && !CERT_B64) || !CERT_PASSWORD) {
     return NextResponse.json({
-      cvr,
+      cvr: searchId,
       uuid: null,
       haeftelser: [],
+      vedtaegter: [],
+      fusioner: [],
+      ejerpantebreve: [],
       fejl: 'Tinglysning certifikat ikke konfigureret',
     });
   }
 
   try {
-    // Trin 1: Søg i Personbogen med CVR-nummer
-    // Endpoint: /tinglysning/unsecuressl/soegpersonbogcvr?cvr=...
+    // Trin 1: Søg i Personbogen
+    // BIZZ-531: To søgemodes — cvr eller navn+fdato (eller navn+udenfdato).
+    // Endpoint i begge tilfælde: /tinglysning/unsecuressl/soegpersonbogcvr
     // Se http_api_beskrivelse v1.12, afsnit 4.4.1
-    const searchRes = await tlFetch(`/soegpersonbogcvr?cvr=${cvr}`);
+    let searchUrl: string;
+    if (cvr) {
+      searchUrl = `/soegpersonbogcvr?cvr=${cvr}`;
+    } else {
+      // navn+fdato eller navn+udenfdato — sikr URL-encoding for navn
+      const navnEnc = encodeURIComponent(navn!);
+      if (fdato) {
+        searchUrl = `/soegpersonbogcvr?fdato=${fdato}&navn=${navnEnc}&udenfdato=false`;
+      } else {
+        searchUrl = `/soegpersonbogcvr?navn=${navnEnc}&udenfdato=true`;
+      }
+    }
+    const searchRes = await tlFetch(searchUrl);
 
     let items: { uuid: string; navn?: string; cvr?: string }[] = [];
 
@@ -320,7 +467,14 @@ export async function GET(req: NextRequest) {
     // en anden virksomheds pantdata, da det er misvisende for brugeren.
 
     if (items.length === 0) {
-      const result: PersonbogData = { cvr, uuid: null, haeftelser: [] };
+      const result: PersonbogData = {
+        cvr: searchId,
+        uuid: null,
+        haeftelser: [],
+        vedtaegter: [],
+        fusioner: [],
+        ejerpantebreve: [],
+      };
       return NextResponse.json(result, {
         headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
       });
@@ -328,6 +482,10 @@ export async function GET(req: NextRequest) {
 
     // Trin 2: Hent summariske oplysninger for hvert personbog-item
     const allHaeftelser: PersonbogHaeftelse[] = [];
+    // BIZZ-533: Akkumulér tinglyste dokumenter (vedtægter, fusioner, ejerpantebreve)
+    const allVedtaegter: PersonbogDokument[] = [];
+    const allFusioner: PersonbogDokument[] = [];
+    const allEjerpantebreve: PersonbogDokument[] = [];
     const primaryUuid = items[0].uuid;
 
     for (const item of items) {
@@ -360,13 +518,23 @@ export async function GET(req: NextRequest) {
         }
 
         allHaeftelser.push(...parsed);
+
+        // BIZZ-533: Parse tinglyste dokumenter fra samme XML
+        allVedtaegter.push(...parsePersonbogDokumenter(detailRes.body, 'VedtaegtSummarisk'));
+        allFusioner.push(...parsePersonbogDokumenter(detailRes.body, 'FusionSummarisk'));
+        allEjerpantebreve.push(
+          ...parsePersonbogDokumenter(detailRes.body, 'EjerpantebrevSummarisk')
+        );
       }
     }
 
     const result: PersonbogData = {
-      cvr,
+      cvr: searchId,
       uuid: primaryUuid,
       haeftelser: allHaeftelser,
+      vedtaegter: allVedtaegter,
+      fusioner: allFusioner,
+      ejerpantebreve: allEjerpantebreve,
     };
 
     return NextResponse.json(result, {

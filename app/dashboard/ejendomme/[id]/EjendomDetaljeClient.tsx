@@ -24,6 +24,7 @@ import {
   X,
   MapPin,
   Building2,
+  Home,
   ChevronDown,
   ChevronRight,
   TrendingUp,
@@ -38,7 +39,9 @@ import {
   CheckCircle,
   XCircle,
   Info,
-  Loader2,
+  Zap,
+  Clock,
+  Paperclip,
 } from 'lucide-react';
 /** Recharts — single dynamic import keeps recharts in one chunk */
 const EjendomPrisChart = dynamic(() => import('./EjendomPrisChart'), { ssr: false });
@@ -59,6 +62,8 @@ import {
   type EjerstrukturNode,
 } from '@/app/lib/mock/ejendomme';
 import { erDawaId, type DawaAdresse, type DawaJordstykke } from '@/app/lib/dawa';
+import { formatBenyttelseOgByggeaar } from '@/app/lib/benyttelseskoder';
+import { tekniskAnlaegTekst, tekniskAnlaegKategori } from '@/app/lib/bbrTekniskAnlaegKoder';
 import type { EjendomApiResponse, LiveBBRBygning } from '@/app/api/ejendom/[id]/route';
 import type { CVRVirksomhed, CVRResponse } from '@/app/api/cvr/route';
 import type { VurderingData, VurderingResponse } from '@/app/api/vurdering/route';
@@ -73,6 +78,10 @@ import type {
   ForelobigVurderingResponse,
 } from '@/app/api/vurdering-forelobig/route';
 import type { MatrikelEjendom, MatrikelResponse } from '@/app/api/matrikel/route';
+import type {
+  MatrikelHistorikEvent,
+  MatrikelHistorikResponse,
+} from '@/app/api/matrikel/historik/route';
 import { gemRecentEjendom } from '@/app/lib/recentEjendomme';
 import { recordRecentVisit } from '@/app/lib/recordRecentVisit';
 import { erTracked, toggleTrackEjendom, fetchErTracked } from '@/app/lib/trackedEjendomme';
@@ -845,6 +854,9 @@ export default function EjendomDetaljeClient({
 
   /** CVR-virksomheder registreret på adressen */
   const [cvrVirksomheder, setCvrVirksomheder] = useState<CVRVirksomhed[] | null>(null);
+  /** BIZZ-473: True when CVR fetch has completed (success or error). Used to prevent
+   * flicker where the section appears briefly then disappears if no companies found. */
+  const [cvrFetchComplete, setCvrFetchComplete] = useState(false);
   /** True hvis CVR_ES_USER/PASS mangler i .env.local */
   const [cvrTokenMangler, setCvrTokenMangler] = useState(false);
   /** True hvis CVR ElasticSearch API er utilgængeligt (timeout/nedbrud) */
@@ -863,6 +875,18 @@ export default function EjendomDetaljeClient({
   const [vurdering, setVurdering] = useState<VurderingData | null>(null);
   /** Alle vurderinger fra Datafordeler — bruges til historiktabel */
   const [alleVurderinger, setAlleVurderinger] = useState<VurderingData[]>([]);
+  /** BIZZ-494: Fradrag for forbedringer (vej/kloak) — vises under Grundværdi i Økonomi-tab */
+  const [vurFradrag, setVurFradrag] = useState<VurderingResponse['fradrag']>(null);
+  /** BIZZ-493: Ejerboligfordeling — vises som kort i Økonomi-tab for ejerlejlighedskomplekser */
+  const [vurFordeling, setVurFordeling] = useState<VurderingResponse['fordeling']>([]);
+  /** BIZZ-492: Grundværdispecifikation — nedbrydning af grundværdiberegning */
+  const [vurGrundvaerdispec, setVurGrundvaerdispec] = useState<
+    VurderingResponse['grundvaerdispec']
+  >([]);
+  /** BIZZ-491: Skattefritagelser for nyeste vurdering */
+  const [vurFritagelser, setVurFritagelser] = useState<VurderingResponse['fritagelser']>([]);
+  /** BIZZ-490: Loftansættelse (grundskatteloft, ESL §45 4,75%-loft) — vises i SKAT-tab */
+  const [vurLoft, setVurLoft] = useState<VurderingResponse['loft']>([]);
   /** True mens vurderingsdata hentes — starter som true når prefetch giver BBR data med det samme */
   const [vurderingLoader, setVurderingLoader] = useState(!!prefetched?.bbrData);
   /** True = vis fuld vurderingshistorik-tabel */
@@ -922,6 +946,12 @@ export default function EjendomDetaljeClient({
   const [matrikelData, setMatrikelData] = useState<MatrikelEjendom | null>(null);
   /** True mens matrikeldata hentes */
   const [matrikelLoader, setMatrikelLoader] = useState(false);
+  /** BIZZ-500: Matrikel-historik (udstykninger, sammenlægninger, arealændringer) */
+  const [matrikelHistorik, setMatrikelHistorik] = useState<MatrikelHistorikEvent[]>([]);
+  /** True mens matrikel-historik hentes */
+  const [historikLoader, setHistorikLoader] = useState(false);
+  /** Om matrikel-historik sektionen er åben (collapsible) */
+  const [historikOpen, setHistorikOpen] = useState(false);
   /** ID'er på jord-rækker der er foldet ud */
   const [expandedJord, setExpandedJord] = useState<Set<string>>(new Set());
 
@@ -1184,7 +1214,36 @@ export default function EjendomDetaljeClient({
     const signal = controller.signal;
     setTlSumLoader(true);
     fetch(`/api/tinglysning?bfe=${bfe}`, { signal })
-      .then((r) => (r.ok ? r.json() : null))
+      .then(async (r) => {
+        if (r.ok) return r.json();
+        // BIZZ-525: Adresse-fallback når BFE-opslag returnerer 404
+        if (r.status === 404 && dawaAdresse?.vejnavn && dawaAdresse?.husnr && dawaAdresse?.postnr) {
+          const params = new URLSearchParams({
+            vejnavn: dawaAdresse.vejnavn,
+            husnummer: dawaAdresse.husnr,
+            postnummer: dawaAdresse.postnr,
+            ...(dawaAdresse.etage ? { etage: dawaAdresse.etage } : {}),
+            ...(dawaAdresse.dør ? { sidedoer: dawaAdresse.dør } : {}),
+          });
+          const fallbackRes = await fetch(`/api/tinglysning?${params.toString()}`, { signal });
+          if (fallbackRes.ok) return fallbackRes.json();
+
+          // BIZZ-527: Tertiær fallback — landsejerlav + matrikel fra DAWA jordstykke
+          if (
+            fallbackRes.status === 404 &&
+            dawaJordstykke?.ejerlav?.kode &&
+            dawaJordstykke?.matrikelnr
+          ) {
+            const matParams = new URLSearchParams({
+              landsejerlavid: String(dawaJordstykke.ejerlav.kode),
+              matrikelnr: dawaJordstykke.matrikelnr,
+            });
+            const matRes = await fetch(`/api/tinglysning?${matParams.toString()}`, { signal });
+            return matRes.ok ? matRes.json() : null;
+          }
+        }
+        return null;
+      })
       .then(async (data) => {
         if (signal.aborted) return;
         if (data && !data.error) {
@@ -1251,6 +1310,7 @@ export default function EjendomDetaljeClient({
     // For ejerlejligheder: filtrer på etage+dør for præcise resultater
     if (dawaAdresse.etage) params.set('etage', dawaAdresse.etage);
     if (dawaAdresse.dør) params.set('doer', dawaAdresse.dør);
+    setCvrFetchComplete(false);
     fetch(`/api/cvr?${params}`, { signal: controller.signal })
       .then((r) => (r.ok ? r.json() : { virksomheder: [], tokenMangler: false }))
       .then((data: CVRResponse) => {
@@ -1258,11 +1318,13 @@ export default function EjendomDetaljeClient({
         setCvrVirksomheder(data.virksomheder);
         setCvrTokenMangler(data.tokenMangler);
         setCvrApiDown(data.apiDown ?? false);
+        setCvrFetchComplete(true);
       })
       .catch((err) => {
         if (err.name === 'AbortError') return;
         logger.error('[ejendom] CVR fetch error:', err);
         setCvrVirksomheder([]);
+        setCvrFetchComplete(true);
       });
     return () => controller.abort();
     // BIZZ-333: Use stable address components as deps instead of full dawaAdresse object
@@ -1348,6 +1410,11 @@ export default function EjendomDetaljeClient({
         if (signal.aborted) return;
         setVurdering(data?.vurdering ?? null);
         setAlleVurderinger(data?.alle ?? []);
+        setVurFradrag(data?.fradrag ?? null);
+        setVurFordeling(data?.fordeling ?? []);
+        setVurGrundvaerdispec(data?.grundvaerdispec ?? []);
+        setVurFritagelser(data?.fritagelser ?? []);
+        setVurLoft(data?.loft ?? []);
       })
       .catch((err) => {
         if (err.name === 'AbortError') return;
@@ -1421,6 +1488,34 @@ export default function EjendomDetaljeClient({
       });
     return () => controller.abort();
   }, [erDAWA, bbrData]);
+
+  /**
+   * BIZZ-500: Lazy-loader matrikel-historik når brugeren åbner sektionen.
+   * Hentes kun én gang per BFE — caches i state.
+   */
+  useEffect(() => {
+    if (!historikOpen) return;
+    if (matrikelHistorik.length > 0 || historikLoader) return;
+    if (!erDAWA || !bbrData?.ejendomsrelationer?.length) return;
+    const bfeNummer = bbrData.ejendomsrelationer[0]?.bfeNummer;
+    if (!bfeNummer) return;
+    const controller = new AbortController();
+    setHistorikLoader(true);
+    fetch(`/api/matrikel/historik?bfeNummer=${bfeNummer}`, { signal: controller.signal })
+      .then((r) => r.json())
+      .then((data: MatrikelHistorikResponse) => {
+        if (controller.signal.aborted) return;
+        if (data.historik?.length) setMatrikelHistorik(data.historik);
+      })
+      .catch((err) => {
+        if (err.name === 'AbortError') return;
+        logger.error('[ejendom] Matrikel historik fetch error:', err);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setHistorikLoader(false);
+      });
+    return () => controller.abort();
+  }, [historikOpen, erDAWA, bbrData, matrikelHistorik.length, historikLoader]);
 
   /**
    * Henter forelobige ejendomsvurderinger fra Vurderingsportalen.
@@ -1758,6 +1853,14 @@ export default function EjendomDetaljeClient({
     tinglysningsdato: string | null;
     tinglysningsafgift: number | null;
     kilde: 'ejf' | 'tinglysning' | 'begge';
+    /**
+     * BIZZ-468: Struktureret liste af alle købere i denne handel med hver
+     * deres andel. Bruges af render-laget i stedet for den concatenerede
+     * `koeber`-streng så hver navn kan få sin egen andel-suffix (ikke kun
+     * den sidste). Tom liste = én køber uden andel — brug fallback til
+     * `koeber` + `andel`-felterne.
+     */
+    koebere?: { navn: string; cvr: string | null; andel: string | null }[];
   }
 
   /**
@@ -1843,12 +1946,25 @@ export default function EjendomDetaljeClient({
         return gDato === dato && gSum === sum && dato !== '';
       });
       if (existing && h.koeber) {
-        // Append buyer name and combine shares
-        existing.koeber = existing.koeber
-          ? `${existing.koeber}, ${h.koeber}${h.andel ? ` (${h.andel})` : ''}`
-          : h.koeber;
-        if (!existing.andel && h.andel) existing.andel = h.andel;
-        else if (existing.andel && h.andel) existing.andel = null; // Multiple shares — don't show individual
+        // BIZZ-468: Build a structured koebere[] — each buyer keeps sin egen
+        // andel. Undgår den gamle string-concat-bug hvor kun sidste køber
+        // havde andel-suffix fordi første købers `andel` var null på
+        // existing-rækken selvom den faktisk var kendt på en senere række.
+        if (!existing.koebere || existing.koebere.length === 0) {
+          // Seed koebere med existing's single buyer først
+          existing.koebere = [
+            { navn: existing.koeber ?? '', cvr: existing.koebercvr, andel: existing.andel },
+          ];
+        }
+        existing.koebere.push({ navn: h.koeber, cvr: h.koebercvr, andel: h.andel });
+        // Rebuild koeber-strengen — inkluder andel per navn hvis minimum ét
+        // navn har en kendt andel. Hvis INGEN har andel, vis bare navnene.
+        const anyAndel = existing.koebere.some((k) => k.andel);
+        existing.koeber = existing.koebere
+          .map((k) => (anyAndel && k.andel ? `${k.navn} (${k.andel})` : k.navn))
+          .join(', ');
+        // Når flere købere med andel: ryd top-level andel (vises inline pr navn)
+        if (anyAndel) existing.andel = null;
       } else {
         grouped.push({ ...h });
       }
@@ -2074,29 +2190,131 @@ export default function EjendomDetaljeClient({
                     {lang === 'da' ? 'Ejerlejlighed' : 'Condominium'}
                   </span>
                 )}
+                {/* BIZZ-550: Ejendomstype-badge — primær kilde: VUR juridiskKategori,
+                     fallback: udledt fra BBR bygningsanvendelser */}
+                {(() => {
+                  // 1. VUR juridiskKategori (nyt vurderingssystem)
+                  if (vurdering?.juridiskKategori) {
+                    return (
+                      <span className="flex items-center gap-1 px-2.5 py-0.5 bg-blue-500/15 border border-blue-500/30 rounded-full text-blue-300 text-xs font-medium flex-shrink-0">
+                        <Home size={11} />
+                        {vurdering.juridiskKategori}
+                      </span>
+                    );
+                  }
+                  // 2. Udled fra BBR bygningsanvendelser (gammelt VUR system)
+                  const bygninger = bbrData?.bbr?.filter(
+                    (b) => b.status !== 'Nedrevet/slettet' && b.status !== 'Ikke opført'
+                  );
+                  if (!bygninger?.length) return null;
+                  let harBolig = false;
+                  let harErhverv = false;
+                  for (const b of bygninger) {
+                    const a = b.anvendelse.toLowerCase();
+                    if (
+                      a.includes('bolig') ||
+                      a.includes('enfamilie') ||
+                      a.includes('rækkehus') ||
+                      a.includes('kædehus') ||
+                      a.includes('dobbelthus') ||
+                      a.includes('beboelse') ||
+                      a.includes('kollegium') ||
+                      a.includes('stuehus') ||
+                      a.includes('fritliggende')
+                    ) {
+                      harBolig = true;
+                    } else if (
+                      a.includes('kontor') ||
+                      a.includes('handel') ||
+                      a.includes('lager') ||
+                      a.includes('erhverv') ||
+                      a.includes('industri') ||
+                      a.includes('fabrik') ||
+                      a.includes('værksted') ||
+                      a.includes('butik') ||
+                      a.includes('hotel') ||
+                      a.includes('produktion') ||
+                      a.includes('transport')
+                    ) {
+                      harErhverv = true;
+                    }
+                  }
+                  const kategori =
+                    harBolig && harErhverv
+                      ? 'Blandet bolig/erhverv'
+                      : harErhverv
+                        ? 'Erhvervsejendom'
+                        : harBolig
+                          ? 'Beboelsesejendom'
+                          : null;
+                  if (!kategori) return null;
+                  return (
+                    <span className="flex items-center gap-1 px-2.5 py-0.5 bg-blue-500/15 border border-blue-500/30 rounded-full text-blue-300 text-xs font-medium flex-shrink-0">
+                      <Home size={11} />
+                      {kategori}
+                    </span>
+                  );
+                })()}
+                {/* BIZZ-457: Benyttelse (VUR) + byggeår (BBR) — "Værksted (1955)" */}
+                {(() => {
+                  const nyesteByg = bbrData?.bbr?.reduce<number | null>((latest, b) => {
+                    if (b.opfoerelsesaar == null) return latest;
+                    if (latest == null || b.opfoerelsesaar > latest) return b.opfoerelsesaar;
+                    return latest;
+                  }, null);
+                  const label = formatBenyttelseOgByggeaar(
+                    vurdering?.benyttelseskode ?? null,
+                    nyesteByg ?? null,
+                    // BIZZ-574: Pass zone så fritids-kategorier filtreres
+                    // i Byzone (forhindrer falsk "Sommerhus"-badge i byen).
+                    dawaAdresse?.zone ?? null
+                  );
+                  if (!label) return null;
+                  return (
+                    <span className="flex items-center gap-1 px-2.5 py-0.5 bg-emerald-500/15 border border-emerald-500/30 rounded-full text-emerald-300 text-xs font-medium flex-shrink-0">
+                      {label}
+                    </span>
+                  );
+                })()}
               </div>
               <div className="flex items-center gap-2 mt-2 flex-wrap">
                 <span className="flex items-center gap-1 px-2 py-0.5 bg-slate-800 border border-slate-700/50 rounded-full text-xs text-slate-300">
                   <MapPin size={11} />
                   {(dawaAdresse.kommunenavn || null) ?? dawaJordstykke?.kommune.navn ?? '–'}
                 </span>
+                {/* BIZZ-508: Supplerende bynavn (fx "Vejlgårde") */}
+                {dawaAdresse.supplerendebynavn && (
+                  <span className="flex items-center gap-1 px-2 py-0.5 bg-slate-800 border border-slate-700/50 rounded-full text-xs text-slate-400">
+                    {dawaAdresse.supplerendebynavn}
+                  </span>
+                )}
                 {dawaJordstykke && (
                   <span className="flex items-center gap-1 px-2 py-0.5 bg-slate-800 border border-slate-700/50 rounded-full text-xs text-slate-300">
                     <Building2 size={11} /> {dawaJordstykke.matrikelnr},{' '}
                     {dawaJordstykke.ejerlav.navn}
                   </span>
                 )}
-                {(dawaAdresse.zone === 'Byzone' ||
-                  dawaAdresse.zone === 'Landzone' ||
-                  dawaAdresse.zone === 'Sommerhuszone') && (
+                {/* BIZZ-498: vis zone-badge for ALLE non-empty zone-værdier.
+                    Plandata returnerer fx også "Udfaset" (zone-status under
+                    udfasning) og diverse historiske kategorier — disse må
+                    også vises, ikke kun de 3 standard. Standard 3 har
+                    farve-kodet badge, øvrige får neutral slate-style. */}
+                {dawaAdresse.zone && (
                   <span
                     className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border ${
                       dawaAdresse.zone === 'Byzone'
                         ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
                         : dawaAdresse.zone === 'Landzone'
                           ? 'bg-amber-500/10 border-amber-500/20 text-amber-400'
-                          : 'bg-orange-500/10 border-orange-500/20 text-orange-400'
+                          : dawaAdresse.zone === 'Sommerhuszone'
+                            ? 'bg-orange-500/10 border-orange-500/20 text-orange-400'
+                            : 'bg-slate-800 border-slate-700/50 text-slate-300'
                     }`}
+                    title={
+                      da
+                        ? 'Zone-klassifikation fra Plandata.dk'
+                        : 'Zone classification from Plandata.dk'
+                    }
                   >
                     {dawaAdresse.zone}
                   </span>
@@ -2109,6 +2327,27 @@ export default function EjendomDetaljeClient({
                 {esrNummer && (
                   <span className="px-2 py-0.5 bg-slate-800 border border-slate-700/50 rounded-full text-xs text-slate-300">
                     ESR: {esrNummer}
+                  </span>
+                )}
+                {/* BIZZ-496: Frednings/beskyttelses-badges fra matrikeldata */}
+                {matrikelData?.jordstykker?.some((js) => js.fredskov) && (
+                  <span className="px-2 py-0.5 bg-green-900/50 border border-green-800/40 rounded-full text-[10px] font-semibold text-green-400">
+                    {t.protectedForest}
+                  </span>
+                )}
+                {matrikelData?.jordstykker?.some((js) => js.strandbeskyttelse) && (
+                  <span className="px-2 py-0.5 bg-blue-900/50 border border-blue-800/40 rounded-full text-[10px] font-semibold text-blue-400">
+                    {t.coastalProtection}
+                  </span>
+                )}
+                {matrikelData?.jordstykker?.some((js) => js.klitfredning) && (
+                  <span className="px-2 py-0.5 bg-amber-900/50 border border-amber-800/40 rounded-full text-[10px] font-semibold text-amber-400">
+                    {t.duneProtection}
+                  </span>
+                )}
+                {matrikelData?.jordstykker?.some((js) => js.jordrente) && (
+                  <span className="px-2 py-0.5 bg-purple-900/50 border border-purple-800/40 rounded-full text-[10px] font-semibold text-purple-400">
+                    {t.groundRent}
                   </span>
                 )}
               </div>
@@ -2365,24 +2604,7 @@ export default function EjendomDetaljeClient({
                                 </div>
                               );
                             }
-                            if (vurdering.estimereretGrundskyld !== null) {
-                              return (
-                                <div>
-                                  <p className="text-slate-500 text-xs leading-none mb-0.5">
-                                    {t.estGroundTax}
-                                    {vurdering.grundskyldspromille !== null && (
-                                      <span className="text-slate-600 ml-1">
-                                        ({vurdering.grundskyldspromille}‰)
-                                      </span>
-                                    )}
-                                  </p>
-                                  <p className="text-white text-sm font-medium">
-                                    {formatDKK(vurdering.estimereretGrundskyld)}
-                                    <span className="text-slate-500 text-xs ml-1">{t.perYear}</span>
-                                  </p>
-                                </div>
-                              );
-                            }
+                            // BIZZ-445: Removed estimated grundskyld fallback — only show actual values
                             return null;
                           })()}
                         </div>
@@ -2609,11 +2831,27 @@ export default function EjendomDetaljeClient({
                   })()}
                 </div>
 
-                {/* Lejligheder er flyttet til ejerskabs-tab for hovedejendomme */}
-                {!(lejligheder !== null && lejligheder.length > 0) && (
+                {/*
+                  BIZZ-473 follow-up: "Virksomheder på adressen"-sektionen blinkede
+                  kort op og forsvandt igen fordi synlighed afhang af et race:
+                    - Initial: lejligheder=null → sektion synlig → CVR-fetch
+                      kunne færdiggøre først → sektion rendret med data
+                    - Senere: lejligheder-fetch afsluttede med .length > 0 →
+                      ydre betingelse blev false → sektion forsvandt
+                  Beslut i stedet deterministisk på "erModer" (hovedejendom,
+                  opdelt i ejerlejligheder). For hovedejendomme skjuler vi
+                  sektionen fra start; for andre viser vi den. Ingen race,
+                  ingen flash.
+                */}
+                {(() => {
+                  const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
+                  return !erModer;
+                })() && (
                   <>
-                    {/* Virksomheder på adressen — CVR OpenData (skjult for ejerlejlighedsejendomme) */}
-                    {cvrTokenMangler ? (
+                    {/* Virksomheder på adressen — CVR OpenData (skjult for ejerlejlighedsejendomme).
+                        BIZZ-473: Don't render anything until fetch is complete, to avoid
+                        the loading spinner briefly showing then disappearing when no results. */}
+                    {!cvrFetchComplete ? null : cvrTokenMangler ? (
                       <div className="bg-amber-500/8 border border-amber-500/20 rounded-xl p-4">
                         <p className="text-amber-300 text-xs font-medium uppercase tracking-wide mb-2">
                           {t.companiesAtAddress}
@@ -2866,6 +3104,9 @@ export default function EjendomDetaljeClient({
                   const totAreal = bygninger.reduce((s, b) => s + (b.samletBygningsareal ?? 0), 0);
                   const boligAreal = bygninger.reduce((s, b) => s + (b.samletBoligareal ?? 0), 0);
                   const erhvAreal = bygninger.reduce((s, b) => s + (b.samletErhvervsareal ?? 0), 0);
+                  // BIZZ-487: Kælder + tagetage udledt fra BBR_Etage i fetchBbrData.ts
+                  const kaelderAreal = bygninger.reduce((s, b) => s + (b.kaelder ?? 0), 0);
+                  const tagetageAreal = bygninger.reduce((s, b) => s + (b.tagetage ?? 0), 0);
                   return (
                     <div>
                       <SectionTitle title={t.buildings} />
@@ -2896,6 +3137,20 @@ export default function EjendomDetaljeClient({
                               : '–'
                           }
                         />
+                        {/* BIZZ-487: Kælder vises kun når der er et areal > 0 */}
+                        {kaelderAreal > 0 && (
+                          <DataKort
+                            label={t.basement}
+                            value={`${kaelderAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`}
+                          />
+                        )}
+                        {/* BIZZ-487: Tagetage vises kun når der er et areal > 0 */}
+                        {tagetageAreal > 0 && (
+                          <DataKort
+                            label={da ? 'Tagetage' : 'Attic'}
+                            value={`${tagetageAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`}
+                          />
+                        )}
                       </div>
                       {bbrLoader ? (
                         <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden animate-pulse">
@@ -2932,9 +3187,38 @@ export default function EjendomDetaljeClient({
                           {bygninger.map((b, i) => {
                             const rowId = b.id || String(i);
                             const aaben = expandedBygninger.has(rowId);
+                            // BIZZ-485: Risk-badges for materiale-risici
+                            const risks = b.risks ?? {
+                              asbestTag: false,
+                              asbestYdervaeg: false,
+                              traeYdervaeg: false,
+                            };
+                            // BIZZ-486: Opgang/etage data for denne bygning
+                            const bygOpgange = (bbrData?.opgange ?? []).filter(
+                              (o) =>
+                                o.bygningId === b.id &&
+                                o.status !== '7' &&
+                                o.status !== 'Nedrevet/slettet'
+                            );
+                            const bygEtager = (bbrData?.etager ?? []).filter(
+                              (e) =>
+                                e.bygningId === b.id &&
+                                e.status !== '7' &&
+                                e.status !== 'Nedrevet/slettet'
+                            );
+                            const harElevator = bygOpgange.some((o) => o.elevator === true);
+                            const etageBetegnelser = [
+                              ...new Set(bygEtager.map((e) => e.etagebetegnelse).filter(Boolean)),
+                            ].join(', ');
                             const detaljer: [string, string][] = (
                               [
                                 [t.outerWall, b.ydervaeg || null],
+                                [
+                                  da ? 'Tagkonstruktion' : 'Roof construction',
+                                  b.tagkonstruktion && b.tagkonstruktion !== '–'
+                                    ? b.tagkonstruktion
+                                    : null,
+                                ],
                                 [t.roofMaterial, b.tagmateriale || null],
                                 [t.heatingInstallation, b.varmeinstallation || null],
                                 [t.heatingForm, b.opvarmningsform || null],
@@ -2942,6 +3226,15 @@ export default function EjendomDetaljeClient({
                                 [t.waterSupply, b.vandforsyning || null],
                                 [t.drainage, b.afloeb || null],
                                 [t.floors, b.antalEtager != null ? `${b.antalEtager}` : null],
+                                // BIZZ-486: Opgange + elevator
+                                [
+                                  da ? 'Opgange' : 'Stairwells',
+                                  bygOpgange.length > 0
+                                    ? `${bygOpgange.length}${harElevator ? ` (${da ? 'med elevator' : 'with elevator'})` : ''}`
+                                    : null,
+                                ],
+                                // BIZZ-486: Etage-betegnelser
+                                [da ? 'Etager (BBR)' : 'Floors (BBR)', etageBetegnelser || null],
                                 [
                                   'Boligareal',
                                   b.samletBoligareal
@@ -2966,6 +3259,18 @@ export default function EjendomDetaljeClient({
                                 ],
                                 [t.preservation, b.fredning || null],
                                 [t.conservationValue, b.bevaringsvaerdighed || null],
+                                // BIZZ-488: Revisionsdato — diskret metadata så brugeren ved
+                                // hvor aktuel BBR-registreringen er. Formateres som dansk/engelsk
+                                // lokal dato når feltet er sat.
+                                [
+                                  da ? 'Data sidst revideret' : 'Data last revised',
+                                  b.revisionsdato
+                                    ? new Date(b.revisionsdato).toLocaleDateString(
+                                        da ? 'da-DK' : 'en-GB',
+                                        { year: 'numeric', month: 'short', day: 'numeric' }
+                                      )
+                                    : null,
+                                ],
                               ] as [string, string | null][]
                             ).filter((row): row is [string, string] => row[1] !== null);
                             return (
@@ -2996,8 +3301,92 @@ export default function EjendomDetaljeClient({
                                   <span className="text-slate-500 text-xs text-center font-mono">
                                     {b.bygningsnr ?? '–'}
                                   </span>
-                                  <span className="text-slate-200 truncate pr-2">
-                                    {b.anvendelse || '–'}
+                                  <span className="text-slate-200 truncate pr-2 flex items-center gap-1.5">
+                                    <span className="truncate">{b.anvendelse || '–'}</span>
+                                    {/* BIZZ-485: Risk-badges — asbest har højeste prioritet (rød).
+                                        Træ-ydervæg vises kun hvis bygning er +40 år uden kendt ombygning. */}
+                                    {/* BIZZ-485 v2: BBR's eksplicitte asbest-flag (byg036) —
+                                        viser badge selv hvis tagmateriale-koden ikke er 3.
+                                        Højere prioritet end udledte flags. */}
+                                    {risks.asbestEksplicit &&
+                                      !risks.asbestTag &&
+                                      !risks.asbestYdervaeg && (
+                                        <span
+                                          className="flex-shrink-0 text-[9px] px-1 py-0.5 rounded bg-red-500/15 text-red-400 border border-red-500/30"
+                                          title={
+                                            da
+                                              ? 'BBR har bekræftet asbestholdigt materiale (byg036)'
+                                              : 'BBR confirmed asbestos-containing material (byg036)'
+                                          }
+                                        >
+                                          {da ? 'Asbest (BBR)' : 'Asbestos (BBR)'}
+                                        </span>
+                                      )}
+                                    {risks.asbestTag && (
+                                      <span
+                                        className="flex-shrink-0 text-[9px] px-1 py-0.5 rounded bg-red-500/15 text-red-400 border border-red-500/30"
+                                        title={
+                                          da
+                                            ? 'Asbest i tagmateriale (fibercement pre-1986)'
+                                            : 'Asbestos in roof (pre-1986 fibre cement)'
+                                        }
+                                      >
+                                        {da ? 'Asbest tag' : 'Asbestos roof'}
+                                      </span>
+                                    )}
+                                    {risks.asbestYdervaeg && (
+                                      <span
+                                        className="flex-shrink-0 text-[9px] px-1 py-0.5 rounded bg-red-500/15 text-red-400 border border-red-500/30"
+                                        title={
+                                          da
+                                            ? 'Asbest i ydervæg (eternit pre-1986)'
+                                            : 'Asbestos in outer wall (pre-1986 eternit)'
+                                        }
+                                      >
+                                        {da ? 'Asbest væg' : 'Asbestos wall'}
+                                      </span>
+                                    )}
+                                    {risks.traeYdervaeg &&
+                                      b.opfoerelsesaar != null &&
+                                      new Date().getFullYear() - b.opfoerelsesaar > 40 &&
+                                      !b.ombygningsaar && (
+                                        <span
+                                          className="flex-shrink-0 text-[9px] px-1 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                                          title={
+                                            da
+                                              ? 'Træydervæg uden kendt ombygning — tjek efterisolering'
+                                              : 'Wooden exterior without known renovation — check insulation'
+                                          }
+                                        >
+                                          {da ? 'Ældre træ' : 'Old wood'}
+                                        </span>
+                                      )}
+                                    {/* BIZZ-488: Fredet og bevaringsværdig badge — inline på bygning-rækken.
+                                        Fredet (byg070Fredning) vinder over bevaringsværdig (byg071SAVE-score)
+                                        hvis begge er sat, da fredning er en stærkere juridisk kategori. */}
+                                    {b.fredning ? (
+                                      <span
+                                        className="flex-shrink-0 text-[9px] px-1 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30"
+                                        title={
+                                          da
+                                            ? `Fredet bygning: ${b.fredning}`
+                                            : `Protected building: ${b.fredning}`
+                                        }
+                                      >
+                                        {da ? 'Fredet' : 'Protected'}
+                                      </span>
+                                    ) : b.bevaringsvaerdighed ? (
+                                      <span
+                                        className="flex-shrink-0 text-[9px] px-1 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/30"
+                                        title={
+                                          da
+                                            ? `Bevaringsværdig (SAVE): ${b.bevaringsvaerdighed}`
+                                            : `Conservation value (SAVE): ${b.bevaringsvaerdighed}`
+                                        }
+                                      >
+                                        SAVE
+                                      </span>
+                                    ) : null}
                                   </span>
                                   <span className="text-slate-400 text-right">
                                     {b.opfoerelsesaar ?? '–'}
@@ -3234,6 +3623,51 @@ export default function EjendomDetaljeClient({
                   </div>
                 )}
 
+                {/* BIZZ-484: Tekniske anlæg (solceller, varmepumper, oliefyr,
+                    tanke etc.) — vises hvis nogen findes på adressen. */}
+                {!bbrLoader && bbrData?.tekniskeAnlaeg && bbrData.tekniskeAnlaeg.length > 0 && (
+                  <div className="mt-5">
+                    <SectionTitle title={da ? 'Tekniske anlæg' : 'Technical installations'} />
+                    <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
+                      <div className="divide-y divide-slate-700/30">
+                        {bbrData.tekniskeAnlaeg.map((t) => {
+                          const tekst = tekniskAnlaegTekst(t.tek020Klassifikation);
+                          const kategori = tekniskAnlaegKategori(t.tek020Klassifikation);
+                          const farve =
+                            kategori === 'energi'
+                              ? 'text-emerald-300 bg-emerald-500/10 border-emerald-500/20'
+                              : kategori === 'tank'
+                                ? 'text-amber-300 bg-amber-500/10 border-amber-500/20'
+                                : 'text-slate-300 bg-slate-700/30 border-slate-600/30';
+                          return (
+                            <div
+                              key={t.id_lokalId}
+                              className="px-4 py-2.5 flex items-center justify-between gap-3"
+                            >
+                              <span className="text-slate-200 text-sm">{tekst}</span>
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-medium border ${farve}`}
+                              >
+                                {kategori === 'energi'
+                                  ? da
+                                    ? 'Energi'
+                                    : 'Energy'
+                                  : kategori === 'tank'
+                                    ? da
+                                      ? 'Tank'
+                                      : 'Tank'
+                                    : da
+                                      ? 'Andet'
+                                      : 'Other'}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* ── Matrikeloplysninger (Datafordeler MAT) ── */}
                 <div className="mt-5">
                   <SectionTitle title={t.cadastreInfo} />
@@ -3299,6 +3733,12 @@ export default function EjendomDetaljeClient({
                                   {js.ejerlavsnavn && (
                                     <p className="text-slate-500 text-xs">{js.ejerlavsnavn}</p>
                                   )}
+                                  {/* BIZZ-499: Vis arealtype fra MAT */}
+                                  {js.arealtype && (
+                                    <p className="text-slate-500 text-[10px]">
+                                      {da ? 'Arealtype' : 'Area type'}: {js.arealtype}
+                                    </p>
+                                  )}
                                 </div>
                                 <p className="text-slate-300 text-sm tabular-nums text-right">
                                   {js.registreretAreal != null
@@ -3337,6 +3777,141 @@ export default function EjendomDetaljeClient({
                           </div>
                         </div>
                       )}
+
+                      {/* ── BIZZ-500: Matrikel-historik (collapsible tidslinje) ── */}
+                      <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden">
+                        <button
+                          type="button"
+                          onClick={() => setHistorikOpen((prev) => !prev)}
+                          className="w-full px-4 py-2.5 flex items-center justify-between hover:bg-slate-700/20 transition-colors"
+                          aria-expanded={historikOpen}
+                        >
+                          <span className="text-slate-300 text-xs font-semibold uppercase tracking-wider flex items-center gap-1.5">
+                            <Clock size={12} className="text-slate-500" />
+                            {da ? 'Matrikel-historik' : 'Cadastre history'}
+                          </span>
+                          {historikOpen ? (
+                            <ChevronDown size={14} className="text-slate-500" />
+                          ) : (
+                            <ChevronRight size={14} className="text-slate-500" />
+                          )}
+                        </button>
+                        {historikOpen && (
+                          <div className="px-4 pb-4 border-t border-slate-700/20">
+                            {historikLoader ? (
+                              <div className="py-4 text-center">
+                                <div className="inline-block w-4 h-4 border-2 border-slate-600 border-t-blue-400 rounded-full animate-spin" />
+                                <p className="text-slate-500 text-xs mt-2">
+                                  {da ? 'Henter historik…' : 'Loading history…'}
+                                </p>
+                              </div>
+                            ) : matrikelHistorik.length > 0 ? (
+                              <div className="relative mt-3">
+                                <div className="absolute left-[7px] top-2 bottom-2 w-px bg-slate-700/50" />
+                                <div className="space-y-4">
+                                  {matrikelHistorik.map((evt, idx) => {
+                                    const typeColor =
+                                      {
+                                        oprettelse: 'bg-green-500',
+                                        udstykning: 'bg-orange-500',
+                                        sammenlægning: 'bg-blue-500',
+                                        arealændring: 'bg-yellow-500',
+                                        statusændring: 'bg-purple-500',
+                                      }[evt.type] ?? 'bg-slate-500';
+                                    const typeLabel = da
+                                      ? {
+                                          oprettelse: 'Oprettet',
+                                          udstykning: 'Udstykning',
+                                          sammenlægning: 'Sammenlægning',
+                                          arealændring: 'Arealændring',
+                                          statusændring: 'Statusændring',
+                                        }[evt.type]
+                                      : {
+                                          oprettelse: 'Created',
+                                          udstykning: 'Subdivision',
+                                          sammenlægning: 'Merger',
+                                          arealændring: 'Area change',
+                                          statusændring: 'Status change',
+                                        }[evt.type];
+                                    const formattedDate = (() => {
+                                      try {
+                                        return new Date(evt.dato).toLocaleDateString(
+                                          da ? 'da-DK' : 'en-GB',
+                                          { year: 'numeric', month: 'short', day: 'numeric' }
+                                        );
+                                      } catch {
+                                        return evt.dato;
+                                      }
+                                    })();
+                                    return (
+                                      <div
+                                        key={`${evt.dato}-${evt.type}-${idx}`}
+                                        className="relative pl-6"
+                                      >
+                                        <div
+                                          className={`absolute left-0.5 top-1 w-3 h-3 rounded-full border-2 border-slate-900 ${typeColor}`}
+                                        />
+                                        <div>
+                                          <div className="flex items-center gap-2 mb-0.5">
+                                            <span className="text-slate-400 text-[10px] tabular-nums">
+                                              {formattedDate}
+                                            </span>
+                                            <span
+                                              className={`px-1.5 py-0.5 text-[10px] font-semibold rounded ${typeColor}/20 text-white/80`}
+                                            >
+                                              {typeLabel}
+                                            </span>
+                                          </div>
+                                          <p className="text-slate-300 text-xs">
+                                            {evt.beskrivelse}
+                                          </p>
+                                          {evt.detaljer && (
+                                            <div className="mt-1 text-[10px] text-slate-500 space-y-0.5">
+                                              {evt.detaljer.arealFoer != null &&
+                                                evt.detaljer.arealEfter != null && (
+                                                  <p>
+                                                    {da ? 'Areal' : 'Area'}:{' '}
+                                                    {evt.detaljer.arealFoer.toLocaleString(
+                                                      da ? 'da-DK' : 'en-GB'
+                                                    )}{' '}
+                                                    m² →{' '}
+                                                    {evt.detaljer.arealEfter.toLocaleString(
+                                                      da ? 'da-DK' : 'en-GB'
+                                                    )}{' '}
+                                                    m²
+                                                  </p>
+                                                )}
+                                              {evt.detaljer.jordstykkerFoer &&
+                                                evt.detaljer.jordstykkerEfter && (
+                                                  <p>
+                                                    {da ? 'Jordstykker' : 'Parcels'}:{' '}
+                                                    {evt.detaljer.jordstykkerFoer.join(', ')} →{' '}
+                                                    {evt.detaljer.jordstykkerEfter.join(', ')}
+                                                  </p>
+                                                )}
+                                              {evt.detaljer.forretningshaendelse && (
+                                                <p className="italic">
+                                                  {evt.detaljer.forretningshaendelse}
+                                                </p>
+                                              )}
+                                            </div>
+                                          )}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ) : (
+                              <p className="py-3 text-slate-500 text-xs text-center">
+                                {da
+                                  ? 'Ingen historik fundet for denne ejendom'
+                                  : 'No history found for this property'}
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   ) : (
                     <div className="bg-slate-800/30 border border-slate-700/40 rounded-xl p-4 text-center">
@@ -3386,14 +3961,12 @@ export default function EjendomDetaljeClient({
                             </p>
                           </div>
 
-                          {/* Lejlighedsliste under info-boksen */}
+                          {/* Lejlighedsliste under info-boksen.
+                              BIZZ-478: Ensartet blå TabLoadingSpinner. */}
                           {lejlighederLoader && (
-                            <div className="flex items-center justify-center py-8">
-                              <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
-                              <span className="ml-2 text-slate-400 text-sm">
-                                {da ? 'Henter lejlighedsdata…' : 'Loading apartment data…'}
-                              </span>
-                            </div>
+                            <TabLoadingSpinner
+                              label={da ? 'Henter lejlighedsdata…' : 'Loading apartment data…'}
+                            />
                           )}
                           {lejligheder !== null && lejligheder.length > 0 && (
                             <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden overflow-x-auto">
@@ -3473,6 +4046,7 @@ export default function EjendomDetaljeClient({
                               : `BFE ${bfeForDiagram}`
                           }
                           lang={lang}
+                          erEjerlejlighed={!!bbrData?.ejerlejlighedBfe}
                         />
                       </div>
                     );
@@ -3540,6 +4114,115 @@ export default function EjendomDetaljeClient({
                           </p>
                         </div>
                       </div>
+
+                      {/* BIZZ-494: Fradrag for forbedringer — vises under Grundværdi */}
+                      {vurFradrag && vurFradrag.vaerdiSum != null && vurFradrag.vaerdiSum > 0 && (
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4 mb-3">
+                          <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-2">
+                            {da ? 'Fradrag for forbedringer' : 'Improvement deductions'}
+                          </p>
+                          <p className="text-white text-sm font-bold mb-2">
+                            {formatDKK(vurFradrag.vaerdiSum)}
+                            {vurFradrag.foersteGangAar && (
+                              <span className="text-slate-500 text-xs font-normal ml-2">
+                                {da ? 'fra' : 'from'} {vurFradrag.foersteGangAar}
+                              </span>
+                            )}
+                          </p>
+                          {vurFradrag.poster.length > 0 && (
+                            <div className="space-y-1">
+                              {vurFradrag.poster.map((post, i) => (
+                                <div key={i} className="flex items-center justify-between text-xs">
+                                  <span className="text-slate-400">
+                                    {post.tekst ?? (da ? 'Fradrag' : 'Deduction')}
+                                    {post.aar && (
+                                      <span className="text-slate-500 ml-1">({post.aar})</span>
+                                    )}
+                                  </span>
+                                  <span className="text-slate-300 tabular-nums">
+                                    {post.vaerdi != null ? formatDKK(post.vaerdi) : '—'}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* BIZZ-493: Ejerboligfordeling — skjult for enfamiliehuse */}
+                      {vurFordeling.length > 0 && (
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4 mb-3">
+                          <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-2">
+                            {da ? 'Ejerboligfordeling' : 'Owner-occupied allocation'}
+                          </p>
+                          <div className="space-y-2">
+                            {vurFordeling.map((f, i) => (
+                              <div key={i} className="grid grid-cols-2 gap-3">
+                                {f.ejerboligvaerdi != null && (
+                                  <div>
+                                    <p className="text-slate-500 text-[10px] uppercase">
+                                      {da ? 'Ejerboligværdi' : 'Owner-occupied value'}
+                                    </p>
+                                    <p className="text-white text-sm font-medium">
+                                      {formatDKK(f.ejerboligvaerdi)}
+                                    </p>
+                                  </div>
+                                )}
+                                {f.ejerboliggrundvaerdi != null && (
+                                  <div>
+                                    <p className="text-slate-500 text-[10px] uppercase">
+                                      {da ? 'Ejerboliggrundværdi' : 'Owner-occupied land value'}
+                                    </p>
+                                    <p className="text-white text-sm font-medium">
+                                      {formatDKK(f.ejerboliggrundvaerdi)}
+                                    </p>
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* BIZZ-492: Grundværdispecifikation — nedbrydning af grundværdiberegning */}
+                      {vurGrundvaerdispec.length > 0 && (
+                        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden overflow-x-auto mb-3">
+                          <div className="px-4 py-2.5 border-b border-slate-700/30">
+                            <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider">
+                              {da ? 'Grundværdispecifikation' : 'Land value specification'}
+                            </p>
+                          </div>
+                          <div className="min-w-[400px]">
+                            <div className="grid grid-cols-[1fr_80px_90px_90px] px-4 py-1.5 text-slate-500 text-[10px] font-medium uppercase bg-slate-900/30">
+                              <span>{da ? 'Beskrivelse' : 'Description'}</span>
+                              <span className="text-right">{da ? 'Areal' : 'Area'}</span>
+                              <span className="text-right">{da ? 'Enhedspris' : 'Unit price'}</span>
+                              <span className="text-right">{da ? 'Beløb' : 'Amount'}</span>
+                            </div>
+                            {vurGrundvaerdispec.map((spec) => (
+                              <div
+                                key={spec.loebenummer}
+                                className="grid grid-cols-[1fr_80px_90px_90px] px-4 py-2 text-sm border-t border-slate-700/20 items-center"
+                              >
+                                <span className="text-slate-300 text-xs">
+                                  {spec.tekst ?? `#${spec.loebenummer}`}
+                                </span>
+                                <span className="text-slate-400 text-xs text-right tabular-nums">
+                                  {spec.areal != null
+                                    ? `${spec.areal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`
+                                    : '—'}
+                                </span>
+                                <span className="text-slate-400 text-xs text-right tabular-nums">
+                                  {spec.enhedBeloeb != null ? formatDKK(spec.enhedBeloeb) : '—'}
+                                </span>
+                                <span className="text-white text-xs text-right tabular-nums font-medium">
+                                  {spec.beloeb != null ? formatDKK(spec.beloeb) : '—'}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
 
                       {/* Vurderingshistorik — collapsible tabel med forelobige prepended */}
                       {(alleVurderinger.length > 1 || forelobige.length > 0) && (
@@ -3870,8 +4553,21 @@ export default function EjendomDetaljeClient({
                         {/* ── {t.currentTaxation} (nyeste foreløbige) ── */}
                         {nyeste && (
                           <div>
-                            <p className="text-slate-300 text-sm font-semibold mb-2">
+                            <p className="text-slate-300 text-sm font-semibold mb-0.5">
                               {t.currentTaxation} ({nyeste.vurderingsaar + 1})
+                            </p>
+                            {/*
+                              BIZZ-469: Forklar eksplicit år-mappingen i
+                              selve Nuværende beskatning-sektion. Samme note
+                              findes under Skattehistorik, men her møder den
+                              brugeren FØR de ser det større historiske
+                              afsnit og undgår forveksling af vurderingsår
+                              og betalingsår på det nyeste tal.
+                            */}
+                            <p className="text-slate-500 text-[11px] mb-2 leading-relaxed">
+                              {da
+                                ? `Skat betalt i ${nyeste.vurderingsaar + 1}, beregnet ud fra vurderingen for ${nyeste.vurderingsaar}.`
+                                : `Tax paid in ${nyeste.vurderingsaar + 1}, calculated from the ${nyeste.vurderingsaar} assessment.`}
                             </p>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                               {/* Grundskyld */}
@@ -3938,114 +4634,49 @@ export default function EjendomDetaljeClient({
                           </div>
                         )}
 
-                        {/* ── Fallback: kun estimeret grundskyld fra Datafordeler ── */}
-                        {!nyeste && vurdering?.estimereretGrundskyld != null && (
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-4">
-                              <p className="text-white text-lg font-bold">
-                                {formatDKK(vurdering.estimereretGrundskyld)}
-                                <span className="text-slate-500 text-xs font-normal ml-1">DKK</span>
-                              </p>
-                              <p className="text-slate-500 text-xs mt-0.5">
-                                {t.estGroundTax}
-                                {vurdering.grundskyldspromille !== null && (
-                                  <span className="text-slate-600 ml-1">
-                                    ({vurdering.grundskyldspromille}‰)
-                                  </span>
-                                )}
-                              </p>
-                            </div>
-                          </div>
-                        )}
+                        {/* BIZZ-445: Removed estimated grundskyld fallback — only actual Vurderingsportalen data */}
                       </div>
                     );
                   })()}
                 </div>
 
-                {/* BIZZ-269 / BIZZ-355: Skattehistorik — faktiske skatter fra Vurderingsportalen + estimater fra Datafordeler */}
-                {(forelobige.length > 0 || alleVurderinger.length > 1) &&
+                {/* BIZZ-445 + BIZZ-469: Skattehistorik — kun faktiske tal fra Vurderingsportalen (estimater fjernet) */}
+                {forelobige.length > 0 &&
                   (() => {
-                    /**
-                     * Byg en samlet skattehistorik-tabel.
-                     * Forelobige rækker (fra Vurderingsportalen) har faktiske grundskyld/ejendomsskat-beløb.
-                     * Historiske vurderingsrækker (fra Datafordeler) har estimeret grundskyld beregnet med promille.
-                     * Forelobige præpends og markeres tydeligt som faktiske værdier — ikke estimater.
-                     */
                     type SkatRaekke = {
                       aar: number;
                       ejendomsvaerdi: number | null;
                       grundvaerdi: number | null;
-                      /** Faktisk grundskyld fra Vurderingsportalen (kun forelobige rækker) */
                       grundskyldAktuel: number | null;
-                      /** Faktisk ejendomsskat fra Vurderingsportalen (kun forelobige rækker) */
                       ejendomsskatAktuel: number | null;
-                      /** Estimeret grundskyld beregnet med kommunepromille (kun historiske rækker) */
-                      grundskyldEstimeret: number | null;
-                      /** true = faktisk beregnet af Vurderingsportalen; false = estimat med promille */
-                      erAktuel: boolean;
                     };
 
-                    // Faktiske rækker fra Vurderingsportalen
-                    const aktuelleRaekker: SkatRaekke[] = forelobige.map((fv) => ({
-                      aar: fv.vurderingsaar,
-                      ejendomsvaerdi: fv.ejendomsvaerdi,
-                      grundvaerdi: fv.grundvaerdi,
-                      grundskyldAktuel: fv.grundskyld,
-                      ejendomsskatAktuel: fv.ejendomsskat,
-                      grundskyldEstimeret: null,
-                      erAktuel: true,
-                    }));
-
-                    // Historiske rækker fra Datafordeler (filtrer år der allerede dækkes af forelobige)
-                    const forelobigAar = new Set(forelobige.map((fv) => fv.vurderingsaar));
-                    // Deduplicate by year — alleVurderinger can contain multiple nodes for the
-                    // same year (e.g. revised assessments). Keep the entry with the highest
-                    // ejendomsvaerdi as it represents the most recent assessment for that year.
-                    const dedupedVurderinger = Array.from(
-                      alleVurderinger
-                        .filter((v) => v.aar != null && !forelobigAar.has(v.aar))
-                        .reduce((map, v) => {
-                          const existing = map.get(v.aar!);
-                          if (
-                            !existing ||
-                            (v.ejendomsvaerdi ?? 0) > (existing.ejendomsvaerdi ?? 0)
-                          ) {
-                            map.set(v.aar!, v);
-                          }
-                          return map;
-                        }, new Map<number, (typeof alleVurderinger)[number]>())
-                        .values()
-                    );
-                    const historiskeRaekker: SkatRaekke[] = dedupedVurderinger
-                      .slice(0, 10)
-                      .map((v) => ({
-                        aar: v.aar!,
-                        ejendomsvaerdi: v.ejendomsvaerdi ?? null,
-                        grundvaerdi: v.grundvaerdi ?? null,
-                        grundskyldAktuel: null,
-                        ejendomsskatAktuel: null,
-                        grundskyldEstimeret: v.estimereretGrundskyld ?? null,
-                        erAktuel: false,
-                      }));
-
-                    const alleRaekker = [...aktuelleRaekker, ...historiskeRaekker].sort(
-                      (a, b) => b.aar - a.aar
-                    );
+                    const alleRaekker: SkatRaekke[] = forelobige
+                      .map((fv) => ({
+                        aar: fv.vurderingsaar,
+                        ejendomsvaerdi: fv.ejendomsvaerdi,
+                        grundvaerdi: fv.grundvaerdi,
+                        grundskyldAktuel: fv.grundskyld,
+                        ejendomsskatAktuel: fv.ejendomsskat,
+                      }))
+                      .sort((a, b) => b.aar - a.aar);
 
                     if (alleRaekker.length === 0) return null;
-
-                    const harEstimater =
-                      historiskeRaekker.length > 0 && !!vurdering?.grundskyldspromille;
 
                     return (
                       <div>
                         <SectionTitle title={da ? 'Skattehistorik' : 'Tax history'} />
+                        <p className="text-slate-500 text-xs mb-2 leading-relaxed">
+                          {da
+                            ? 'Årstal refererer til vurderingsåret. Skatten baseret på vurderingen opkræves typisk det følgende år — fx bygger betalinger i 2025 på vurderingen for 2024.'
+                            : 'Year refers to the assessment year. The tax based on that assessment is usually collected the following year — e.g. payments in 2025 are based on the 2024 assessment.'}
+                        </p>
                         <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden overflow-x-auto">
                           <table className="w-full text-xs">
                             <thead>
                               <tr className="border-b border-slate-700/40">
                                 <th className="px-4 py-2.5 text-left text-slate-500 font-medium">
-                                  {da ? 'År' : 'Year'}
+                                  {da ? 'Vurderingsår' : 'Assessment year'}
                                 </th>
                                 <th className="px-4 py-2.5 text-right text-slate-500 font-medium">
                                   {da ? 'Ejendomsværdi' : 'Property value'}
@@ -4062,23 +4693,16 @@ export default function EjendomDetaljeClient({
                               </tr>
                             </thead>
                             <tbody>
-                              {alleRaekker.map((r, i) => (
+                              {alleRaekker.map((r) => (
                                 <tr
-                                  key={r.aar + '-' + i}
+                                  key={r.aar}
                                   className="border-b border-slate-700/20 last:border-0 hover:bg-slate-800/30"
                                 >
                                   <td className="px-4 py-2 text-slate-300 font-medium">
                                     {r.aar}
-                                    {/* Badge indicating data provenance */}
-                                    {r.erAktuel ? (
-                                      <span className="ml-1.5 px-1 py-0.5 bg-emerald-500/10 border border-emerald-500/20 rounded text-[9px] text-emerald-400 font-medium">
-                                        {da ? 'faktisk' : 'actual'}
-                                      </span>
-                                    ) : (
-                                      <span className="ml-1.5 px-1 py-0.5 bg-slate-700/40 border border-slate-600/30 rounded text-[9px] text-slate-500 font-medium">
-                                        {da ? 'est.' : 'est.'}
-                                      </span>
-                                    )}
+                                    <span className="ml-1.5 text-slate-600 text-[10px] font-normal">
+                                      {da ? `(betales ${r.aar + 1})` : `(paid ${r.aar + 1})`}
+                                    </span>
                                   </td>
                                   <td className="px-4 py-2 text-right text-slate-300">
                                     {r.ejendomsvaerdi ? formatDKK(r.ejendomsvaerdi) : '–'}
@@ -4087,35 +4711,23 @@ export default function EjendomDetaljeClient({
                                     {r.grundvaerdi ? formatDKK(r.grundvaerdi) : '–'}
                                   </td>
                                   <td className="px-4 py-2 text-right font-medium tabular-nums">
-                                    {r.erAktuel ? (
-                                      r.grundskyldAktuel != null ? (
-                                        <span className="text-emerald-400">
-                                          {formatDKK(r.grundskyldAktuel)} kr/år
-                                        </span>
-                                      ) : (
-                                        '–'
-                                      )
-                                    ) : r.grundskyldEstimeret != null ? (
-                                      <span className="text-blue-400">
-                                        {formatDKK(r.grundskyldEstimeret)} kr/år
+                                    {r.grundskyldAktuel != null ? (
+                                      <span className="text-emerald-400">
+                                        {formatDKK(r.grundskyldAktuel)} kr/år
                                       </span>
                                     ) : (
                                       '–'
                                     )}
                                   </td>
                                   <td className="px-4 py-2 text-right tabular-nums">
-                                    {r.erAktuel ? (
-                                      r.ejendomsskatAktuel != null ? (
-                                        <span className="text-emerald-400 font-medium">
-                                          {formatDKK(r.ejendomsskatAktuel)} kr/år
-                                        </span>
-                                      ) : (
-                                        <span className="text-slate-600 text-[10px]">
-                                          {da ? 'ikke opkrævet' : 'not charged'}
-                                        </span>
-                                      )
+                                    {r.ejendomsskatAktuel != null ? (
+                                      <span className="text-emerald-400 font-medium">
+                                        {formatDKK(r.ejendomsskatAktuel)} kr/år
+                                      </span>
                                     ) : (
-                                      <span className="text-slate-600">–</span>
+                                      <span className="text-slate-600 text-[10px]">
+                                        {da ? 'ikke opkrævet' : 'not charged'}
+                                      </span>
                                     )}
                                   </td>
                                 </tr>
@@ -4123,16 +4735,109 @@ export default function EjendomDetaljeClient({
                             </tbody>
                           </table>
                         </div>
-                        {harEstimater && (
-                          <p className="text-slate-600 text-[10px] mt-2">
-                            {da
-                              ? `Historiske rækker (est.) beregnet med kommunens grundskyldspromille: ${vurdering!.grundskyldspromille}‰ — faktiske rækker stammer direkte fra Vurderingsportalen.`
-                              : `Historical rows (est.) calculated using municipality land tax rate: ${vurdering!.grundskyldspromille}‰ — actual rows sourced directly from Vurderingsportalen.`}
-                          </p>
-                        )}
                       </div>
                     );
                   })()}
+
+                {/* BIZZ-490: Grundskatteloft (Loftansættelse, ESL §45 4,75%-regulering).
+                    Vises som info-kort mellem historik og fritagelser så brugeren kan se
+                    at grundskylden er begrænset af loftet — ellers fremstår den som en
+                    uforklaret diskrepans i forhold til "promille × grundværdi". */}
+                {vurLoft.length > 0 &&
+                  (() => {
+                    const aktivLoft =
+                      vurLoft.find((l) => l.basisaar != null && l.grundvaerdi != null) ??
+                      vurLoft[0];
+                    if (
+                      !aktivLoft ||
+                      (aktivLoft.basisaar == null && aktivLoft.grundvaerdi == null)
+                    ) {
+                      return null;
+                    }
+                    return (
+                      <div className="bg-amber-500/5 border border-amber-500/30 rounded-xl p-4">
+                        <div className="flex items-start gap-3">
+                          <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-amber-500/15 border border-amber-500/30 flex items-center justify-center">
+                            <Landmark size={16} className="text-amber-300" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="text-amber-200 text-sm font-semibold">
+                                {da ? 'Grundskatteloft aktiv' : 'Land-tax ceiling active'}
+                              </p>
+                              <span className="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                                {da ? 'ESL §45' : 'ESL §45'}
+                              </span>
+                            </div>
+                            <p className="text-slate-400 text-xs mt-1 leading-snug">
+                              {da
+                                ? 'Grundskylden kan maksimalt stige 4,75% om året (loftreguleret grundværdi). Når loftet er aktivt, beregnes skatten af den regulerede grundværdi, ikke den fulde offentlige vurdering.'
+                                : 'Land tax can rise by at most 4.75% per year (capped land value). When the ceiling is active, tax is calculated from the capped value — not the full public valuation.'}
+                            </p>
+                            <div className="grid grid-cols-2 gap-x-6 gap-y-1 mt-3 text-xs">
+                              {aktivLoft.basisaar != null && (
+                                <div className="flex justify-between gap-2">
+                                  <span className="text-slate-500">
+                                    {da ? 'Basisår' : 'Base year'}
+                                  </span>
+                                  <span className="text-slate-300 tabular-nums">
+                                    {aktivLoft.basisaar}
+                                  </span>
+                                </div>
+                              )}
+                              {aktivLoft.grundvaerdi != null && (
+                                <div className="flex justify-between gap-2">
+                                  <span className="text-slate-500">
+                                    {da ? 'Loftværdi' : 'Capped value'}
+                                  </span>
+                                  <span className="text-slate-300 tabular-nums">
+                                    {formatDKK(aktivLoft.grundvaerdi)}
+                                  </span>
+                                </div>
+                              )}
+                              {aktivLoft.pgf11 && (
+                                <div className="flex justify-between gap-2 col-span-2">
+                                  <span className="text-slate-500">
+                                    {da ? 'Beregningsgrundlag' : 'Calculation basis'}
+                                  </span>
+                                  <span className="text-slate-300">{aktivLoft.pgf11}</span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                {/* BIZZ-491: Skattefritagelser */}
+                {vurFritagelser.length > 0 && (
+                  <div>
+                    <SectionTitle title={da ? 'Skattefritagelser' : 'Tax exemptions'} />
+                    <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
+                      {vurFritagelser.map((f) => (
+                        <div
+                          key={f.loebenummer}
+                          className="px-4 py-3 border-b border-slate-700/20 last:border-b-0 flex items-center justify-between"
+                        >
+                          <div>
+                            <p className="text-slate-300 text-sm">
+                              {f.artKode ?? `#${f.loebenummer}`}
+                            </p>
+                            {f.omfangKode && (
+                              <p className="text-slate-500 text-xs">
+                                {da ? 'Omfang' : 'Scope'}: {f.omfangKode}
+                              </p>
+                            )}
+                          </div>
+                          <p className="text-white text-sm font-medium tabular-nums">
+                            {f.beloeb != null ? formatDKK(f.beloeb) : '—'}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -4747,10 +5452,14 @@ export default function EjendomDetaljeClient({
                   </div>
                   {/* end planer subsection */}
 
-                  {/* ── Energimærker subsection ── */}
-                  <div>
+                  {/* ── Energimærker subsection ──
+                      BIZZ-565: Header alignet med Planer-sektionen ovenover
+                      (ikon-style + text-color/size). Tidligere brugte vi en
+                      emoji-prefix der gjorde sektionen visuelt anderledes
+                      end de øvrige dokument-sektioner. */}
+                  <div className="border-t border-slate-700/30">
                     <div className="px-4 py-2 flex items-center gap-2">
-                      <span className="text-sm leading-none">⚡</span>
+                      <Zap size={13} className="text-slate-500" />
                       <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">
                         {t.energyReports}
                       </span>
@@ -4787,26 +5496,37 @@ export default function EjendomDetaljeClient({
 
                     {energimaerker && energimaerker.length > 0 && (
                       <div>
-                        <div className="min-w-[680px] grid grid-cols-[56px_1fr_100px_120px_120px_80px_28px] gap-x-3 px-4 py-1.5 border-b border-slate-700/20">
+                        {/* BIZZ-565 v4: Grid alignet med Dokumenter+Planer-sektionerne
+                            ovenfor: 28px leading (matches chevron-kolonne) +
+                            72px ÅR + 1fr ADRESSE + 60px KLASSE + 100px GF +
+                            100px GT + 120px STATUS + 80px RAPPORT (PDF +
+                            checkbox slået sammen som i Planer-sektionen). Det
+                            sikrer at ÅR, STATUS og RAPPORT-kolonnerne ligger
+                            præcis under tilsvarende kolonner i de øvrige
+                            dokument-sektioner. */}
+                        <div className="min-w-[760px] grid grid-cols-[28px_72px_1fr_60px_100px_100px_120px_80px] gap-x-3 px-4 py-1.5 border-b border-slate-700/20">
+                          <span />
+                          <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
+                            {da ? 'År' : 'Year'}
+                          </span>
+                          <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
+                            {da ? 'Adresse' : 'Address'}
+                          </span>
                           <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
                             Klasse
                           </span>
                           <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
-                            Adresse
+                            {da ? 'Gyldig fra' : 'Valid from'}
+                          </span>
+                          <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
+                            {da ? 'Gyldig til' : 'Valid until'}
                           </span>
                           <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
                             Status
                           </span>
                           <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
-                            Gyldig fra
+                            {da ? 'Rapport' : 'Report'}
                           </span>
-                          <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
-                            Gyldig til
-                          </span>
-                          <span className="text-[11px] font-medium text-slate-500 uppercase tracking-wide">
-                            Rapport
-                          </span>
-                          <span />
                         </div>
                         {energimaerker.map((m) => {
                           // Officielle EU energimærke farver (Building Energy Performance Directive)
@@ -4830,17 +5550,24 @@ export default function EjendomDetaljeClient({
                                 : m.status === 'Erstattet'
                                   ? 'bg-amber-500/15 text-amber-400'
                                   : 'bg-slate-700/40 text-slate-400';
+                          // BIZZ-565: Udtræk år fra gyldigFra til ÅR-kolonne.
+                          // Format kan være "19. jul. 2022", "2022-07-19" eller andet —
+                          // grab første 4 cifre (årstal-mønster) som fallback.
+                          const aar = (() => {
+                            const s = m.gyldigFra ?? '';
+                            const m4 = s.match(/(\d{4})/);
+                            return m4 ? m4[1] : '—';
+                          })();
                           return (
                             <div
                               key={m.serialId}
-                              className="min-w-[680px] grid grid-cols-[56px_1fr_100px_120px_120px_80px_28px] gap-x-3 px-4 py-2 border-b border-slate-700/15 hover:bg-slate-700/10 transition-colors items-center"
+                              className="min-w-[760px] grid grid-cols-[28px_72px_1fr_60px_100px_100px_120px_80px] gap-x-3 px-4 py-2 border-b border-slate-700/15 hover:bg-slate-700/10 transition-colors items-center"
                             >
-                              <span
-                                style={klasseStyle}
-                                className="inline-flex items-center justify-center w-7 h-7 rounded-md text-xs font-bold"
-                              >
-                                {m.klasse}
-                              </span>
+                              {/* 0. (tom — matcher chevron-kolonne i Dokumenter/Planer) */}
+                              <span />
+                              {/* 1. ÅR */}
+                              <span className="text-sm tabular-nums text-slate-300">{aar}</span>
+                              {/* 2. ADRESSE */}
                               <div>
                                 <p className="text-sm text-slate-200">{m.adresse ?? '—'}</p>
                                 {m.bygninger.length > 0 && (
@@ -4855,20 +5582,31 @@ export default function EjendomDetaljeClient({
                                   </p>
                                 )}
                               </div>
+                              {/* 3. KLASSE */}
                               <span
-                                className={`inline-flex items-center self-start px-2 py-0.5 rounded text-xs font-medium ${statusKlasse}`}
+                                style={klasseStyle}
+                                className="inline-flex items-center justify-center w-7 h-7 rounded-md text-xs font-bold"
                               >
-                                {m.status ?? '—'}
+                                {m.klasse}
                               </span>
+                              {/* 4. GYLDIG FRA */}
                               <span className="text-sm tabular-nums text-slate-400">
                                 {m.gyldigFra ?? '—'}
                               </span>
+                              {/* 5. GYLDIG TIL */}
                               <span
                                 className={`text-sm tabular-nums ${m.status === 'Ugyldig' ? 'text-red-400' : 'text-slate-300'}`}
                               >
                                 {m.udloeber ?? '—'}
                               </span>
-                              <div>
+                              {/* 6. STATUS */}
+                              <span
+                                className={`inline-flex items-center self-start px-2 py-0.5 rounded text-xs font-medium ${statusKlasse}`}
+                              >
+                                {m.status ?? '—'}
+                              </span>
+                              {/* 7. RAPPORT — PDF + checkbox samme celle som Planer-sektionen */}
+                              <div className="flex items-center gap-1.5 self-start">
                                 {m.pdfUrl ? (
                                   <a
                                     href={m.pdfUrl}
@@ -4882,38 +5620,35 @@ export default function EjendomDetaljeClient({
                                 ) : (
                                   <span className="text-xs text-slate-600">—</span>
                                 )}
-                              </div>
-                              {/* Bulk-download checkbox — uses valgteDoc shared with the rest of the Dokumenter tab */}
-                              {m.pdfUrl ? (
-                                <label
-                                  className="flex items-center cursor-pointer flex-shrink-0"
-                                  onClick={(ev) => ev.stopPropagation()}
-                                >
-                                  <input
-                                    type="checkbox"
-                                    className="sr-only"
-                                    checked={valgteDoc.has(`energi-${m.serialId}`)}
-                                    onChange={() => toggleDoc(`energi-${m.serialId}`)}
-                                  />
-                                  <span
-                                    className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors ${valgteDoc.has(`energi-${m.serialId}`) ? 'bg-blue-500 border-blue-500' : 'bg-[#0a1020] border-slate-400'}`}
+                                {m.pdfUrl && (
+                                  <label
+                                    className="flex items-center cursor-pointer flex-shrink-0"
+                                    onClick={(ev) => ev.stopPropagation()}
                                   >
-                                    {valgteDoc.has(`energi-${m.serialId}`) && (
-                                      <svg
-                                        viewBox="0 0 10 10"
-                                        className="w-2 h-2 text-white"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        strokeWidth="2.5"
-                                      >
-                                        <path d="M1.5 5.5l2.5 2.5 4.5-4.5" />
-                                      </svg>
-                                    )}
-                                  </span>
-                                </label>
-                              ) : (
-                                <span />
-                              )}
+                                    <input
+                                      type="checkbox"
+                                      className="sr-only"
+                                      checked={valgteDoc.has(`energi-${m.serialId}`)}
+                                      onChange={() => toggleDoc(`energi-${m.serialId}`)}
+                                    />
+                                    <span
+                                      className={`w-3.5 h-3.5 rounded-sm border flex items-center justify-center transition-colors ${valgteDoc.has(`energi-${m.serialId}`) ? 'bg-blue-500 border-blue-500' : 'bg-[#0a1020] border-slate-400'}`}
+                                    >
+                                      {valgteDoc.has(`energi-${m.serialId}`) && (
+                                        <svg
+                                          viewBox="0 0 10 10"
+                                          className="w-2 h-2 text-white"
+                                          fill="none"
+                                          stroke="currentColor"
+                                          strokeWidth="2.5"
+                                        >
+                                          <path d="M1.5 5.5l2.5 2.5 4.5-4.5" />
+                                        </svg>
+                                      )}
+                                    </span>
+                                  </label>
+                                )}
+                              </div>
                             </div>
                           );
                         })}
@@ -5475,6 +6210,9 @@ export default function EjendomDetaljeClient({
                   const totAreal = bygninger.reduce((s, b) => s + (b.samletBygningsareal ?? 0), 0);
                   const boligAreal = bygninger.reduce((s, b) => s + (b.samletBoligareal ?? 0), 0);
                   const erhvAreal = bygninger.reduce((s, b) => s + (b.samletErhvervsareal ?? 0), 0);
+                  // BIZZ-487: Kælder + tagetage udledt fra BBR_Etage i fetchBbrData.ts
+                  const kaelderAreal = bygninger.reduce((s, b) => s + (b.kaelder ?? 0), 0);
+                  const tagetageAreal = bygninger.reduce((s, b) => s + (b.tagetage ?? 0), 0);
                   return (
                     <div>
                       <SectionTitle title={t.buildings} />
@@ -5505,6 +6243,20 @@ export default function EjendomDetaljeClient({
                               : '–'
                           }
                         />
+                        {/* BIZZ-487: Kælder vises kun når der er et areal > 0 */}
+                        {kaelderAreal > 0 && (
+                          <DataKort
+                            label={t.basement}
+                            value={`${kaelderAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`}
+                          />
+                        )}
+                        {/* BIZZ-487: Tagetage vises kun når der er et areal > 0 */}
+                        {tagetageAreal > 0 && (
+                          <DataKort
+                            label={da ? 'Tagetage' : 'Attic'}
+                            value={`${tagetageAreal.toLocaleString(da ? 'da-DK' : 'en-GB')} m²`}
+                          />
+                        )}
                       </div>
 
                       {bbrLoader ? (
@@ -5816,6 +6568,12 @@ export default function EjendomDetaljeClient({
                                   {js.ejerlavsnavn && (
                                     <p className="text-slate-500 text-xs">{js.ejerlavsnavn}</p>
                                   )}
+                                  {/* BIZZ-499: Vis arealtype fra MAT */}
+                                  {js.arealtype && (
+                                    <p className="text-slate-500 text-[10px]">
+                                      {da ? 'Arealtype' : 'Area type'}: {js.arealtype}
+                                    </p>
+                                  )}
                                 </div>
                                 <p className="text-slate-300 text-sm tabular-nums text-right">
                                   {js.registreretAreal != null
@@ -5854,6 +6612,141 @@ export default function EjendomDetaljeClient({
                           </div>
                         </div>
                       )}
+
+                      {/* ── BIZZ-500: Matrikel-historik (collapsible tidslinje) — mobil ── */}
+                      <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden">
+                        <button
+                          type="button"
+                          onClick={() => setHistorikOpen((prev) => !prev)}
+                          className="w-full px-4 py-2.5 flex items-center justify-between hover:bg-slate-700/20 transition-colors"
+                          aria-expanded={historikOpen}
+                        >
+                          <span className="text-slate-300 text-xs font-semibold uppercase tracking-wider flex items-center gap-1.5">
+                            <Clock size={12} className="text-slate-500" />
+                            {da ? 'Matrikel-historik' : 'Cadastre history'}
+                          </span>
+                          {historikOpen ? (
+                            <ChevronDown size={14} className="text-slate-500" />
+                          ) : (
+                            <ChevronRight size={14} className="text-slate-500" />
+                          )}
+                        </button>
+                        {historikOpen && (
+                          <div className="px-4 pb-4 border-t border-slate-700/20">
+                            {historikLoader ? (
+                              <div className="py-4 text-center">
+                                <div className="inline-block w-4 h-4 border-2 border-slate-600 border-t-blue-400 rounded-full animate-spin" />
+                                <p className="text-slate-500 text-xs mt-2">
+                                  {da ? 'Henter historik…' : 'Loading history…'}
+                                </p>
+                              </div>
+                            ) : matrikelHistorik.length > 0 ? (
+                              <div className="relative mt-3">
+                                <div className="absolute left-[7px] top-2 bottom-2 w-px bg-slate-700/50" />
+                                <div className="space-y-4">
+                                  {matrikelHistorik.map((evt, idx) => {
+                                    const typeColor =
+                                      {
+                                        oprettelse: 'bg-green-500',
+                                        udstykning: 'bg-orange-500',
+                                        sammenlægning: 'bg-blue-500',
+                                        arealændring: 'bg-yellow-500',
+                                        statusændring: 'bg-purple-500',
+                                      }[evt.type] ?? 'bg-slate-500';
+                                    const typeLabel = da
+                                      ? {
+                                          oprettelse: 'Oprettet',
+                                          udstykning: 'Udstykning',
+                                          sammenlægning: 'Sammenlægning',
+                                          arealændring: 'Arealændring',
+                                          statusændring: 'Statusændring',
+                                        }[evt.type]
+                                      : {
+                                          oprettelse: 'Created',
+                                          udstykning: 'Subdivision',
+                                          sammenlægning: 'Merger',
+                                          arealændring: 'Area change',
+                                          statusændring: 'Status change',
+                                        }[evt.type];
+                                    const formattedDate = (() => {
+                                      try {
+                                        return new Date(evt.dato).toLocaleDateString(
+                                          da ? 'da-DK' : 'en-GB',
+                                          { year: 'numeric', month: 'short', day: 'numeric' }
+                                        );
+                                      } catch {
+                                        return evt.dato;
+                                      }
+                                    })();
+                                    return (
+                                      <div
+                                        key={`m-${evt.dato}-${evt.type}-${idx}`}
+                                        className="relative pl-6"
+                                      >
+                                        <div
+                                          className={`absolute left-0.5 top-1 w-3 h-3 rounded-full border-2 border-slate-900 ${typeColor}`}
+                                        />
+                                        <div>
+                                          <div className="flex items-center gap-2 mb-0.5">
+                                            <span className="text-slate-400 text-[10px] tabular-nums">
+                                              {formattedDate}
+                                            </span>
+                                            <span
+                                              className={`px-1.5 py-0.5 text-[10px] font-semibold rounded ${typeColor}/20 text-white/80`}
+                                            >
+                                              {typeLabel}
+                                            </span>
+                                          </div>
+                                          <p className="text-slate-300 text-xs">
+                                            {evt.beskrivelse}
+                                          </p>
+                                          {evt.detaljer && (
+                                            <div className="mt-1 text-[10px] text-slate-500 space-y-0.5">
+                                              {evt.detaljer.arealFoer != null &&
+                                                evt.detaljer.arealEfter != null && (
+                                                  <p>
+                                                    {da ? 'Areal' : 'Area'}:{' '}
+                                                    {evt.detaljer.arealFoer.toLocaleString(
+                                                      da ? 'da-DK' : 'en-GB'
+                                                    )}{' '}
+                                                    m² →{' '}
+                                                    {evt.detaljer.arealEfter.toLocaleString(
+                                                      da ? 'da-DK' : 'en-GB'
+                                                    )}{' '}
+                                                    m²
+                                                  </p>
+                                                )}
+                                              {evt.detaljer.jordstykkerFoer &&
+                                                evt.detaljer.jordstykkerEfter && (
+                                                  <p>
+                                                    {da ? 'Jordstykker' : 'Parcels'}:{' '}
+                                                    {evt.detaljer.jordstykkerFoer.join(', ')} →{' '}
+                                                    {evt.detaljer.jordstykkerEfter.join(', ')}
+                                                  </p>
+                                                )}
+                                              {evt.detaljer.forretningshaendelse && (
+                                                <p className="italic">
+                                                  {evt.detaljer.forretningshaendelse}
+                                                </p>
+                                              )}
+                                            </div>
+                                          )}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ) : (
+                              <p className="py-3 text-slate-500 text-xs text-center">
+                                {da
+                                  ? 'Ingen historik fundet for denne ejendom'
+                                  : 'No history found for this property'}
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   ) : (
                     <div className="bg-slate-800/30 border border-slate-700/40 rounded-xl p-4 text-center">
@@ -5982,13 +6875,11 @@ export default function EjendomDetaljeClient({
                               : 'Ownership is registered on individual condominium units.'}
                           </p>
                         </div>
+                        {/* BIZZ-478: Ensartet blå TabLoadingSpinner. */}
                         {lejlighederLoader && (
-                          <div className="flex items-center justify-center py-8">
-                            <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
-                            <span className="ml-2 text-slate-400 text-sm">
-                              {da ? 'Henter lejlighedsdata…' : 'Loading apartment data…'}
-                            </span>
-                          </div>
+                          <TabLoadingSpinner
+                            label={da ? 'Henter lejlighedsdata…' : 'Loading apartment data…'}
+                          />
                         )}
                         {lejligheder !== null && lejligheder.length > 0 && (
                           <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden overflow-x-auto">
@@ -6066,6 +6957,7 @@ export default function EjendomDetaljeClient({
                             : `BFE ${bfe}`
                         }
                         lang={lang}
+                        erEjerlejlighed={!!bbrData?.ejerlejlighedBfe}
                       />
                     </div>
                   );
@@ -6894,10 +7786,18 @@ function PropertyOwnerDiagram({
   bfe,
   adresse,
   lang,
+  erEjerlejlighed = false,
 }: {
   bfe: number;
   adresse: string;
   lang: 'da' | 'en';
+  /**
+   * BIZZ-470: True når ejendommen er en ejerlejlighed. Signalerer til
+   * /api/ejerskab/chain at Tinglysning-opslagene kan springes over —
+   * Tinglysning returnerer alligevel kun "Opdelt i ejerlejlighed" som
+   * status, og EJF leverer de faktiske ejere meget hurtigere.
+   */
+  erEjerlejlighed?: boolean;
 }) {
   const _router = useRouter();
   const da = lang === 'da';
@@ -6914,7 +7814,8 @@ function PropertyOwnerDiagram({
 
     const controller = new AbortController();
 
-    fetch(`/api/ejerskab/chain?bfe=${bfe}&adresse=${encodeURIComponent(adresse)}`, {
+    const typeParam = erEjerlejlighed ? '&type=ejerlejlighed' : '';
+    fetch(`/api/ejerskab/chain?bfe=${bfe}&adresse=${encodeURIComponent(adresse)}${typeParam}`, {
       signal: controller.signal,
     })
       .then((r) => (r.ok ? r.json() : null))
@@ -6929,6 +7830,10 @@ function PropertyOwnerDiagram({
               type: n.type as 'person' | 'company' | 'property' | 'status',
               cvr: n.cvr as number | undefined,
               link: n.link as string | undefined,
+              // Propagate bfeNummer so DiagramForce renders "BFE X" on the
+              // property node (bug seen 2026-04-18 where root property
+              // node was a blank box)
+              bfeNummer: n.bfeNummer as number | undefined,
             })),
             edges: data.edges.map((e: Record<string, unknown>) => ({
               from: e.from as string,
@@ -6946,16 +7851,13 @@ function PropertyOwnerDiagram({
       .finally(() => setLoading(false));
 
     return () => controller.abort();
-  }, [bfe, adresse]);
+  }, [bfe, adresse, erEjerlejlighed]);
 
   if (loading)
+    // BIZZ-478: Brug den blå TabLoadingSpinner-bar i stedet for box-spinner
+    // så ejendomssidens diagram-tab visuelt matcher resten af appen.
     return (
-      <div className="flex items-center justify-center py-12 bg-slate-800/40 border border-slate-700/40 rounded-xl">
-        <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
-        <span className="ml-2 text-slate-400 text-sm">
-          {da ? 'Henter ejerstruktur…' : 'Loading ownership structure…'}
-        </span>
-      </div>
+      <TabLoadingSpinner label={da ? 'Henter ejerstruktur…' : 'Loading ownership structure…'} />
     );
 
   if (!graph || graph.nodes.length <= 1) {
@@ -7157,6 +8059,8 @@ function TinglysningTab({
   const [showAllServitutter, setShowAllServitutter] = useState(false);
   /** True when the servitut fetch was aborted by the 30 s timeout — used to show a timeout warning in the UI. */
   const [servituterTimedOut, setServituterTimedOut] = useState(false);
+  /** BIZZ-548: True when the servitut fetch failed (non-timeout) — shows error state with retry */
+  const [servituterError, setServituterError] = useState(false);
   const [expandedAdkomst, setExpandedAdkomst] = useState<Set<number>>(new Set());
   const [expandedHaeftelser, setExpandedHaeftelser] = useState<Set<number>>(new Set());
   const [expandedServitutter, setExpandedServitutter] = useState<Set<number>>(new Set());
@@ -7188,6 +8092,7 @@ function TinglysningTab({
     setEjereLoading(true);
     setHaeftelserLoading(true);
     setServituterLoading(true);
+    setServituterError(false);
     setFejl(null);
     setEjere([]);
     setHaeftelser([]);
@@ -7228,10 +8133,14 @@ function TinglysningTab({
         // Trin 2: Hent summariske data i 3 parallelle sektions-kald
         // Progressiv loading — hver sektion vises straks den er klar
         const base = `/api/tinglysning/summarisk?uuid=${tlData.uuid}`;
-        const erEjerlejlighed = moderBfe && moderBfe !== bfe;
-        const servituterUrl = erEjerlejlighed
-          ? `${base}&section=servitutter&hovedBfe=${moderBfe}`
-          : `${base}&section=servitutter`;
+        // BIZZ-474: Send altid hovedBfe til summarisk-API'en — for ejerlejligheder
+        // bruges moderBfe (lejlighedens forældreejendom), og for hovedejendomme
+        // bruges deres egen BFE. API'en slår hovednoteringsnummer op og tilføjer
+        // servitutter fra den primære grundbogs-UUID hvis den afviger fra den
+        // UUID vi allerede har. Tidligere mistede hovedejendomme servitutter der
+        // lå på en anden hovednoteringsnummer-UUID end tlFetch returnerede.
+        const effektivtHovedBfe = moderBfe && moderBfe !== bfe ? moderBfe : bfe;
+        const servituterUrl = `${base}&section=servitutter&hovedBfe=${effektivtHovedBfe}`;
         return Promise.all([
           fetch(`${base}&section=ejere`, { signal })
             .then((r) => (r.ok ? r.json() : null))
@@ -7254,8 +8163,17 @@ function TinglysningTab({
           // BIZZ-331: Servitutter for ejerlejligheder can be slow (fetches
           // from hovedejendom). Use separate timeout + error handling so other
           // sections still display even if servitutter times out.
-          fetch(servituterUrl, { signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]) })
-            .then((r) => (r.ok ? r.json() : null))
+          // BIZZ-474: Bumped to 45s — hovedejendomme with many servitutter
+          // need enough headroom for per-document enrichment even with
+          // concurrency=10 and cap=30.
+          fetch(servituterUrl, { signal: AbortSignal.any([signal, AbortSignal.timeout(45000)]) })
+            .then((r) => {
+              if (!r.ok) {
+                setServituterError(true);
+                return null;
+              }
+              return r.json();
+            })
             .then((res) => {
               if (res) {
                 setServitutter(res.servitutter ?? []);
@@ -7265,10 +8183,11 @@ function TinglysningTab({
             })
             .catch((err) => {
               if (err.name === 'AbortError') {
-                // Timed out (30 s) — surface a warning so the user knows the list is incomplete.
+                // Timed out (45 s) — surface a warning so the user knows the list is incomplete.
                 setServituterTimedOut(true);
               } else {
                 logger.error('[tinglysning] Servitut fetch fejlede:', err);
+                setServituterError(true);
               }
               setServituterLoading(false);
             }),
@@ -7338,16 +8257,10 @@ function TinglysningTab({
     Anden: da ? 'Andet' : 'Other',
   };
 
-  // Initial loading — vent kun på UUID-søgning, ikke alle sektioner
+  // Initial loading — vent kun på UUID-søgning, ikke alle sektioner.
+  // BIZZ-478: Ensartet blå loading-bar i stedet for box-spinner.
   if (loading && ejereLoading && haeftelserLoading && servituterLoading && ejere.length === 0)
-    return (
-      <div className="flex items-center justify-center py-16">
-        <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
-        <span className="ml-2 text-slate-400 text-sm">
-          {da ? 'Henter tingbogsdata…' : 'Loading registry data…'}
-        </span>
-      </div>
-    );
+    return <TabLoadingSpinner label={da ? 'Henter tingbogsdata…' : 'Loading registry data…'} />;
 
   if (fejl || !bfe)
     return (
@@ -7359,7 +8272,21 @@ function TinglysningTab({
       </div>
     );
 
-  const visServitutter = showAllServitutter ? servitutter : servitutter.slice(0, 5);
+  /**
+   * BIZZ-472: Sortér servitutter så ejendommens egne kommer først, dernæst
+   * servitutter arvet fra hovedejendommen. På en ejerlejlighed fortæller
+   * rækkefølgen hvilke byrder der er tinglyst direkte på lejligheden og
+   * hvilke der hviler på hele komplekset.
+   */
+  const sorteredeServitutter = [...servitutter].sort((a, b) => {
+    const aHoved = a.fraHovedejendom ? 1 : 0;
+    const bHoved = b.fraHovedejendom ? 1 : 0;
+    return aHoved - bHoved;
+  });
+  const visServitutter = showAllServitutter
+    ? sorteredeServitutter
+    : sorteredeServitutter.slice(0, 5);
+  const antalFraHovedejendom = servitutter.filter((s) => s.fraHovedejendom).length;
 
   /**
    * Gruppér adkomst-entries efter dokumentId — to ejere på samme skøde deler dokumentId
@@ -7824,13 +8751,9 @@ function TinglysningTab({
         )}
 
         {/* ── HÆFTELSER ── */}
+        {/* BIZZ-478: Ensartet blå TabLoadingSpinner. */}
         {haeftelserLoading && (
-          <div className="flex items-center justify-center py-8">
-            <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
-            <span className="ml-2 text-slate-400 text-sm">
-              {da ? 'Henter hæftelser…' : 'Loading charges…'}
-            </span>
-          </div>
+          <TabLoadingSpinner label={da ? 'Henter hæftelser…' : 'Loading charges…'} />
         )}
         {haeftelser.length > 0 && (
           <>
@@ -8177,14 +9100,10 @@ function TinglysningTab({
           </>
         )}
 
-        {/* ── SERVITUTTER ── */}
+        {/* ── SERVITUTTER ──
+            BIZZ-478: Ensartet blå TabLoadingSpinner. */}
         {servituterLoading && (
-          <div className="flex items-center justify-center py-8">
-            <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
-            <span className="ml-2 text-slate-400 text-sm">
-              {da ? 'Henter servitutter…' : 'Loading easements…'}
-            </span>
-          </div>
+          <TabLoadingSpinner label={da ? 'Henter servitutter…' : 'Loading easements…'} />
         )}
         {servituterTimedOut && servitutter.length === 0 && (
           <div className="mx-4 my-3 flex items-start gap-2 rounded-md border border-yellow-500/40 bg-yellow-500/10 px-3 py-2">
@@ -8196,12 +9115,85 @@ function TinglysningTab({
             </span>
           </div>
         )}
+        {/* BIZZ-548: Error state with retry button */}
+        {servituterError &&
+          !servituterLoading &&
+          servitutter.length === 0 &&
+          !servituterTimedOut && (
+            <div className="mx-4 my-3 flex items-start gap-2 rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2">
+              <span className="mt-0.5 text-red-400 text-sm">✕</span>
+              <span className="text-red-300 text-sm flex-1">
+                {da
+                  ? 'Servitutter kunne ikke hentes. Tjek forbindelsen og prøv igen.'
+                  : 'Easements could not be loaded. Check your connection and try again.'}
+              </span>
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                className="text-xs text-red-300 border border-red-500/30 px-2 py-0.5 rounded hover:bg-red-500/20 transition-colors"
+              >
+                {da ? 'Prøv igen' : 'Retry'}
+              </button>
+            </div>
+          )}
+        {/* BIZZ-548: Empty state — no servitutter found (not loading, no error, no timeout) */}
+        {!servituterLoading &&
+          !servituterError &&
+          !servituterTimedOut &&
+          servitutter.length === 0 && (
+            <div className="mx-4 my-3 flex items-center gap-2 rounded-md border border-slate-700/30 bg-slate-800/40 px-3 py-2">
+              <span className="text-slate-500 text-sm">
+                {da
+                  ? 'Ingen servitutter fundet for denne ejendom.'
+                  : 'No easements found for this property.'}
+              </span>
+            </div>
+          )}
         {servitutter.length > 0 && (
           <>
-            <div className="px-4 py-1.5 bg-teal-500/5 border-b border-slate-700/20">
+            <div className="px-4 py-1.5 bg-teal-500/5 border-b border-slate-700/20 flex items-center gap-2">
               <span className="text-[10px] font-semibold text-teal-400 uppercase tracking-wider">
                 {da ? 'Servitutter' : 'Easements'} ({servitutter.length})
               </span>
+              {/* BIZZ-472: Fortæl hvor mange af servitutterne der er arvet fra hovedejendommen.
+                  Klik åbner hovedejendommens side så brugeren kan se fuld kontekst. */}
+              {antalFraHovedejendom > 0 &&
+                (moderBfe ? (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const js = await fetch(`/api/adresse/jordstykke?bfe=${moderBfe}`);
+                        if (!js.ok) return;
+                        const { adgangsadresseId } = (await js.json()) as {
+                          adgangsadresseId?: string;
+                        };
+                        if (adgangsadresseId) {
+                          router.push(`/dashboard/ejendomme/${adgangsadresseId}`);
+                        }
+                      } catch {
+                        /* ignore */
+                      }
+                    }}
+                    className="text-[10px] font-medium text-amber-400 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded hover:bg-amber-500/20 transition-colors inline-flex items-center gap-1"
+                    title={
+                      da
+                        ? `Se hovedejendommen (BFE ${moderBfe})`
+                        : `View parent property (BFE ${moderBfe})`
+                    }
+                  >
+                    <Building2 size={9} />
+                    {da
+                      ? `${antalFraHovedejendom} fra hovedejendom →`
+                      : `${antalFraHovedejendom} from parent →`}
+                  </button>
+                ) : (
+                  <span className="text-[10px] font-medium text-amber-400/90 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded">
+                    {da
+                      ? `${antalFraHovedejendom} fra hovedejendom`
+                      : `${antalFraHovedejendom} from parent property`}
+                  </span>
+                ))}
             </div>
             {visServitutter.map((s, i) => {
               const docId = String(s.dokumentId ?? '');
@@ -8253,10 +9245,36 @@ function TinglysningTab({
                           </span>
                         )}
                       </span>
+                      {/* BIZZ-472: Marker servitutter arvet fra hovedejendommen */}
+                      {s.fraHovedejendom && (
+                        <span
+                          className="flex-shrink-0 inline-flex items-center gap-0.5 text-[10px] text-amber-400 bg-amber-500/10 border border-amber-500/20 px-1 py-0.5 rounded"
+                          title={
+                            da
+                              ? 'Denne servitut er tinglyst på hovedejendommen og gælder for alle ejerlejligheder i komplekset'
+                              : 'This easement is registered on the parent property and applies to all units in the complex'
+                          }
+                        >
+                          <Building2 size={9} />
+                          {da ? 'Hovedejendom' : 'Parent'}
+                        </span>
+                      )}
+                      {/* BIZZ-567: Bilag-tælling som diskret badge efter titlen.
+                          Tidligere lå antallet i DOK-kolonnen som "PDF +N bilag"
+                          hvilket støjede og overlappede download-knappen
+                          (BIZZ-553). Badge vises kun når der ER bilag. */}
                       {servitutBilag.length > 0 && (
-                        <span className="flex-shrink-0 inline-flex items-center gap-0.5 text-[10px] text-teal-500/80 bg-teal-500/10 px-1 py-0.5 rounded">
-                          <FileText size={9} />
-                          {servitutBilag.length}
+                        <span
+                          className="flex-shrink-0 inline-flex items-center gap-0.5 text-[10px] text-slate-300 bg-slate-700/40 border border-slate-600/30 px-1 py-0.5 rounded"
+                          title={
+                            da
+                              ? `${servitutBilag.length} ${servitutBilag.length === 1 ? 'bilag' : 'bilag'} tilknyttet`
+                              : `${servitutBilag.length} ${servitutBilag.length === 1 ? 'attachment' : 'attachments'}`
+                          }
+                        >
+                          <Paperclip size={9} />
+                          {servitutBilag.length}{' '}
+                          {da ? 'bilag' : servitutBilag.length === 1 ? 'attachment' : 'attachments'}
                         </span>
                       )}
                     </span>
@@ -8272,22 +9290,40 @@ function TinglysningTab({
                         const bilagRefs = Array.isArray(s.bilagRefs)
                           ? (s.bilagRefs as string[])
                           : [];
-                        const pdfUrl =
-                          bilagRefs.length > 0
+                        // BIZZ-474: Når vi har både dokument OG bilag, slå dem
+                        // sammen til én merged PDF via ?uuid=X&bilag=a,b,c.
+                        // Fallback til rent bilag hvis dokumentet mangler (typisk
+                        // for pre-digitale servitutter).
+                        const pdfUrl = docId
+                          ? bilagRefs.length > 0
+                            ? `/api/tinglysning/dokument?uuid=${docId}&bilag=${bilagRefs.join(',')}`
+                            : `/api/tinglysning/dokument?uuid=${docId}`
+                          : bilagRefs.length > 0
                             ? `/api/tinglysning/dokument?bilag=${bilagRefs[0]}`
-                            : docId
-                              ? `/api/tinglysning/dokument?uuid=${docId}`
-                              : null;
+                            : null;
+                        // BIZZ-567: Label er nu altid "PDF" — bilag-tælling er
+                        // flyttet til badge efter servitut-titlen for at holde
+                        // DOK-kolonnen ren og ensartet med øvrige sektioner.
+                        // Den genererede PDF inkluderer stadig alle bilag når
+                        // bilagRefs er sat (URL-konstruktion uændret ovenfor).
+                        const label = 'PDF';
                         return (
                           pdfUrl && (
                             <a
                               href={pdfUrl}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="inline-flex items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300"
+                              className="inline-flex items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300 whitespace-nowrap"
+                              title={
+                                docId && bilagRefs.length > 0
+                                  ? da
+                                    ? 'Dokument + alle bilag i én samlet PDF'
+                                    : 'Document + all attachments in one combined PDF'
+                                  : undefined
+                              }
                             >
                               <FileText size={11} />
-                              PDF
+                              {label}
                             </a>
                           )
                         );
@@ -8395,28 +9431,46 @@ function TinglysningTab({
                           Dok: {String(s.dokumentAlias)}
                         </p>
                       )}
-                      {/* ── Tilknyttede bilag til denne servitut ── */}
-                      {servitutBilag.length > 0 && (
-                        <div className="mt-2 pt-2 border-t border-slate-700/20">
-                          <p className="text-slate-500 text-[10px] uppercase mb-1.5">
-                            {da ? 'Tilknyttede bilag' : 'Attachments'} ({servitutBilag.length})
-                          </p>
-                          <div className="space-y-1">
-                            {servitutBilag.map((bilagId, bi) => (
-                              <a
-                                key={bi}
-                                href={`/api/tinglysning/dokument?bilag=${bilagId}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 transition-colors"
-                              >
-                                <FileText size={10} className="flex-shrink-0" />
-                                {da ? `Bilag ${bi + 1}` : `Attachment ${bi + 1}`}
-                              </a>
-                            ))}
+                      {/*
+                        ── Tilknyttede bilag til denne servitut ──
+                        BIZZ-474: Bilag har nu læsbar beskrivelse via s.bilag
+                        (fx "relaksation", "tillæg til servitutten findes i
+                        bilag") fra tingbogsattestens TekstAngivelse-map.
+                        Falder tilbage til "Bilag N" for ældre data uden tekst.
+                      */}
+                      {(() => {
+                        const bilagMedTekst =
+                          (s.bilag as Array<{ id: string; tekst: string }> | undefined) ?? [];
+                        const visBilag =
+                          bilagMedTekst.length > 0
+                            ? bilagMedTekst
+                            : servitutBilag.map((id, i) => ({
+                                id,
+                                tekst: `${da ? 'Bilag' : 'Attachment'} ${i + 1}`,
+                              }));
+                        if (visBilag.length === 0) return null;
+                        return (
+                          <div className="mt-2 pt-2 border-t border-slate-700/20">
+                            <p className="text-slate-500 text-[10px] uppercase mb-1.5">
+                              {da ? 'Tilknyttede bilag' : 'Attachments'} ({visBilag.length})
+                            </p>
+                            <div className="space-y-1">
+                              {visBilag.map((b, bi) => (
+                                <a
+                                  key={bi}
+                                  href={`/api/tinglysning/dokument?bilag=${b.id}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                                >
+                                  <FileText size={10} className="flex-shrink-0" />
+                                  <span className="truncate">{b.tekst}</span>
+                                </a>
+                              ))}
+                            </div>
                           </div>
-                        </div>
-                      )}
+                        );
+                      })()}
                     </div>
                   )}
                 </div>

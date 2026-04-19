@@ -454,6 +454,26 @@ export const translations = {
       personbogDriftsinventar: 'Driftsinventar',
       personbogFordringer: 'Fordringer',
       personbogImmaterielleRettigheder: 'Immaterielle rettigheder',
+      // BIZZ-521 — Fast ejendom sektion på Tinglysning-tab
+      fastEjendomEjer: 'Ejendomme ejet af virksomheden',
+      fastEjendomKreditor: 'Ejendomme hvor virksomheden er kreditor',
+      fastEjendomError: 'Kunne ikke hente tinglysningsdata for fast ejendom',
+      fastEjendomEmpty: 'Ingen tinglyste ejendomme fundet',
+      fastEjendomAdkomst: 'Adkomst',
+      fastEjendomMatrikel: 'Matrikel',
+      // BIZZ-529 — Bilbog sektion på Tinglysning-tab
+      bilbogError: 'Kunne ikke hente bilbogsdata',
+      bilbogEmpty: 'Ingen tinglyste køretøjer fundet',
+      bilbogStelnummer: 'Stelnr.',
+      bilbogRegnr: 'Reg.nr.',
+      bilbogAargang: 'Årgang',
+      bilbogIngenHaeftelser: 'Ingen hæftelser',
+      // BIZZ-530 — Andelsbog sektion på Tinglysning-tab
+      andelsbogError: 'Kunne ikke hente andelsbogsdata',
+      andelsbogEmpty: 'Ingen tinglyste andele fundet',
+      andelsbogEtage: 'Etage',
+      andelsbogSide: 'Side',
+      andelsbogIngenHaeftelser: 'Ingen hæftelser',
     },
 
     /* ─── Person page ─────────────────────────────────────────────── */
@@ -1010,6 +1030,26 @@ export const translations = {
       personbogDriftsinventar: 'Operating equipment',
       personbogFordringer: 'Claims',
       personbogImmaterielleRettigheder: 'Intangible rights',
+      // BIZZ-521 — Real property section on Tinglysning tab
+      fastEjendomEjer: 'Properties owned by the company',
+      fastEjendomKreditor: 'Properties where the company is creditor',
+      fastEjendomError: 'Could not load land registry data for real property',
+      fastEjendomEmpty: 'No registered real properties found',
+      fastEjendomAdkomst: 'Title type',
+      fastEjendomMatrikel: 'Cadastre',
+      // BIZZ-529 — Vehicle register section on Tinglysning tab
+      bilbogError: 'Could not load vehicle register data',
+      bilbogEmpty: 'No registered vehicles found',
+      bilbogStelnummer: 'VIN',
+      bilbogRegnr: 'Reg. no.',
+      bilbogAargang: 'Year',
+      bilbogIngenHaeftelser: 'No liens',
+      // BIZZ-530 — Cooperative register section on Tinglysning tab
+      andelsbogError: 'Could not load cooperative register data',
+      andelsbogEmpty: 'No registered cooperative units found',
+      andelsbogEtage: 'Floor',
+      andelsbogSide: 'Side',
+      andelsbogIngenHaeftelser: 'No liens',
     },
 
     /* ─── Person page ─────────────────────────────────────────────── */

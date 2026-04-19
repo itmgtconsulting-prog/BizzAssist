@@ -50,6 +50,26 @@ export interface HandelData {
   overdragelsesmaade: string | null;
   /** Valutakode (typisk DKK) */
   valutakode: string | null;
+
+  // ─── BIZZ-480: Udvidede EJF_Handelsoplysninger felter ─────────────────────
+  /** Skødetekst — kontekst om handlen */
+  skoedetekst?: string | null;
+  /** Afståelsesdato (kan afvige fra overtagelsesdato) */
+  afstaaelsesdato?: string | null;
+  /** Betalingsforpligtelsesdato — hvornår betalingsforpligtelsen indtraadte */
+  betalingsforpligtelsesdato?: string | null;
+  /** Husdyrbesaetningsum — relevant for landbrugsejendomme */
+  husdyrbesaetningsum?: number | null;
+
+  // ─── BIZZ-481: Udvidede EJF_Ejerskifte felter ─────────────────────────────
+  /** True hvis handlen er betinget (skøde med uopfyldte betingelser) */
+  betinget?: boolean | null;
+  /** Frist for opfyldelse af betingelser (ISO 8601) */
+  fristDato?: string | null;
+  /** Officiel klassificering: frit salg / arv / gave / tvangsauktion / fusion / spaltning */
+  forretningshaendelse?: string | null;
+  /** Hvis sat → handlen er annulleret eller ombyttet (ISO 8601) */
+  virkningTil?: string | null;
 }
 
 /** API-svaret fra denne route */
@@ -111,6 +131,11 @@ interface RawEjerskifte {
   overdragelsesmaade: string | null;
   handelsoplysningerLokalId: string | null;
   status: string | null;
+  // BIZZ-481: Udvidede felter
+  betinget?: boolean | null;
+  fristDato?: string | null;
+  forretningshaendelse?: string | null;
+  virkningTil?: string | null;
 }
 
 /** EJF_Handelsoplysninger — prisdata for en handel */
@@ -123,6 +148,11 @@ interface RawHandelsoplysning {
   koebsaftaleDato: string | null;
   valutakode: string | null;
   status: string | null;
+  // BIZZ-480: Udvidede felter
+  skoedetekst?: string | null;
+  afstaaelsesdato?: string | null;
+  betalingsforpligtelsesdato?: string | null;
+  husdyrbesaetningsum?: number | null;
 }
 
 // ─── GraphQL helpers ─────────────────────────────────────────────────────────
@@ -226,6 +256,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
 
   try {
     // ── Trin 1: Hent ejerskifter for BFE → få handelsoplysningerLokalId ──
+    // BIZZ-481: Udvidet med betinget, fristDato, forretningshaendelse, virkningTil
     const ejerskifteQuery = `{
       EJF_Ejerskifte(
         first: 200
@@ -239,6 +270,10 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
           overdragelsesmaade
           handelsoplysningerLokalId
           status
+          betinget
+          fristDato
+          forretningshaendelse
+          virkningTil
         }
       }
     }`;
@@ -306,6 +341,8 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
     }
 
     // ── Trin 2: Hent handelsoplysninger via id_lokalId ──
+    // BIZZ-480: Udvidet med skoedetekst, afstaaelsesdato,
+    // betalingsforpligtelsesdato, husdyrbesaetningsum
     const idsStr = handelsIds.map((id) => `"${id}"`).join(', ');
     const handelsQuery = `{
       EJF_Handelsoplysninger(
@@ -323,6 +360,10 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
           koebsaftaleDato
           valutakode
           status
+          skoedetekst
+          afstaaelsesdato
+          betalingsforpligtelsesdato
+          husdyrbesaetningsum
         }
       }
     }`;
@@ -349,6 +390,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
     }
 
     // ── Sammenkobl ejerskifter med handelsoplysninger ──
+    // BIZZ-480 + 481: Inkluderer udvidede felter fra begge entiteter.
     const handler: HandelData[] = ejerskifter
       .map((e) => {
         const h = e.handelsoplysningerLokalId
@@ -363,6 +405,16 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
           overtagelsesdato: e.overtagelsesdato ?? null,
           overdragelsesmaade: e.overdragelsesmaade ?? null,
           valutakode: h?.valutakode ?? null,
+          // BIZZ-480
+          skoedetekst: h?.skoedetekst ?? null,
+          afstaaelsesdato: h?.afstaaelsesdato ?? null,
+          betalingsforpligtelsesdato: h?.betalingsforpligtelsesdato ?? null,
+          husdyrbesaetningsum: h?.husdyrbesaetningsum ?? null,
+          // BIZZ-481
+          betinget: e.betinget ?? null,
+          fristDato: e.fristDato ?? null,
+          forretningshaendelse: e.forretningshaendelse ?? null,
+          virkningTil: e.virkningTil ?? null,
         };
       })
       .filter(

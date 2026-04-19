@@ -23,7 +23,7 @@ import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { resolveTenantId } from '@/lib/api/auth';
 import { logger } from '@/app/lib/logger';
 import { parseQuery } from '@/app/lib/validate';
-import { DAWA_BASE_URL } from '@/app/lib/serviceEndpoints';
+import { darHentAdresse } from '@/app/lib/dar';
 
 const PLANDATA_WFS = 'https://geoserver.plandata.dk/geoserver/wfs';
 
@@ -343,34 +343,21 @@ export async function GET(request: NextRequest): Promise<NextResponse<PlandataRe
   const { adresseId } = parsed.data;
 
   try {
-    // ── Hent koordinater fra DAWA ──────────────────────────────────────────
-    // ID kan være adresse-UUID eller adgangsadresse-UUID — prøv begge endpoints.
+    // ── Hent koordinater via DAR (med DAWA fallback internt) ──────────────
+    // BIZZ-535: darHentAdresse prøver DAR GraphQL først; hvis DAR ikke har
+    // adressen eller mangler Adressepunkt-koordinater, falder den tilbage
+    // til DAWA automatisk. Adresse-ID kan være både adresse-UUID og
+    // adgangsadresse-UUID (dawaHentAdresse forsøger begge).
     let x: number, y: number;
     try {
-      const tryUrls = [
-        `${DAWA_BASE_URL}/adresser/${adresseId}?struktur=mini`,
-        `${DAWA_BASE_URL}/adgangsadresser/${adresseId}?struktur=mini`,
-      ];
-
-      let coords: { x?: number; y?: number } | null = null;
-      for (const url of tryUrls) {
-        const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
-        if (res.ok) {
-          const data = (await res.json()) as { x?: number; y?: number };
-          if (data.x && data.y) {
-            coords = data;
-            break;
-          }
-        }
-      }
-
-      if (!coords) {
+      const adresse = await darHentAdresse(adresseId);
+      if (!adresse || !adresse.x || !adresse.y) {
         return NextResponse.json({ planer: null, fejl: 'Ingen koordinater fundet på adresse' });
       }
-      x = coords.x!;
-      y = coords.y!;
+      x = adresse.x;
+      y = adresse.y;
     } catch (err) {
-      logger.error('[Plandata] DAWA fejl:', err);
+      logger.error('[Plandata] Adresse-opslag fejl:', err);
       return NextResponse.json({ planer: null, fejl: 'Ekstern API fejl' });
     }
 

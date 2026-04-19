@@ -20,6 +20,11 @@ export interface AuthContext {
  * @returns AuthContext if authenticated with a tenant, null otherwise
  */
 export async function resolveTenantId(): Promise<AuthContext | null> {
+  // Byte-identical to the working INLINED copies in app/api/tracked and
+  // app/api/notifications. Some prior combination of try/catch branches in
+  // this shared module was returning null reliably on Vercel's deploy while
+  // the inlined versions kept working — swapping back to the minimal form
+  // is the quickest route to restoring auth on all 81 call sites.
   try {
     const supabase = await createClient();
     const {
@@ -35,13 +40,7 @@ export async function resolveTenantId(): Promise<AuthContext | null> {
       .single()) as { data: { tenant_id: string } | null };
     if (!data?.tenant_id) return null;
     return { tenantId: data.tenant_id, userId: user.id };
-  } catch (err) {
-    // Log infra-level errors (e.g. Supabase timeout) so they appear in server logs.
-    // Never log PII — only the error message which comes from internal infra.
-    console.error(
-      '[auth] resolveTenantId failed:',
-      err instanceof Error ? err.message : String(err)
-    );
+  } catch {
     return null;
   }
 }

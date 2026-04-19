@@ -7,8 +7,50 @@
  * Dokumentation: https://dawadocs.dataforsyningen.dk
  */
 
+import * as Sentry from '@sentry/nextjs';
 import { kommunenavnFraKode } from './kommuner';
 import { DAWA_BASE_URL } from '@/app/lib/serviceEndpoints';
+import { logger } from '@/app/lib/logger';
+
+/**
+ * BIZZ-537: DAWA is scheduled to be shut down on 2026-07-01. Until then we
+ * want centralised visibility into every call we make so we can track
+ * migration progress and catch any forgotten DAWA dependency before the
+ * real outage.
+ *
+ * All DAWA fetches should go through this wrapper. It:
+ *   - adds a Sentry breadcrumb (endpoint path only — no query string, so
+ *     user-supplied addresses never leak into Sentry)
+ *   - logs a deprecation line with the caller identifier
+ *   - returns the native `Response` untouched so call sites keep using
+ *     `res.ok`, `res.json()`, etc. exactly as before
+ *
+ * @param url     - Full DAWA URL (including any query string)
+ * @param options - Standard `fetch` options — forwarded as-is
+ * @param meta    - Free-form telemetry context, typically `{ caller: 'module.fn' }`
+ * @returns The underlying `fetch` response
+ */
+export async function fetchDawa(
+  url: string,
+  options?: RequestInit,
+  meta?: { caller?: string }
+): Promise<Response> {
+  // Endpoint = path-only, query stripped. Addresses / BFE numbers / user
+  // input never enter the telemetry stream this way.
+  const endpoint = url.replace(/^https?:\/\/[^/]+/, '').split('?')[0];
+  const caller = meta?.caller ?? 'unknown';
+
+  Sentry.addBreadcrumb({
+    category: 'dawa.call',
+    message: `[DAWA deprecated] ${caller} → ${endpoint}`,
+    level: 'info',
+    data: { endpoint, caller, deadline: '2026-07-01' },
+  });
+
+  logger.log(`[DAWA deprecated] call from ${caller} → ${endpoint} (deadline 2026-07-01)`);
+
+  return fetch(url, options);
+}
 
 /**
  * Et autocomplete-resultat fra DAWA — normaliseret fra alle 3 DAWA-typer:
@@ -59,6 +101,19 @@ export interface DawaAdresse {
    * Afgørende for bygge- og anvendelsesregler.
    */
   zone?: string;
+  /**
+   * BIZZ-508: Supplerende bynavn (fx "Vejlgårde", "Vanløse") — lokalt anvendt
+   * bydelsnavn der supplerer det officielle postnrnavn. Kun sat når adressen
+   * ligger i et DAGI-registreret supplerende bynavn-område.
+   */
+  supplerendebynavn?: string;
+  /**
+   * BIZZ-508: Vejkode (3-4 cifret kode) fra NavngivenVejKommunedel. Vejkoden
+   * er kommunens lokale nummerering af den navngivne vej — fx "1234" — og
+   * bruges bl.a. ved opslag i kommunale systemer. Hvis vejen krydser flere
+   * kommuner har vejen separate vejkoder pr. kommunedel.
+   */
+  vejkode?: string;
 }
 
 /** Et jordstykke (matrikel) fra DAWA */
@@ -165,7 +220,11 @@ export async function dawaAutocomplete(q: string): Promise<DawaAutocompleteResul
   try {
     // Ingen type-begrænsning — returnerer adresse, adgangsadresse OG vejnavn-resultater
     const url = `${DAWA_BASE_URL}/autocomplete?q=${encodeURIComponent(q)}&per_side=8&caretpos=${q.length}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    const res = await fetchDawa(
+      url,
+      { signal: AbortSignal.timeout(5000) },
+      { caller: 'dawa.dawaAutocomplete' }
+    );
     if (!res.ok) return [];
     const raw: unknown = await res.json();
     if (!Array.isArray(raw)) return [];
@@ -184,9 +243,11 @@ export async function dawaAutocomplete(q: string): Promise<DawaAutocompleteResul
  */
 async function hentZone(agId: string): Promise<string | undefined> {
   try {
-    const res = await fetch(`${DAWA_BASE_URL}/adgangsadresser/${agId}`, {
-      signal: AbortSignal.timeout(3000),
-    });
+    const res = await fetchDawa(
+      `${DAWA_BASE_URL}/adgangsadresser/${agId}`,
+      { signal: AbortSignal.timeout(3000) },
+      { caller: 'dawa.hentZone' }
+    );
     if (!res.ok) return undefined;
     const data = (await res.json()) as Record<string, unknown>;
     return typeof data.zone === 'string' ? data.zone : undefined;
@@ -238,14 +299,18 @@ export async function dawaHentAdresse(id: string): Promise<DawaAdresse | null> {
           `${raw.vejnavn} ${raw.husnr}, ${raw.postnr} ${raw.postnrnavn}`
       ),
       zone,
+      // BIZZ-508: Supplerende bynavn direkte fra DAWA (fx "Vejlgårde")
+      supplerendebynavn: (raw.supplerendebynavn as string | null) ?? undefined,
     };
   };
 
   try {
     // Forsøg 1: fuld adresse (UUID er adresse-UUID)
-    const res1 = await fetch(`${DAWA_BASE_URL}/adresser/${id}?struktur=mini`, {
-      signal: AbortSignal.timeout(5000),
-    });
+    const res1 = await fetchDawa(
+      `${DAWA_BASE_URL}/adresser/${id}?struktur=mini`,
+      { signal: AbortSignal.timeout(5000) },
+      { caller: 'dawa.dawaHentAdresse.adresser' }
+    );
     if (res1.ok) {
       const raw = (await res1.json()) as Record<string, unknown>;
       // adgangsadresseid giver os adgangspunktet hvorfra vi kan hente zone
@@ -257,9 +322,11 @@ export async function dawaHentAdresse(id: string): Promise<DawaAdresse | null> {
     // Forsøg 2: adgangspunkt (UUID er adgangsadresse-UUID fra autocomplete)
     // Hent mini-data og zone parallelt for at spare tid
     const [res2, zone2] = await Promise.all([
-      fetch(`${DAWA_BASE_URL}/adgangsadresser/${id}?struktur=mini`, {
-        signal: AbortSignal.timeout(5000),
-      }),
+      fetchDawa(
+        `${DAWA_BASE_URL}/adgangsadresser/${id}?struktur=mini`,
+        { signal: AbortSignal.timeout(5000) },
+        { caller: 'dawa.dawaHentAdresse.adgangsadresser' }
+      ),
       hentZone(id),
     ]);
     if (res2.ok) return mapRaw((await res2.json()) as Record<string, unknown>, zone2);
@@ -279,9 +346,11 @@ export async function dawaHentAdresse(id: string): Promise<DawaAdresse | null> {
  */
 export async function dawaHentJordstykke(lng: number, lat: number): Promise<DawaJordstykke | null> {
   try {
-    const res = await fetch(`${DAWA_BASE_URL}/jordstykker?x=${lng}&y=${lat}&srid=4326`, {
-      signal: AbortSignal.timeout(5000),
-    });
+    const res = await fetchDawa(
+      `${DAWA_BASE_URL}/jordstykker?x=${lng}&y=${lat}&srid=4326`,
+      { signal: AbortSignal.timeout(5000) },
+      { caller: 'dawa.dawaHentJordstykke' }
+    );
     if (!res.ok) return null;
     const data = await res.json();
     if (!Array.isArray(data) || data.length === 0) return null;

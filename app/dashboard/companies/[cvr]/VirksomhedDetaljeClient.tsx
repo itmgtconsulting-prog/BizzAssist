@@ -13,7 +13,7 @@
  * @param params.cvr - 8-cifret CVR-nummer fra URL
  */
 
-import { useState, useEffect, use, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, use, useCallback, useRef, useMemo, Fragment } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -62,7 +62,11 @@ import type { RegnskabsAar } from '@/app/api/regnskab/xbrl/route';
 import type { RelateretVirksomhed } from '@/app/api/cvr-public/related/route';
 import type { CvrHandelData } from '@/app/api/salgshistorik/cvr/route';
 import type { EjendomSummary } from '@/app/api/ejendomme-by-owner/route';
-import type { PersonbogHaeftelse } from '@/app/api/tinglysning/personbog/route';
+import type { PersonbogHaeftelse, PersonbogDokument } from '@/app/api/tinglysning/personbog/route';
+import type { VirksomhedEjendomsrolle } from '@/app/api/tinglysning/virksomhed/route';
+import type { BilbogBil } from '@/app/api/tinglysning/bilbog/route';
+import type { AndelsbogBolig } from '@/app/api/tinglysning/andelsbog/route';
+import PaategningTimeline from '@/app/components/tinglysning/PaategningTimeline';
 import PropertyOwnerCard from '@/app/components/ejendomme/PropertyOwnerCard';
 import { saveRecentCompany } from '@/app/lib/recentCompanies';
 import { recordRecentVisit } from '@/app/lib/recordRecentVisit';
@@ -214,6 +218,8 @@ const historikTypeConfig: Record<string, { icon: React.ReactNode; color: string 
   status: { icon: <CheckCircle size={14} />, color: 'text-amber-400' },
   branche: { icon: <Factory size={14} />, color: 'text-cyan-400' },
   ejerskab: { icon: <Shield size={14} />, color: 'text-orange-400' },
+  fusion: { icon: <ArrowRightLeft size={14} />, color: 'text-rose-400' },
+  spaltning: { icon: <ArrowRightLeft size={14} />, color: 'text-pink-400' },
 };
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -250,6 +256,30 @@ interface OwnerChainNode {
  * @param deltagere - Deltagere-array fra CVRPublicData
  * @returns Ejere med navn, enhedsNummer, erVirksomhed, ejerandel
  */
+/**
+ * BIZZ-564: Identificér LEGALE ejere — IKKE Reelle Ejere (RBE).
+ *
+ * "Reel ejer" (Real Beneficial Owner / RBE) er en KAP-anmeldelse-konstruktion
+ * fra hvidvasklovgivningen og repræsenterer NOT direkte juridisk ejerskab.
+ * Diagram + ejerandels-summering må KUN inkludere legalt ejerskab (EJERREGISTER,
+ * LEGALE_EJERE, INTERESSENT, FULDT_ANSVARLIG) — ellers fås duplikater og
+ * ejerandel summer over 100% (en person kan både være legal ejer OG reel ejer
+ * af samme virksomhed → tælles 2x).
+ */
+function erLegalEjerRolle(rolle: string): boolean {
+  const role = rolle.toUpperCase();
+  // Eksklusiv check: "REEL EJER" matcher .includes('EJER') så vi MÅ filtrere
+  // den fra eksplicit. Ditto "REELLE_EJERE" (variant brugt i CVR ES).
+  if (role.includes('REEL')) return false;
+  return (
+    role.includes('EJER') ||
+    role.includes('LEGALE') ||
+    role.includes('INTERESSENT') ||
+    // CVR ES bruger mellemrum: "Fuldt ansvarlig deltager" — matcher begge former
+    (role.includes('FULDT') && role.includes('ANSVARLIG'))
+  );
+}
+
 function extractOwners(deltagere: CVRPublicData['deltagere']): {
   navn: string;
   enhedsNummer: number | null;
@@ -257,33 +287,9 @@ function extractOwners(deltagere: CVRPublicData['deltagere']): {
   ejerandel: string | null;
 }[] {
   return (deltagere ?? [])
-    .filter((d) =>
-      d.roller.some((r) => {
-        const role = r.rolle.toUpperCase();
-        return (
-          (role.includes('EJER') ||
-            role.includes('LEGALE') ||
-            role.includes('REEL') ||
-            role.includes('INTERESSENT') ||
-            // CVR ES uses spaces: "Fuldt ansvarlig deltager" — match both space and underscore forms
-            (role.includes('FULDT') && role.includes('ANSVARLIG'))) &&
-          !r.til
-        );
-      })
-    )
+    .filter((d) => d.roller.some((r) => erLegalEjerRolle(r.rolle) && !r.til))
     .map((d) => {
-      const ejerRolle = d.roller.find((r) => {
-        const role = r.rolle.toUpperCase();
-        return (
-          (role.includes('EJER') ||
-            role.includes('LEGALE') ||
-            role.includes('REEL') ||
-            role.includes('INTERESSENT') ||
-            // CVR ES uses spaces: "Fuldt ansvarlig deltager" — match both space and underscore forms
-            (role.includes('FULDT') && role.includes('ANSVARLIG'))) &&
-          !r.til
-        );
-      });
+      const ejerRolle = d.roller.find((r) => erLegalEjerRolle(r.rolle) && !r.til);
       return {
         navn: d.navn,
         enhedsNummer: d.enhedsNummer,
@@ -395,6 +401,8 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
 
   /** Om modervirksomheds-sektionen er udfoldet (default: collapsed) */
   const [parentSectionOpen, setParentSectionOpen] = useState(false);
+  /** BIZZ-475: Vis historiske datterselskaber (ophørte/solgte). Default off. */
+  const [visHistorik, setVisHistorik] = useState(false);
 
   /** Om datterselskabs-sektionen er udfoldet (default: open) */
   const [childSectionOpen, setChildSectionOpen] = useState(true);
@@ -430,8 +438,8 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
       depth: number,
       maxDepth: number
     ): Promise<OwnerChainNode[]> {
-      return Promise.all(
-        ownerList.map(async (o): Promise<OwnerChainNode> => {
+      const resolved = await Promise.all(
+        ownerList.map(async (o): Promise<OwnerChainNode | null> => {
           if (!o.erVirksomhed || !o.enhedsNummer || depth >= maxDepth) {
             return { ...o, cvr: null, parents: [] };
           }
@@ -453,13 +461,21 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
               }
             }
             if (!cached) return { ...o, cvr: null, parents: [] };
+
+            // BIZZ-471: Ophørte virksomheder kan ikke være reelle nuværende
+            // ejere — drop dem fra ejerstrukturen helt. CVR registeret kan
+            // stadig liste en ceased entity som deltager fordi role.til
+            // ikke altid bliver sat, men selskabet eksisterer ikke længere.
+            // Matches /api/ejerskab/chain's filter-logik for konsistens.
+            if (cached.enddate != null) {
+              return null;
+            }
+
             const parentOwners = extractOwners(cached.deltagere);
             const resolvedParents = await resolveChainTop(parentOwners, depth + 1, maxDepth);
-            // BIZZ-357: Mark ceased companies so the diagram can render them visually distinct
             return {
               ...o,
               cvr: cached.cvr,
-              isCeased: cached.enddate != null,
               parents: resolvedParents,
             };
           } catch {
@@ -467,6 +483,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
           }
         })
       );
+      return resolved.filter((n): n is OwnerChainNode => n !== null);
     }
 
     resolveChainTop(directOwners, 0, 4).then(setOwnerChainShared);
@@ -490,9 +507,70 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
   const [ejendommeLoading, setEjendommeLoading] = useState(false);
   const [ejendommeLoadingMore, setEjendommeLoadingMore] = useState(false);
   const [ejendommeFetchComplete, setEjendommeFetchComplete] = useState(false);
+
+  /**
+   * BIZZ-569: Pre-enriched data per BFE fra batch-endpoint.
+   * Map<bfeNummer, EnrichedRow>. Bruges af PropertyOwnerCard via preEnriched-prop
+   * for at undgå N parallelle per-card-fetches (hver med Vercel cold-start).
+   */
+  const [preEnrichedByBfe, setPreEnrichedByBfe] = useState<
+    Map<
+      number,
+      {
+        areal: number | null;
+        vurdering: number | null;
+        vurderingsaar: number | null;
+        erGrundvaerdi?: boolean;
+        ejerNavn: string | null;
+        koebesum: number | null;
+        koebsdato: string | null;
+        boligAreal: number | null;
+        erhvervsAreal: number | null;
+        matrikelAreal: number | null;
+      }
+    >
+  >(new Map());
   const [ejendommeManglerNoegle, setEjendommeManglerNoegle] = useState(false);
   const [ejendommeManglerAdgang, setEjendommeManglerAdgang] = useState(false);
   const [ejendommeTotalBfe, setEjendommeTotalBfe] = useState(0);
+  /** BIZZ-455: Toggle for visning af tidligere ejede (solgte) ejendomme */
+  const [visSolgte, setVisSolgte] = useState(false);
+  /** BIZZ-diagram: Memoized diagram graph — only rebuilds when ejendomme fully loaded,
+   * preventing "jumping" as properties stream in progressively. Shows active only. */
+  const diagramGraphStable = useMemo(() => {
+    if (!data) return { nodes: [], edges: [], mainId: '' };
+    const aktiveEjendomme = ejendommeData.filter((p) => p.aktiv !== false);
+    const propertiesByCvr =
+      aktiveEjendomme.length > 0
+        ? aktiveEjendomme.reduce((map, p) => {
+            const cvrNum = parseInt(p.ownerCvr, 10);
+            if (!map.has(cvrNum)) map.set(cvrNum, []);
+            map.get(cvrNum)!.push(p as DiagramPropertySummary);
+            return map;
+          }, new Map<number, DiagramPropertySummary[]>())
+        : undefined;
+    return buildDiagramGraph(
+      data.name,
+      data.vat,
+      data.companydesc ?? null,
+      ownerChainShared,
+      relatedCompanies,
+      data.industrydesc ?? null,
+      propertiesByCvr
+    );
+    // Only rebuild when ejendomme loading finishes (ejendommeFetchComplete flips true)
+    // OR when ownership/company data changes. Deliberately EXCLUDE ejendommeData so
+    // progressive batches don't trigger re-simulation mid-load.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    data?.name,
+    data?.vat,
+    data?.companydesc,
+    data?.industrydesc,
+    ownerChainShared,
+    relatedCompanies,
+    ejendommeFetchComplete,
+  ]);
   /** Kommasepereret CVR-nøgle der sidst blev hentet — forhindrer duplicate-fetches */
   const ejendomFetchKeyRef = useRef('');
   /** AbortController for igangværende progressiv ejendomshentning */
@@ -500,6 +578,12 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
 
   /** Personbog (tinglysning) — lazy-loaded when liens tab is activated */
   const [personbogData, setPersonbogData] = useState<PersonbogHaeftelse[]>([]);
+  /** BIZZ-533: Tinglyste dokumenter (vedtægter, fusioner, ejerpantebreve) fra Personbog */
+  const [personbogDokumenter, setPersonbogDokumenter] = useState<{
+    vedtaegter: PersonbogDokument[];
+    fusioner: PersonbogDokument[];
+    ejerpantebreve: PersonbogDokument[];
+  }>({ vedtaegter: [], fusioner: [], ejerpantebreve: [] });
   const [personbogLoading, setPersonbogLoading] = useState(false);
   const [personbogFejl, setPersonbogFejl] = useState<string | null>(null);
   const [expandedPant, setExpandedPant] = useState<Set<number>>(new Set());
@@ -508,6 +592,39 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
 
   /** Tinglysning-tab: om Personbogen-rækken er udfoldet */
   const [personbogRowOpen, setPersonbogRowOpen] = useState(false);
+
+  /**
+   * BIZZ-521 — Fast ejendom data fra e-TL soegvirksomhed (bog=1).
+   * Separate arrays for ejer- og kreditor-rolle. Lazy-loaded samtidig med
+   * Personbogen når Tinglysning-tab'en aktiveres.
+   */
+  // Kun kreditor-rækken bruges i UI'en (ejer-listen dubletterer Ejendomme-tab).
+  const [fastEjendomKreditor, setFastEjendomKreditor] = useState<VirksomhedEjendomsrolle[]>([]);
+  const [fastEjendomLoading, setFastEjendomLoading] = useState(false);
+  const [fastEjendomFejl, setFastEjendomFejl] = useState<string | null>(null);
+  const fastEjendomFetchedRef = useRef(false);
+  /** Hvilke af Fast ejendom-underrækkerne der er udfoldet (pt. kun kreditor) */
+  const [fastEjendomOpen, setFastEjendomOpen] = useState<Set<'ejer' | 'kreditor'>>(new Set());
+
+  /**
+   * BIZZ-529 — Bilbog data fra e-TL soegbil + bil/uuid.
+   * Lazy-loadet sammen med personbog når Tinglysning-tab'en aktiveres.
+   */
+  const [bilbogData, setBilbogData] = useState<BilbogBil[]>([]);
+  const [bilbogLoading, setBilbogLoading] = useState(false);
+  const [bilbogFejl, setBilbogFejl] = useState<string | null>(null);
+  const [bilbogOpen, setBilbogOpen] = useState(false);
+  const bilbogFetchedRef = useRef(false);
+
+  /**
+   * BIZZ-530 — Andelsbog data fra e-TL andelsbolig/virksomhed + andelsbolig/{uuid}.
+   * Lazy-loadet sammen med personbog når Tinglysning-tab'en aktiveres.
+   */
+  const [andelsbogData, setAndelsbogData] = useState<AndelsbogBolig[]>([]);
+  const [andelsbogLoading, setAndelsbogLoading] = useState(false);
+  const [andelsbogFejl, setAndelsbogFejl] = useState<string | null>(null);
+  const [andelsbogOpen, setAndelsbogOpen] = useState(false);
+  const andelsbogFetchedRef = useRef(false);
 
   // Auto-åbn Personbogen-rækken når data loader ind og der er hæftelser
 
@@ -852,12 +969,109 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
       }
 
       setPersonbogData(json.haeftelser ?? []);
+      // BIZZ-533: Gem tinglyste dokumenter (vedtægter/fusioner/ejerpantebreve)
+      setPersonbogDokumenter({
+        vedtaegter: json.vedtaegter ?? [],
+        fusioner: json.fusioner ?? [],
+        ejerpantebreve: json.ejerpantebreve ?? [],
+      });
     } catch {
       setPersonbogFejl(c.personbogError);
     } finally {
       setPersonbogLoading(false);
     }
   }, [cvr, c.personbogError]);
+
+  /**
+   * BIZZ-521 — Lazy-loader Fast ejendom-data (ejer + kreditor) når
+   * Tinglysning-tab'en aktiveres. Fetcher kun én gang per CVR.
+   */
+  const fetchFastEjendom = useCallback(async () => {
+    if (fastEjendomFetchedRef.current) return;
+    fastEjendomFetchedRef.current = true;
+    setFastEjendomLoading(true);
+    setFastEjendomFejl(null);
+
+    try {
+      const res = await fetch(`/api/tinglysning/virksomhed?cvr=${encodeURIComponent(cvr)}`);
+      const json = await res.json();
+
+      if (!res.ok) {
+        setFastEjendomFejl(json.error ?? c.fastEjendomError);
+        return;
+      }
+      if (json.fejl) {
+        setFastEjendomFejl(json.fejl);
+        return;
+      }
+
+      // json.ejer droppes bevidst — listen er duplikeret med Ejendomme-tab
+      setFastEjendomKreditor(json.kreditor ?? []);
+    } catch {
+      setFastEjendomFejl(c.fastEjendomError);
+    } finally {
+      setFastEjendomLoading(false);
+    }
+  }, [cvr, c.fastEjendomError]);
+
+  /**
+   * BIZZ-529 — Lazy-loader bilbogsdata når Tinglysning-tab aktiveres.
+   * Hver bil kommer med egen liste af hæftelser (virksomhedspant,
+   * ejendomsforbehold, leasing m.fl.). Fetcher kun én gang per CVR.
+   */
+  const fetchBilbog = useCallback(async () => {
+    if (bilbogFetchedRef.current) return;
+    bilbogFetchedRef.current = true;
+    setBilbogLoading(true);
+    setBilbogFejl(null);
+
+    try {
+      const res = await fetch(`/api/tinglysning/bilbog?cvr=${encodeURIComponent(cvr)}`);
+      const json = await res.json();
+      if (!res.ok) {
+        setBilbogFejl(json.error ?? c.bilbogError);
+        return;
+      }
+      if (json.fejl) {
+        setBilbogFejl(json.fejl);
+        return;
+      }
+      setBilbogData(json.biler ?? []);
+    } catch {
+      setBilbogFejl(c.bilbogError);
+    } finally {
+      setBilbogLoading(false);
+    }
+  }, [cvr, c.bilbogError]);
+
+  /**
+   * BIZZ-530 — Lazy-loader andelsbogsdata når Tinglysning-tab aktiveres.
+   * Fetcher kun én gang per CVR.
+   */
+  const fetchAndelsbog = useCallback(async () => {
+    if (andelsbogFetchedRef.current) return;
+    andelsbogFetchedRef.current = true;
+    setAndelsbogLoading(true);
+    setAndelsbogFejl(null);
+
+    try {
+      const res = await fetch(`/api/tinglysning/andelsbog?cvr=${encodeURIComponent(cvr)}`);
+      const json = await res.json();
+      if (!res.ok) {
+        setAndelsbogFejl(json.error ?? c.andelsbogError);
+        return;
+      }
+      if (json.fejl) {
+        setAndelsbogFejl(json.fejl);
+        return;
+      }
+      setAndelsbogData(json.andele ?? []);
+    } catch {
+      setAndelsbogFejl(c.andelsbogError);
+    } finally {
+      setAndelsbogLoading(false);
+    }
+  }, [cvr, c.andelsbogError]);
 
   /** Trigger regnskab-fetch når financials-tab aktiveres */
   useEffect(() => {
@@ -880,6 +1094,9 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
     }
     if (aktivTab === 'liens') {
       fetchPersonbog();
+      fetchFastEjendom();
+      fetchBilbog();
+      fetchAndelsbog();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aktivTab]);
@@ -969,6 +1186,43 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
     },
     []
   );
+
+  /**
+   * BIZZ-569: Batch-enrich alle BFE'er i ÉT endpoint-kald i stedet for ét
+   * per kort. Sparer N × Vercel cold-start og giver dramatisk hurtigere
+   * card-rendering på sider med mange ejendomme.
+   */
+  useEffect(() => {
+    if (aktivTab !== 'properties') return;
+    if (ejendommeData.length === 0) return;
+
+    // Find BFE'er der mangler enriched data
+    const missing = ejendommeData.filter((e) => !preEnrichedByBfe.has(e.bfeNummer));
+    if (missing.length === 0) return;
+
+    const controller = new AbortController();
+    const bfes = missing.map((e) => e.bfeNummer).join(',');
+    const dawaIds = missing.map((e) => e.dawaId ?? '').join(',');
+
+    fetch(`/api/ejendomme-by-owner/enrich-batch?bfes=${bfes}&dawaIds=${dawaIds}`, {
+      signal: controller.signal,
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!data || controller.signal.aborted) return;
+        setPreEnrichedByBfe((prev) => {
+          const next = new Map(prev);
+          for (const [bfe, row] of Object.entries(data)) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            next.set(parseInt(bfe, 10), row as any);
+          }
+          return next;
+        });
+      })
+      .catch(() => {});
+
+    return () => controller.abort();
+  }, [aktivTab, ejendommeData, preEnrichedByBfe]);
 
   /**
    * Trigger progressiv ejendomshentning når properties-tab aktiveres eller CVR-sæt ændres.
@@ -1588,12 +1842,36 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                           Info
                         </h2>
                         {data.industrydesc && (
-                          <p className="text-slate-400 text-xs mt-1 mb-3">
+                          <p className="text-slate-400 text-xs mt-1">
                             {data.industrycode ? `${data.industrycode} — ` : ''}
                             {data.industrydesc}
                           </p>
                         )}
-                        {!data.industrydesc && <div className="mb-3" />}
+                        {/* BIZZ-512: Sekundære brancher (bibranche1/2/3). For holdinger
+                            og blandede virksomheder er bibrancherne ofte mere retvisende
+                            end hovedbranchen alene. */}
+                        {data.secondaryIndustries && data.secondaryIndustries.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-1 mb-3">
+                            {data.secondaryIndustries.map((b, i) => (
+                              <span
+                                key={i}
+                                className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-slate-700/40 border border-slate-600/40 text-slate-300"
+                                title={
+                                  b.code != null ? `${b.code} — ${b.desc ?? '—'}` : (b.desc ?? '')
+                                }
+                              >
+                                {b.code != null && (
+                                  <span className="text-slate-500 mr-1">{b.code}</span>
+                                )}
+                                {b.desc ?? '—'}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {!data.industrydesc &&
+                          !(data.secondaryIndustries && data.secondaryIndustries.length > 0) && (
+                            <div className="mb-3" />
+                          )}
 
                         {/* ── Stamdata — 2-kolonne grid, label over værdi ── */}
                         <div className="grid grid-cols-2 gap-x-4 gap-y-3">
@@ -1686,7 +1964,69 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                               <p className="text-white text-sm font-medium">{data.statusTekst}</p>
                             </div>
                           )}
+                          {/* BIZZ-520: P-enheder count */}
+                          {data.productionunits && data.productionunits.length > 0 && (
+                            <div>
+                              <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                                {lang === 'da' ? 'Produktionsenheder' : 'Production units'}
+                              </p>
+                              <p className="text-white text-sm font-medium">
+                                {data.productionunits.filter((p) => p.active).length}
+                                {data.productionunits.some((p) => !p.active) && (
+                                  <span className="text-slate-500 text-xs ml-1">
+                                    ({data.productionunits.length}{' '}
+                                    {lang === 'da' ? 'i alt' : 'total'})
+                                  </span>
+                                )}
+                              </p>
+                            </div>
+                          )}
+                          {/* BIZZ-520: sidstOpdateret — CVR data freshness */}
+                          {data.sidstOpdateret && (
+                            <div className="col-span-2">
+                              <p className="text-slate-500 text-[10px] uppercase tracking-wider">
+                                {lang === 'da' ? 'Data opdateret' : 'Data updated'}
+                              </p>
+                              <p className="text-slate-400 text-xs">
+                                {new Date(data.sidstOpdateret).toLocaleDateString(
+                                  lang === 'da' ? 'da-DK' : 'en-GB',
+                                  { year: 'numeric', month: 'long', day: 'numeric' }
+                                )}
+                              </p>
+                            </div>
+                          )}
                         </div>
+
+                        {/* BIZZ-513: Beskæftigelseshistorik */}
+                        {data.aarsbeskaeftigelse && data.aarsbeskaeftigelse.length > 0 && (
+                          <div className="mt-4 pt-3 border-t border-slate-700/30">
+                            <p className="text-slate-500 text-[10px] uppercase tracking-wider font-medium mb-2">
+                              {lang === 'da' ? 'Beskæftigelseshistorik' : 'Employment history'}
+                            </p>
+                            <div className="grid grid-cols-[auto_1fr_1fr] gap-x-4 gap-y-1 text-xs">
+                              <span className="text-slate-500 font-medium">
+                                {lang === 'da' ? 'År' : 'Year'}
+                              </span>
+                              <span className="text-slate-500 font-medium text-right">
+                                {lang === 'da' ? 'Ansatte' : 'Employees'}
+                              </span>
+                              <span className="text-slate-500 font-medium text-right">
+                                {lang === 'da' ? 'Årsværk' : 'FTE'}
+                              </span>
+                              {data.aarsbeskaeftigelse.slice(0, 8).map((a, idx) => (
+                                <Fragment key={a.aar ?? idx}>
+                                  <span className="text-slate-400 tabular-nums">{a.aar}</span>
+                                  <span className="text-white text-right tabular-nums">
+                                    {a.antalAnsatte ?? '—'}
+                                  </span>
+                                  <span className="text-slate-300 text-right tabular-nums">
+                                    {a.antalAarsvaerk ?? '—'}
+                                  </span>
+                                </Fragment>
+                              ))}
+                            </div>
+                          </div>
+                        )}
 
                         {/* ── Ledelse, Ejere & Kontakt — 2-kolonne grid ── */}
                         <div className="mt-4 pt-3 border-t border-slate-700/30 grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1862,10 +2202,8 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                       const fmtNum = (n: number) => n.toLocaleString('da-DK');
 
                       return relatedLoading ? (
-                        <div className="flex items-center justify-center py-8">
-                          <Loader2 className="w-5 h-5 text-indigo-500 animate-spin" />
-                          <span className="ml-2 text-slate-400 text-sm">{c.loading}</span>
-                        </div>
+                        // BIZZ-478: Ensartet blå TabLoadingSpinner.
+                        <TabLoadingSpinner label={c.loading} />
                       ) : aktive.length > 0 ? (
                         <section className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-5">
                           <h2 className="text-white font-semibold text-sm mb-3 flex items-center gap-2">
@@ -1927,9 +2265,12 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                         r.resultatFoerSkat != null ||
                         b.egenkapital != null;
                       if (!hasData) return null;
+                      // BIZZ-459: XBRL-route normaliserer nu alle monetære
+                      // felter til T DKK (tusinder) før udlevering. Label
+                      // matcher kilden.
                       const fmtDKK = (v: number | null | undefined) =>
                         v != null
-                          ? v.toLocaleString('da-DK', { maximumFractionDigits: 0 }) + ' kr'
+                          ? v.toLocaleString('da-DK', { maximumFractionDigits: 0 }) + ' T DKK'
                           : '–';
                       return (
                         <section className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-5">
@@ -2000,6 +2341,8 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                             <th className="pb-2 pr-4">{c.name}</th>
                             <th className="pb-2 pr-4">{c.address}</th>
                             <th className="pb-2 pr-4">{c.industry}</th>
+                            {/* BIZZ-514: Ansatte-kolonne per P-enhed */}
+                            <th className="pb-2 pr-4">{c.employeesShort}</th>
                             <th className="pb-2">Status</th>
                           </tr>
                         </thead>
@@ -2008,13 +2351,49 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                             <tr key={pu.pno} className="border-b border-slate-700/20 text-white">
                               <td className="py-2 pr-4 text-slate-400 font-mono text-xs">
                                 {pu.pno}
+                                {/* BIZZ-514: Hoved-P-enhed markering */}
+                                {pu.main && (
+                                  <span
+                                    className="ml-1.5 text-[9px] px-1 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30"
+                                    title={
+                                      lang === 'da'
+                                        ? 'Hovedproduktionsenhed'
+                                        : 'Main production unit'
+                                    }
+                                  >
+                                    {lang === 'da' ? 'Hoved' : 'Main'}
+                                  </span>
+                                )}
                               </td>
                               <td className="py-2 pr-4">{pu.name}</td>
                               <td className="py-2 pr-4 text-slate-300 text-xs">
                                 {pu.address}, {pu.zipcode} {pu.city}
                               </td>
                               <td className="py-2 pr-4 text-slate-400 text-xs">
-                                {pu.industrydesc ?? '—'}
+                                <div className="flex flex-col gap-0.5">
+                                  <span>{pu.industrydesc ?? '—'}</span>
+                                  {/* BIZZ-514: Bibrancher per P-enhed som små tags under hovedbranchen */}
+                                  {pu.secondaryIndustries && pu.secondaryIndustries.length > 0 && (
+                                    <div className="flex flex-wrap gap-0.5">
+                                      {pu.secondaryIndustries.map((b, i) => (
+                                        <span
+                                          key={i}
+                                          className="text-[9px] px-1 py-0.5 rounded bg-slate-700/40 border border-slate-600/40 text-slate-400"
+                                          title={
+                                            b.code != null
+                                              ? `${b.code} — ${b.desc ?? '—'}`
+                                              : (b.desc ?? '')
+                                          }
+                                        >
+                                          {b.desc ?? '—'}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="py-2 pr-4 text-slate-300 text-xs tabular-nums">
+                                {pu.employees ?? '—'}
                               </td>
                               <td className="py-2">
                                 <span
@@ -2040,28 +2419,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
           )}
 
           {/* ══ RELATIONSDIAGRAM (Force Graph — original) ══ */}
-          {aktivTab === 'diagram' &&
-            (() => {
-              const propertiesByCvr =
-                ejendommeData.length > 0
-                  ? ejendommeData.reduce((map, p) => {
-                      const cvrNum = parseInt(p.ownerCvr, 10);
-                      if (!map.has(cvrNum)) map.set(cvrNum, []);
-                      map.get(cvrNum)!.push(p as DiagramPropertySummary);
-                      return map;
-                    }, new Map<number, DiagramPropertySummary[]>())
-                  : undefined;
-              const diagramGraph = buildDiagramGraph(
-                data.name,
-                data.vat,
-                data.companydesc ?? null,
-                ownerChainShared,
-                relatedCompanies,
-                data.industrydesc ?? null,
-                propertiesByCvr
-              );
-              return <DiagramForce graph={diagramGraph} lang={lang} />;
-            })()}
+          {aktivTab === 'diagram' && <DiagramForce graph={diagramGraphStable} lang={lang} />}
 
           {/* ══ EJENDOMME (inkl. ejendomshandler) ══ */}
           {aktivTab === 'properties' && (
@@ -2072,16 +2430,13 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
               {/* ── Ejendomme-portefølje sektion ── */}
               {
                 <div className="space-y-4">
-                  {/* Indledende spinner */}
+                  {/* Indledende spinner — BIZZ-478: ensartet blå TabLoadingSpinner */}
                   {ejendommeLoading && ejendommeData.length === 0 && (
-                    <div className="flex items-center justify-center py-12">
-                      <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
-                      <span className="ml-2 text-slate-400 text-sm">
-                        {lang === 'da'
-                          ? 'Henter ejendomsportefølje…'
-                          : 'Loading property portfolio…'}
-                      </span>
-                    </div>
+                    <TabLoadingSpinner
+                      label={
+                        lang === 'da' ? 'Henter ejendomsportefølje…' : 'Loading property portfolio…'
+                      }
+                    />
                   )}
 
                   {/* Mangler nøgle / adgang */}
@@ -2128,16 +2483,260 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                         )}
                       </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-                        {ejendommeData.map((ej) => (
-                          <PropertyOwnerCard
-                            key={ej.bfeNummer}
-                            ejendom={ej}
-                            showOwner={relatedCompanies.length > 0}
-                            lang={lang}
-                          />
-                        ))}
-                      </div>
+                      {/* BIZZ-456: Gruppér ejendomme efter ejer-CVR i koncernhierarki.
+                          BIZZ-455: Separat fold-ud for solgte ejendomme. */}
+                      {(() => {
+                        // Build concern hierarchy order: main CVR first, then active subsidiaries
+                        const cvrOrder: number[] = [data.vat];
+                        const seenCvr = new Set<number>([data.vat]);
+                        for (const rv of relatedCompanies.filter((v) => v.aktiv)) {
+                          if (!seenCvr.has(rv.cvr)) {
+                            cvrOrder.push(rv.cvr);
+                            seenCvr.add(rv.cvr);
+                          }
+                        }
+                        const nameByCvr = new Map<number, string>();
+                        nameByCvr.set(data.vat, data.name);
+                        for (const rv of relatedCompanies) nameByCvr.set(rv.cvr, rv.navn);
+
+                        // Split into active and sold
+                        const aktive = ejendommeData.filter((e) => e.aktiv !== false);
+                        const solgte = ejendommeData.filter((e) => e.aktiv === false);
+
+                        // Group active by ownerCvr (normalized to number)
+                        const groupedActive = new Map<number, typeof aktive>();
+                        for (const e of aktive) {
+                          const cvrNum = parseInt(e.ownerCvr, 10);
+                          if (!groupedActive.has(cvrNum)) groupedActive.set(cvrNum, []);
+                          groupedActive.get(cvrNum)!.push(e);
+                        }
+                        // Catch any ownerCvrs not in cvrOrder (e.g. person-owned)
+                        for (const cvr of groupedActive.keys()) {
+                          if (!seenCvr.has(cvr)) {
+                            cvrOrder.push(cvr);
+                            seenCvr.add(cvr);
+                          }
+                        }
+
+                        return (
+                          <>
+                            {cvrOrder.map((cvr) => {
+                              const props = groupedActive.get(cvr);
+                              if (!props || props.length === 0) return null;
+                              const name = nameByCvr.get(cvr) ?? `CVR ${cvr}`;
+                              const isMain = cvr === data.vat;
+                              return (
+                                <div key={cvr} className="space-y-2">
+                                  <Link
+                                    href={`/dashboard/companies/${cvr}`}
+                                    className="inline-flex items-center gap-2 group"
+                                  >
+                                    <Building2
+                                      size={14}
+                                      className="text-slate-500 group-hover:text-blue-400 transition-colors"
+                                    />
+                                    <h3 className="text-sm font-semibold text-slate-200 group-hover:text-blue-400 transition-colors">
+                                      {name}
+                                    </h3>
+                                    <span className="text-[10px] text-slate-500 font-mono">
+                                      CVR {cvr}
+                                    </span>
+                                    <span className="text-[10px] text-slate-500">
+                                      · {props.length}{' '}
+                                      {lang === 'da'
+                                        ? props.length === 1
+                                          ? 'ejendom'
+                                          : 'ejendomme'
+                                        : props.length === 1
+                                          ? 'property'
+                                          : 'properties'}
+                                    </span>
+                                    {isMain && (
+                                      <span className="text-[9px] px-1.5 py-0.5 bg-blue-500/15 border border-blue-500/30 rounded text-blue-400 font-medium">
+                                        {lang === 'da' ? 'Moder' : 'Parent'}
+                                      </span>
+                                    )}
+                                  </Link>
+                                  {/* BIZZ-461: Gruppér ejendomme der deler adresse (typisk
+                                      ejerlejligheder i samme bygning) under en kompleks-header.
+                                      Kun grupper med 2+ ejendomme får header — single-ejendomme
+                                      vises som før. */}
+                                  {(() => {
+                                    type EjType = (typeof props)[number];
+                                    const groups = new Map<string, EjType[]>();
+                                    const order: string[] = [];
+                                    for (const ej of props) {
+                                      // Key = adresse + postnr; tom adresse = unikt fallback per BFE
+                                      const key = ej.adresse
+                                        ? `${ej.adresse}|${ej.postnr ?? ''}`
+                                        : `bfe-${ej.bfeNummer}`;
+                                      if (!groups.has(key)) {
+                                        groups.set(key, []);
+                                        order.push(key);
+                                      }
+                                      groups.get(key)!.push(ej);
+                                    }
+                                    // BIZZ-569: Saml ALLE single-properties (ikke-kompleks)
+                                    // i ÉN delt grid så de flow'er horisontalt på desktop.
+                                    // Tidligere fik hver enkelt sit eget grid-wrapper hvilket
+                                    // tvang dem til at stack vertikalt selv på brede skærme.
+                                    // Bumpet bredde til lg:3 og xl:4 kolonner per spec.
+                                    const singleEjendomme = order
+                                      .filter((k) => groups.get(k)!.length === 1)
+                                      .map((k) => groups.get(k)![0]);
+                                    const komplekser = order.filter(
+                                      (k) => groups.get(k)!.length > 1
+                                    );
+                                    return (
+                                      <div className="space-y-4">
+                                        {singleEjendomme.length > 0 && (
+                                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                            {singleEjendomme.map((ej) => (
+                                              <PropertyOwnerCard
+                                                key={ej.bfeNummer}
+                                                ejendom={ej}
+                                                showOwner={false}
+                                                lang={lang}
+                                                preEnriched={
+                                                  preEnrichedByBfe.get(ej.bfeNummer) ?? null
+                                                }
+                                              />
+                                            ))}
+                                          </div>
+                                        )}
+                                        {komplekser.map((key) => {
+                                          const grp = groups.get(key)!;
+                                          // Kompleks: header + indented grid
+                                          return (
+                                            <div
+                                              key={key}
+                                              className="border-l-2 border-emerald-500/30 pl-3"
+                                            >
+                                              <div className="flex items-center gap-2 mb-1.5">
+                                                <Building2
+                                                  size={12}
+                                                  className="text-emerald-400/70"
+                                                />
+                                                <span className="text-xs font-medium text-slate-300">
+                                                  {grp[0].adresse}
+                                                  {grp[0].postnr ? `, ${grp[0].postnr}` : ''}
+                                                </span>
+                                                <span className="text-[10px] text-emerald-400/70 px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20">
+                                                  {lang === 'da'
+                                                    ? `Kompleks · ${grp.length} ejerlejligheder`
+                                                    : `Complex · ${grp.length} units`}
+                                                </span>
+                                              </div>
+                                              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                                {grp.map((ej) => (
+                                                  <PropertyOwnerCard
+                                                    key={ej.bfeNummer}
+                                                    ejendom={ej}
+                                                    showOwner={false}
+                                                    lang={lang}
+                                                    preEnriched={
+                                                      preEnrichedByBfe.get(ej.bfeNummer) ?? null
+                                                    }
+                                                  />
+                                                ))}
+                                              </div>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    );
+                                  })()}
+                                </div>
+                              );
+                            })}
+                            {/* Fold-out for sold properties — grouped by historical owner */}
+                            {solgte.length > 0 && (
+                              <div className="pt-4 border-t border-slate-700/30">
+                                <button
+                                  type="button"
+                                  onClick={() => setVisSolgte((v) => !v)}
+                                  className="flex items-center gap-2 text-xs text-slate-400 hover:text-slate-200 transition-colors"
+                                >
+                                  {visSolgte ? (
+                                    <ChevronDown size={14} />
+                                  ) : (
+                                    <ChevronRight size={14} />
+                                  )}
+                                  {lang === 'da'
+                                    ? `${visSolgte ? 'Skjul' : 'Vis'} ${solgte.length} tidligere ejendom${solgte.length !== 1 ? 'me' : ''}`
+                                    : `${visSolgte ? 'Hide' : 'Show'} ${solgte.length} former propert${solgte.length !== 1 ? 'ies' : 'y'}`}
+                                </button>
+                                {visSolgte &&
+                                  (() => {
+                                    // Group sold properties by historical owner (same ownerCvr logic)
+                                    const groupedSold = new Map<number, typeof solgte>();
+                                    for (const e of solgte) {
+                                      const cvrNum = parseInt(e.ownerCvr, 10);
+                                      if (!groupedSold.has(cvrNum)) groupedSold.set(cvrNum, []);
+                                      groupedSold.get(cvrNum)!.push(e);
+                                    }
+                                    // Include sold-only CVRs not already in cvrOrder
+                                    const soldCvrOrder = [...cvrOrder];
+                                    for (const cvr of groupedSold.keys()) {
+                                      if (!soldCvrOrder.includes(cvr)) soldCvrOrder.push(cvr);
+                                    }
+                                    return (
+                                      <div className="space-y-4 mt-3">
+                                        {soldCvrOrder.map((cvr) => {
+                                          const props = groupedSold.get(cvr);
+                                          if (!props || props.length === 0) return null;
+                                          const name = nameByCvr.get(cvr) ?? `CVR ${cvr}`;
+                                          return (
+                                            <div key={cvr} className="space-y-2">
+                                              <Link
+                                                href={`/dashboard/companies/${cvr}`}
+                                                className="inline-flex items-center gap-2 group"
+                                              >
+                                                <Building2
+                                                  size={14}
+                                                  className="text-slate-500 group-hover:text-blue-400 transition-colors"
+                                                />
+                                                <h3 className="text-sm font-semibold text-slate-400 group-hover:text-blue-400 transition-colors">
+                                                  {name}
+                                                </h3>
+                                                <span className="text-[10px] text-slate-500 font-mono">
+                                                  CVR {cvr}
+                                                </span>
+                                                <span className="text-[10px] text-slate-500">
+                                                  · {props.length}{' '}
+                                                  {lang === 'da'
+                                                    ? props.length === 1
+                                                      ? 'tidligere ejendom'
+                                                      : 'tidligere ejendomme'
+                                                    : props.length === 1
+                                                      ? 'former property'
+                                                      : 'former properties'}
+                                                </span>
+                                              </Link>
+                                              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                                                {props.map((ej) => (
+                                                  <PropertyOwnerCard
+                                                    key={ej.bfeNummer}
+                                                    ejendom={ej}
+                                                    showOwner={false}
+                                                    lang={lang}
+                                                    preEnriched={
+                                                      preEnrichedByBfe.get(ej.bfeNummer) ?? null
+                                                    }
+                                                  />
+                                                ))}
+                                              </div>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    );
+                                  })()}
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()}
 
                       {ejendommeLoadingMore && (
                         <div className="flex items-center justify-center gap-2 py-4 text-slate-500 text-sm">
@@ -2386,6 +2985,12 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                 (() => {
                   /** Aktive relaterede virksomheder (ophørte filtreres fra) */
                   const aktive = relatedCompanies.filter((v) => v.aktiv);
+                  /**
+                   * BIZZ-475: Historiske (ophørte/solgte) datterselskaber. Vises
+                   * kun når brugeren toggler "Vis historik" — beholdes som flad
+                   * liste for at undgå at rode gruppestrukturen til.
+                   */
+                  const historiske = relatedCompanies.filter((v) => !v.aktiv);
                   /** Rod-virksomheder (ejet direkte af den valgte, eller ingen anden ejer på listen) */
                   const rodVirksomheder = aktive.filter((v) => v.ejetAfCvr == null);
                   /** Børn grupperet efter ejer-CVR */
@@ -2867,8 +3472,36 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                         </>
                       )}
 
+                      {/* BIZZ-475: Historiske datterselskaber — toggle-drevet */}
+                      {historiske.length > 0 && (
+                        <div className="pt-2">
+                          <button
+                            type="button"
+                            onClick={() => setVisHistorik((prev) => !prev)}
+                            className="flex items-center gap-2 w-full group cursor-pointer"
+                            aria-expanded={visHistorik}
+                          >
+                            <ChevronDown
+                              size={14}
+                              className={`text-slate-500 group-hover:text-slate-400 transition-all duration-200 shrink-0 ${visHistorik ? '' : '-rotate-90'}`}
+                            />
+                            <span className="text-sm text-slate-400 group-hover:text-slate-300 font-medium transition-colors whitespace-nowrap">
+                              {lang === 'da'
+                                ? `Vis historik (${historiske.length} ophørt${historiske.length > 1 ? 'e' : ''})`
+                                : `Show history (${historiske.length} dissolved)`}
+                            </span>
+                            <div className="h-px flex-1 bg-slate-700/60 group-hover:bg-slate-600 transition-colors" />
+                          </button>
+                          {visHistorik && (
+                            <div className="grid gap-3 mt-2 opacity-75">
+                              {historiske.map((rel) => renderCard(rel, 0))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
                       {/* No related companies */}
-                      {aktive.length === 0 && (
+                      {aktive.length === 0 && historiske.length === 0 && (
                         <div className="text-center py-8">
                           <Building2 size={32} className="mx-auto text-slate-600 mb-2" />
                           <p className="text-slate-500 text-sm">{c.noCompanies}</p>
@@ -3420,6 +4053,22 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                                         ? ` — ${entry.til}`
                                         : ` — ${lang === 'da' ? 'nu' : 'present'}`}
                                     </p>
+                                    {/* BIZZ-516: Modpart-link for fusion/spaltning — link til owners-siden
+                                        hvor enhedsNummer kan slås op (fælles namespace for virksomheder og
+                                        personer i CVR). Giver brugeren en direkte genvej til modparten. */}
+                                    {(entry.type === 'fusion' || entry.type === 'spaltning') &&
+                                      entry.modpartEnhedsNummer && (
+                                        <Link
+                                          href={`/dashboard/owners/${entry.modpartEnhedsNummer}`}
+                                          className="inline-flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 mt-2 transition-colors"
+                                        >
+                                          <ExternalLink size={10} />
+                                          {lang === 'da' ? 'Se modpart' : 'View counterparty'}{' '}
+                                          <span className="font-mono text-slate-500">
+                                            (#{entry.modpartEnhedsNummer})
+                                          </span>
+                                        </Link>
+                                      )}
                                   </div>
                                 </li>
                               ))}
@@ -3508,27 +4157,451 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                         setExpandedPant={setExpandedPant}
                         selectedPantDocs={selectedPantDocs}
                         setSelectedPantDocs={setSelectedPantDocs}
+                        dokumenter={personbogDokumenter}
                       />
                     </div>
                   )}
                 </div>
 
-                {/* ── Bilbog, Andelsbog, Fast ejendom — placeholder (0 ind til API tilsluttes) ── */}
-                {[
-                  { label: c.carBook },
-                  { label: c.cooperativeBook },
-                  { label: c.realProperty },
-                ].map((item) => (
-                  <div key={item.label} className="flex items-center justify-between px-4 py-2.5">
-                    <div className="flex items-center gap-3">
-                      {/* Spacer — matcher chevron-bredde fra Personbogen-række */}
-                      <span className="w-4 flex-shrink-0" />
-                      <FileText size={15} className="text-slate-600" />
-                      <span className="text-slate-400 text-sm">{item.label} (0)</span>
-                    </div>
-                    <Download size={15} className="text-slate-700 opacity-40" />
+                {/* ── Bilbogen (BIZZ-529) — expandabel med rigtige data ── */}
+                <div>
+                  <div className="flex items-center justify-between px-4 py-2.5 hover:bg-slate-800/30 transition-colors">
+                    <button
+                      onClick={() => setBilbogOpen((prev) => !prev)}
+                      className="flex items-center gap-3 flex-1 text-left min-w-0"
+                      disabled={bilbogData.length === 0 && !bilbogLoading}
+                    >
+                      <span className="flex-shrink-0 w-4">
+                        {bilbogLoading ? (
+                          <Loader2 size={12} className="animate-spin text-slate-500" />
+                        ) : bilbogData.length === 0 ? (
+                          <span />
+                        ) : bilbogOpen ? (
+                          <ChevronDown size={13} className="text-slate-500" />
+                        ) : (
+                          <ChevronRight size={13} className="text-slate-500" />
+                        )}
+                      </span>
+                      <FileText
+                        size={15}
+                        className={bilbogData.length > 0 ? 'text-slate-500' : 'text-slate-600'}
+                      />
+                      <span
+                        className={
+                          bilbogData.length > 0
+                            ? 'text-slate-200 text-sm'
+                            : 'text-slate-400 text-sm'
+                        }
+                      >
+                        {c.carBook}
+                        <span className="text-slate-500 text-xs ml-1">
+                          ({bilbogLoading ? '…' : bilbogData.length})
+                        </span>
+                      </span>
+                    </button>
                   </div>
-                ))}
+                  {bilbogOpen && bilbogData.length > 0 && (
+                    <div className="border-t border-slate-700/20 bg-slate-900/30 px-4 py-3 space-y-3">
+                      {bilbogFejl && <div className="text-xs text-red-400">{bilbogFejl}</div>}
+                      {bilbogData.map((bil) => (
+                        <div
+                          key={bil.uuid}
+                          className="bg-slate-800/40 border border-slate-700/40 rounded-lg p-3"
+                        >
+                          <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-xs">
+                            <span className="text-slate-100 font-medium">
+                              {bil.fabrikat ?? '—'}
+                            </span>
+                            {bil.aargang && (
+                              <span className="text-slate-400">
+                                {c.bilbogAargang}: {bil.aargang}
+                              </span>
+                            )}
+                            {bil.registreringsnummer && (
+                              <span className="text-slate-400">
+                                {c.bilbogRegnr}: {bil.registreringsnummer}
+                              </span>
+                            )}
+                            {bil.stelnummer && (
+                              <span className="text-slate-500 font-mono">
+                                {c.bilbogStelnummer}: {bil.stelnummer}
+                              </span>
+                            )}
+                          </div>
+                          {bil.haeftelser.length === 0 ? (
+                            <div className="mt-2 text-xs text-slate-500">
+                              {c.bilbogIngenHaeftelser}
+                            </div>
+                          ) : (
+                            <ul className="mt-2 space-y-2">
+                              {bil.haeftelser.map((h, i) => (
+                                <li
+                                  key={`${bil.uuid}-${h.dokumentId ?? i}`}
+                                  className="text-xs text-slate-400"
+                                >
+                                  <div className="flex flex-wrap items-baseline gap-x-3">
+                                    <span className="text-slate-300">{h.type}</span>
+                                    {h.hovedstol != null && (
+                                      <span>
+                                        {h.hovedstol.toLocaleString('da-DK')} {h.valuta}
+                                      </span>
+                                    )}
+                                    {h.kreditor && (
+                                      <span className="text-slate-500">
+                                        {c.personbogKreditor}: {h.kreditor}
+                                      </span>
+                                    )}
+                                    {h.tinglysningsdato && (
+                                      <span className="text-slate-600">{h.tinglysningsdato}</span>
+                                    )}
+                                    {h.dokumentId && (
+                                      <a
+                                        href={`/api/tinglysning/dokument?uuid=${h.dokumentId}`}
+                                        download
+                                        className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300"
+                                      >
+                                        <Download size={10} />
+                                        PDF
+                                      </a>
+                                    )}
+                                  </div>
+                                  {/* BIZZ-522: revisionshistorik pr. dokument */}
+                                  {h.dokumentId && (
+                                    <div className="mt-1">
+                                      <PaategningTimeline dokumentId={h.dokumentId} lang={lang} />
+                                    </div>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* ── Andelsbogen (BIZZ-530) — expandabel med rigtige data ── */}
+                <div>
+                  <div className="flex items-center justify-between px-4 py-2.5 hover:bg-slate-800/30 transition-colors">
+                    <button
+                      onClick={() => setAndelsbogOpen((prev) => !prev)}
+                      className="flex items-center gap-3 flex-1 text-left min-w-0"
+                      disabled={andelsbogData.length === 0 && !andelsbogLoading}
+                    >
+                      <span className="flex-shrink-0 w-4">
+                        {andelsbogLoading ? (
+                          <Loader2 size={12} className="animate-spin text-slate-500" />
+                        ) : andelsbogData.length === 0 ? (
+                          <span />
+                        ) : andelsbogOpen ? (
+                          <ChevronDown size={13} className="text-slate-500" />
+                        ) : (
+                          <ChevronRight size={13} className="text-slate-500" />
+                        )}
+                      </span>
+                      <FileText
+                        size={15}
+                        className={andelsbogData.length > 0 ? 'text-slate-500' : 'text-slate-600'}
+                      />
+                      <span
+                        className={
+                          andelsbogData.length > 0
+                            ? 'text-slate-200 text-sm'
+                            : 'text-slate-400 text-sm'
+                        }
+                      >
+                        {c.cooperativeBook}
+                        <span className="text-slate-500 text-xs ml-1">
+                          ({andelsbogLoading ? '…' : andelsbogData.length})
+                        </span>
+                      </span>
+                    </button>
+                  </div>
+                  {andelsbogOpen && andelsbogData.length > 0 && (
+                    <div className="border-t border-slate-700/20 bg-slate-900/30 px-4 py-3 space-y-3">
+                      {andelsbogFejl && <div className="text-xs text-red-400">{andelsbogFejl}</div>}
+                      {andelsbogData.map((andel) => (
+                        <div
+                          key={andel.uuid}
+                          className="bg-slate-800/40 border border-slate-700/40 rounded-lg p-3"
+                        >
+                          <div className="text-sm text-slate-100 font-medium">
+                            {andel.adresse ?? '—'}
+                          </div>
+                          {(andel.postnr || andel.by) && (
+                            <div className="text-xs text-slate-400 mt-0.5">
+                              {[andel.postnr, andel.by].filter(Boolean).join(' ')}
+                            </div>
+                          )}
+                          {andel.haeftelser.length === 0 ? (
+                            <div className="mt-2 text-xs text-slate-500">
+                              {c.andelsbogIngenHaeftelser}
+                            </div>
+                          ) : (
+                            <ul className="mt-2 space-y-2">
+                              {andel.haeftelser.map((h, i) => (
+                                <li
+                                  key={`${andel.uuid}-${h.dokumentId ?? i}`}
+                                  className="text-xs text-slate-400"
+                                >
+                                  <div className="flex flex-wrap items-baseline gap-x-3">
+                                    <span className="text-slate-300">{h.type}</span>
+                                    {h.hovedstol != null && (
+                                      <span>
+                                        {h.hovedstol.toLocaleString('da-DK')} {h.valuta}
+                                      </span>
+                                    )}
+                                    {h.kreditor && (
+                                      <span className="text-slate-500">
+                                        {c.personbogKreditor}: {h.kreditor}
+                                      </span>
+                                    )}
+                                    {h.tinglysningsdato && (
+                                      <span className="text-slate-600">{h.tinglysningsdato}</span>
+                                    )}
+                                    {h.dokumentId && (
+                                      <a
+                                        href={`/api/tinglysning/dokument?uuid=${h.dokumentId}`}
+                                        download
+                                        className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300"
+                                      >
+                                        <Download size={10} />
+                                        PDF
+                                      </a>
+                                    )}
+                                  </div>
+                                  {/* BIZZ-522: revisionshistorik pr. dokument */}
+                                  {h.dokumentId && (
+                                    <div className="mt-1">
+                                      <PaategningTimeline dokumentId={h.dokumentId} lang={lang} />
+                                    </div>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/*
+                  Fast ejendom (BIZZ-521) — kun kreditor-sektionen vises her.
+                  "Ejer" er duplikeret med Ejendomme-fanen der bruger EJF som
+                  sandhedskilde for nuværende ejerskab; tinglysningens
+                  ejer-liste er historisk og forvirrer. Kreditor er
+                  tinglysnings-specifik (pantebreve) og hører til her.
+                */}
+                {(
+                  [
+                    { rolle: 'kreditor', rows: fastEjendomKreditor, label: c.fastEjendomKreditor },
+                  ] as const
+                ).map(({ rolle, rows, label }) => {
+                  const open = fastEjendomOpen.has(rolle);
+                  return (
+                    <div key={rolle}>
+                      <div className="flex items-center justify-between px-4 py-2.5 hover:bg-slate-800/30 transition-colors">
+                        <button
+                          onClick={() =>
+                            setFastEjendomOpen((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(rolle)) next.delete(rolle);
+                              else next.add(rolle);
+                              return next;
+                            })
+                          }
+                          className="flex items-center gap-3 flex-1 text-left min-w-0"
+                          disabled={rows.length === 0 && !fastEjendomLoading}
+                        >
+                          <span className="flex-shrink-0 w-4">
+                            {fastEjendomLoading ? (
+                              <Loader2 size={12} className="animate-spin text-slate-500" />
+                            ) : rows.length === 0 ? (
+                              <span />
+                            ) : open ? (
+                              <ChevronDown size={13} className="text-slate-500" />
+                            ) : (
+                              <ChevronRight size={13} className="text-slate-500" />
+                            )}
+                          </span>
+                          <FileText
+                            size={15}
+                            className={rows.length > 0 ? 'text-slate-500' : 'text-slate-600'}
+                          />
+                          <span
+                            className={
+                              rows.length > 0 ? 'text-slate-200 text-sm' : 'text-slate-400 text-sm'
+                            }
+                          >
+                            {label}
+                            <span className="text-slate-500 text-xs ml-1">
+                              ({fastEjendomLoading ? '…' : rows.length})
+                            </span>
+                          </span>
+                        </button>
+                      </div>
+                      {open && rows.length > 0 && (
+                        <div className="border-t border-slate-700/20 bg-slate-900/30 px-4 py-3">
+                          {fastEjendomFejl && (
+                            <div className="text-xs text-red-400 mb-2">{fastEjendomFejl}</div>
+                          )}
+                          {/*
+                            BIZZ-521 follow-up: Brug tinglysnings-specifik kort-variant.
+                            PropertyOwnerCard's auto-enrichment (current ejer, vurdering)
+                            er misvisende i tinglysnings-kontekst fordi vi viser
+                            historiske adkomster — ikke den aktuelle ejer.
+                          */}
+                          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+                            {(() => {
+                              // De-dupliker på BFE: samler alle dokumenter for samme
+                              // ejendom i ét kort, så én ejendom = ét kort (med evt.
+                              // flere adkomst-typer listet).
+                              const groups = new Map<
+                                number,
+                                { first: VirksomhedEjendomsrolle; all: VirksomhedEjendomsrolle[] }
+                              >();
+                              for (const r of rows) {
+                                const g = groups.get(r.bfe);
+                                if (g) g.all.push(r);
+                                else groups.set(r.bfe, { first: r, all: [r] });
+                              }
+                              return Array.from(groups.values()).map(({ first, all }) => {
+                                const heading =
+                                  first.adresse ??
+                                  first.matrikel ??
+                                  `BFE ${first.bfe.toLocaleString('da-DK')}`;
+                                const subLine =
+                                  first.postnr && first.by
+                                    ? `${first.postnr} ${first.by}`
+                                    : first.adresse
+                                      ? first.matrikel
+                                      : first.kommune;
+                                const detailHref = first.dawaId
+                                  ? `/dashboard/ejendomme/${first.dawaId}`
+                                  : null;
+                                const adkomster = Array.from(
+                                  new Set(
+                                    all.map((r) => r.adkomstType).filter((x): x is string => !!x)
+                                  )
+                                );
+                                const CardBody = (
+                                  <div
+                                    className={`group relative flex flex-col bg-slate-800/60 border rounded-xl overflow-hidden transition-all ${
+                                      detailHref
+                                        ? 'border-slate-700/50 hover:border-emerald-500/40 hover:bg-slate-800/80'
+                                        : 'border-slate-700/40'
+                                    }`}
+                                  >
+                                    <div className="h-1 flex-shrink-0 bg-gradient-to-r from-emerald-600/60 to-emerald-500/20" />
+                                    <div className="p-4 flex flex-col gap-2">
+                                      <div className="flex items-start gap-2">
+                                        <MapPin
+                                          size={14}
+                                          className="mt-0.5 flex-shrink-0 text-emerald-500"
+                                        />
+                                        <div className="min-w-0">
+                                          <p className="text-white font-medium text-sm leading-snug truncate">
+                                            {heading}
+                                          </p>
+                                          {subLine && (
+                                            <p className="text-slate-400 text-xs mt-0.5 truncate">
+                                              {subLine}
+                                            </p>
+                                          )}
+                                        </div>
+                                      </div>
+                                      <div className="flex flex-wrap gap-1.5">
+                                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] text-slate-400 bg-slate-900/60 font-mono">
+                                          BFE {first.bfe.toLocaleString('da-DK')}
+                                        </span>
+                                        {first.ejendomstype && (
+                                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] text-slate-300 bg-slate-900/60">
+                                            {first.ejendomstype}
+                                          </span>
+                                        )}
+                                        {adkomster.map((a) => (
+                                          <span
+                                            key={a}
+                                            className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] text-emerald-300 bg-emerald-900/30"
+                                          >
+                                            {c.fastEjendomAdkomst}: {a}
+                                          </span>
+                                        ))}
+                                      </div>
+                                      {/* BIZZ-570: Vis hæftelse-beløb øverst på kreditor-kort.
+                                          Sum hvis flere haeftelser på samme BFE. */}
+                                      {(() => {
+                                        if (rolle !== 'kreditor') return null;
+                                        const haeftelser = all.filter(
+                                          (r) => r.haeftelseBeloeb != null && r.haeftelseBeloeb > 0
+                                        );
+                                        if (haeftelser.length === 0) return null;
+                                        const sumBeloeb = haeftelser.reduce(
+                                          (s, r) => s + (r.haeftelseBeloeb ?? 0),
+                                          0
+                                        );
+                                        const types = Array.from(
+                                          new Set(
+                                            haeftelser
+                                              .map((r) => r.haeftelseType)
+                                              .filter((t): t is string => !!t)
+                                          )
+                                        );
+                                        return (
+                                          <div className="pt-1.5 border-t border-slate-700/30">
+                                            <div className="flex items-baseline gap-2">
+                                              <span className="text-amber-400 text-sm font-semibold">
+                                                {sumBeloeb.toLocaleString('da-DK')} DKK
+                                              </span>
+                                              <span className="text-[10px] text-slate-500 uppercase tracking-wide">
+                                                {lang === 'da' ? 'Hæftelse' : 'Lien'}
+                                                {haeftelser.length > 1
+                                                  ? ` × ${haeftelser.length}`
+                                                  : ''}
+                                              </span>
+                                            </div>
+                                            {types.length > 0 && (
+                                              <p className="text-[10px] text-slate-400 mt-0.5">
+                                                {types.join(' · ')}
+                                              </p>
+                                            )}
+                                          </div>
+                                        );
+                                      })()}
+                                      {all.some((r) => r.dokumentAlias) && (
+                                        <div className="text-[10px] text-slate-500 font-mono pt-1 border-t border-slate-700/30">
+                                          {all
+                                            .map((r) => r.dokumentAlias)
+                                            .filter((a): a is string => !!a)
+                                            .slice(0, 3)
+                                            .join(' · ')}
+                                          {all.filter((r) => r.dokumentAlias).length > 3 && ' …'}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                                return detailHref ? (
+                                  <Link
+                                    key={`${rolle}-${first.bfe}`}
+                                    href={detailHref}
+                                    className="block"
+                                  >
+                                    {CardBody}
+                                  </Link>
+                                ) : (
+                                  <div key={`${rolle}-${first.bfe}`}>{CardBody}</div>
+                                );
+                              });
+                            })()}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -4307,6 +5380,12 @@ interface PersonbogSectionProps {
   setExpandedPant: React.Dispatch<React.SetStateAction<Set<number>>>;
   selectedPantDocs: Set<string>;
   setSelectedPantDocs: React.Dispatch<React.SetStateAction<Set<string>>>;
+  /** BIZZ-533: Tinglyste dokumenter (vedtægter/fusioner/ejerpantebreve) */
+  dokumenter?: {
+    vedtaegter: PersonbogDokument[];
+    fusioner: PersonbogDokument[];
+    ejerpantebreve: PersonbogDokument[];
+  };
 }
 
 /**
@@ -4326,6 +5405,7 @@ function PersonbogSection({
   setExpandedPant,
   selectedPantDocs,
   setSelectedPantDocs,
+  dokumenter,
 }: PersonbogSectionProps) {
   /** Loading state — inline compact (vises inde i den ekspanderede personbog-række) */
   if (loading) {
@@ -4602,6 +5682,42 @@ function PersonbogSection({
                           </div>
                         )}
 
+                        {/* BIZZ-532: Referencerente + tillæg */}
+                        {h.referenceRenteNavn && (
+                          <div>
+                            <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                              {da ? 'Referencerente' : 'Reference rate'}
+                            </p>
+                            <p className="text-white">
+                              {h.referenceRenteNavn}
+                              {h.referenceRenteSats != null && ` (${h.referenceRenteSats}%)`}
+                              {h.renteTillaeg != null && ` + ${h.renteTillaeg}%`}
+                            </p>
+                          </div>
+                        )}
+
+                        {/* BIZZ-532: Kreditorbetegnelse */}
+                        {h.kreditorbetegnelse && (
+                          <div>
+                            <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                              {da ? 'Kreditorbetegnelse' : 'Creditor designation'}
+                            </p>
+                            <p className="text-white">{h.kreditorbetegnelse}</p>
+                          </div>
+                        )}
+
+                        {/* BIZZ-532: Låntype + pantebrevformular */}
+                        {(h.laantype || h.pantebrevFormular) && (
+                          <div>
+                            <p className="text-slate-500 text-[10px] uppercase mb-0.5">
+                              {da ? 'Låntype' : 'Loan type'}
+                            </p>
+                            <p className="text-white">
+                              {[h.laantype, h.pantebrevFormular].filter(Boolean).join(' · ')}
+                            </p>
+                          </div>
+                        )}
+
                         {/* Tinglysningsdato */}
                         {h.tinglysningsdato && (
                           <div>
@@ -4685,6 +5801,13 @@ function PersonbogSection({
                               h.anmelderNavn
                             )}
                           </p>
+                        </div>
+                      )}
+
+                      {/* BIZZ-522: revisionshistorik (påtegninger) pr. dokument */}
+                      {h.dokumentId && (
+                        <div className="mt-2 pt-2 border-t border-slate-700/20">
+                          <PaategningTimeline dokumentId={h.dokumentId} lang={da ? 'da' : 'en'} />
                         </div>
                       )}
                     </div>
@@ -4822,6 +5945,63 @@ function PersonbogSection({
           </div>
         ));
       })()}
+
+      {/* BIZZ-533: Tinglyste dokumenter (vedtægter, fusioner, ejerpantebreve) */}
+      {dokumenter &&
+        (dokumenter.vedtaegter.length > 0 ||
+          dokumenter.fusioner.length > 0 ||
+          dokumenter.ejerpantebreve.length > 0) && (
+          <div className="px-4 py-3 border-t border-slate-700/20 space-y-2">
+            <p className="text-slate-500 text-[10px] uppercase tracking-wider font-semibold">
+              {da ? 'Øvrige tinglyste dokumenter' : 'Other registered documents'}
+            </p>
+            {dokumenter.vedtaegter.length > 0 && (
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-slate-400">
+                  {da ? 'Vedtægter' : 'Articles of association'}:
+                </span>
+                <span className="text-white font-medium">{dokumenter.vedtaegter.length}</span>
+                <span className="text-slate-500">
+                  {dokumenter.vedtaegter
+                    .map((d) => d.tinglysningsdato)
+                    .filter(Boolean)
+                    .slice(0, 3)
+                    .join(', ')}
+                </span>
+              </div>
+            )}
+            {dokumenter.fusioner.length > 0 && (
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-slate-400">
+                  {da ? 'Fusioner/spaltninger' : 'Mergers/demergers'}:
+                </span>
+                <span className="text-white font-medium">{dokumenter.fusioner.length}</span>
+                <span className="text-slate-500">
+                  {dokumenter.fusioner
+                    .map((d) => d.tinglysningsdato)
+                    .filter(Boolean)
+                    .slice(0, 3)
+                    .join(', ')}
+                </span>
+              </div>
+            )}
+            {dokumenter.ejerpantebreve.length > 0 && (
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-slate-400">
+                  {da ? 'Ejerpantebreve i løsøre' : 'Owner mortgage in chattels'}:
+                </span>
+                <span className="text-white font-medium">{dokumenter.ejerpantebreve.length}</span>
+                <span className="text-slate-500">
+                  {dokumenter.ejerpantebreve
+                    .map((d) => d.tinglysningsdato)
+                    .filter(Boolean)
+                    .slice(0, 3)
+                    .join(', ')}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
     </>
   );
 }
@@ -5906,8 +7086,15 @@ function RegnskabstalTable({ years, lang, regnskaber = [] }: RegnskabstalTablePr
   );
   /** Balance og Nøgletal sammenklappet som default — Resultatopgørelse åben */
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(
-    () => new Set([da ? 'Balance' : 'Balance Sheet', da ? 'Nøgletal' : 'Key Ratios'])
+    () =>
+      new Set([
+        da ? 'Balance' : 'Balance Sheet',
+        da ? 'Pengestrømme' : 'Cash Flow',
+        da ? 'Nøgletal' : 'Key Ratios',
+      ])
   );
+  /** BIZZ-560: Tracking af hvilke noter der er udfoldet (default: alle kollapsede med preview) */
+  const [aabneNoter, setAabneNoter] = useState<Set<string>>(() => new Set());
 
   /** Viste år — 5 default, alle hvis udfoldet */
   const visteAar = visAlleAar ? years : years.slice(0, 5);
@@ -6185,8 +7372,50 @@ function RegnskabstalTable({ years, lang, regnskaber = [] }: RegnskabstalTablePr
     },
   ];
 
+  /**
+   * BIZZ-517a: Pengestrømsopgørelse-rækker.
+   * Skjules på sektionsniveau hvis ingen af de viste år har pengestrøm-data
+   * (typisk fordi små regnskabsklasse B-selskaber ikke aflægger en).
+   */
+  const pengestromRows: FinRow[] = [
+    {
+      id: 'p-drift',
+      label: da ? 'Drift' : 'Operating',
+      getValue: (y) => y.pengestroemme?.fraDrift ?? null,
+      bold: true,
+    },
+    {
+      id: 'p-invest',
+      label: da ? 'Investering' : 'Investing',
+      getValue: (y) => y.pengestroemme?.fraInvestering ?? null,
+    },
+    {
+      id: 'p-finans',
+      label: da ? 'Finansiering' : 'Financing',
+      getValue: (y) => y.pengestroemme?.fraFinansiering ?? null,
+    },
+    {
+      id: 'p-forskyd',
+      label: da ? 'Årets forskydning' : 'Net Change',
+      getValue: (y) => y.pengestroemme?.aaretsForskydning ?? null,
+      bold: true,
+    },
+    {
+      id: 'p-primo',
+      label: da ? 'Likvider primo' : 'Cash Beginning of Period',
+      getValue: (y) => y.pengestroemme?.likviderPrimo ?? null,
+    },
+    {
+      id: 'p-ultimo',
+      label: da ? 'Likvider ultimo' : 'Cash End of Period',
+      getValue: (y) => y.pengestroemme?.likviderUltimo ?? null,
+    },
+  ];
+  /** True hvis mindst ét år har pengestrøm-data — skjuler sektion ellers */
+  const harPengestrom = visteAar.some((y) => y.pengestroemme != null);
+
   /** Alle rækker samlet — bruges til chart-opslag */
-  const alleRows = [...resultatRows, ...balanceRows, ...noegletalsRows];
+  const alleRows = [...resultatRows, ...balanceRows, ...noegletalsRows, ...pengestromRows];
 
   /** Bygger chart data — kun år hvor mindst én valgt række har data */
   const chartData = [...years]
@@ -6238,7 +7467,7 @@ function RegnskabstalTable({ years, lang, regnskaber = [] }: RegnskabstalTablePr
           )}
           <BarChart3 size={15} className="text-slate-400" />
           <span className="text-sm font-semibold text-slate-200">{title}</span>
-          {!rows[0]?.isPercent && <span className="text-xs text-slate-500 ml-1">(DKK)</span>}
+          {!rows[0]?.isPercent && <span className="text-xs text-slate-500 ml-1">(T DKK)</span>}
         </button>
 
         {/* Tabel — skjult hvis sammenklappet */}
@@ -6392,7 +7621,154 @@ function RegnskabstalTable({ years, lang, regnskaber = [] }: RegnskabstalTablePr
 
       {renderSection(da ? 'Resultatopgørelse' : 'Income Statement', resultatRows)}
       {renderSection(da ? 'Balance' : 'Balance Sheet', balanceRows)}
+      {/* BIZZ-517a: Pengestrømsopgørelse — vises kun hvis selskabet har aflagt en */}
+      {harPengestrom && renderSection(da ? 'Pengestrømme' : 'Cash Flow', pengestromRows)}
       {renderSection(da ? 'Nøgletal' : 'Key Ratios', noegletalsRows)}
+
+      {/* BIZZ-559: Revisor + revisionspåtegning fra seneste regnskabsår.
+          Skjules hvis ingen revisor-info findes (revision fravalgt). */}
+      {(() => {
+        const senesteRevisor = visteAar.find((y) => y.revisor != null)?.revisor;
+        if (!senesteRevisor) return null;
+        return (
+          <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700/30">
+              <div className="flex items-center gap-2">
+                <CheckCircle size={15} className="text-amber-400" />
+                <span className="text-sm font-semibold text-slate-200">
+                  {da ? 'Revisor' : 'Auditor'}
+                </span>
+              </div>
+              {senesteRevisor.harForbehold ? (
+                <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-red-500/15 text-red-400 border border-red-500/30">
+                  {da
+                    ? `Forbehold: ${senesteRevisor.forbeholdType}`
+                    : `Modified: ${senesteRevisor.forbeholdType}`}
+                </span>
+              ) : (
+                <span className="text-[10px] font-medium px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                  {da ? 'Ren konklusion' : 'Unmodified opinion'}
+                </span>
+              )}
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 p-4">
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">
+                  {da ? 'Revisionsfirma' : 'Audit firm'}
+                </p>
+                <p className="text-sm text-slate-200">
+                  {senesteRevisor.firmaCvr ? (
+                    <a
+                      href={`/dashboard/companies/${senesteRevisor.firmaCvr}`}
+                      className="text-blue-400 hover:underline"
+                    >
+                      {senesteRevisor.firmanavn ?? `CVR ${senesteRevisor.firmaCvr}`}
+                    </a>
+                  ) : (
+                    (senesteRevisor.firmanavn ?? '—')
+                  )}
+                </p>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">
+                  {da ? 'Revisor' : 'Auditor'}
+                </p>
+                <p className="text-sm text-slate-200">{senesteRevisor.revisorNavn ?? '—'}</p>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">
+                  {da ? 'Underskriftssted' : 'Signed at'}
+                </p>
+                <p className="text-sm text-slate-200">{senesteRevisor.signaturSted ?? '—'}</p>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">
+                  {da ? 'Underskriftsdato' : 'Signed date'}
+                </p>
+                <p className="text-sm text-slate-200">{senesteRevisor.signaturDato ?? '—'}</p>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* BIZZ-560: Note-tekstblokke fra seneste regnskabsår — formål, anvendt
+          regnskabspraksis, begivenheder efter balancedag, going concern.
+          Hver note collapsible med kort preview. */}
+      {(() => {
+        const senesteNoter = visteAar.find((y) => y.noter != null)?.noter;
+        if (!senesteNoter) return null;
+        const noteFelter: Array<{
+          key: string;
+          label: string;
+          value: string | null;
+        }> = [
+          { key: 'formaal', label: da ? 'Formål' : 'Purpose', value: senesteNoter.formaal },
+          {
+            key: 'regnskabspraksis',
+            label: da ? 'Anvendt regnskabspraksis' : 'Accounting policies',
+            value: senesteNoter.regnskabspraksis,
+          },
+          {
+            key: 'begivenhederEfterBalancedag',
+            label: da ? 'Begivenheder efter balancedag' : 'Events after reporting period',
+            value: senesteNoter.begivenhederEfterBalancedag,
+          },
+          {
+            key: 'goingConcern',
+            label: da ? 'Going concern' : 'Going concern',
+            value: senesteNoter.goingConcern,
+          },
+        ];
+        const aktive = noteFelter.filter((n) => n.value && n.value.length > 0);
+        if (aktive.length === 0) return null;
+        return (
+          <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden">
+            <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-700/30">
+              <FileText size={15} className="text-slate-400" />
+              <span className="text-sm font-semibold text-slate-200">{da ? 'Noter' : 'Notes'}</span>
+              <span className="text-[10px] text-slate-500">({aktive.length})</span>
+            </div>
+            <div className="divide-y divide-slate-700/20">
+              {aktive.map((n) => {
+                const isExpanded = aabneNoter.has(n.key);
+                const text = n.value!;
+                const erLang = text.length > 280;
+                return (
+                  <div key={n.key} className="p-4">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setAabneNoter((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(n.key)) next.delete(n.key);
+                          else next.add(n.key);
+                          return next;
+                        })
+                      }
+                      className="flex items-center gap-2 w-full text-left mb-2 hover:text-blue-400 transition-colors"
+                      disabled={!erLang}
+                    >
+                      {erLang &&
+                        (isExpanded ? (
+                          <ChevronDown size={13} className="text-slate-500 flex-shrink-0" />
+                        ) : (
+                          <ChevronRight size={13} className="text-slate-500 flex-shrink-0" />
+                        ))}
+                      <span className="text-[10px] uppercase tracking-wider text-slate-500 font-medium">
+                        {n.label}
+                      </span>
+                    </button>
+                    <p className="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">
+                      {erLang && !isExpanded ? `${text.slice(0, 280)}…` : text}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Graf — vises nederst når mindst én række er valgt */}
       {chartRows.size > 0 && (

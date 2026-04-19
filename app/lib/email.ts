@@ -464,3 +464,148 @@ export async function sendAccountDeletionEmail(to: string): Promise<void> {
     logger.error('[email] Failed to send deletion email:', err);
   }
 }
+
+// ─── Payment failure notification (BIZZ-540) ───────────────────────────────
+
+/** Parameters for the payment-failed notification email */
+export interface PaymentFailedParams {
+  /** Recipient email address */
+  to: string;
+  /** Display name of the plan whose invoice failed */
+  planName: string;
+  /** Amount Stripe tried and failed to charge, in DKK */
+  amountDueDkk: number;
+  /** Optional decline reason from Stripe (e.g. "Your card was declined") */
+  failureReason?: string | null;
+  /** Date of Stripe's next automatic retry, when known */
+  nextRetryAt?: Date | null;
+  /** URL where the user can update their payment method (our settings page) */
+  updateUrl: string;
+  /** Which attempt this was (Stripe invoice.attempt_count) */
+  attemptCount?: number | null;
+}
+
+/**
+ * Send a payment-failure notification email when Stripe's invoice.payment_failed
+ * webhook fires. Users need to know their recurring charge failed so they can
+ * update their card before access is cut off.
+ *
+ * BIZZ-540: Called from app/api/stripe/webhook/route.ts handlePaymentFailed().
+ *
+ * Retention: Transactional email — no persistent storage beyond Resend delivery logs.
+ * No PII (email address) is logged on our side — only user_id via audit_log.
+ *
+ * @param params - Email parameters (recipient, plan, amount, retry info, update link)
+ */
+export async function sendPaymentFailedEmail(params: PaymentFailedParams): Promise<void> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    logger.warn('[email] RESEND_API_KEY not set, skipping payment-failed email');
+    return;
+  }
+
+  const { to, planName, amountDueDkk, failureReason, nextRetryAt, updateUrl, attemptCount } =
+    params;
+
+  const nextRetryDa = nextRetryAt
+    ? nextRetryAt.toLocaleDateString('da-DK', { day: 'numeric', month: 'long', year: 'numeric' })
+    : null;
+  const nextRetryEn = nextRetryAt
+    ? nextRetryAt.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
+    : null;
+
+  // Escape failure reason to avoid HTML injection from Stripe decline messages
+  const reasonDa = failureReason
+    ? String(failureReason).replace(/[<>&"']/g, (c) => `&#${c.charCodeAt(0)};`)
+    : null;
+
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; background: #0f172a; color: #e2e8f0; padding: 40px; border-radius: 12px;">
+      <h1 style="color: #ffffff; font-size: 24px; margin: 0 0 8px 0;">BizzAssist</h1>
+      <p style="color: #64748b; font-size: 12px; margin: 0 0 24px 0;">Danmarks forretningsintelligens platform</p>
+
+      <h2 style="color: #f87171; font-size: 18px; margin: 0 0 16px 0;">&#9888; Betaling mislykkedes / Payment failed</h2>
+
+      <p style="margin: 0 0 4px 0; font-size: 14px;">Vi kunne ikke tr&aelig;kke betalingen for dit abonnement.</p>
+      <p style="margin: 0 0 20px 0; font-size: 13px; color: #94a3b8;">We were unable to charge your subscription.</p>
+
+      <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+        <tr>
+          <td style="padding: 10px 0; color: #94a3b8; font-size: 13px; border-bottom: 1px solid #1e293b;">Plan</td>
+          <td style="padding: 10px 0; text-align: right; font-size: 13px; border-bottom: 1px solid #1e293b;">${planName}</td>
+        </tr>
+        <tr>
+          <td style="padding: 10px 0; color: #94a3b8; font-size: 13px; border-bottom: 1px solid #1e293b;">Bel&oslash;b / Amount</td>
+          <td style="padding: 10px 0; text-align: right; font-size: 13px; border-bottom: 1px solid #1e293b;">${amountDueDkk} kr</td>
+        </tr>
+        ${
+          reasonDa
+            ? `<tr>
+          <td style="padding: 10px 0; color: #94a3b8; font-size: 13px; border-bottom: 1px solid #1e293b;">&Aring;rsag / Reason</td>
+          <td style="padding: 10px 0; text-align: right; font-size: 13px; border-bottom: 1px solid #1e293b;">${reasonDa}</td>
+        </tr>`
+            : ''
+        }
+        ${
+          attemptCount
+            ? `<tr>
+          <td style="padding: 10px 0; color: #94a3b8; font-size: 13px; border-bottom: 1px solid #1e293b;">Fors&oslash;g / Attempt</td>
+          <td style="padding: 10px 0; text-align: right; font-size: 13px; border-bottom: 1px solid #1e293b;">${attemptCount}</td>
+        </tr>`
+            : ''
+        }
+        ${
+          nextRetryDa
+            ? `<tr>
+          <td style="padding: 10px 0; color: #94a3b8; font-size: 13px;">N&aelig;ste fors&oslash;g / Next retry</td>
+          <td style="padding: 10px 0; text-align: right; font-size: 13px;">${nextRetryDa}<br/><span style="color: #64748b; font-size: 11px;">${nextRetryEn}</span></td>
+        </tr>`
+            : ''
+        }
+      </table>
+
+      <p style="margin: 30px 0 12px 0; font-size: 14px; color: #e2e8f0;">
+        Opdat&eacute;r din betalingsmetode for at undg&aring; afbrydelse af adgangen.
+      </p>
+      <p style="margin: 0 0 20px 0; font-size: 12px; color: #94a3b8;">
+        Please update your payment method to avoid losing access.
+      </p>
+      <a href="${updateUrl}" style="display: inline-block; background: #dc2626; color: #ffffff; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-size: 14px; font-weight: 600;">
+        Opdat&eacute;r betalingsmetode / Update payment method
+      </a>
+
+      <p style="margin: 30px 0 0 0; font-size: 12px; color: #64748b;">
+        Hvis du mener der er sket en fejl, kontakt os p&aring; ${companyInfo.supportEmail ?? 'support@bizzassist.dk'}.
+      </p>
+
+      <hr style="border: none; border-top: 1px solid #1e293b; margin: 30px 0;" />
+      <p style="color: #475569; font-size: 11px; margin: 0;">${companyInfo.legalLineHtml}</p>
+    </div>
+  `;
+
+  try {
+    const res = await fetch(RESEND_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: FROM_ADDRESS,
+        to,
+        subject:
+          'Betaling mislykkedes — handling p&aring;kr&aelig;vet / Payment failed — action required',
+        html,
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text();
+      logger.error('[email] Resend API error (payment-failed):', res.status, body);
+    } else {
+      logger.log('[email] Payment-failed notification sent');
+    }
+  } catch (err) {
+    logger.error('[email] Failed to send payment-failed email:', err);
+  }
+}

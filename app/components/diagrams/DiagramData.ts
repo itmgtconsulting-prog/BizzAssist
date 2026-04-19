@@ -48,10 +48,20 @@ export interface DiagramPropertySummary {
   ownerCvr: string;
   /** Adresse (vejnavn + husnr) */
   adresse: string | null;
+  /** Postnummer */
+  postnr?: string | null;
+  /** By/postdistrikt */
+  by?: string | null;
   /** Ejendomstype (f.eks. "Normal ejendom", "Ejerlejlighed") */
   ejendomstype: string | null;
   /** DAWA adgangsadresse UUID — til link til detaljeside */
   dawaId: string | null;
+  /** Etage (f.eks. "1", "st") — kun for ejerlejligheder (BIZZ-551) */
+  etage?: string | null;
+  /** Dør (f.eks. "tv", "th") — kun for ejerlejligheder (BIZZ-551) */
+  doer?: string | null;
+  /** Ejer-andel (f.eks. "50%", "100%") */
+  ejerandel?: string | null;
 }
 
 /** A node in the diagram graph */
@@ -66,6 +76,8 @@ export interface DiagramNode {
   type: 'person' | 'company' | 'main' | 'property' | 'status';
   /** CVR number (companies only) */
   cvr?: number;
+  /** EnhedsNummer (person nodes only) — used for dynamic expansion via CVR ES */
+  enhedsNummer?: number;
   /** BFE number (property nodes only) */
   bfeNummer?: number;
   /** Industry / branche description */
@@ -220,6 +232,9 @@ export function buildDiagramGraph(
         label: node.navn,
         type: node.erVirksomhed ? 'company' : 'person',
         cvr: node.cvr ?? undefined,
+        // Persons need enhedsNummer so DiagramForce can offer the "Udvid"-knap
+        // to fetch their other owned companies.
+        enhedsNummer: !node.erVirksomhed ? (node.enhedsNummer ?? undefined) : undefined,
         // BIZZ-357: Propagate ceased status from owner chain so diagram can render it visually
         isCeased: node.isCeased ?? undefined,
         link,
@@ -361,6 +376,7 @@ export function buildDiagramGraph(
         label: ejer.navn,
         type: ejer.erVirksomhed ? 'company' : 'person',
         cvr: ejer.erVirksomhed ? ejer.enhedsNummer : undefined,
+        enhedsNummer: !ejer.erVirksomhed ? ejer.enhedsNummer : undefined,
         branche: ejer.branche ?? undefined,
         link,
         isCoOwner: true,
@@ -382,28 +398,54 @@ export function buildDiagramGraph(
       const shown = props.slice(0, MAX_PROPS_PER_COMPANY);
       for (const p of shown) {
         const propId = `bfe-${p.bfeNummer}`;
+        // BIZZ-452: Always create edge even if node already exists (co-ownership)
+        edges.push({
+          from: companyNode.id,
+          to: propId,
+          ejerandel: p.ejerandel ?? undefined,
+        });
         if (seenIds.has(propId)) continue;
         seenIds.add(propId);
+        // Link to property detail page via DAWA adgangsadresse UUID
         const link = p.dawaId ? `/dashboard/ejendomme/${p.dawaId}` : undefined;
+        // Merge address + postnr+by into main label (e.g. "Arnold Nielsens Boulevard 64A, 2650 Hvidovre")
+        // BIZZ-551: Append etage + dør for ejerlejligheder
+        const postBy = [p.postnr, p.by].filter(Boolean).join(' ');
+        const rawAddr = p.adresse ?? `BFE ${p.bfeNummer}`;
+        const baseAddr = p.etage ? `${rawAddr}, ${p.etage}.${p.doer ? ` ${p.doer}` : ''}` : rawAddr;
+        const mainLabel = postBy ? `${baseAddr}, ${postBy}` : baseAddr;
         nodes.push({
           id: propId,
-          label: p.adresse ?? `BFE ${p.bfeNummer}`,
+          label: mainLabel,
           sublabel: p.ejendomstype ?? undefined,
           type: 'property',
           bfeNummer: p.bfeNummer,
           link,
         });
-        edges.push({ from: companyNode.id, to: propId });
       }
 
-      // BIZZ-268: Overflow node when more properties exist than shown
+      // BIZZ-268: Overflow node when more properties exist than shown.
+      // overflowItems tillader at boksen foldes ud til en klikbar liste med
+      // adresser der linker til den enkelte ejendom.
       if (props.length > MAX_PROPS_PER_COMPANY) {
         const overflowId = `props-overflow-${cvr}`;
         const remaining = props.length - MAX_PROPS_PER_COMPANY;
+        const overflowProps = props.slice(MAX_PROPS_PER_COMPANY);
         nodes.push({
           id: overflowId,
           label: `+${remaining} ejendomme`,
           type: 'property',
+          overflowItems: overflowProps.map((p) => {
+            const postBy = [p.postnr, p.by].filter(Boolean).join(' ');
+            const rawAddr = p.adresse ?? `BFE ${p.bfeNummer}`;
+            const baseAddr = p.etage
+              ? `${rawAddr}, ${p.etage}.${p.doer ? ` ${p.doer}` : ''}`
+              : rawAddr;
+            return {
+              label: postBy ? `${baseAddr}, ${postBy}` : baseAddr,
+              link: p.dawaId ? `/dashboard/ejendomme/${p.dawaId}` : undefined,
+            };
+          }),
         });
         edges.push({ from: companyNode.id, to: overflowId });
       }
@@ -627,6 +669,7 @@ export function buildPersonDiagramGraph(
           label: ejer.navn,
           type: ejer.erVirksomhed ? 'company' : 'person',
           cvr: ejer.erVirksomhed ? ejer.enhedsNummer : undefined,
+          enhedsNummer: !ejer.erVirksomhed ? ejer.enhedsNummer : undefined,
           branche: ejer.branche ?? undefined,
           link,
           isCoOwner: true,
@@ -703,18 +746,30 @@ export function buildPersonDiagramGraph(
       const shown = props.slice(0, MAX_PROPS_PER_COMPANY);
       for (const p of shown) {
         const propId = `bfe-${p.bfeNummer}`;
+        // BIZZ-452: Always create edge even if node already exists (co-ownership)
+        edges.push({
+          from: companyNode.id,
+          to: propId,
+          ejerandel: p.ejerandel ?? undefined,
+        });
         if (seenIds.has(propId)) continue;
         seenIds.add(propId);
+        // Link to property detail page via DAWA adgangsadresse UUID
         const link = p.dawaId ? `/dashboard/ejendomme/${p.dawaId}` : undefined;
+        // Merge address + postnr+by into main label (e.g. "Arnold Nielsens Boulevard 64A, 2650 Hvidovre")
+        // BIZZ-551: Append etage + dør for ejerlejligheder
+        const postBy = [p.postnr, p.by].filter(Boolean).join(' ');
+        const rawAddr = p.adresse ?? `BFE ${p.bfeNummer}`;
+        const baseAddr = p.etage ? `${rawAddr}, ${p.etage}.${p.doer ? ` ${p.doer}` : ''}` : rawAddr;
+        const mainLabel = postBy ? `${baseAddr}, ${postBy}` : baseAddr;
         nodes.push({
           id: propId,
-          label: p.adresse ?? `BFE ${p.bfeNummer}`,
+          label: mainLabel,
           sublabel: p.ejendomstype ?? undefined,
           type: 'property',
           bfeNummer: p.bfeNummer,
           link,
         });
-        edges.push({ from: companyNode.id, to: propId });
       }
 
       // BIZZ-268: Overflow node when more properties exist than shown

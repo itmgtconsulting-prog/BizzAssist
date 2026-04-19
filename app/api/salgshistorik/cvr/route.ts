@@ -23,6 +23,7 @@ import {
   DATAFORDELER_TOKEN_URL,
   DAWA_BASE_URL,
 } from '@/app/lib/serviceEndpoints';
+import { fetchDawa } from '@/app/lib/dawa';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -183,10 +184,11 @@ interface DawaBfeResult {
 async function hentAdresseFraBfe(bfe: number): Promise<DawaBfeResult> {
   const empty: DawaBfeResult = { adresse: null, postnr: null, by: null, kommune: null };
   try {
-    const res = await fetch(`${DAWA_BASE_URL}/bfe/${bfe}`, {
-      signal: AbortSignal.timeout(5000),
-      next: { revalidate: 86400 },
-    });
+    const res = await fetchDawa(
+      `${DAWA_BASE_URL}/bfe/${bfe}`,
+      { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
+      { caller: 'salgshistorik.cvr.bfe' }
+    );
     if (!res.ok) return empty;
     const json = await res.json();
 

@@ -49,6 +49,54 @@ export interface Balance {
   investeringsejendomme: number | null;
 }
 
+/**
+ * Pengestrømsopgørelse — cash flow statement (BIZZ-517a).
+ *
+ * Hentes via fsa: + ifrs-full: tags. Alle felter er nullable da mange
+ * små selskaber ikke aflægger pengestrømsopgørelse (kun krævet for
+ * regnskabsklasse C+).
+ */
+export interface Pengestroemme {
+  /** Pengestrømme fra driftsaktivitet (operating activities) */
+  fraDrift: number | null;
+  /** Pengestrømme fra investeringsaktivitet (investing activities) — typisk negativ */
+  fraInvestering: number | null;
+  /** Pengestrømme fra finansieringsaktivitet (financing activities) */
+  fraFinansiering: number | null;
+  /** Årets samlede ændring i likvider */
+  aaretsForskydning: number | null;
+  /** Likvider primo (start af perioden) */
+  likviderPrimo: number | null;
+  /** Likvider ultimo (slut af perioden) */
+  likviderUltimo: number | null;
+}
+
+/**
+ * Revisor + revisionspåtegning — auditor info (BIZZ-559).
+ *
+ * Hentes via cmn:/arr: tags. Alle felter er nullable da små regnskabsklasse B-
+ * selskaber kan have fravalgt revision, og fordi forskellige taksonomier bruger
+ * forskellige felter (sustainability-revisor for ESG-rapporter etc.).
+ */
+export interface Revisor {
+  /** Revisionsfirmaets navn (fx "PricewaterhouseCoopers Statsautoriseret Revisionspartnerselskab") */
+  firmanavn: string | null;
+  /** Revisionsfirmaets CVR-nummer (8 cifre, link til virksomhedsside) */
+  firmaCvr: string | null;
+  /** Underskrivende revisors navn */
+  revisorNavn: string | null;
+  /** Revisorens MNE-nummer (Member Number i Erhvervsstyrelsen) */
+  revisorMNE: string | null;
+  /** Underskriftssted (by) */
+  signaturSted: string | null;
+  /** Underskriftsdato (ISO format YYYY-MM-DD) */
+  signaturDato: string | null;
+  /** True hvis revisor har afgivet modificeret konklusion (forbehold) */
+  harForbehold: boolean;
+  /** Type forbehold hvis modificeret (fx "QualifiedOpinion", "AdverseOpinion") */
+  forbeholdType: string | null;
+}
+
 /** Beregnede nøgletal — calculated key ratios */
 export interface Noegletal {
   // ── Rentabilitet ──
@@ -72,6 +120,22 @@ export interface Noegletal {
   antalAnsatte: number | null;
 }
 
+/**
+ * BIZZ-560: Tekst-noter fra årsregnskabet (HTML-strippet til ren tekst).
+ * Alle felter er nullable — XBRL-noter er ikke obligatoriske og mange små
+ * selskaber undlader dem helt.
+ */
+export interface RegnskabNoter {
+  /** Virksomhedens formål / hovedaktivitet */
+  formaal: string | null;
+  /** Anvendt regnskabspraksis */
+  regnskabspraksis: string | null;
+  /** Begivenheder efter balancedagen */
+  begivenhederEfterBalancedag: string | null;
+  /** Going concern-vurdering */
+  goingConcern: string | null;
+}
+
 /** Et regnskabsår med alle data */
 export interface RegnskabsAar {
   /** Regnskabsår (f.eks. 2024) */
@@ -86,6 +150,12 @@ export interface RegnskabsAar {
   balance: Balance;
   /** Beregnede nøgletal */
   noegletal: Noegletal;
+  /** BIZZ-517a: Pengestrømsopgørelse (null hvis selskabet ikke aflægger en) */
+  pengestroemme: Pengestroemme | null;
+  /** BIZZ-559: Revisor + revisionspåtegning (null hvis revision fravalgt) */
+  revisor: Revisor | null;
+  /** BIZZ-560: Note-tekstblokke (formål, praksis, begivenheder, going concern) */
+  noter: RegnskabNoter | null;
 }
 
 /** Response shape */
@@ -156,6 +226,106 @@ const BALANCE_TAGS: Record<keyof Balance, string[]> = {
 /** Nøgletal tags (direkte fra XBRL, ikke beregnede) */
 const NOEGLETAL_TAGS: Partial<Record<keyof Noegletal, string[]>> = {
   antalAnsatte: ['AverageNumberOfEmployees', 'NumberOfEmployees'],
+};
+
+/**
+ * BIZZ-559: Revisor-tags (cmn: + arr: namespace).
+ *
+ * cmn: = common (basis-info som navn, CVR). arr: = audit-related-report
+ * (revisorerklæring, forbehold, key audit matters). Alle tags er text-blokke
+ * der ofte indeholder HTML-formateret indhold — vi udtrækker kun rå-tekst
+ * eller bool-flags her; sanitering/render er UI'ens ansvar.
+ *
+ * Bemærk: NameOfAuditFirm er i cmn: namespace, ikke fsa:.
+ * Sustainability-varianter (NameOfAuditFirmSubstainability) ignoreres da
+ * vi fokuserer på finansiel revisor.
+ */
+const REVISOR_TEXT_TAGS = {
+  firmanavn: ['NameOfAuditFirm'],
+  firmaCvr: ['IdentificationNumberCvrOfAuditFirm'],
+  revisorNavn: ['NameAndSurnameOfAuditor'],
+  revisorMNE: ['IdentificationNumberOfAuditor'],
+  signaturSted: ['SignatureOfAuditorsPlace'],
+  signaturDato: ['SignatureOfAuditorsDate'],
+  forbeholdType: ['TypeOfModifiedOpinionOnAuditedFinancialStatements'],
+} as const;
+
+/**
+ * BIZZ-560: Note-tekstblokke fra fsa: + ifrs-full: namespace.
+ *
+ * Tekstblokke er typisk fri-tekst HTML der beskriver virksomhedens formål,
+ * regnskabspraksis, begivenheder efter balancedag etc. extractText
+ * normaliserer HTML-stripping så vi får ren tekst tilbage.
+ *
+ * NB: Ingen Substainability-varianter — fokus er finansielle noter.
+ */
+const NOTER_TEXT_TAGS = {
+  /** Virksomhedens hovedaktivitet/formål */
+  formaal: [
+    'DescriptionOfPrincipalActivities',
+    'DescriptionOfActivities',
+    'DescriptionOfNatureOfEntitysOperationsAndPrincipalActivities',
+  ],
+  /** Anvendt regnskabspraksis */
+  regnskabspraksis: [
+    'DisclosureOfAccountingPolicies',
+    'DescriptionOfAccountingPolicies',
+    'DisclosureOfSummaryOfSignificantAccountingPoliciesExplanatory',
+  ],
+  /** Begivenheder efter balancedagen */
+  begivenhederEfterBalancedag: [
+    'InformationAboutSubsequentEvents',
+    'DisclosureOfNonadjustingEventsAfterReportingPeriodExplanatory',
+    'DisclosureOfEventsAfterReportingPeriodExplanatory',
+  ],
+  /** Going concern-vurdering */
+  goingConcern: ['InformationOnGoingConcernAssumption', 'DisclosureOfGoingConcernExplanatory'],
+} as const;
+
+/**
+ * BIZZ-517a: Pengestrøm-tags (fsa + IFRS-taksonomi).
+ *
+ * fsa-tags følger Danish FSA taxonomy fra Erhvervsstyrelsen — bruges af
+ * små/mellemstore danske selskaber. ifrs-full-tags bruges af børsnoterede
+ * og store selskaber der aflægger regnskab efter IFRS.
+ *
+ * Alle tags er duration-context (regnskabsperioden), undtagen
+ * likviderPrimo + likviderUltimo som er instant-context (pr. dato).
+ */
+const PENGESTROM_TAGS: Record<keyof Pengestroemme, string[]> = {
+  fraDrift: [
+    'CashFlowsFromUsedInOperatingActivities',
+    'CashFlowsFromOperatingActivities',
+    'CashFlowFromOperatingActivities',
+    'NetCashFlowsFromUsedInOperatingActivities',
+  ],
+  fraInvestering: [
+    'CashFlowsFromUsedInInvestingActivities',
+    'CashFlowsFromInvestingActivities',
+    'CashFlowFromInvestingActivities',
+    'NetCashFlowsFromUsedInInvestingActivities',
+  ],
+  fraFinansiering: [
+    'CashFlowsFromUsedInFinancingActivities',
+    'CashFlowsFromFinancingActivities',
+    'CashFlowFromFinancingActivities',
+    'NetCashFlowsFromUsedInFinancingActivities',
+  ],
+  aaretsForskydning: [
+    'IncreaseDecreaseInCashAndCashEquivalents',
+    'IncreaseDecreaseInCashAndCashEquivalentsBeforeEffectOfExchangeRateChanges',
+    'CashFlowForPeriodIncreaseDecrease',
+  ],
+  likviderPrimo: [
+    'CashAndCashEquivalentsAtBeginningOfPeriod',
+    'CashAndCashEquivalentsBeginningOfPeriod',
+  ],
+  likviderUltimo: [
+    'CashAndCashEquivalentsAtEndOfPeriod',
+    'CashAndCashEquivalentsEndOfPeriod',
+    // Fallback til Balance-tag hvis pengestrøm-specifikt ultimo mangler
+    'CashAndCashEquivalents',
+  ],
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -261,10 +431,13 @@ function extractValue(xml: string, tagNames: string[], validCtxIds?: Set<string>
         }
         const num = parseFloat(cleaned);
         if (!isNaN(num)) {
-          // Beregn reel DKK-værdi baseret på iXBRL scale eller standard XBRL
+          // Beregn reel DKK-værdi baseret på iXBRL scale eller standard XBRL decimals
           const scaleMatch = attrs.match(/scale="(-?\d+)"/);
           const scale = scaleMatch ? parseInt(scaleMatch[1], 10) : 0;
           const hasScale = scaleMatch !== null;
+          // BIZZ-449: Standard XBRL bruger decimals-attribut til at angive enhed
+          // decimals="-3" → tusinder, decimals="-6" → millioner, "INF"/0 → hele DKK
+          const decimalsMatch = attrs.match(/decimals="(-?\d+|INF)"/i);
           let dkkValue: number;
 
           if (hasScale && scale > 0) {
@@ -276,8 +449,13 @@ function extractValue(xml: string, tagNames: string[], validCtxIds?: Set<string>
             // Sandsynligvis i millioner DKK (visuel display-enhed ikke i XBRL).
             // Heuristik: hvis scale=0 men tal < 10M, antag millioner.
             dkkValue = num * 1_000_000;
+          } else if (decimalsMatch && decimalsMatch[1] !== 'INF') {
+            // BIZZ-449: Standard XBRL med decimals-attribut (mest almindelig for danske SMB'er)
+            // decimals="-3" → værdi er i tusinder → gang med 1.000
+            const d = parseInt(decimalsMatch[1], 10);
+            dkkValue = d < 0 ? num * Math.pow(10, -d) : num;
           } else {
-            // Standard XBRL: tal er i hele DKK (f.eks. 101933000000)
+            // Standard XBRL uden scale/decimals: tal er i hele DKK
             dkkValue = num;
           }
           // BIZZ-435: Return hele DKK — UI formatter selv med toLocaleString
@@ -287,6 +465,81 @@ function extractValue(xml: string, tagNames: string[], validCtxIds?: Set<string>
     }
   }
   return null;
+}
+
+/**
+ * BIZZ-559: Udtager en TEKST-værdi fra XBRL for et tag-navn.
+ *
+ * Handles both standard XBRL (<ns:Tag>text</ns:Tag>) og iXBRL inline
+ * (<ix:nonNumeric name="ns:Tag">text</ix:nonNumeric>). Bruges til
+ * revisor-info, noter, og andre ikke-numeriske felter.
+ *
+ * Vi accepterer ALLE contexts (ingen filter) — revisor-info bruger ofte
+ * dimensions for primary auditor vs sustainability auditor og en separat
+ * audit-context der ikke matcher regnskabs-perioden. Vi tager den FØRSTE
+ * non-Substainability variant så vi får hovedrevisoren.
+ *
+ * @param xml - Rå XBRL/iXBRL-streng
+ * @param tagNames - Mulige tag-navne at søge efter (uden namespace)
+ */
+function extractText(xml: string, tagNames: readonly string[]): string | null {
+  for (const tag of tagNames) {
+    // Skip Substainability-varianter eksplicit — de er ESG-revisor, ikke
+    // den finansielle hovedrevisor som dette ticket dækker
+    const escapedTag = tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // BIZZ-559 v3 (BIZZ-562 fix): ESEF iXBRL kan inkludere SAMME tag flere
+    // gange — typisk:
+    //   - en TRUNCATED version med continuedAt-attribut (visible HTML chunk)
+    //   - en FULD version (hidden complete value, ofte i ix:hidden-section)
+    // Tidligere returnerede vi første match → fik truncated. Nu samler vi
+    // ALLE matches og returnerer den længste (= den fulde værdi).
+    const patterns: RegExp[] = [
+      // Standard XBRL: <ns:Tag attrs>text</ns:Tag>
+      new RegExp(`<[a-z-]+:${escapedTag}\\s+[^>]*>([\\s\\S]*?)<\\/[a-z-]+:${escapedTag}>`, 'gi'),
+      // iXBRL nonNumeric: <ix:nonNumeric name="ns:Tag" ...>text</ix:nonNumeric>
+      new RegExp(
+        `<ix:nonNumeric\\s+[^>]*name="[^"]*:${escapedTag}"[^>]*>([\\s\\S]*?)<\\/ix:nonNumeric>`,
+        'gi'
+      ),
+      // iXBRL nonFraction (CVR-numre etc.) — bruger closing tag for at få fuld bredde
+      new RegExp(
+        `<ix:nonFraction\\s+[^>]*name="[^"]*:${escapedTag}"[^>]*>([\\s\\S]*?)<\\/ix:nonFraction>`,
+        'gi'
+      ),
+    ];
+    let longestText: string | null = null;
+    for (const re of patterns) {
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(xml)) !== null) {
+        if (!m[1]) continue;
+        const text = normaliseInline(m[1]);
+        if (!text) continue;
+        if (longestText == null || text.length > longestText.length) {
+          longestText = text;
+        }
+      }
+    }
+    if (longestText) return longestText;
+  }
+  return null;
+}
+
+/**
+ * BIZZ-559 v2: Normaliserer en text-værdi der kan indeholde inline HTML
+ * fra ESEF iXBRL (span, br, &nbsp;). Stripper alle tags og dekoder de
+ * mest almindelige HTML-entities + numeriske character references.
+ */
+function normaliseInline(raw: string): string {
+  return raw
+    .replace(/<[^>]+>/g, '') // strip all HTML tags
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 /**
@@ -342,6 +595,63 @@ function parseXbrl(xml: string, periodeStart: string, periodeSlut: string): Regn
     materielleAnlaeg: extractValue(xml, BALANCE_TAGS.materielleAnlaeg, instCtx),
     investeringsejendomme: extractValue(xml, BALANCE_TAGS.investeringsejendomme, instCtx),
   };
+
+  // BIZZ-517a: Pengestrømsopgørelse.
+  // fraDrift/Investering/Finansiering + aaretsForskydning er duration-context.
+  // likviderPrimo/Ultimo er instant-context (start/slut af perioden).
+  const pengestroemmeRaw: Pengestroemme = {
+    fraDrift: extractValue(xml, PENGESTROM_TAGS.fraDrift, durCtx),
+    fraInvestering: extractValue(xml, PENGESTROM_TAGS.fraInvestering, durCtx),
+    fraFinansiering: extractValue(xml, PENGESTROM_TAGS.fraFinansiering, durCtx),
+    aaretsForskydning: extractValue(xml, PENGESTROM_TAGS.aaretsForskydning, durCtx),
+    likviderPrimo: extractValue(xml, PENGESTROM_TAGS.likviderPrimo, instCtx),
+    likviderUltimo: extractValue(xml, PENGESTROM_TAGS.likviderUltimo, instCtx),
+  };
+  // Hvis ALLE pengestrøm-felter er null, har selskabet ikke aflagt en pengestrømsopgørelse
+  // (typisk små regnskabsklasse B-selskaber). Returnér null så UI kan skjule sektionen.
+  const harPengestroem = Object.values(pengestroemmeRaw).some((v) => v != null);
+  const pengestroemme: Pengestroemme | null = harPengestroem ? pengestroemmeRaw : null;
+
+  // BIZZ-559: Revisor + revisionspåtegning.
+  // Tags ligger typisk i en separat audit-context (ikke regnskabs-perioden) så
+  // vi accepterer ALLE contexts via extractText. Trim trailing tegn (komma etc.)
+  // som nogle ESEF-renderers tilføjer.
+  const trim = (s: string | null) => s?.replace(/[\s,;.]+$/, '').trim() || null;
+  // BIZZ-559 v2: CVR-numre kan have whitespace fra ESEF iXBRL spans (fx "30 700228").
+  // Strip alt whitespace så vi får ren 8-cifret string til /companies/{cvr}-link.
+  const cvrClean = (s: string | null) => s?.replace(/\s+/g, '') || null;
+  const forbeholdRaw = extractText(xml, REVISOR_TEXT_TAGS.forbeholdType);
+  // ESEF-enum-værdier: "Opinion" = ren konklusion (ikke modificeret).
+  // Modificerede typer: QualifiedOpinion, AdverseOpinion, DisclaimerOfOpinion.
+  const harForbehold =
+    forbeholdRaw != null && forbeholdRaw !== '' && !/^opinion$/i.test(forbeholdRaw);
+  const revisorRaw: Revisor = {
+    firmanavn: trim(extractText(xml, REVISOR_TEXT_TAGS.firmanavn)),
+    firmaCvr: cvrClean(extractText(xml, REVISOR_TEXT_TAGS.firmaCvr)),
+    revisorNavn: trim(extractText(xml, REVISOR_TEXT_TAGS.revisorNavn)),
+    revisorMNE: extractText(xml, REVISOR_TEXT_TAGS.revisorMNE),
+    signaturSted: trim(extractText(xml, REVISOR_TEXT_TAGS.signaturSted)),
+    signaturDato: extractText(xml, REVISOR_TEXT_TAGS.signaturDato),
+    harForbehold,
+    forbeholdType: harForbehold ? forbeholdRaw : null,
+  };
+  // Hvis ingen revisor-felter findes (revision fravalgt eller selskabet er
+  // udenlandsk uden dansk revisor-tagging), returnér null så UI skjuler sektionen.
+  const harRevisor =
+    revisorRaw.firmanavn != null || revisorRaw.revisorNavn != null || revisorRaw.firmaCvr != null;
+  const revisor: Revisor | null = harRevisor ? revisorRaw : null;
+
+  // BIZZ-560: Note-tekstblokke (formål, regnskabspraksis, begivenheder, going concern).
+  // Brug extractText som allerede håndterer iXBRL HTML-stripping via normaliseInline.
+  // Returnér null-objekt når INGEN noter er fundet — UI skjuler hele sektionen.
+  const noterRaw: RegnskabNoter = {
+    formaal: extractText(xml, NOTER_TEXT_TAGS.formaal),
+    regnskabspraksis: extractText(xml, NOTER_TEXT_TAGS.regnskabspraksis),
+    begivenhederEfterBalancedag: extractText(xml, NOTER_TEXT_TAGS.begivenhederEfterBalancedag),
+    goingConcern: extractText(xml, NOTER_TEXT_TAGS.goingConcern),
+  };
+  const harNoter = Object.values(noterRaw).some((v) => v != null && v.length > 0);
+  const noter: RegnskabNoter | null = harNoter ? noterRaw : null;
 
   // Nøgletal — direkte fra XBRL + beregnede
   const antalAnsatte = extractValue(xml, NOEGLETAL_TAGS.antalAnsatte ?? [], anyCtx);
@@ -441,7 +751,17 @@ function parseXbrl(xml: string, periodeStart: string, periodeSlut: string): Regn
     antalAnsatte,
   };
 
-  return { aar, periodeStart, periodeSlut, resultat, balance, noegletal };
+  return {
+    aar,
+    periodeStart,
+    periodeSlut,
+    resultat,
+    balance,
+    noegletal,
+    pengestroemme,
+    revisor,
+    noter,
+  };
 }
 
 // ─── Route Handler ────────────────────────────────────────────────────────────
@@ -474,6 +794,64 @@ function countFields(y: RegnskabsAar): number {
 /** Beregn periodelængde i dage */
 function periodeDage(y: RegnskabsAar): number {
   return (new Date(y.periodeSlut).getTime() - new Date(y.periodeStart).getTime()) / 86400000;
+}
+
+/**
+ * BIZZ-459/466: Normaliser numeriske felter til T DKK (tusinder).
+ *
+ * XBRL-parseren returnerer inkonsistente enheder på tværs af virksomheder:
+ *  - Nogle SMB'er: decimals-attribut mangler → returneres som T DKK (fx JaJR 15310)
+ *  - Store virksomheder med decimals="-3"/"-6": returneres som fuld DKK (fx NOVO 130540000)
+ *
+ * Heuristik: Find max abs(monetært felt) i et regnskabsår. Hvis > 10M er det
+ * "umuligt" T DKK for et normalt årsregnskab (=10 mia T DKK) → dvs. tallene
+ * er i fuld DKK. Vi dividerer alle monetære felter med 1.000 så udlevering
+ * altid er konsistent T DKK. Nøgletal-rationerne (soliditetsgrad, ROI osv.)
+ * røres ikke da de er procenter/forhold.
+ */
+function normaliserTilTDKK(year: RegnskabsAar): RegnskabsAar {
+  const monetaereFelter = [
+    ...Object.values(year.resultat),
+    ...Object.values(year.balance),
+    year.noegletal.nettoGaeld,
+    // BIZZ-517a: Pengestrøm-felter er også monetære og skal med i T DKK-detektion
+    ...(year.pengestroemme ? Object.values(year.pengestroemme) : []),
+  ].filter((v): v is number => typeof v === 'number');
+  if (monetaereFelter.length === 0) return year;
+
+  const maksVaerdi = Math.max(...monetaereFelter.map((v) => Math.abs(v)));
+  // Tærskel 10M = 10.000.000 T DKK = 10 mia DKK. Hvis max > 10M er det
+  // urealistisk som T DKK for et dansk selskab → tallene er i fuld DKK.
+  const erFuldDkk = maksVaerdi > 10_000_000;
+  if (!erFuldDkk) return year;
+
+  const divider = (v: number | null): number | null => (v == null ? v : Math.round(v / 1000));
+  const divideAll = (obj: Record<string, number | null>): Record<string, number | null> => {
+    const out: Record<string, number | null> = {};
+    for (const [k, v] of Object.entries(obj)) out[k] = divider(v);
+    return out;
+  };
+
+  return {
+    ...year,
+    resultat: divideAll(
+      year.resultat as unknown as Record<string, number | null>
+    ) as unknown as Resultatopgoerelse,
+    balance: divideAll(
+      year.balance as unknown as Record<string, number | null>
+    ) as unknown as Balance,
+    noegletal: {
+      ...year.noegletal,
+      // Kun nettoGaeld er et monetært tal — resten er procenter/forhold
+      nettoGaeld: divider(year.noegletal.nettoGaeld),
+    },
+    // BIZZ-517a: Pengestrøm-felter er alle monetære — divider med 1.000 hvis fuld DKK
+    pengestroemme: year.pengestroemme
+      ? (divideAll(
+          year.pengestroemme as unknown as Record<string, number | null>
+        ) as unknown as Pengestroemme)
+      : null,
+  };
 }
 
 /** Dedupliker RegnskabsAar-array: ét regnskab per år, bedste vinder */
@@ -556,7 +934,12 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     }
 
     // Seneste offentliggørelsestidspunkt — bruges som cache-nøgle
-    const latestTimestamp = regnskabData.regnskaber[0]?.offentliggjort ?? '';
+    // BIZZ-449: Append parser version to timestamp so cache is invalidated when
+    // the XBRL parser logic changes (e.g. decimals attribute handling fix).
+    // v6: BIZZ-562 — extractText vælger LÆNGSTE match for ESEF continuation cases
+    const PARSER_VERSION = 'v6';
+    const latestTimestamp =
+      (regnskabData.regnskaber[0]?.offentliggjort ?? '') + `_${PARSER_VERSION}`;
 
     // ── 2. Tjek Supabase cache ──
     const supabase = getSupabase();
@@ -586,9 +969,19 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         }
 
         // Delvis cache — vi har ældre data, men ES har nyt. Behold det gamle.
-        if (cached?.years) {
+        // BIZZ-561: MEN kun hvis kun offentliggjort-tidsstempel ændret — ikke
+        // hvis PARSER_VERSION er bumpet. Hvis parser-versionen er ændret er
+        // cachet data struktur-mæssigt forældet (mangler nye felter som
+        // pengestroemme/revisor) og skal IKKE genbruges — ellers skipper
+        // nyeRegnskaber-filtret allerede-cachede år, og deduplicateYears
+        // taber pga. tie-break på countFields. Fuld re-parse kræves.
+        const cachedVersion = (cached?.es_timestamp as string | undefined)?.split('_').pop();
+        const versionMismatch = cachedVersion != null && cachedVersion !== PARSER_VERSION;
+        if (cached?.years && !versionMismatch) {
           cachedYears = cached.years as RegnskabsAar[];
         }
+        // versionMismatch = true → cachedYears forbliver tom → ALLE år re-parses
+        // med ny parser-logik. Cache opdateres efter re-parse.
       } catch {
         // Cache-fejl — fortsæt med XBRL-fetch
       }
@@ -646,7 +1039,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     // Merge nye parsede data med cached data
     const allYears = [...cachedYears, ...years];
-    const uniqueYears = deduplicateYears(allYears);
+    // BIZZ-459/466: Normaliser hver år til T DKK før vi dedupliker/returnerer,
+    // så UI'en kan vise konsistent "T DKK"-label uanset om den underliggende
+    // XBRL var deklareret i T DKK eller fuld DKK.
+    const uniqueYears = deduplicateYears(allYears).map(normaliserTilTDKK);
 
     // ── 4. Gem opdateret cache i Supabase (kun ved komplet fetch) ──
     if (supabase && latestTimestamp && offset === 0 && limit >= total && uniqueYears.length > 0) {

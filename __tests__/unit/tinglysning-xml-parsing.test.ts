@@ -447,6 +447,71 @@ describe('GET /api/tinglysning/summarisk — servitut parsing', () => {
 
     expect(body.servitutter).toEqual([]);
   });
+
+  /**
+   * BIZZ-474: For hovedejendomme (samlede ejendomme der er opdelt i
+   * ejerlejligheder — fx Thorvald Bindesbølls Plads 18) kan e-TL pakke
+   * servitut-blokke i <EjendomServitutSummarisk> frem for den korte
+   * <ServitutSummarisk>. Den gamle regex matchede kun den korteste variant
+   * og droppede servitutter for hovedejendomme. Backreference-regex skal
+   * nu matche både prefix-variantet og det oprindelige.
+   */
+  it('parses EjendomServitutSummarisk wrapper (samlet ejendom variant)', async () => {
+    httpsState.xmlBody = `<?xml version="1.0"?>
+<ns:EjendomSummarisk>
+  <ns:EjendomServitutSummarisk>
+    <ns:ServitutType>Vejret</ns:ServitutType>
+    <ns:TinglysningsDato>2019-05-16T00:00:00</ns:TinglysningsDato>
+    <ns:PrioritetNummer>5</ns:PrioritetNummer>
+    <ns:ServitutTekstSummarisk>Vejret til adgang</ns:ServitutTekstSummarisk>
+  </ns:EjendomServitutSummarisk>
+</ns:EjendomSummarisk>`;
+    const res = await GET(makeRequest());
+    const body = await res.json();
+
+    expect(body.servitutter).toHaveLength(1);
+    expect(body.servitutter[0].type).toBe('Vejret');
+    expect(body.servitutter[0].prioritet).toBe(5);
+  });
+
+  it('parses EjerlejlighedServitutSummarisk wrapper (ejerlejlighed variant)', async () => {
+    httpsState.xmlBody = `<?xml version="1.0"?>
+<ns:EjendomSummarisk>
+  <ns:EjerlejlighedServitutSummarisk>
+    <ns:ServitutType>Brugsret</ns:ServitutType>
+    <ns:TinglysningsDato>2020-01-15T00:00:00</ns:TinglysningsDato>
+    <ns:PrioritetNummer>1</ns:PrioritetNummer>
+  </ns:EjerlejlighedServitutSummarisk>
+</ns:EjendomSummarisk>`;
+    const res = await GET(makeRequest());
+    const body = await res.json();
+
+    expect(body.servitutter).toHaveLength(1);
+    expect(body.servitutter[0].type).toBe('Brugsret');
+  });
+
+  it('parses mixed variants side-by-side in same XML', async () => {
+    httpsState.xmlBody = `<?xml version="1.0"?>
+<ns:EjendomSummarisk>
+  <ns:ServitutSummarisk>
+    <ns:ServitutType>Vejret</ns:ServitutType>
+    <ns:TinglysningsDato>2010-06-01T00:00:00</ns:TinglysningsDato>
+    <ns:PrioritetNummer>2</ns:PrioritetNummer>
+  </ns:ServitutSummarisk>
+  <ns:EjendomServitutSummarisk>
+    <ns:ServitutType>Byggeservitut</ns:ServitutType>
+    <ns:TinglysningsDato>2017-03-10T00:00:00</ns:TinglysningsDato>
+    <ns:PrioritetNummer>3</ns:PrioritetNummer>
+  </ns:EjendomServitutSummarisk>
+</ns:EjendomSummarisk>`;
+    const res = await GET(makeRequest());
+    const body = await res.json();
+
+    expect(body.servitutter).toHaveLength(2);
+    const types = body.servitutter.map((s: { type: string }) => s.type);
+    expect(types).toContain('Vejret');
+    expect(types).toContain('Byggeservitut');
+  });
 });
 
 // ─── Tests: Error handling ────────────────────────────────────────────────────

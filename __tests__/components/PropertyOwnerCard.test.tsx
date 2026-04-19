@@ -19,20 +19,18 @@ import { render, screen } from '@testing-library/react';
 import PropertyOwnerCard from '@/app/components/ejendomme/PropertyOwnerCard';
 import type { EjendomSummary } from '@/app/api/ejendomme-by-owner/route';
 
-// Mock Next.js Link to avoid router dependency in jsdom
+// Mock Next.js Link to avoid router dependency in jsdom.
+// Spread all props through so aria-label, onClick and className reach the anchor.
 vi.mock('next/link', () => ({
   default: ({
     children,
     href,
-    className,
-    onClick,
+    ...rest
   }: {
     children: React.ReactNode;
     href: string;
-    className?: string;
-    onClick?: React.MouseEventHandler;
-  }) => (
-    <a href={href} className={className} onClick={onClick}>
+  } & Record<string, unknown>) => (
+    <a href={href} {...(rest as Record<string, unknown>)}>
       {children}
     </a>
   ),
@@ -50,6 +48,8 @@ const baseEjendom: EjendomSummary = {
   kommuneKode: '0101',
   ejendomstype: 'Normal ejendom',
   dawaId: 'b84b7e12-b8a1-4601-87d5-000000000001',
+  etage: null,
+  doer: null,
 };
 
 const ejendomNoAdresse: EjendomSummary = {
@@ -110,20 +110,20 @@ describe('PropertyOwnerCard', () => {
     expect(screen.getByText('Ejerlejlighed')).toBeInTheDocument();
   });
 
-  it('renders "Se detaljer" link (DA) when dawaId is set', () => {
+  // BIZZ-464: "Se detaljer"-pillen er fjernet — hele kortet er Link'et.
+  // Tjek nu bare at der findes en anchor mod detaljesiden med en læsbar
+  // aria-label for skærmlæsere.
+  it('wraps the whole card in a link to /dashboard/ejendomme/{dawaId} when dawaId is set', () => {
     render(<PropertyOwnerCard ejendom={baseEjendom} lang="da" />);
-    expect(screen.getByText('Se detaljer')).toBeInTheDocument();
-  });
-
-  it('renders "View details" link (EN) when dawaId is set', () => {
-    render(<PropertyOwnerCard ejendom={baseEjendom} lang="en" />);
-    expect(screen.getByText('View details')).toBeInTheDocument();
-  });
-
-  it('"Se detaljer" link points to /dashboard/ejendomme/{dawaId}', () => {
-    render(<PropertyOwnerCard ejendom={baseEjendom} lang="da" />);
-    const link = screen.getByText('Se detaljer').closest('a');
+    const link = screen.getByRole('link');
     expect(link).toHaveAttribute('href', `/dashboard/ejendomme/${baseEjendom.dawaId}`);
+    expect(link.getAttribute('aria-label')).toMatch(/^Se detaljer for /);
+  });
+
+  it('uses English aria-label when lang=en', () => {
+    render(<PropertyOwnerCard ejendom={baseEjendom} lang="en" />);
+    const link = screen.getByRole('link');
+    expect(link.getAttribute('aria-label')).toMatch(/^View details for /);
   });
 
   it('renders no-detail fallback message when dawaId is null', () => {

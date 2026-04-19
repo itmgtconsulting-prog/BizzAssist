@@ -37,6 +37,14 @@ import { DAR_ENDPOINT } from '@/app/lib/serviceEndpoints';
  * Constants
  * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 const MAT_WFS_ENDPOINT = 'https://services.datafordeler.dk/Matrikel/MatGaeld662/1/WFS';
+/**
+ * BIZZ-503: Datafordeler DAR WFS endpoint. Used for spatial queries
+ * (reverse geocoding) that DAR GraphQL does not support.
+ */
+const DAR_WFS_ENDPOINT = 'https://services.datafordeler.dk/DAR/DAR/1/WFS';
+
+/** BIZZ-505: Datafordeler MAT GraphQL endpoint for jordstykke BFE lookup. */
+const MAT_GQL_URL = 'https://graphql.datafordeler.dk/MAT/v1';
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  * GraphQL helpers
@@ -137,6 +145,10 @@ interface DarHusnummerRaw {
   navngivenVej: string; // UUID → DAR_NavngivenVej
   postnummer: string; // UUID → DAR_Postnummer
   kommuneinddeling: string; // UUID → DAR_Kommuneinddeling (NOT a 4-digit code)
+  /** BIZZ-508: UUID → DAR_SupplerendeBynavn (null hvis adressen ikke har et supplerende bynavn) */
+  supplerendeBynavn?: string | null;
+  /** BIZZ-508: UUID → DAR_NavngivenVejKommunedel (knytter vej til specifik kommune ved vejnavne der krydser kommunegrænser) */
+  navngivenVejKommunedel?: string | null;
 }
 
 /**
@@ -545,6 +557,8 @@ export async function darHentAdresse(id: string): Promise<DawaAdresse | null> {
           navngivenVej
           postnummer
           kommuneinddeling
+          supplerendeBynavn
+          navngivenVejKommunedel
         }
       }
     }`;
@@ -560,8 +574,9 @@ export async function darHentAdresse(id: string): Promise<DawaAdresse | null> {
       return _dawaHentAdresse(id);
     }
 
-    // Step 2: Parallelle opslag for Adgangspunkt, Postnummer, NavngivenVej og Kommuneinddeling
-    const [apData, pnData, vejData, komData] = await Promise.all([
+    // Step 2: Parallelle opslag for Adgangspunkt, Postnummer, NavngivenVej,
+    // Kommuneinddeling, BIZZ-508 SupplerendeBynavn og BIZZ-508 NavngivenVejKommunedel
+    const [apData, pnData, vejData, komData, sbData, nvkData] = await Promise.all([
       // Adressepunkt → koordinater (EPSG:25832 WKT)
       // NB: Typen hedder DAR_Adressepunkt i GraphQL (ikke DAR_Adgangspunkt).
       // position er SpatialPointEpsg25832Type med { wkt } underfelt.
@@ -608,6 +623,36 @@ export async function darHentAdresse(id: string): Promise<DawaAdresse | null> {
               virkningstid: "${ts}"
               registreringstid: "${ts}"
             ) { nodes { kommunekode navn } }
+          }`)
+        : Promise.resolve(null),
+
+      // BIZZ-508: SupplerendeBynavn → navn (fx "Vejlgårde")
+      hn.supplerendeBynavn
+        ? darQuery<{ DAR_SupplerendeBynavn: { nodes: Array<{ navn: string }> } }>(`{
+            DAR_SupplerendeBynavn(
+              where: { id_lokalId: { eq: "${hn.supplerendeBynavn}" } }
+              virkningstid: "${ts}"
+              registreringstid: "${ts}"
+            ) { nodes { navn } }
+          }`)
+        : Promise.resolve(null),
+
+      // BIZZ-508: NavngivenVejKommunedel → kommuneinddeling-UUID
+      // Relevant når en navngiven vej strækker sig over flere kommuner
+      // (sjælden edge case) — vi henter kommune-referencen herfra for at
+      // kende den KORREKTE kommunetilhørighed for netop dette husnummer,
+      // frem for blot husnummer.kommuneinddeling.
+      hn.navngivenVejKommunedel
+        ? darQuery<{
+            DAR_NavngivenVejKommunedel: {
+              nodes: Array<{ kommune: string | null; vejkode: string | null }>;
+            };
+          }>(`{
+            DAR_NavngivenVejKommunedel(
+              where: { id_lokalId: { eq: "${hn.navngivenVejKommunedel}" } }
+              virkningstid: "${ts}"
+              registreringstid: "${ts}"
+            ) { nodes { kommune vejkode } }
           }`)
         : Promise.resolve(null),
     ]);
@@ -659,6 +704,20 @@ export async function darHentAdresse(id: string): Promise<DawaAdresse | null> {
       resolveKommunenavnFromRawCode(hn.kommuneinddeling) ||
       '';
 
+    // BIZZ-508: Udtræk supplerendeBynavn-navn (fx "Vejlgårde")
+    const sbNode = sbData?.DAR_SupplerendeBynavn?.nodes?.[0];
+
+    // BIZZ-508: Udtræk vejkode fra NavngivenVejKommunedel.
+    // Log warning hvis nvkNode.kommune afviger fra hn.kommuneinddeling (edge case for
+    // vejnavne der krydser kommunegrænser) så vi er klar over data-diskrepansen.
+    const nvkNode = nvkData?.DAR_NavngivenVejKommunedel?.nodes?.[0];
+    if (nvkNode?.kommune && hn.kommuneinddeling && nvkNode.kommune !== hn.kommuneinddeling) {
+      logger.warn(
+        '[darHentAdresse] NavngivenVejKommunedel.kommune afviger fra Husnummer.kommuneinddeling ' +
+          `(${nvkNode.kommune} vs ${hn.kommuneinddeling}) — cross-kommune vej detekteret for ${hn.id_lokalId}`
+      );
+    }
+
     return {
       id: hn.id_lokalId,
       vejnavn: vejNode?.vejnavn ?? parsed.vejnavn,
@@ -670,7 +729,14 @@ export async function darHentAdresse(id: string): Promise<DawaAdresse | null> {
       x: coords?.[0] ?? 0,
       y: coords?.[1] ?? 0,
       adressebetegnelse: rensAdresseStreng(hn.adgangsadressebetegnelse),
-      zone: undefined, // Zone kræver Plandata WFS — udeladt for nu
+      // BIZZ-509: Zone er en planloven-attribut og lever i Plandata.dk —
+      // ikke i DAR. Slå op i plandata WFS når vi har WGS84-koordinater.
+      // Ikke-kritisk: null hvis plandata er utilgængelig.
+      zone: coords ? ((await hentZoneFraPlandata(coords[0], coords[1])) ?? undefined) : undefined,
+      // BIZZ-508: Supplerende bynavn fra DAR (fx "Vejlgårde")
+      supplerendebynavn: sbNode?.navn ?? undefined,
+      // BIZZ-508: Vejkode fra NavngivenVejKommunedel — kommunens lokale vejnummer
+      vejkode: nvkNode?.vejkode ?? undefined,
     };
   } catch (err) {
     // DAR fejlede — fallback til DAWA mens den stadig virker
@@ -773,4 +839,820 @@ export async function darHentJordstykke(lng: number, lat: number): Promise<DawaJ
  */
 export function erDarId(id: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+}
+
+/**
+ * BIZZ-504: GeoJSON FeatureCollection of address points inside a bbox.
+ * Properties kept minimal (`husnr` only) so the response matches the
+ * legacy DAWA shape used by the map layer.
+ */
+export interface DarHusnumreFeatureCollection {
+  type: 'FeatureCollection';
+  features: Array<{
+    type: 'Feature';
+    geometry: { type: 'Point'; coordinates: [number, number] };
+    properties: { husnr: string };
+  }>;
+}
+
+/**
+ * BIZZ-504: Hent alle husnumre inden for en WGS84 bbox via Datafordeler
+ * DAR WFS. Bruger WFS `bbox` parameter på husnummer/position geometri —
+ * WFS understøtter dette natively, ingen CQL_FILTER nødvendig.
+ *
+ * Returnerer:
+ *   - `null` hvis DATAFORDELER_API_KEY mangler, WFS fejler eller svaret
+ *     ikke kan parses → caller skal falde tilbage til DAWA
+ *   - Tom `features`-liste hvis bbox er gyldig men ingen adresser findes
+ *   - Udfyldt FeatureCollection med Point-features ellers
+ *
+ * Never throws; alle fejl logges.
+ *
+ * @param w - West længdegrad (WGS84)
+ * @param s - South breddegrad (WGS84)
+ * @param e - East længdegrad (WGS84)
+ * @param n - North breddegrad (WGS84)
+ * @param maxFeatures - Hard cap (default 1000 for kort-layeret)
+ */
+export async function darHusnumreBbox(
+  w: number,
+  s: number,
+  e: number,
+  n: number,
+  maxFeatures = 1000
+): Promise<DarHusnumreFeatureCollection | null> {
+  const apiKey = process.env.DATAFORDELER_API_KEY;
+  if (!apiKey) {
+    logger.warn(
+      'darHusnumreBbox: DATAFORDELER_API_KEY not set — skipping DAR, caller should fall back to DAWA'
+    );
+    return null;
+  }
+
+  try {
+    // WFS 2.0 standard: bbox filter as "minx,miny,maxx,maxy,srsName".
+    // srsName ensures the coordinates are interpreted as WGS84 regardless
+    // of server default.
+    const params = new URLSearchParams({
+      service: 'WFS',
+      version: '2.0.0',
+      request: 'GetFeature',
+      typeNames: 'DAR:Husnummer_Gaeldende',
+      srsName: 'EPSG:4326',
+      bbox: `${w},${s},${e},${n},EPSG:4326`,
+      outputFormat: 'json',
+      count: String(maxFeatures),
+      apiKey,
+    });
+
+    const res = await fetch(proxyUrl(`${DAR_WFS_ENDPOINT}?${params.toString()}`), {
+      headers: { ...proxyHeaders() },
+      signal: AbortSignal.timeout(proxyTimeout()),
+    });
+
+    if (!res.ok) {
+      logger.warn(`darHusnumreBbox DAR WFS fejl: ${res.status} ${res.statusText}`);
+      return null;
+    }
+
+    const geojson = (await res.json()) as {
+      features?: Array<{
+        properties?: Record<string, unknown>;
+        geometry?: { type?: string; coordinates?: unknown };
+      }>;
+    };
+
+    if (!Array.isArray(geojson.features)) return null;
+
+    const features: DarHusnumreFeatureCollection['features'] = [];
+    for (const f of geojson.features) {
+      const coords = f.geometry?.coordinates;
+      // Accept only Point geometries with numeric [lng, lat]
+      if (
+        f.geometry?.type !== 'Point' ||
+        !Array.isArray(coords) ||
+        typeof coords[0] !== 'number' ||
+        typeof coords[1] !== 'number'
+      ) {
+        continue;
+      }
+      const husnr = String(
+        f.properties?.husnummertekst ?? f.properties?.husnummer ?? f.properties?.husnr ?? ''
+      );
+      features.push({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [coords[0], coords[1]] },
+        properties: { husnr },
+      });
+    }
+
+    return { type: 'FeatureCollection', features };
+  } catch (err) {
+    logger.error('darHusnumreBbox DAR WFS fetch failed:', err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ * BIZZ-503: Reverse geocoding via Datafordeler DAR WFS
+ * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+/**
+ * Result shape of a successful reverse geocode.
+ * Keeps the `id` nullable — DAR WFS occasionally returns a feature without an
+ * address UUID attached.
+ */
+export interface DarReverseResult {
+  /** Human-readable address string, e.g. "Bredgade 1, 1260 København K" */
+  adresse: string;
+  /** DAR Husnummer UUID when available (navigable in our app) */
+  id: string | null;
+}
+
+/**
+ * BIZZ-503: Reverse-geocode a WGS84 coordinate via Datafordeler DAR WFS.
+ *
+ * Uses CQL_FILTER DWITHIN on the `husnummer:position` geometry to find
+ * address points within ~50m of the input coordinate. Returns the first
+ * result (WFS does not sort by distance, but density of Danish addresses
+ * makes the nearest match reliable inside 50m).
+ *
+ * Returns null when:
+ *   - DATAFORDELER_API_KEY is not set
+ *   - WFS returns no features
+ *   - WFS errors (non-2xx) — callers should fall back to DAWA
+ *
+ * Never throws; all errors are logged.
+ *
+ * @param lng - Længdegrad (WGS84)
+ * @param lat - Breddegrad (WGS84)
+ * @returns DarReverseResult or null
+ */
+export async function darReverseGeocode(
+  lng: number,
+  lat: number
+): Promise<DarReverseResult | null> {
+  const apiKey = process.env.DATAFORDELER_API_KEY;
+  if (!apiKey) {
+    logger.warn(
+      'darReverseGeocode: DATAFORDELER_API_KEY not set — skipping DAR, caller should fall back to DAWA'
+    );
+    return null;
+  }
+
+  try {
+    // DWITHIN with 50m radius. Denmark's address density is such that any
+    // address this close is effectively "the one" the user clicked. If no
+    // feature is returned we return null and the caller falls back to DAWA.
+    const cql = `DWITHIN(husnummer/position,POINT(${lng} ${lat}),50,meters)`;
+    const params = new URLSearchParams({
+      service: 'WFS',
+      version: '2.0.0',
+      request: 'GetFeature',
+      typeNames: 'DAR:Husnummer_Gaeldende',
+      srsName: 'EPSG:4326',
+      CQL_FILTER: cql,
+      outputFormat: 'json',
+      count: '1',
+      apiKey,
+    });
+
+    const res = await fetch(proxyUrl(`${DAR_WFS_ENDPOINT}?${params.toString()}`), {
+      headers: { ...proxyHeaders() },
+      signal: AbortSignal.timeout(proxyTimeout()),
+    });
+
+    if (!res.ok) {
+      logger.warn(`darReverseGeocode DAR WFS fejl: ${res.status} ${res.statusText}`);
+      return null;
+    }
+
+    const geojson = (await res.json()) as {
+      features?: Array<{
+        properties?: Record<string, unknown>;
+        id?: string;
+      }>;
+    };
+
+    const feature = geojson.features?.[0];
+    if (!feature?.properties) return null;
+
+    const p = feature.properties;
+    // DAR exposes husnummer + adresseUuid under slightly varying names depending
+    // on output format version. Guard all three common casings.
+    const vejnavn = (p.vejnavn ?? p.vejNavn ?? '') as string;
+    const husnr = (p.husnummertekst ?? p.husnummer ?? p.husnr ?? '') as string;
+    const postnr = String(p.postnummer ?? p.postnr ?? '').trim();
+    const postnrnavn = (p.postdistriktnavn ?? p.postnrnavn ?? '') as string;
+    const id =
+      (p.adresseUuid as string | null) ??
+      (p.husnummerUuid as string | null) ??
+      (feature.id as string | null) ??
+      null;
+
+    const adresseParts = [`${vejnavn} ${husnr}`.trim()];
+    if (postnr) adresseParts.push(`${postnr} ${postnrnavn}`.trim());
+    const adresse = adresseParts.filter(Boolean).join(', ');
+
+    if (!adresse) return null;
+
+    return { adresse, id };
+  } catch (err) {
+    logger.error(
+      'darReverseGeocode DAR WFS fetch failed:',
+      err instanceof Error ? err.message : err
+    );
+    return null;
+  }
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ * BIZZ-509: Plandata WFS — zone classification (Byzone/Landzone/Sommerhus)
+ * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+/**
+ * BIZZ-509: Zone data (Byzone / Landzone / Sommerhus) is a planloven
+ * concept and officially lives in Plandata.dk — not DAWA. We used to pull
+ * it from DAWA's `adgangsadresser.zone` field because that was the
+ * convenient path, but DAWA shuts down 2026-07-01 so we have to go to
+ * source.
+ *
+ * Plandata.dk's GeoServer WFS is the same one `/api/plandata` already
+ * uses for lokalplaner / kommuneplanrammer. No API key, SRID=4326 prefix
+ * required in CQL (otherwise coords are interpreted as EPSG:25832 and
+ * the spatial query returns nothing).
+ */
+const PLANDATA_WFS_ENDPOINT = 'https://geoserver.plandata.dk/geoserver/wfs';
+
+/**
+ * BIZZ-509: Resolve zone classification for a WGS84 coordinate via
+ * Plandata.dk WFS. Returns "Byzone", "Landzone", "Sommerhuszone" or null.
+ *
+ * The "zonekort_vedtaget_v" layer covers the entire country — a properly
+ * classified coordinate always hits one polygon. Layer naming is
+ * defensively tried against a small list of historical variants because
+ * plandata.dk has renamed layers in the past.
+ *
+ * Never throws. Returns null on any fetch/parse failure so `darHentAdresse`
+ * can continue without zone data.
+ *
+ * @param lng - Længdegrad (WGS84)
+ * @param lat - Breddegrad (WGS84)
+ */
+export async function hentZoneFraPlandata(lng: number, lat: number): Promise<string | null> {
+  // SRID=4326; prefix is load-bearing — without it GeoServer treats coords
+  // as EPSG:25832 (UTM32N) and returns zero features.
+  const cql = encodeURIComponent(`INTERSECTS(geometri,SRID=4326;POINT(${lng} ${lat}))`);
+
+  // Try layers in order. Stop at the first one that returns a feature.
+  // pdk: prefix is the current convention (matches other plandata layers).
+  const LAYERS = ['pdk:theme_pdk_zonekort_vedtaget_v', 'plandk:zonekort'];
+
+  for (const typeName of LAYERS) {
+    try {
+      const url =
+        `${PLANDATA_WFS_ENDPOINT}?service=WFS&version=1.0.0&request=GetFeature` +
+        `&typeName=${encodeURIComponent(typeName)}` +
+        `&outputFormat=application/json` +
+        `&CQL_FILTER=${cql}` +
+        `&maxFeatures=1`;
+
+      const res = await fetch(url, {
+        signal: AbortSignal.timeout(5000),
+        next: { revalidate: 86400 },
+      });
+      if (!res.ok) continue;
+
+      const json = (await res.json()) as {
+        features?: Array<{ properties?: Record<string, unknown> }>;
+      };
+      const props = json.features?.[0]?.properties;
+      if (!props) continue;
+
+      // Field name varies across layer versions. Try each in priority order.
+      const rawZone =
+        props.zone ?? props.zone_navn ?? props.zonekode ?? props.zoneKode ?? props.betegnelse;
+      if (typeof rawZone !== 'string' || rawZone.length === 0) continue;
+
+      return normaliseZone(rawZone);
+    } catch (err) {
+      logger.warn(
+        `hentZoneFraPlandata: layer=${typeName} failed`,
+        err instanceof Error ? err.message : err
+      );
+      // Try next layer
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Normalise zone label returned by plandata.dk to the canonical values
+ * the UI expects. Historically the service has returned numeric codes
+ * ("1"/"2"/"3"), short labels ("Byzone"), and longer phrases
+ * ("Sommerhusområde"). Map them to the trio used throughout the app.
+ *
+ * @param raw - Raw zone string or numeric code from plandata
+ */
+function normaliseZone(raw: string): string {
+  const t = raw.trim().toLowerCase();
+  if (t === '1' || t.startsWith('by')) return 'Byzone';
+  if (t === '2' || t.startsWith('sommerhus')) return 'Sommerhuszone';
+  if (t === '3' || t.startsWith('land')) return 'Landzone';
+  return raw; // pass through unrecognised values so the UI can show them
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ * BIZZ-507: DAR GraphQL — batch resolve etage/dør for BBR_Enhed UUIDs
+ * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+/**
+ * BIZZ-507: Per-adresse-UUID minimal shape used by BBR enhed enrichment.
+ * Keeps the same keys the legacy DAWA batch returned so callers can swap
+ * the implementation without further changes.
+ */
+export interface DarAdresseUnit {
+  etage: string | null;
+  doer: string | null;
+  adressebetegnelse: string;
+}
+
+/**
+ * BIZZ-507: Batch-resolve `etagebetegnelse` + `doerbetegnelse` for a list
+ * of DAR adresse UUIDs (typically `BBR_Enhed.adresseIdentificerer`).
+ *
+ * Uses DAR GraphQL's `in: [...]` filter so a whole block of flats comes
+ * back in one query. This replaces the DAWA batch call
+ * `/adresser?id=…&id=…&struktur=mini` — that endpoint dies 2026-07-01.
+ *
+ * Returns:
+ *   - Map<uuid, DarAdresseUnit> with one entry per UUID DAR knows about
+ *   - Empty map on any error / missing API key so callers can fall back
+ *     to DAWA without a null-check branch
+ *
+ * Never throws.
+ *
+ * @param ids - Array of DAR adresse UUIDs
+ */
+export async function darHentAdresserBatch(
+  ids: readonly string[]
+): Promise<Map<string, DarAdresseUnit>> {
+  const result = new Map<string, DarAdresseUnit>();
+  if (!process.env.DATAFORDELER_API_KEY) {
+    logger.warn(
+      'darHentAdresserBatch: DATAFORDELER_API_KEY not set — returning empty map, caller should fall back to DAWA'
+    );
+    return result;
+  }
+
+  // Filter to real UUID shape + dedupe. Empty / malformed IDs short-circuit
+  // so we never send a bogus `in:[]` query.
+  const uniqueUuids = Array.from(
+    new Set(
+      ids.filter((id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))
+    )
+  );
+  if (uniqueUuids.length === 0) return result;
+
+  const ts = nowTs();
+  const quotedIds = uniqueUuids.map((id) => `"${id.replace(/"/g, '\\"')}"`).join(', ');
+  // DAR caps `first` at some internal limit; request more than we have so
+  // the whole batch fits. The typical caller passes ≤50 UUIDs.
+  const first = Math.max(uniqueUuids.length, 50);
+
+  const data = await darQuery<{
+    DAR_Adresse: {
+      nodes: Array<{
+        id_lokalId: string;
+        adressebetegnelse?: string;
+        etagebetegnelse?: string;
+        doerbetegnelse?: string;
+      }>;
+    };
+  }>(`{
+    DAR_Adresse(
+      where: { id_lokalId: { in: [${quotedIds}] } }
+      virkningstid: "${ts}"
+      registreringstid: "${ts}"
+      first: ${first}
+    ) {
+      nodes {
+        id_lokalId
+        adressebetegnelse
+        etagebetegnelse
+        doerbetegnelse
+      }
+    }
+  }`);
+
+  for (const node of data?.DAR_Adresse?.nodes ?? []) {
+    if (!node.id_lokalId) continue;
+    result.set(node.id_lokalId, {
+      etage: node.etagebetegnelse && node.etagebetegnelse.length > 0 ? node.etagebetegnelse : null,
+      doer: node.doerbetegnelse && node.doerbetegnelse.length > 0 ? node.doerbetegnelse : null,
+      adressebetegnelse: node.adressebetegnelse ?? '',
+    });
+  }
+
+  return result;
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ * BIZZ-510: MAT WFS — paginated bulk jordstykker for sitemap generation
+ * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+/**
+ * Minimal jordstykke-shape used for sitemap generation.
+ * Covers the subset of fields the cron job needs — no geometry, no
+ * fredning/strandbeskyttelse, since slug + BFE is all it writes.
+ */
+export interface MatJordstykkeBulk {
+  bfenummer: number;
+  matrikelnr: string;
+  ejerlavsnavn: string;
+  ejerlavskode: number;
+}
+
+/**
+ * BIZZ-510: Page through Datafordeler MAT WFS `Jordstykke_Gaeldende` to
+ * enumerate every jordstykke with a BFE number. Used by the sitemap cron
+ * job to replace the DAWA `/jordstykker` endpoint before the 2026-07-01
+ * shutdown.
+ *
+ * WFS pagination uses `startIndex` (0-based) + `count` (page size). An
+ * empty feature array signals the end of the dataset. Field names are
+ * read defensively — MatGaeld662 has historically varied between
+ * `bfenummer` / `bfeNummer`, `matrikelnr` / `matrnr`, etc.
+ *
+ * Returns `null` on any fetch / parse failure so the caller can fall back
+ * to DAWA. Never throws.
+ *
+ * @param startIndex - 0-based offset into the jordstykker dataset
+ * @param count      - Max features to return (MatGaeld662 caps at 1000)
+ */
+export async function matListJordstykker(
+  startIndex: number,
+  count: number
+): Promise<MatJordstykkeBulk[] | null> {
+  const apiKey = process.env.DATAFORDELER_API_KEY;
+  if (!apiKey) {
+    logger.warn(
+      'matListJordstykker: DATAFORDELER_API_KEY not set — skipping MAT, caller should fall back to DAWA'
+    );
+    return null;
+  }
+
+  try {
+    const params = new URLSearchParams({
+      service: 'WFS',
+      version: '2.0.0',
+      request: 'GetFeature',
+      typeNames: 'mat:Jordstykke_Gaeldende',
+      srsName: 'EPSG:4326',
+      outputFormat: 'json',
+      count: String(count),
+      startIndex: String(startIndex),
+      apiKey,
+    });
+
+    const res = await fetch(proxyUrl(`${MAT_WFS_ENDPOINT}?${params.toString()}`), {
+      headers: { ...proxyHeaders() },
+      signal: AbortSignal.timeout(proxyTimeout()),
+    });
+
+    if (!res.ok) {
+      logger.warn(`matListJordstykker MAT WFS fejl: ${res.status} ${res.statusText}`);
+      return null;
+    }
+
+    const geojson = (await res.json()) as {
+      features?: Array<{ properties?: Record<string, unknown> }>;
+    };
+
+    if (!Array.isArray(geojson.features)) return null;
+
+    const result: MatJordstykkeBulk[] = [];
+    for (const f of geojson.features) {
+      const p = f.properties;
+      if (!p) continue;
+      const bfeRaw = p.bfenummer ?? p.bfeNummer ?? p.BFEnummer;
+      const bfe =
+        typeof bfeRaw === 'number' ? bfeRaw : typeof bfeRaw === 'string' ? Number(bfeRaw) : NaN;
+      if (!bfe || !Number.isFinite(bfe)) continue;
+
+      const matrikelnr = String(p.matrikelnummer ?? p.matrnr ?? p.matrikelnr ?? '');
+      const ejerlavsnavn = String(p.ejerlavsnavn ?? p.ejerlavsNavn ?? '');
+      const ejerlavskodeRaw = p.ejerlavskode ?? p.ejerlavsKode ?? p.ejerlav_kode ?? 0;
+      const ejerlavskode =
+        typeof ejerlavskodeRaw === 'number'
+          ? ejerlavskodeRaw
+          : typeof ejerlavskodeRaw === 'string'
+            ? Number(ejerlavskodeRaw) || 0
+            : 0;
+
+      if (!matrikelnr && !ejerlavsnavn) continue;
+
+      result.push({ bfenummer: bfe, matrikelnr, ejerlavsnavn, ejerlavskode });
+    }
+
+    return result;
+  } catch (err) {
+    logger.error(
+      'matListJordstykker MAT WFS fetch failed:',
+      err instanceof Error ? err.message : err
+    );
+    return null;
+  }
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ * BIZZ-506: DAR GraphQL — resolve full adresse UUID for ejerlejligheder
+ * (adgangsadresse + etage + dør combination)
+ * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+/**
+ * BIZZ-506: Resolve a full DAR `adresse` UUID for a specific unit by
+ * chaining DAR GraphQL queries:
+ *   1. DAR_NavngivenVej(vejnavn)        → vej-UUID(s)
+ *   2. DAR_Postnummer(postnr)           → postnr-UUID
+ *   3. DAR_Husnummer(husnummertekst +
+ *      postnummer-UUID + navngivenVej)  → husnummer-UUID
+ *   4. DAR_Adresse(husnummer-UUID +
+ *      etagebetegnelse + doerbetegnelse) → final adresse-UUID
+ *
+ * Used by ejerlejlighed flows where we have split fields (vejnavn, husnr,
+ * postnr, etage, dør) from EJF but need the DAR adresseIdentificerer to
+ * query BBR_Enhed. DAWA /adresser?vejnavn=… is the pre-2026-07-01
+ * equivalent; callers should fall back to it on null.
+ *
+ * Never throws. Returns null on any missing API key, empty chain result,
+ * or GraphQL error.
+ *
+ * Cost: up to 4 GraphQL round-trips per call. Batch at the caller level
+ * when resolving many units from the same address list.
+ *
+ * @param input - Split address components
+ */
+export async function darResolveAdresseId(input: {
+  vejnavn: string;
+  husnr: string;
+  postnr: string;
+  etage?: string | null;
+  doer?: string | null;
+}): Promise<string | null> {
+  if (!process.env.DATAFORDELER_API_KEY) {
+    logger.warn(
+      'darResolveAdresseId: DATAFORDELER_API_KEY not set — skipping DAR, caller should fall back to DAWA'
+    );
+    return null;
+  }
+
+  const ts = nowTs();
+  const esc = (s: string) => s.replace(/"/g, '\\"');
+
+  // Step 1: NavngivenVej (vejnavne kan forekomme flere gange i landet →
+  // vi henter op til 20 kandidater og filtrerer via postnummer i trin 3).
+  const vejData = await darQuery<{
+    DAR_NavngivenVej: { nodes: Array<{ id_lokalId: string }> };
+  }>(`{
+    DAR_NavngivenVej(
+      where: { vejnavn: { eq: "${esc(input.vejnavn)}" } }
+      virkningstid: "${ts}"
+      registreringstid: "${ts}"
+      first: 20
+    ) { nodes { id_lokalId } }
+  }`);
+  const vejUuids = new Set((vejData?.DAR_NavngivenVej?.nodes ?? []).map((n) => n.id_lokalId));
+  if (vejUuids.size === 0) return null;
+
+  // Step 2: Postnummer
+  const postnrData = await darQuery<{
+    DAR_Postnummer: { nodes: Array<{ id_lokalId: string }> };
+  }>(`{
+    DAR_Postnummer(
+      where: { postnr: { eq: "${esc(input.postnr)}" } }
+      virkningstid: "${ts}"
+      registreringstid: "${ts}"
+      first: 1
+    ) { nodes { id_lokalId } }
+  }`);
+  const postnrUuid = postnrData?.DAR_Postnummer?.nodes?.[0]?.id_lokalId;
+  if (!postnrUuid) return null;
+
+  // Step 3: Husnummer — match husnummertekst + postnr, then filter by vej-UUIDs
+  const husnummerData = await darQuery<{
+    DAR_Husnummer: { nodes: Array<{ id_lokalId: string; navngivenVej: string }> };
+  }>(`{
+    DAR_Husnummer(
+      where: {
+        husnummertekst: { eq: "${esc(input.husnr)}" }
+        postnummer: { eq: "${postnrUuid}" }
+      }
+      virkningstid: "${ts}"
+      registreringstid: "${ts}"
+      first: 20
+    ) { nodes { id_lokalId navngivenVej } }
+  }`);
+  const husnummerMatch = (husnummerData?.DAR_Husnummer?.nodes ?? []).find((h) =>
+    vejUuids.has(h.navngivenVej)
+  );
+  if (!husnummerMatch) return null;
+
+  // Step 4: Adresse — composite match on husnummer + etage + dør.
+  // Etage or dør being absent is fine (ground-floor, single-entry flats) —
+  // we still require an exact match on whatever is provided.
+  const adresseWhereParts = [`husnummer: { eq: "${husnummerMatch.id_lokalId}" }`];
+  if (input.etage) {
+    adresseWhereParts.push(`etagebetegnelse: { eq: "${esc(input.etage)}" }`);
+  }
+  if (input.doer) {
+    adresseWhereParts.push(`doerbetegnelse: { eq: "${esc(input.doer)}" }`);
+  }
+
+  const adresseData = await darQuery<{
+    DAR_Adresse: { nodes: Array<{ id_lokalId: string }> };
+  }>(`{
+    DAR_Adresse(
+      where: { ${adresseWhereParts.join(', ')} }
+      virkningstid: "${ts}"
+      registreringstid: "${ts}"
+      first: 1
+    ) { nodes { id_lokalId } }
+  }`);
+  return adresseData?.DAR_Adresse?.nodes?.[0]?.id_lokalId ?? null;
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ * BIZZ-505: MAT GraphQL — jordstykke by BFE with ejerlav-name resolution
+ * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+/**
+ * Shape returned by matHentJordstykkeByBfe — intentionally kept close to the
+ * legacy DAWA `/jordstykker?bfenummer=` response so the /api/adresse/jordstykke
+ * route can return a compatible payload without caller changes.
+ */
+export interface MatJordstykkeByBfe {
+  matrikelnr: string;
+  registreretAreal: number | null;
+  vejareal: number | null;
+  ejerlav: {
+    /** 7-digit ejerlavskode, e.g. 1161451 — may be 0 if MAT_Ejerlav lookup fails */
+    kode: number;
+    /** Ejerlavsnavn (e.g. "Søgård Hgd., Kliplev Sogn") — null if resolution fails */
+    navn: string | null;
+  };
+}
+
+/**
+ * BIZZ-505: Look up a jordstykke by BFE number via MAT GraphQL and resolve
+ * the associated ejerlav name.
+ *
+ * Pipeline:
+ *   1. MAT_SamletFastEjendom(BFEnummer=bfe) → jordstykke with ejerlavLokalId (UUID)
+ *   2. MAT_Ejerlav(id_lokalId=ejerlavLokalId) → ejerlavskode + ejerlavsnavn
+ *
+ * Returns null on:
+ *   - DATAFORDELER_API_KEY missing
+ *   - MAT GraphQL errors or empty result
+ *   - Schema drift (defensive field reading)
+ *
+ * Caller (`/api/adresse/jordstykke?bfe=…`) falls back to DAWA on null.
+ *
+ * @param bfe - BFE number (positive integer)
+ */
+export async function matHentJordstykkeByBfe(bfe: number): Promise<MatJordstykkeByBfe | null> {
+  const apiKey = process.env.DATAFORDELER_API_KEY;
+  if (!apiKey) {
+    logger.warn(
+      'matHentJordstykkeByBfe: DATAFORDELER_API_KEY not set — skipping MAT, caller should fall back to DAWA'
+    );
+    return null;
+  }
+
+  const nowIso = new Date().toISOString();
+  const url = `${MAT_GQL_URL}?apiKey=${encodeURIComponent(apiKey)}`;
+
+  // Helper — minimal GraphQL POST with JSON response. Returns parsed data
+  // or null on any error so the pipeline can fall back cleanly.
+  async function gqlQuery<T extends object>(query: string): Promise<T | null> {
+    try {
+      const res = await fetch(proxyUrl(url), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...proxyHeaders() },
+        body: JSON.stringify({ query }),
+        signal: AbortSignal.timeout(proxyTimeout()),
+      });
+      if (!res.ok) {
+        logger.warn(`MAT GraphQL fejl: ${res.status} ${res.statusText}`);
+        return null;
+      }
+      const json = (await res.json()) as { data?: T; errors?: unknown[] };
+      if (json.errors?.length) {
+        logger.warn('MAT GraphQL errors:', JSON.stringify(json.errors).slice(0, 400));
+        return null;
+      }
+      return json.data ?? null;
+    } catch (err) {
+      logger.error('MAT GraphQL fetch failed:', err instanceof Error ? err.message : err);
+      return null;
+    }
+  }
+
+  // Step 1: SamletFastEjendom → jordstykke
+  const sfeQuery = `{
+    MAT_SamletFastEjendom(
+      first: 1
+      virkningstid: "${nowIso}"
+      registreringstid: "${nowIso}"
+      where: { BFEnummer: { eq: ${bfe} } }
+    ) {
+      nodes {
+        BFEnummer
+        jordstykkeSamlesISamletFastEjendom(first: 1) {
+          nodes {
+            id_lokalId
+            matrikelnummer
+            registreretAreal
+            vejareal
+            ejerlavLokalId
+          }
+        }
+      }
+    }
+  }`;
+
+  const sfeData = await gqlQuery<{
+    MAT_SamletFastEjendom?: {
+      nodes?: Array<{
+        jordstykkeSamlesISamletFastEjendom?: {
+          nodes?: Array<{
+            matrikelnummer?: string;
+            registreretAreal?: number;
+            vejareal?: number;
+            ejerlavLokalId?: string;
+          }>;
+        };
+      }>;
+    };
+  }>(sfeQuery);
+
+  const js =
+    sfeData?.MAT_SamletFastEjendom?.nodes?.[0]?.jordstykkeSamlesISamletFastEjendom?.nodes?.[0];
+  if (!js || !js.matrikelnummer) {
+    logger.warn(`matHentJordstykkeByBfe: no jordstykke for BFE ${bfe}`);
+    return null;
+  }
+
+  const matrikelnr = String(js.matrikelnummer);
+  const registreretAreal = typeof js.registreretAreal === 'number' ? js.registreretAreal : null;
+  const vejareal = typeof js.vejareal === 'number' ? js.vejareal : null;
+  const ejerlavLokalId = typeof js.ejerlavLokalId === 'string' ? js.ejerlavLokalId : null;
+
+  // Step 2: Resolve ejerlav name + kode. If this fails the jordstykke is
+  // still useful (matrikelnr + areal) so we return with navn=null, kode=0.
+  let ejerlavKode = 0;
+  let ejerlavNavn: string | null = null;
+
+  if (ejerlavLokalId) {
+    const ejerlavQuery = `{
+      MAT_Ejerlav(
+        first: 1
+        virkningstid: "${nowIso}"
+        registreringstid: "${nowIso}"
+        where: { id_lokalId: { eq: "${ejerlavLokalId}" } }
+      ) {
+        nodes {
+          ejerlavskode
+          ejerlavsnavn
+        }
+      }
+    }`;
+    const ejerlavData = await gqlQuery<{
+      MAT_Ejerlav?: {
+        nodes?: Array<{
+          ejerlavskode?: number | string;
+          ejerlavsnavn?: string;
+        }>;
+      };
+    }>(ejerlavQuery);
+    const row = ejerlavData?.MAT_Ejerlav?.nodes?.[0];
+    if (row) {
+      const kodeRaw = row.ejerlavskode;
+      ejerlavKode =
+        typeof kodeRaw === 'number'
+          ? kodeRaw
+          : typeof kodeRaw === 'string'
+            ? Number(kodeRaw) || 0
+            : 0;
+      ejerlavNavn = typeof row.ejerlavsnavn === 'string' ? row.ejerlavsnavn : null;
+    }
+  }
+
+  return {
+    matrikelnr,
+    registreretAreal,
+    vejareal,
+    ejerlav: { kode: ejerlavKode, navn: ejerlavNavn },
+  };
 }

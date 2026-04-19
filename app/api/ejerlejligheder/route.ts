@@ -18,6 +18,8 @@ import { z } from 'zod';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
 import { parseQuery } from '@/app/lib/validate';
+import { fetchDawa } from '@/app/lib/dawa';
+import { darResolveAdresseId } from '@/app/lib/dar';
 // EJF/Datafordeler er ikke nødvendig — alt data hentes fra tinglysning summarisk XML
 
 // ─── Query param validation ─────────────────────────────────────────────────
@@ -345,8 +347,13 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
       void results;
     }
 
-    // ── Trin 3: Hent DAWA-adresse-ID'er for navigation ──
-    const dawaIdMap = new Map<string, string>(); // uuid → dawaId
+    // ── Trin 3: Hent adresse-UUID'er for navigation (BIZZ-506) ──
+    //
+    // Flow: DAR GraphQL først (chained NavngivenVej → Postnummer → Husnummer
+    // → Adresse) → DAWA /adresser fallback hvis DAR null'er. Resultatet er
+    // den DAR adresse-UUID der bruges som `adresseIdentificerer` i BBR_Enhed
+    // queries og til in-app navigation.
+    const dawaIdMap = new Map<string, string>(); // uuid → adresseId (from DAR or DAWA)
     for (let i = 0; i < lejlighedItems.length; i += CONCURRENCY) {
       const batch = lejlighedItems.slice(i, i + CONCURRENCY);
       const results = await Promise.allSettled(
@@ -364,20 +371,36 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
             const postnr = postnrMatch?.[1];
             if (!postnr) return;
 
-            // DAWA adresse-opslag med etage+dør
+            // BIZZ-506: Primær — DAR GraphQL chained lookup
+            const darId = await darResolveAdresseId({
+              vejnavn: vej,
+              husnr: nr,
+              postnr,
+              etage: etage ?? null,
+              doer: doer ?? null,
+            });
+            if (darId) {
+              dawaIdMap.set(item.uuid, darId);
+              return;
+            }
+
+            // Fallback — DAWA /adresser. Tagget så telemetri kan tælle
+            // hvor mange ejerlejlighed-opslag der stadig falder tilbage.
             const params = new URLSearchParams({ vejnavn: vej, husnr: nr, postnr });
             if (etage) params.set('etage', etage);
             if (doer) params.set('dør', doer);
-            const dawaRes = await fetch(`https://api.dataforsyningen.dk/adresser?${params}`, {
-              signal: AbortSignal.timeout(5000),
-            });
+            const dawaRes = await fetchDawa(
+              `https://api.dataforsyningen.dk/adresser?${params}`,
+              { signal: AbortSignal.timeout(5000) },
+              { caller: 'ejerlejligheder.adresser.fallback' }
+            );
             if (!dawaRes.ok) return;
             const addrs = (await dawaRes.json()) as { id: string }[];
             if (addrs.length > 0) {
               dawaIdMap.set(item.uuid, addrs[0].id);
             }
           } catch {
-            /* ignore */
+            /* ignore — individual lookup failures are non-fatal */
           }
         })
       );

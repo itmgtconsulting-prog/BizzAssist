@@ -117,3 +117,96 @@ export async function tlFetch(
 export function getTlBase(): string {
   return process.env.TINGLYSNING_BASE_URL ?? 'https://test.tinglysning.dk';
 }
+
+/**
+ * BIZZ-524: POST request til Tinglysning HTTP API.
+ *
+ * Bruges til endpoints der kræver JSON request body — fx
+ * /tinglysningsobjekter/aendringer og /tinglysningsobjekter/senesteaendring.
+ *
+ * Bruger samme proxy-først, mTLS-fallback strategi som tlFetch (GET).
+ *
+ * @param urlPath - API path under /tinglysning/ssl/
+ * @param body    - JSON body som string eller object (object stringifies)
+ * @param options - timeout, accept header, custom apiPath
+ */
+export async function tlPost(
+  urlPath: string,
+  body: string | Record<string, unknown>,
+  options?: { timeout?: number; accept?: string; apiPath?: string }
+): Promise<{ status: number; body: string }> {
+  const { tlBase, proxyUrl, proxySecret, certB64, certPath, certPassword } = getCertConfig();
+  const timeout = options?.timeout ?? 55000;
+  const accept = options?.accept ?? 'application/json';
+  const tlApiPath = options?.apiPath ?? '/tinglysning/ssl';
+  const bodyStr = typeof body === 'string' ? body : JSON.stringify(body);
+
+  // ── Proxy-path: Vercel → Hetzner proxy → Tinglysning (mTLS på proxy) ──
+  if (proxyUrl) {
+    const targetUrl = `${tlBase}${tlApiPath}${urlPath}`;
+    const proxied = targetUrl.replace('https://', `${proxyUrl}/proxy/`);
+    try {
+      const proxyRes = await fetch(proxied, {
+        method: 'POST',
+        headers: {
+          Accept: accept,
+          'Content-Type': 'application/json; charset=utf-8',
+          ...(proxySecret ? { 'X-Proxy-Secret': proxySecret } : {}),
+        },
+        body: bodyStr,
+        signal: AbortSignal.timeout(timeout),
+      });
+      return { status: proxyRes.status, body: await proxyRes.text() };
+    } catch (err) {
+      logger.warn(
+        '[tlPost] Proxy failed, falling back to direct mTLS:',
+        err instanceof Error ? err.message : err
+      );
+    }
+  }
+
+  // ── Direkte mTLS POST ──
+  return new Promise((resolve, reject) => {
+    let pfx: Buffer;
+    if (certB64) pfx = Buffer.from(certB64, 'base64');
+    else {
+      const certAbsPath = path.resolve(certPath);
+      if (!fs.existsSync(certAbsPath)) {
+        reject(new Error('Certifikat ikke fundet: ' + certAbsPath));
+        return;
+      }
+      pfx = fs.readFileSync(certAbsPath);
+    }
+    const url = new URL(tlBase + tlApiPath + urlPath);
+    const bodyBuf = Buffer.from(bodyStr, 'utf-8');
+    const req = https.request(
+      {
+        hostname: url.hostname,
+        port: 443,
+        path: url.pathname + url.search,
+        method: 'POST',
+        pfx,
+        passphrase: certPassword,
+        rejectUnauthorized: false,
+        timeout,
+        headers: {
+          Accept: accept,
+          'Content-Type': 'application/json; charset=utf-8',
+          'Content-Length': bodyBuf.byteLength,
+        },
+      },
+      (res) => {
+        let respBody = '';
+        res.on('data', (d) => (respBody += d));
+        res.on('end', () => resolve({ status: res.statusCode ?? 500, body: respBody }));
+      }
+    );
+    req.on('error', reject);
+    req.on('timeout', () => {
+      req.destroy();
+      reject(new Error('Timeout'));
+    });
+    req.write(bodyBuf);
+    req.end();
+  });
+}

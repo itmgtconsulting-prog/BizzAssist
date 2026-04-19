@@ -48,6 +48,12 @@ export interface CVRPublicData {
   email: string | null;
   industrycode: number | null;
   industrydesc: string | null;
+  /**
+   * BIZZ-512: Sekundære brancher (bibranche1/2/3). Op til 3 bibrancher
+   * udover hovedbranchen. Ofte mere retvisende end hovedbranchen alene
+   * for holdingselskaber og blandede virksomheder.
+   */
+  secondaryIndustries?: { code: number | null; desc: string | null }[];
   companycode: number | null;
   companydesc: string | null;
   startdate: string | null;
@@ -65,6 +71,13 @@ export interface CVRPublicData {
     zipcode: string;
     city: string;
     industrydesc: string | null;
+    /**
+     * BIZZ-514: Bibrancher per produktionsenhed. Kun sat når mindst én
+     * bibranche findes.
+     */
+    secondaryIndustries?: { code: number | null; desc: string | null }[];
+    /** BIZZ-514: Antal ansatte per P-enhed (eksakt tal eller interval "10-19") */
+    employees?: string | null;
     /** Telefonnummer for produktionsenheden */
     phone: string | null;
     /** Email for produktionsenheden */
@@ -111,12 +124,19 @@ export interface CVRPublicData {
   /** Tegningsregel — hvem der tegner selskabet */
   tegningsregel: string | null;
 
+  /** BIZZ-513: Årlig beskæftigelseshistorik — sorteret nyeste først */
+  aarsbeskaeftigelse: Array<{
+    aar: number;
+    antalAnsatte: number | null;
+    antalAarsvaerk: number | null;
+  }>;
+
   /**
    * Historiske ændringer fra tidsbestemte arrays (navne, adresse, form, status, branche).
    * Indeholder ALLE perioder — ikke kun gyldigNu.
    */
   historik: Array<{
-    /** Ændringstype: 'navn' | 'adresse' | 'form' | 'status' | 'branche' */
+    /** Ændringstype: 'navn' | 'adresse' | 'form' | 'status' | 'branche' | 'fusion' | 'spaltning' */
     type: string;
     /** Startdato for perioden (ISO) */
     fra: string;
@@ -124,6 +144,17 @@ export interface CVRPublicData {
     til: string | null;
     /** Værdien i den pågældende periode */
     vaerdi: string;
+    /**
+     * BIZZ-516: For fusion/spaltning — modpartens enhedsNummer (CVR-internt id
+     * for den anden virksomhed i transaktionen). Null hvis ikke oplyst i ES.
+     */
+    modpartEnhedsNummer?: number | null;
+    /**
+     * BIZZ-516: For fusion/spaltning — 'ind' når denne virksomhed er modtageren
+     * (optagende/fortsættende), 'ud' når denne virksomhed er ophørt/spaltet ud,
+     * null hvis retningen ikke kan udledes entydigt.
+     */
+    retning?: 'ind' | 'ud' | null;
   }>;
 
   /**
@@ -285,6 +316,27 @@ function mapESHit(hit: Record<string, unknown>): CVRPublicData | null {
       : null;
   const branche = typeof brancheNu?.branchetekst === 'string' ? brancheNu.branchetekst : null;
 
+  // BIZZ-512: Sekundære brancher (bibranche1/2/3). Ofte meget retvisende
+  // for holdingselskaber og blandede virksomheder hvor hovedbranchen er
+  // generisk (fx "Ikke-finansielle holdingselskaber"). Returnerer max 3
+  // aktive bibrancher i rækkefølge.
+  const sekundaereBrancher: { code: number | null; desc: string | null }[] = [];
+  for (const key of ['bibranche1', 'bibranche2', 'bibranche3']) {
+    const raw = Array.isArray(src[key])
+      ? (src[key] as (Periodic & { branchekode?: string | number; branchetekst?: string })[])
+      : [];
+    const nu = gyldigNu(raw);
+    if (!nu) continue;
+    const code =
+      nu.branchekode != null
+        ? typeof nu.branchekode === 'number'
+          ? nu.branchekode
+          : parseInt(String(nu.branchekode), 10)
+        : null;
+    const desc = typeof nu.branchetekst === 'string' ? nu.branchetekst : null;
+    if (code != null || desc) sekundaereBrancher.push({ code, desc });
+  }
+
   // ── Virksomhedsform ──
   const former = Array.isArray(src.virksomhedsform)
     ? (src.virksomhedsform as (Periodic & {
@@ -444,7 +496,7 @@ function mapESHit(hit: Record<string, unknown>): CVRPublicData | null {
   const formaalFraAttr = getAttrValue('FORMÅL');
 
   // ── Historik (alle perioder fra tidsbestemte arrays) ──
-  const historik: Array<{ type: string; fra: string; til: string | null; vaerdi: string }> = [];
+  const historik: CVRPublicData['historik'] = [];
 
   // Navne-historik
   for (const entry of navne) {
@@ -517,6 +569,66 @@ function mapESHit(hit: Record<string, unknown>): CVRPublicData | null {
         vaerdi: val,
       });
     }
+  }
+
+  // BIZZ-516: Fusioner + spaltninger → historik med modpart-enhedsNummer og retning
+  // CVR ES Vrvirksomhed.fusioner/spaltninger indeholder indgaaende[]/udgaaende[] arrays
+  // der fortæller om denne virksomhed modtog/afgav i transaktionen:
+  //   indgaaende populated  → retning 'ind' (denne virksomhed var modtager)
+  //   udgaaende populated   → retning 'ud'  (denne virksomhed afgav)
+  // enhedsNummerOrganisation er modpartens CVR-interne enhedsnummer.
+  const extractRetning = (entry: Record<string, unknown>): 'ind' | 'ud' | null => {
+    const ind = Array.isArray(entry.indgaaende) && entry.indgaaende.length > 0;
+    const ud = Array.isArray(entry.udgaaende) && entry.udgaaende.length > 0;
+    if (ind && !ud) return 'ind';
+    if (ud && !ind) return 'ud';
+    return null; // begge eller ingen — kan ikke skelnes
+  };
+  const fusioner = Array.isArray(src.fusioner) ? (src.fusioner as Record<string, unknown>[]) : [];
+  for (const f of fusioner) {
+    const navne = Array.isArray(f.organisationsNavn) ? (f.organisationsNavn as Periodic[]) : [];
+    const fra = navne[0]?.periode?.gyldigFra ?? '';
+    const til = navne[0]?.periode?.gyldigTil ?? null;
+    if (!fra) continue;
+    const modpart =
+      typeof f.enhedsNummerOrganisation === 'number' ? f.enhedsNummerOrganisation : null;
+    const retning = extractRetning(f);
+    const label =
+      retning === 'ind' ? 'Fusion (optagende)' : retning === 'ud' ? 'Fusion (ophørt)' : 'Fusion';
+    historik.push({
+      type: 'fusion',
+      fra,
+      til,
+      vaerdi: label,
+      modpartEnhedsNummer: modpart,
+      retning,
+    });
+  }
+  const spaltninger = Array.isArray(src.spaltninger)
+    ? (src.spaltninger as Record<string, unknown>[])
+    : [];
+  for (const s of spaltninger) {
+    const navne = Array.isArray(s.organisationsNavn) ? (s.organisationsNavn as Periodic[]) : [];
+    const fra = navne[0]?.periode?.gyldigFra ?? '';
+    const til = navne[0]?.periode?.gyldigTil ?? null;
+    if (!fra) continue;
+    const modpart =
+      typeof s.enhedsNummerOrganisation === 'number' ? s.enhedsNummerOrganisation : null;
+    const retning = extractRetning(s);
+    const label =
+      retning === 'ind'
+        ? 'Spaltning (modtagende)'
+        : retning === 'ud'
+          ? 'Spaltning (afgivende)'
+          : 'Spaltning';
+    historik.push({
+      type: 'spaltning',
+      fra,
+      til,
+      vaerdi: label,
+      modpartEnhedsNummer: modpart,
+      retning,
+    });
   }
 
   // ── Ejere / Deltagere (deltagerRelation) ──
@@ -681,17 +793,21 @@ function mapESHit(hit: Record<string, unknown>): CVRPublicData | null {
   }
 
   // Byg owners fra deltagere med aktive ejerroller (EJERREGISTER med til == null)
+  // BIZZ-564: Reel ejer (RBE — Real Beneficial Owner fra hvidvasklov) er IKKE
+  // legalt ejerskab og MÅ IKKE inkluderes i owners-array (bruges til diagram +
+  // ejerandel-summering). En person kan være BÅDE legal ejer OG reel ejer af
+  // samme virksomhed → tælles dobbelt → ejerandel summer over 100%.
   for (const d of deltagere) {
     const harAktivEjerRolle = d.roller.some((r) => {
       const upper = r.rolle.toUpperCase();
+      if (r.til !== null) return false; // kun aktive
+      if (upper.includes('REEL')) return false; // RBE — ikke legalt ejerskab
       return (
-        (upper.includes('EJER') ||
-          upper.includes('LEGALE') ||
-          upper.includes('REEL') ||
-          upper.includes('INTERESSENT') ||
-          // CVR ES role names use spaces: "Fuldt ansvarlig deltager" — match both forms
-          (upper.includes('FULDT') && upper.includes('ANSVARLIG'))) &&
-        r.til === null
+        upper.includes('EJER') ||
+        upper.includes('LEGALE') ||
+        upper.includes('INTERESSENT') ||
+        // CVR ES role names use spaces: "Fuldt ansvarlig deltager" — match both forms
+        (upper.includes('FULDT') && upper.includes('ANSVARLIG'))
       );
     });
     if (harAktivEjerRolle) {
@@ -712,6 +828,9 @@ function mapESHit(hit: Record<string, unknown>): CVRPublicData | null {
     email,
     industrycode: branchekode,
     industrydesc: branche,
+    // BIZZ-512: udfyldt kun hvis mindst én bibranche fundet — undgår
+    // at klienten renderer et tomt "Sekundære brancher"-afsnit.
+    secondaryIndustries: sekundaereBrancher.length > 0 ? sekundaereBrancher : undefined,
     companycode,
     companydesc,
     startdate,
@@ -733,6 +852,22 @@ function mapESHit(hit: Record<string, unknown>): CVRPublicData | null {
     regnskabsaar,
     senesteVedtaegtsdato,
     tegningsregel,
+    aarsbeskaeftigelse: Array.isArray(src.aarsbeskaeftigelse)
+      ? (
+          src.aarsbeskaeftigelse as Array<{
+            aar?: number;
+            antalAnsatte?: number;
+            antalAarsvaerk?: number;
+          }>
+        )
+          .filter((a) => a.aar != null)
+          .map((a) => ({
+            aar: a.aar!,
+            antalAnsatte: a.antalAnsatte ?? null,
+            antalAarsvaerk: a.antalAarsvaerk ?? null,
+          }))
+          .sort((a, b) => b.aar - a.aar)
+      : [],
     historik,
     deltagere,
   };
@@ -782,6 +917,10 @@ async function fetchProduktionsenheder(
         'VrproduktionsEnhed.navne',
         'VrproduktionsEnhed.beliggenhedsadresse',
         'VrproduktionsEnhed.hovedbranche',
+        // BIZZ-514: Bibrancher per P-enhed (samme mønster som hoved-virksomhed)
+        'VrproduktionsEnhed.bibranche1',
+        'VrproduktionsEnhed.bibranche2',
+        'VrproduktionsEnhed.bibranche3',
         'VrproduktionsEnhed.produktionsEnhedMetadata',
         'VrproduktionsEnhed.telefonNummer',
         'VrproduktionsEnhed.elektroniskPost',
@@ -841,11 +980,43 @@ async function fetchProduktionsenheder(
           : [];
         const peBranche = gyldigNu(peBrancher)?.branchetekst ?? null;
 
-        // Metadata — sammensatStatus + hovedafdeling
+        // BIZZ-514: Bibrancher per P-enhed
+        const peSecondary: { code: number | null; desc: string | null }[] = [];
+        for (const key of ['bibranche1', 'bibranche2', 'bibranche3']) {
+          const raw = Array.isArray(pe[key])
+            ? (pe[key] as (Periodic & { branchekode?: string | number; branchetekst?: string })[])
+            : [];
+          const nu = gyldigNu(raw);
+          if (!nu) continue;
+          const code =
+            nu.branchekode != null
+              ? typeof nu.branchekode === 'number'
+                ? nu.branchekode
+                : parseInt(String(nu.branchekode), 10)
+              : null;
+          const desc = typeof nu.branchetekst === 'string' ? nu.branchetekst : null;
+          if (code != null || desc) peSecondary.push({ code, desc });
+        }
+
+        // Metadata — sammensatStatus + hovedafdeling + ansatte
         const peMeta = pe.produktionsEnhedMetadata as Record<string, unknown> | undefined;
         const peStatus =
           typeof peMeta?.sammensatStatus === 'string' ? peMeta.sammensatStatus : null;
         const peAktiv = peStatus !== 'Ophørt';
+        // BIZZ-514: hovedProduktionsEnhed-flag fra metadata (tidligere hardcoded false)
+        const peMain =
+          typeof peMeta?.hovedProduktionsEnhed === 'boolean' ? peMeta.hovedProduktionsEnhed : false;
+        // BIZZ-514: Antal ansatte — nyesteErstMaanedsbeskaeftigelse.antalAnsatte
+        // eller interval-kode hvis ikke eksakt tal. Matcher virksomhedens ansatte-logik.
+        const peMaaned = peMeta?.nyesteErstMaanedsbeskaeftigelse as
+          | Record<string, unknown>
+          | undefined;
+        const peEmployees =
+          peMaaned?.antalAnsatte != null
+            ? String(peMaaned.antalAnsatte)
+            : typeof peMaaned?.intervalKodeAntalAnsatte === 'string'
+              ? (intervalKodeMap[peMaaned.intervalKodeAntalAnsatte as string] ?? null)
+              : null;
 
         // Telefon
         const peTelefoner = Array.isArray(pe.telefonNummer)
@@ -861,12 +1032,14 @@ async function fetchProduktionsenheder(
 
         return {
           pno,
-          main: false,
+          main: peMain,
           name: peName,
           address: `${peVej} ${peHus}${peBog}`.trim(),
           zipcode: pePost,
           city: peBy,
           industrydesc: peBranche,
+          secondaryIndustries: peSecondary.length > 0 ? peSecondary : undefined,
+          employees: peEmployees,
           phone: peTlf,
           email: peEmail,
           active: peAktiv,

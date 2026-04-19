@@ -50,6 +50,7 @@ const DEMO_PLAN: PlanDef = {
   durationDays: 0,
   tokenAccumulationCapMultiplier: 5,
   freeTrialDays: 0,
+  paymentGraceHours: 0,
   maxSales: null,
   salesCount: 0,
 };

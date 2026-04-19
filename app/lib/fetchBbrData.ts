@@ -11,7 +11,10 @@
 
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { BBR_WFS_ENDPOINT, BBR_GQL_ENDPOINT, DAWA_BASE_URL } from '@/app/lib/serviceEndpoints';
+import { fetchDawa } from '@/app/lib/dawa';
+import { darHentAdresserBatch } from '@/app/lib/dar';
 import {
+  tagKonstruktionTekst,
   tagMaterialeTekst,
   ydervaegMaterialeTekst,
   varmeInstallationTekst,
@@ -43,6 +46,13 @@ export interface RawBBRBygning {
   byg054AntalEtager?: number;
   byg033Tagdaekningsmateriale?: string;
   byg032YdervaeggensMateriale?: string;
+  /**
+   * BIZZ-485 v2: Asbestholdigt materiale-flag fra BBR. Bruges til
+   * risk-scoring på BBR-tab (rødt badge ved 'asbest').
+   * NB: byg034Tagkonstruktion findes IKKE i BBR v2-schemaet (verificeret
+   * 2026-04-19 — query-fejl kostede produktions-incident). Forbliver '–'.
+   */
+  byg036AsbestholdigtMateriale?: string;
   byg056Varmeinstallation?: string;
   byg057Opvarmningsmiddel?: string;
   byg058SupplerendeVarme?: string;
@@ -111,6 +121,64 @@ export interface LiveBBRBygning {
   revisionsdato: string | null;
   /** Ejerforholdskode (byg066) — rå kode, f.eks. "50"=andelsboligforening */
   ejerforholdskode: string | null;
+  /**
+   * BIZZ-485: Rå materiale-koder bevares så UI kan lave risk-scoring uden
+   * at skulle oversætte tekst tilbage til kode. Kan være null hvis BBR
+   * ikke har registreret materialet.
+   */
+  tagkonstruktionKode: number | null;
+  tagmaterialeKode: number | null;
+  ydervaegKode: number | null;
+  /**
+   * BIZZ-485: Risk-flags udledt af materialekoderne.
+   * - asbestTag: tagmateriale = 3 (fibercement/asbest)
+   * - asbestYdervaeg: ydervaeg = 3 (fibercement/eternit asbest)
+   * - traeYdervaeg: ydervaeg = 5 (træ) — lavere prioritet, kun info
+   * - asbestEksplicit: byg036AsbestholdigtMateriale = '1' (BBR-bekræftet)
+   */
+  risks: {
+    asbestTag: boolean;
+    asbestYdervaeg: boolean;
+    traeYdervaeg: boolean;
+    asbestEksplicit: boolean;
+  };
+}
+
+/** BIZZ-486: Raw BBR opgang (stairwell) from GraphQL */
+interface RawBBROpgang {
+  id_lokalId?: string;
+  bygning?: string;
+  opg020Elevator?: string;
+  status?: string;
+}
+
+/** BIZZ-486: Raw BBR etage (floor) from GraphQL */
+interface RawBBREtage {
+  id_lokalId?: string;
+  bygning?: string;
+  eta006BygningensEtagebetegnelse?: string;
+  eta020SamletArealAfEtage?: number;
+  status?: string;
+}
+
+/** BIZZ-486: Normalised BBR opgang returned to client */
+export interface LiveBBROpgang {
+  id: string;
+  bygningId: string | null;
+  /** Elevator (opg020): "0"=ingen, "1"=ja */
+  elevator: boolean | null;
+  status: string | null;
+}
+
+/** BIZZ-486: Normalised BBR etage returned to client */
+export interface LiveBBREtage {
+  id: string;
+  bygningId: string | null;
+  /** Etagebetegnelse fra BBR (eta006), f.eks. "kl", "st", "1", "2" */
+  etagebetegnelse: string | null;
+  /** Samlet areal af etagen (eta020) i m² */
+  samletAreal: number | null;
+  status: string | null;
 }
 
 /** Normalised BBR enhed returned to client */
@@ -174,6 +242,20 @@ export interface EjendomApiResponse {
   ejerlejlighedBfe: number | null;
   /** BFE-nummer for moderejendommen (null hvis det ikke er en ejerlejlighed) */
   moderBfe: number | null;
+  /** BIZZ-486: Opgange (stairwells) per bygning */
+  opgange: LiveBBROpgang[] | null;
+  /** BIZZ-486: Etager (floors) per bygning */
+  etager: LiveBBREtage[] | null;
+  /**
+   * BIZZ-484: Tekniske anlæg på adressen — solceller, varmepumper, oliefyr,
+   * tanke etc. tek020Klassifikation mappes via bbrTekniskAnlaegKoder til
+   * læsbar tekst på UI.
+   */
+  tekniskeAnlaeg: Array<{
+    id_lokalId: string;
+    tek020Klassifikation: string | null;
+    status: string | null;
+  }> | null;
   bbrFejl: string | null;
 }
 
@@ -386,10 +468,11 @@ async function fetchBFENummer(dawaId: string): Promise<{
     let adgKommunekode: string | null = null;
 
     // Trin 1a: Forsøg direkte som adgangsadresse
-    const adgRes = await fetch(`${DAWA_BASE_URL}/adgangsadresser/${dawaId}`, {
-      signal: AbortSignal.timeout(5000),
-      next: { revalidate: 3600 },
-    });
+    const adgRes = await fetchDawa(
+      `${DAWA_BASE_URL}/adgangsadresser/${dawaId}`,
+      { signal: AbortSignal.timeout(5000), next: { revalidate: 3600 } },
+      { caller: 'fetchBbrData.adgangsadresse' }
+    );
 
     if (adgRes.ok) {
       const adg = (await adgRes.json()) as {
@@ -406,10 +489,11 @@ async function fetchBFENummer(dawaId: string): Promise<{
       adgKommunekode = adg?.kommune?.kode ?? null;
     } else {
       // Trin 1b: ID er en adresse (med etage/dør) — hent adgangsadresse via /adresser/{id}
-      const adrRes = await fetch(`${DAWA_BASE_URL}/adresser/${dawaId}`, {
-        signal: AbortSignal.timeout(5000),
-        next: { revalidate: 3600 },
-      });
+      const adrRes = await fetchDawa(
+        `${DAWA_BASE_URL}/adresser/${dawaId}`,
+        { signal: AbortSignal.timeout(5000), next: { revalidate: 3600 } },
+        { caller: 'fetchBbrData.adresse' }
+      );
       if (!adrRes.ok)
         return {
           bfeNummer: null,
@@ -426,6 +510,7 @@ async function fetchBFENummer(dawaId: string): Promise<{
         adgangsadresse?: {
           id?: string;
           jordstykke?: { ejerlav?: { kode?: number }; matrikelnr?: string };
+          kommune?: { kode?: string };
         };
         adressebetegnelse?: string;
       };
@@ -436,6 +521,12 @@ async function fetchBFENummer(dawaId: string): Promise<{
       adresseTekst = adr?.adressebetegnelse ?? null;
       etage = adr?.etage ?? null;
       doer = adr?.dør ?? null;
+      // BIZZ: Sæt adgKommunekode også her — uden denne springer cross-kommune-
+      // validering over når property kun har et adresse-id (med etage/dør) i
+      // stedet for et adgangsadresse-id. Det førte til at Vurderingsportalen-
+      // hits fra andre kommuner blev accepteret som ejerlejligheds-BFE
+      // (f.eks. Søbyvej 11 i Hvidovre fik BFE 4050546 fra Skive).
+      adgKommunekode = adr?.adgangsadresse?.kommune?.kode ?? null;
     }
 
     if (!ejerlavKode || !matrikelnr) {
@@ -451,10 +542,11 @@ async function fetchBFENummer(dawaId: string): Promise<{
 
     // BIZZ-254: Trin 2 + 3 kører parallelt (uafhængige af hinanden)
     // Trin 2: Hent BFEnummer fra jordstykker-endpoint (= moderejendommens BFE)
-    const jordBfePromise = fetch(`${DAWA_BASE_URL}/jordstykker/${ejerlavKode}/${matrikelnr}`, {
-      signal: AbortSignal.timeout(5000),
-      next: { revalidate: 3600 },
-    })
+    const jordBfePromise = fetchDawa(
+      `${DAWA_BASE_URL}/jordstykker/${ejerlavKode}/${matrikelnr}`,
+      { signal: AbortSignal.timeout(5000), next: { revalidate: 3600 } },
+      { caller: 'fetchBbrData.jordstykker.moder' }
+    )
       .then(async (jsRes) => {
         if (!jsRes.ok) return null;
         const js = (await jsRes.json()) as { bfenummer?: number };
@@ -522,9 +614,10 @@ async function fetchBFENummer(dawaId: string): Promise<{
               // BFE op via DAWA jordstykker for at bekræfte kommunekoden stemmer.
               if (adgKommunekode) {
                 try {
-                  const verifyRes = await fetch(
+                  const verifyRes = await fetchDawa(
                     `${DAWA_BASE_URL}/jordstykker?bfenummer=${candidate}&per_side=1`,
-                    { signal: AbortSignal.timeout(3000), next: { revalidate: 3600 } }
+                    { signal: AbortSignal.timeout(3000), next: { revalidate: 3600 } },
+                    { caller: 'fetchBbrData.jordstykker.verify' }
                   );
                   if (verifyRes.ok) {
                     const verifyData = (await verifyRes.json()) as Array<{
@@ -572,6 +665,200 @@ async function fetchBFENummer(dawaId: string): Promise<{
 
 // ─── Date helper ─────────────────────────────────────────────────────────────
 
+/**
+ * BIZZ-569 / BIZZ-575 v2: Lightweight BBR-area fetch by BFE-nummer.
+ *
+ * Bruges af /api/ejendomme-by-owner/enrich(-batch) til at berige property-
+ * cards med bolig/erhverv m² uden at fetche den fulde BBR-payload (enheder,
+ * opgange, materialer m.m.).
+ *
+ * BIZZ-575 v2 root cause: BBR-API returnerer DUPLIKATER af samme bygning
+ * (identisk id_lokalId optræder N gange — fx 4× for Bibliotekvej 58).
+ * Den oprindelige sum gav derfor 4× det rigtige tal (1.149 × 4 = 4.596).
+ * Schema'en understøtter IKKE bfeNummer-filter på hverken BBR_Grund
+ * eller BBR_Bygning (verificeret via probe), så filtrering må ske via
+ * id_lokalId-deduplikering + status-filter (status=7 = nedrevet).
+ *
+ * @param bfe     - BFE-nummer (kun til logging — filtrering sker via dawaId)
+ * @param dawaId  - DAWA adgangsadresse-UUID (husnummer i BBR_Bygning)
+ * @returns { boligAreal, erhvervsAreal, samletBygningsareal } — null hvis BBR ikke svarer
+ */
+export async function fetchBbrAreasByBfe(
+  _bfe: number,
+  dawaId?: string | null
+): Promise<{
+  boligAreal: number | null;
+  erhvervsAreal: number | null;
+  samletBygningsareal: number | null;
+} | null> {
+  if (!dawaId) return null;
+  const vt = nowDafDateTime();
+
+  const nodes = await fetchBBRGraphQL(
+    `query($vt: DafDateTime!, $id: String!) {
+      BBR_Bygning(first: 100, virkningstid: $vt, where: { husnummer: { eq: $id } }) {
+        nodes {
+          id_lokalId
+          byg038SamletBygningsareal
+          byg039BygningensSamledeBoligAreal
+          byg040BygningensSamledeErhvervsAreal
+          status
+        }
+      }
+    }`,
+    { vt, id: dawaId }
+  );
+
+  if (!Array.isArray(nodes) || nodes.length === 0) return null;
+
+  // BIZZ-575 v2: Dedupliker på id_lokalId. BBR returnerer ofte samme bygning
+  // flere gange (formentlig pga. flere virkningsperioder, ejer-relationer
+  // eller adresse-relationer). Uden dedup summerer vi kunstigt × N.
+  const seen = new Set<string>();
+  const unique: RawBBRBygning[] = [];
+  for (const raw of nodes as RawBBRBygning[]) {
+    const id = raw.id_lokalId;
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    unique.push(raw);
+  }
+
+  let bolig = 0;
+  let erhverv = 0;
+  let samlet = 0;
+  let any = false;
+  for (const n of unique) {
+    // BIZZ-575: Status "7" = nedrevet/slettet — skip så aflyste bygninger
+    // ikke pumper arealet kunstigt op.
+    if (n.status != null && String(n.status) === '7') continue;
+    if (n.byg039BygningensSamledeBoligAreal != null) {
+      bolig += Number(n.byg039BygningensSamledeBoligAreal);
+      any = true;
+    }
+    if (n.byg040BygningensSamledeErhvervsAreal != null) {
+      erhverv += Number(n.byg040BygningensSamledeErhvervsAreal);
+      any = true;
+    }
+    if (n.byg038SamletBygningsareal != null) {
+      samlet += Number(n.byg038SamletBygningsareal);
+      any = true;
+    }
+  }
+  if (!any) return null;
+  return {
+    boligAreal: bolig > 0 ? bolig : null,
+    erhvervsAreal: erhverv > 0 ? erhverv : null,
+    samletBygningsareal: samlet > 0 ? samlet : null,
+  };
+}
+
+/**
+ * BIZZ-484: Hentet liste af tekniske anlæg (solceller, varmepumper, oliefyr,
+ * etc.) for en adgangsadresse. Returnerer rå BBR_TekniskAnlaeg-noder med
+ * id_lokalId, tek020Klassifikation, status. Klassifikationskode mappes
+ * til læsbar tekst via bbrTekniskAnlaegKoder.ts på UI-siden.
+ *
+ * @param dawaId - DAWA adgangsadresse-UUID (husnummer-feltet)
+ * @returns Array af tekniske anlæg, eller null ved fejl
+ */
+export async function fetchBbrTekniskAnlaegByDawaId(dawaId: string): Promise<Array<{
+  id_lokalId: string;
+  tek020Klassifikation: string | null;
+  status: string | null;
+}> | null> {
+  if (!dawaId) return null;
+  const vt = nowDafDateTime();
+  const nodes = await fetchBBRGraphQL(
+    `query($vt: DafDateTime!, $id: String!) {
+      BBR_TekniskAnlaeg(first: 100, virkningstid: $vt, where: { husnummer: { eq: $id } }) {
+        nodes {
+          id_lokalId
+          tek020Klassifikation
+          status
+        }
+      }
+    }`,
+    { vt, id: dawaId }
+  );
+  if (!Array.isArray(nodes)) return null;
+  // Dedupliker på id_lokalId (samme issue som BBR_Bygning — virkningsperioder)
+  const seen = new Set<string>();
+  const unique: Array<{
+    id_lokalId: string;
+    tek020Klassifikation: string | null;
+    status: string | null;
+  }> = [];
+  for (const raw of nodes as Array<{
+    id_lokalId?: string;
+    tek020Klassifikation?: string;
+    status?: string;
+  }>) {
+    if (!raw.id_lokalId || seen.has(raw.id_lokalId)) continue;
+    // Skip status=7 (nedrevet/slettet)
+    if (raw.status != null && String(raw.status) === '7') continue;
+    seen.add(raw.id_lokalId);
+    unique.push({
+      id_lokalId: raw.id_lokalId,
+      tek020Klassifikation: raw.tek020Klassifikation ?? null,
+      status: raw.status ?? null,
+    });
+  }
+  return unique;
+}
+
+/**
+ * @deprecated BIZZ-575 — Bruger fetchBbrAreasByBfe i stedet for at få
+ * korrekt BFE-isolation. Beholdt midlertidigt for backwards-compat hvis
+ * andre call-sites refererer den.
+ */
+export async function fetchBbrAreasByDawaId(dawaId: string): Promise<{
+  boligAreal: number | null;
+  erhvervsAreal: number | null;
+  samletBygningsareal: number | null;
+} | null> {
+  if (!dawaId) return null;
+  const vt = nowDafDateTime();
+  const query = `
+    query($vt: DafDateTime!, $id: String!) {
+      BBR_Bygning(first: 100, virkningstid: $vt, where: { husnummer: { eq: $id } }) {
+        nodes {
+          byg038SamletBygningsareal
+          byg039BygningensSamledeBoligAreal
+          byg040BygningensSamledeErhvervsAreal
+          status
+        }
+      }
+    }
+  `;
+  const nodes = await fetchBBRGraphQL(query, { vt, id: dawaId });
+  if (!Array.isArray(nodes) || nodes.length === 0) return null;
+  let bolig = 0;
+  let erhverv = 0;
+  let samlet = 0;
+  let any = false;
+  for (const n of nodes as RawBBRBygning[]) {
+    if (n.status != null && String(n.status) === '7') continue;
+    if (n.byg039BygningensSamledeBoligAreal != null) {
+      bolig += Number(n.byg039BygningensSamledeBoligAreal);
+      any = true;
+    }
+    if (n.byg040BygningensSamledeErhvervsAreal != null) {
+      erhverv += Number(n.byg040BygningensSamledeErhvervsAreal);
+      any = true;
+    }
+    if (n.byg038SamletBygningsareal != null) {
+      samlet += Number(n.byg038SamletBygningsareal);
+      any = true;
+    }
+  }
+  if (!any) return null;
+  return {
+    boligAreal: bolig > 0 ? bolig : null,
+    erhvervsAreal: erhverv > 0 ? erhverv : null,
+    samletBygningsareal: samlet > 0 ? samlet : null,
+  };
+}
+
 /** Returns a DafDateTime string for the current moment (CET/CEST). */
 function nowDafDateTime(): string {
   // Datafordeler requires timezone offset format: 2026-03-23T12:00:00+01:00
@@ -597,6 +884,11 @@ function nowDafDateTime(): string {
 export function normaliseBygning(raw: RawBBRBygning): LiveBBRBygning {
   const parseCode = (v: string | undefined) => (v != null ? parseInt(v, 10) : undefined);
 
+  // BIZZ-485 (reverted): tagkonstruktion fjernet fra query — sættes til null.
+  const tagkonstruktionKode = null;
+  const tagmaterialeKode = parseCode(raw.byg033Tagdaekningsmateriale) ?? null;
+  const ydervaegKode = parseCode(raw.byg032YdervaeggensMateriale) ?? null;
+
   return {
     id: raw.id_lokalId ?? '',
     opfoerelsesaar: raw.byg026Opfoerelsesaar ?? null,
@@ -612,9 +904,10 @@ export function normaliseBygning(raw: RawBBRBygning): LiveBBRBygning {
     antalEtager: raw.byg054AntalEtager ?? null,
     kaelder: null,
     tagetage: null,
-    tagkonstruktion: '–',
-    tagmateriale: tagMaterialeTekst(parseCode(raw.byg033Tagdaekningsmateriale)),
-    ydervaeg: ydervaegMaterialeTekst(parseCode(raw.byg032YdervaeggensMateriale)),
+    // BIZZ-485: Tagkonstruktion hentes nu fra byg034 i stedet for hårdkodet '–'
+    tagkonstruktion: tagKonstruktionTekst(tagkonstruktionKode),
+    tagmateriale: tagMaterialeTekst(tagmaterialeKode),
+    ydervaeg: ydervaegMaterialeTekst(ydervaegKode),
     varmeinstallation: varmeInstallationTekst(parseCode(raw.byg056Varmeinstallation)),
     opvarmningsform: opvarmningsmiddelTekst(parseCode(raw.byg057Opvarmningsmiddel)),
     vandforsyning: vandforsyningTekst(parseCode(raw.byg030Vandforsyning)),
@@ -631,6 +924,20 @@ export function normaliseBygning(raw: RawBBRBygning): LiveBBRBygning {
     bygningsnr: null, // udfyldes fra WFS bygningPunkter efter fetch
     revisionsdato: raw.byg094Revisionsdato ?? null,
     ejerforholdskode: raw.byg066Ejerforhold ?? null,
+    // BIZZ-485: Rå materialekoder + udledte risk-flags til UI-badges.
+    // Asbest-kode 3 for både tagmateriale og ydervæg flagger sundhedsrisiko
+    // (asbestforbud siden 1986, men stadig tilladt i eksisterende byggeri).
+    tagkonstruktionKode,
+    tagmaterialeKode,
+    ydervaegKode,
+    risks: {
+      asbestTag: tagmaterialeKode === 3,
+      asbestYdervaeg: ydervaegKode === 3,
+      traeYdervaeg: ydervaegKode === 5,
+      // BIZZ-485 v2: BBR's eksplicitte asbest-flag (byg036). Værdien '1' =
+      // bekræftet asbestholdigt materiale (sundhedsrisiko).
+      asbestEksplicit: raw.byg036AsbestholdigtMateriale === '1',
+    },
   };
 }
 
@@ -667,6 +974,33 @@ export function normaliseEnhed(raw: RawBBREnhed): LiveBBREnhed {
   };
 }
 
+// ─── BIZZ-486: Opgang/Etage normalisation ──────────────────────────────────
+
+/**
+ * Normalises raw BBR opgang. Elevator kode: "1"=ja, "0"=ingen, andet=ukendt.
+ */
+function normaliseOpgang(raw: RawBBROpgang): LiveBBROpgang {
+  return {
+    id: raw.id_lokalId ?? '',
+    bygningId: raw.bygning ?? null,
+    elevator: raw.opg020Elevator === '1' ? true : raw.opg020Elevator === '0' ? false : null,
+    status: raw.status ?? null,
+  };
+}
+
+/**
+ * Normalises raw BBR etage.
+ */
+function normaliseEtage(raw: RawBBREtage): LiveBBREtage {
+  return {
+    id: raw.id_lokalId ?? '',
+    bygningId: raw.bygning ?? null,
+    etagebetegnelse: raw.eta006BygningensEtagebetegnelse ?? null,
+    samletAreal: raw.eta020SamletArealAfEtage ?? null,
+    status: raw.status ?? null,
+  };
+}
+
 // ─── GraphQL queries ────────────────────────────────────────────────────────
 
 const BYGNING_QUERY = `
@@ -685,6 +1019,7 @@ const BYGNING_QUERY = `
         byg054AntalEtager
         byg033Tagdaekningsmateriale
         byg032YdervaeggensMateriale
+        byg036AsbestholdigtMateriale
         byg056Varmeinstallation
         byg057Opvarmningsmiddel
         byg058SupplerendeVarme
@@ -723,6 +1058,7 @@ const BYGNING_BY_ID_QUERY = `
         byg054AntalEtager
         byg033Tagdaekningsmateriale
         byg032YdervaeggensMateriale
+        byg036AsbestholdigtMateriale
         byg056Varmeinstallation
         byg057Opvarmningsmiddel
         byg058SupplerendeVarme
@@ -793,12 +1129,45 @@ const ENHED_BY_BYGNING_QUERY = `
   }
 `;
 
+/** BIZZ-486: Hent opgange for en bygning (schema verificeret 2026-04-19 probe) */
+const OPGANG_BY_BYGNING_QUERY = `
+  query($vt: DafDateTime!, $id: String!) {
+    BBR_Opgang(first: 50, virkningstid: $vt, where: { bygning: { eq: $id } }) {
+      nodes {
+        id_lokalId
+        bygning
+        opg020Elevator
+        status
+      }
+    }
+  }
+`;
+
+/** BIZZ-486: Hent etager for en bygning (schema verificeret 2026-04-19 probe) */
+const ETAGE_BY_BYGNING_QUERY = `
+  query($vt: DafDateTime!, $id: String!) {
+    BBR_Etage(first: 50, virkningstid: $vt, where: { bygning: { eq: $id } }) {
+      nodes {
+        id_lokalId
+        bygning
+        eta006BygningensEtagebetegnelse
+        eta020SamletArealAfEtage
+        status
+      }
+    }
+  }
+`;
+
 /**
- * Batch-henter DAWA-adressedata for en liste af adresse-UUIDs.
- * Returnerer et map fra UUID → { etage, doer, adressebetegnelse }.
- * Bruger DAWA's bulk-endpoint (kommaseparerede IDs) for effektivitet.
+ * Batch-henter adresse-data (etage, dør, adressebetegnelse) for en liste
+ * af adresse-UUIDs. Bruges til at berige BBR-enheder (ejerlejligheder).
  *
- * @param ids - Array af DAWA adresse-UUIDs (fra BBR_Enhed.adresseIdentificerer)
+ * BIZZ-507: Primært via Datafordeler DAR_Adresse med `in:[…]` filter for
+ * at batch'e hele bygninger i ét kald. Falder tilbage til DAWA for
+ * manglende UUIDs (der sker f.eks. når nye adresser ikke er i DAR endnu,
+ * eller når DATAFORDELER_API_KEY ikke er sat lokalt).
+ *
+ * @param ids - Array af adresse-UUIDs (fra BBR_Enhed.adresseIdentificerer)
  */
 async function fetchDAWAEnhedAdresser(
   ids: string[]
@@ -810,12 +1179,27 @@ async function fetchDAWAEnhedAdresser(
   const uuids = ids.filter((id) => UUID_RE.test(id));
   if (uuids.length === 0) return result;
 
+  // ── Primær: DAR_Adresse batch ───────────────────────────────────────────
   try {
-    const params = uuids.map((id) => `id=${encodeURIComponent(id)}`).join('&');
-    const res = await fetch(`${DAWA_BASE_URL}/adresser?${params}&struktur=mini`, {
-      signal: AbortSignal.timeout(8000),
-      next: { revalidate: 3600 },
-    });
+    const darMap = await darHentAdresserBatch(uuids);
+    for (const [id, unit] of darMap) {
+      result.set(id, unit);
+    }
+  } catch {
+    // darHentAdresserBatch never throws, but guard anyway
+  }
+
+  // ── Fallback: DAWA for UUIDs DAR didn't know about ──────────────────────
+  const missing = uuids.filter((id) => !result.has(id));
+  if (missing.length === 0) return result;
+
+  try {
+    const params = missing.map((id) => `id=${encodeURIComponent(id)}`).join('&');
+    const res = await fetchDawa(
+      `${DAWA_BASE_URL}/adresser?${params}&struktur=mini`,
+      { signal: AbortSignal.timeout(8000), next: { revalidate: 3600 } },
+      { caller: 'fetchBbrData.adresser.batch.fallback' }
+    );
     if (!res.ok) return result;
     const data = (await res.json()) as Array<Record<string, unknown>>;
     for (const item of data) {
@@ -896,9 +1280,10 @@ export async function fetchBbrForAddress(
 
       // Trin 2: Ingen grund? Find andre adgangsadresser på samme matrikel via DAWA
       if (!grundId && ejerlavKode && matrikelnr) {
-        const adgRes = await fetch(
+        const adgRes = await fetchDawa(
           `${DAWA_BASE_URL}/adgangsadresser?ejerlavkode=${ejerlavKode}&matrikelnr=${encodeURIComponent(matrikelnr)}&per_side=10`,
-          { signal: AbortSignal.timeout(5000), next: { revalidate: 3600 } }
+          { signal: AbortSignal.timeout(5000), next: { revalidate: 3600 } },
+          { caller: 'fetchBbrData.adgangsadresser.samme-matrikel' }
         );
         if (adgRes.ok) {
           const adgangsadresser = (await adgRes.json()) as { id: string }[];
@@ -1077,9 +1462,11 @@ export async function fetchBbrForAddress(
   let effectiveBfe = bfeNummer;
   if (!effectiveBfe && ejerlavKode && matrikelnr) {
     try {
-      const jsRes = await fetch(`${DAWA_BASE_URL}/jordstykker/${ejerlavKode}/${matrikelnr}`, {
-        signal: AbortSignal.timeout(5000),
-      });
+      const jsRes = await fetchDawa(
+        `${DAWA_BASE_URL}/jordstykker/${ejerlavKode}/${matrikelnr}`,
+        { signal: AbortSignal.timeout(5000) },
+        { caller: 'fetchBbrData.jordstykker.fallback' }
+      );
       if (jsRes.ok) {
         const js = (await jsRes.json()) as { bfenummer?: number };
         effectiveBfe = js?.bfenummer ?? null;
@@ -1103,6 +1490,69 @@ export async function fetchBbrForAddress(
         ]
       : null;
 
+  // BIZZ-486: Hent opgange + etager parallelt for alle byggninger.
+  // Fejl her er ikke-fatale — enhedstabellen fungerer uden denne data.
+  let opgange: LiveBBROpgang[] | null = null;
+  let etager: LiveBBREtage[] | null = null;
+  if (bbr && bbr.length > 0) {
+    try {
+      const bygIds = bbr.map((b) => b.id).filter((id): id is string => !!id);
+      const [rawOpgangResults, rawEtageResults] = await Promise.all([
+        Promise.all(
+          bygIds.map((bygId) =>
+            fetchBBRGraphQL(OPGANG_BY_BYGNING_QUERY, { vt, id: bygId }).catch(() => null)
+          )
+        ),
+        Promise.all(
+          bygIds.map((bygId) =>
+            fetchBBRGraphQL(ETAGE_BY_BYGNING_QUERY, { vt, id: bygId }).catch(() => null)
+          )
+        ),
+      ]);
+      const rawOpgange = rawOpgangResults.flatMap((r) => (r ?? []) as RawBBROpgang[]);
+      const rawEtager = rawEtageResults.flatMap((r) => (r ?? []) as RawBBREtage[]);
+      // Dedupliker — BBR returnerer nogle gange duplikater for samme id_lokalId
+      const dedupeOpg = new Map<string, RawBBROpgang>();
+      for (const o of rawOpgange) if (o.id_lokalId) dedupeOpg.set(o.id_lokalId, o);
+      const dedupeEta = new Map<string, RawBBREtage>();
+      for (const e of rawEtager) if (e.id_lokalId) dedupeEta.set(e.id_lokalId, e);
+      opgange = [...dedupeOpg.values()].map(normaliseOpgang);
+      etager = [...dedupeEta.values()].map(normaliseEtage);
+
+      // BIZZ-487 (re-implemented 2026-04-19): Aggregér kælder/tagetage-areal
+      // pr. bygning fra BBR_Etage. byg077KaelderAreal/byg078TagetageAreal
+      // eksisterer IKKE i skemaet — vi udleder fra eta006BygningensEtagebetegnelse.
+      for (const b of bbr) {
+        const bygEtager = etager.filter(
+          (e) => e.bygningId === b.id && e.status !== '7' && e.samletAreal != null
+        );
+        const kaelderSum = bygEtager
+          .filter((e) => e.etagebetegnelse === 'kl')
+          .reduce((sum, e) => sum + (e.samletAreal ?? 0), 0);
+        const tagetageSum = bygEtager
+          .filter((e) => e.etagebetegnelse === 'tag')
+          .reduce((sum, e) => sum + (e.samletAreal ?? 0), 0);
+        if (kaelderSum > 0) b.kaelder = kaelderSum;
+        if (tagetageSum > 0) b.tagetage = tagetageSum;
+      }
+    } catch (err) {
+      logger.warn('[fetchBBR] Opgang/Etage fetch fejlede:', err);
+      // Ikke-fatal — fortsæt med null
+    }
+  }
+
+  // BIZZ-484: Hent tekniske anlæg parallelt — non-fatal hvis det fejler.
+  let tekniskeAnlaeg: Array<{
+    id_lokalId: string;
+    tek020Klassifikation: string | null;
+    status: string | null;
+  }> | null = null;
+  try {
+    tekniskeAnlaeg = await fetchBbrTekniskAnlaegByDawaId(adgangsadresseId);
+  } catch (err) {
+    logger.warn('[fetchBBR] TekniskAnlaeg fetch fejlede:', err);
+  }
+
   const bbrFejl = !(process.env.DATAFORDELER_API_KEY ?? '')
     ? 'Datafordeler API-nøgle ikke konfigureret.'
     : bbr === null
@@ -1116,6 +1566,9 @@ export async function fetchBbrForAddress(
     ejendomsrelationer,
     ejerlejlighedBfe,
     moderBfe,
+    opgange,
+    etager,
+    tekniskeAnlaeg,
     bbrFejl,
   };
 }

@@ -21,6 +21,27 @@ import { resolveTenantId } from '@/lib/api/auth';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
+/**
+ * Resolve the label for the root property node in the ejerskab diagram.
+ *
+ * The client-side code that composes the `adresse` query param for this
+ * route sometimes produces strings that are only commas and whitespace
+ * (e.g. `" , , "`) when the DAR/DAWA lookup returned an address with
+ * missing fields. Rendering such a string in the diagram produces a blank
+ * node box. Falling back to `BFE <nr>` makes the node always carry
+ * meaningful text.
+ *
+ * Exported so it can be unit-tested in isolation.
+ *
+ * @param adresse - Address string supplied by the caller (may be empty)
+ * @param bfe     - BFE number for the property (used as fallback identifier)
+ */
+export function resolvePropertyLabel(adresse: string, bfe: string | number): string {
+  const trimmed = (adresse ?? '').replace(/[\s,]+/g, ' ').trim();
+  if (trimmed.length > 0) return adresse;
+  return `BFE ${bfe}`;
+}
+
 interface ChainNode {
   id: string;
   label: string;
@@ -31,6 +52,12 @@ interface ChainNode {
   link?: string;
   /** True when the company has a slutdato / sammensatStatus "Ophørt" — shown greyed out in diagrams */
   isCeased?: boolean;
+  /**
+   * BFE number on property nodes — lets the diagram render a `BFE 12345` line
+   * even when the address is missing or empty, so the root property node is
+   * never a blank box (bug seen on Ejerskab tab 2026-04-18).
+   */
+  bfeNummer?: number;
 }
 
 /** Status-tekster fra Tinglysning der ikke er faktiske ejere */
@@ -51,7 +78,7 @@ export interface ChainEjerDetalje {
   navn: string;
   cvr: string | null;
   enhedsNummer: number | null;
-  type: 'person' | 'selskab' | 'status';
+  type: 'person' | 'selskab' | 'status' | 'pvoplys';
   andel: string | null;
   adresse: string | null;
   overtagelsesdato: string | null;
@@ -59,6 +86,15 @@ export interface ChainEjerDetalje {
   koebesum: number | null;
   /** True when the owning company is ceased/dissolved — shown as warning in UI */
   isCeased?: boolean;
+  /**
+   * BIZZ-482: PV-oplys-felter for dødsboer, udenlandske ejere, fonde m.m.
+   * Kun sat når typen er 'pvoplys'. fiktivtPVnummer bruges til link til
+   * dedikeret detaljeside (se BIZZ-483).
+   */
+  fiktivtPVnummer?: string | null;
+  landekode?: string | null;
+  udlandsadresse?: string | null;
+  administrator?: string | null;
 }
 
 export interface OwnershipChainResponse {
@@ -106,7 +142,19 @@ function mapEjerandel(val: number): string {
 async function fetchCompanyOwners(cvr: number): Promise<{
   companyName: string;
   isCeased: boolean;
-  owners: { navn: string; enhedsNummer: number; erVirksomhed: boolean; ejerandel: string | null }[];
+  owners: {
+    navn: string;
+    enhedsNummer: number;
+    /**
+     * BIZZ-564 v3: CVR-nummer (kun for virksomheder). For deltager-virksomheder
+     * er enhedsNummer en intern 10-cifret CVR-ES-id som IKKE kan bruges til
+     * cvrNummer-opslag. Den rigtige CVR ligger i deltager.forretningsnoegle
+     * — uden denne kunne recursion ikke forfølge ejerkæden videre op.
+     */
+    cvrNummer: number | null;
+    erVirksomhed: boolean;
+    ejerandel: string | null;
+  }[];
 }> {
   if (!CVR_ES_USER || !CVR_ES_PASS)
     return { companyName: `CVR ${cvr}`, isCeased: false, owners: [] };
@@ -153,6 +201,7 @@ async function fetchCompanyOwners(cvr: number): Promise<{
     const owners: {
       navn: string;
       enhedsNummer: number;
+      cvrNummer: number | null;
       erVirksomhed: boolean;
       ejerandel: string | null;
     }[] = [];
@@ -173,6 +222,19 @@ async function fetchCompanyOwners(cvr: number): Promise<{
       const navn = gyldigNu(dNavne)?.navn;
       if (!navn) continue;
 
+      // BIZZ-564 v3: For virksomheds-deltagere er forretningsnoegle CVR-nr
+      // (8-cifret). enhedsNummer er CVR-ES intern 10-cifret id og kan IKKE
+      // bruges til at slå virksomheden op via cvrNummer-term-query. Uden
+      // denne mapping stopper recursion fordi det "fake CVR" returnerer 0
+      // hits når næste fetchCompanyOwners-iteration kører.
+      const forretningsnoegle =
+        typeof deltager.forretningsnoegle === 'number'
+          ? deltager.forretningsnoegle
+          : typeof deltager.forretningsnoegle === 'string'
+            ? parseInt(deltager.forretningsnoegle, 10)
+            : null;
+      const cvrNummer = erVirksomhed && forretningsnoegle ? forretningsnoegle : null;
+
       // Check for ejer-roller
       const orgs = Array.isArray(rel.organisationer)
         ? (rel.organisationer as Record<string, unknown>[])
@@ -184,45 +246,64 @@ async function fetchCompanyOwners(cvr: number): Promise<{
         const orgNavne = Array.isArray(org.organisationsNavn)
           ? (org.organisationsNavn as (Periodic & { navn?: string })[])
           : [];
-        const erEjerOrg = orgNavne.some(
-          (n) =>
-            n.navn &&
-            (n.navn.toUpperCase().includes('EJER') ||
-              n.navn.toUpperCase().includes('LEGALE') ||
-              n.navn.toUpperCase().includes('REEL')) &&
-            n.periode?.gyldigTil == null
-        );
-        if (!erEjerOrg) continue;
-        erEjer = true;
+        // BIZZ-564 v2: Reel ejer (RBE) er KAP-anmeldelse og IKKE legalt ejerskab.
+        // Bemærk: orgNavne.periode.gyldigTil er ALTID null (CVR ES bruger kun
+        // perioden på orgNavn til at tracke navne-ændringer, ikke ejer-status).
+        // Den reelle ejer-status check sker via medlemsData attributter (vaerdier)
+        // hvor vi tjekker om ejerandel-vaerdi har en aktiv (gyldigTil=null) entry.
+        const erRolleType = orgNavne.some((n) => {
+          const upper = n.navn?.toUpperCase() ?? '';
+          if (!upper) return false;
+          if (upper.includes('REEL')) return false; // RBE — ikke legalt ejerskab
+          return upper.includes('EJER') || upper.includes('LEGALE');
+        });
+        if (!erRolleType) continue;
 
-        // Find ejerandel
+        // Find ejerandel + AKTIV-check via medlemsData attributter.
+        // BIZZ-564 v2: Hvis EJERANDEL_PROCENT har vaerdier hvor ALLE er udløbet
+        // (alle gyldigTil != null), er ejerskabet historisk og skal IKKE med.
+        // Hvis mindst én vaerdi har gyldigTil = null → aktiv ejer.
         const medlemsData = Array.isArray(org.medlemsData)
           ? (org.medlemsData as Record<string, unknown>[])
           : [];
+        let aktivEjerandel: string | null = null;
+        let harEjerandelAttribut = false;
         for (const md of medlemsData) {
           const attrs = Array.isArray(md.attributter)
             ? (md.attributter as Record<string, unknown>[])
             : [];
           for (const attr of attrs) {
             if (attr.type === 'EJERANDEL_PROCENT') {
+              harEjerandelAttribut = true;
               const vaerdier = Array.isArray(attr.vaerdier)
                 ? (attr.vaerdier as (Periodic & { vaerdi?: number })[])
                 : [];
-              const gyldig = gyldigNu(vaerdier);
-              if (gyldig?.vaerdi != null) {
-                ejerandel = mapEjerandel(
-                  typeof gyldig.vaerdi === 'number'
-                    ? gyldig.vaerdi
-                    : parseFloat(String(gyldig.vaerdi))
+              // Find AKTIV vaerdi (gyldigTil == null) — IKKE bare seneste
+              const aktiv = vaerdier.find((v) => v.periode?.gyldigTil == null);
+              if (aktiv?.vaerdi != null) {
+                aktivEjerandel = mapEjerandel(
+                  typeof aktiv.vaerdi === 'number' ? aktiv.vaerdi : parseFloat(String(aktiv.vaerdi))
                 );
               }
             }
           }
         }
+        // Aktiv ejer-criteria:
+        //   1. Ingen EJERANDEL_PROCENT-attributter → fallback: behandl som aktiv
+        //      (sjælden case, men nogle ejer-typer fx INTERESSENTER har ikke
+        //      eksplicit ejerandel-kvantificering)
+        //   2. Har EJERANDEL_PROCENT MEN ingen aktiv vaerdi → historisk → skip
+        //   3. Har aktiv vaerdi → inkluder med den ejerandel
+        if (harEjerandelAttribut && aktivEjerandel == null) {
+          // Historisk ejer — skip helt
+          continue;
+        }
+        erEjer = true;
+        ejerandel = aktivEjerandel;
       }
 
       if (erEjer) {
-        owners.push({ navn, enhedsNummer, erVirksomhed, ejerandel });
+        owners.push({ navn, enhedsNummer, cvrNummer, erVirksomhed, ejerandel });
       }
     }
 
@@ -242,6 +323,16 @@ export async function GET(req: NextRequest) {
 
   const bfe = req.nextUrl.searchParams.get('bfe');
   const adresse = req.nextUrl.searchParams.get('adresse') ?? 'Ejendom';
+  /**
+   * BIZZ-470: Klienten sender type=ejerlejlighed når ejendommen er en
+   * ejerlejlighed. I så fald springer vi Tinglysning-kaldene over — for
+   * ejerlejligheder returnerer Tinglysning-adkomst typisk kun "Opdelt i
+   * ejerlejligheder" som status, og de faktiske ejere ligger alligevel i
+   * EJF. At undvære de to sekventielle Tinglysning-runde-trips (search +
+   * summarisk XML) sparer ~2-4 sek på koldstart.
+   */
+  const ejendomstypeHint = (req.nextUrl.searchParams.get('type') ?? '').toLowerCase();
+  const skipTinglysning = ejendomstypeHint.includes('ejerlejlighed');
 
   if (!bfe) {
     return NextResponse.json({ nodes: [], edges: [], mainId: '', fejl: 'bfe er påkrævet' });
@@ -252,8 +343,15 @@ export async function GET(req: NextRequest) {
   const seenIds = new Set<string>();
   const mainId = `bfe-${bfe}`;
 
-  // Ejendomsnode (grøn)
-  nodes.push({ id: mainId, label: adresse, type: 'property' });
+  // Ejendomsnode (grøn). Fallback-label håndteres af resolvePropertyLabel:
+  // hvis klientens adresse-streng er tom eller kun kommaer/mellemrum, brug
+  // `BFE <nr>` så noden aldrig renderes som en blank kasse.
+  nodes.push({
+    id: mainId,
+    label: resolvePropertyLabel(adresse, bfe),
+    type: 'property',
+    bfeNummer: Number(bfe) || undefined,
+  });
   seenIds.add(mainId);
 
   // Hent ejere fra Tinglysning adkomst (primær kilde) og beriget via CVR API
@@ -278,142 +376,150 @@ export async function GET(req: NextRequest) {
     .then((r) => (r.ok ? r.json() : null))
     .catch(() => null);
 
-  // Trin 1: Prøv Tinglysning API — har navne, adkomsttype, evt. CVR
-  try {
-    const tlRes = await fetch(`${req.nextUrl.origin}/api/tinglysning?bfe=${bfe}`, {
-      headers: { cookie: cookieHeader },
-      signal: AbortSignal.timeout(30000),
-    });
-    if (tlRes.ok) {
-      const tlData = await tlRes.json();
-      if (tlData.uuid && !tlData.error) {
-        // Hent KUN ejere-sektion fra summarisk (undgår at parse 90KB+ XML for servitutter)
-        const tlSumRes = await fetch(
-          `${req.nextUrl.origin}/api/tinglysning/summarisk?uuid=${tlData.uuid}&section=ejere`,
-          {
-            headers: { cookie: cookieHeader },
-            signal: AbortSignal.timeout(30000),
-          }
-        );
-        if (tlSumRes.ok) {
-          const sumData = await tlSumRes.json();
-          const ejere = sumData.ejere ?? [];
-          for (const ejer of ejere) {
-            if (ejer.cvr) {
-              const id = `cvr-${ejer.cvr}`;
-              if (!seenIds.has(id)) {
-                seenIds.add(id);
-                nodes.push({
-                  id,
-                  label: ejer.navn || `CVR ${ejer.cvr}`,
-                  type: 'company',
-                  cvr: parseInt(ejer.cvr, 10),
-                  link: `/dashboard/companies/${ejer.cvr}`,
-                });
-                companyOwnersToResolve.push({ nodeId: id, cvr: parseInt(ejer.cvr, 10), depth: 0 });
-              }
-              edges.push({ from: id, to: mainId, ejerandel: ejer.andel ?? undefined });
-              ejerDetaljer.push({
-                navn: ejer.navn,
-                cvr: ejer.cvr,
-                enhedsNummer: null,
-                type: 'selskab',
-                andel: ejer.andel,
-                adresse: ejer.adresse ?? null,
-                overtagelsesdato: ejer.overtagelsesdato ?? null,
-                adkomstType: ejer.adkomstType ?? null,
-                koebesum: ejer.koebesum ?? null,
-              });
-            } else {
-              // Tjek om "ejeren" egentlig er en status-tekst (fx "Opdelt i ejerlejligheder")
-              const erStatus = STATUS_TEKSTER.some((s) =>
-                (ejer.navn ?? '').toLowerCase().includes(s)
-              );
-
-              if (erStatus) {
-                const id = `status-${nodes.length}`;
-                nodes.push({ id, label: ejer.navn, type: 'status' });
-                edges.push({ from: id, to: mainId });
-                ejerDetaljer.push({
-                  navn: ejer.navn,
-                  cvr: null,
-                  enhedsNummer: null,
-                  type: 'status' as 'person',
-                  andel: null,
-                  adresse: null,
-                  overtagelsesdato: null,
-                  adkomstType: null,
-                  koebesum: null,
-                });
-              } else {
-                const id = `person-${nodes.length}`;
-                // BIZZ-386: Push node immediately (without enhedsNummer) so id is stable,
-                // then batch-resolve enhedsNummer for all persons after the loop.
-                nodes.push({
-                  id,
-                  label: ejer.navn || 'Person',
-                  type: 'person',
-                });
+  // Trin 1: Prøv Tinglysning API — har navne, adkomsttype, evt. CVR.
+  // BIZZ-470: For ejerlejligheder (identificeret via ?type=ejerlejlighed)
+  // springer vi helt over — Tinglysning returnerer ikke de reelle ejere
+  // alligevel, og EJF-fallbacken henter dem hurtigt via ejfPromise.
+  if (!skipTinglysning)
+    try {
+      const tlRes = await fetch(`${req.nextUrl.origin}/api/tinglysning?bfe=${bfe}`, {
+        headers: { cookie: cookieHeader },
+        signal: AbortSignal.timeout(30000),
+      });
+      if (tlRes.ok) {
+        const tlData = await tlRes.json();
+        if (tlData.uuid && !tlData.error) {
+          // Hent KUN ejere-sektion fra summarisk (undgår at parse 90KB+ XML for servitutter)
+          const tlSumRes = await fetch(
+            `${req.nextUrl.origin}/api/tinglysning/summarisk?uuid=${tlData.uuid}&section=ejere`,
+            {
+              headers: { cookie: cookieHeader },
+              signal: AbortSignal.timeout(30000),
+            }
+          );
+          if (tlSumRes.ok) {
+            const sumData = await tlSumRes.json();
+            const ejere = sumData.ejere ?? [];
+            for (const ejer of ejere) {
+              if (ejer.cvr) {
+                const id = `cvr-${ejer.cvr}`;
+                if (!seenIds.has(id)) {
+                  seenIds.add(id);
+                  nodes.push({
+                    id,
+                    label: ejer.navn || `CVR ${ejer.cvr}`,
+                    type: 'company',
+                    cvr: parseInt(ejer.cvr, 10),
+                    link: `/dashboard/companies/${ejer.cvr}`,
+                  });
+                  companyOwnersToResolve.push({
+                    nodeId: id,
+                    cvr: parseInt(ejer.cvr, 10),
+                    depth: 0,
+                  });
+                }
                 edges.push({ from: id, to: mainId, ejerandel: ejer.andel ?? undefined });
                 ejerDetaljer.push({
                   navn: ejer.navn,
-                  cvr: null,
-                  type: 'person',
+                  cvr: ejer.cvr,
+                  enhedsNummer: null,
+                  type: 'selskab',
                   andel: ejer.andel,
                   adresse: ejer.adresse ?? null,
                   overtagelsesdato: ejer.overtagelsesdato ?? null,
                   adkomstType: ejer.adkomstType ?? null,
                   koebesum: ejer.koebesum ?? null,
-                  enhedsNummer: null,
                 });
-                // Track node/detaljer indices so we can patch them after batch lookup
-                tlPersonsToResolve.push({
-                  navn: ejer.navn,
-                  nodeIdx: nodes.length - 1,
-                  detaljeIdx: ejerDetaljer.length - 1,
-                });
+              } else {
+                // Tjek om "ejeren" egentlig er en status-tekst (fx "Opdelt i ejerlejligheder")
+                const erStatus = STATUS_TEKSTER.some((s) =>
+                  (ejer.navn ?? '').toLowerCase().includes(s)
+                );
+
+                if (erStatus) {
+                  const id = `status-${nodes.length}`;
+                  nodes.push({ id, label: ejer.navn, type: 'status' });
+                  edges.push({ from: id, to: mainId });
+                  ejerDetaljer.push({
+                    navn: ejer.navn,
+                    cvr: null,
+                    enhedsNummer: null,
+                    type: 'status' as 'person',
+                    andel: null,
+                    adresse: null,
+                    overtagelsesdato: null,
+                    adkomstType: null,
+                    koebesum: null,
+                  });
+                } else {
+                  const id = `person-${nodes.length}`;
+                  // BIZZ-386: Push node immediately (without enhedsNummer) so id is stable,
+                  // then batch-resolve enhedsNummer for all persons after the loop.
+                  nodes.push({
+                    id,
+                    label: ejer.navn || 'Person',
+                    type: 'person',
+                  });
+                  edges.push({ from: id, to: mainId, ejerandel: ejer.andel ?? undefined });
+                  ejerDetaljer.push({
+                    navn: ejer.navn,
+                    cvr: null,
+                    type: 'person',
+                    andel: ejer.andel,
+                    adresse: ejer.adresse ?? null,
+                    overtagelsesdato: ejer.overtagelsesdato ?? null,
+                    adkomstType: ejer.adkomstType ?? null,
+                    koebesum: ejer.koebesum ?? null,
+                    enhedsNummer: null,
+                  });
+                  // Track node/detaljer indices so we can patch them after batch lookup
+                  tlPersonsToResolve.push({
+                    navn: ejer.navn,
+                    nodeIdx: nodes.length - 1,
+                    detaljeIdx: ejerDetaljer.length - 1,
+                  });
+                }
               }
             }
           }
         }
       }
-    }
 
-    // BIZZ-386: Batch-resolve enhedsNummer for all Tinglysning person owners in parallel
-    if (tlPersonsToResolve.length > 0 && CVR_ES_USER && CVR_ES_PASS) {
-      const auth = Buffer.from(`${CVR_ES_USER}:${CVR_ES_PASS}`).toString('base64');
-      const results = await Promise.allSettled(
-        tlPersonsToResolve.map(({ navn }) =>
-          navn
-            ? fetch(`${CVR_ES_BASE}/deltager/_search`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: `Basic ${auth}` },
-                body: JSON.stringify({
-                  query: { match: { 'Vrdeltagerperson.navne.navn': navn } },
-                  _source: ['Vrdeltagerperson.enhedsNummer'],
-                  size: 1,
-                }),
-                signal: AbortSignal.timeout(5000),
-              })
-                .then((r) => (r.ok ? r.json() : null))
-                .catch(() => null)
-            : Promise.resolve(null)
-        )
-      );
-      for (let i = 0; i < tlPersonsToResolve.length; i++) {
-        const result = results[i];
-        if (result.status !== 'fulfilled' || !result.value) continue;
-        const enr = result.value?.hits?.hits?.[0]?._source?.Vrdeltagerperson?.enhedsNummer;
-        if (typeof enr !== 'number') continue;
-        const { nodeIdx, detaljeIdx } = tlPersonsToResolve[i];
-        nodes[nodeIdx].enhedsNummer = enr;
-        nodes[nodeIdx].link = `/dashboard/owners/${enr}`;
-        ejerDetaljer[detaljeIdx].enhedsNummer = enr;
+      // BIZZ-386: Batch-resolve enhedsNummer for all Tinglysning person owners in parallel
+      if (tlPersonsToResolve.length > 0 && CVR_ES_USER && CVR_ES_PASS) {
+        const auth = Buffer.from(`${CVR_ES_USER}:${CVR_ES_PASS}`).toString('base64');
+        const results = await Promise.allSettled(
+          tlPersonsToResolve.map(({ navn }) =>
+            navn
+              ? fetch(`${CVR_ES_BASE}/deltager/_search`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', Authorization: `Basic ${auth}` },
+                  body: JSON.stringify({
+                    query: { match: { 'Vrdeltagerperson.navne.navn': navn } },
+                    _source: ['Vrdeltagerperson.enhedsNummer'],
+                    size: 1,
+                  }),
+                  signal: AbortSignal.timeout(5000),
+                })
+                  .then((r) => (r.ok ? r.json() : null))
+                  .catch(() => null)
+              : Promise.resolve(null)
+          )
+        );
+        for (let i = 0; i < tlPersonsToResolve.length; i++) {
+          const result = results[i];
+          if (result.status !== 'fulfilled' || !result.value) continue;
+          const enr = result.value?.hits?.hits?.[0]?._source?.Vrdeltagerperson?.enhedsNummer;
+          if (typeof enr !== 'number') continue;
+          const { nodeIdx, detaljeIdx } = tlPersonsToResolve[i];
+          nodes[nodeIdx].enhedsNummer = enr;
+          nodes[nodeIdx].link = `/dashboard/owners/${enr}`;
+          ejerDetaljer[detaljeIdx].enhedsNummer = enr;
+        }
       }
+    } catch {
+      /* Tinglysning valgfri */
     }
-  } catch {
-    /* Tinglysning valgfri */
-  }
 
   // ── EJF fallback — bruges når Tinglysning ikke returnerer faktiske ejere ──
   // For ejerlejligheder returnerer Tinglysning typisk kun "Opdelt i ejerlejlighed"
@@ -524,6 +630,38 @@ export async function GET(req: NextRequest) {
               adkomstType: null,
               koebesum: null,
             });
+          } else if (ejer.ejertype === 'pvoplys' && ejer.personNavn) {
+            // BIZZ-482: Parter uden CVR/CPR (dødsboer, udenlandske selskaber,
+            // fonde, administratorer). Disse renderes som diagrammets 'person'-
+            // node (samme visuelle udtryk) men ejerDetaljer beholder
+            // type='pvoplys' og de udvidede felter så UI'en kan vise flag,
+            // udlandsadresse og administrator. Springer enhedsNummer-lookup
+            // over — PV-parter findes ikke i CVR ES.
+            const id = `pvoplys-${ejer.fiktivtPVnummer ?? nodes.length}`;
+            if (!seenIds.has(id)) {
+              seenIds.add(id);
+              nodes.push({
+                id,
+                label: ejer.personNavn,
+                type: 'person',
+              });
+            }
+            edges.push({ from: id, to: mainId, ejerandel: andel });
+            ejerDetaljer.push({
+              navn: ejer.personNavn,
+              cvr: null,
+              enhedsNummer: null,
+              type: 'pvoplys',
+              andel: andel ?? null,
+              adresse: ejer.udlandsadresse ?? null,
+              overtagelsesdato: ejer.virkningFra ?? null,
+              adkomstType: null,
+              koebesum: null,
+              fiktivtPVnummer: ejer.fiktivtPVnummer ?? null,
+              landekode: ejer.landekode ?? null,
+              udlandsadresse: ejer.udlandsadresse ?? null,
+              administrator: ejer.administrator ?? null,
+            });
           } else if (ejer.personNavn) {
             const id = `person-ejf-${nodes.length}`;
 
@@ -630,9 +768,14 @@ export async function GET(req: NextRequest) {
       }
 
       for (const owner of owners) {
-        const ownerId = owner.erVirksomhed
-          ? `cvr-${owner.enhedsNummer}`
-          : `en-${owner.enhedsNummer}`;
+        // BIZZ-564 v3: For virksomheder skal vi ID'e via det rigtige CVR-nummer
+        // (forretningsnoegle), ikke det interne CVR-ES enhedsNummer. Hvis vi
+        // brugte enhedsNummer som "cvr" stoppede recursion fordi næste
+        // fetchCompanyOwners-iteration ikke kunne finde virksomheden via
+        // term-query på cvrNummer.
+        const effectiveCvr =
+          owner.erVirksomhed && owner.cvrNummer ? owner.cvrNummer : owner.enhedsNummer;
+        const ownerId = owner.erVirksomhed ? `cvr-${effectiveCvr}` : `en-${owner.enhedsNummer}`;
 
         if (!seenIds.has(ownerId)) {
           seenIds.add(ownerId);
@@ -641,14 +784,18 @@ export async function GET(req: NextRequest) {
               id: ownerId,
               label: owner.navn,
               type: 'company',
-              cvr: owner.enhedsNummer,
-              link: `/dashboard/companies/${owner.enhedsNummer}`,
+              cvr: effectiveCvr,
+              link: `/dashboard/companies/${effectiveCvr}`,
             });
-            nextLevel.push({
-              nodeId: ownerId,
-              cvr: owner.enhedsNummer,
-              depth: depth + 1,
-            });
+            // Kun push til next-level hvis vi har en gyldig CVR — ellers kan
+            // vi alligevel ikke recurse (f.eks. udenlandske ejere uden DK-CVR).
+            if (owner.cvrNummer) {
+              nextLevel.push({
+                nodeId: ownerId,
+                cvr: owner.cvrNummer,
+                depth: depth + 1,
+              });
+            }
           } else {
             nodes.push({
               id: ownerId,
@@ -666,12 +813,50 @@ export async function GET(req: NextRequest) {
     currentLevel = nextLevel;
   }
 
-  // Propagate isCeased from resolved company nodes to ejerDetaljer entries
+  // Propagate isCeased from resolved company nodes til ejerDetaljer entries.
+  // Skal ske FØR filtreringen nedenfor, så detaljerne bevarer advarslen
+  // om at en direkte ejer er ophørt selvom noden fjernes fra diagrammet.
   for (const d of ejerDetaljer) {
     if (d.cvr && d.type === 'selskab') {
-      const node = nodes.find((n) => n.type === 'company' && n.cvr === parseInt(d.cvr!, 10));
+      const cvrNum = parseInt(d.cvr, 10);
+      const node = nodes.find((n) => n.type === 'company' && n.cvr === cvrNum);
       if (node?.isCeased) d.isCeased = true;
     }
+  }
+
+  // BIZZ-471 + BIZZ-477: Fjern ophørte virksomheder fra ejerstrukturen OG
+  // fra adkomst-listen. Ophørte selskaber kan ikke længere eje noget i dag;
+  // at vise dem som 100%-ejer (selv med "Ophørt" badge) giver forkert
+  // indtryk af det aktuelle ejerskab. Tinglysning-registreringen kan være
+  // forældet når selskabet er afregistreret uden formel re-tinglysning af
+  // adkomsten. Match chain-graph og ejer-liste: samme filter, samme ejere.
+  const ceasedCompanyIds = new Set(
+    nodes.filter((n) => n.type === 'company' && n.isCeased).map((n) => n.id)
+  );
+  const ceasedCvrs = new Set(
+    nodes
+      .filter((n) => n.type === 'company' && n.isCeased && n.cvr != null)
+      .map((n) => String(n.cvr))
+  );
+  if (ceasedCompanyIds.size > 0) {
+    const filteredNodes = nodes.filter((n) => !ceasedCompanyIds.has(n.id));
+    nodes.length = 0;
+    nodes.push(...filteredNodes);
+    const filteredEdges = edges.filter(
+      (e) => !ceasedCompanyIds.has(e.from) && !ceasedCompanyIds.has(e.to)
+    );
+    edges.length = 0;
+    edges.push(...filteredEdges);
+  }
+  if (ceasedCvrs.size > 0) {
+    // BIZZ-477: Drop ophørte selskaber fra ejerDetaljer så UI-listen matcher
+    // diagrammet (begge viser kun aktive ejere).
+    const filteredEjerDetaljer = ejerDetaljer.filter((d) => {
+      if (d.type !== 'selskab' || !d.cvr) return true;
+      return !ceasedCvrs.has(d.cvr);
+    });
+    ejerDetaljer.length = 0;
+    ejerDetaljer.push(...filteredEjerDetaljer);
   }
 
   const fejl: string | null = null;

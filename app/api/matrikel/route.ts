@@ -75,11 +75,13 @@ interface RawJordstykke {
   arealtype?: string;
   vejareal?: number;
   faelleslod?: boolean;
-  fredskov?: boolean;
-  strandbeskyttelse?: boolean;
-  klitfredning?: boolean;
-  jordrente?: boolean;
   ejerlavLokalId?: string;
+}
+
+interface RawEjerlav {
+  id_lokalId?: string;
+  ejerlavsnavn?: string;
+  ejerlavskode?: number;
 }
 
 interface RawSamletFastEjendom {
@@ -90,9 +92,6 @@ interface RawSamletFastEjendom {
   hovedejendomOpdeltIEjerlejligh?: boolean;
   arbejderbolig?: boolean;
   udskiltVej?: boolean;
-  jordstykkeSamlesISamletFastEjendom?: {
-    nodes?: RawJordstykke[];
-  };
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -179,7 +178,13 @@ async function fetchMATGraphQL(query: string): Promise<Record<string, unknown> |
  * @param now - ISO-timestamp for bitemporale parametre
  * @returns GraphQL query streng
  */
-function buildFullQuery(bfeNummer: number, now: string): string {
+/**
+ * 2026-04-19 MAT schema update: jordstykkeSamlesISamletFastEjendom sub-query
+ * removed from MAT_SamletFastEjendom. Fredskov/strandbeskyttelse/klitfredning/
+ * jordrente fields also removed from MAT_Jordstykke. Now we query jordstykker
+ * separately using samletFastEjendomLokalId filter (string!).
+ */
+function buildEjendomQuery(bfeNummer: number, now: string): string {
   return `{
     MAT_SamletFastEjendom(
       first: 1
@@ -195,62 +200,49 @@ function buildFullQuery(bfeNummer: number, now: string): string {
         hovedejendomOpdeltIEjerlejligh
         arbejderbolig
         udskiltVej
-        jordstykkeSamlesISamletFastEjendom(first: 50) {
-          nodes {
-            id_lokalId
-            matrikelnummer
-            registreretAreal
-            arealtype
-            vejareal
-            faelleslod
-            fredskov
-            strandbeskyttelse
-            klitfredning
-            jordrente
-            ejerlavLokalId
-          }
-        }
       }
     }
   }`;
 }
 
 /**
- * Bygger en simpel fallback-query uden fredskov/strandbeskyttelse/klitfredning/jordrente,
- * som bruges hvis den fulde query fejler pga. ukendte felter i skemaet.
- *
- * @param bfeNummer - BFE-nummer (heltal)
- * @param now - ISO-timestamp for bitemporale parametre
- * @returns GraphQL query streng
+ * Separate query for jordstykker belonging to a SamletFastEjendom.
+ * Uses samletFastEjendomLokalId filter (string) since the sub-query was removed.
  */
-function buildSimpleQuery(bfeNummer: number, now: string): string {
+function buildJordstykkeQuery(bfeNummer: number, now: string): string {
   return `{
-    MAT_SamletFastEjendom(
-      first: 1
+    MAT_Jordstykke(
+      first: 50
       virkningstid: "${now}"
       registreringstid: "${now}"
-      where: { BFEnummer: { eq: ${bfeNummer} } }
+      where: { samletFastEjendomLokalId: { eq: "${bfeNummer}" } }
     ) {
       nodes {
-        BFEnummer
-        status
-        erFaelleslod
-        landbrugsnotering
-        hovedejendomOpdeltIEjerlejligh
-        arbejderbolig
-        udskiltVej
-        jordstykkeSamlesISamletFastEjendom(first: 50) {
-          nodes {
-            id_lokalId
-            matrikelnummer
-            registreretAreal
-            arealtype
-            vejareal
-            faelleslod
-            ejerlavLokalId
-          }
-        }
+        id_lokalId
+        matrikelnummer
+        registreretAreal
+        arealtype
+        vejareal
+        faelleslod
+        ejerlavLokalId
       }
+    }
+  }`;
+}
+
+/**
+ * BIZZ-497: Fetch ejerlav names for a set of ejerlav lokalIds.
+ */
+function buildEjerlavQuery(lokalIds: string[], now: string): string {
+  const quoted = lokalIds.map((id) => `"${id}"`).join(',');
+  return `{
+    MAT_Ejerlav(
+      first: 50
+      virkningstid: "${now}"
+      registreringstid: "${now}"
+      where: { id_lokalId: { in: [${quoted}] } }
+    ) {
+      nodes { id_lokalId ejerlavsnavn ejerlavskode }
     }
   }`;
 }
@@ -263,7 +255,11 @@ function buildSimpleQuery(bfeNummer: number, now: string): string {
  * @param raw - Rå jordstykke fra GraphQL-svar
  * @returns Normaliseret MatrikelJordstykke
  */
-function mapJordstykke(raw: RawJordstykke): MatrikelJordstykke {
+function mapJordstykke(
+  raw: RawJordstykke,
+  ejerlavMap?: Map<string, RawEjerlav>
+): MatrikelJordstykke {
+  const ejerlav = raw.ejerlavLokalId ? ejerlavMap?.get(raw.ejerlavLokalId) : undefined;
   return {
     id: raw.id_lokalId ?? '',
     matrikelnummer: raw.matrikelnummer ?? '',
@@ -271,12 +267,15 @@ function mapJordstykke(raw: RawJordstykke): MatrikelJordstykke {
     arealtype: raw.arealtype ?? null,
     vejareal: raw.vejareal ?? null,
     faelleslod: raw.faelleslod ?? false,
-    fredskov: raw.fredskov ?? null,
-    strandbeskyttelse: raw.strandbeskyttelse ?? null,
-    klitfredning: raw.klitfredning ?? null,
-    jordrente: raw.jordrente ?? null,
+    // 2026-04-19: fredskov/strandbeskyttelse/klitfredning/jordrente fields
+    // were removed from MAT_Jordstykke schema — keep null until replacement found
+    fredskov: null,
+    strandbeskyttelse: null,
+    klitfredning: null,
+    jordrente: null,
     ejerlavskode: raw.ejerlavLokalId ?? null,
-    ejerlavsnavn: null, // Ejerlav-navn kræver separat opslag — ejerlavskode er tilstrækkelig
+    // BIZZ-497: Ejerlav-navn via separat MAT_Ejerlav lookup
+    ejerlavsnavn: ejerlav?.ejerlavsnavn ?? null,
   };
 }
 
@@ -286,9 +285,11 @@ function mapJordstykke(raw: RawJordstykke): MatrikelJordstykke {
  * @param raw - Rå SamletFastEjendom fra GraphQL-svar
  * @returns Normaliseret MatrikelEjendom
  */
-function mapEjendom(raw: RawSamletFastEjendom): MatrikelEjendom {
-  const rawJordstykker = raw.jordstykkeSamlesISamletFastEjendom?.nodes ?? [];
-
+function mapEjendom(
+  raw: RawSamletFastEjendom,
+  rawJordstykker: RawJordstykke[],
+  ejerlavMap?: Map<string, RawEjerlav>
+): MatrikelEjendom {
   return {
     bfeNummer: raw.BFEnummer ?? 0,
     status: raw.status ?? null,
@@ -297,7 +298,7 @@ function mapEjendom(raw: RawSamletFastEjendom): MatrikelEjendom {
     opdeltIEjerlejligheder: raw.hovedejendomOpdeltIEjerlejligh ?? false,
     arbejderbolig: raw.arbejderbolig ?? false,
     udskiltVej: raw.udskiltVej ?? false,
-    jordstykker: rawJordstykker.map(mapJordstykke),
+    jordstykker: rawJordstykker.map((j) => mapJordstykke(j, ejerlavMap)),
   };
 }
 
@@ -335,32 +336,28 @@ export async function GET(request: NextRequest): Promise<NextResponse<MatrikelRe
   const now = nowISOTimestamp();
 
   try {
-    // Trin 1: Prøv fuld query med alle felter
-    let data = await fetchMATGraphQL(buildFullQuery(bfeNummer, now));
+    // 2026-04-19 schema update: MAT_SamletFastEjendom no longer has
+    // jordstykkeSamlesISamletFastEjendom sub-query. Run 2 queries in parallel:
+    //   1. SamletFastEjendom metadata (status, erFaelleslod, etc.)
+    //   2. MAT_Jordstykke filtered by samletFastEjendomLokalId (string!)
+    const [ejendomData, jordstykkeData] = await Promise.all([
+      fetchMATGraphQL(buildEjendomQuery(bfeNummer, now)),
+      fetchMATGraphQL(buildJordstykkeQuery(bfeNummer, now)),
+    ]);
 
-    // Trin 2: Fald tilbage til simpel query hvis fuld query fejlede
-    if (!data) {
-      logger.warn(
-        '[MAT] Fuld query fejlede — prøver simpel query uden fredskov/strandbeskyttelse/klitfredning/jordrente'
-      );
-      data = await fetchMATGraphQL(buildSimpleQuery(bfeNummer, now));
-    }
-
-    if (!data) {
+    if (!ejendomData) {
       return NextResponse.json(
         { matrikel: null, fejl: 'Kunne ikke hente matrikeldata fra Datafordeler' },
         { status: 200 }
       );
     }
 
-    // Udtræk SamletFastEjendom nodes
-    const sfEjendom = data['MAT_SamletFastEjendom'] as
+    const sfEjendom = ejendomData['MAT_SamletFastEjendom'] as
       | { nodes?: RawSamletFastEjendom[] }
       | undefined;
-    const nodes = sfEjendom?.nodes;
+    const ejendomNodes = sfEjendom?.nodes;
 
-    if (!nodes?.length) {
-      // Ingen data fundet — ikke en fejl, bare tomt resultat
+    if (!ejendomNodes?.length) {
       return NextResponse.json(
         { matrikel: null, fejl: null },
         {
@@ -370,7 +367,22 @@ export async function GET(request: NextRequest): Promise<NextResponse<MatrikelRe
       );
     }
 
-    const matrikel = mapEjendom(nodes[0]);
+    const rawJordstykker =
+      (jordstykkeData?.['MAT_Jordstykke'] as { nodes?: RawJordstykke[] } | undefined)?.nodes ?? [];
+
+    // BIZZ-497: Hent ejerlav-navne for alle unikke ejerlavLokalId
+    let ejerlavMap: Map<string, RawEjerlav> | undefined;
+    const unikkeEjerlavIds = [
+      ...new Set(rawJordstykker.map((j) => j.ejerlavLokalId).filter((id): id is string => !!id)),
+    ];
+    if (unikkeEjerlavIds.length > 0) {
+      const ejerlavData = await fetchMATGraphQL(buildEjerlavQuery(unikkeEjerlavIds, now));
+      const ejerlavNodes =
+        (ejerlavData?.['MAT_Ejerlav'] as { nodes?: RawEjerlav[] } | undefined)?.nodes ?? [];
+      ejerlavMap = new Map(ejerlavNodes.filter((n) => n.id_lokalId).map((n) => [n.id_lokalId!, n]));
+    }
+
+    const matrikel = mapEjendom(ejendomNodes[0], rawJordstykker, ejerlavMap);
 
     return NextResponse.json(
       { matrikel, fejl: null },

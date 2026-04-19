@@ -100,16 +100,41 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  /** Zod schema for tinglysning query params */
-  const tinglysningSchema = z.object({
-    bfe: z.string().regex(/^\d+$/, 'bfe parameter er påkrævet (numerisk)'),
-  });
+  /** BIZZ-525 + BIZZ-527: Zod schema — bfe ELLER adresse ELLER landsejerlav+matrikel */
+  const tinglysningSchema = z
+    .object({
+      bfe: z.string().regex(/^\d+$/).optional(),
+      vejnavn: z.string().optional(),
+      husnummer: z.string().optional(),
+      postnummer: z
+        .string()
+        .regex(/^\d{4}$/)
+        .optional(),
+      etage: z.string().optional(),
+      sidedoer: z.string().optional(),
+      // BIZZ-527: tertiær fallback via ejerlav + matrikel
+      landsejerlavid: z.string().regex(/^\d+$/).optional(),
+      matrikelnr: z.string().optional(),
+    })
+    .refine(
+      (d) =>
+        d.bfe || (d.vejnavn && d.husnummer && d.postnummer) || (d.landsejerlavid && d.matrikelnr),
+      {
+        message: 'Angiv enten bfe, vejnavn+husnummer+postnummer eller landsejerlavid+matrikelnr',
+      }
+    );
 
   const parsed = parseQuery(req, tinglysningSchema);
   if (!parsed.success) {
-    return NextResponse.json({ error: 'bfe parameter er påkrævet (numerisk)' }, { status: 400 });
+    return NextResponse.json(
+      {
+        error: 'Angiv enten bfe, vejnavn+husnummer+postnummer eller landsejerlavid+matrikelnr',
+      },
+      { status: 400 }
+    );
   }
-  const { bfe } = parsed.data;
+  const { bfe, vejnavn, husnummer, postnummer, etage, sidedoer, landsejerlavid, matrikelnr } =
+    parsed.data;
 
   const hasCert = !!(
     process.env.TINGLYSNING_CERT_PATH ||
@@ -130,14 +155,44 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    // Trin 1: Søg ejendom med BFE-nummer
-    const searchRes = await tlFetch(`/ejendom/hovednoteringsnummer?hovednoteringsnummer=${bfe}`);
-    if (searchRes.status !== 200) {
-      return NextResponse.json({ error: 'Tinglysning API fejl' }, { status: 502 });
+    // Trin 1: Søg ejendom — enten via BFE eller adresse
+    let items: Record<string, unknown>[] = [];
+
+    if (bfe) {
+      const searchRes = await tlFetch(`/ejendom/hovednoteringsnummer?hovednoteringsnummer=${bfe}`);
+      if (searchRes.status !== 200) {
+        return NextResponse.json({ error: 'Tinglysning API fejl' }, { status: 502 });
+      }
+      const searchData = JSON.parse(searchRes.body);
+      items = searchData?.items ?? [];
     }
 
-    const searchData = JSON.parse(searchRes.body);
-    let items = searchData?.items ?? [];
+    // BIZZ-525: Adresse-fallback — prøv adressesøgning hvis BFE-opslag returnerede tomt
+    if (items.length === 0 && vejnavn && husnummer && postnummer) {
+      const params = new URLSearchParams({
+        vejnavn,
+        husnummer,
+        postnummer,
+        ...(etage ? { etage } : {}),
+        ...(sidedoer ? { sidedoer } : {}),
+      });
+      const addrRes = await tlFetch(`/ejendom/adresse?${params.toString()}`);
+      if (addrRes.status === 200) {
+        const addrData = JSON.parse(addrRes.body);
+        items = addrData?.items ?? [];
+      }
+    }
+
+    // BIZZ-527: Landsejerlav + matrikel tertiær fallback — særligt nyttig for
+    // landzone/agricultural ejendomme hvor adresse-opslag ofte er upålidelig
+    if (items.length === 0 && landsejerlavid && matrikelnr) {
+      const params = new URLSearchParams({ landsejerlavid, matrikelnr });
+      const matRes = await tlFetch(`/ejendom/landsejerlavmatrikel?${params.toString()}`);
+      if (matRes.status === 200) {
+        const matData = JSON.parse(matRes.body);
+        items = matData?.items ?? [];
+      }
+    }
 
     /**
      * Test-miljø fallback: Når BFE ikke findes i test.tinglysning.dk,
@@ -162,8 +217,8 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Ejendom ikke fundet i tingbogen' }, { status: 404 });
     }
 
-    const item = items[0];
-    const uuid = item.uuid;
+    const item = items[0] as Record<string, unknown>;
+    const uuid = String(item.uuid ?? '');
 
     // Trin 2: Hent summariske oplysninger med UUID
     const detailRes = await tlFetch(`/ejdsummarisk/${uuid}`);
@@ -173,19 +228,19 @@ export async function GET(req: NextRequest) {
     }
 
     const result: TinglysningData & { testFallback?: boolean } = {
-      bfe: parseInt(bfe, 10),
+      bfe: bfe ? parseInt(bfe, 10) : typeof item.bfe === 'number' ? item.bfe : 0,
       uuid,
-      adresse: item.adresse ?? '',
-      vedroerende: item.vedroerende ?? '',
+      adresse: String(item.adresse ?? ''),
+      vedroerende: String(item.vedroerende ?? ''),
       ejendomstype: extraData.ejendomstype ?? null,
       ejerlejlighedNr: extraData.ejerlejlighedNr ?? null,
       tinglystAreal: extraData.tinglystAreal ?? null,
       fordelingstal: extraData.fordelingstal ?? null,
-      ejendomsVurdering: item.ejendomsVurdering ?? null,
-      grundVaerdi: item.grundVaerdi ?? null,
-      vurderingsDato: item.vurderingsDato ?? null,
-      ejendomsnummer: item.ejendomsnummer ?? null,
-      kommuneNummer: item.kommuneNummer ?? null,
+      ejendomsVurdering: (item.ejendomsVurdering as number) ?? null,
+      grundVaerdi: (item.grundVaerdi as number) ?? null,
+      vurderingsDato: (item.vurderingsDato as string) ?? null,
+      ejendomsnummer: (item.ejendomsnummer as string) ?? null,
+      kommuneNummer: (item.kommuneNummer as string) ?? null,
       ...(erTestFallback && { testFallback: true }),
     };
 

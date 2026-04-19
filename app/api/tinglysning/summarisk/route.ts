@@ -46,13 +46,44 @@ export interface TLEjer {
   dato: string | null;
 }
 
-/** In-memory cache for summarisk XML — avoids re-fetching large responses */
+/** In-memory cache for summarisk XML — avoids re-fetching large responses.
+ * BIZZ-547: Bumped from 5min → 30min. Tinglysning data changes very rarely
+ * (new documents added at most a few times per year). Longer TTL significantly
+ * reduces cold-start latency for ejerlejligheder where multiple units in the
+ * same building share the same hovedejendom servitutter. */
 const xmlCache = new Map<string, { status: number; body: string; ts: number }>();
-const XML_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const XML_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+
+/** BIZZ-547: In-memory cache for dokaktuel responses — documents are immutable,
+ * so a long TTL is safe. Shared across servitut enrichment calls. */
+const dokCache = new Map<string, { body: string; ts: number }>();
+const DOK_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 
 /** Exposed for test teardown only — clears the in-memory XML cache. */
 export function clearXmlCache(): void {
   xmlCache.clear();
+  dokCache.clear();
+}
+
+/**
+ * BIZZ-528: Henter dokaktuel via uuid, med fallback til alias-opslag hvis
+ * uuid-stien returnerer 404/non-200. Tinglysning kan i visse tilfælde
+ * kun finde et dokument via alias-stien (dato-løbenummer), specielt for
+ * ældre dokumenter eller når uuid-mapping er flyttet.
+ *
+ * @param uuid    Dokument-UUID (primært opslag)
+ * @param alias   DokumentAliasIdentifikator/AktHistoriskIdentifikator
+ *                (dato-løbenummer-format), bruges hvis uuid-opslag fejler.
+ * @returns Resultatet fra tlFetch — selv ved fallback bevares samme shape.
+ */
+async function fetchDokaktuel(
+  uuid: string,
+  alias: string | null
+): Promise<{ status: number; body: string; truncated: boolean }> {
+  const primary = await tlFetch(`/dokaktuel/uuid/${uuid}`);
+  if (primary.status === 200 || !alias) return primary;
+  // Non-200 + alias tilgængeligt → prøv alias-stien
+  return tlFetch(`/dokaktuel/alias/${alias}`);
 }
 
 /**
@@ -158,6 +189,12 @@ export interface TLServitut {
   dokumentAlias: string | null;
   /** Original PDF bilagsreferencer (UUID'er der kan hentes via /bilag/{id}) */
   bilagRefs: string[];
+  /**
+   * BIZZ-474: Bilag med læsbar beskrivelse fra tingbogsattestens
+   * TekstAngivelse-bilagsreferencer, matchet pr. UUID. Erstatter de rå
+   * UUID'er når de skal vises i UI.
+   */
+  bilag: { id: string; tekst: string }[];
   ogsaaLystPaa: number | null;
   /** True hvis servitutten er hentet fra hovedejendommen (for ejerlejligheder) */
   fraHovedejendom?: boolean;
@@ -201,10 +238,10 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    // For ejere/haeftelser sections, limit download to 25KB — enough for adkomst+haeftelser
-    // but skips most servitutter (which can be 60KB+ for hovedejendomme).
-    // Full download only for servitutter section or no section (backwards compat).
-    const needsFullXml = !section || section === 'servitutter';
+    // BIZZ-448: Download full XML for haeftelser too — on hovedejendomme the adkomst
+    // section can exceed 25KB, pushing haeftelser beyond the truncation boundary.
+    // Only ejere section uses the 25KB optimisation (adkomst is always near the top).
+    const needsFullXml = !section || section === 'servitutter' || section === 'haeftelser';
     const maxBytes = needsFullXml ? 0 : 25_000;
     const res = await tlFetch(`/ejdsummarisk/${uuid}`, maxBytes);
     if (res.status !== 200) {
@@ -323,7 +360,8 @@ export async function GET(req: NextRequest) {
       ejere.filter((e) => e.dokumentId),
       async (ejer) => {
         try {
-          const dokRes = await tlFetch(`/dokaktuel/uuid/${ejer.dokumentId}`);
+          // BIZZ-528: Brug fetchDokaktuel med alias-fallback
+          const dokRes = await fetchDokaktuel(ejer.dokumentId!, ejer.dokumentAlias);
           if (dokRes.status === 200) {
             const dok = dokRes.body;
             // Anmelder
@@ -362,7 +400,7 @@ export async function GET(req: NextRequest) {
     // ── Parse hæftelser ──
     const haeftelser: TLHaeftelse[] = [];
     const haeftelseEntries = [
-      ...xml.matchAll(/<ns:HaeftelseSummarisk>([\s\S]*?)<\/ns:HaeftelseSummarisk>/g),
+      ...xml.matchAll(/HaeftelseSummarisk>([\s\S]*?)<\/[^:]*:?HaeftelseSummarisk>/g),
     ];
     for (const [, entry] of haeftelseEntries) {
       const type = entry.match(/HaeftelseType[^>]*>([^<]+)/)?.[1] ?? 'ukendt';
@@ -584,7 +622,8 @@ export async function GET(req: NextRequest) {
     });
     await batchParallel(haeftelserToEnrich, async (h) => {
       try {
-        const dokRes = await tlFetch(`/dokaktuel/uuid/${h.dokumentId}`);
+        // BIZZ-528: Brug fetchDokaktuel med alias-fallback
+        const dokRes = await fetchDokaktuel(h.dokumentId!, h.dokumentAlias);
         if (dokRes.status === 200) {
           const dok = dokRes.body;
           // Debitorer (fra dokument hvis summarisk ikke har dem)
@@ -745,10 +784,40 @@ export async function GET(req: NextRequest) {
     });
 
     // ── Parse servitutter ──
+    // BIZZ-474: e-TL udstiller servitut-blokke med flere lokale navne afhængigt
+    // af ejendomstypen. Traditionel samlet fast ejendom bruger <ServitutSummarisk>,
+    // ejerlejligheder <EjerlejlighedServitutSummarisk>, og hovedejendomme for
+    // ejerlejlighedsudstykninger (Thorvald Bindesbølls Plads 18 m.fl.) kan bruge
+    // <EjendomServitutSummarisk>. Den gamle regex matchede kun den korteste
+    // variant fordi `[^:]*` stoppede ved et kolon — så close-tag for
+    // EjerlejlighedServitutSummarisk aldrig matchede, og servitut-blokke
+    // på hovedejendomme blev silently droppet.
+    //
+    // Ny regex bruger backreference på det fulde lokale tag-navn (inkl.
+    // evt. prefix) så åbne- og lukke-tag matcher som par. Den namespace-
+    // aware prefix fanges via (?:(?:[a-zA-Z0-9]+):)? foran tag-navnet.
+    const SERVITUT_TAG_RE =
+      /<(?:[a-zA-Z0-9]+:)?([A-Za-z]*ServitutSummarisk)>([\s\S]*?)<\/(?:[a-zA-Z0-9]+:)?\1>/g;
+
+    // BIZZ-474 follow-up: Forhåndsbyg uuid→beskrivelse map fra tingbogsattestens
+    // bilag-TekstAngivelse-entries. Hver bilag optræder som
+    //   <Overskrift>Bilagsreference</Overskrift><Afsnit>{uuid} - {beskrivelse}</Afsnit>
+    // UUID-delen matcher de <Bilagsreference>-elementer der allerede ligger
+    // inde i servitut/hæftelse/adkomst-blokkene, så vi kan attachere hver
+    // bilag-beskrivelse til det dokument den reelt hører under.
+    const bilagTekstByUuid = new Map<string, string>();
+    const BILAG_UUID_RE =
+      /TekstGruppe>[\s\S]*?Overskrift[^>]*>Bilagsreference<[\s\S]*?Afsnit[^>]*>([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\s*-\s*([^<]*))?</g;
+    for (const m of xml.matchAll(BILAG_UUID_RE)) {
+      const uuid = m[1];
+      const beskrivelse = (m[2] ?? '').trim();
+      if (!bilagTekstByUuid.has(uuid)) {
+        bilagTekstByUuid.set(uuid, beskrivelse || 'Bilag');
+      }
+    }
+
     const servitutter: TLServitut[] = [];
-    const servitutEntries = [
-      ...xml.matchAll(/<ns:ServitutSummarisk>([\s\S]*?)<\/ns:ServitutSummarisk>/g),
-    ];
+    const servitutEntries = [...xml.matchAll(SERVITUT_TAG_RE)].map((m) => [m[0], m[2]] as const);
     for (const [, entry] of servitutEntries) {
       const type = entry.match(/ServitutType[^>]*>([^<]+)/)?.[1] ?? 'ukendt';
       const dato = entry.match(/TinglysningsDato[^>]*>([^<]+)/)?.[1]?.split('T')[0] ?? null;
@@ -818,19 +887,42 @@ export async function GET(req: NextRequest) {
         dokumentId,
         dokumentAlias,
         bilagRefs: allBilag,
+        // BIZZ-474: Attach bilag med læsbar beskrivelse fra tingbogsattestens
+        // TekstAngivelse-map. UI kan vise fx "relaksation" i stedet for rå UUID.
+        bilag: allBilag.map((id) => ({
+          id,
+          tekst: bilagTekstByUuid.get(id) ?? 'Bilag',
+        })),
         ogsaaLystPaa,
       });
     }
 
     // ── Berig servitutter med tillægstekst fra dokument-detaljer ──
-    // Paralleliseret i batches af 5
+    // BIZZ-474: Hovedejendomme kan have mange servitutter (20+); per-dokument
+    // enrichment serielt i batches af 5 gav timeout (>30s client). Parallelisér
+    // mere aggressivt, og cap antallet aggressivt for at undgå 60s Vercel-loft
+    // når både primær + moderejendom-sti henter dokumenter. Resterende viser
+    // bare den summariske tillægstekst fra ejdsummarisk-XML'en.
+    const ENRICH_CAP = 8;
+    const servitutterToEnrich = servitutter.filter((s) => s.dokumentId).slice(0, ENRICH_CAP);
     await batchParallel(
-      servitutter.filter((s) => s.dokumentId),
+      servitutterToEnrich,
       async (s) => {
         try {
-          const dokRes = await tlFetch(`/dokaktuel/uuid/${s.dokumentId}`);
-          if (dokRes.status === 200) {
-            const dok = dokRes.body;
+          const dokPath = `/dokaktuel/uuid/${s.dokumentId}`;
+          // BIZZ-547: Check dokaktuel cache first — documents are immutable
+          const cached = dokCache.get(dokPath);
+          let dok: string;
+          if (cached && Date.now() - cached.ts < DOK_CACHE_TTL) {
+            dok = cached.body;
+          } else {
+            // BIZZ-528: Brug fetchDokaktuel med alias-fallback
+            const dokRes = await fetchDokaktuel(s.dokumentId!, s.dokumentAlias);
+            if (dokRes.status !== 200) return;
+            dok = dokRes.body;
+            dokCache.set(dokPath, { body: dok, ts: Date.now() });
+          }
+          {
             const dokAfsnit = [...dok.matchAll(/Afsnit[^>]*>([^<]{3,})/g)]
               .map((m) => m[1].trim())
               .filter((v) => v.length > 0 && !v.match(/^[0-9a-f-]{36}$/));
@@ -844,7 +936,8 @@ export async function GET(req: NextRequest) {
         } catch {
           /* ignore — detaljer er valgfrie */
         }
-      }
+      },
+      10 // batchSize bumpet fra 5 → 10 for hurtigere total-latency
     );
 
     // ── Parse tingbogsattest stamoplysninger ──
@@ -922,24 +1015,20 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // ── Saml alle bilagsreferencer (UUIDs der kan hentes som original PDF) ──
+    // ── Saml orphan bilag (UUIDs som IKKE er knyttet til et dokument) ──
+    // BIZZ-474: Tidligere blev ALLE tingbog-level bilag dumpet i en separat
+    // sektion uanset om de reelt hørte til en servitut/hæftelse/adkomst. Nu
+    // viser vi kun de bilag der IKKE kan matches til et dokument — de andre
+    // rendres direkte under deres ejer-dokument via .bilag-feltet.
+    // Kun servitutter har bilagRefs i deres type pt. — ejere/haeftelser
+    // eksponerer ikke bilag-refs som felt, så de kan ikke "eje" et bilag.
+    const attachedBilagIds = new Set<string>();
+    for (const s of servitutter) for (const id of s.bilagRefs) attachedBilagIds.add(id);
+
     const bilagRefs: { id: string; tekst: string }[] = [];
-    for (const t of tillaegEntries) {
-      const entry = t[1];
-      const overskrift = entry.match(/Overskrift[^>]*>([^<]+)/)?.[1] ?? '';
-      if (overskrift.toLowerCase().includes('bilagsreference')) {
-        const afsnit = entry.match(/Afsnit[^>]*>([^<]+)/)?.[1] ?? '';
-        // UUID kan være i afsnit-teksten
-        const uuidMatch = afsnit.match(
-          /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/
-        );
-        if (uuidMatch) {
-          const beskrivelse = afsnit
-            .replace(uuidMatch[0], '')
-            .replace(/^\s*-\s*/, '')
-            .trim();
-          bilagRefs.push({ id: uuidMatch[1], tekst: beskrivelse || 'Bilag' });
-        }
+    for (const [uuid, tekst] of bilagTekstByUuid) {
+      if (!attachedBilagIds.has(uuid)) {
+        bilagRefs.push({ id: uuid, tekst });
       }
     }
 
@@ -995,9 +1084,12 @@ export async function GET(req: NextRequest) {
                 // ── Fuld parsing af servitutter fra moderejendommen ──
                 // Spejler den eksisterende parsing-logik for lejlighedens egne servitutter,
                 // men markerer hver post med fraHovedejendom: true.
-                const hovedServitutEntries = [
-                  ...hovedXml.matchAll(/<ns:ServitutSummarisk>([\s\S]*?)<\/ns:ServitutSummarisk>/g),
-                ];
+                // BIZZ-474: samme backreference-baserede regex som primær
+                // parser — matcher alle servitut-varianter (ServitutSummarisk,
+                // EjerlejlighedServitutSummarisk, EjendomServitutSummarisk).
+                const hovedServitutEntries = [...hovedXml.matchAll(SERVITUT_TAG_RE)].map(
+                  (m) => [m[0], m[2]] as const
+                );
                 const servitutterFraHoved: TLServitut[] = [];
                 for (const [, entry] of hovedServitutEntries) {
                   const type = entry.match(/ServitutType[^>]*>([^<]+)/)?.[1] ?? 'ukendt';
@@ -1071,15 +1163,24 @@ export async function GET(req: NextRequest) {
                     dokumentId,
                     dokumentAlias,
                     bilagRefs: allBilag,
+                    // BIZZ-474: Moderejendoms bilag-tekster ligger i hovedXml's
+                    // egen tingbogsattest, ikke i den primære bilagTekstByUuid.
+                    // Her falder vi tilbage til "Bilag" som beskrivelse — kan
+                    // udvides hvis moderejendom ofte har navngivne bilag.
+                    bilag: allBilag.map((id) => ({ id, tekst: 'Bilag' })),
                     ogsaaLystPaa,
                     fraHovedejendom: true,
                   });
                 }
 
                 // ── Berig moderejendommens servitutter med tillægstekst fra dokumenter ──
-                // Spejler den eksisterende dokument-berigelse for lejlighedens servitutter.
+                // BIZZ-474: Cap endnu strammere på moder-siden fordi denne sti
+                // kører PÅ TOP af den primære enrichment for ejerlejligheder —
+                // to enrichment-runder mod samme e-TL må sammenlagt ikke ramme
+                // 60s serverless-loftet.
+                const ENRICH_CAP_HOVED = 5;
                 await batchParallel(
-                  servitutterFraHoved.filter((s) => s.dokumentId),
+                  servitutterFraHoved.filter((s) => s.dokumentId).slice(0, ENRICH_CAP_HOVED),
                   async (s) => {
                     try {
                       const dokRes = await tlFetch(`/dokaktuel/uuid/${s.dokumentId}`);
@@ -1098,11 +1199,29 @@ export async function GET(req: NextRequest) {
                     } catch {
                       /* ignore — tillaegstekst fra dokument er valgfri */
                     }
-                  }
+                  },
+                  10 // batchSize bumpet fra 5 → 10
                 );
 
-                // Tilføj moderejendommens servitutter til svaret
-                servitutter.push(...servitutterFraHoved);
+                // BIZZ-566: Dedupliker servitutter mellem lejlighed og hovedejendom.
+                // Samme dokument kan være tinglyst på begge — uden dedup vises
+                // det to gange. Behold lejlighedens version (mere specifik) og
+                // filtrer hovedejendoms-versionen fra.
+                // Primær nøgle: dokumentId (e-TL UUID — globalt unik).
+                // Fallback (når dokumentId mangler): composite (dato|type|tekst-hash).
+                const eksisterendeDokIds = new Set(
+                  servitutter.filter((s) => s.dokumentId).map((s) => s.dokumentId as string)
+                );
+                const compositeKey = (s: TLServitut): string =>
+                  `${s.dato ?? ''}|${s.type}|${(s.tekst ?? '').slice(0, 80)}`;
+                const eksisterendeComposite = new Set(servitutter.map(compositeKey));
+                const dedupedFraHoved = servitutterFraHoved.filter((s) => {
+                  if (s.dokumentId && eksisterendeDokIds.has(s.dokumentId)) return false;
+                  if (eksisterendeComposite.has(compositeKey(s))) return false;
+                  return true;
+                });
+                // Tilføj kun de UNIKKE moderejendoms-servitutter
+                servitutter.push(...dedupedFraHoved);
               }
             }
           }

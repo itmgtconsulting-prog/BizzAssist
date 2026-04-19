@@ -44,6 +44,8 @@ interface PlanConfigRow {
   requires_approval: boolean;
   is_active: boolean;
   free_trial_days: number;
+  /** BIZZ-541: hours of continued access after a failed payment (default 0) */
+  payment_grace_hours: number;
   stripe_price_id: string | null;
   max_sales: number | null;
   sales_count: number;
@@ -100,6 +102,7 @@ function mapRow(row: PlanConfigRow, defaults?: (typeof PLANS)[PlanId]) {
     requiresApproval: row.requires_approval,
     isActive: row.is_active,
     freeTrialDays: row.free_trial_days,
+    paymentGraceHours: row.payment_grace_hours ?? 0,
     stripePriceId: row.stripe_price_id ?? '',
     maxSales: row.max_sales ?? null,
     salesCount: row.sales_count ?? 0,
@@ -165,6 +168,7 @@ export async function GET(): Promise<NextResponse> {
           requiresApproval: d.requiresApproval,
           isActive: true,
           freeTrialDays: 0,
+          paymentGraceHours: 0,
           stripePriceId: '',
           maxSales: null,
           salesCount: 0,
@@ -217,6 +221,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           requires_approval: updates.requiresApproval ?? false,
           is_active: updates.isActive ?? true,
           free_trial_days: updates.freeTrialDays ?? 0,
+          // BIZZ-541: clamp to CHECK constraint range [0, 168]
+          payment_grace_hours: Math.max(
+            0,
+            Math.min(168, Number(updates.paymentGraceHours ?? 0) || 0)
+          ),
           max_sales: updates.maxSales ?? null,
           sales_count: updates.salesCount ?? 0,
           sort_order: updates.sortOrder ?? 99,
@@ -282,6 +291,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         if (updates.isActive !== undefined) updateFields.is_active = updates.isActive;
         if (updates.freeTrialDays !== undefined)
           updateFields.free_trial_days = updates.freeTrialDays;
+        // BIZZ-541: clamp to CHECK constraint range [0, 168]
+        if (updates.paymentGraceHours !== undefined)
+          updateFields.payment_grace_hours = Math.max(
+            0,
+            Math.min(168, Number(updates.paymentGraceHours) || 0)
+          );
         if (updates.stripePriceId !== undefined)
           updateFields.stripe_price_id = updates.stripePriceId;
         if (updates.maxSales !== undefined) updateFields.max_sales = updates.maxSales;
@@ -312,6 +327,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
             requires_approval: updates.requiresApproval ?? defaults?.requiresApproval ?? false,
             is_active: updates.isActive ?? true,
             free_trial_days: updates.freeTrialDays ?? 0,
+            payment_grace_hours: Math.max(
+              0,
+              Math.min(168, Number(updates.paymentGraceHours ?? 0) || 0)
+            ),
             max_sales: updates.maxSales ?? null,
             sales_count: updates.salesCount ?? 0,
             sort_order: updates.sortOrder ?? LEGACY_PLAN_IDS.indexOf(planId as PlanId) + 1,

@@ -12,6 +12,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import https from 'https';
 import fs from 'fs';
 import PDFDocument from 'pdfkit';
+import { PDFDocument as PdfLibDocument } from 'pdf-lib';
 import { logger } from '@/app/lib/logger';
 import { companyInfo } from '@/app/lib/companyInfo';
 import { resolveTenantId } from '@/lib/api/auth';
@@ -87,6 +88,163 @@ async function tlFetch(urlPath: string): Promise<string> {
   const result = await tlFetchShared(urlPath, { accept: 'application/xml' });
   if (result.status !== 200) throw new Error(`HTTP ${result.status}`);
   return result.body;
+}
+
+/**
+ * BIZZ-567 v4: Genererer servitut-dokument PDF fra UUID. Wrapper omkring
+ * den eksisterende XML→PDF-pipeline længere nede i route-handleren, men
+ * eksponeret som standalone-funktion så bilag-pathen kan inkludere
+ * dokumentet i merged download. Returnerer Buffer ved succes, kaster
+ * fejl ved tlFetch HTTP-fejl (typisk pre-digitale dokumenter).
+ *
+ * @param uuid - Dokument-UUID
+ */
+async function generateDocumentPdfFromUuid(uuid: string): Promise<Buffer> {
+  const xml = await tlFetch(`/dokaktuel/uuid/${uuid}`);
+  const sections = parseXmlToSections(xml);
+  const docTitle = sections[0]?.title ?? 'Tinglysningsdokument';
+
+  const doc = new PDFDocument({
+    size: 'A4',
+    margin: 50,
+    info: { Title: docTitle, Author: 'BizzAssist' },
+  });
+  const chunks: Buffer[] = [];
+  doc.on('data', (chunk: Buffer) => chunks.push(chunk));
+
+  // Header
+  doc.fontSize(8).fillColor('#94a3b8').text('BizzAssist — Tinglysningsdokument', 50, 30);
+  doc
+    .fontSize(8)
+    .text(
+      new Date().toLocaleDateString('da-DK', { day: 'numeric', month: 'long', year: 'numeric' }),
+      50,
+      30,
+      { align: 'right' }
+    );
+
+  // Titel
+  doc.moveDown(1.5);
+  doc.fontSize(18).fillColor('#1e293b').text(docTitle, { align: 'center' });
+  doc.moveDown(0.3);
+  doc.fontSize(9).fillColor('#64748b').text(`Dokument-ID: ${uuid}`, { align: 'center' });
+  doc.moveDown(1);
+
+  // Sektioner
+  for (const section of sections.slice(1)) {
+    doc.fontSize(12).fillColor('#2563eb').text(section.title);
+    doc.moveDown(0.3);
+    doc.strokeColor('#e2e8f0').lineWidth(0.5).moveTo(50, doc.y).lineTo(545, doc.y).stroke();
+    doc.moveDown(0.4);
+
+    for (const field of section.fields) {
+      let y = doc.y;
+      if (y > 750) {
+        doc.addPage();
+        y = doc.y;
+      }
+      if (field.label === 'Tekst' && field.value.length > 80) {
+        doc
+          .fontSize(8)
+          .fillColor('#64748b')
+          .text(field.label + ':', 50);
+        doc.fontSize(9).fillColor('#1e293b').text(field.value, 50, undefined, { width: 495 });
+        doc.moveDown(0.3);
+      } else {
+        doc
+          .fontSize(9)
+          .fillColor('#64748b')
+          .text(field.label + ':', 50, y, { width: 160 });
+        doc.fontSize(9).fillColor('#1e293b').text(field.value, 220, y, { width: 325 });
+        doc.moveDown(0.2);
+      }
+    }
+    doc.moveDown(0.5);
+  }
+
+  doc.fontSize(7).fillColor('#94a3b8').text(`Genereret af ${companyInfo.legalLine}`, 50, 780, {
+    align: 'center',
+  });
+  doc.end();
+
+  return new Promise<Buffer>((resolve) => {
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+  });
+}
+
+/**
+ * BIZZ-474: Henter original bilag-PDF fra Tinglysning via mTLS.
+ * Returnerer Buffer ved succes, null ved fejl så merge kan fortsætte med
+ * resterende bilag uden at hele download-flowet fejler.
+ *
+ * @param bilagUuid - Bilagsreference-UUID
+ */
+async function fetchBilagPdf(bilagUuid: string): Promise<Buffer | null> {
+  try {
+    const pfx = loadCert();
+    return await new Promise<Buffer>((resolve, reject) => {
+      const url = new URL(TL_BASE + `/tinglysning/ssl/bilag/${bilagUuid}`);
+      const r = https.request(
+        {
+          hostname: url.hostname,
+          port: 443,
+          path: url.pathname,
+          method: 'GET',
+          pfx,
+          passphrase: CERT_PASSWORD,
+          rejectUnauthorized: false,
+          timeout: 30000,
+          headers: { Accept: 'application/pdf' },
+        },
+        (res) => {
+          const chunks: Buffer[] = [];
+          res.on('data', (d) => chunks.push(d));
+          res.on('end', () =>
+            res.statusCode === 200
+              ? resolve(Buffer.concat(chunks))
+              : reject(new Error(`HTTP ${res.statusCode}`))
+          );
+        }
+      );
+      r.on('error', reject);
+      r.on('timeout', () => {
+        r.destroy();
+        reject(new Error('Timeout'));
+      });
+      r.end();
+    });
+  } catch (err) {
+    logger.warn(`[tinglysning/dokument] bilag ${bilagUuid} fetch fejlede:`, err);
+    return null;
+  }
+}
+
+/**
+ * BIZZ-474: Fletter flere PDF-buffere til én via pdf-lib. Bruges til at
+ * samle hoveddokumentet med alle tilknyttede bilag i én download.
+ * Malformede bilag springes over (logges), så et enkelt ødelagt bilag
+ * ikke blokkerer hele flettet.
+ *
+ * @param main   - Primær PDF (dokumentet)
+ * @param extras - Bilag-PDF'er, i rækkefølge de skal appendes
+ */
+async function mergePdfs(main: Buffer, extras: Buffer[]): Promise<Buffer> {
+  const merged = await PdfLibDocument.create();
+  const mainDoc = await PdfLibDocument.load(main, { ignoreEncryption: true });
+  const mainPages = await merged.copyPages(mainDoc, mainDoc.getPageIndices());
+  mainPages.forEach((p) => merged.addPage(p));
+
+  for (const extra of extras) {
+    try {
+      const doc = await PdfLibDocument.load(extra, { ignoreEncryption: true });
+      const pages = await merged.copyPages(doc, doc.getPageIndices());
+      pages.forEach((p) => merged.addPage(p));
+    } catch (err) {
+      logger.warn('[tinglysning/dokument] bilag kunne ikke flettes:', err);
+    }
+  }
+
+  return Buffer.from(await merged.save());
 }
 
 /** Parser XML og udtrækker alle felter med læsbare labels */
@@ -407,46 +565,81 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Certifikat ikke konfigureret' }, { status: 503 });
 
   // ── Original PDF bilag — hent direkte fra Tinglysning ──
+  // BIZZ-554: Bilag-parameteren kan indeholde flere komma-separerede UUIDer
+  // (fx fra ekspanderet servitut-detalje med flere bilag). Tidligere blev
+  // hele strengen sendt som ét bilag-ID til Tinglysning som returnerede
+  // 'Ekstern API fejl'. Nu split'es UUIDerne, hvert bilag hentes via
+  // fetchBilagPdf, og resultatet flettes med mergePdfs til én download.
+  //
+  // BIZZ-567 v4: Bilag-pathen håndterer NU også ?uuid=X&bilag=a,b,c-kald.
+  // Den prøver at hente servitut-dokumentet og merge det INDEN bilagene,
+  // men falder elegant tilbage til bilag-only hvis dokument-fetch fejler
+  // (typisk pre-digitale dokumenter der ikke findes via dokaktuel-API).
+  // Tidligere v2-routing til uuid-pathen kastede 500 i den situation.
   if (bilagId) {
+    // UUID validation: 8-4-4-4-12 hex chars
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const bilagUuids = bilagId
+      .split(',')
+      .map((u) => u.trim())
+      .filter((u) => u.length > 0);
+
+    // Reject hvis nogen segment ikke er gyldig UUID — undgå at sende skrald
+    // til det eksterne API (gav generisk 'Ekstern API fejl' i prod, BIZZ-554)
+    const invalid = bilagUuids.filter((u) => !UUID_RE.test(u));
+    if (invalid.length > 0) {
+      return NextResponse.json({ error: 'Ugyldigt bilag-UUID format' }, { status: 400 });
+    }
+
+    if (bilagUuids.length === 0) {
+      return NextResponse.json({ error: 'bilag parameter tom' }, { status: 400 });
+    }
+
     try {
-      const pfx = loadCert();
-      const url = new URL(TL_BASE + `/tinglysning/ssl/bilag/${bilagId}`);
-      const pdfData = await new Promise<Buffer>((resolve, reject) => {
-        const r = https.request(
-          {
-            hostname: url.hostname,
-            port: 443,
-            path: url.pathname,
-            method: 'GET',
-            pfx,
-            passphrase: CERT_PASSWORD,
-            rejectUnauthorized: false,
-            timeout: 55000, // Turbopack dev + test mTLS
-            headers: { Accept: 'application/pdf' },
-          },
-          (res) => {
-            const chunks: Buffer[] = [];
-            res.on('data', (d) => chunks.push(d));
-            res.on('end', () =>
-              res.statusCode === 200
-                ? resolve(Buffer.concat(chunks))
-                : reject(new Error(`HTTP ${res.statusCode}`))
-            );
-          }
-        );
-        r.on('error', reject);
-        r.on('timeout', () => {
-          r.destroy();
-          reject(new Error('Timeout'));
-        });
-        r.end();
-      });
+      // BIZZ-567 v4: Hent servitut-dokument PARALLELT med bilagene hvis uuid
+      // er sat. Hvis dokument-hentning fejler (typisk pre-digital), fortsæt
+      // med bilag-only — ingen 500-fejl. Genererer dokument-PDF via samme
+      // PDFKit-pipeline som uuid-pathen længere nede ved kort at inline'e
+      // den nødvendige logik for ikke-pre-digitale dokumenter.
+      const documentPdfPromise: Promise<Buffer | null> = uuid
+        ? generateDocumentPdfFromUuid(uuid).catch(() => null)
+        : Promise.resolve(null);
+
+      const [documentPdf, bilagBuffers] = await Promise.all([
+        documentPdfPromise,
+        Promise.all(bilagUuids.map((u) => fetchBilagPdf(u))),
+      ]);
+      const validBilag = bilagBuffers.filter((b): b is Buffer => b !== null);
+
+      if (validBilag.length === 0 && !documentPdf) {
+        // Hverken bilag eller dokument kunne hentes
+        return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 502 });
+      }
+
+      // Saml dokument først (hvis vi har det) + alle bilag.
+      const allBuffers: Buffer[] = [];
+      if (documentPdf) allBuffers.push(documentPdf);
+      allBuffers.push(...validBilag);
+
+      const pdfData =
+        allBuffers.length === 1
+          ? allBuffers[0]
+          : await mergePdfs(allBuffers[0], allBuffers.slice(1));
+
+      const filenameSuffix = uuid
+        ? `${uuid.slice(0, 8)}-med-bilag`
+        : bilagUuids.length === 1
+          ? bilagUuids[0].slice(0, 8)
+          : `${bilagUuids.length}-bilag-${bilagUuids[0].slice(0, 8)}`;
 
       return new NextResponse(new Uint8Array(pdfData), {
         status: 200,
         headers: {
           'Content-Type': 'application/pdf',
-          'Content-Disposition': `inline; filename="tinglysning-bilag-${bilagId.slice(0, 8)}.pdf"`,
+          'Content-Disposition': `inline; filename="tinglysning-${filenameSuffix}.pdf"`,
+          'X-Bilag-Merged': String(validBilag.length),
+          'X-Bilag-Requested': String(bilagUuids.length),
+          'X-Document-Included': documentPdf ? '1' : '0',
         },
       });
     } catch (err) {
@@ -819,11 +1012,50 @@ export async function GET(req: NextRequest) {
     const alias = xml.match(/DokumentAliasIdentifikator[^>]*>([^<]+)/)?.[1] ?? uuid;
     const filename = `tinglysning-${alias}.pdf`;
 
-    return new NextResponse(new Uint8Array(pdfBuffer), {
+    // BIZZ-474: Hvis klienten har sendt bilag=uuid1,uuid2,... med requesten,
+    // hent hver bilag-PDF via mTLS og flet til én samlet download. Dokumentet
+    // kommer først, derefter bilagene i samme rækkefølge som klient-siden
+    // sender dem. Fejlede bilag springes over (logges), så ét ødelagt bilag
+    // ikke blokkerer hele flettet.
+    const bilagParam = req.nextUrl.searchParams.get('bilag');
+    // BIZZ-567 v3: Case-INSENSITIVE UUID-regex. Bilag-only-pathen brugte /i
+    // men uuid-pathen var strict lowercase — uppercase UUIDs blev filtreret
+    // ud → 0 bilag → kun servitut downloadet uden bilag.
+    const bilagUuids = bilagParam
+      ? bilagParam
+          .split(',')
+          .map((s) => s.trim())
+          .filter((s) => /^[0-9a-f-]{36}$/i.test(s))
+      : [];
+
+    if (bilagUuids.length === 0) {
+      return new NextResponse(new Uint8Array(pdfBuffer), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/pdf',
+          'Content-Disposition': `inline; filename="${filename}"`,
+        },
+      });
+    }
+
+    // Hent alle bilag parallelt (capped så vi ikke rammer Tinglysnings endpoint for hårdt)
+    const CONCURRENCY = 4;
+    const bilagPdfs: Buffer[] = [];
+    for (let i = 0; i < bilagUuids.length; i += CONCURRENCY) {
+      const batch = bilagUuids.slice(i, i + CONCURRENCY);
+      const results = await Promise.all(batch.map((id) => fetchBilagPdf(id)));
+      for (const r of results) if (r) bilagPdfs.push(r);
+    }
+
+    const mergedBuffer = await mergePdfs(pdfBuffer, bilagPdfs);
+    const mergedFilename = `tinglysning-${alias}-med-bilag.pdf`;
+    return new NextResponse(new Uint8Array(mergedBuffer), {
       status: 200,
       headers: {
         'Content-Type': 'application/pdf',
-        'Content-Disposition': `inline; filename="${filename}"`,
+        'Content-Disposition': `inline; filename="${mergedFilename}"`,
+        'X-Bilag-Merged': String(bilagPdfs.length),
+        'X-Bilag-Requested': String(bilagUuids.length),
       },
     });
   } catch (err) {

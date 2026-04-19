@@ -17,26 +17,50 @@ export const runtime = 'nodejs';
 export const maxDuration = 30;
 
 const VT = new Date().toISOString();
+// 4 Custom-tjenester tildelt jf. support 2026-04-19. Prøv begge navngivnings-
+// varianter — "EJFCustom_X" (som vi bruger for EjerskabBegraenset i dag) og
+// "CustomX" (som support nævner). GraphQL-navnet afgør hvilket af dem virker.
 const EJF_GQL_PROBES = [
+  // Varianter af EjerskabBegraenset
   {
     name: 'EJFCustom_EjerskabBegraenset',
     query: `{ EJFCustom_EjerskabBegraenset(first: 1, virkningstid: "${VT}") { nodes { bestemtFastEjendomBFENr } } }`,
   },
   {
-    name: 'EJF_Ejerskab',
+    name: 'CustomEjerskabBegraenset',
+    query: `{ CustomEjerskabBegraenset(first: 1, virkningstid: "${VT}") { nodes { bestemtFastEjendomBFENr } } }`,
+  },
+  // Ejendomsadministrator
+  {
+    name: 'EJFCustom_EjendomsadministratorBegraenset',
+    query: `{ EJFCustom_EjendomsadministratorBegraenset(first: 1, virkningstid: "${VT}") { nodes { id_lokalId status } } }`,
+  },
+  {
+    name: 'CustomEjendomsadministratorBegraenset',
+    query: `{ CustomEjendomsadministratorBegraenset(first: 1, virkningstid: "${VT}") { nodes { id_lokalId status } } }`,
+  },
+  // PersonEllerVirksomhedsadmini
+  {
+    name: 'EJFCustom_PersonEllerVirksomhedsadminiBegraenset',
+    query: `{ EJFCustom_PersonEllerVirksomhedsadminiBegraenset(first: 1, virkningstid: "${VT}") { nodes { id_lokalId status } } }`,
+  },
+  {
+    name: 'CustomPersonEllerVirksomhedsadminiBegraenset',
+    query: `{ CustomPersonEllerVirksomhedsadminiBegraenset(first: 1, virkningstid: "${VT}") { nodes { id_lokalId status } } }`,
+  },
+  // PersonSimpel
+  {
+    name: 'EJFCustom_PersonSimpelBegraenset',
+    query: `{ EJFCustom_PersonSimpelBegraenset(first: 1, virkningstid: "${VT}") { nodes { id_lokalId status } } }`,
+  },
+  {
+    name: 'CustomPersonSimpelBegraenset',
+    query: `{ CustomPersonSimpelBegraenset(first: 1, virkningstid: "${VT}") { nodes { id_lokalId status } } }`,
+  },
+  // Entitetsbaserede — forventes at fejle (support siger vi ikke har adgang)
+  {
+    name: 'EJF_Ejerskab (entity — forventer fejl)',
     query: `{ EJF_Ejerskab(first: 1, virkningstid: "${VT}") { nodes { id_lokalId status } } }`,
-  },
-  {
-    name: 'EJF_PersonVirksomhedsoplys',
-    query: `{ EJF_PersonVirksomhedsoplys(first: 1, virkningstid: "${VT}") { nodes { id_lokalId status } } }`,
-  },
-  {
-    name: 'EJF_Handelsoplysninger',
-    query: `{ EJF_Handelsoplysninger(first: 1, virkningstid: "${VT}") { nodes { id_lokalId status } } }`,
-  },
-  {
-    name: 'EJF_Ejerskifte',
-    query: `{ EJF_Ejerskifte(first: 1, virkningstid: "${VT}") { nodes { id_lokalId status } } }`,
   },
 ];
 

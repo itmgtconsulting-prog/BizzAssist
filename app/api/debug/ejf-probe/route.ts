@@ -105,6 +105,21 @@ const EJF_GQL_PROBES = [
     name: 'EJF_Ejerskab (entity — forventer fejl)',
     query: `{ EJF_Ejerskab(first: 1, virkningstid: "${VT}") { nodes { id_lokalId status } } }`,
   },
+  // Jakobs eksempel-query med id_lokalId filter — prøv om specifik id-opslag virker
+  // selvom "first:1" listing gav DAF-AUTH-0001
+  {
+    name: 'EJF_PersonVirksomhedsoplys (id_lokalId filter)',
+    query: `query EJF_PersonEllerVirksomhedsoplysning { EJF_PersonVirksomhedsoplys(virkningstid: "${VT}", where: { id_lokalId: { eq: "00000000-0000-0000-0000-000000000000" } }) { nodes { id_namespace id_lokalId navn fiktivtPVnummer adresselinje1 } } }`,
+  },
+  // Custom-variant af samme query-shape
+  {
+    name: 'CustomPersonSimpelBegraenset (med id filter, rolle-navn direkte)',
+    query: `{ CustomPersonSimpelBegraenset(virkningstid: "${VT}", where: { id_lokalId: { eq: "00000000-0000-0000-0000-000000000000" } }) { nodes { id_lokalId navn } } }`,
+  },
+  {
+    name: 'EJFCustom_PersonSimpelBegraenset (med id filter)',
+    query: `{ EJFCustom_PersonSimpelBegraenset(virkningstid: "${VT}", where: { id_lokalId: { eq: "00000000-0000-0000-0000-000000000000" } }) { nodes { id_lokalId navn } } }`,
+  },
   // Introspection — list alle tilgængelige query-fields
   {
     name: '__schema.Query fields (introspection)',
@@ -118,7 +133,14 @@ const FIL_URL_PATTERNS = [
   'https://services.datafordeler.dk/EJERFORTEGNELSEN/EjerfortegnelsenTotaludtraekFladPraedefineret/1/fil/',
   'https://services.datafordeler.dk/EJERFORTEGNELSEN/Ejerfortegnelsen_Totaludtraek_Flad_Praedefineret_JSON/1/fil/',
   'https://filudtraek.datafordeler.dk/EJERFORTEGNELSEN/',
+  // REST-service varianter for CustomPersonSimpelBegraenset
+  'https://services.datafordeler.dk/EJERFORTEGNELSEN/CustomPersonSimpelBegraenset/1/rest/',
+  'https://services.datafordeler.dk/EJERFORTEGNELSEN/CustomPersonSimpelBegraenset/1/rest/PersonSimpelBegraenset',
+  'https://services.datafordeler.dk/EJERFORTEGNELSEN/Ejerfortegnelsen_v2/1/rest/CustomPersonSimpelBegraenset',
 ];
+
+// Try flexibleHistory endpoint alongside flexibleCurrent
+const FLEXIBLE_HISTORY_URL = 'https://graphql.datafordeler.dk/flexibleHistory/v1/';
 
 /**
  * Verify the caller passed the correct CRON_SECRET via Bearer header.
@@ -259,11 +281,46 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     })
   );
 
+  // Also probe flexibleHistory endpoint for PersonSimpelBegraenset
+  const historyResults: Record<string, unknown> = {};
+  for (const fieldName of [
+    'EJFCustom_PersonSimpelBegraenset',
+    'CustomPersonSimpelBegraenset',
+    'EJFCustom_EjerskabBegraenset',
+  ]) {
+    try {
+      const res = await fetch(proxyUrl(FLEXIBLE_HISTORY_URL), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+          ...proxyHeaders(),
+        },
+        body: JSON.stringify({
+          query: `{ ${fieldName}(first: 1, virkningstid: "${VT}") { nodes { id_lokalId } } }`,
+        }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const json = (await res.json().catch(() => null)) as {
+        errors?: Array<{ message: string; extensions?: { code: string } }>;
+      } | null;
+      historyResults[`flexibleHistory/${fieldName}`] = {
+        httpStatus: res.status,
+        errors: json?.errors?.map((e) => ({ message: e.message, code: e.extensions?.code })),
+      };
+    } catch (err) {
+      historyResults[`flexibleHistory/${fieldName}`] = {
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
   logger.log('[debug/ejf-probe] completed');
   return NextResponse.json({
     tokenPreview: `${token.slice(0, 12)}…${token.slice(-4)}`,
     tokenLength: token.length,
     graphql: graphqlResults,
     fildownload: filResults,
+    flexibleHistory: historyResults,
   });
 }

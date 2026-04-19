@@ -2530,7 +2530,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                                     return (
                                       <div className="space-y-4">
                                         {singleEjendomme.length > 0 && (
-                                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                                             {singleEjendomme.map((ej) => (
                                               <PropertyOwnerCard
                                                 key={ej.bfeNummer}
@@ -2564,7 +2564,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                                                     : `Complex · ${grp.length} units`}
                                                 </span>
                                               </div>
-                                              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                                              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                                                 {grp.map((ej) => (
                                                   <PropertyOwnerCard
                                                     key={ej.bfeNummer}

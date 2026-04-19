@@ -309,19 +309,55 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
             if (ppRes?.ok) {
               const ppData = await ppRes.json();
               const bulkBfes: number[] = Array.isArray(ppData.bfes) ? ppData.bfes : [];
-              // Tilføj BFEs der ikke allerede er i diagrammet (dedup mod existingIds)
+              // BIZZ-581: Berig BFE'er med adresse + dawaId så de vises som
+              // korrekte ejendomsbokse (klikbare, med adresse) i stedet for
+              // "BFE XXXXX"-ID-bokse.
+              const newBfes = bulkBfes.filter((bfe) => !existingIds.has(`bfe-${bfe}`));
+              let addressMap: Record<
+                string,
+                {
+                  adresse: string | null;
+                  postnr: string | null;
+                  by: string | null;
+                  dawaId: string | null;
+                  ejendomstype: string | null;
+                  etage: string | null;
+                  doer: string | null;
+                }
+              > = {};
+              if (newBfes.length > 0) {
+                try {
+                  const addrRes = await fetch(`/api/bfe-addresses?bfes=${newBfes.join(',')}`, {
+                    signal: AbortSignal.timeout(10000),
+                  });
+                  if (addrRes.ok) {
+                    addressMap = await addrRes.json();
+                  }
+                } catch {
+                  // Fallback til BFE-only labels
+                }
+              }
               for (const bfe of bulkBfes) {
                 const bfeId = `bfe-${bfe}`;
                 if (existingIds.has(bfeId)) continue;
                 existingIds.add(bfeId);
-                // Minimal node — adresse-enrichment sker via DAWA når
-                // brugeren navigerer til ejendomsdetaljerne
+                const enriched = addressMap[String(bfe)];
+                const postBy = enriched
+                  ? [enriched.postnr, enriched.by].filter(Boolean).join(' ')
+                  : '';
+                const baseAddr = enriched?.adresse
+                  ? enriched.etage
+                    ? `${enriched.adresse}, ${enriched.etage}.${enriched.doer ? ` ${enriched.doer}` : ''}`
+                    : enriched.adresse
+                  : `BFE ${bfe}`;
+                const mainLabel = postBy ? `${baseAddr}, ${postBy}` : baseAddr;
                 newNodes.push({
                   id: bfeId,
-                  label: `BFE ${bfe}`,
-                  sublabel: 'Personligt ejet',
+                  label: mainLabel,
+                  sublabel: enriched?.ejendomstype ?? 'Personligt ejet',
                   type: 'property',
                   bfeNummer: bfe,
+                  link: enriched?.dawaId ? `/dashboard/ejendomme/${enriched.dawaId}` : undefined,
                 });
                 newEdges.push({
                   from: personId,

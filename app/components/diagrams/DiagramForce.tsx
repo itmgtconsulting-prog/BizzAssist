@@ -362,6 +362,10 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
                 newEdges.push({
                   from: personId,
                   to: bfeId,
+                  // BIZZ-585: Personligt ejede ejendomme er typisk 100% ejet
+                  // af personen — vis det som default på edgen så ejerandel
+                  // ikke bare mangler på bulk-data-sporet.
+                  ejerandel: '100%',
                 });
               }
             }

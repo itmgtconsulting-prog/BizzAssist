@@ -229,6 +229,17 @@ export default function PropertyOwnerCard({
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] text-slate-400 bg-slate-900/60 font-mono">
             BFE {formatBfe(ejendom.bfeNummer)}
           </span>
+          {/* BIZZ-596: Vis ejerandel når den IKKE er 100% — signalerer
+              medejerskab (fx 50% delt med ægtefælle). Skjult når 100% for
+              at holde kortet visuelt roligt (standard tilfælde). */}
+          {ejendom.ejerandel && ejendom.ejerandel !== '100%' && (
+            <span
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold text-purple-300 bg-purple-500/15 border border-purple-500/30"
+              title={da ? 'Din andel af ejendommen' : 'Your share of the property'}
+            >
+              {ejendom.ejerandel}
+            </span>
+          )}
           {ejendom.kommune && (
             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] text-slate-500 bg-slate-900/40">
               {ejendom.kommune}

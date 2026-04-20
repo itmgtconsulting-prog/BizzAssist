@@ -71,6 +71,50 @@ async function insertAuditLog(
   }
 }
 
+/**
+ * BIZZ-636: Map Postgres fejl-kode til passende HTTP-status + meningsfuld
+ * besked. Supabase returnerer specifikke koder for RLS-blok og constraint-
+ * krænkelser som fortjener 400/403 frem for generisk 500.
+ */
+function mapDbError(error: { code?: string; message: string } | null): {
+  status: number;
+  body: { error: string; detail?: string };
+} {
+  const code = error?.code ?? '';
+  const msg = error?.message ?? '';
+
+  // 42501: insufficient_privilege — typisk RLS-blok
+  if (code === '42501' || msg.toLowerCase().includes('row-level security')) {
+    return {
+      status: 403,
+      body: {
+        error: 'Adgang nægtet — manglende RLS-rettighed til denne tabel',
+        detail:
+          process.env.NODE_ENV === 'development' ? msg : 'Kontakt support hvis fejlen fortsætter',
+      },
+    };
+  }
+
+  // 23505: unique_violation
+  if (code === '23505') {
+    return { status: 409, body: { error: 'Der findes allerede en plan med dette ID' } };
+  }
+
+  // 23514: check_violation
+  if (code === '23514') {
+    return {
+      status: 400,
+      body: {
+        error: 'Ugyldig værdi — overholder ikke database-constraints',
+        detail: process.env.NODE_ENV === 'development' ? msg : undefined,
+      },
+    };
+  }
+
+  // Fallback — generisk 500 uden detaljer til klient
+  return { status: 500, body: { error: 'Internal server error' } };
+}
+
 /** Verify caller is admin (app_metadata.isAdmin). */
 async function verifyAdmin() {
   const supabase = await createClient();
@@ -234,8 +278,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         };
         const { error } = await admin.from('plan_configs').insert(row as never);
         if (error) {
-          logger.error('[admin/plans create] DB error:', error.message);
-          return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+          logger.error('[admin/plans create] DB error:', {
+            code: (error as { code?: string }).code,
+            message: error.message,
+          });
+          const mapped = mapDbError(error as { code?: string; message: string });
+          return NextResponse.json(mapped.body, { status: mapped.status });
         }
         // Audit log — fire-and-forget (ISO 27001 A.12.4)
         insertAuditLog(admin, {
@@ -251,8 +299,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         if (!planId) return NextResponse.json({ error: 'planId required' }, { status: 400 });
         const { error } = await admin.from('plan_configs').delete().eq('plan_id', planId);
         if (error) {
-          logger.error('[admin/plans delete] DB error:', error.message);
-          return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+          logger.error('[admin/plans delete] DB error:', {
+            code: (error as { code?: string }).code,
+            message: error.message,
+          });
+          const mapped = mapDbError(error as { code?: string; message: string });
+          return NextResponse.json(mapped.body, { status: mapped.status });
         }
         // Audit log — fire-and-forget (ISO 27001 A.12.4)
         insertAuditLog(admin, {

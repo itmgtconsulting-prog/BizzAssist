@@ -2203,7 +2203,8 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
 
                       return relatedLoading ? (
                         // BIZZ-478: Ensartet blå TabLoadingSpinner.
-                        <TabLoadingSpinner label={c.loading} />
+                        // BIZZ-617: Specifik label så brugeren ved hvad der hentes
+                        <TabLoadingSpinner label={c.loadingDatterselskaber} />
                       ) : aktive.length > 0 ? (
                         <section className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-5">
                           <h2 className="text-white font-semibold text-sm mb-3 flex items-center gap-2">
@@ -2424,7 +2425,10 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
           {/* ══ EJENDOMME (inkl. ejendomshandler) ══ */}
           {aktivTab === 'properties' && (
             <div className="space-y-4">
-              {(ejendommeLoading || ejendommeLoadingMore) && <TabLoadingSpinner />}
+              {/* BIZZ-617: Brug specifik label så loading-feedback er konsistent */}
+              {(ejendommeLoading || ejendommeLoadingMore) && (
+                <TabLoadingSpinner label={c.loadingEjendomsportefoelje} />
+              )}
               {/* BIZZ-441: Filter chips removed — only property portfolio shown */}
 
               {/* ── Ejendomme-portefølje sektion ── */}
@@ -2432,11 +2436,7 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                 <div className="space-y-4">
                   {/* Indledende spinner — BIZZ-478: ensartet blå TabLoadingSpinner */}
                   {ejendommeLoading && ejendommeData.length === 0 && (
-                    <TabLoadingSpinner
-                      label={
-                        lang === 'da' ? 'Henter ejendomsportefølje…' : 'Loading property portfolio…'
-                      }
-                    />
+                    <TabLoadingSpinner label={c.loadingEjendomsportefoelje} />
                   )}
 
                   {/* Mangler nøgle / adgang */}
@@ -2976,8 +2976,8 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
           {/* ══ GRUPPE ══ */}
           {aktivTab === 'companies' && (
             <div className="space-y-4">
-              {/* Loading */}
-              {relatedLoading && <TabLoadingSpinner />}
+              {/* BIZZ-617: Loading med specifik label */}
+              {relatedLoading && <TabLoadingSpinner label={c.loadingDatterselskaber} />}
 
               {/* Gruppe-hierarki */}
               {!relatedLoading &&
@@ -3516,8 +3516,10 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
           {/* ══ REGNSKAB ══ */}
           {aktivTab === 'financials' && (
             <div className="space-y-4">
-              {/* Første batch loader */}
-              {(xbrlLoading || xbrlLoadingMore || regnskabLoading) && <TabLoadingSpinner />}
+              {/* BIZZ-617: Specifik label på regnskabs-loader */}
+              {(xbrlLoading || xbrlLoadingMore || regnskabLoading) && (
+                <TabLoadingSpinner label={c.loadingRegnskab} />
+              )}
 
               {/* Data — vises så snart første batch er klar */}
               {!xbrlLoading && xbrlData && xbrlData.length > 0 && (
@@ -4090,7 +4092,8 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
           {/* ══ TINGLYSNING ══ */}
           {aktivTab === 'liens' && (
             <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden">
-              {personbogLoading && <TabLoadingSpinner />}
+              {/* BIZZ-617: Brug eksisterende loadingPersonbog-key (Personbogen) */}
+              {personbogLoading && <TabLoadingSpinner label={c.loadingPersonbog} />}
               <div className="px-4 py-2.5 border-b border-slate-700/30 flex items-center gap-2">
                 <Scale size={15} className="text-slate-400" />
                 <span className="text-sm font-semibold text-slate-200">

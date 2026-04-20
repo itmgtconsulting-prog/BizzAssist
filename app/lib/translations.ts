@@ -431,6 +431,16 @@ export const translations = {
       financialDataNote:
         'Regnskabsdata (omsætning, resultat, egenkapital, årsrapporter) kræver system-til-system adgang til Virk.dk. Vi afventer godkendelse fra Erhvervsstyrelsen.',
       loadingPersonbog: 'Henter personbogsdata...',
+      // BIZZ-617: Loading-labels til alignment på tværs af virksomheds-tabs
+      loadingDiagram: 'Henter diagram…',
+      loadingEjendomsportefoelje: 'Henter ejendomsportefølje…',
+      loadingDatterselskaber: 'Henter datterselskaber…',
+      loadingRegnskab: 'Henter regnskabsdata…',
+      loadingPersoner: 'Henter nøglepersoner…',
+      loadingKronologi: 'Henter kronologi…',
+      // BIZZ-618: Ekstra keys til person-detaljesiden
+      loadingRelationsdiagram: 'Henter relationsdiagram…',
+      loadingGruppe: 'Henter gruppedata…',
       personbogError: 'Kunne ikke hente personbogsdata',
       personbogEmpty: 'Ingen tinglyste dokumenter fundet',
       personbogSamletHaeftelse: 'Samlet hæftelse',
@@ -1007,6 +1017,16 @@ export const translations = {
       financialDataNote:
         'Financial data (revenue, profit, equity, annual reports) requires system-to-system access to Virk.dk. We are awaiting approval from the Danish Business Authority.',
       loadingPersonbog: 'Loading person register data...',
+      // BIZZ-617: Loading-labels (EN) — alignment på tværs af virksomheds-tabs
+      loadingDiagram: 'Loading diagram…',
+      loadingEjendomsportefoelje: 'Loading property portfolio…',
+      loadingDatterselskaber: 'Loading subsidiaries…',
+      loadingRegnskab: 'Loading financial data…',
+      loadingPersoner: 'Loading key people…',
+      loadingKronologi: 'Loading timeline…',
+      // BIZZ-618: Person-detaljeside keys
+      loadingRelationsdiagram: 'Loading relationship diagram…',
+      loadingGruppe: 'Loading group data…',
       personbogError: 'Could not load person register data',
       personbogEmpty: 'No registered documents found',
       personbogSamletHaeftelse: 'Total lien',

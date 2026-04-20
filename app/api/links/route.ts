@@ -15,6 +15,7 @@ import { z } from 'zod';
 import { createClient } from '@supabase/supabase-js';
 import { parseBody } from '@/app/lib/validate';
 import { writeAuditLog } from '@/app/lib/auditLog';
+import { logger } from '@/app/lib/logger';
 
 /** Zod schema for POST /api/links request body */
 const linksPostSchema = z
@@ -236,7 +237,7 @@ export async function POST(req: NextRequest) {
       .insert({ link_id: linkId, user_id: userId });
 
     if (insertErr) {
-      console.error('[links] insert link_verifications fejl:', insertErr.message);
+      logger.error('[links] insert link_verifications fejl:', insertErr.message);
       const body =
         process.env.NODE_ENV === 'development'
           ? { error: 'Intern serverfejl', dev_detail: insertErr.message }
@@ -301,7 +302,7 @@ export async function POST(req: NextRequest) {
         .single();
 
       if (insertErr || !inserted) {
-        console.error('[links] insert verified_links fejl:', insertErr?.message ?? 'Insert failed');
+        logger.error('[links] insert verified_links fejl:', insertErr?.message ?? 'Insert failed');
         const body =
           process.env.NODE_ENV === 'development'
             ? { error: 'Intern serverfejl', dev_detail: insertErr?.message ?? 'Insert failed' }

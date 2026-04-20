@@ -36,6 +36,7 @@ import { Redis } from '@upstash/redis';
 import { resolveTenantId } from '@/lib/api/auth';
 import { fetchBbrForAddress } from '@/app/lib/fetchBbrData';
 import { parseBody } from '@/app/lib/validate';
+import { logger } from '@/app/lib/logger';
 
 /** Zod schema for POST /api/analysis/run request body */
 const analysisRunSchema = z
@@ -811,7 +812,7 @@ async function executeTool(
     setCache(name, input, result);
     return result;
   } catch (err) {
-    console.error('[analysis/run] Tool-kald fejl:', err);
+    logger.error('[analysis/run] Tool-kald fejl:', err);
     return { fejl: 'Ekstern API fejl' };
   }
 }
@@ -1126,7 +1127,7 @@ export async function POST(request: NextRequest): Promise<Response> {
         sse('[DONE]');
         controller.close();
       } catch (err) {
-        console.error('[analysis/run] SSE stream fejl:', err);
+        logger.error('[analysis/run] SSE stream fejl:', err);
         sse(JSON.stringify({ error: 'AI-tjeneste fejl' }));
         sse('[DONE]');
         controller.close();

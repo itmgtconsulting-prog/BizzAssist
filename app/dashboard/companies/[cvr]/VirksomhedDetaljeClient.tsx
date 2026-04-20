@@ -78,14 +78,17 @@ import type { DiagramPropertySummary } from '@/app/components/diagrams/DiagramDa
 import dynamic from 'next/dynamic';
 import VerifiedLinks from '@/app/components/VerifiedLinks';
 import TabLoadingSpinner from '@/app/components/TabLoadingSpinner';
-/** Recharts — single dynamic import keeps recharts in one chunk */
-const RegnskabChart = dynamic(() => import('./RegnskabChart'), { ssr: false });
+/** BIZZ-600: RegnskabChart wraps recharts — lazy-loaded so recharts stays out of initial bundle */
+const RegnskabChart = dynamic(() => import(/* recharts */ './RegnskabChart'), { ssr: false });
 
-/** Lazy-loaded diagram variants */
-const DiagramForce = dynamic(() => import('@/app/components/diagrams/DiagramForce'), {
-  ssr: false,
-  loading: () => <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />,
-});
+/** BIZZ-600: DiagramForce uses d3-force — dynamic() keeps d3-force out of initial bundle */
+const DiagramForce = dynamic(
+  () => import(/* d3-force */ '@/app/components/diagrams/DiagramForce'),
+  {
+    ssr: false,
+    loading: () => <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />,
+  }
+);
 
 // ─── Tracked Companies (localStorage) ────────────────────────────────────────
 

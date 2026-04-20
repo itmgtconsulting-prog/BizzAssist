@@ -24,10 +24,11 @@ import TabLoadingSpinner from '@/app/components/TabLoadingSpinner';
 import type { DiagramGraph } from '@/app/components/diagrams/DiagramData';
 import { logger } from '@/app/lib/logger';
 
-/** DiagramForce er dynamisk importeret pga. D3-force (tung browser-only bundle) */
-const DiagramForce = dynamic(() => import('@/app/components/diagrams/DiagramForce'), {
-  ssr: false,
-});
+/** BIZZ-600: DiagramForce uses d3-force — dynamic() keeps d3-force out of initial bundle */
+const DiagramForce = dynamic(
+  () => import(/* d3-force */ '@/app/components/diagrams/DiagramForce'),
+  { ssr: false }
+);
 
 interface EjerDetalje {
   navn: string;

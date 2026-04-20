@@ -42,18 +42,23 @@ import {
   Zap,
   Clock,
 } from 'lucide-react';
-/** Recharts — single dynamic import keeps recharts in one chunk */
-const EjendomPrisChart = dynamic(() => import('./EjendomPrisChart'), { ssr: false });
-
-/** PropertyMap — dynamisk importeret pga. Mapbox GL (browser-only) */
-const PropertyMap = dynamic(() => import('@/app/components/ejendomme/PropertyMap'), {
+/** BIZZ-600: EjendomPrisChart wraps recharts — lazy-loaded so recharts stays out of initial bundle */
+const EjendomPrisChart = dynamic(() => import(/* recharts */ './EjendomPrisChart'), {
   ssr: false,
-  loading: () => (
-    <div className="w-full h-64 bg-slate-800/50 rounded-xl animate-pulse flex items-center justify-center">
-      <span className="text-slate-500 text-sm">Indlæser kort...</span>
-    </div>
-  ),
 });
+
+/** BIZZ-600: PropertyMap wraps mapbox-gl (browser-only) — dynamic() keeps mapbox-gl out of initial bundle */
+const PropertyMap = dynamic(
+  () => import(/* mapbox-gl */ '@/app/components/ejendomme/PropertyMap'),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="w-full h-64 bg-slate-800/50 rounded-xl animate-pulse flex items-center justify-center">
+        <span className="text-slate-500 text-sm">Indlæser kort...</span>
+      </div>
+    ),
+  }
+);
 import {
   getEjendomById,
   formatDKK,

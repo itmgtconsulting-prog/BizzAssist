@@ -775,6 +775,29 @@ export default function PersonDetailPageClient({
   const [ejendommeManglerNoegle, setEjendommeManglerNoegle] = useState(false);
   const [ejendommeManglerAdgang, setEjendommeManglerAdgang] = useState(false);
   const [ejendommeTotalBfe, setEjendommeTotalBfe] = useState(0);
+  /**
+   * BIZZ-597 Fase 2: Pre-enriched data per BFE fra batch-endpoint — matcher
+   * virksomhedsfanens pattern (BIZZ-569). Uden denne fyrer hver
+   * PropertyOwnerCard sit eget /enrich-kald = N+1 fetches med Vercel cold-
+   * start-latency. Batch-endpoint'et henter alle felter i ét kald.
+   */
+  const [preEnrichedByBfe, setPreEnrichedByBfe] = useState<
+    Map<
+      number,
+      {
+        areal: number | null;
+        vurdering: number | null;
+        vurderingsaar: number | null;
+        erGrundvaerdi?: boolean;
+        ejerNavn: string | null;
+        koebesum: number | null;
+        koebsdato: string | null;
+        boligAreal: number | null;
+        erhvervsAreal: number | null;
+        matrikelAreal: number | null;
+      }
+    >
+  >(new Map());
   /** Kommasepereret CVR-nøgle der sidst blev hentet — forhindrer duplicate-fetches */
   const ejendomFetchKeyRef = useRef('');
   /** AbortController for igangværende progressiv ejendomshentning */
@@ -1386,6 +1409,44 @@ export default function PersonDetailPageClient({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aktivTab, derived, relatedCompanies, fetchEjendommeProgressively]);
+
+  /**
+   * BIZZ-597 Fase 2: Batch-enrichment når properties-tab aktiveres.
+   * Matcher virksomhedsfanens pattern (BIZZ-569) — uden dette fyrer hver
+   * PropertyOwnerCard sit eget /enrich-kald = N+1 fetches med cold-start-
+   * latency. Batch-endpointet henter areal, vurdering, købspris m.v. i ét
+   * kald for alle savnede BFE'er.
+   */
+  useEffect(() => {
+    if (aktivTab !== 'properties') return;
+    if (ejendommeData.length === 0) return;
+
+    const missing = ejendommeData.filter((e) => !preEnrichedByBfe.has(e.bfeNummer));
+    if (missing.length === 0) return;
+
+    const controller = new AbortController();
+    const bfes = missing.map((e) => e.bfeNummer).join(',');
+    const dawaIds = missing.map((e) => e.dawaId ?? '').join(',');
+
+    fetch(`/api/ejendomme-by-owner/enrich-batch?bfes=${bfes}&dawaIds=${dawaIds}`, {
+      signal: controller.signal,
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!data || controller.signal.aborted) return;
+        setPreEnrichedByBfe((prev) => {
+          const next = new Map(prev);
+          for (const [bfe, row] of Object.entries(data)) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            next.set(parseInt(bfe, 10), row as any);
+          }
+          return next;
+        });
+      })
+      .catch(() => {});
+
+    return () => controller.abort();
+  }, [aktivTab, ejendommeData, preEnrichedByBfe]);
 
   /**
    * BIZZ-594: Fetch personligt ejede ejendomme (bulk-data) når diagram eller
@@ -2342,6 +2403,7 @@ export default function PersonDetailPageClient({
                                   }
                                   showOwner={false}
                                   lang={lang}
+                                  preEnriched={preEnrichedByBfe.get(ej.bfeNummer) ?? null}
                                 />
                               ))}
                             </div>
@@ -2385,6 +2447,7 @@ export default function PersonDetailPageClient({
                                     ejendom={ej}
                                     showOwner={false}
                                     lang={lang}
+                                    preEnriched={preEnrichedByBfe.get(ej.bfeNummer) ?? null}
                                   />
                                 ))}
                               </div>
@@ -2445,6 +2508,9 @@ export default function PersonDetailPageClient({
                                                 ejendom={ej}
                                                 showOwner={false}
                                                 lang={lang}
+                                                preEnriched={
+                                                  preEnrichedByBfe.get(ej.bfeNummer) ?? null
+                                                }
                                               />
                                             ))}
                                           </div>

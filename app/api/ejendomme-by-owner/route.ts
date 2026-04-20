@@ -279,9 +279,16 @@ async function hentBfeByCvr(
 async function hentBfeByPerson(
   enhedsNummer: number,
   token: string
-): Promise<{ bfeNumre: number[]; authError: boolean } | null> {
+): Promise<{
+  bfeNumre: number[];
+  ejerandelByBfe: Map<number, string>;
+  authError: boolean;
+} | null> {
   const virkningstid = new Date().toISOString();
 
+  // BIZZ-597 Fase 1: Hent ejerandel-brøk så person-query er symmetrisk med
+  // CVR-query (tidligere returnerede person-pathen kun bfeNumre[] — det gav
+  // forkert 100%-ejerskab på kort hvor personen kun ejer 50% fx Søbyvej 11).
   const query = `{
     EJFCustom_EjerskabBegraenset(
       first: 500
@@ -293,6 +300,8 @@ async function hentBfeByPerson(
       nodes {
         bestemtFastEjendomBFENr
         virkningFra
+        faktiskEjerandel_taeller
+        faktiskEjerandel_naevner
       }
     }
   }`;
@@ -312,7 +321,7 @@ async function hentBfeByPerson(
       next: { revalidate: 300 },
     });
 
-    if (res.status === 403) return { bfeNumre: [], authError: true };
+    if (res.status === 403) return { bfeNumre: [], ejerandelByBfe: new Map(), authError: true };
     if (!res.ok) return null;
 
     const json = (await res.json()) as GqlResult<RawEjerskab>;
@@ -321,14 +330,28 @@ async function hentBfeByPerson(
       json.errors?.some(
         (e) => e.extensions?.code === 'DAF-AUTH-0001' || e.message?.includes('not authorized')
       ) ?? false;
-    if (authError) return { bfeNumre: [], authError: true };
+    if (authError) return { bfeNumre: [], ejerandelByBfe: new Map(), authError: true };
 
     const nodes = json.data?.EJFCustom_EjerskabBegraenset?.nodes ?? [];
     const bfeNumre = nodes
       .map((n) => n.bestemtFastEjendomBFENr)
       .filter((b): b is number => b != null);
 
-    return { bfeNumre, authError: false };
+    // BIZZ-597 Fase 1: Byg map af BFE → ejerandel-streng ("50%", "100%").
+    // Samme logik som hentBfeByCvr bruger, så downstream konsumenter kan
+    // behandle person- og CVR-resultater identisk.
+    const ejerandelByBfe = new Map<number, string>();
+    for (const n of nodes) {
+      if (n.bestemtFastEjendomBFENr == null) continue;
+      const t = n.faktiskEjerandel_taeller;
+      const nav = n.faktiskEjerandel_naevner;
+      if (t != null && nav != null && nav > 0) {
+        const pct = Math.round((t / nav) * 100);
+        ejerandelByBfe.set(n.bestemtFastEjendomBFENr, `${pct}%`);
+      }
+    }
+
+    return { bfeNumre, ejerandelByBfe, authError: false };
   } catch {
     return null;
   }
@@ -937,6 +960,12 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
         if (!bfeTilCvr.has(bfe)) {
           bfeTilCvr.set(bfe, `person-${enhedsNumre[i]}`);
         }
+      }
+      // BIZZ-597 Fase 1: Merge person-ejerandel (symmetrisk med CVR-pathen).
+      // Tidligere blev person-ejendomme vist med hardcoded 100% i UI fordi
+      // ejerandel ikke blev hentet her.
+      for (const [bfe, andel] of result.ejerandelByBfe) {
+        if (!bfeTilEjerandel.has(bfe)) bfeTilEjerandel.set(bfe, andel);
       }
     }
 

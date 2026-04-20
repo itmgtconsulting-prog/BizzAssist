@@ -24,6 +24,7 @@ import { logger } from '@/app/lib/logger';
 import { selectPrimaryOwner, type EjerCandidate } from './selectPrimaryOwner';
 import { fetchBbrAreasByBfe } from '@/app/lib/fetchBbrData';
 import { DAWA_BASE_URL } from '@/app/lib/serviceEndpoints';
+import { fetchSalgshistorikMedFallback } from '@/app/lib/fetchSalgshistorikMedFallback';
 
 export const runtime = 'nodejs';
 export const maxDuration = 15;
@@ -157,37 +158,10 @@ export async function GET(request: NextRequest) {
 
         return { ejerNavn: primary.personNavn };
       }),
-      // BIZZ-465 / BIZZ-575 v5: Seneste handel med faktisk købspris (foretræk
-      // entries WITH price; fallback til seneste dato uden pris så kortet kan
-      // vise "Overtaget DATE (pris ej oplyst)" i stedet for "ingen handel").
-      fetch(`${baseUrl}/api/salgshistorik?bfeNummer=${bfe}`, fetchOpts).then(async (r) => {
-        if (!r.ok) return null;
-        const d = (await r.json()) as {
-          handler?: Array<{
-            kontantKoebesum?: number | null;
-            samletKoebesum?: number | null;
-            loesoeresum?: number | null;
-            entreprisesum?: number | null;
-            overtagelsesdato?: string | null;
-            koebsaftaleDato?: string | null;
-          }>;
-        };
-        const handler = d.handler ?? [];
-        if (handler.length === 0) return null;
-        const findPrice = (h: (typeof handler)[number]): number | null => {
-          const v =
-            h.kontantKoebesum ??
-            h.samletKoebesum ??
-            ((h.loesoeresum ?? 0) + (h.entreprisesum ?? 0) || null);
-          return v && v > 0 ? v : null;
-        };
-        const medPris = handler.find((h) => findPrice(h) != null);
-        const seneste = medPris ?? handler[0];
-        return {
-          koebesum: medPris ? findPrice(medPris) : null,
-          koebsdato: seneste.overtagelsesdato ?? seneste.koebsaftaleDato ?? null,
-        };
-      }),
+      // BIZZ-609: Brug shared helper der prøver EJF først, falder tilbage til
+      // Tinglysning adkomst-dokumenter når EJF mangler handel (typisk
+      // intra-koncern-overdragelser og nye ejerlejlighed-BFE'er).
+      fetchSalgshistorikMedFallback(bfe, baseUrl, cookieHeader, 5000),
     ]);
 
     if (bbrAreasRes.status === 'fulfilled' && bbrAreasRes.value) {

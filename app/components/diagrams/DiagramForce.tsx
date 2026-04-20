@@ -1594,13 +1594,46 @@ function DiagramForce({
   const autoExpandDoneRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     const mainNode = graph.nodes.find((n) => n.id === graph.mainId);
-    if (!mainNode || mainNode.type !== 'person') return;
-    if (mainNode.enhedsNummer == null) return;
-    if (autoExpandDoneRef.current.has(mainNode.id)) return;
-    if (expandedDynamic.has(mainNode.id)) return;
-    if (loadingExpansion.has(mainNode.id)) return;
-    autoExpandDoneRef.current.add(mainNode.id);
-    void expandPersonDynamic(mainNode.id, mainNode.enhedsNummer);
+    if (!mainNode) return;
+
+    // BIZZ-597 Fase 3: Main-node er selv en person → auto-expand hans
+    // personlige ejendomme + virksomheder så vi får fuld view uden manuel
+    // klik på Udvid.
+    if (mainNode.type === 'person' && mainNode.enhedsNummer != null) {
+      if (!autoExpandDoneRef.current.has(mainNode.id)) {
+        autoExpandDoneRef.current.add(mainNode.id);
+        if (!expandedDynamic.has(mainNode.id) && !loadingExpansion.has(mainNode.id)) {
+          void expandPersonDynamic(mainNode.id, mainNode.enhedsNummer);
+        }
+      }
+      return;
+    }
+
+    // BIZZ-585: På virksomhedsdiagram er main-node en company. Find
+    // co-owner-persons der ejer company'en direkte (fx Jakob ejer JaJR
+    // Holding) og auto-expand dem så deres personligt ejede ejendomme
+    // også vises på diagrammet — ellers får brugeren kun edge til
+    // holding uden indsigt i den ejendoms-portefølje personen har
+    // udenom selskabet.
+    //
+    // Begrænsning: kun person-nodes med udgående edge til mainNode +
+    // tilhørende co-owner-flag auto-expandes. Øvrige person-nodes længere
+    // ude i hierarkiet må bruge manuel Udvid-klik (undgår over-fetching).
+    if (mainNode.type === 'company' || mainNode.type === 'main') {
+      const topOwners = graph.nodes.filter(
+        (n) =>
+          n.type === 'person' &&
+          n.enhedsNummer != null &&
+          graph.edges.some((e) => e.from === n.id && e.to === mainNode.id)
+      );
+      for (const owner of topOwners) {
+        if (autoExpandDoneRef.current.has(owner.id)) continue;
+        if (expandedDynamic.has(owner.id)) continue;
+        if (loadingExpansion.has(owner.id)) continue;
+        autoExpandDoneRef.current.add(owner.id);
+        void expandPersonDynamic(owner.id, owner.enhedsNummer!);
+      }
+    }
   }, [graph, expandPersonDynamic, expandedDynamic, loadingExpansion]);
 
   // ── Expand/collapse all helpers ──

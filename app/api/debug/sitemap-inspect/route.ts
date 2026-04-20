@@ -56,23 +56,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       })),
     };
 
-    // Call the actual sitemap default export and report what it returns
-    try {
-      const sitemapModule = await import('@/app/sitemap');
-      const resNum = await sitemapModule.default({ id: 0 as unknown as number });
-      diag.sitemap_id_number = {
-        total: resNum.length,
-        first: resNum[0] ?? null,
-      };
-      const resStr = await sitemapModule.default({ id: '0' as unknown as number });
-      diag.sitemap_id_string = {
-        total: resStr.length,
-        first: resStr[0] ?? null,
-      };
-    } catch (sitemapErr) {
-      diag.sitemap_exception =
-        sitemapErr instanceof Error ? sitemapErr.message : String(sitemapErr);
-    }
+    // BIZZ-645: /app/sitemap.ts is replaced by /app/sitemap/[id]/route.ts —
+    // no direct call needed anymore. Visit /sitemap/0.xml to verify output.
   } catch (err) {
     diag.exception = err instanceof Error ? err.message : String(err);
   }

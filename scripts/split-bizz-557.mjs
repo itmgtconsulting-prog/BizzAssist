@@ -10,7 +10,9 @@ import { config as loadDotenv } from 'dotenv';
 import path from 'node:path';
 import url from 'node:url';
 
-loadDotenv({ path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local') });
+loadDotenv({
+  path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local'),
+});
 
 const HOST = process.env.JIRA_HOST || 'bizzassist.atlassian.net';
 const EMAIL = process.env.JIRA_EMAIL;
@@ -45,7 +47,10 @@ function req(method, p, body) {
   });
 }
 
-const meta = await req('GET', `/rest/api/3/issue/createmeta?projectKeys=${PROJECT}&expand=projects.issuetypes`);
+const meta = await req(
+  'GET',
+  `/rest/api/3/issue/createmeta?projectKeys=${PROJECT}&expand=projects.issuetypes`
+);
 const types = JSON.parse(meta.body).projects?.[0]?.issuetypes ?? [];
 const taskType =
   types.find((t) => /^task$/i.test(t.name)) ??
@@ -138,7 +143,7 @@ const descA = {
               content: [
                 {
                   type: 'text',
-                  text: 'Erstat hovedejendom-BFE i svar-payloaden med ejerlejlighed-BFE\'erne (kan være flere hvis CVR ejer flere lejligheder i samme blok).',
+                  text: "Erstat hovedejendom-BFE i svar-payloaden med ejerlejlighed-BFE'erne (kan være flere hvis CVR ejer flere lejligheder i samme blok).",
                 },
               ],
             },
@@ -204,7 +209,7 @@ const descA = {
               content: [
                 {
                   type: 'text',
-                  text: 'Ingen regression: virksomheder der faktisk ejer hovedejendomme (fx Novo Nordisk erhvervsejendomme) returnerer stadig hovedejendom-BFE\'et.',
+                  text: "Ingen regression: virksomheder der faktisk ejer hovedejendomme (fx Novo Nordisk erhvervsejendomme) returnerer stadig hovedejendom-BFE'et.",
                 },
               ],
             },
@@ -276,7 +281,10 @@ const descB = {
       content: [
         {
           type: 'text',
-          text: 'Når EJF returnerer en ejerlejlighed-BFE (jf. søster-ticket ' + keyA + '), skal UI\'et vise ejerlejlighedens korrekte metadata: etage + dør i adressen, "Ejerlejlighed"-badge, og klik skal føre til ejerlejlighedens detaljeside. I dag vises adressen uden etage/dør og med badge "Ejerbolig til vurdering i lige år" selvom det er en ejerlejlighed.',
+          text:
+            'Når EJF returnerer en ejerlejlighed-BFE (jf. søster-ticket ' +
+            keyA +
+            '), skal UI\'et vise ejerlejlighedens korrekte metadata: etage + dør i adressen, "Ejerlejlighed"-badge, og klik skal føre til ejerlejlighedens detaljeside. I dag vises adressen uden etage/dør og med badge "Ejerbolig til vurdering i lige år" selvom det er en ejerlejlighed.',
         },
       ],
     },
@@ -504,7 +512,8 @@ console.log('→ Creating Ticket B (UI etage/dør + badge)…');
 const resB = await req('POST', '/rest/api/3/issue', {
   fields: {
     project: { key: PROJECT },
-    summary: 'Ejendomskort: vis etage/dør + Ejerlejlighed-badge på Kaffevej 31 (efter EJF drill-down)',
+    summary:
+      'Ejendomskort: vis etage/dør + Ejerlejlighed-badge på Kaffevej 31 (efter EJF drill-down)',
     description: descB,
     issuetype: { id: taskType.id },
     priority: { name: 'Medium' },

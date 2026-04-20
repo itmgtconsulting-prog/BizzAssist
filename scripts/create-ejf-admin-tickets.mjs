@@ -11,7 +11,9 @@ import { config as loadDotenv } from 'dotenv';
 import path from 'node:path';
 import url from 'node:url';
 
-loadDotenv({ path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local') });
+loadDotenv({
+  path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local'),
+});
 
 const HOST = process.env.JIRA_HOST || 'bizzassist.atlassian.net';
 const EMAIL = process.env.JIRA_EMAIL;
@@ -46,7 +48,10 @@ function req(method, p, body) {
   });
 }
 
-const meta = await req('GET', `/rest/api/3/issue/createmeta?projectKeys=${PROJECT}&expand=projects.issuetypes`);
+const meta = await req(
+  'GET',
+  `/rest/api/3/issue/createmeta?projectKeys=${PROJECT}&expand=projects.issuetypes`
+);
 const types = JSON.parse(meta.body).projects?.[0]?.issuetypes ?? [];
 const taskType =
   types.find((t) => /^task$/i.test(t.name)) ??
@@ -66,9 +71,17 @@ const descA = {
           type: 'text',
           text: 'Probe 2026-04-19 bekræftede at vi har adgang til 2 nye EJF GraphQL-services via flexibleCurrent/v1/ som vi ikke bruger i dag: ',
         },
-        { type: 'text', text: 'EJFCustom_EjendomsadministratorBegraenset', marks: [{ type: 'code' }] },
+        {
+          type: 'text',
+          text: 'EJFCustom_EjendomsadministratorBegraenset',
+          marks: [{ type: 'code' }],
+        },
         { type: 'text', text: ' og ' },
-        { type: 'text', text: 'EJFCustom_PersonEllerVirksomhedsadminiBegraenset', marks: [{ type: 'code' }] },
+        {
+          type: 'text',
+          text: 'EJFCustom_PersonEllerVirksomhedsadminiBegraenset',
+          marks: [{ type: 'code' }],
+        },
         {
           type: 'text',
           text: '. Sammen kan de levere "hvem administrerer denne ejendom?"-data — særligt vigtigt for ejerforeninger, udlejningsejendomme og erhvervs­ejendomme hvor administratoren ofte er en anden virksomhed end ejeren.',
@@ -103,7 +116,10 @@ const descA = {
             {
               type: 'paragraph',
               content: [
-                { type: 'text', text: 'Klikbart link til CVR-siden (hvis virksomhed) eller person-siden (hvis person)' },
+                {
+                  type: 'text',
+                  text: 'Klikbart link til CVR-siden (hvis virksomhed) eller person-siden (hvis person)',
+                },
               ],
             },
           ],
@@ -122,7 +138,12 @@ const descA = {
           content: [
             {
               type: 'paragraph',
-              content: [{ type: 'text', text: 'Kontaktoplysninger hvis tilgængeligt via PersonEllerVirksomhedsadmini' }],
+              content: [
+                {
+                  type: 'text',
+                  text: 'Kontaktoplysninger hvis tilgængeligt via PersonEllerVirksomhedsadmini',
+                },
+              ],
             },
           ],
         },
@@ -140,7 +161,10 @@ const descA = {
               content: [
                 { type: 'text', text: 'Nyt endpoint: ' },
                 { type: 'text', text: '/api/ejendomsadmin?bfeNummer=X', marks: [{ type: 'code' }] },
-                { type: 'text', text: ' der forespørger EJFCustom_EjendomsadministratorBegraenset filtreret på BFE.' },
+                {
+                  type: 'text',
+                  text: ' der forespørger EJFCustom_EjendomsadministratorBegraenset filtreret på BFE.',
+                },
               ],
             },
           ],
@@ -189,7 +213,11 @@ const descA = {
         },
       ],
     },
-    { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Bonus: reverse lookup' }] },
+    {
+      type: 'heading',
+      attrs: { level: 2 },
+      content: [{ type: 'text', text: 'Bonus: reverse lookup' }],
+    },
     {
       type: 'paragraph',
       content: [
@@ -199,7 +227,11 @@ const descA = {
         },
       ],
     },
-    { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Acceptance criteria' }] },
+    {
+      type: 'heading',
+      attrs: { level: 2 },
+      content: [{ type: 'text', text: 'Acceptance criteria' }],
+    },
     {
       type: 'bulletList',
       content: [
@@ -209,7 +241,10 @@ const descA = {
             {
               type: 'paragraph',
               content: [
-                { type: 'text', text: 'Ejendom med administrator (fx ejerforening) viser administrator-sektion.' },
+                {
+                  type: 'text',
+                  text: 'Ejendom med administrator (fx ejerforening) viser administrator-sektion.',
+                },
               ],
             },
           ],
@@ -220,7 +255,10 @@ const descA = {
             {
               type: 'paragraph',
               content: [
-                { type: 'text', text: 'Ejendom uden administrator viser ingen sektion (skjult, ikke "Ukendt").' },
+                {
+                  type: 'text',
+                  text: 'Ejendom uden administrator viser ingen sektion (skjult, ikke "Ukendt").',
+                },
               ],
             },
           ],
@@ -231,7 +269,10 @@ const descA = {
             {
               type: 'paragraph',
               content: [
-                { type: 'text', text: 'Klik på administrator fører til CVR- eller person-detaljeside.' },
+                {
+                  type: 'text',
+                  text: 'Klik på administrator fører til CVR- eller person-detaljeside.',
+                },
               ],
             },
           ],
@@ -273,10 +314,62 @@ const descB = {
     {
       type: 'bulletList',
       content: [
-        { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'CustomEjerskabBegraenset — ✅ findes som EJFCustom_EjerskabBegraenset' }] }] },
-        { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'CustomEjendomsadministratorBegraenset — ✅ findes som EJFCustom_EjendomsadministratorBegraenset' }] }] },
-        { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'CustomPersonEllerVirksomhedsadminiBegraenset — ✅ findes som EJFCustom_PersonEllerVirksomhedsadminiBegraenset' }] }] },
-        { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'CustomPersonSimpelBegraenset — ❌ kan IKKE findes under nogen gættet GraphQL-field-navn' }] }] },
+        {
+          type: 'listItem',
+          content: [
+            {
+              type: 'paragraph',
+              content: [
+                {
+                  type: 'text',
+                  text: 'CustomEjerskabBegraenset — ✅ findes som EJFCustom_EjerskabBegraenset',
+                },
+              ],
+            },
+          ],
+        },
+        {
+          type: 'listItem',
+          content: [
+            {
+              type: 'paragraph',
+              content: [
+                {
+                  type: 'text',
+                  text: 'CustomEjendomsadministratorBegraenset — ✅ findes som EJFCustom_EjendomsadministratorBegraenset',
+                },
+              ],
+            },
+          ],
+        },
+        {
+          type: 'listItem',
+          content: [
+            {
+              type: 'paragraph',
+              content: [
+                {
+                  type: 'text',
+                  text: 'CustomPersonEllerVirksomhedsadminiBegraenset — ✅ findes som EJFCustom_PersonEllerVirksomhedsadminiBegraenset',
+                },
+              ],
+            },
+          ],
+        },
+        {
+          type: 'listItem',
+          content: [
+            {
+              type: 'paragraph',
+              content: [
+                {
+                  type: 'text',
+                  text: 'CustomPersonSimpelBegraenset — ❌ kan IKKE findes under nogen gættet GraphQL-field-navn',
+                },
+              ],
+            },
+          ],
+        },
       ],
     },
     { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Problem' }] },
@@ -293,21 +386,78 @@ const descB = {
     {
       type: 'bulletList',
       content: [
-        { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'EJFCustom_PersonSimpelBegraenset' }] }] },
-        { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'CustomPersonSimpelBegraenset' }] }] },
-        { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'EJFCustom_SimpelPerson' }] }] },
-        { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'EJFCustom_PersonSimpleBegraenset' }] }] },
-        { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'EJFCustom_Person' }] }] },
-        { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'EJFCustom_PersonBasisBegraenset' }] }] },
-        { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'EJFCustom_PersonEjerskabBegraenset' }] }] },
-        { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'EJFCustom_PersonSimpel' }] }] },
+        {
+          type: 'listItem',
+          content: [
+            {
+              type: 'paragraph',
+              content: [{ type: 'text', text: 'EJFCustom_PersonSimpelBegraenset' }],
+            },
+          ],
+        },
+        {
+          type: 'listItem',
+          content: [
+            {
+              type: 'paragraph',
+              content: [{ type: 'text', text: 'CustomPersonSimpelBegraenset' }],
+            },
+          ],
+        },
+        {
+          type: 'listItem',
+          content: [
+            { type: 'paragraph', content: [{ type: 'text', text: 'EJFCustom_SimpelPerson' }] },
+          ],
+        },
+        {
+          type: 'listItem',
+          content: [
+            {
+              type: 'paragraph',
+              content: [{ type: 'text', text: 'EJFCustom_PersonSimpleBegraenset' }],
+            },
+          ],
+        },
+        {
+          type: 'listItem',
+          content: [{ type: 'paragraph', content: [{ type: 'text', text: 'EJFCustom_Person' }] }],
+        },
+        {
+          type: 'listItem',
+          content: [
+            {
+              type: 'paragraph',
+              content: [{ type: 'text', text: 'EJFCustom_PersonBasisBegraenset' }],
+            },
+          ],
+        },
+        {
+          type: 'listItem',
+          content: [
+            {
+              type: 'paragraph',
+              content: [{ type: 'text', text: 'EJFCustom_PersonEjerskabBegraenset' }],
+            },
+          ],
+        },
+        {
+          type: 'listItem',
+          content: [
+            { type: 'paragraph', content: [{ type: 'text', text: 'EJFCustom_PersonSimpel' }] },
+          ],
+        },
       ],
     },
     {
       type: 'paragraph',
       content: [
         { type: 'text', text: 'Rolle-identifier: ' },
-        { type: 'text', text: 'DAF:ROLE:EJF:CustomPersonSimpelBegraenset', marks: [{ type: 'code' }] },
+        {
+          type: 'text',
+          text: 'DAF:ROLE:EJF:CustomPersonSimpelBegraenset',
+          marks: [{ type: 'code' }],
+        },
       ],
     },
     { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Opgaver' }] },
@@ -321,7 +471,10 @@ const descB = {
             {
               type: 'paragraph',
               content: [
-                { type: 'text', text: 'Send opfølgnings-mail til SDFI support med listen af probede navne.' },
+                {
+                  type: 'text',
+                  text: 'Send opfølgnings-mail til SDFI support med listen af probede navne.',
+                },
               ],
             },
           ],
@@ -370,7 +523,11 @@ const descB = {
         },
       ],
     },
-    { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Acceptance criteria' }] },
+    {
+      type: 'heading',
+      attrs: { level: 2 },
+      content: [{ type: 'text', text: 'Acceptance criteria' }],
+    },
     {
       type: 'bulletList',
       content: [
@@ -380,7 +537,10 @@ const descB = {
             {
               type: 'paragraph',
               content: [
-                { type: 'text', text: 'Korrekt GraphQL-field-navn for CustomPersonSimpelBegraenset verificeret via probe (HTTP 200 + nodes returned).' },
+                {
+                  type: 'text',
+                  text: 'Korrekt GraphQL-field-navn for CustomPersonSimpelBegraenset verificeret via probe (HTTP 200 + nodes returned).',
+                },
               ],
             },
           ],
@@ -390,9 +550,7 @@ const descB = {
           content: [
             {
               type: 'paragraph',
-              content: [
-                { type: 'text', text: 'Memory opdateret med endeligt navn.' },
-              ],
+              content: [{ type: 'text', text: 'Memory opdateret med endeligt navn.' }],
             },
           ],
         },
@@ -402,7 +560,10 @@ const descB = {
             {
               type: 'paragraph',
               content: [
-                { type: 'text', text: 'Probe-endpointet /api/debug/ejf-probe fjernet eller parkeret (har tjent sit formål).' },
+                {
+                  type: 'text',
+                  text: 'Probe-endpointet /api/debug/ejf-probe fjernet eller parkeret (har tjent sit formål).',
+                },
               ],
             },
           ],
@@ -417,7 +578,8 @@ console.log('→ Creating ticket A (Administrator feature)…');
 const resA = await req('POST', '/rest/api/3/issue', {
   fields: {
     project: { key: PROJECT },
-    summary: 'Ejendom: vis administrator via ejfcustom_ejendomsadministratorbegraenset + personellervirksomhedsadmini',
+    summary:
+      'Ejendom: vis administrator via ejfcustom_ejendomsadministratorbegraenset + personellervirksomhedsadmini',
     description: descA,
     issuetype: { id: taskType.id },
     priority: { name: 'Medium' },
@@ -434,7 +596,8 @@ console.log('→ Creating ticket B (SDFI support follow-up)…');
 const resB = await req('POST', '/rest/api/3/issue', {
   fields: {
     project: { key: PROJECT },
-    summary: 'EJF: afklar graphql-field-navn for custompersonsimpelbegraenset (sdfi support follow-up)',
+    summary:
+      'EJF: afklar graphql-field-navn for custompersonsimpelbegraenset (sdfi support follow-up)',
     description: descB,
     issuetype: { id: taskType.id },
     priority: { name: 'Low' },

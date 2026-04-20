@@ -13,7 +13,9 @@ import { config as loadDotenv } from 'dotenv';
 import path from 'node:path';
 import url from 'node:url';
 
-loadDotenv({ path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local') });
+loadDotenv({
+  path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local'),
+});
 
 const HOST = process.env.JIRA_HOST || 'bizzassist.atlassian.net';
 const EMAIL = process.env.JIRA_EMAIL;
@@ -32,11 +34,16 @@ const DEFAULT_KEYS = [
 ];
 
 const BLOCKER_REASONS = {
-  'BIZZ-501': 'MAT direkte geometri — probing viser at Datafordeler MAT WFS kræver polygon-parsing der ikke matcher DAWA-fallback; skal have adgang til nyt matrikel-format først.',
-  'BIZZ-485': 'BBR materiale-detaljer — probing af BBR_Bygning GraphQL schema viser at tagkonstruktion/ydervæg-lag/isolering ikke eksponeres som separate felter, kun aggregeret byg033Tagmateriale.',
-  'BIZZ-484': 'BBR_TekniskAnlaeg — probing viser at Datafordeler BBR v2 GraphQL kun eksponerer reference-felter (husnummer/bygning/grund/enhed/jordstykke) + metadata. Data-felter (anlægstype/fabrikat/ydelse) mangler. Kræver REST API-integration.',
-  'BIZZ-560': 'CVR XBRL noter — probing viser at noter-sektionen i XBRL-regnskaber ikke parses fra CVR regnskabs-API. Kræver separat XBRL parser-integration.',
-  'BIZZ-483': 'PV-detaljeside for fiktivtPVnummer — blokeret af at dødsbo/fond/udenlandske ejere ikke har stabilt CVR/enhedsNummer, kræver ny datamodel for ikke-registrerede ejere.',
+  'BIZZ-501':
+    'MAT direkte geometri — probing viser at Datafordeler MAT WFS kræver polygon-parsing der ikke matcher DAWA-fallback; skal have adgang til nyt matrikel-format først.',
+  'BIZZ-485':
+    'BBR materiale-detaljer — probing af BBR_Bygning GraphQL schema viser at tagkonstruktion/ydervæg-lag/isolering ikke eksponeres som separate felter, kun aggregeret byg033Tagmateriale.',
+  'BIZZ-484':
+    'BBR_TekniskAnlaeg — probing viser at Datafordeler BBR v2 GraphQL kun eksponerer reference-felter (husnummer/bygning/grund/enhed/jordstykke) + metadata. Data-felter (anlægstype/fabrikat/ydelse) mangler. Kræver REST API-integration.',
+  'BIZZ-560':
+    'CVR XBRL noter — probing viser at noter-sektionen i XBRL-regnskaber ikke parses fra CVR regnskabs-API. Kræver separat XBRL parser-integration.',
+  'BIZZ-483':
+    'PV-detaljeside for fiktivtPVnummer — blokeret af at dødsbo/fond/udenlandske ejere ikke har stabilt CVR/enhedsNummer, kræver ny datamodel for ikke-registrerede ejere.',
 };
 
 function req(method, p, body) {

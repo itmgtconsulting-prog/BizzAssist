@@ -8,7 +8,9 @@ import { config as loadDotenv } from 'dotenv';
 import path from 'node:path';
 import url from 'node:url';
 
-loadDotenv({ path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local') });
+loadDotenv({
+  path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local'),
+});
 
 const HOST = process.env.JIRA_HOST || 'bizzassist.atlassian.net';
 const EMAIL = process.env.JIRA_EMAIL;
@@ -43,7 +45,10 @@ function req(method, p, body) {
   });
 }
 
-const meta = await req('GET', `/rest/api/3/issue/createmeta?projectKeys=${PROJECT}&expand=projects.issuetypes`);
+const meta = await req(
+  'GET',
+  `/rest/api/3/issue/createmeta?projectKeys=${PROJECT}&expand=projects.issuetypes`
+);
 const types = JSON.parse(meta.body).projects?.[0]?.issuetypes ?? [];
 const bugType =
   types.find((t) => /^task$/i.test(t.name)) ??
@@ -114,9 +119,7 @@ const description = {
           content: [
             {
               type: 'paragraph',
-              content: [
-                { type: 'text', text: 'Type: Ejerlejlighed (korrekt) i Samlet ejendom' },
-              ],
+              content: [{ type: 'text', text: 'Type: Ejerlejlighed (korrekt) i Samlet ejendom' }],
             },
           ],
         },

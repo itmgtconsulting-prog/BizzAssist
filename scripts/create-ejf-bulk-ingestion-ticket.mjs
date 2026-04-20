@@ -63,16 +63,16 @@ const bullets = (items) => ({
 const description = doc([
   h(2, 'Problem'),
   p(
-    "BizzAssist kan ikke finde en persons personligt ejede ejendomme ud fra CVR ES enhedsNummer. " +
-      "EJFCustom_EjerskabBegraenset (vores eneste adgang til EJF) understøtter KUN filter på " +
-      "bestemtFastEjendomBFENr og ejendeVirksomhedCVRNr — ingen person-filtre. " +
-      "De fulde EJF-tjenester (EJF_Ejerskab, EJF_PersonVirksomhedsoplys, EJF_Handelsoplysninger) " +
-      "eksisterer men returnerer DAF-AUTH-0001 med vores nuværende grant."
+    'BizzAssist kan ikke finde en persons personligt ejede ejendomme ud fra CVR ES enhedsNummer. ' +
+      'EJFCustom_EjerskabBegraenset (vores eneste adgang til EJF) understøtter KUN filter på ' +
+      'bestemtFastEjendomBFENr og ejendeVirksomhedCVRNr — ingen person-filtre. ' +
+      'De fulde EJF-tjenester (EJF_Ejerskab, EJF_PersonVirksomhedsoplys, EJF_Handelsoplysninger) ' +
+      'eksisterer men returnerer DAF-AUTH-0001 med vores nuværende grant.'
   ),
   p(
-    "Grundlæggende problem: CVR ES og EJF bruger forskellige person-identifikatorer. " +
-      "Vi kan pege navn + bopælsadresse via CVR ES og derfra få fødselsdato via EJF, men " +
-      "vi kan ikke bruge dette til at finde andre ejendomme personen ejer."
+    'Grundlæggende problem: CVR ES og EJF bruger forskellige person-identifikatorer. ' +
+      'Vi kan pege navn + bopælsadresse via CVR ES og derfra få fødselsdato via EJF, men ' +
+      'vi kan ikke bruge dette til at finde andre ejendomme personen ejer.'
   ),
   h(2, 'Løsning: Bulk-ingestion af offentlige EJF-data'),
   p(
@@ -181,15 +181,15 @@ Returner property-noder til diagrammet`,
   ]),
   h(2, 'Alternativ der blev fravalgt'),
   p(
-    "Ansøge om EJF_Ejerskab-grant hos SDFI blev overvejet men fravalgt: " +
-      "det kræver at bede om yderligere adgang, hvilket bryder med vores princip om " +
-      "at bygge på offentlige data. Bulk-sporet er også teknisk bedre (lavere latency, " +
-      "ingen afhængighed af live-API-stabilitet)."
+    'Ansøge om EJF_Ejerskab-grant hos SDFI blev overvejet men fravalgt: ' +
+      'det kræver at bede om yderligere adgang, hvilket bryder med vores princip om ' +
+      'at bygge på offentlige data. Bulk-sporet er også teknisk bedre (lavere latency, ' +
+      'ingen afhængighed af live-API-stabilitet).'
   ),
   h(2, 'Udvidelse: CVR bulk-ingestion'),
   p(
-    "Samme arkitektur bør overvejes for CVR-data. I dag laver vi live-kald til CVR ES for " +
-      "hver virksomhed/deltager — det skaber latency på virksomhedsdiagrammer og sårbarhed " +
+    'Samme arkitektur bør overvejes for CVR-data. I dag laver vi live-kald til CVR ES for ' +
+      'hver virksomhed/deltager — det skaber latency på virksomhedsdiagrammer og sårbarhed ' +
       "ved CVR-API-udfald. CVR's fulde datasæt er offentligt tilgængeligt som daglige udtræk."
   ),
   bullets([

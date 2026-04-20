@@ -9,7 +9,9 @@ import { config as loadDotenv } from 'dotenv';
 import path from 'node:path';
 import url from 'node:url';
 
-loadDotenv({ path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local') });
+loadDotenv({
+  path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local'),
+});
 
 const HOST = process.env.JIRA_HOST || 'bizzassist.atlassian.net';
 const EMAIL = process.env.JIRA_EMAIL;
@@ -44,7 +46,10 @@ function req(method, p, body) {
   });
 }
 
-const meta = await req('GET', `/rest/api/3/issue/createmeta?projectKeys=${PROJECT}&expand=projects.issuetypes`);
+const meta = await req(
+  'GET',
+  `/rest/api/3/issue/createmeta?projectKeys=${PROJECT}&expand=projects.issuetypes`
+);
 const types = JSON.parse(meta.body).projects?.[0]?.issuetypes ?? [];
 const bugType =
   types.find((t) => /^task$/i.test(t.name)) ??
@@ -75,7 +80,10 @@ const description = {
             {
               type: 'paragraph',
               content: [
-                { type: 'text', text: 'URL: test.bizzassist.dk/dashboard/owners/4000115446 → Diagram' },
+                {
+                  type: 'text',
+                  text: 'URL: test.bizzassist.dk/dashboard/owners/4000115446 → Diagram',
+                },
               ],
             },
           ],
@@ -135,21 +143,104 @@ const description = {
             {
               type: 'paragraph',
               content: [
-                { type: 'text', text: 'Alle toolbar-funktioner skal være 1:1 med virksomhedsdiagrammet:' },
+                {
+                  type: 'text',
+                  text: 'Alle toolbar-funktioner skal være 1:1 med virksomhedsdiagrammet:',
+                },
               ],
             },
             {
               type: 'bulletList',
               content: [
-                { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Zoom +/- / slider (samme trin, samme default)' }] }] },
-                { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Centrér-knap (centrerer om root-noden)' }] }] },
-                { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Reset-knap' }] }] },
-                { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Udvid / Skjul-toggle — inkl. rekursiv udvidelse af person-noden' }] }] },
-                { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Ejendomme-toggle (default off på person-side, jf. BIZZ-571)' }] }] },
-                { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Fullscreen-knap' }] }] },
-                { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Pan/træk (mouse+touch) — samme interaktionsmodel' }] }] },
-                { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Dobbeltklik-zoom' }] }] },
-                { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Overflow-bokse (+N ejendomme) med udvidelse + bottom-row-placering (jf. BIZZ-568)' }] }] },
+                {
+                  type: 'listItem',
+                  content: [
+                    {
+                      type: 'paragraph',
+                      content: [
+                        { type: 'text', text: 'Zoom +/- / slider (samme trin, samme default)' },
+                      ],
+                    },
+                  ],
+                },
+                {
+                  type: 'listItem',
+                  content: [
+                    {
+                      type: 'paragraph',
+                      content: [{ type: 'text', text: 'Centrér-knap (centrerer om root-noden)' }],
+                    },
+                  ],
+                },
+                {
+                  type: 'listItem',
+                  content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Reset-knap' }] }],
+                },
+                {
+                  type: 'listItem',
+                  content: [
+                    {
+                      type: 'paragraph',
+                      content: [
+                        {
+                          type: 'text',
+                          text: 'Udvid / Skjul-toggle — inkl. rekursiv udvidelse af person-noden',
+                        },
+                      ],
+                    },
+                  ],
+                },
+                {
+                  type: 'listItem',
+                  content: [
+                    {
+                      type: 'paragraph',
+                      content: [
+                        {
+                          type: 'text',
+                          text: 'Ejendomme-toggle (default off på person-side, jf. BIZZ-571)',
+                        },
+                      ],
+                    },
+                  ],
+                },
+                {
+                  type: 'listItem',
+                  content: [
+                    { type: 'paragraph', content: [{ type: 'text', text: 'Fullscreen-knap' }] },
+                  ],
+                },
+                {
+                  type: 'listItem',
+                  content: [
+                    {
+                      type: 'paragraph',
+                      content: [
+                        { type: 'text', text: 'Pan/træk (mouse+touch) — samme interaktionsmodel' },
+                      ],
+                    },
+                  ],
+                },
+                {
+                  type: 'listItem',
+                  content: [
+                    { type: 'paragraph', content: [{ type: 'text', text: 'Dobbeltklik-zoom' }] },
+                  ],
+                },
+                {
+                  type: 'listItem',
+                  content: [
+                    {
+                      type: 'paragraph',
+                      content: [
+                        {
+                          type: 'text',
+                          text: 'Overflow-bokse (+N ejendomme) med udvidelse + bottom-row-placering (jf. BIZZ-568)',
+                        },
+                      ],
+                    },
+                  ],
+                },
               ],
             },
           ],
@@ -204,7 +295,11 @@ const description = {
         },
       ],
     },
-    { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Acceptance criteria' }] },
+    {
+      type: 'heading',
+      attrs: { level: 2 },
+      content: [{ type: 'text', text: 'Acceptance criteria' }],
+    },
     {
       type: 'bulletList',
       content: [
@@ -214,7 +309,10 @@ const description = {
             {
               type: 'paragraph',
               content: [
-                { type: 'text', text: 'Klik på Jakob Juul Rasmussen-noden (eller Udvid-knap) folder den ud og viser personligt ejede virksomheder + ejendomme.' },
+                {
+                  type: 'text',
+                  text: 'Klik på Jakob Juul Rasmussen-noden (eller Udvid-knap) folder den ud og viser personligt ejede virksomheder + ejendomme.',
+                },
               ],
             },
           ],
@@ -225,7 +323,10 @@ const description = {
             {
               type: 'paragraph',
               content: [
-                { type: 'text', text: 'Toolbar-knapperne har identisk adfærd med virksomhedsdiagrammet — verificeret ved at side-by-side klikke på begge diagramtyper.' },
+                {
+                  type: 'text',
+                  text: 'Toolbar-knapperne har identisk adfærd med virksomhedsdiagrammet — verificeret ved at side-by-side klikke på begge diagramtyper.',
+                },
               ],
             },
           ],
@@ -236,7 +337,10 @@ const description = {
             {
               type: 'paragraph',
               content: [
-                { type: 'text', text: 'Overflow-bokse placeres og udvides identisk på begge diagrammer (jf. BIZZ-568).' },
+                {
+                  type: 'text',
+                  text: 'Overflow-bokse placeres og udvides identisk på begge diagrammer (jf. BIZZ-568).',
+                },
               ],
             },
           ],
@@ -246,9 +350,7 @@ const description = {
           content: [
             {
               type: 'paragraph',
-              content: [
-                { type: 'text', text: 'Zoom, pan og centrér opfører sig ens.' },
-              ],
+              content: [{ type: 'text', text: 'Zoom, pan og centrér opfører sig ens.' }],
             },
           ],
         },
@@ -274,7 +376,8 @@ const description = {
 const res = await req('POST', '/rest/api/3/issue', {
   fields: {
     project: { key: PROJECT },
-    summary: 'Person-diagram: person-node skal kunne foldes ud + fuld alignment med virksomhedsdiagram',
+    summary:
+      'Person-diagram: person-node skal kunne foldes ud + fuld alignment med virksomhedsdiagram',
     description,
     issuetype: { id: bugType.id },
     priority: { name: 'Medium' },

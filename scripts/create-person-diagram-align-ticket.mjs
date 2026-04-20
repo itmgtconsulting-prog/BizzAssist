@@ -9,7 +9,9 @@ import { config as loadDotenv } from 'dotenv';
 import path from 'node:path';
 import url from 'node:url';
 
-loadDotenv({ path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local') });
+loadDotenv({
+  path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local'),
+});
 
 const HOST = process.env.JIRA_HOST || 'bizzassist.atlassian.net';
 const EMAIL = process.env.JIRA_EMAIL;
@@ -44,7 +46,10 @@ function req(method, p, body) {
   });
 }
 
-const meta = await req('GET', `/rest/api/3/issue/createmeta?projectKeys=${PROJECT}&expand=projects.issuetypes`);
+const meta = await req(
+  'GET',
+  `/rest/api/3/issue/createmeta?projectKeys=${PROJECT}&expand=projects.issuetypes`
+);
 const types = JSON.parse(meta.body).projects?.[0]?.issuetypes ?? [];
 const bugType =
   types.find((t) => /^task$/i.test(t.name)) ??
@@ -91,7 +96,10 @@ const description = {
         {
           type: 'listItem',
           content: [
-            { type: 'paragraph', content: [{ type: 'text', text: 'Person: Jakob Juul Rasmussen' }] },
+            {
+              type: 'paragraph',
+              content: [{ type: 'text', text: 'Person: Jakob Juul Rasmussen' }],
+            },
           ],
         },
         {
@@ -145,7 +153,11 @@ const description = {
               type: 'paragraph',
               content: [
                 { type: 'text', text: 'Ejendomme-toggle-knappen ', marks: [] },
-                { type: 'text', text: 'skal være DEFAULT DEAKTIVERET', marks: [{ type: 'strong' }] },
+                {
+                  type: 'text',
+                  text: 'skal være DEFAULT DEAKTIVERET',
+                  marks: [{ type: 'strong' }],
+                },
                 {
                   type: 'text',
                   text: ' — diagrammet åbner uden ejendomme. Bruger kan aktivere toggle for at se ejendomme. Det forhindrer at person-diagrammet bliver overfyldt.',
@@ -338,7 +350,8 @@ const description = {
 const payload = {
   fields: {
     project: { key: PROJECT },
-    summary: 'Diagram: align person-diagram med virksomheds-diagram (skjul historik, ejendomme-toggle default off, overflow-udvid)',
+    summary:
+      'Diagram: align person-diagram med virksomheds-diagram (skjul historik, ejendomme-toggle default off, overflow-udvid)',
     description,
     issuetype: { id: bugType.id },
     priority: { name: 'Medium' },

@@ -9,7 +9,9 @@ import { config as loadDotenv } from 'dotenv';
 import path from 'node:path';
 import url from 'node:url';
 
-loadDotenv({ path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local') });
+loadDotenv({
+  path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local'),
+});
 
 const HOST = process.env.JIRA_HOST || 'bizzassist.atlassian.net';
 const EMAIL = process.env.JIRA_EMAIL;
@@ -44,7 +46,10 @@ function req(method, p, body) {
   });
 }
 
-const meta = await req('GET', `/rest/api/3/issue/createmeta?projectKeys=${PROJECT}&expand=projects.issuetypes`);
+const meta = await req(
+  'GET',
+  `/rest/api/3/issue/createmeta?projectKeys=${PROJECT}&expand=projects.issuetypes`
+);
 const types = JSON.parse(meta.body).projects?.[0]?.issuetypes ?? [];
 const taskType =
   types.find((t) => /^task$/i.test(t.name)) ??
@@ -77,7 +82,11 @@ const description = {
         },
       ],
     },
-    { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Arkitektur — hybrid deling' }] },
+    {
+      type: 'heading',
+      attrs: { level: 2 },
+      content: [{ type: 'text', text: 'Arkitektur — hybrid deling' }],
+    },
     {
       type: 'paragraph',
       content: [
@@ -97,7 +106,10 @@ const description = {
               type: 'paragraph',
               content: [
                 { type: 'text', text: 'Delt: ', marks: [{ type: 'strong' }] },
-                { type: 'text', text: 'layout-algoritme, zoom/pan/viewport, toolbar, overflow-gruppering (+N-bokse), udvid-knap-state, fullscreen, tastatur-shortcuts.' },
+                {
+                  type: 'text',
+                  text: 'layout-algoritme, zoom/pan/viewport, toolbar, overflow-gruppering (+N-bokse), udvid-knap-state, fullscreen, tastatur-shortcuts.',
+                },
               ],
             },
           ],
@@ -109,7 +121,10 @@ const description = {
               type: 'paragraph',
               content: [
                 { type: 'text', text: 'Separat: ', marks: [{ type: 'strong' }] },
-                { type: 'text', text: 'node-rendering (forskellige felter pr. type: person/company/ejendom), data-fetch-hooks (CVR vs EJF), context-specifikke features (fx personroller-liste kun på person).' },
+                {
+                  type: 'text',
+                  text: 'node-rendering (forskellige felter pr. type: person/company/ejendom), data-fetch-hooks (CVR vs EJF), context-specifikke features (fx personroller-liste kun på person).',
+                },
               ],
             },
           ],
@@ -118,9 +133,7 @@ const description = {
     },
     {
       type: 'paragraph',
-      content: [
-        { type: 'text', text: 'API-skitse:' },
-      ],
+      content: [{ type: 'text', text: 'API-skitse:' }],
     },
     {
       type: 'codeBlock',
@@ -143,7 +156,11 @@ const description = {
         },
       ],
     },
-    { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Faseplan (rækkefølge er obligatorisk)' }] },
+    {
+      type: 'heading',
+      attrs: { level: 2 },
+      content: [{ type: 'text', text: 'Faseplan (rækkefølge er obligatorisk)' }],
+    },
     {
       type: 'orderedList',
       attrs: { order: 1 },
@@ -154,8 +171,15 @@ const description = {
             {
               type: 'paragraph',
               content: [
-                { type: 'text', text: 'Fase 0 — Baseline tests (~1 dag).', marks: [{ type: 'strong' }] },
-                { type: 'text', text: ' Playwright snapshot-tests af 4 kendte virksomhedsdiagrammer (JaJR Holding, Novo Nordisk, lille med 1 ejendom, tomt). E2E-test af alle toolbar-funktioner. MÅ IKKE preces videre før testene er grønne.' },
+                {
+                  type: 'text',
+                  text: 'Fase 0 — Baseline tests (~1 dag).',
+                  marks: [{ type: 'strong' }],
+                },
+                {
+                  type: 'text',
+                  text: ' Playwright snapshot-tests af 4 kendte virksomhedsdiagrammer (JaJR Holding, Novo Nordisk, lille med 1 ejendom, tomt). E2E-test af alle toolbar-funktioner. MÅ IKKE preces videre før testene er grønne.',
+                },
               ],
             },
           ],
@@ -166,8 +190,15 @@ const description = {
             {
               type: 'paragraph',
               content: [
-                { type: 'text', text: 'Fase 1 — Extract uden adfærdsændring (~2-3 dage).', marks: [{ type: 'strong' }] },
-                { type: 'text', text: ' Kopiér virksomhedsside-diagrammet ordret til ny DiagramRenderer. Gør virksomhedssiden til tynd wrapper der kalder DiagramRenderer med virksomheds-renderer-callbacks. Fase 0-tests skal stadig være grønne efter denne fase.' },
+                {
+                  type: 'text',
+                  text: 'Fase 1 — Extract uden adfærdsændring (~2-3 dage).',
+                  marks: [{ type: 'strong' }],
+                },
+                {
+                  type: 'text',
+                  text: ' Kopiér virksomhedsside-diagrammet ordret til ny DiagramRenderer. Gør virksomhedssiden til tynd wrapper der kalder DiagramRenderer med virksomheds-renderer-callbacks. Fase 0-tests skal stadig være grønne efter denne fase.',
+                },
               ],
             },
           ],
@@ -178,8 +209,15 @@ const description = {
             {
               type: 'paragraph',
               content: [
-                { type: 'text', text: 'Fase 2 — Tilføj person-context (~2-3 dage).', marks: [{ type: 'strong' }] },
-                { type: 'text', text: ' Introducér persondiagrammet via samme DiagramRenderer med person-renderer-callbacks. Person-logikken er udelukkende additiv — rører ikke virksomheds-flow.' },
+                {
+                  type: 'text',
+                  text: 'Fase 2 — Tilføj person-context (~2-3 dage).',
+                  marks: [{ type: 'strong' }],
+                },
+                {
+                  type: 'text',
+                  text: ' Introducér persondiagrammet via samme DiagramRenderer med person-renderer-callbacks. Person-logikken er udelukkende additiv — rører ikke virksomheds-flow.',
+                },
               ],
             },
           ],
@@ -190,15 +228,26 @@ const description = {
             {
               type: 'paragraph',
               content: [
-                { type: 'text', text: 'Fase 3 — Gradvis de-dup (løbende).', marks: [{ type: 'strong' }] },
-                { type: 'text', text: ' Hvor der er kopi-kode mellem person- og company-render kan det gradvist slås sammen. Hver konsolidering er en separat commit med egen test-run.' },
+                {
+                  type: 'text',
+                  text: 'Fase 3 — Gradvis de-dup (løbende).',
+                  marks: [{ type: 'strong' }],
+                },
+                {
+                  type: 'text',
+                  text: ' Hvor der er kopi-kode mellem person- og company-render kan det gradvist slås sammen. Hver konsolidering er en separat commit med egen test-run.',
+                },
               ],
             },
           ],
         },
       ],
     },
-    { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Regression-vagter' }] },
+    {
+      type: 'heading',
+      attrs: { level: 2 },
+      content: [{ type: 'text', text: 'Regression-vagter' }],
+    },
     {
       type: 'bulletList',
       content: [
@@ -207,7 +256,12 @@ const description = {
           content: [
             {
               type: 'paragraph',
-              content: [{ type: 'text', text: 'Snapshot-test (pixel-diff ≤ 1 %) af 4 kendte virksomhedsdiagrammer — kører før hver merge.' }],
+              content: [
+                {
+                  type: 'text',
+                  text: 'Snapshot-test (pixel-diff ≤ 1 %) af 4 kendte virksomhedsdiagrammer — kører før hver merge.',
+                },
+              ],
             },
           ],
         },
@@ -216,7 +270,12 @@ const description = {
           content: [
             {
               type: 'paragraph',
-              content: [{ type: 'text', text: 'E2E: zoom, pan, udvid, skjul, overflow, ejendomme-toggle, fullscreen, dobbeltklik-zoom.' }],
+              content: [
+                {
+                  type: 'text',
+                  text: 'E2E: zoom, pan, udvid, skjul, overflow, ejendomme-toggle, fullscreen, dobbeltklik-zoom.',
+                },
+              ],
             },
           ],
         },
@@ -239,7 +298,12 @@ const description = {
           content: [
             {
               type: 'paragraph',
-              content: [{ type: 'text', text: 'Interaktiv review-liste: kendt-god adfærd dokumenteret (fx "udvid Novo Nordisk ser sådan ud") — reviewer følger manuelt.' }],
+              content: [
+                {
+                  type: 'text',
+                  text: 'Interaktiv review-liste: kendt-god adfærd dokumenteret (fx "udvid Novo Nordisk ser sådan ud") — reviewer følger manuelt.',
+                },
+              ],
             },
           ],
         },
@@ -249,28 +313,145 @@ const description = {
     {
       type: 'bulletList',
       content: [
-        { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Fase 0: ~1 dag' }] }] },
-        { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Fase 1: 2-3 dage (lav risiko)' }] }] },
-        { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Fase 2: 2-3 dage' }] }] },
-        { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Fase 3: løbende, per delticket' }] }] },
-        { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Total første stabile version: ~1-2 uger' }] }] },
+        {
+          type: 'listItem',
+          content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Fase 0: ~1 dag' }] }],
+        },
+        {
+          type: 'listItem',
+          content: [
+            {
+              type: 'paragraph',
+              content: [{ type: 'text', text: 'Fase 1: 2-3 dage (lav risiko)' }],
+            },
+          ],
+        },
+        {
+          type: 'listItem',
+          content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Fase 2: 2-3 dage' }] }],
+        },
+        {
+          type: 'listItem',
+          content: [
+            {
+              type: 'paragraph',
+              content: [{ type: 'text', text: 'Fase 3: løbende, per delticket' }],
+            },
+          ],
+        },
+        {
+          type: 'listItem',
+          content: [
+            {
+              type: 'paragraph',
+              content: [{ type: 'text', text: 'Total første stabile version: ~1-2 uger' }],
+            },
+          ],
+        },
       ],
     },
-    { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Berørte diagram-bugs (vil blive nemmere at rette efter refactor)' }] },
+    {
+      type: 'heading',
+      attrs: { level: 2 },
+      content: [
+        { type: 'text', text: 'Berørte diagram-bugs (vil blive nemmere at rette efter refactor)' },
+      ],
+    },
     {
       type: 'bulletList',
       content: [
-        { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'BIZZ-571 — person-diagram align med virksomhedsdiagram' }] }] },
-        { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'BIZZ-582 — Udvid-knap + fuld alignment' }] }] },
-        { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'BIZZ-586 — person-node foldes ud + fuld alignment' }] }] },
-        { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'BIZZ-581 — personligt ejede ejendomsbokse format + klik' }] }] },
-        { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'BIZZ-585 — personligt ejede ejendomme på separat linje + ejerandel' }] }] },
-        { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'BIZZ-568 — overflow-bokse bottom-row (3. regression)' }] }] },
-        { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'BIZZ-573 — filtrér reelle ejere fra' }] }] },
-        { type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'BIZZ-564 — JAJR Ejendomme 2 ejerkæde' }] }] },
+        {
+          type: 'listItem',
+          content: [
+            {
+              type: 'paragraph',
+              content: [
+                { type: 'text', text: 'BIZZ-571 — person-diagram align med virksomhedsdiagram' },
+              ],
+            },
+          ],
+        },
+        {
+          type: 'listItem',
+          content: [
+            {
+              type: 'paragraph',
+              content: [{ type: 'text', text: 'BIZZ-582 — Udvid-knap + fuld alignment' }],
+            },
+          ],
+        },
+        {
+          type: 'listItem',
+          content: [
+            {
+              type: 'paragraph',
+              content: [
+                { type: 'text', text: 'BIZZ-586 — person-node foldes ud + fuld alignment' },
+              ],
+            },
+          ],
+        },
+        {
+          type: 'listItem',
+          content: [
+            {
+              type: 'paragraph',
+              content: [
+                { type: 'text', text: 'BIZZ-581 — personligt ejede ejendomsbokse format + klik' },
+              ],
+            },
+          ],
+        },
+        {
+          type: 'listItem',
+          content: [
+            {
+              type: 'paragraph',
+              content: [
+                {
+                  type: 'text',
+                  text: 'BIZZ-585 — personligt ejede ejendomme på separat linje + ejerandel',
+                },
+              ],
+            },
+          ],
+        },
+        {
+          type: 'listItem',
+          content: [
+            {
+              type: 'paragraph',
+              content: [
+                { type: 'text', text: 'BIZZ-568 — overflow-bokse bottom-row (3. regression)' },
+              ],
+            },
+          ],
+        },
+        {
+          type: 'listItem',
+          content: [
+            {
+              type: 'paragraph',
+              content: [{ type: 'text', text: 'BIZZ-573 — filtrér reelle ejere fra' }],
+            },
+          ],
+        },
+        {
+          type: 'listItem',
+          content: [
+            {
+              type: 'paragraph',
+              content: [{ type: 'text', text: 'BIZZ-564 — JAJR Ejendomme 2 ejerkæde' }],
+            },
+          ],
+        },
       ],
     },
-    { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Acceptance criteria (når refactor aktiveres)' }] },
+    {
+      type: 'heading',
+      attrs: { level: 2 },
+      content: [{ type: 'text', text: 'Acceptance criteria (når refactor aktiveres)' }],
+    },
     {
       type: 'bulletList',
       content: [
@@ -279,7 +460,12 @@ const description = {
           content: [
             {
               type: 'paragraph',
-              content: [{ type: 'text', text: 'Fase 0 snapshot-tests + E2E-tests passer på virksomhedssiden før refactor begynder.' }],
+              content: [
+                {
+                  type: 'text',
+                  text: 'Fase 0 snapshot-tests + E2E-tests passer på virksomhedssiden før refactor begynder.',
+                },
+              ],
             },
           ],
         },
@@ -288,7 +474,12 @@ const description = {
           content: [
             {
               type: 'paragraph',
-              content: [{ type: 'text', text: 'Efter Fase 1: virksomhedssiden opfører sig pixel-identisk med før refactor — verificeret med snapshot-diff.' }],
+              content: [
+                {
+                  type: 'text',
+                  text: 'Efter Fase 1: virksomhedssiden opfører sig pixel-identisk med før refactor — verificeret med snapshot-diff.',
+                },
+              ],
             },
           ],
         },
@@ -297,7 +488,12 @@ const description = {
           content: [
             {
               type: 'paragraph',
-              content: [{ type: 'text', text: 'Efter Fase 2: persondiagrammet har mindst samme toolbar-funktionalitet som virksomhedsdiagrammet.' }],
+              content: [
+                {
+                  type: 'text',
+                  text: 'Efter Fase 2: persondiagrammet har mindst samme toolbar-funktionalitet som virksomhedsdiagrammet.',
+                },
+              ],
             },
           ],
         },
@@ -306,7 +502,12 @@ const description = {
           content: [
             {
               type: 'paragraph',
-              content: [{ type: 'text', text: 'Feature-flag gør det muligt at rulle tilbage til gammel kode-sti med én env-ændring.' }],
+              content: [
+                {
+                  type: 'text',
+                  text: 'Feature-flag gør det muligt at rulle tilbage til gammel kode-sti med én env-ændring.',
+                },
+              ],
             },
           ],
         },
@@ -319,7 +520,8 @@ console.log('→ Creating refactor ticket…');
 const res = await req('POST', '/rest/api/3/issue', {
   fields: {
     project: { key: PROJECT },
-    summary: 'Diagram-refactor: delt diagramrenderer-komponent for person- og virksomhedsside (hybrid, faseplan, regression-vagter)',
+    summary:
+      'Diagram-refactor: delt diagramrenderer-komponent for person- og virksomhedsside (hybrid, faseplan, regression-vagter)',
     description,
     issuetype: { id: taskType.id },
     priority: { name: 'Medium' },

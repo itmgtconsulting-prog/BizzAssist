@@ -18,7 +18,9 @@ import { config as loadDotenv } from 'dotenv';
 import path from 'node:path';
 import url from 'node:url';
 
-loadDotenv({ path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local') });
+loadDotenv({
+  path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local'),
+});
 
 const HOST = process.env.JIRA_HOST || 'bizzassist.atlassian.net';
 const EMAIL = process.env.JIRA_EMAIL;
@@ -109,7 +111,9 @@ const description = {
       'Kommunale enheder, menighedsråd — særlige identifier-typer',
     ]),
     h(3, 'Datavolumen'),
-    p('Observation fra BIZZ-534 ingestion (preview-miljø, april 2026): ~10-15% af alle EJF-records er PV-oplys. Med ~6M records totalt svarer det til ~600-900k ejerskaber vi ikke fanger.'),
+    p(
+      'Observation fra BIZZ-534 ingestion (preview-miljø, april 2026): ~10-15% af alle EJF-records er PV-oplys. Med ~6M records totalt svarer det til ~600-900k ejerskaber vi ikke fanger.'
+    ),
     h(2, 'Opgave'),
     h(3, '1. Schema-udvidelse'),
     p('Tilføj nye kolonner til public.ejf_ejerskab for PV-oplys-specifikke felter:'),
@@ -133,7 +137,7 @@ alter table public.ejf_ejerskab
     ),
     bullets([
       'ejendePartUdenCVRCPR { id fiktivtPVnummer landekode adresselinje1-10 administrator }',
-      'Map PV-oplys-ejere med ejer_type=\'pvoplys\' og ejf_id=fiktivtPVnummer',
+      "Map PV-oplys-ejere med ejer_type='pvoplys' og ejf_id=fiktivtPVnummer",
       'Persistér adresselinjer samlet som udlandsadresse-streng',
     ]),
     h(3, '3. Query-route til PV-ejere'),

@@ -14,7 +14,9 @@ import { config as loadDotenv } from 'dotenv';
 import path from 'node:path';
 import url from 'node:url';
 
-loadDotenv({ path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local') });
+loadDotenv({
+  path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local'),
+});
 
 const HOST = 'bizzassist.atlassian.net';
 const EMAIL = process.env.JIRA_EMAIL;
@@ -104,22 +106,129 @@ const validatePayload = {
         description: '',
         startPointLayout: { x: 60.0, y: -70.0 },
         statuses: [
-          { statusReference: '10000', layout: { x: 180.0, y: -16.0 }, properties: {}, deprecated: false },
-          { statusReference: '10001', layout: { x: 324.47, y: -16.0 }, properties: {}, deprecated: false },
-          { statusReference: '10002', layout: { x: 510.47, y: -16.0 }, properties: {}, deprecated: false },
-          { statusReference: '10003', layout: { x: 682.4, y: -16.0 }, properties: {}, deprecated: false },
-          { statusReference: '10036', layout: { x: 823.88, y: -43.0 }, properties: {}, deprecated: false },
-          { statusReference: BLOCKED_STATUS_ID, layout: { x: 823.88, y: 40.0 }, properties: {}, deprecated: false },
+          {
+            statusReference: '10000',
+            layout: { x: 180.0, y: -16.0 },
+            properties: {},
+            deprecated: false,
+          },
+          {
+            statusReference: '10001',
+            layout: { x: 324.47, y: -16.0 },
+            properties: {},
+            deprecated: false,
+          },
+          {
+            statusReference: '10002',
+            layout: { x: 510.47, y: -16.0 },
+            properties: {},
+            deprecated: false,
+          },
+          {
+            statusReference: '10003',
+            layout: { x: 682.4, y: -16.0 },
+            properties: {},
+            deprecated: false,
+          },
+          {
+            statusReference: '10036',
+            layout: { x: 823.88, y: -43.0 },
+            properties: {},
+            deprecated: false,
+          },
+          {
+            statusReference: BLOCKED_STATUS_ID,
+            layout: { x: 823.88, y: 40.0 },
+            properties: {},
+            deprecated: false,
+          },
         ],
         transitions: [
-          { id: '1', type: 'INITIAL', toStatusReference: '10000', links: [], name: 'Create', description: '', actions: [], validators: [], triggers: [], properties: { 'jira.i18n.title': 'common.forms.create' } },
-          { id: '2', type: 'GLOBAL', toStatusReference: '10036', links: [], name: 'On Hold', description: '', actions: [], validators: [], triggers: [], properties: {} },
-          { id: '11', type: 'GLOBAL', toStatusReference: '10000', links: [], name: 'To Do', description: '', actions: [], validators: [], triggers: [], properties: { 'jira.i18n.title': 'gh.workflow.preset.todo' } },
-          { id: '21', type: 'GLOBAL', toStatusReference: '10001', links: [], name: 'In Progress', description: '', actions: [], validators: [], triggers: [], properties: { 'jira.i18n.title': 'gh.workflow.preset.inprogress' } },
-          { id: '31', type: 'GLOBAL', toStatusReference: '10002', links: [], name: 'In Review', description: '', actions: [], validators: [], triggers: [], properties: {} },
-          { id: '41', type: 'GLOBAL', toStatusReference: '10003', links: [], name: 'Done', description: '', actions: [], validators: [], triggers: [], properties: { 'jira.i18n.title': 'gh.workflow.preset.done' } },
+          {
+            id: '1',
+            type: 'INITIAL',
+            toStatusReference: '10000',
+            links: [],
+            name: 'Create',
+            description: '',
+            actions: [],
+            validators: [],
+            triggers: [],
+            properties: { 'jira.i18n.title': 'common.forms.create' },
+          },
+          {
+            id: '2',
+            type: 'GLOBAL',
+            toStatusReference: '10036',
+            links: [],
+            name: 'On Hold',
+            description: '',
+            actions: [],
+            validators: [],
+            triggers: [],
+            properties: {},
+          },
+          {
+            id: '11',
+            type: 'GLOBAL',
+            toStatusReference: '10000',
+            links: [],
+            name: 'To Do',
+            description: '',
+            actions: [],
+            validators: [],
+            triggers: [],
+            properties: { 'jira.i18n.title': 'gh.workflow.preset.todo' },
+          },
+          {
+            id: '21',
+            type: 'GLOBAL',
+            toStatusReference: '10001',
+            links: [],
+            name: 'In Progress',
+            description: '',
+            actions: [],
+            validators: [],
+            triggers: [],
+            properties: { 'jira.i18n.title': 'gh.workflow.preset.inprogress' },
+          },
+          {
+            id: '31',
+            type: 'GLOBAL',
+            toStatusReference: '10002',
+            links: [],
+            name: 'In Review',
+            description: '',
+            actions: [],
+            validators: [],
+            triggers: [],
+            properties: {},
+          },
+          {
+            id: '41',
+            type: 'GLOBAL',
+            toStatusReference: '10003',
+            links: [],
+            name: 'Done',
+            description: '',
+            actions: [],
+            validators: [],
+            triggers: [],
+            properties: { 'jira.i18n.title': 'gh.workflow.preset.done' },
+          },
           // NEW transition to Blocked
-          { id: '51', type: 'GLOBAL', toStatusReference: BLOCKED_STATUS_ID, links: [], name: 'Blocked', description: 'Mark ticket as blocked by external dependency', actions: [], validators: [], triggers: [], properties: {} },
+          {
+            id: '51',
+            type: 'GLOBAL',
+            toStatusReference: BLOCKED_STATUS_ID,
+            links: [],
+            name: 'Blocked',
+            description: 'Mark ticket as blocked by external dependency',
+            actions: [],
+            validators: [],
+            triggers: [],
+            properties: {},
+          },
         ],
         loopedTransitionContainerLayout: {},
       },
@@ -133,7 +242,8 @@ console.log('  HTTP', val.status);
 const valJson = JSON.parse(val.body);
 if (valJson.errors?.length) {
   console.log('  Validation errors:');
-  for (const e of valJson.errors) console.log('    -', e.errorMessage || JSON.stringify(e).slice(0, 200));
+  for (const e of valJson.errors)
+    console.log('    -', e.errorMessage || JSON.stringify(e).slice(0, 200));
   process.exit(1);
 }
 console.log('  OK (no errors)');

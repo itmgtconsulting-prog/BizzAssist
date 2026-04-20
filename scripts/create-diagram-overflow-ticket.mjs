@@ -8,7 +8,9 @@ import { config as loadDotenv } from 'dotenv';
 import path from 'node:path';
 import url from 'node:url';
 
-loadDotenv({ path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local') });
+loadDotenv({
+  path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local'),
+});
 
 const HOST = process.env.JIRA_HOST || 'bizzassist.atlassian.net';
 const EMAIL = process.env.JIRA_EMAIL;
@@ -44,7 +46,10 @@ function req(method, p, body) {
 }
 
 // Discover Bug issue-type id
-const meta = await req('GET', `/rest/api/3/issue/createmeta?projectKeys=${PROJECT}&expand=projects.issuetypes`);
+const meta = await req(
+  'GET',
+  `/rest/api/3/issue/createmeta?projectKeys=${PROJECT}&expand=projects.issuetypes`
+);
 const types = JSON.parse(meta.body).projects?.[0]?.issuetypes ?? [];
 const bugType =
   types.find((t) => /^bug$/i.test(t.name)) ??
@@ -52,7 +57,10 @@ const bugType =
   types.find((t) => /^story$/i.test(t.name)) ??
   types.find((t) => !t.subtask);
 if (!bugType) {
-  console.error('No Bug/Task issue type found. Available:', types.map((t) => t.name));
+  console.error(
+    'No Bug/Task issue type found. Available:',
+    types.map((t) => t.name)
+  );
   process.exit(1);
 }
 console.log(`Using issue type: ${bugType.name}`);

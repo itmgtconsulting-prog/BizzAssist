@@ -1634,6 +1634,10 @@ function DiagramForce({
    * AND fire person-dynamic-expand for any person-node der ikke er udvidet
    * endnu. Det betyder Udvid-knappen nu også henter personligt ejede
    * virksomheder + ejendomme i ét klik.
+   *
+   * BIZZ-619: Udvid slår nu også `showProperties` på — hvis brugeren aktivt
+   * udvider diagrammet, er det i praksis altid fordi de vil se alt, inkl.
+   * personligt ejede ejendomme der ellers er skjult bag toggle'en.
    */
   function expandOneLevel() {
     let didSomething = false;
@@ -1651,6 +1655,13 @@ function DiagramForce({
           void expandPersonDynamic(p.id, p.enhedsNummer);
         }
       }
+      didSomething = true;
+    }
+    // Afslør ejendomme når brugeren udvider — ellers vil Udvid-klik ikke
+    // synligt gøre noget for person-diagrammer hvor de nyligt hentede
+    // property-noder er filtered bag showProperties=false.
+    if (!showProperties) {
+      setShowProperties(true);
       didSomething = true;
     }
     if (!didSomething) return;

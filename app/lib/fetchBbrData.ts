@@ -810,19 +810,23 @@ export async function resolveMatrikelArealByBfe(bfe: number): Promise<number | n
   try {
     const adgId = await lookupAdgangsadresseByBfeViaVurderingsportalen(bfe);
     if (!adgId) return null;
+    // OBS: struktur=mini udelader ejerlav/matrikelnr. Brug default nestedjson
+    // så vi kan chaine videre til jordstykke-opslag.
     const adgRes = await fetchDawa(
-      `${DAWA_BASE_URL}/adgangsadresser/${adgId}?struktur=mini`,
+      `${DAWA_BASE_URL}/adgangsadresser/${adgId}`,
       { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
       { caller: 'resolveMatrikelArealByBfe.adgangsadresse' }
     );
     if (!adgRes.ok) return null;
     const adg = (await adgRes.json()) as {
-      ejerlavkode?: number;
+      ejerlav?: { kode?: number };
       matrikelnr?: string;
     };
-    if (!adg.ejerlavkode || !adg.matrikelnr) return null;
+    const ejerlavkode = adg.ejerlav?.kode;
+    const matrikelnr = adg.matrikelnr;
+    if (!ejerlavkode || !matrikelnr) return null;
     const jordRes = await fetchDawa(
-      `${DAWA_BASE_URL}/jordstykker/${adg.ejerlavkode}/${encodeURIComponent(adg.matrikelnr)}`,
+      `${DAWA_BASE_URL}/jordstykker/${ejerlavkode}/${encodeURIComponent(matrikelnr)}`,
       { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
       { caller: 'resolveMatrikelArealByBfe.jordstykke' }
     );

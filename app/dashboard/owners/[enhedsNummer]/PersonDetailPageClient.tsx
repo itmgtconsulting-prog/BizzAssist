@@ -1462,9 +1462,26 @@ export default function PersonDetailPageClient({
    */
   useEffect(() => {
     if (aktivTab !== 'properties') return;
-    if (ejendommeData.length === 0) return;
+    // BIZZ-638: Enrich BÅDE virksomhedsejede (ejendommeData) OG personligt
+    // ejede (personalBfes) — sidstnævnte kommer fra ejf_ejerskab-bulkdata
+    // (BIZZ-534/595) og blev tidligere glemt i enrich-loopet så de 9
+    // personligt ejede kort på Jakob's side viste evig skeleton-bars.
+    const combinedBfes: Array<{ bfeNummer: number; dawaId: string | null }> = [
+      ...ejendommeData.map((e) => ({ bfeNummer: e.bfeNummer, dawaId: e.dawaId ?? null })),
+      ...personalBfes.map((p) => ({ bfeNummer: p.bfeNummer, dawaId: p.dawaId ?? null })),
+    ];
+    if (combinedBfes.length === 0) return;
 
-    const missing = ejendommeData.filter((e) => !preEnrichedByBfe.has(e.bfeNummer));
+    // Dedup per BFE — en ejendom kan optræde begge steder (fx personligt +
+    // via ENK). Første forekomst vinder dawaId'et (CVR-sporet er typisk
+    // mere korrekt når det findes).
+    const seen = new Set<number>();
+    const missing: typeof combinedBfes = [];
+    for (const item of combinedBfes) {
+      if (seen.has(item.bfeNummer)) continue;
+      seen.add(item.bfeNummer);
+      if (!preEnrichedByBfe.has(item.bfeNummer)) missing.push(item);
+    }
     if (missing.length === 0) return;
 
     const controller = new AbortController();
@@ -1489,7 +1506,7 @@ export default function PersonDetailPageClient({
       .catch(() => {});
 
     return () => controller.abort();
-  }, [aktivTab, ejendommeData, preEnrichedByBfe]);
+  }, [aktivTab, ejendommeData, personalBfes, preEnrichedByBfe]);
 
   /**
    * BIZZ-594: Fetch personligt ejede ejendomme (bulk-data) når diagram eller

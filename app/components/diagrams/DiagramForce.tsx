@@ -283,9 +283,12 @@ function DiagramForce({
             const bfeId = `bfe-${p.bfeNummer}`;
             if (existingIds.has(bfeId)) continue;
             existingIds.add(bfeId);
+            // BIZZ-627: Placeholder "Ejendom" i stedet for "BFE X" når
+            // adresse mangler — BFE vises i 3. linje af node-rendereren.
             const postBy = [p.postnr, p.by].filter(Boolean).join(' ');
-            const baseAddr = p.adresse ?? `BFE ${p.bfeNummer}`;
-            const mainLabel = postBy ? `${baseAddr}, ${postBy}` : baseAddr;
+            const hasAddress = !!p.adresse;
+            const baseAddr = hasAddress ? (p.adresse as string) : 'Ejendom';
+            const mainLabel = hasAddress && postBy ? `${baseAddr}, ${postBy}` : baseAddr;
             newNodes.push({
               id: bfeId,
               label: mainLabel,
@@ -355,12 +358,14 @@ function DiagramForce({
                 const postBy = enriched
                   ? [enriched.postnr, enriched.by].filter(Boolean).join(' ')
                   : '';
-                const baseAddr = enriched?.adresse
-                  ? enriched.etage
-                    ? `${enriched.adresse}, ${enriched.etage}.${enriched.doer ? ` ${enriched.doer}` : ''}`
-                    : enriched.adresse
-                  : `BFE ${bfe}`;
-                const mainLabel = postBy ? `${baseAddr}, ${postBy}` : baseAddr;
+                // BIZZ-627: Placeholder "Ejendom" når adresse mangler.
+                const hasAddress = !!enriched?.adresse;
+                const baseAddr = hasAddress
+                  ? enriched!.etage
+                    ? `${enriched!.adresse}, ${enriched!.etage}.${enriched!.doer ? ` ${enriched!.doer}` : ''}`
+                    : (enriched!.adresse as string)
+                  : 'Ejendom';
+                const mainLabel = hasAddress && postBy ? `${baseAddr}, ${postBy}` : baseAddr;
                 newNodes.push({
                   id: bfeId,
                   label: mainLabel,

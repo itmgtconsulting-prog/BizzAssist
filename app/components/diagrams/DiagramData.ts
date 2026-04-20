@@ -420,10 +420,15 @@ export function buildDiagramGraph(
         const link = p.dawaId ? `/dashboard/ejendomme/${p.dawaId}` : undefined;
         // Merge address + postnr+by into main label (e.g. "Arnold Nielsens Boulevard 64A, 2650 Hvidovre")
         // BIZZ-551: Append etage + dør for ejerlejligheder
+        // BIZZ-627: Når adresse mangler, vis "Ejendom" som placeholder i stedet
+        // for "BFE X" — BFE-nummeret vises separat i 3. linje i DiagramForce.
+        // Undgår duplikeret BFE-visning og signalerer tydeligt at adresse mangler.
         const postBy = [p.postnr, p.by].filter(Boolean).join(' ');
-        const rawAddr = p.adresse ?? `BFE ${p.bfeNummer}`;
-        const baseAddr = p.etage ? `${rawAddr}, ${p.etage}.${p.doer ? ` ${p.doer}` : ''}` : rawAddr;
-        const mainLabel = postBy ? `${baseAddr}, ${postBy}` : baseAddr;
+        const hasAddress = !!p.adresse;
+        const rawAddr = p.adresse ?? 'Ejendom';
+        const baseAddr =
+          hasAddress && p.etage ? `${rawAddr}, ${p.etage}.${p.doer ? ` ${p.doer}` : ''}` : rawAddr;
+        const mainLabel = hasAddress && postBy ? `${baseAddr}, ${postBy}` : baseAddr;
         nodes.push({
           id: propId,
           label: mainLabel,
@@ -774,10 +779,15 @@ export function buildPersonDiagramGraph(
         const link = p.dawaId ? `/dashboard/ejendomme/${p.dawaId}` : undefined;
         // Merge address + postnr+by into main label (e.g. "Arnold Nielsens Boulevard 64A, 2650 Hvidovre")
         // BIZZ-551: Append etage + dør for ejerlejligheder
+        // BIZZ-627: Når adresse mangler, vis "Ejendom" som placeholder i stedet
+        // for "BFE X" — BFE-nummeret vises separat i 3. linje i DiagramForce.
+        // Undgår duplikeret BFE-visning og signalerer tydeligt at adresse mangler.
         const postBy = [p.postnr, p.by].filter(Boolean).join(' ');
-        const rawAddr = p.adresse ?? `BFE ${p.bfeNummer}`;
-        const baseAddr = p.etage ? `${rawAddr}, ${p.etage}.${p.doer ? ` ${p.doer}` : ''}` : rawAddr;
-        const mainLabel = postBy ? `${baseAddr}, ${postBy}` : baseAddr;
+        const hasAddress = !!p.adresse;
+        const rawAddr = p.adresse ?? 'Ejendom';
+        const baseAddr =
+          hasAddress && p.etage ? `${rawAddr}, ${p.etage}.${p.doer ? ` ${p.doer}` : ''}` : rawAddr;
+        const mainLabel = hasAddress && postBy ? `${baseAddr}, ${postBy}` : baseAddr;
         nodes.push({
           id: propId,
           label: mainLabel,
@@ -824,10 +834,13 @@ export function buildPersonDiagramGraph(
       if (seenIds.has(propId)) continue;
       seenIds.add(propId);
       const link = p.dawaId ? `/dashboard/ejendomme/${p.dawaId}` : undefined;
+      // BIZZ-627: Placeholder "Ejendom" i stedet for "BFE X" når adresse mangler.
       const postBy = [p.postnr, p.by].filter(Boolean).join(' ');
-      const rawAddr = p.adresse ?? `BFE ${p.bfeNummer}`;
-      const baseAddr = p.etage ? `${rawAddr}, ${p.etage}.${p.doer ? ` ${p.doer}` : ''}` : rawAddr;
-      const mainLabel = postBy ? `${baseAddr}, ${postBy}` : baseAddr;
+      const hasAddress = !!p.adresse;
+      const rawAddr = p.adresse ?? 'Ejendom';
+      const baseAddr =
+        hasAddress && p.etage ? `${rawAddr}, ${p.etage}.${p.doer ? ` ${p.doer}` : ''}` : rawAddr;
+      const mainLabel = hasAddress && postBy ? `${baseAddr}, ${postBy}` : baseAddr;
       nodes.push({
         id: propId,
         label: mainLabel,

@@ -125,13 +125,22 @@ export async function generateSitemaps(): Promise<Array<{ id: number }>> {
  * @param params - { id: number } — sidenummer (0-indekseret)
  * @returns MetadataRoute.Sitemap array med alle URL-entries for denne side
  */
-export default async function sitemap({ id }: { id: number }): Promise<MetadataRoute.Sitemap> {
+export default async function sitemap({
+  id,
+}: {
+  id: number | string;
+}): Promise<MetadataRoute.Sitemap> {
+  // BIZZ-645: Next.js leverer metadata-route id som string fra URL-segment
+  // (fx "0" fra /sitemap/0.xml). Strict equality `id === 0` var derfor
+  // altid false og staticEntries endte tom — selv på side 0. Coerce til
+  // number før sammenligning.
+  const pageId = typeof id === 'string' ? parseInt(id, 10) : id;
   // Statiske sider injiceres kun på første side
-  const staticEntries: MetadataRoute.Sitemap = id === 0 ? STATIC_PAGES : [];
+  const staticEntries: MetadataRoute.Sitemap = pageId === 0 ? STATIC_PAGES : [];
   const staticCount = staticEntries.length;
 
   // DB-entries: beregn range med offset for statiske sider på side 0
-  const dbOffset = id === 0 ? 0 : id * PAGE_SIZE - staticCount;
+  const dbOffset = pageId === 0 ? 0 : pageId * PAGE_SIZE - staticCount;
   const dbLimit = PAGE_SIZE - staticCount;
 
   try {

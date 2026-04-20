@@ -2452,14 +2452,27 @@ export default function PersonDetailPageClient({
                           ? `Indlæser… (${ejendommeData.length} af ${ejendommeTotalBfe} ejendomme)`
                           : `Loading… (${ejendommeData.length} of ${ejendommeTotalBfe} properties)`
                         : (() => {
-                            // BIZZ-639: Vis både aktive og historiske (solgte)
-                            // tal — skjul historisk-delen når 0.
-                            const aktiveCount = ejendommeData.filter(
-                              (e) => e.aktiv !== false
-                            ).length;
-                            const historiskeCount = ejendommeData.filter(
-                              (e) => e.aktiv === false
-                            ).length;
+                            // BIZZ-639 + BIZZ-640: Vis både aktive og historiske
+                            // (solgte) tal på tværs af BÅDE virksomhedsejede
+                            // (ejendommeData) OG personligt ejede (personalBfes).
+                            // Brug Map dedup på bfeNummer så ejendomme der
+                            // optræder begge steder (fx både via CVR og via
+                            // person-bridge) ikke tælles dobbelt.
+                            const alleByBfe = new Map<number, { aktiv: boolean }>();
+                            for (const e of ejendommeData) {
+                              alleByBfe.set(e.bfeNummer, { aktiv: e.aktiv !== false });
+                            }
+                            for (const p of personalBfes) {
+                              // Personligt ejede overskriver ikke — virksomheds-
+                              // entry er allerede kanonisk hvis begge kilder
+                              // rapporterer samme BFE.
+                              if (!alleByBfe.has(p.bfeNummer)) {
+                                alleByBfe.set(p.bfeNummer, { aktiv: p.aktiv !== false });
+                              }
+                            }
+                            const alle = Array.from(alleByBfe.values());
+                            const aktiveCount = alle.filter((e) => e.aktiv).length;
+                            const historiskeCount = alle.filter((e) => !e.aktiv).length;
                             if (lang === 'da') {
                               const aktivLabel = `${aktiveCount} aktiv${aktiveCount !== 1 ? 'e' : ''} ejendom${aktiveCount !== 1 ? 'me' : ''}`;
                               return historiskeCount > 0

@@ -34,6 +34,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { Ratelimit } from '@upstash/ratelimit';
 import { Redis } from '@upstash/redis';
 import { resolveTenantId } from '@/lib/api/auth';
+import { assertAiAllowed } from '@/app/lib/aiGate';
 import { fetchBbrForAddress } from '@/app/lib/fetchBbrData';
 import { parseBody } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
@@ -1010,6 +1011,9 @@ export async function POST(request: NextRequest): Promise<Response> {
   // ── Auth ────────────────────────────────────────────────────────────────────
   const auth = await resolveTenantId();
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  // BIZZ-649: Central AI billing-gate — afvis før Anthropic-kald.
+  const blocked = await assertAiAllowed(auth.userId);
+  if (blocked) return blocked as NextResponse;
 
   // ── Rate limit ──────────────────────────────────────────────────────────────
   const identifier = getClientKey(request);

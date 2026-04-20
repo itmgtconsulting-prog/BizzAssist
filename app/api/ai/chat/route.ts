@@ -33,6 +33,7 @@ import { createAdminClient, tenantDb, type TenantDb } from '@/lib/supabase/admin
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/lib/supabase/types';
 import { logActivity } from '@/app/lib/activityLog';
+import { assertAiAllowed } from '@/app/lib/aiGate';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -1357,10 +1358,14 @@ export async function POST(request: NextRequest): Promise<Response> {
   }
   const { userId, tenantId: resolvedTenantId } = auth;
 
-  // BIZZ-641: Accepter både 'active' og 'trialing' — men trial-brugere får
-  // kun AI-adgang via selvstændigt betalte token-pakker (topUpTokens), ikke
-  // via plan-quota. Det forhindrer misbrug hvor brugere opretter trial efter
-  // trial for at forbruge gratis AI.
+  // BIZZ-649: Central AI billing-gate — delt med alle øvrige AI-endpoints.
+  // Inkluderer admin-bypass + -1 unlimited + zero_budget → 402.
+  const blocked = await assertAiAllowed(userId);
+  if (blocked) return blocked;
+
+  // BIZZ-641/643: Hent subscription + plan-tokens igen til downstream
+  // per-kilde token-allocation (allocateTokensBySource). Gate'n har allerede
+  // godkendt kaldet — dette er kun til korrekt decrement-tracking.
   const adminClient = createAdminClient();
   const { data: freshUser } = await adminClient.auth.admin.getUserById(userId);
   const sub = freshUser?.user?.app_metadata?.subscription as
@@ -1376,13 +1381,6 @@ export async function POST(request: NextRequest): Promise<Response> {
     | null
     | undefined;
   const subStatus = sub?.status ?? '';
-
-  // BIZZ-649 P0: Hent plan-tokens fra plan_configs før gate-check.
-  // BIZZ-641: Under trial blokeres plan-tokens — effektiv grænse er kun
-  // topUpTokens + bonusTokens (manuelt tildelt af admin). Efter aktivering
-  // tilføjes plan-tokens normalt.
-  // BIZZ-643: Track per-kilde-forbrug separat (planTokensUsed) så vi kan
-  // vise balance pr. kilde i UI + gennemføre prioritets-dekrement.
   const tokensUsedThisMonth = sub?.tokensUsedThisMonth ?? 0;
   const planTokensUsed = sub?.planTokensUsed ?? 0;
   const bonusTokens = sub?.bonusTokens ?? 0;
@@ -1396,50 +1394,6 @@ export async function POST(request: NextRequest): Promise<Response> {
       .single<{ ai_tokens_per_month: number }>();
     planTokens = subStatus === 'trialing' ? 0 : (planRow?.ai_tokens_per_month ?? 0);
   }
-
-  // BIZZ-649: Gate-decision via ren funktion (decideAiGate) så alle
-  // permutationer er unit-testede — kernen er at blokere 'active' bruger
-  // med plan=0 + bonus=0 + topUp=0 (billing-lækage før commit).
-  const gate = decideAiGate({
-    status: subStatus,
-    tokensUsedThisMonth,
-    planTokens,
-    bonusTokens,
-    topUpTokens,
-  });
-  if (gate.decision === 'no_subscription') {
-    return Response.json(
-      { error: 'Aktivt abonnement kræves for at bruge AI-assistenten' },
-      { status: 403 }
-    );
-  }
-  if (gate.decision === 'quota_exceeded') {
-    return Response.json({ error: 'Token kvote opbrugt for denne måned' }, { status: 429 });
-  }
-  if (gate.decision === 'zero_budget') {
-    // P0 billing-lækage-guard — Sentry-breadcrumb så vi kan se hvis en
-    // bruger forsøger at kalde AI uden budget (normalt blokeret af UI).
-    Sentry.addBreadcrumb({
-      category: 'billing',
-      message: 'AI chat blocked: zero_budget',
-      level: 'info',
-      data: { isTrial: gate.isTrial, userId, planId: sub?.planId ?? null },
-    });
-    return Response.json(
-      {
-        error: gate.isTrial
-          ? 'AI-tokens er låst indtil dit abonnement starter. Køb en token-pakke for at bruge AI nu.'
-          : 'Dit abonnement har ingen AI-tokens. Køb en token-pakke eller opgrader plan for at bruge AI.',
-        code: 'trial_ai_blocked',
-        cta: 'buy_token_pack',
-      },
-      { status: 402 }
-    );
-  }
-  // gate.decision === 'allow' — fortsæt til Anthropic. gate.effectiveLimit
-  // holdes tilgængelig via gate-objektet hvis vi senere vil logge remaining-
-  // budget i en Sentry-breadcrumb.
-  void gate.effectiveLimit;
 
   const apiKey = process.env.BIZZASSIST_CLAUDE_KEY?.trim();
   if (!apiKey) {

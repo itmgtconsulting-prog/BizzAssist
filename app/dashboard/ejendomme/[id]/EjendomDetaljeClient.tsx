@@ -568,6 +568,13 @@ export default function EjendomDetaljeClient({
     totalDebt: da ? 'Samlet pantegæld' : 'Total mortgage debt',
     loanToValue: da ? 'Belåningsgrad' : 'Loan-to-value',
     loadingTinglysning: da ? 'Henter tinglysningsdata…' : 'Loading land registry data…',
+    // BIZZ-616: Tilføj manglende loading-labels så alle 7 tabs følger samme
+    // pattern (blå progress-bar + spinner + specifik "Henter [ressource]…").
+    loadingOverblik: da ? 'Henter overblik…' : 'Loading overview…',
+    loadingBBR: da ? 'Henter BBR-data…' : 'Loading BBR data…',
+    loadingEjerskab: da ? 'Henter ejerskabsdata…' : 'Loading ownership data…',
+    loadingSkat: da ? 'Henter SKAT-data…' : 'Loading tax data…',
+    loadingDokumenter: da ? 'Henter dokumenter…' : 'Loading documents…',
     // Udbudshistorik
     listingHistory: da ? 'Udbudshistorik' : 'Listing history',
     listingPricesAndStatus: da ? 'Udbudspriser og status' : 'Listing prices and status',
@@ -2395,6 +2402,11 @@ export default function EjendomDetaljeClient({
             {/* ══ OVERBLIK ══ */}
             {aktivTab === 'overblik' && (
               <div className="space-y-2">
+                {/* BIZZ-616: Tab-level loading spinner mens kerne-data (BBR +
+                    vurdering) hentes. Matcher øvrige tabs' loading-pattern. */}
+                {(bbrLoader || vurderingLoader) && !bbrData && (
+                  <TabLoadingSpinner label={t.loadingOverblik} />
+                )}
                 {/* 2-spalte layout: ejendomsdata (venstre) + økonomi (højre) */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                   {/* ─── Rad 1: Matrikel (v) + Ejendomsvurdering (h)
@@ -3058,7 +3070,8 @@ export default function EjendomDetaljeClient({
             {/* ══ BBR ══ — Live data, collapsible rækker */}
             {aktivTab === 'bbr' && (
               <div className="space-y-3">
-                {bbrLoader && <TabLoadingSpinner label={t.loading} />}
+                {/* BIZZ-616: Specifik "Henter BBR-data…" label i stedet for generisk t.loading */}
+                {bbrLoader && <TabLoadingSpinner label={t.loadingBBR} />}
                 {bbrData?.bbrFejl && (
                   <div className="p-3 bg-orange-500/10 border border-orange-500/20 rounded-lg">
                     <p className="text-orange-300 text-sm">BBR: {bbrData.bbrFejl}</p>
@@ -4570,6 +4583,11 @@ export default function EjendomDetaljeClient({
             {/* ══ SKAT ══ */}
             {aktivTab === 'skatter' && (
               <div className="space-y-5">
+                {/* BIZZ-616: Top-level tab loading spinner — vises mens VUR-data
+                    hentes så tabben ikke står blank ved første klik. */}
+                {(forelobigLoader || vurderingLoader) && (
+                  <TabLoadingSpinner label={t.loadingSkat} />
+                )}
                 {/* ── Ejendomsskatter — baseret på foreløbige + estimerede data ── */}
                 <div>
                   <SectionTitle title={t.propertyTaxes} />
@@ -4898,6 +4916,10 @@ export default function EjendomDetaljeClient({
             {/* ══ DOKUMENTER ══ */}
             {aktivTab === 'dokumenter' && (
               <div className="space-y-2">
+                {/* BIZZ-616: Tab-level loading indicator når plan/energi/jord data hentes */}
+                {(plandataLoader || energiLoader || jordLoader) && (
+                  <TabLoadingSpinner label={t.loadingDokumenter} />
+                )}
                 {/* ── Dokumenter (samlet kort) ── */}
                 <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-x-auto">
                   {/* Kort-header */}
@@ -6218,7 +6240,8 @@ export default function EjendomDetaljeClient({
           ══════════════════════════════════════════ */}
             {aktivTab === 'bbr' && (
               <div className="space-y-3">
-                {bbrLoader && <TabLoadingSpinner label={t.loading} />}
+                {/* BIZZ-616: Specifik BBR-label */}
+                {bbrLoader && <TabLoadingSpinner label={t.loadingBBR} />}
                 {/* BBR-fejlbesked */}
                 {bbrData?.bbrFejl && (
                   <div className="p-3 bg-orange-500/10 border border-orange-500/20 rounded-lg">
@@ -6816,12 +6839,8 @@ export default function EjendomDetaljeClient({
           ══════════════════════════════════════════ */}
             {aktivTab === 'ejerforhold' && (
               <div className="space-y-6">
-                {/* Loading state for ejerskab */}
-                {ejereLoader && (
-                  <TabLoadingSpinner
-                    label={da ? 'Henter ejerskabsdata…' : 'Loading ownership data…'}
-                  />
-                )}
+                {/* BIZZ-616: Brug translations-key for konsistens med øvrige tabs */}
+                {ejereLoader && <TabLoadingSpinner label={t.loadingEjerskab} />}
                 {/* Ejer-kort */}
                 {ejendom.ejerDetaljer && (
                   <div>

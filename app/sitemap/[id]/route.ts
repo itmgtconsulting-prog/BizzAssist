@@ -37,15 +37,23 @@ interface UrlEntry {
   priority?: number;
 }
 
-/** Hardcoded static pages served on page 0 only. */
-const STATIC_PAGES: UrlEntry[] = [
-  { loc: BASE_URL, changefreq: 'weekly', priority: 1.0 },
-  { loc: `${BASE_URL}/login`, changefreq: 'monthly', priority: 0.5 },
-  { loc: `${BASE_URL}/login/signup`, changefreq: 'monthly', priority: 0.6 },
-  { loc: `${BASE_URL}/privacy`, changefreq: 'yearly', priority: 0.2 },
-  { loc: `${BASE_URL}/terms`, changefreq: 'yearly', priority: 0.2 },
-  { loc: `${BASE_URL}/cookies`, changefreq: 'yearly', priority: 0.1 },
-];
+/**
+ * Build static pages with today's date as lastmod. Some validators (including
+ * Google Search Console's submit-time validator) flag entries without lastmod
+ * as "Ugyldig sitemapadresse" — BIZZ-645.
+ */
+function staticPages(): UrlEntry[] {
+  const today = new Date().toISOString().split('T')[0];
+  return [
+    { loc: `${BASE_URL}/`, lastmod: today, changefreq: 'weekly', priority: 1.0 },
+    { loc: `${BASE_URL}/privacy`, lastmod: today, changefreq: 'yearly', priority: 0.2 },
+    { loc: `${BASE_URL}/terms`, lastmod: today, changefreq: 'yearly', priority: 0.2 },
+    { loc: `${BASE_URL}/cookies`, lastmod: today, changefreq: 'yearly', priority: 0.1 },
+    // /login + /login/signup droppet: robots.txt har Disallow: /login/ så de
+    // skal ikke ligge i sitemap'et (Google flagger mismatch mellem robots og
+    // sitemap som warning/error).
+  ];
+}
 
 /**
  * Escape XML special characters in URL values. Slugs should already be
@@ -84,7 +92,7 @@ export async function GET(
     return NextResponse.json({ error: 'Not Found' }, { status: 404 });
   }
 
-  const staticEntries = pageId === 0 ? STATIC_PAGES : [];
+  const staticEntries = pageId === 0 ? staticPages() : [];
   const staticCount = staticEntries.length;
   const dbOffset = pageId === 0 ? 0 : pageId * PAGE_SIZE - staticCount;
   const dbLimit = PAGE_SIZE - staticCount;
@@ -115,12 +123,14 @@ export async function GET(
   }
 
   const all = [...staticEntries, ...dbEntries];
-  const urls = all.map(serializeEntry).join('');
+  // Newlines between <url> elements — readability for debuggers and some
+  // strict validators (Google occasionally flags compact XML as malformed).
+  const urls = all.map(serializeEntry).join('\n');
   const xml =
-    `<?xml version="1.0" encoding="UTF-8"?>` +
-    `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">` +
+    `<?xml version="1.0" encoding="UTF-8"?>\n` +
+    `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n` +
     urls +
-    `</urlset>`;
+    `\n</urlset>\n`;
 
   return new NextResponse(xml, {
     status: 200,

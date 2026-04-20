@@ -735,16 +735,18 @@ async function resolveBfeToAdgangsadresseId(bfe: number): Promise<string | null>
 }
 
 /**
- * BIZZ-629 v5: Slå BFE op i Vurderingsportalen ES og resolve til en DAWA
- * adgangsadresse-UUID.
+ * BIZZ-629 v5 / BIZZ-596: Slå BFE op i Vurderingsportalen ES og resolve til
+ * DAWA adresse-UUID — den fulde unit-adresse (med etage/dør for ejerlejligheder).
  *
- * OBS: Vurderingsportalens felt "adgangsAdresseID" er IKKE en DAWA-UUID — den
- * peger på BBR's bygnings-UUID og returnerer tom hvis brugt direkte i
- * BBR_Bygning.husnummer-filteret. Vi henter i stedet addresse-teksten og
- * slår den op i DAWA /adresser for at få den rigtige adgangsadresse-UUID.
+ * OBS: Vurderingsportalens felter "adresseID" og "adgangsAdresseID" er IKKE
+ * DAWA-UUID'er — de peger på interne IDs. Vi henter adresse-teksten fra
+ * Vurderingsportalen og slår den op i DAWA /adresser for at få den rigtige
+ * DAWA adresse-UUID. Den UUID fungerer som adresseIdentificerer i BBR_Enhed
+ * (matcher lejligheden direkte for ejerlejligheder). BBR_Bygning-fallbacken
+ * i fetchBbrAreasByBfe probe'r adresse → adgangsadresse via DAWA.
  *
- * @param bfe - BFE-nummer (ejerlejlighed eller erhvervsejendom)
- * @returns DAWA adgangsadresse-UUID eller null hvis ikke findbart
+ * @param bfe - BFE-nummer (ejerlejlighed, erhvervsejendom, eller SFE)
+ * @returns DAWA adresse-UUID (med etage/dør for ejerlejligheder) eller null
  */
 async function lookupAdgangsadresseByBfeViaVurderingsportalen(bfe: number): Promise<string | null> {
   try {
@@ -786,9 +788,16 @@ async function lookupAdgangsadresseByBfeViaVurderingsportalen(bfe: number): Prom
         { caller: 'lookupAdgangsadresseByBfeViaVurderingsportalen.dawa' }
       );
       if (!dawaRes.ok) continue;
-      const adrArr = (await dawaRes.json()) as Array<{ adgangsadresseid?: string }>;
-      const adgId = adrArr[0]?.adgangsadresseid;
-      if (adgId) return adgId;
+      // BIZZ-596: Returnér den fulde adresse-UUID (id) — IKKE adgangsadresseid.
+      // adresse-UUID indeholder etage/dør for ejerlejligheder og er det BBR_Enhed
+      // kræver i adresseIdentificerer-filteret. BBR_Bygning-pathen probe'r
+      // adresse → adgangsadresse når nødvendigt (se fetchBbrAreasByBfe).
+      const adrArr = (await dawaRes.json()) as Array<{
+        id?: string;
+        adgangsadresseid?: string;
+      }>;
+      const adrId = adrArr[0]?.id ?? adrArr[0]?.adgangsadresseid;
+      if (adrId) return adrId;
     }
     return null;
   } catch {
@@ -808,22 +817,40 @@ async function lookupAdgangsadresseByBfeViaVurderingsportalen(bfe: number): Prom
  */
 export async function resolveMatrikelArealByBfe(bfe: number): Promise<number | null> {
   try {
-    const adgId = await lookupAdgangsadresseByBfeViaVurderingsportalen(bfe);
-    if (!adgId) return null;
-    // OBS: struktur=mini udelader ejerlav/matrikelnr. Brug default nestedjson
-    // så vi kan chaine videre til jordstykke-opslag.
+    const resolvedId = await lookupAdgangsadresseByBfeViaVurderingsportalen(bfe);
+    if (!resolvedId) return null;
+    // BIZZ-596: lookup-helperen returnerer nu adresse-UUID (med etage/dør for
+    // ejerlejligheder). Prøv først som adgangsadresse — hvis 404, prøv som
+    // adresse og chain til dens adgangsadresseid.
+    let ejerlavkode: number | undefined;
+    let matrikelnr: string | undefined;
+
     const adgRes = await fetchDawa(
-      `${DAWA_BASE_URL}/adgangsadresser/${adgId}`,
+      `${DAWA_BASE_URL}/adgangsadresser/${resolvedId}`,
       { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
       { caller: 'resolveMatrikelArealByBfe.adgangsadresse' }
     );
-    if (!adgRes.ok) return null;
-    const adg = (await adgRes.json()) as {
-      ejerlav?: { kode?: number };
-      matrikelnr?: string;
-    };
-    const ejerlavkode = adg.ejerlav?.kode;
-    const matrikelnr = adg.matrikelnr;
+    if (adgRes.ok) {
+      const adg = (await adgRes.json()) as {
+        ejerlav?: { kode?: number };
+        matrikelnr?: string;
+      };
+      ejerlavkode = adg.ejerlav?.kode;
+      matrikelnr = adg.matrikelnr;
+    } else {
+      // ID var en adresse-UUID — hent adgangsadresse via /adresser/{id}
+      const adrRes = await fetchDawa(
+        `${DAWA_BASE_URL}/adresser/${resolvedId}`,
+        { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
+        { caller: 'resolveMatrikelArealByBfe.adresse' }
+      );
+      if (!adrRes.ok) return null;
+      const adr = (await adrRes.json()) as {
+        adgangsadresse?: { ejerlav?: { kode?: number }; matrikelnr?: string };
+      };
+      ejerlavkode = adr.adgangsadresse?.ejerlav?.kode;
+      matrikelnr = adr.adgangsadresse?.matrikelnr;
+    }
     if (!ejerlavkode || !matrikelnr) return null;
     const jordRes = await fetchDawa(
       `${DAWA_BASE_URL}/jordstykker/${ejerlavkode}/${encodeURIComponent(matrikelnr)}`,

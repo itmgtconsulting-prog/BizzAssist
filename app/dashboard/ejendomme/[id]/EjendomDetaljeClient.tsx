@@ -9317,22 +9317,36 @@ function TinglysningTab({
                         </span>
                       )}
                       {/* BIZZ-567: Bilag-tælling som diskret badge efter titlen.
-                          Tidligere lå antallet i DOK-kolonnen som "PDF +N bilag"
-                          hvilket støjede og overlappede download-knappen
-                          (BIZZ-553). Badge vises kun når der ER bilag. */}
+                          BIZZ-605: Badge er nu klikbar — åbner rækken og scroller
+                          til "Tilknyttede bilag" så brugeren kan hente hvert bilag
+                          separat. Hoveddokument-PDF og bilag er nu adskilt. */}
                       {servitutBilag.length > 0 && (
-                        <span
-                          className="flex-shrink-0 inline-flex items-center gap-0.5 text-[10px] text-slate-300 bg-slate-700/40 border border-slate-600/30 px-1 py-0.5 rounded"
+                        <button
+                          type="button"
+                          onClick={(ev) => {
+                            ev.stopPropagation();
+                            setExpandedServitutter((prev) => {
+                              const n = new Set(prev);
+                              n.add(i);
+                              return n;
+                            });
+                          }}
+                          className="flex-shrink-0 inline-flex items-center gap-0.5 text-[10px] text-slate-300 bg-slate-700/40 border border-slate-600/30 px-1 py-0.5 rounded hover:bg-slate-600/50 hover:text-blue-300 transition-colors cursor-pointer"
                           title={
                             da
-                              ? `${servitutBilag.length} ${servitutBilag.length === 1 ? 'bilag' : 'bilag'} tilknyttet`
-                              : `${servitutBilag.length} ${servitutBilag.length === 1 ? 'attachment' : 'attachments'}`
+                              ? `Vis ${servitutBilag.length} ${servitutBilag.length === 1 ? 'tilknyttet bilag' : 'tilknyttede bilag'}`
+                              : `Show ${servitutBilag.length} ${servitutBilag.length === 1 ? 'attachment' : 'attachments'}`
+                          }
+                          aria-label={
+                            da
+                              ? `Vis ${servitutBilag.length} tilknyttede bilag`
+                              : `Show ${servitutBilag.length} attachments`
                           }
                         >
                           <Paperclip size={9} />
                           {servitutBilag.length}{' '}
                           {da ? 'bilag' : servitutBilag.length === 1 ? 'attachment' : 'attachments'}
-                        </span>
+                        </button>
                       )}
                     </span>
                     <span />
@@ -9344,45 +9358,28 @@ function TinglysningTab({
                       onClick={(ev) => ev.stopPropagation()}
                     >
                       {(() => {
-                        const bilagRefs = Array.isArray(s.bilagRefs)
-                          ? (s.bilagRefs as string[])
-                          : [];
-                        // BIZZ-474: Når vi har både dokument OG bilag, slå dem
-                        // sammen til én merged PDF via ?uuid=X&bilag=a,b,c.
-                        // Fallback til rent bilag hvis dokumentet mangler (typisk
-                        // for pre-digitale servitutter).
-                        const pdfUrl = docId
-                          ? bilagRefs.length > 0
-                            ? `/api/tinglysning/dokument?uuid=${docId}&bilag=${bilagRefs.join(',')}`
-                            : `/api/tinglysning/dokument?uuid=${docId}`
-                          : bilagRefs.length > 0
-                            ? `/api/tinglysning/dokument?bilag=${bilagRefs[0]}`
-                            : null;
-                        // BIZZ-567: Label er nu altid "PDF" — bilag-tælling er
-                        // flyttet til badge efter servitut-titlen for at holde
-                        // DOK-kolonnen ren og ensartet med øvrige sektioner.
-                        // Den genererede PDF inkluderer stadig alle bilag når
-                        // bilagRefs er sat (URL-konstruktion uændret ovenfor).
-                        const label = 'PDF';
+                        // BIZZ-605: PDF-knappen åbner udelukkende selve
+                        // hoveddokumentet (servitutten). Bilag-badgen ved siden af
+                        // titlen åbner rækken så hvert bilag kan hentes separat
+                        // fra "Tilknyttede bilag"-sektionen. Tidligere fletning af
+                        // hoveddok + bilag (BIZZ-474) gjorde det umuligt at skelne
+                        // selve servitut-teksten fra bilag i den samlede PDF.
+                        //
+                        // Når docId mangler (pre-digitale servitutter), skjul
+                        // PDF-knappen — bilag tilgås via badgen/detaljesektionen.
+                        if (!docId) return null;
+                        const pdfUrl = `/api/tinglysning/dokument?uuid=${docId}`;
                         return (
-                          pdfUrl && (
-                            <a
-                              href={pdfUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300 whitespace-nowrap"
-                              title={
-                                docId && bilagRefs.length > 0
-                                  ? da
-                                    ? 'Dokument + alle bilag i én samlet PDF'
-                                    : 'Document + all attachments in one combined PDF'
-                                  : undefined
-                              }
-                            >
-                              <FileText size={11} />
-                              {label}
-                            </a>
-                          )
+                          <a
+                            href={pdfUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-0.5 text-xs text-blue-400 hover:text-blue-300 whitespace-nowrap"
+                            title={da ? 'Åbn servitut-dokument' : 'Open easement document'}
+                          >
+                            <FileText size={11} />
+                            PDF
+                          </a>
                         );
                       })()}
                     </div>

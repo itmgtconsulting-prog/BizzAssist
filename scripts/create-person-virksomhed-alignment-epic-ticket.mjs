@@ -115,7 +115,9 @@ const description = {
       'Backward compat: behold bfes[]-feltet i person-properties response så eksisterende klienter ikke breakes; tilføj properties[]-felt med de rige data',
     ]),
     h(3, 'Fase 2 — Delt UI-komponent'),
-    p('Udtræk app/components/ejendomme/EjendommeTabs.tsx som fælles komponent brugt af både person- og virksomheds-detaljesider:'),
+    p(
+      'Udtræk app/components/ejendomme/EjendommeTabs.tsx som fælles komponent brugt af både person- og virksomheds-detaljesider:'
+    ),
     code(
       `interface EjendommeTabsProps {
   mode: 'cvr' | 'person';
@@ -138,7 +140,9 @@ const description = {
       'Filter chips (hvis prop givet)',
       'Empty states for missing keys/access',
     ]),
-    p('Virksomhedsside og personside reducerer til thin wrappers der henter data og passer til EjendommeTabs.'),
+    p(
+      'Virksomhedsside og personside reducerer til thin wrappers der henter data og passer til EjendommeTabs.'
+    ),
     h(3, 'Fase 3 — Person-diagram fix'),
     ordered([
       'Wrap diagramGraph i useMemo i PersonDetailPageClient.tsx (samme pattern som VirksomhedDetaljeClient.tsx linje 540-573)',
@@ -152,9 +156,7 @@ const description = {
       'BIZZ-595 — person-Ejendomme-tab: personligt ejede ejendomme vises ikke',
       'BIZZ-596 — person-Ejendomme: align datafelter + funktionalitet med virksomhedsfanen',
     ]),
-    p(
-      'Når denne ticket er done, kan BIZZ-594/595/596 lukkes som duplicates.'
-    ),
+    p('Når denne ticket er done, kan BIZZ-594/595/596 lukkes som duplicates.'),
     h(2, 'Acceptance criteria'),
     bullets([
       'Person-diagram for Jakob viser alle 9 gældende personligt ejede ejendomme uden manuel Udvid (inkl. Søbyvej 11)',

@@ -304,7 +304,16 @@ Afslør IKKE oplysningerne medmindre brugeren spørger direkte til dem.`;
   // ── Validate API key ──
   const apiKey = process.env.BIZZASSIST_CLAUDE_KEY?.trim();
   if (!apiKey) {
-    return Response.json({ error: 'BIZZASSIST_CLAUDE_KEY ikke konfigureret' }, { status: 500 });
+    // BIZZ-651: Generisk besked + buy-tokens CTA (ingen env-var-lækage)
+    return Response.json(
+      {
+        error:
+          'AI er midlertidigt utilgængelig. Bekræft at dit abonnement er aktivt, eller køb en token-pakke for at fortsætte.',
+        code: 'ai_unavailable',
+        cta: 'buy_token_pack',
+      },
+      { status: 503 }
+    );
   }
 
   // ── Parse request body ──

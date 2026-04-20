@@ -377,7 +377,13 @@ function AIChatPanel() {
         // BIZZ-642: Trial-gate — vis dedikeret banner med købs-CTA i stedet
         // for generisk fejl-besked. Brugeren har en fair action (køb
         // token-pakke) som løser blokeringen med det samme.
-        if (res.status === 402 && err.code === 'trial_ai_blocked') {
+        // BIZZ-642/651: Alle AI-blokeringer (402 trial_ai_blocked, 503
+        // ai_unavailable) viser samme buy-tokens-banner. Uniformt CTA
+        // uanset årsag (trial / kvote / key missing / abonnement paused).
+        if (
+          (res.status === 402 && err.code === 'trial_ai_blocked') ||
+          (res.status === 503 && err.code === 'ai_unavailable')
+        ) {
           setTrialBlocked({ message: err.error ?? a.trialBlockedBody });
           setIsLoading(false);
           // Fjern den optimistisk-tilføjede user-besked fra UI fordi den

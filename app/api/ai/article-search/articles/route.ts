@@ -716,8 +716,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   // Claude API-nøgle er kun nødvendig i ai-fasen
   const apiKey = phase !== 'raw' ? process.env.BIZZASSIST_CLAUDE_KEY?.trim() : undefined;
-  if (phase !== 'raw' && !apiKey)
-    return NextResponse.json({ error: 'BIZZASSIST_CLAUDE_KEY ikke konfigureret' }, { status: 500 });
+  if (phase !== 'raw' && !apiKey) {
+    // BIZZ-651: Generisk besked + buy-tokens CTA
+    return NextResponse.json(
+      {
+        error:
+          'AI er midlertidigt utilgængelig. Bekræft at dit abonnement er aktivt, eller køb en token-pakke for at fortsætte.',
+        code: 'ai_unavailable',
+        cta: 'buy_token_pack',
+      },
+      { status: 503 }
+    );
+  }
 
   let body: CompanyInput;
   try {

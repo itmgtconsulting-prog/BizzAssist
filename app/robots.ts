@@ -41,7 +41,9 @@ export default function robots(): MetadataRoute.Robots {
     .replace(/\/$/, '');
 
   // Production: Tillad offentlige SEO-sider, bloker alt andet.
-  // Next.js paginerede sitemaps serveres på /sitemap/[id] — index er /sitemap/0.xml.
+  // BIZZ-645: Pege på /sitemap.xml (sitemap-index) i stedet for første fil
+  // direkte — Google foretrækker index-konventionen så paginerede filer
+  // auto-discover'es.
   return {
     rules: [
       {
@@ -50,6 +52,6 @@ export default function robots(): MetadataRoute.Robots {
         disallow: ['/dashboard/', '/api/', '/login/', '/auth/', '/admin/'],
       },
     ],
-    sitemap: `${baseUrl}/sitemap/0.xml`,
+    sitemap: `${baseUrl}/sitemap.xml`,
   };
 }

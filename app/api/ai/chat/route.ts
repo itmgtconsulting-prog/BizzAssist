@@ -1344,7 +1344,18 @@ export function decideAiGate(
 export async function POST(request: NextRequest): Promise<Response> {
   // BIZZ-236: AI access gated by API key availability (not env flag)
   if (!process.env.BIZZASSIST_CLAUDE_KEY) {
-    return Response.json({ error: 'AI-chat er ikke konfigureret i dette miljø' }, { status: 503 });
+    // BIZZ-651: Lækager ikke env-var-navnet og guider brugeren til token-køb
+    // som fair CTA (klient-side fanger `code: 'ai_unavailable'` og viser
+    // samme banner som trial_ai_blocked).
+    return Response.json(
+      {
+        error:
+          'AI er midlertidigt utilgængelig. Bekræft at dit abonnement er aktivt, eller køb en token-pakke for at fortsætte.',
+        code: 'ai_unavailable',
+        cta: 'buy_token_pack',
+      },
+      { status: 503 }
+    );
   }
 
   // Rate limit: 10 req/min for AI chat
@@ -1397,9 +1408,15 @@ export async function POST(request: NextRequest): Promise<Response> {
 
   const apiKey = process.env.BIZZASSIST_CLAUDE_KEY?.trim();
   if (!apiKey) {
+    // BIZZ-651: Generisk besked + same CTA-kode som 503'en ovenfor.
     return Response.json(
-      { error: 'BIZZASSIST_CLAUDE_KEY ikke konfigureret. Tilføj den i .env.local' },
-      { status: 500 }
+      {
+        error:
+          'AI er midlertidigt utilgængelig. Bekræft at dit abonnement er aktivt, eller køb en token-pakke for at fortsætte.',
+        code: 'ai_unavailable',
+        cta: 'buy_token_pack',
+      },
+      { status: 503 }
     );
   }
 

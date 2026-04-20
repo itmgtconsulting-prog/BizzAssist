@@ -178,17 +178,28 @@ const probes: Record<ProbeId, () => Promise<ProbeResult>> = {
 };
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
-  // Admin-only endpoint
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  // BIZZ-623: Cron-bypass for infra_down probe-flowet — service-scan kalder
+  // dette endpoint uden user session. Kun Authorization: Bearer <CRON_SECRET>
+  // accepteres (timing-safe compare) + samme x-vercel-cron requirement som
+  // andre cron-kaldte routes.
+  const authHeader = request.headers.get('authorization') ?? '';
+  const cronSecret = process.env.CRON_SECRET ?? '';
+  const isCronCall =
+    cronSecret.length > 0 && authHeader.startsWith('Bearer ') && authHeader.slice(7) === cronSecret;
 
-  const admin = createAdminClient();
-  const { data: freshUser } = await admin.auth.admin.getUserById(user.id);
-  if (!freshUser?.user?.app_metadata?.isAdmin) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  if (!isCronCall) {
+    // Admin-only endpoint (default path)
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+    const admin = createAdminClient();
+    const { data: freshUser } = await admin.auth.admin.getUserById(user.id);
+    if (!freshUser?.user?.app_metadata?.isAdmin) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
   }
 
   const parsed = parseQuery(request, querySchema);

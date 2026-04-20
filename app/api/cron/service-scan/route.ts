@@ -933,8 +933,20 @@ export async function GET(request: NextRequest) {
         logger.log(`[service-scan] Oprettede ${ejfIngestIssues} EJF-ingest-issue-scan(s)`);
       }
 
+      // ── 8. BIZZ-623 Trigger 2: infra_down detection ─────────────────────────
+      // Probe infrastructure-services (datafordeler, upstash, resend, cvr etc.)
+      // og log hver probe til service_probe_history. Når 2 KONSEKUTIVE probes
+      // af samme service er "down", opretter vi service_manager_scans-row med
+      // scan_type='infra_down' så Service Manager kan notificere + oprette
+      // JIRA-ticket (infra-action, ikke kode-fix). 2-konsekutive filter
+      // forhindrer falske positive fra single-probe-glitches.
+      const infraDownScans = await probeInfraAndDetectDowns(admin, request.nextUrl.origin, now);
+      if (infraDownScans > 0) {
+        logger.log(`[service-scan] Oprettede ${infraDownScans} infra_down scan(s)`);
+      }
+
       logger.log(
-        `[service-scan] Done: ${issues.length} issues, ${errorIssues.length} errors, ${proposedFixCount} fixes proposed, ${cronFailureScans} cron-failures, ${ejfIngestIssues} ejf-issues`
+        `[service-scan] Done: ${issues.length} issues, ${errorIssues.length} errors, ${proposedFixCount} fixes proposed, ${cronFailureScans} cron-failures, ${ejfIngestIssues} ejf-issues, ${infraDownScans} infra-down`
       );
 
       // Heartbeat-write + Sentry check-in håndteres af withCronMonitor —
@@ -950,6 +962,7 @@ export async function GET(request: NextRequest) {
         fixes: fixResults,
         cronFailureScans,
         ejfIngestIssues,
+        infraDownScans,
         summary,
       });
     }
@@ -1229,6 +1242,162 @@ async function checkEjfIngestHealthAndCreateScans(
     });
     if (insertErr) {
       logger.error(`[service-scan] Kunne ikke oprette ejf-ingest-scan:`, insertErr.message);
+      continue;
+    }
+    created++;
+  }
+
+  return created;
+}
+
+/**
+ * BIZZ-623 Trigger 2: Probe infrastructure services via /api/admin/service-
+ * status, log each result to service_probe_history, and when 2 consecutive
+ * probes for the SAME service return is_down=true, create a service_manager_
+ * scans row with scan_type='infra_down'.
+ *
+ * 2-konsekutive filter er kernen i acceptance-kriteriet "Ingen falske positive
+ * ved single-probe-glitch". Dedup: 4-timers vindue per service så en
+ * persistent down-service ikke spammer scan-listen.
+ *
+ * @param admin - Supabase admin-client
+ * @param baseUrl - Origin til at kalde /api/admin/service-status?probe=...
+ * @param now - Reference-tidspunkt til dedup
+ * @returns Antal infra_down-scans der blev oprettet
+ */
+async function probeInfraAndDetectDowns(
+  admin: ReturnType<typeof createAdminClient>,
+  baseUrl: string,
+  now: Date
+): Promise<number> {
+  const serviceIds = ['datafordeler', 'upstash', 'resend', 'cvr', 'brave', 'mediastack', 'twilio'];
+
+  // Step 1: probe each service + log to service_probe_history
+  for (const svc of serviceIds) {
+    let isDown = true;
+    let httpStatus = 0;
+    let detail: string | null = null;
+    try {
+      const secret = process.env.CRON_SECRET ?? '';
+      const res = await fetch(
+        `${baseUrl}/api/admin/service-status?probe=${encodeURIComponent(svc)}`,
+        {
+          headers: secret ? { Authorization: `Bearer ${secret}` } : {},
+          signal: AbortSignal.timeout(8000),
+        }
+      );
+      httpStatus = res.status;
+      if (res.ok) {
+        const data = (await res.json()) as { ok?: boolean; detail?: string };
+        isDown = !data.ok;
+        detail = data.detail ?? null;
+      } else {
+        detail = `probe HTTP ${res.status}`;
+      }
+    } catch (err) {
+      detail = err instanceof Error ? err.name : 'probe_exception';
+    }
+
+    // Log probe result — service_probe_history ikke i generated types, cast
+    try {
+      await (
+        admin as unknown as {
+          from: (t: string) => {
+            insert: (row: Record<string, unknown>) => Promise<{ error: unknown }>;
+          };
+        }
+      )
+        .from('service_probe_history')
+        .insert({
+          service_id: svc,
+          is_down: isDown,
+          http_status: httpStatus || null,
+          detail,
+        });
+    } catch (err) {
+      logger.error('[service-scan] probe_history insert:', err);
+    }
+  }
+
+  // Step 2: for hver service — hent 2 seneste probes og tjek for 2× down
+  const downServices: Array<{ serviceId: string; lastDetail: string | null }> = [];
+  interface ProbeRow {
+    service_id: string;
+    is_down: boolean;
+    detail: string | null;
+    probed_at: string;
+  }
+  for (const svc of serviceIds) {
+    try {
+      const { data } = await (
+        admin as unknown as {
+          from: (t: string) => {
+            select: (c: string) => {
+              eq: (
+                k: string,
+                v: string
+              ) => {
+                order: (
+                  col: string,
+                  opts: { ascending: boolean }
+                ) => {
+                  limit: (n: number) => Promise<{ data: ProbeRow[] | null; error: unknown }>;
+                };
+              };
+            };
+          };
+        }
+      )
+        .from('service_probe_history')
+        .select('service_id, is_down, detail, probed_at')
+        .eq('service_id', svc)
+        .order('probed_at', { ascending: false })
+        .limit(2);
+      const rows = data ?? [];
+      if (rows.length >= 2 && rows[0].is_down && rows[1].is_down) {
+        downServices.push({ serviceId: svc, lastDetail: rows[0].detail });
+      }
+    } catch {
+      // Best-effort — enkelt service's historik-fejl afbryder ikke resten.
+    }
+  }
+
+  if (downServices.length === 0) return 0;
+
+  // Step 3: dedup mod seneste 4t scans (samme mønster som cron_failure)
+  const fourHoursAgo = new Date(now.getTime() - 4 * 60 * 60 * 1000).toISOString();
+  const { data: recentScans } = await admin
+    .from('service_manager_scans')
+    .select('summary')
+    .eq('scan_type', 'infra_down' as never)
+    .gte('created_at', fourHoursAgo);
+  const alreadyScanned = new Set<string>();
+  for (const s of recentScans ?? []) {
+    const summaryStr = (s as { summary?: string }).summary ?? '';
+    const m = summaryStr.match(/\[infra_down\]\s+([\w-]+):/);
+    if (m) alreadyScanned.add(m[1]);
+  }
+
+  let created = 0;
+  for (const d of downServices) {
+    if (alreadyScanned.has(d.serviceId)) continue;
+    const issue = {
+      type: 'infra_outage',
+      severity: 'error',
+      message: `Infra-service '${d.serviceId}' er nede`,
+      source: 'service_probe',
+      context: `2 konsekutive probe-fejl. Seneste detail: ${d.lastDetail ?? 'ukendt'}`,
+    };
+    const summary = `[infra_down] ${d.serviceId}: 2 konsekutive probe-fejl`;
+    const { error } = await admin.from('service_manager_scans').insert({
+      scan_type: 'infra_down',
+      status: 'completed',
+      triggered_by: null,
+      issues_found: [issue],
+      summary,
+    });
+    if (error) {
+      logger.error(`[service-scan] Kunne ikke oprette infra_down for ${d.serviceId}:`, error);
       continue;
     }
     created++;

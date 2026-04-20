@@ -2425,8 +2425,10 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
           {/* ══ EJENDOMME (inkl. ejendomshandler) ══ */}
           {aktivTab === 'properties' && (
             <div className="space-y-4">
-              {/* BIZZ-617: Brug specifik label så loading-feedback er konsistent */}
-              {(ejendommeLoading || ejendommeLoadingMore) && (
+              {/* BIZZ-617 + BIZZ-635: ÉN tab-level loading spinner. Tidligere
+                  rendrerede vi 2-3 parallelle spinners (tab-level +
+                  portefølje-sektion + indledende) — nu er der kun én. */}
+              {(ejendommeLoading || ejendommeLoadingMore) && ejendommeData.length === 0 && (
                 <TabLoadingSpinner label={c.loadingEjendomsportefoelje} />
               )}
               {/* BIZZ-441: Filter chips removed — only property portfolio shown */}
@@ -2434,10 +2436,9 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
               {/* ── Ejendomme-portefølje sektion ── */}
               {
                 <div className="space-y-4">
-                  {/* Indledende spinner — BIZZ-478: ensartet blå TabLoadingSpinner */}
-                  {ejendommeLoading && ejendommeData.length === 0 && (
-                    <TabLoadingSpinner label={c.loadingEjendomsportefoelje} />
-                  )}
+                  {/* BIZZ-635: Fjernet intern "Indledende spinner" — den ydre
+                      tab-spinner dækker allerede første-load. Intern duplicate
+                      gav 2 stablede spinners ved tab-åbning. */}
 
                   {/* Mangler nøgle / adgang */}
                   {ejendommeFetchComplete && ejendommeManglerNoegle && (

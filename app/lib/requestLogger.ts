@@ -123,15 +123,21 @@ export function logRequest(req: NextRequest, status: number, duration: number): 
     userAgentCategory: categoriseUserAgent(req.headers.get('user-agent')),
   };
 
+  // BIZZ-598 note: Dette er ikke debug-støj — det er request-line-logging
+  // der bevidst skriver til stdout for produktionens log-aggregation (Vercel
+  // logs / downstream). logger.log er no-op i prod, så vi kan IKKE route
+  // gennem den her. Undtagelse dokumenteret som tilladt direkte console.log.
   if (isDev) {
     // Pretty dev output: "POST /api/ai/chat 200 142ms"
     const colour = statusColour(status);
     const dur = duration < 1000 ? `${Math.round(duration)}ms` : `${(duration / 1000).toFixed(1)}s`;
+
     console.log(
       `${DIM}${entry.timestamp}${RESET} ${method.padEnd(6)} ${path} ${colour}${status}${RESET} ${DIM}${dur}${RESET}`
     );
   } else {
     // Structured JSON for production log aggregation
+
     console.log(JSON.stringify(entry));
   }
 }

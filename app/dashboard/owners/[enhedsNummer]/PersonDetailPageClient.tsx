@@ -2225,7 +2225,10 @@ export default function PersonDetailPageClient({
           {/* ══ EJENDOMME ══ */}
           {aktivTab === 'properties' && (
             <div className="space-y-4">
-              {(ejendommeLoading || ejendommeLoadingMore) && <TabLoadingSpinner />}
+              {/* BIZZ-618: Specifik label for ejendoms-loading */}
+              {(ejendommeLoading || ejendommeLoadingMore) && (
+                <TabLoadingSpinner label={c.loadingEjendomsportefoelje} />
+              )}
               {/* BIZZ-631: Filter chips (Alle / Ejendomme / Ejendomshandler) er
                   fjernet så person-Ejendomme-tab matcher virksomhedsfanens layout
                   1:1 (jf. BIZZ-596/597). Ejendomshandler-sektionen vises nu
@@ -2606,7 +2609,8 @@ export default function PersonDetailPageClient({
           {/* ══ GRUPPE ══ */}
           {aktivTab === 'group' && (
             <>
-              {relatedLoading && <TabLoadingSpinner />}
+              {/* BIZZ-618: Specifik label for gruppe-loading */}
+              {relatedLoading && <TabLoadingSpinner label={c.loadingGruppe} />}
               <GroupTab
                 data={data}
                 ejerVirksomheder={topLevelEjer}
@@ -2625,7 +2629,8 @@ export default function PersonDetailPageClient({
           {/* ══ TINGLYSNING (PERSONBOG VIA VIRKSOMHEDER) ══ */}
           {aktivTab === 'liens' && (
             <>
-              {personbogLoading && <TabLoadingSpinner />}
+              {/* BIZZ-618: Personbog-label i stedet for ubeskrevet spinner */}
+              {personbogLoading && <TabLoadingSpinner label={c.loadingTinglysning} />}
               <PersonTinglysningTab
                 personbogMap={personbogMap}
                 loading={personbogLoading}

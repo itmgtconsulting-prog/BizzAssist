@@ -513,6 +513,11 @@ export const translations = {
       noGroup: 'Ingen koncernstruktur fundet',
       noLiens: 'Ingen tinglysninger fundet',
       loadingTinglysning: 'Henter personbogsdata for tilknyttede virksomheder...',
+      // BIZZ-618: Loading-labels til person-detaljesidens tabs
+      loadingEjendomsportefoelje: 'Henter ejendomsportefølje…',
+      loadingRelationsdiagram: 'Henter relationsdiagram…',
+      loadingGruppe: 'Henter gruppedata…',
+      loadingKronologi: 'Henter kronologi…',
       tinglysningError: 'Kunne ikke hente personbogsdata',
       tinglysningEmpty: 'Ingen registreringer i Personbogen for tilknyttede virksomheder',
       tinglysningIngenVirksomheder:
@@ -1099,6 +1104,11 @@ export const translations = {
       noGroup: 'No group structure found',
       noLiens: 'No land registry entries found',
       loadingTinglysning: 'Loading personal register data for affiliated companies...',
+      // BIZZ-618: Loading-labels (EN) til person-detaljesidens tabs
+      loadingEjendomsportefoelje: 'Loading property portfolio…',
+      loadingRelationsdiagram: 'Loading relationship diagram…',
+      loadingGruppe: 'Loading group data…',
+      loadingKronologi: 'Loading timeline…',
       tinglysningError: 'Could not fetch personal register data',
       tinglysningEmpty: 'No registrations in the Personal Register for affiliated companies',
       tinglysningIngenVirksomheder:

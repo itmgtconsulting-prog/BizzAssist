@@ -349,10 +349,21 @@ async function phaseProperties(
     // normalised to MatJordstykkeBulk[] so buildEjendomEntries handles a
     // single shape regardless of source.
     let items: MatJordstykkeBulk[] | null = null;
+    // BIZZ-645: Track the RAW API page size separately from the filtered
+    // items.length. DAWA returnerer konsekvent 1000 items pr side, men ~9
+    // har null-bfenummer og bliver filtreret væk. Tidligere sammenlignede
+    // vi `items.length < JORDSTYKKE_PAGE_SIZE` som "sidste side" — hvilket
+    // betød at cronen satte done:true allerede efter side 1 fordi 991 < 1000.
+    // Fix: sammenlign rå API-respons-længden i stedet.
+    let rawPageSize = 0;
 
     try {
       const startIndex = (currentPage - 1) * JORDSTYKKE_PAGE_SIZE;
       items = await matListJordstykker(startIndex, JORDSTYKKE_PAGE_SIZE);
+      // MAT WFS returnerer allerede filtrerede items — brug items.length
+      // som rå-size-approksimation (MAT WFS caps ved 1000 og returnerer
+      // kun gyldige jordstykker).
+      if (items !== null) rawPageSize = items.length;
     } catch (err) {
       logger.error(
         '[generate-sitemap] MAT WFS side',
@@ -386,6 +397,10 @@ async function phaseProperties(
 
         const data = (await res.json()) as unknown[];
         if (!Array.isArray(data)) break;
+        // BIZZ-645: Gem rå API-respons-længde FØR filter så done-check
+        // er korrekt. DAWA leverer altid per_side=1000 hvis der er flere
+        // pages tilbage — <1000 betyder vi har ramt datasættets slutning.
+        rawPageSize = data.length;
         items = data
           .map((raw): MatJordstykkeBulk | null => {
             const js = raw as DawaJordstykke;
@@ -405,7 +420,7 @@ async function phaseProperties(
       }
     }
 
-    if (items.length === 0) {
+    if (rawPageSize === 0) {
       // No more data — full scan done, reset progress
       await saveProgress(admin, 1);
       done = true;
@@ -423,8 +438,8 @@ async function phaseProperties(
 
     currentPage++;
 
-    if (items.length < JORDSTYKKE_PAGE_SIZE) {
-      // Shorter page = last page in dataset
+    if (rawPageSize < JORDSTYKKE_PAGE_SIZE) {
+      // Shorter raw page = last page in dataset (pre-filter)
       await saveProgress(admin, 1);
       done = true;
       break;

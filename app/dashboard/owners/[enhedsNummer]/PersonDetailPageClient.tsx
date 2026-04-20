@@ -120,6 +120,27 @@ function erEjerregister(rolle: string): boolean {
   return rolle.toUpperCase() === 'EJERREGISTER';
 }
 
+/**
+ * BIZZ-620: Returnerer true hvis virksomhedsformen implicit gør deltageren
+ * til ejer uden at kræve separat ejerandel-registrering i CVR. Enkeltmands-
+ * virksomhed (ENK) har pr. definition én ejer (deltageren selv) og
+ * I/S-, K/S-, P/S-selskaber registrerer deltagerne som ejere gennem deres
+ * deltagerrolle alene.
+ *
+ * Matcher tilsvarende logik i DiagramForce.expandPersonDynamic (BIZZ-597)
+ * så virksomheder-tabben ikke underrapporterer personligt ejede virksomheder
+ * set ift. diagrammet.
+ */
+function erEjerVedForm(form: string | null): boolean {
+  const f = (form ?? '').toLowerCase();
+  return (
+    f.includes('enkeltmand') ||
+    f.includes('interessent') || // I/S
+    f.includes('kommandit') || // K/S
+    f.includes('partnersels') // P/S
+  );
+}
+
 // ─── Small UI components ────────────────────────────────────────────────────
 
 function EmptyState({ ikon, tekst }: { ikon: React.ReactNode; tekst: string }) {
@@ -1000,9 +1021,17 @@ export default function PersonDetailPageClient({
     if (!data || relatedFetchedRef.current) return;
     relatedFetchedRef.current = true;
 
-    /** Kun virksomheder med faktisk ejerandel — matcher ejerVirksomheder i derived */
+    /**
+     * Matcher ejerVirksomheder i derived (BIZZ-620): inkluderer både
+     * virksomheder med registreret ejerandel OG virksomheder hvor formen
+     * (ENK/I/S/K/S/P/S) implicit gør deltageren til ejer.
+     */
     const owned = data.virksomheder.filter(
-      (v) => v.aktiv && v.roller.some((r) => erEjerRolle(r.rolle) && !r.til && r.ejerandel)
+      (v) =>
+        v.aktiv &&
+        (v.roller.some((r) => erEjerRolle(r.rolle) && !r.til && r.ejerandel) ||
+          (erEjerVedForm(v.form) &&
+            v.roller.some((r) => !r.til && !r.rolle.toUpperCase().includes('STIFTER'))))
     );
     if (owned.length === 0) return;
 
@@ -1048,9 +1077,22 @@ export default function PersonDetailPageClient({
       (v) => !v.aktiv || !v.roller.some((r) => !r.til)
     );
 
-    /** Ejer-virksomheder = virksomheder hvor personen har en aktiv ejerrolle MED ejerandel */
+    /**
+     * Ejer-virksomheder = virksomheder hvor personen har en aktiv ejerrolle
+     * MED ejerandel, ELLER virksomheden er af en form (ENK, I/S, K/S, P/S)
+     * hvor deltageren pr. definition er ejer uden separat ejerandel-
+     * registrering (BIZZ-620).
+     *
+     * Uden form-faldback fanges personligt ejede ENK-virksomheder ikke som
+     * ejer, fordi CVR kun registrerer dem som deltagere. Tidligere endte
+     * de derfor fejlagtigt i "Andre roller"-listen på Virksomheder-tab.
+     */
     const ejerVirksomheder = data.virksomheder.filter(
-      (v) => v.aktiv && v.roller.some((r) => erEjerRolle(r.rolle) && !r.til && r.ejerandel)
+      (v) =>
+        v.aktiv &&
+        (v.roller.some((r) => erEjerRolle(r.rolle) && !r.til && r.ejerandel) ||
+          (erEjerVedForm(v.form) &&
+            v.roller.some((r) => !r.til && !r.rolle.toUpperCase().includes('STIFTER'))))
     );
     const ejerCvrs = new Set(ejerVirksomheder.map((v) => v.cvr));
     /** Andre virksomheder = aktive virksomheder der IKKE er i ejerskabsdiagrammet */
@@ -1095,6 +1137,19 @@ export default function PersonDetailPageClient({
       if (ejerR.length > 0 && ejerR.some((r) => r.ejerandel)) {
         const andel = ejerR.find((r) => r.ejerandel)?.ejerandel ?? null;
         rollerPerKategori.ejerandel.push({ v, roller: ejerR.map((r) => r.rolle), andel });
+      } else if (erEjerVedForm(v.form)) {
+        // BIZZ-620: ENK / I/S / K/S / P/S — deltageren er pr. definition
+        // ejer selv uden registreret ejerandel. For ENK markeres 100% som
+        // implicit andel; andre former efterlader andel tomt fordi der kan
+        // være flere deltagere uden registreret fordeling.
+        const formLc = (v.form ?? '').toLowerCase();
+        const implicitAndel = formLc.includes('enkeltmand') ? '100%' : null;
+        const roller = aktive
+          .filter((r) => !r.rolle.toUpperCase().includes('STIFTER'))
+          .map((r) => r.rolle);
+        if (roller.length > 0) {
+          rollerPerKategori.ejerandel.push({ v, roller, andel: implicitAndel });
+        }
       }
       if (bestR.length > 0)
         rollerPerKategori.bestyrelse.push({ v, roller: bestR.map((r) => r.rolle) });

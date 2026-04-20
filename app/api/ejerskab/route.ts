@@ -419,7 +419,14 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjerskabRe
     );
   }
 
-  const raaEjere: EjerData[] = nodes.map((n) => {
+  // BIZZ-610: EJF returnerer både historiske og gældende ejerskaber for
+  // samme BFE når et ejerskifte er sket (både sælger- og køber-posteringer
+  // har samme virkningFra-dato). Udnytter EJF's eget status-felt —
+  // 'gældende' = aktuel ejer, 'historisk' = tidligere. Vi beholder null
+  // konservativt som aktuel, så partielle data ikke skjuler ejere.
+  const gaeldendeNodes = nodes.filter((n) => !n.status || n.status.toLowerCase() !== 'historisk');
+
+  const raaEjere: EjerData[] = gaeldendeNodes.map((n) => {
     const ejertype = parseEjertypeFraNode(n);
     const pv = n.oplysningerEjesAfEjerskab ?? null;
     // BIZZ-482: Saml udlandsadresse fra linje 1–5. Tomme linjer filtreres

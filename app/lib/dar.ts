@@ -573,12 +573,16 @@ export async function darAutocomplete(q: string): Promise<DawaAutocompleteResult
   const variants = [...allVariants].slice(0, 12);
 
   try {
-    // Kør queries for alle case-varianter parallelt
+    // BIZZ-608: Kør queries for alle case-varianter parallelt MOD BÅDE
+    // DAR_Husnummer (adgangsadresser = hovedejendomme) OG DAR_Adresse
+    // (adresser med etage/dør = ejerlejligheder). Tidligere fik brugeren kun
+    // hovedejendommen tilbage selvom de måske ledte efter en bestemt
+    // lejlighed — ejerlejligheden var usynlig i dropdown.
     const allResults = await Promise.all(
-      variants.map(async (variant) => {
-        const query = `{
+      variants.flatMap((variant) => [
+        darQuery<{ DAR_Husnummer: { nodes: DarHusnummerRaw[] } }>(`{
           DAR_Husnummer(
-            first: 8
+            first: 6
             virkningstid: "${ts}"
             registreringstid: "${ts}"
             where: { adgangsadressebetegnelse: { startsWith: "${variant}" } }
@@ -590,45 +594,142 @@ export async function darAutocomplete(q: string): Promise<DawaAutocompleteResult
               status
             }
           }
-        }`;
-        return darQuery<{ DAR_Husnummer: { nodes: DarHusnummerRaw[] } }>(query);
-      })
+        }`),
+        // BIZZ-608: DAR_Adresse for ejerlejligheder med etage/dør.
+        // adressebetegnelse indeholder fulde "Vej 1, 2. tv, 1234 By"-strengen.
+        darQuery<{
+          DAR_Adresse: {
+            nodes: Array<{
+              id_lokalId: string;
+              adressebetegnelse?: string;
+              etagebetegnelse?: string;
+              doerbetegnelse?: string;
+              status?: string;
+            }>;
+          };
+        }>(`{
+          DAR_Adresse(
+            first: 6
+            virkningstid: "${ts}"
+            registreringstid: "${ts}"
+            where: { adressebetegnelse: { startsWith: "${variant}" } }
+          ) {
+            nodes {
+              id_lokalId
+              adressebetegnelse
+              etagebetegnelse
+              doerbetegnelse
+              status
+            }
+          }
+        }`),
+      ])
     );
 
-    // Dedupliker på id_lokalId
-    const seen = new Set<string>();
-    const nodes: DarHusnummerRaw[] = [];
-    for (const data of allResults) {
-      for (const h of data?.DAR_Husnummer?.nodes ?? []) {
-        if (!seen.has(h.id_lokalId)) {
-          seen.add(h.id_lokalId);
-          nodes.push(h);
+    // Dedupliker husnumre
+    const seenHn = new Set<string>();
+    const husnumre: DarHusnummerRaw[] = [];
+    // Dedupliker adresser (ejerlejligheder)
+    const seenAdr = new Set<string>();
+    const adresser: Array<{
+      id_lokalId: string;
+      adressebetegnelse?: string;
+      etagebetegnelse?: string;
+      doerbetegnelse?: string;
+    }> = [];
+
+    for (let i = 0; i < allResults.length; i++) {
+      const data = allResults[i];
+      if (i % 2 === 0) {
+        // DAR_Husnummer-resultat
+        const hnData = data as { DAR_Husnummer?: { nodes?: DarHusnummerRaw[] } } | null;
+        for (const h of hnData?.DAR_Husnummer?.nodes ?? []) {
+          if (!seenHn.has(h.id_lokalId)) {
+            seenHn.add(h.id_lokalId);
+            husnumre.push(h);
+          }
+        }
+      } else {
+        // DAR_Adresse-resultat
+        const adrData = data as {
+          DAR_Adresse?: {
+            nodes?: Array<{
+              id_lokalId: string;
+              adressebetegnelse?: string;
+              etagebetegnelse?: string;
+              doerbetegnelse?: string;
+            }>;
+          };
+        } | null;
+        for (const a of adrData?.DAR_Adresse?.nodes ?? []) {
+          // Skip adresser uden etage/dør — de er identiske med adgangsadressen
+          // og ville bare give duplikerede entries.
+          const harSubAdresse =
+            (a.etagebetegnelse && a.etagebetegnelse.length > 0) ||
+            (a.doerbetegnelse && a.doerbetegnelse.length > 0);
+          if (!harSubAdresse) continue;
+          if (!seenAdr.has(a.id_lokalId)) {
+            seenAdr.add(a.id_lokalId);
+            adresser.push(a);
+          }
         }
       }
     }
-    if (nodes.length === 0) {
+
+    if (husnumre.length === 0 && adresser.length === 0) {
       // DAR returned no results — may be IP-blocked; fall back to DAWA
       logger.warn('darAutocomplete: DAR returned 0 results, trying DAWA fallback');
       return _dawaAutocomplete(q);
     }
 
-    return nodes.slice(0, 8).map((h): DawaAutocompleteResult => {
-      const parsed = parseAdresseBetegnelse(h.adgangsadressebetegnelse);
-      return {
-        type: 'adgangsadresse',
-        tekst: rensAdresseStreng(h.adgangsadressebetegnelse),
-        adresse: {
-          id: h.id_lokalId,
-          vejnavn: parsed.vejnavn,
-          husnr: h.husnummertekst || parsed.husnr,
-          postnr: parsed.postnr,
-          postnrnavn: parsed.postnrnavn,
-          kommunenavn: '', // Ikke tilgængelig som tekst i DAR — kun kommunekode
-          x: 0, // Koordinater kræver separat adgangspunkt-opslag
-          y: 0,
-        },
-      };
-    });
+    const husnummerResults: DawaAutocompleteResult[] = husnumre
+      .slice(0, 5)
+      .map((h): DawaAutocompleteResult => {
+        const parsed = parseAdresseBetegnelse(h.adgangsadressebetegnelse);
+        return {
+          type: 'adgangsadresse',
+          tekst: rensAdresseStreng(h.adgangsadressebetegnelse),
+          adresse: {
+            id: h.id_lokalId,
+            vejnavn: parsed.vejnavn,
+            husnr: h.husnummertekst || parsed.husnr,
+            postnr: parsed.postnr,
+            postnrnavn: parsed.postnrnavn,
+            kommunenavn: '',
+            x: 0,
+            y: 0,
+          },
+        };
+      });
+
+    // BIZZ-608: Map adresser (ejerlejligheder) til 'adresse'-type så UI kan
+    // vise "Lejlighed"-badge og linke direkte til den specifikke BFE.
+    const adresseResults: DawaAutocompleteResult[] = adresser
+      .slice(0, 5)
+      .map((a): DawaAutocompleteResult => {
+        const parsed = parseAdresseBetegnelse(a.adressebetegnelse ?? '');
+        return {
+          type: 'adresse',
+          tekst: rensAdresseStreng(a.adressebetegnelse ?? ''),
+          adresse: {
+            id: a.id_lokalId,
+            vejnavn: parsed.vejnavn,
+            husnr: parsed.husnr,
+            etage: a.etagebetegnelse ?? undefined,
+            dør: a.doerbetegnelse ?? undefined,
+            postnr: parsed.postnr,
+            postnrnavn: parsed.postnrnavn,
+            kommunenavn: '',
+            x: 0,
+            y: 0,
+          },
+        };
+      });
+
+    // Interleave: hovedejendomme først, så lejligheder — giver naturlig
+    // rækkefølge hvor brugere der tastede "Arnold Nielsens Blvd 62A" ser
+    // hovedejendommen øverst + de 2 lejligheder under.
+    return [...husnummerResults, ...adresseResults].slice(0, 10);
   } catch (err) {
     logger.error('darAutocomplete fejl, falder tilbage til DAWA:', err);
     // Fallback til DAWA (gratis, ingen auth/IP-krav) — virker indtil 1. juli 2026

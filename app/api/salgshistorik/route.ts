@@ -264,9 +264,15 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
     // et BFE repræsenterer en ejerskifte-hændelse. Prisoplysninger er ikke
     // tilgængelige via EJFCustom — klienten merger med Tinglysning-
     // adkomster for købesummer + købernavne.
+    // BIZZ-633 v5: EJFCustom_EjerskabBegraenset kræver virkningstid-argument
+    // (jf. BIZZ-584). Uden det fejler querien altid med "The argument
+    // virkningstid is required". Brug nu-tidspunkt — det giver aktuelle +
+    // historiske records på begge endpoints.
+    const virkningstid = new Date().toISOString();
     const ejerskabQuery = `{
       EJFCustom_EjerskabBegraenset(
         first: 500
+        virkningstid: "${virkningstid}"
         where: {
           bestemtFastEjendomBFENr: { eq: ${bfeNummer} }
         }
@@ -280,6 +286,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
           faktiskEjerandel_naevner
           status
           virkningFra
+          virkningTil
         }
       }
     }`;
@@ -293,6 +300,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
       faktiskEjerandel_naevner?: number | null;
       status?: string | null;
       virkningFra?: string | null;
+      virkningTil?: string | null;
     }
 
     // Primær-kilde FlexibleCurrent (aktuelle). HistoriskCurrent-forsøget
@@ -382,7 +390,11 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
         betinget: null,
         fristDato: null,
         forretningshaendelse: formatAndel(n), // Genbruges til at bære andel
-        virkningTil: n.status?.toLowerCase() === 'historisk' ? (n.virkningFra ?? null) : null,
+        // BIZZ-633 v5: Brug den faktiske virkningTil hvis returneret — ellers
+        // fall back til virkningFra når status er historisk (ejerskab afsluttet).
+        virkningTil:
+          n.virkningTil ??
+          (n.status?.toLowerCase() === 'historisk' ? (n.virkningFra ?? null) : null),
       }))
       .sort((a, b) => (b.overtagelsesdato ?? '').localeCompare(a.overtagelsesdato ?? ''));
 

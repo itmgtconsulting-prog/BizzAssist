@@ -343,42 +343,55 @@ async function phaseProperties(
   let currentPage = startPage;
   let done = false;
 
-  for (let i = 0; i < MAX_JORDSTYKKE_PAGES_PER_RUN; i++) {
-    // BIZZ-510: Try MAT WFS (Datafordeler) first. Falls back to DAWA
-    // /jordstykker until DAWA shuts down 2026-07-01. Both paths are
-    // normalised to MatJordstykkeBulk[] so buildEjendomEntries handles a
-    // single shape regardless of source.
+  // BIZZ-645: DAWA /jordstykker caps pagination at side*per_side <= 25_000.
+  // Vi itererer i stedet pr. kommune (98 kommuner i DK, hver < 25K jordstykker)
+  // og pagine inden for kommunen. Fremskridts-cursor er nu "kommune-index
+  // × 10000 + side" så en enkelt int kan encode både kommune og side.
+  //
+  // Kører kun hvis MAT WFS fejler — MAT caps heller ikke, men endpointet
+  // 404'er aktuelt på vores Datafordeler-konto.
+  const kommunekoder = await fetchKommunekoder();
+  if (kommunekoder.length === 0) {
+    logger.error('[generate-sitemap] Kunne ikke hente kommune-liste — afbryder');
+    return { page: currentPage, count: 0, done: false };
+  }
+
+  // Fortolk startPage: 10000 = kommune-index, 1-9999 = side inden for kommune.
+  let kommuneIndex = Math.floor((startPage - 1) / 10000);
+  let sideInKommune = ((startPage - 1) % 10000) + 1;
+
+  outer: for (
+    let pageCounter = 0;
+    pageCounter < MAX_JORDSTYKKE_PAGES_PER_RUN && kommuneIndex < kommunekoder.length;
+    pageCounter++
+  ) {
+    const kommunekode = kommunekoder[kommuneIndex];
+    // BIZZ-510: Try MAT WFS first. Falls back to DAWA per-kommune /jordstykker
+    // filter — cap er 25K × side-size = 25M per kommune (aldrig ramt).
     let items: MatJordstykkeBulk[] | null = null;
-    // BIZZ-645: Track the RAW API page size separately from the filtered
-    // items.length. DAWA returnerer konsekvent 1000 items pr side, men ~9
-    // har null-bfenummer og bliver filtreret væk. Tidligere sammenlignede
-    // vi `items.length < JORDSTYKKE_PAGE_SIZE` som "sidste side" — hvilket
-    // betød at cronen satte done:true allerede efter side 1 fordi 991 < 1000.
-    // Fix: sammenlign rå API-respons-længden i stedet.
     let rawPageSize = 0;
 
     try {
-      const startIndex = (currentPage - 1) * JORDSTYKKE_PAGE_SIZE;
+      const startIndex = (sideInKommune - 1) * JORDSTYKKE_PAGE_SIZE;
       items = await matListJordstykker(startIndex, JORDSTYKKE_PAGE_SIZE);
-      // MAT WFS returnerer allerede filtrerede items — brug items.length
-      // som rå-size-approksimation (MAT WFS caps ved 1000 og returnerer
-      // kun gyldige jordstykker).
       if (items !== null) rawPageSize = items.length;
     } catch (err) {
       logger.error(
-        '[generate-sitemap] MAT WFS side',
-        currentPage,
+        '[generate-sitemap] MAT WFS kommune',
+        kommunekode,
+        'side',
+        sideInKommune,
         'kastede — falder tilbage til DAWA:',
         err
       );
     }
 
     if (items === null) {
-      // MAT failed or unavailable — fall back to DAWA for this page only.
+      // DAWA fallback pr. kommune
       try {
         const url =
           `https://api.dataforsyningen.dk/jordstykker` +
-          `?per_side=${JORDSTYKKE_PAGE_SIZE}&side=${currentPage}`;
+          `?per_side=${JORDSTYKKE_PAGE_SIZE}&side=${sideInKommune}&kommunekode=${kommunekode}`;
         const res = await fetchDawa(
           url,
           { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(10000) },
@@ -387,8 +400,10 @@ async function phaseProperties(
 
         if (!res.ok) {
           logger.error(
-            '[generate-sitemap] DAWA jordstykker side',
-            currentPage,
+            '[generate-sitemap] DAWA jordstykker kommune',
+            kommunekode,
+            'side',
+            sideInKommune,
             'fejlede:',
             res.status
           );
@@ -397,9 +412,6 @@ async function phaseProperties(
 
         const data = (await res.json()) as unknown[];
         if (!Array.isArray(data)) break;
-        // BIZZ-645: Gem rå API-respons-længde FØR filter så done-check
-        // er korrekt. DAWA leverer altid per_side=1000 hvis der er flere
-        // pages tilbage — <1000 betyder vi har ramt datasættets slutning.
         rawPageSize = data.length;
         items = data
           .map((raw): MatJordstykkeBulk | null => {
@@ -415,43 +427,69 @@ async function phaseProperties(
           })
           .filter((x): x is MatJordstykkeBulk => x !== null);
       } catch (err) {
-        logger.error('[generate-sitemap] DAWA jordstykker side', currentPage, 'fejl:', err);
+        logger.error(
+          '[generate-sitemap] DAWA jordstykker kommune',
+          kommunekode,
+          'side',
+          sideInKommune,
+          'fejl:',
+          err
+        );
         break;
       }
     }
 
-    if (rawPageSize === 0) {
-      // No more data — full scan done, reset progress
-      await saveProgress(admin, 1);
-      done = true;
-      break;
+    // Build + upsert
+    if (items.length > 0) {
+      let batchStart = 0;
+      const entries = buildEjendomEntries(items, now);
+      while (batchStart < entries.length) {
+        const slice = entries.slice(batchStart, batchStart + UPSERT_BATCH_SIZE);
+        totalCount += await upsertBatch(admin, slice);
+        batchStart += UPSERT_BATCH_SIZE;
+      }
     }
 
-    // Build + upsert in batches
-    let batchStart = 0;
-    const entries = buildEjendomEntries(items, now);
-    while (batchStart < entries.length) {
-      const slice = entries.slice(batchStart, batchStart + UPSERT_BATCH_SIZE);
-      totalCount += await upsertBatch(admin, slice);
-      batchStart += UPSERT_BATCH_SIZE;
-    }
-
-    currentPage++;
-
+    // Avancer: hvis denne kommune er færdig (rawPageSize < 1000), hop til næste
     if (rawPageSize < JORDSTYKKE_PAGE_SIZE) {
-      // Shorter raw page = last page in dataset (pre-filter)
-      await saveProgress(admin, 1);
-      done = true;
-      break;
+      kommuneIndex++;
+      sideInKommune = 1;
+      if (kommuneIndex >= kommunekoder.length) {
+        // Alle kommuner processeret — reset + done
+        await saveProgress(admin, 1);
+        done = true;
+        break outer;
+      }
+    } else {
+      sideInKommune++;
     }
+
+    // Encode next cursor
+    currentPage = kommuneIndex * 10000 + sideInKommune;
   }
 
-  // Gem fremskridt til næste kørsel (kun hvis ikke done)
   if (!done) {
     await saveProgress(admin, currentPage);
   }
-
   return { page: currentPage, count: totalCount, done };
+}
+
+/**
+ * BIZZ-645: Hent list af 98 danske kommunekoder fra DAWA.
+ * Cachet in-memory per request (hvert cron-kald starter fresh).
+ */
+async function fetchKommunekoder(): Promise<string[]> {
+  try {
+    const res = await fetch('https://api.dataforsyningen.dk/kommuner?struktur=mini', {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as Array<{ kode?: string }>;
+    return data.map((k) => k.kode).filter((k): k is string => !!k);
+  } catch {
+    return [];
+  }
 }
 
 /**

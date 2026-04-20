@@ -923,8 +923,18 @@ export async function GET(request: NextRequest) {
         );
       }
 
+      // ── 7. BIZZ-611: EJF bulk-ingest freshness check ───────────────────────
+      // Alert hvis seneste ingest-run ikke er afsluttet efter 24t (stuck) eller
+      // hvis seneste succeseful run processerede < 100 rækker (sandsynlig fejl
+      // i data-kilden). Bruges til at fange stille ingest-regressions uden at
+      // admin skal overvåge Supabase manuelt.
+      const ejfIngestIssues = await checkEjfIngestHealthAndCreateScans(admin, now);
+      if (ejfIngestIssues > 0) {
+        logger.log(`[service-scan] Oprettede ${ejfIngestIssues} EJF-ingest-issue-scan(s)`);
+      }
+
       logger.log(
-        `[service-scan] Done: ${issues.length} issues, ${errorIssues.length} errors, ${proposedFixCount} fixes proposed, ${cronFailureScans} cron-failures`
+        `[service-scan] Done: ${issues.length} issues, ${errorIssues.length} errors, ${proposedFixCount} fixes proposed, ${cronFailureScans} cron-failures, ${ejfIngestIssues} ejf-issues`
       );
 
       // Heartbeat-write + Sentry check-in håndteres af withCronMonitor —
@@ -939,6 +949,7 @@ export async function GET(request: NextRequest) {
         fixesProposed: proposedFixCount,
         fixes: fixResults,
         cronFailureScans,
+        ejfIngestIssues,
         summary,
       });
     }
@@ -1083,6 +1094,141 @@ async function checkCronHeartbeatsAndCreateScans(
         `[service-scan] Kunne ikke oprette cron_failure-scan for ${f.jobName}:`,
         insertErr.message
       );
+      continue;
+    }
+    created++;
+  }
+
+  return created;
+}
+
+/**
+ * BIZZ-611: Tjek public.ejf_ingest_runs for sundhedsproblemer med EJF bulk-
+ * ingestion og opret cron_failure-scans hvis noget ser galt ud.
+ *
+ * Detekterer 2 kategorier:
+ *   1. Stuck run: seneste række har finished_at=NULL og started_at > 24t siden.
+ *      Betyder at cronen gik ned eller Vercel timeout'ede uden at skrive
+ *      resultat — data er sandsynligvis ikke opdateret.
+ *   2. Suspicious low volume: seneste SUCCESSFUL run (finished_at != NULL,
+ *      error = NULL) har rows_processed < 100. Forventet bulk-ingest henter
+ *      millioner af rækker — <100 betyder at source-file var tom, URL returnerede
+ *      fejl, eller parser afviste formatet.
+ *
+ * Dedup (samme 4t-vindue som cron-failure-check) forhindrer spam ved persistent
+ * problem. Oprettes som scan_type='cron_failure' så Service Manager-agenten
+ * (BIZZ-623) kan klassificere + foreslå fix eller oprette JIRA-ticket.
+ *
+ * @param admin - Supabase admin-client
+ * @param now - Reference-tidspunkt
+ * @returns Antal ejf-ingest-issue-scans der blev oprettet
+ */
+async function checkEjfIngestHealthAndCreateScans(
+  admin: ReturnType<typeof createAdminClient>,
+  now: Date
+): Promise<number> {
+  interface IngestRow {
+    id: number;
+    started_at: string;
+    finished_at: string | null;
+    rows_processed: number | null;
+    error: string | null;
+  }
+
+  let recentRuns: IngestRow[] = [];
+  try {
+    // ejf_ingest_runs er ikke i generated Supabase types — cast
+    const { data, error } = await (
+      admin as unknown as {
+        from: (t: string) => {
+          select: (c: string) => {
+            order: (
+              col: string,
+              opts: { ascending: boolean }
+            ) => {
+              limit: (n: number) => Promise<{ data: IngestRow[] | null; error: unknown }>;
+            };
+          };
+        };
+      }
+    )
+      .from('ejf_ingest_runs')
+      .select('id, started_at, finished_at, rows_processed, error')
+      .order('started_at', { ascending: false })
+      .limit(5);
+    if (error) {
+      // PGRST205 hvis migration 046 ikke er kørt — ikke fatalt, bare return 0
+      logger.error('[service-scan] ejf_ingest_runs query fejl:', error);
+      return 0;
+    }
+    recentRuns = data ?? [];
+  } catch (err) {
+    logger.error('[service-scan] ejf_ingest_runs exception:', err);
+    return 0;
+  }
+
+  if (recentRuns.length === 0) return 0;
+
+  const issues: Array<{ reason: 'stuck' | 'low_volume'; detail: string }> = [];
+
+  // 1) Stuck run: seneste har finished_at=NULL og er > 24 t gammel
+  const latest = recentRuns[0];
+  if (!latest.finished_at) {
+    const ageHours = (now.getTime() - new Date(latest.started_at).getTime()) / 3_600_000;
+    if (ageHours > 24) {
+      issues.push({
+        reason: 'stuck',
+        detail: `ingest_run id=${latest.id} startede for ${ageHours.toFixed(1)} t siden og er ikke afsluttet (finished_at IS NULL)`,
+      });
+    }
+  }
+
+  // 2) Low volume: seneste SUCCESSFUL (finished_at != NULL og ingen error)
+  // processede < 100 rækker. Bulk-ingest forventes at hente millioner.
+  const latestSuccess = recentRuns.find((r) => r.finished_at && !r.error);
+  if (latestSuccess && (latestSuccess.rows_processed ?? 0) < 100) {
+    issues.push({
+      reason: 'low_volume',
+      detail: `ingest_run id=${latestSuccess.id} processede kun ${latestSuccess.rows_processed ?? 0} rækker (forventet millioner) — sandsynlig kilde-fejl eller tom dump-fil`,
+    });
+  }
+
+  if (issues.length === 0) return 0;
+
+  // Dedup mod sidste 4t af scans for at undgå spam
+  const fourHoursAgo = new Date(now.getTime() - 4 * 60 * 60 * 1000).toISOString();
+  const { data: recentScans } = await admin
+    .from('service_manager_scans')
+    .select('summary')
+    .eq('scan_type', 'cron_failure' as never)
+    .gte('created_at', fourHoursAgo);
+  const alreadyScanned = new Set<string>();
+  for (const s of recentScans ?? []) {
+    const summaryStr = (s as { summary?: string }).summary ?? '';
+    const match = summaryStr.match(/\[ejf_ingest_(stuck|low_volume)\]/);
+    if (match) alreadyScanned.add(match[1]);
+  }
+
+  let created = 0;
+  for (const iss of issues) {
+    if (alreadyScanned.has(iss.reason)) continue;
+    const issue = {
+      type: 'runtime_error',
+      severity: 'error',
+      message: `EJF bulk-ingest ${iss.reason === 'stuck' ? 'hænger' : 'fik for lidt data'}`,
+      source: 'ejf_ingest_runs',
+      context: iss.detail,
+    };
+    const summary = `[ejf_ingest_${iss.reason}] ingest-ejf-bulk: ${iss.detail}`;
+    const { error: insertErr } = await admin.from('service_manager_scans').insert({
+      scan_type: 'cron_failure',
+      status: 'completed',
+      triggered_by: null,
+      issues_found: [issue],
+      summary,
+    });
+    if (insertErr) {
+      logger.error(`[service-scan] Kunne ikke oprette ejf-ingest-scan:`, insertErr.message);
       continue;
     }
     created++;

@@ -24,6 +24,17 @@ import { getSharedOAuthToken } from '@/app/lib/dfTokenCache';
 import { resolveTenantId } from '@/lib/api/auth';
 import { parseQuery } from '@/app/lib/validate';
 import { EJF_GQL_ENDPOINT, DATAFORDELER_TOKEN_URL } from '@/app/lib/serviceEndpoints';
+import { LruCache } from '@/app/lib/lruCache';
+
+// BIZZ-633: LRU-cache for salgshistorik-svar. Samme BFE slås op mange
+// gange i samme session (økonomi-tab, ejendoms-kort, diagram-berigelse).
+// Uden cache fyrer hver visning to EJF-GraphQL-kald (ejerskifte + handels-
+// oplysninger) med ~800ms samlet latency. Cache holder 150 entries i
+// 1 time — handelsdata ændrer sig sjældent på den skala.
+const salgshistorikCache = new LruCache<number, SalgshistorikResponse>({
+  maxSize: 150,
+  ttlMs: 3_600_000,
+});
 
 /** Zod schema for /api/salgshistorik query parameters */
 const salgshistorikQuerySchema = z.object({
@@ -240,6 +251,17 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
 
   const { bfeNummer } = parsed.data;
 
+  // BIZZ-633: LRU cache-hit → undgå hele EJF round-trip'en. Salgshistorik er
+  // en særlig hot path fordi både Økonomi-tab, ejendoms-kort og
+  // diagram-enrichment trigger samme BFE-lookup.
+  const cached = salgshistorikCache.get(bfeNummer);
+  if (cached) {
+    return NextResponse.json(cached, {
+      status: 200,
+      headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
+    });
+  }
+
   const token = await getSharedOAuthToken();
   if (!token) {
     return NextResponse.json(
@@ -331,13 +353,19 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
         }))
         .sort((a, b) => (b.overtagelsesdato ?? '').localeCompare(a.overtagelsesdato ?? ''));
 
-      return NextResponse.json(
-        { bfeNummer, handler, fejl: null, manglerNoegle: false, manglerAdgang: false },
-        {
-          status: 200,
-          headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
-        }
-      );
+      // BIZZ-633: Cache response før return
+      const responseData: SalgshistorikResponse = {
+        bfeNummer,
+        handler,
+        fejl: null,
+        manglerNoegle: false,
+        manglerAdgang: false,
+      };
+      salgshistorikCache.set(bfeNummer, responseData);
+      return NextResponse.json(responseData, {
+        status: 200,
+        headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
+      });
     }
 
     // ── Trin 2: Hent handelsoplysninger via id_lokalId ──
@@ -430,13 +458,19 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
       `[salgshistorik] ${handler.length} handler fundet for BFE ${bfeNummer} (${ejerskifter.length} ejerskifter, ${handelsIds.length} handelsoplysninger)`
     );
 
-    return NextResponse.json(
-      { bfeNummer, handler, fejl: null, manglerNoegle: false, manglerAdgang: false },
-      {
-        status: 200,
-        headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
-      }
-    );
+    // BIZZ-633: Cache response før return
+    const responseData: SalgshistorikResponse = {
+      bfeNummer,
+      handler,
+      fejl: null,
+      manglerNoegle: false,
+      manglerAdgang: false,
+    };
+    salgshistorikCache.set(bfeNummer, responseData);
+    return NextResponse.json(responseData, {
+      status: 200,
+      headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
+    });
   } catch (err) {
     Sentry.captureException(err);
     const msg = err instanceof Error ? err.message : 'Ukendt fejl';

@@ -1,24 +1,34 @@
-const host = process.env.JIRA_HOST;
-const user = process.env.JIRA_EMAIL;
-const tok = process.env.JIRA_API_TOKEN;
-const auth = 'Basic ' + Buffer.from(user + ':' + tok).toString('base64');
-const text =
-  'Audit 2026-04-20 — allerede implementeret:\n\nAPI: app/api/matrikel/historik/route.ts (397 linjer) — forespørger MAT GraphQL med temporale queries (11 historical checkpoints: 0, 1, 2, 3, 5, 8, 10, 15, 20, 30, 50 år tilbage) og sammenligner snapshots for at detektere udstykninger, sammenlægninger, arealændringer og statusændringer. Returnerer MatrikelHistorikResponse med tidslinje-events. Cache: 24 timer pr. BFE.\n\nUI: app/dashboard/ejendomme/[id]/EjendomDetaljeClient.tsx — collapsible historik-sektion med 5 event-typer (oprettelse/udstykning/sammenlægning/arealændring/statusændring) rendret som farvede tidslinje-markers. Lazy-loadet ved klik på "Historik" toggle. Renderet to steder i client for både mobile og desktop-layout.\n\nTypes:\n- MatrikelHistorikEvent (dato, type, beskrivelse, detaljer)\n- MatrikelHistorikResponse (bfeNummer, historik, fejl)\n\nAcceptance-criteria opfyldt:\n✅ Historik-tidslinje for mindst én udstykket ejendom (MAT-queries er generiske)\n✅ Performance: cache pr. BFE i 24 timer (revalidate=86400)\n\nKlar til verifikation: åbn enhver ejendoms-detaljeside → BBR-tab (eller Matrikel-tab afhængigt af layout) → klik "Vis historik"-toggle.';
-const comment = {
-  body: {
-    type: 'doc',
-    version: 1,
-    content: [{ type: 'paragraph', content: [{ type: 'text', text }] }],
-  },
+#!/usr/bin/env node
+import https from 'node:https';
+import { config as loadDotenv } from 'dotenv';
+import path from 'node:path';
+import url from 'node:url';
+loadDotenv({ path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local') });
+const HOST = process.env.JIRA_HOST;
+const auth = Buffer.from(`${process.env.JIRA_EMAIL}:${process.env.JIRA_API_TOKEN}`).toString('base64');
+function req(m,p,b){return new Promise((res,rej)=>{const d=b?JSON.stringify(b):null;const r=https.request({hostname:HOST,path:p,method:m,headers:{Authorization:'Basic '+auth,'Content-Type':'application/json',Accept:'application/json',...(d?{'Content-Length':Buffer.byteLength(d)}:{})}},(x)=>{let y='';x.on('data',c=>y+=c);x.on('end',()=>res({status:x.statusCode,body:y}))});r.on('error',rej);if(d)r.write(d);r.end()});}
+const p = (...c) => ({ type:'paragraph', content:c });
+const txt = (t,m) => m?{type:'text',text:t,marks:m}:{type:'text',text:t};
+const strong = (s) => txt(s,[{type:'strong'}]);
+const code = (s) => txt(s,[{type:'code'}]);
+const h = (l,t) => ({type:'heading',attrs:{level:l},content:[{type:'text',text:t}]});
+const li = (...c) => ({type:'listItem',content:c});
+const ul = (...i) => ({type:'bulletList',content:i});
+
+const body = {
+  type:'doc', version:1, content:[
+    h(2, 'Code-level verifikation — PASSED'),
+    ul(
+      li(p(code('app/api/matrikel/historik/route.ts'), txt(' — ny endpoint med eksplicit BIZZ-500 reference. Bitemporale queries mod MAT/v1 med '), code('virkningstid'), txt('-parametre. Returnerer '), code('MatrikelHistorikResponse'), txt(' med tidslinje-events.'))),
+      li(p(code('EjendomDetaljeClient.tsx:3811 + 6693'), txt(' — collapsible "Matrikel-historik"-tidslinje på desktop + mobil.'))),
+      li(p(txt('State '), code('matrikelHistorik'), txt(' (linje 953) — "BIZZ-500: Matrikel-historik (udstykninger, sammenlægninger, arealændringer)".'))),
+    ),
+  ],
 };
-const r1 = await fetch('https://' + host + '/rest/api/3/issue/BIZZ-500/comment', {
-  method: 'POST',
-  headers: { Authorization: auth, 'Content-Type': 'application/json' },
-  body: JSON.stringify(comment),
-});
-const r2 = await fetch('https://' + host + '/rest/api/3/issue/BIZZ-500/transitions', {
-  method: 'POST',
-  headers: { Authorization: auth, 'Content-Type': 'application/json' },
-  body: JSON.stringify({ transition: { id: '31' } }),
-});
-console.log('BIZZ-500 comment:', r1.status, 'transition:', r2.status);
+
+const c = await req('POST','/rest/api/3/issue/BIZZ-500/comment',{body});
+console.log(c.status===201?'✅ comment':`❌ (${c.status})`);
+const tr = await req('GET','/rest/api/3/issue/BIZZ-500/transitions');
+const done = (JSON.parse(tr.body).transitions||[]).find(t=>/^done$/i.test(t.name));
+const r = await req('POST','/rest/api/3/issue/BIZZ-500/transitions',{transition:{id:done.id}});
+console.log(r.status===204?'✅ BIZZ-500 → Done':`⚠️ (${r.status})`);

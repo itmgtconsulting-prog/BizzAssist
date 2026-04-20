@@ -1221,6 +1221,74 @@ function recordTenantTokenUsage(
   })();
 }
 
+/**
+ * BIZZ-643: Dekrementér AI-token-forbrug i prioritets-rækkefølge:
+ *  1. Plan-tokens (nulstilles månedligt — "use it or lose it")
+ *  2. Bonus-tokens (admin-tildelt, ingen udløb)
+ *  3. Top-up tokens (selvstændigt købt, skal have mest værdi per krone)
+ *
+ * Returnerer de opdaterede per-kilde-tællere der skal persisteres i
+ * app_metadata.subscription. Rækkefølgen sikrer at brugeren ikke brænder
+ * betalte top-up-tokens af før plan-quota er opbrugt.
+ *
+ * @param consumed  - Samlet token-forbrug for dette AI-kald
+ * @param state     - Nuværende subscription-state (tokensUsedThisMonth + per-kilde-felter + balancer)
+ * @returns Nye værdier der kan merges ind i subscription-objekt
+ */
+export function allocateTokensBySource(
+  consumed: number,
+  state: {
+    planTokens: number; // planens månedlige quota (0 under trial)
+    planTokensUsed: number; // allerede brugt af plan-quota denne måned
+    bonusTokens: number; // starting balance, dekrementerer
+    topUpTokens: number; // starting balance, dekrementerer
+    tokensUsedThisMonth: number; // aggregat (backwards-compat)
+  }
+): {
+  planTokensUsed: number;
+  bonusTokens: number;
+  topUpTokens: number;
+  tokensUsedThisMonth: number;
+} {
+  let remaining = Math.max(0, Math.floor(consumed));
+  let planTokensUsed = state.planTokensUsed;
+  let bonusTokens = state.bonusTokens;
+  let topUpTokens = state.topUpTokens;
+
+  // 1. Plan-tokens først — bruger "use it or lose it" kvota før betalte kilder
+  const planRemaining = Math.max(0, state.planTokens - planTokensUsed);
+  if (planRemaining > 0 && remaining > 0) {
+    const take = Math.min(planRemaining, remaining);
+    planTokensUsed += take;
+    remaining -= take;
+  }
+
+  // 2. Bonus-tokens (admin-tildelt)
+  if (bonusTokens > 0 && remaining > 0) {
+    const take = Math.min(bonusTokens, remaining);
+    bonusTokens -= take;
+    remaining -= take;
+  }
+
+  // 3. Top-up-tokens (købt via Stripe) — prioriteres sidst så brugerens
+  // direkte-betalte tokens har længst levetid
+  if (topUpTokens > 0 && remaining > 0) {
+    const take = Math.min(topUpTokens, remaining);
+    topUpTokens -= take;
+    remaining -= take;
+  }
+
+  // Hvis remaining > 0 efter alle kilder: brugeren har overskredet quota.
+  // Vi registrerer stadig forbruget (tokensUsedThisMonth) — gate'n på
+  // næste request stopper dem.
+  return {
+    planTokensUsed,
+    bonusTokens,
+    topUpTokens,
+    tokensUsedThisMonth: state.tokensUsedThisMonth + Math.floor(consumed),
+  };
+}
+
 // ─── Handler ────────────────────────────────────────────────────────────────
 
 export async function POST(request: NextRequest): Promise<Response> {
@@ -1250,6 +1318,8 @@ export async function POST(request: NextRequest): Promise<Response> {
     | {
         status?: string;
         tokensUsedThisMonth?: number;
+        /** BIZZ-643: per-kilde-tracking. Backwards-compat: default 0 når ikke sat. */
+        planTokensUsed?: number;
         bonusTokens?: number;
         topUpTokens?: number;
         planId?: string;
@@ -1268,9 +1338,14 @@ export async function POST(request: NextRequest): Promise<Response> {
   // BIZZ-641: Under trial blokeres plan-tokens — effektiv grænse er kun
   // topUpTokens + bonusTokens (manuelt tildelt af admin). Efter aktivering
   // tilføjes plan-tokens normalt.
+  // BIZZ-643: Track per-kilde-forbrug separat (planTokensUsed) så vi kan
+  // vise balance pr. kilde i UI + gennemføre prioritets-dekrement i
+  // allocateTokensBySource().
   const tokensUsedThisMonth = sub.tokensUsedThisMonth ?? 0;
+  const planTokensUsed = sub.planTokensUsed ?? 0;
   const bonusTokens = sub.bonusTokens ?? 0;
   const topUpTokens = sub.topUpTokens ?? 0;
+  let planTokens = 0;
   let effectiveTokenLimit = 0;
   if (sub.planId) {
     const { data: planRow } = await adminClient
@@ -1278,7 +1353,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       .select('ai_tokens_per_month')
       .eq('plan_id', sub.planId)
       .single<{ ai_tokens_per_month: number }>();
-    const planTokens = subStatus === 'trialing' ? 0 : (planRow?.ai_tokens_per_month ?? 0);
+    planTokens = subStatus === 'trialing' ? 0 : (planRow?.ai_tokens_per_month ?? 0);
     effectiveTokenLimit = planTokens + bonusTokens + topUpTokens;
   } else {
     effectiveTokenLimit = bonusTokens + topUpTokens;
@@ -1592,17 +1667,25 @@ export async function POST(request: NextRequest): Promise<Response> {
             controller.close();
 
             // Fire-and-forget: persist token usage so quota check works next request
-            adminClient.auth.admin
-              .updateUserById(userId, {
-                app_metadata: {
-                  ...freshUser?.user?.app_metadata,
-                  subscription: {
-                    ...sub,
-                    tokensUsedThisMonth: tokensUsedThisMonth + totalTokens,
+            // BIZZ-643: Dekrementér pr. kilde (plan→bonus→topUp) frem for
+            // blot at inkrementere det aggregate forbrug.
+            {
+              const allocation = allocateTokensBySource(totalTokens, {
+                planTokens,
+                planTokensUsed,
+                bonusTokens,
+                topUpTokens,
+                tokensUsedThisMonth,
+              });
+              adminClient.auth.admin
+                .updateUserById(userId, {
+                  app_metadata: {
+                    ...freshUser?.user?.app_metadata,
+                    subscription: { ...sub, ...allocation },
                   },
-                },
-              })
-              .catch(() => {}); // non-critical — best-effort tracking
+                })
+                .catch(() => {}); // non-critical — best-effort tracking
+            }
 
             // Fire-and-forget: record in tenant.ai_token_usage for auditable per-tenant billing
             if (resolvedTenantId) {
@@ -1671,17 +1754,24 @@ export async function POST(request: NextRequest): Promise<Response> {
         controller.close();
 
         // Fire-and-forget: persist token usage so quota check works next request
-        adminClient.auth.admin
-          .updateUserById(userId, {
-            app_metadata: {
-              ...freshUser?.user?.app_metadata,
-              subscription: {
-                ...sub,
-                tokensUsedThisMonth: tokensUsedThisMonth + totalTokens,
+        // BIZZ-643: Samme prioritets-dekrement som ved normal-afslutning.
+        {
+          const allocation = allocateTokensBySource(totalTokens, {
+            planTokens,
+            planTokensUsed,
+            bonusTokens,
+            topUpTokens,
+            tokensUsedThisMonth,
+          });
+          adminClient.auth.admin
+            .updateUserById(userId, {
+              app_metadata: {
+                ...freshUser?.user?.app_metadata,
+                subscription: { ...sub, ...allocation },
               },
-            },
-          })
-          .catch(() => {}); // non-critical — best-effort tracking
+            })
+            .catch(() => {}); // non-critical — best-effort tracking
+        }
 
         // Fire-and-forget: record in tenant.ai_token_usage for auditable per-tenant billing
         if (resolvedTenantId) {

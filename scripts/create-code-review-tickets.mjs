@@ -109,9 +109,7 @@ const tickets = [
           'app/api/analysis/run/route.ts — 2× console.error (tool call + SSE)',
           'app/api/links/route.ts — 2× console.error (link verification)',
         ]),
-        p(
-          'Erstat med logger.error()/logger.log(). Sikr at ingen PII logges (emails, CVR, navn).'
-        ),
+        p('Erstat med logger.error()/logger.log(). Sikr at ingen PII logges (emails, CVR, navn).'),
         h(2, '3. any-typer (MEDIUM)'),
         bullets([
           'app/lib/notifications.ts — 1 occurrence',
@@ -170,9 +168,7 @@ const tickets = [
           'companyInfo.ts (75%) — CVR-status enum-transitions',
         ]),
         h(2, '3. E2E-coverage (MEDIUM — kun smoke/homepage i dag)'),
-        p(
-          'Kun 2 E2E-suites findes. Manglende dækning af kernedflows:'
-        ),
+        p('Kun 2 E2E-suites findes. Manglende dækning af kernedflows:'),
         bullets([
           '/dashboard (søgning, recent entities)',
           '/dashboard/ejendomme/[id] (property detail — 9665 linjer)',
@@ -211,7 +207,9 @@ const tickets = [
           'Code review 2026-04-20 fandt tre performance-opgaver: heavy libs er ikke dynamisk importeret, store komponenter re-renderer unødvendigt, og der er ingen LRU-cache for gentagne external API-calls (trods CLAUDE.md-krav).'
         ),
         h(2, '1. Heavy libraries ikke lazy-loaded (MEDIUM)'),
-        p('Følgende biblioteker er på kritisk-path trods at de kun bruges i specifikke komponenter:'),
+        p(
+          'Følgende biblioteker er på kritisk-path trods at de kun bruges i specifikke komponenter:'
+        ),
         bullets([
           'mapbox-gl (3.20.0) — kun brugt i PropertyMap.tsx. Skal wrappes i next/dynamic({ ssr: false })',
           'recharts (3.8.0) — CompanySkabChart.tsx (18.75% coverage). Skal lazy-loades',
@@ -301,7 +299,9 @@ const tickets = [
           'PR kan reviewes i rimelig tid (ikke monolitisk)',
         ]),
         h(2, 'Afhængigheder'),
-        p('Afvent BIZZ-597 (person/virksomhed alignment) først — den reducerer naturligt person-client og etablerer delte tab-components som pattern.'),
+        p(
+          'Afvent BIZZ-597 (person/virksomhed alignment) først — den reducerer naturligt person-client og etablerer delte tab-components som pattern.'
+        ),
       ],
     },
   },

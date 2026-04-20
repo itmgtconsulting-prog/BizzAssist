@@ -49,7 +49,7 @@ try {
   //            on residential property). Nørrebrogade 100 is a 5-building
   //            boligejendom which is a good candidate.
   const ADDRS = ['Nørrebrogade 100', 'Bibliotekvej 58', 'Amagertorv 18'];
-  let loftFound = false;
+  let _loftFound = false;
   let usedAddr = null;
   for (const addr of ADDRS) {
     console.log(`\n→ BIZZ-490 verify: navigate to ${addr} and open SKAT tab`);
@@ -84,7 +84,7 @@ try {
     const hasLoftvaerdi = /loftværdi|capped value/i.test(skatText);
     console.log(`  ${addr}: grundskatteloft=${has490 ? '✅' : '❌'}  basisår=${hasBasisaar ? '✅' : '❌'}  loftværdi=${hasLoftvaerdi ? '✅' : '❌'}`);
     if (has490) {
-      loftFound = true;
+      _loftFound = true;
       usedAddr = addr;
       break;
     }

@@ -7,7 +7,7 @@ import { chromium } from 'playwright';
 import { config as loadDotenv } from 'dotenv';
 import path from 'node:path';
 import url from 'node:url';
-import fs from 'node:fs';
+import _fs from 'node:fs';
 
 loadDotenv({ path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local') });
 

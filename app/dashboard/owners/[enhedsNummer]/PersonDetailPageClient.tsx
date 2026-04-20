@@ -803,8 +803,9 @@ export default function PersonDetailPageClient({
   /** AbortController for igangværende progressiv ejendomshentning */
   const ejendomAbortRef = useRef<AbortController | null>(null);
 
-  /** BIZZ-399: Ejendomshandler (salgshistorik) — lazy-loaded fra /api/salgshistorik/cvr */
-  const [ejendommeFilter, setEjendommeFilter] = useState<string | null>(null);
+  // BIZZ-631: ejendommeFilter-state fjernet — filter chips er taget ud for at
+  // matche virksomhedsfanens layout. Ejendomshandler-sektionen vises nu altid
+  // når data er tilgængelige.
   /** BIZZ-580: Toggle for visning af tidligere ejede (solgte) ejendomme — default skjult, matcher virksomhedsfanen */
   const [visSolgteEjendomme, setVisSolgteEjendomme] = useState(false);
   const [ejendomshandler, setEjendomshandler] = useState<
@@ -2225,48 +2226,13 @@ export default function PersonDetailPageClient({
           {aktivTab === 'properties' && (
             <div className="space-y-4">
               {(ejendommeLoading || ejendommeLoadingMore) && <TabLoadingSpinner />}
-              {/* BIZZ-399: Filter chips — Alle / Ejendomme / Ejendomshandler */}
-              <div className="flex flex-wrap gap-2">
-                <button
-                  onClick={() => setEjendommeFilter(null)}
-                  className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                    ejendommeFilter === null
-                      ? 'bg-white/10 border-white/30 text-white'
-                      : 'bg-slate-800 border-slate-700/50 text-slate-400 hover:text-slate-300'
-                  }`}
-                >
-                  {lang === 'da' ? 'Alle' : 'All'}
-                </button>
-                <button
-                  onClick={() =>
-                    setEjendommeFilter(ejendommeFilter === 'portefolje' ? null : 'portefolje')
-                  }
-                  className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                    ejendommeFilter === 'portefolje'
-                      ? 'bg-blue-600/30 border-blue-500/50 text-blue-300'
-                      : 'bg-slate-800 border-slate-700/50 text-slate-400 hover:text-slate-300'
-                  }`}
-                >
-                  {lang === 'da' ? 'Ejendomme' : 'Properties'}
-                </button>
-                <button
-                  onClick={() =>
-                    setEjendommeFilter(ejendommeFilter === 'handler' ? null : 'handler')
-                  }
-                  className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                    ejendommeFilter === 'handler'
-                      ? 'bg-emerald-600/30 border-emerald-500/50 text-emerald-300'
-                      : 'bg-slate-800 border-slate-700/50 text-slate-400 hover:text-slate-300'
-                  }`}
-                >
-                  {lang === 'da' ? 'Ejendomshandler' : 'Property trades'}
-                  {ejendomshandler.length > 0 && (
-                    <span className="ml-1.5 text-[10px] opacity-70">
-                      ({ejendomshandler.length})
-                    </span>
-                  )}
-                </button>
-              </div>
+              {/* BIZZ-631: Filter chips (Alle / Ejendomme / Ejendomshandler) er
+                  fjernet så person-Ejendomme-tab matcher virksomhedsfanens layout
+                  1:1 (jf. BIZZ-596/597). Ejendomshandler-sektionen vises nu
+                  unconditionally under ejendoms-griden når data er tilgængelig.
+                  ejendommeFilter-state beholdes midlertidigt for at undgå ripple-
+                  ændringer; den er altid null og render-betingelsen nedenfor vises
+                  konstant. */}
               {/* BIZZ-338: Ingen tilknyttede virksomheder — hverken ejede eller andre roller */}
               {ejendommeFetchComplete &&
                 !ejendommeManglerNoegle &&
@@ -2570,8 +2536,10 @@ export default function PersonDetailPageClient({
                   </div>
                 )}
 
-              {/* BIZZ-399: Ejendomshandler sektion */}
-              {(ejendommeFilter === null || ejendommeFilter === 'handler') && (
+              {/* BIZZ-399/631: Ejendomshandler sektion — vises altid under
+                  ejendoms-griden når data er tilgængelige. Tidligere filter-
+                  chips-condition fjernet så layout matcher virksomhedsfanen. */}
+              {true && (
                 <>
                   {handlerLoading && (
                     <div className="flex items-center justify-center py-8 gap-2">

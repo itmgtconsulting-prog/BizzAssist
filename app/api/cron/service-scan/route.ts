@@ -909,8 +909,22 @@ export async function GET(request: NextRequest) {
         await sendAlertEmail(issues, scanId, proposedFixCount, now);
       }
 
+      // ── 6. BIZZ-623: Cron-heartbeat-trigger ─────────────────────────────────
+      // Tjek public.cron_heartbeats for jobs der fejler (last_status='error')
+      // ELLER er forsinkede (last_run_at > 2× expected_interval). For hver fejl,
+      // opret en separat service_manager_scans-row med scan_type='cron_failure'
+      // så Service Manager-agenten kan foreslå en fix. Dedup: skip hvis vi
+      // allerede har lavet en cron_failure-scan for samme job inden for de
+      // sidste 4 timer (undgår spam fra persistent fejlede jobs).
+      const cronFailureScans = await checkCronHeartbeatsAndCreateScans(admin, now);
+      if (cronFailureScans > 0) {
+        logger.log(
+          `[service-scan] Oprettede ${cronFailureScans} cron_failure-scan(s) fra heartbeat-check`
+        );
+      }
+
       logger.log(
-        `[service-scan] Done: ${issues.length} issues, ${errorIssues.length} errors, ${proposedFixCount} fixes proposed`
+        `[service-scan] Done: ${issues.length} issues, ${errorIssues.length} errors, ${proposedFixCount} fixes proposed, ${cronFailureScans} cron-failures`
       );
 
       // Heartbeat-write + Sentry check-in håndteres af withCronMonitor —
@@ -924,8 +938,155 @@ export async function GET(request: NextRequest) {
         warningCount: issues.filter((i) => i.severity === 'warning').length,
         fixesProposed: proposedFixCount,
         fixes: fixResults,
+        cronFailureScans,
         summary,
       });
     }
   );
+}
+
+/**
+ * BIZZ-623: Tjek cron_heartbeats for fejlede eller forsinkede jobs og opret
+ * en service_manager_scans-row med scan_type='cron_failure' per unikke fejl.
+ *
+ * Dedup: vi opretter ikke en ny scan for samme job hvis vi allerede har lavet
+ * en cron_failure-scan for det job inden for de sidste 4 timer. Det forhindrer
+ * at en persistent fejlet cron spammer scan-listen hver time.
+ *
+ * Acceptance (BIZZ-623): "Cron der fejler 2 gange i træk udløser
+ * service_manager_scans med scan_type='cron_failure' inden for 30 min."
+ * Vi er konservative og fyrer allerede på første failure så agenten får
+ * chancen for at analysere ASAP — dedup-vinduet forhindrer spam.
+ *
+ * @param admin - Supabase admin-client
+ * @param now - Reference-tidspunkt (bruges til overdue-beregning + dedup)
+ * @returns Antal cron_failure-scans der blev oprettet
+ */
+async function checkCronHeartbeatsAndCreateScans(
+  admin: ReturnType<typeof createAdminClient>,
+  now: Date
+): Promise<number> {
+  interface HeartbeatRow {
+    job_name: string;
+    last_run_at: string | null;
+    last_status: 'success' | 'error' | null;
+    last_duration_ms: number | null;
+    expected_interval_minutes: number | null;
+    last_error: string | null;
+  }
+
+  let heartbeats: HeartbeatRow[] = [];
+  try {
+    const { data, error } = await admin
+      .from('cron_heartbeats')
+      .select(
+        'job_name, last_run_at, last_status, last_duration_ms, expected_interval_minutes, last_error'
+      )
+      .returns<HeartbeatRow[]>();
+    if (error) {
+      logger.error('[service-scan] cron_heartbeats query fejl:', error.message);
+      return 0;
+    }
+    heartbeats = data ?? [];
+  } catch (err) {
+    // fx PGRST205 hvis migration 041 ikke er kørt — ikke fatalt
+    logger.error('[service-scan] cron_heartbeats query exception:', err);
+    return 0;
+  }
+
+  if (heartbeats.length === 0) return 0;
+
+  // Find jobs der er enten error eller overdue
+  const failing: Array<{
+    jobName: string;
+    reason: 'error' | 'overdue';
+    detail: string;
+    lastRunAt: string | null;
+    lastError: string | null;
+  }> = [];
+
+  for (const hb of heartbeats) {
+    if (hb.last_status === 'error') {
+      failing.push({
+        jobName: hb.job_name,
+        reason: 'error',
+        detail: `Seneste run fejlede: ${hb.last_error ?? 'uspecificeret fejl'}`,
+        lastRunAt: hb.last_run_at,
+        lastError: hb.last_error,
+      });
+      continue;
+    }
+    if (hb.last_run_at && hb.expected_interval_minutes) {
+      const ageMinutes = (now.getTime() - new Date(hb.last_run_at).getTime()) / 60_000;
+      // Overdue tærskel: 2× forventet interval + 5 min grace (samme som
+      // cron-status dashboard for at undgå forskellig behandling).
+      if (ageMinutes > hb.expected_interval_minutes * 2 + 5) {
+        failing.push({
+          jobName: hb.job_name,
+          reason: 'overdue',
+          detail: `Sidst kørt for ${Math.round(ageMinutes)} min siden (forventet hver ${hb.expected_interval_minutes} min)`,
+          lastRunAt: hb.last_run_at,
+          lastError: null,
+        });
+      }
+    }
+  }
+
+  if (failing.length === 0) return 0;
+
+  // Dedup: check om der allerede er en cron_failure-scan for samme job inden
+  // for de sidste 4 timer. Vi sammenligner mod summary-feltet der indeholder
+  // job-navnet i format "[cron_failure] <jobName>: ...".
+  const fourHoursAgo = new Date(now.getTime() - 4 * 60 * 60 * 1000).toISOString();
+  // Cast via `as never` — Supabase types er genereret før migration 050
+  // tilføjede 'cron_failure' til scan_type-enum. Skift når types regenereres.
+  const { data: recentCronScans } = await admin
+    .from('service_manager_scans')
+    .select('summary')
+    .eq('scan_type', 'cron_failure' as never)
+    .gte('created_at', fourHoursAgo);
+
+  const alreadyScanned = new Set<string>();
+  for (const s of recentCronScans ?? []) {
+    const summaryStr = (s as { summary?: string }).summary ?? '';
+    const match = summaryStr.match(/\[cron_failure\]\s+([\w-]+):/);
+    if (match) alreadyScanned.add(match[1]);
+  }
+
+  let created = 0;
+  for (const f of failing) {
+    if (alreadyScanned.has(f.jobName)) {
+      logger.log(
+        `[service-scan] Cron-failure-scan for ${f.jobName} findes allerede (< 4t) — skipper`
+      );
+      continue;
+    }
+
+    const issue = {
+      type: f.reason === 'error' ? 'runtime_error' : 'config_error',
+      severity: 'error',
+      message: `Cron job '${f.jobName}' ${f.reason === 'error' ? 'fejlede' : 'er forsinket'}`,
+      source: 'cron_heartbeat',
+      context: f.detail,
+    };
+
+    const summary = `[cron_failure] ${f.jobName}: ${f.detail}`;
+    const { error: insertErr } = await admin.from('service_manager_scans').insert({
+      scan_type: 'cron_failure',
+      status: 'completed',
+      triggered_by: null,
+      issues_found: [issue],
+      summary,
+    });
+    if (insertErr) {
+      logger.error(
+        `[service-scan] Kunne ikke oprette cron_failure-scan for ${f.jobName}:`,
+        insertErr.message
+      );
+      continue;
+    }
+    created++;
+  }
+
+  return created;
 }

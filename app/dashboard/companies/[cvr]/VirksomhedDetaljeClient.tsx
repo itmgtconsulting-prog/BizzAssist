@@ -2483,9 +2483,28 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                             ? lang === 'da'
                               ? `Indlæser… (${ejendommeData.length} af ${ejendommeTotalBfe} ejendomme)`
                               : `Loading… (${ejendommeData.length} of ${ejendommeTotalBfe} properties)`
-                            : lang === 'da'
-                              ? `${ejendommeData.length} ejendom${ejendommeData.length !== 1 ? 'me' : ''} fundet`
-                              : `${ejendommeData.length} propert${ejendommeData.length !== 1 ? 'ies' : 'y'} found`}
+                            : (() => {
+                                // BIZZ-639: Overskriften skal vise både aktive og
+                                // historiske (solgte) tal. Historisk-tallet
+                                // skjules helt når 0 så overskriften ikke ser
+                                // tom ud for nye/rene porteføljer.
+                                const aktiveCount = ejendommeData.filter(
+                                  (e) => e.aktiv !== false
+                                ).length;
+                                const historiskeCount = ejendommeData.filter(
+                                  (e) => e.aktiv === false
+                                ).length;
+                                if (lang === 'da') {
+                                  const aktivLabel = `${aktiveCount} aktiv${aktiveCount !== 1 ? 'e' : ''} ejendom${aktiveCount !== 1 ? 'me' : ''}`;
+                                  return historiskeCount > 0
+                                    ? `${aktivLabel} · ${historiskeCount} historisk${historiskeCount !== 1 ? 'e' : ''}`
+                                    : aktivLabel;
+                                }
+                                const aktivLabel = `${aktiveCount} active propert${aktiveCount !== 1 ? 'ies' : 'y'}`;
+                                return historiskeCount > 0
+                                  ? `${aktivLabel} · ${historiskeCount} historical`
+                                  : aktivLabel;
+                              })()}
                         </p>
                         {relatedCompanies.length > 0 && (
                           <span className="text-slate-500 text-xs">

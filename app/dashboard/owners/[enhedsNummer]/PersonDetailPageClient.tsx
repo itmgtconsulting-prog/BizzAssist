@@ -2389,9 +2389,26 @@ export default function PersonDetailPageClient({
                         ? lang === 'da'
                           ? `Indlæser… (${ejendommeData.length} af ${ejendommeTotalBfe} ejendomme)`
                           : `Loading… (${ejendommeData.length} of ${ejendommeTotalBfe} properties)`
-                        : lang === 'da'
-                          ? `${ejendommeData.length} ejendom${ejendommeData.length !== 1 ? 'me' : ''} fundet`
-                          : `${ejendommeData.length} propert${ejendommeData.length !== 1 ? 'ies' : 'y'} found`}
+                        : (() => {
+                            // BIZZ-639: Vis både aktive og historiske (solgte)
+                            // tal — skjul historisk-delen når 0.
+                            const aktiveCount = ejendommeData.filter(
+                              (e) => e.aktiv !== false
+                            ).length;
+                            const historiskeCount = ejendommeData.filter(
+                              (e) => e.aktiv === false
+                            ).length;
+                            if (lang === 'da') {
+                              const aktivLabel = `${aktiveCount} aktiv${aktiveCount !== 1 ? 'e' : ''} ejendom${aktiveCount !== 1 ? 'me' : ''}`;
+                              return historiskeCount > 0
+                                ? `${aktivLabel} · ${historiskeCount} historisk${historiskeCount !== 1 ? 'e' : ''}`
+                                : aktivLabel;
+                            }
+                            const aktivLabel = `${aktiveCount} active propert${aktiveCount !== 1 ? 'ies' : 'y'}`;
+                            return historiskeCount > 0
+                              ? `${aktivLabel} · ${historiskeCount} historical`
+                              : aktivLabel;
+                          })()}
                     </p>
                     {/* BIZZ-338: tæller inkluderer nu også andreVirksomheder */}
                     <span className="text-slate-500 text-xs">

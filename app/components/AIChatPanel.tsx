@@ -686,7 +686,7 @@ function AIChatPanel() {
                   {a.trialBlockedBuyCta}
                 </button>
                 <button
-                  onClick={() => router.push('/dashboard/settings/billing')}
+                  onClick={() => router.push('/dashboard/settings?tab=abonnement')}
                   className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-slate-700/40 hover:bg-slate-700/60 text-slate-300 text-[11px] transition-colors"
                 >
                   {a.trialBlockedUpgradeCta}

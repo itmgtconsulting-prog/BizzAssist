@@ -80,3 +80,13 @@ export async function getSharedOAuthToken(): Promise<string | null> {
 
   return _tokenPromise;
 }
+
+/**
+ * Internal test helper — nulstiller cached token + in-flight promise så
+ * unit-tests kan isolere getSharedOAuthToken-kald med fetch-mocks. Ikke
+ * beregnet til produktions-brug.
+ */
+export function __resetTokenCacheForTests(): void {
+  _cachedToken = null;
+  _tokenPromise = null;
+}

@@ -115,7 +115,7 @@ const description = {
     h(2, 'Sandsynlig årsag'),
     bullets([
       'Servitut-PDF-endpoint (fx /api/tinglysning/pdf?dok=XXX) kalder e-TL dokument-API der returnerer både hoveddokument + alle tilhørende bilag i samme respons',
-      'Frontend loop\'er over ALLE returnerede elementer og åbner dem hver især — men filterer ikke på rolle=hoveddokument vs rolle=bilag',
+      "Frontend loop'er over ALLE returnerede elementer og åbner dem hver især — men filterer ikke på rolle=hoveddokument vs rolle=bilag",
       'Alternativt: tillægstekst-parsing opsnapper de 3 UUID\'er og åbner dem alle som "PDF" uden at adskille hoveddok fra bilag',
       'e-TL giver typisk dokument-metadata med type/rolle — fx "SERVITUT" vs "BILAG" — som skal respekteres i download-logikken',
     ]),

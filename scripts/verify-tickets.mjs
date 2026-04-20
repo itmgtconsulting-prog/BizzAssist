@@ -99,12 +99,10 @@ try {
 
     // On BBR tab, click each bygning row to expand (reveals Opgange/Etager detaljer — BIZZ-486)
     if (t === 'BBR') {
-      const bygBtns = page
-        .locator('button')
-        .filter({
-          hasText:
-            /Etagebolig|Parcelhus|Beboelse|Kontor|Butik|Erhverv|Produktion|Rækkehus|Dobbelthus/i,
-        });
+      const bygBtns = page.locator('button').filter({
+        hasText:
+          /Etagebolig|Parcelhus|Beboelse|Kontor|Butik|Erhverv|Produktion|Rækkehus|Dobbelthus/i,
+      });
       const count = await bygBtns.count();
       for (let i = 0; i < Math.min(count, 3); i++) {
         await bygBtns

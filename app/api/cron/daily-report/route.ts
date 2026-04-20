@@ -23,6 +23,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
+import { withCronMonitor } from '@/app/lib/cronMonitor';
 import { companyInfo } from '@/app/lib/companyInfo';
 import { RESEND_ENDPOINT } from '@/app/lib/serviceEndpoints';
 
@@ -556,31 +557,39 @@ async function sendReport(html: string, subject: string): Promise<void> {
  * @returns JSON med ok-flag og de indsamlede statistikker
  */
 export async function GET(request: NextRequest) {
+  // Auth udenfor monitor-wrapper: 401 skal ikke tælle som cron-fejl i Sentry.
   if (!verifyCronSecret(request)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const now = new Date();
-  // 24 timer tilbage fra nu
-  const since = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  // BIZZ-621 + BIZZ-624: Wrap cron-logikken i withCronMonitor så
+  // heartbeat + Sentry check-in + duration-tracking sker automatisk.
+  return withCronMonitor(
+    { jobName: 'daily-report', schedule: '0 7 * * *', intervalMinutes: 1440 },
+    async () => {
+      const now = new Date();
+      // 24 timer tilbage fra nu
+      const since = new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
-  const stats = await collectStats(since);
+      const stats = await collectStats(since);
 
-  // Datostreng til emnelinjen: DD.MM.YYYY
-  const dateLabel = now.toLocaleDateString('da-DK', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    timeZone: 'UTC',
-  });
-  const subject = `BizzAssist Daglig Status \u2014 ${dateLabel}`;
+      // Datostreng til emnelinjen: DD.MM.YYYY
+      const dateLabel = now.toLocaleDateString('da-DK', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        timeZone: 'UTC',
+      });
+      const subject = `BizzAssist Daglig Status \u2014 ${dateLabel}`;
 
-  const html = buildHtml(stats, now);
-  await sendReport(html, subject);
+      const html = buildHtml(stats, now);
+      await sendReport(html, subject);
 
-  return NextResponse.json({
-    ok: true,
-    reportDate: now.toISOString(),
-    stats,
-  });
+      return NextResponse.json({
+        ok: true,
+        reportDate: now.toISOString(),
+        stats,
+      });
+    }
+  );
 }

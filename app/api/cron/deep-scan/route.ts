@@ -35,6 +35,7 @@ import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 import { companyInfo } from '@/app/lib/companyInfo';
 import { RESEND_ENDPOINT } from '@/app/lib/serviceEndpoints';
+import { withCronMonitor } from '@/app/lib/cronMonitor';
 
 /** Vercel Pro function timeout (seconds) — uses full near-limit duration */
 export const maxDuration = 55;
@@ -747,88 +748,95 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const now = new Date();
-  const admin = createAdminClient();
+  // BIZZ-621 + BIZZ-624: heartbeat + Sentry cron-monitoring.
+  return withCronMonitor(
+    { jobName: 'deep-scan', schedule: '30 3 * * *', intervalMinutes: 1440 },
+    async () => {
+      const now = new Date();
+      const admin = createAdminClient();
 
-  logger.log('[deep-scan] Starting daily deep scan at', now.toISOString());
+      logger.log('[deep-scan] Starting daily deep scan at', now.toISOString());
 
-  // ── 1. Run all checks in parallel ────────────────────────────────────────
-  // Dependency audit can be slow (npm registry call) — run all concurrently
-  const [tsResult, testResult, vulnResult] = await Promise.all([
-    checkTypeScriptErrors(),
-    checkTestFailures(),
-    checkDependencyVulnerabilities(),
-  ]);
+      // ── 1. Run all checks in parallel ────────────────────────────────────────
+      // Dependency audit can be slow (npm registry call) — run all concurrently
+      const [tsResult, testResult, vulnResult] = await Promise.all([
+        checkTypeScriptErrors(),
+        checkTestFailures(),
+        checkDependencyVulnerabilities(),
+      ]);
 
-  const allCheckResults: CheckResult[] = [tsResult, testResult, vulnResult];
+      const allCheckResults: CheckResult[] = [tsResult, testResult, vulnResult];
 
-  // Flatten all issues for storage
-  const allIssues: DeepScanIssue[] = allCheckResults.flatMap((cr) => cr.issues);
+      // Flatten all issues for storage
+      const allIssues: DeepScanIssue[] = allCheckResults.flatMap((cr) => cr.issues);
 
-  const errorCount = allIssues.filter((i) => i.severity === 'error').length;
-  const warningCount = allIssues.filter((i) => i.severity === 'warning').length;
+      const errorCount = allIssues.filter((i) => i.severity === 'error').length;
+      const warningCount = allIssues.filter((i) => i.severity === 'warning').length;
 
-  const checksSummary = allCheckResults
-    .map(
-      (cr) => `${cr.checkName}: ${cr.issues.length} problemer${cr.ran ? '' : ' (check fejlede)'}`
-    )
-    .join(', ');
+      const checksSummary = allCheckResults
+        .map(
+          (cr) =>
+            `${cr.checkName}: ${cr.issues.length} problemer${cr.ran ? '' : ' (check fejlede)'}`
+        )
+        .join(', ');
 
-  const summary =
-    allIssues.length === 0
-      ? 'Deep scan fuldført: ingen problemer fundet.'
-      : `Deep scan fuldført: ${errorCount} fejl, ${warningCount} advarsler. ${checksSummary}.`;
+      const summary =
+        allIssues.length === 0
+          ? 'Deep scan fuldført: ingen problemer fundet.'
+          : `Deep scan fuldført: ${errorCount} fejl, ${warningCount} advarsler. ${checksSummary}.`;
 
-  // ── 2. Persist scan record ────────────────────────────────────────────────
-  const { data: scanData, error: scanInsertErr } = await admin
-    .from('service_manager_scans')
-    .insert({
-      scan_type: 'deep',
-      status: 'completed',
-      triggered_by: null,
-      issues_found: allIssues,
-      summary,
-    })
-    .select('id')
-    .single();
+      // ── 2. Persist scan record ────────────────────────────────────────────────
+      const { data: scanData, error: scanInsertErr } = await admin
+        .from('service_manager_scans')
+        .insert({
+          scan_type: 'deep',
+          status: 'completed',
+          triggered_by: null,
+          issues_found: allIssues,
+          summary,
+        })
+        .select('id')
+        .single();
 
-  if (scanInsertErr || !scanData) {
-    logger.error('[deep-scan] Kunne ikke oprette scan-record:', scanInsertErr?.message);
-    return NextResponse.json({ error: 'Kunne ikke oprette scan-record' }, { status: 500 });
-  }
+      if (scanInsertErr || !scanData) {
+        logger.error('[deep-scan] Kunne ikke oprette scan-record:', scanInsertErr?.message);
+        return NextResponse.json({ error: 'Kunne ikke oprette scan-record' }, { status: 500 });
+      }
 
-  const scanId = scanData.id as string;
+      const scanId = scanData.id as string;
 
-  await logActivity('deep_scan_completed', {
-    scan_id: scanId,
-    issue_count: allIssues.length,
-    error_count: errorCount,
-    warning_count: warningCount,
-    ts_errors: tsResult.issues.length,
-    test_failures: testResult.issues.length,
-    vulnerabilities: vulnResult.issues.length,
-    checks_ran: allCheckResults.filter((cr) => cr.ran).length,
-  });
+      await logActivity('deep_scan_completed', {
+        scan_id: scanId,
+        issue_count: allIssues.length,
+        error_count: errorCount,
+        warning_count: warningCount,
+        ts_errors: tsResult.issues.length,
+        test_failures: testResult.issues.length,
+        vulnerabilities: vulnResult.issues.length,
+        checks_ran: allCheckResults.filter((cr) => cr.ran).length,
+      });
 
-  // ── 3. Send detailed email report ─────────────────────────────────────────
-  await sendDeepScanReport(allCheckResults, scanId, now);
+      // ── 3. Send detailed email report ─────────────────────────────────────────
+      await sendDeepScanReport(allCheckResults, scanId, now);
 
-  logger.log(
-    `[deep-scan] Done: ${allIssues.length} total issues, ${errorCount} errors, ${warningCount} warnings`
+      logger.log(
+        `[deep-scan] Done: ${allIssues.length} total issues, ${errorCount} errors, ${warningCount} warnings`
+      );
+
+      return NextResponse.json({
+        ok: true,
+        scanId,
+        totalIssues: allIssues.length,
+        errorCount,
+        warningCount,
+        checks: allCheckResults.map((cr) => ({
+          name: cr.checkName,
+          ran: cr.ran,
+          issueCount: cr.issues.length,
+          checkError: cr.checkError,
+        })),
+        summary,
+      });
+    }
   );
-
-  return NextResponse.json({
-    ok: true,
-    scanId,
-    totalIssues: allIssues.length,
-    errorCount,
-    warningCount,
-    checks: allCheckResults.map((cr) => ({
-      name: cr.checkName,
-      ran: cr.ran,
-      issueCount: cr.issues.length,
-      checkError: cr.checkError,
-    })),
-    summary,
-  });
 }

@@ -35,6 +35,7 @@ import { getSharedOAuthToken } from '@/app/lib/dfTokenCache';
 import { getCertOAuthToken, isCertAuthConfigured } from '@/app/lib/dfCertAuth';
 import { proxyUrl, proxyHeaders, proxyTimeout } from '@/app/lib/dfProxy';
 import { EJF_GQL_ENDPOINT } from '@/app/lib/serviceEndpoints';
+import { withCronMonitor } from '@/app/lib/cronMonitor';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300; // 5 min — bulk-ingest kan tage tid
@@ -512,119 +513,125 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const startTime = Date.now();
-  const dumpUrl = process.env.EJF_BULK_DUMP_URL;
-  const admin = createAdminClient();
+  // BIZZ-621 + BIZZ-624: heartbeat + Sentry cron-monitoring.
+  return withCronMonitor(
+    { jobName: 'ingest-ejf-bulk', schedule: '0 4 * * *', intervalMinutes: 1440 },
+    async () => {
+      const startTime = Date.now();
+      const dumpUrl = process.env.EJF_BULK_DUMP_URL;
+      const admin = createAdminClient();
 
-  // BIZZ-534: nye tabeller, endnu ikke i auto-generated types
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const ingestRuns = (admin as any).from('ejf_ingest_runs');
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const ejfTbl = (admin as any).from('ejf_ejerskab');
+      // BIZZ-534: nye tabeller, endnu ikke i auto-generated types
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const ingestRuns = (admin as any).from('ejf_ingest_runs');
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const ejfTbl = (admin as any).from('ejf_ejerskab');
 
-  // Hent evt. cursor fra forrige kørsel for inkrementel synk
-  const resetParam = request.nextUrl.searchParams.get('reset');
-  const cursorParam = request.nextUrl.searchParams.get('cursor');
-  let startCursor: string | null = cursorParam ?? null;
+      // Hent evt. cursor fra forrige kørsel for inkrementel synk
+      const resetParam = request.nextUrl.searchParams.get('reset');
+      const cursorParam = request.nextUrl.searchParams.get('cursor');
+      let startCursor: string | null = cursorParam ?? null;
 
-  if (!startCursor && resetParam !== 'true') {
-    // Find seneste ufærdige kørsel med gemt cursor
-    const { data: lastRun } = await ingestRuns
-      .select('error')
-      .not('error', 'is', null)
-      .ilike('error', '%cursor:%')
-      .order('id', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (lastRun?.error) {
-      const match = (lastRun.error as string).match(/cursor:\s*(\S+)/);
-      if (match) startCursor = match[1];
-    }
-  }
+      if (!startCursor && resetParam !== 'true') {
+        // Find seneste ufærdige kørsel med gemt cursor
+        const { data: lastRun } = await ingestRuns
+          .select('error')
+          .not('error', 'is', null)
+          .ilike('error', '%cursor:%')
+          .order('id', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (lastRun?.error) {
+          const match = (lastRun.error as string).match(/cursor:\s*(\S+)/);
+          if (match) startCursor = match[1];
+        }
+      }
 
-  // Opret run-row for tracking
-  const { data: runRow, error: runErr } = await ingestRuns
-    .insert({ started_at: new Date().toISOString() })
-    .select('id')
-    .single();
+      // Opret run-row for tracking
+      const { data: runRow, error: runErr } = await ingestRuns
+        .insert({ started_at: new Date().toISOString() })
+        .select('id')
+        .single();
 
-  if (runErr) {
-    logger.error('[ingest-ejf-bulk] Kan ikke oprette run-row:', runErr.message);
-    return NextResponse.json({ ok: false, error: 'Run-tracking fejlede' }, { status: 500 });
-  }
-  const runId = runRow!.id as number;
+      if (runErr) {
+        logger.error('[ingest-ejf-bulk] Kan ikke oprette run-row:', runErr.message);
+        return NextResponse.json({ ok: false, error: 'Run-tracking fejlede' }, { status: 500 });
+      }
+      const runId = runRow!.id as number;
 
-  let processed = 0;
-  let inserted = 0;
-  let failed = 0;
-  let error: string | null = null;
-  let endCursor: string | null = null;
-  let complete = false;
-  let mode: 'bulk-file' | 'graphql' = 'graphql';
+      let processed = 0;
+      let inserted = 0;
+      let failed = 0;
+      let error: string | null = null;
+      let endCursor: string | null = null;
+      let complete = false;
+      let mode: 'bulk-file' | 'graphql' = 'graphql';
 
-  if (dumpUrl) {
-    // ── Mode A: Bulk-fil download ──
-    mode = 'bulk-file';
-    logger.log('[ingest-ejf-bulk] Mode A: Bulk-fil download fra', dumpUrl);
-    const result = await ingestFromBulkFile(dumpUrl, ejfTbl, startTime);
-    processed = result.processed;
-    inserted = result.inserted;
-    failed = result.failed;
-    error = result.error;
-    complete = !error;
-  } else {
-    // ── Mode B: GraphQL pagination ──
-    const token = await getToken();
-    if (!token) {
-      error = 'OAuth token ikke tilgængeligt — tjek DATAFORDELER_OAUTH_CLIENT_ID/SECRET';
-      logger.error('[ingest-ejf-bulk]', error);
-    } else {
-      mode = 'graphql';
+      if (dumpUrl) {
+        // ── Mode A: Bulk-fil download ──
+        mode = 'bulk-file';
+        logger.log('[ingest-ejf-bulk] Mode A: Bulk-fil download fra', dumpUrl);
+        const result = await ingestFromBulkFile(dumpUrl, ejfTbl, startTime);
+        processed = result.processed;
+        inserted = result.inserted;
+        failed = result.failed;
+        error = result.error;
+        complete = !error;
+      } else {
+        // ── Mode B: GraphQL pagination ──
+        const token = await getToken();
+        if (!token) {
+          error = 'OAuth token ikke tilgængeligt — tjek DATAFORDELER_OAUTH_CLIENT_ID/SECRET';
+          logger.error('[ingest-ejf-bulk]', error);
+        } else {
+          mode = 'graphql';
+          logger.log(
+            `[ingest-ejf-bulk] Mode B: GraphQL pagination, startCursor: ${startCursor ?? 'null'}`
+          );
+          const result = await ingestFromGraphQL(token, ejfTbl, startCursor, startTime);
+          processed = result.processed;
+          inserted = result.inserted;
+          failed = result.failed;
+          endCursor = result.cursor;
+          error = result.error;
+          complete = result.complete;
+        }
+      }
+
+      // Gem cursor i error-feltet for resume (kun hvis ikke komplet)
+      const statusNote = complete
+        ? null
+        : endCursor
+          ? `Ufuldstændig kørsel — cursor: ${endCursor}`
+          : error;
+
+      await ingestRuns
+        .update({
+          finished_at: new Date().toISOString(),
+          rows_processed: processed,
+          rows_inserted: inserted,
+          rows_updated: 0,
+          rows_failed: failed,
+          error: statusNote ?? error,
+        })
+        .eq('id', runId);
+
+      const elapsed = Math.round((Date.now() - startTime) / 1000);
       logger.log(
-        `[ingest-ejf-bulk] Mode B: GraphQL pagination, startCursor: ${startCursor ?? 'null'}`
+        `[ingest-ejf-bulk] Færdig: mode=${mode} processed=${processed} inserted=${inserted} ` +
+          `failed=${failed} complete=${complete} elapsed=${elapsed}s`
       );
-      const result = await ingestFromGraphQL(token, ejfTbl, startCursor, startTime);
-      processed = result.processed;
-      inserted = result.inserted;
-      failed = result.failed;
-      endCursor = result.cursor;
-      error = result.error;
-      complete = result.complete;
+
+      return NextResponse.json({
+        ok: error == null,
+        runId,
+        mode,
+        rows: { processed, inserted, updated: 0, failed },
+        complete,
+        cursor: endCursor,
+        elapsed: `${elapsed}s`,
+        error,
+      });
     }
-  }
-
-  // Gem cursor i error-feltet for resume (kun hvis ikke komplet)
-  const statusNote = complete
-    ? null
-    : endCursor
-      ? `Ufuldstændig kørsel — cursor: ${endCursor}`
-      : error;
-
-  await ingestRuns
-    .update({
-      finished_at: new Date().toISOString(),
-      rows_processed: processed,
-      rows_inserted: inserted,
-      rows_updated: 0,
-      rows_failed: failed,
-      error: statusNote ?? error,
-    })
-    .eq('id', runId);
-
-  const elapsed = Math.round((Date.now() - startTime) / 1000);
-  logger.log(
-    `[ingest-ejf-bulk] Færdig: mode=${mode} processed=${processed} inserted=${inserted} ` +
-      `failed=${failed} complete=${complete} elapsed=${elapsed}s`
   );
-
-  return NextResponse.json({
-    ok: error == null,
-    runId,
-    mode,
-    rows: { processed, inserted, updated: 0, failed },
-    complete,
-    cursor: endCursor,
-    elapsed: `${elapsed}s`,
-    error,
-  });
 }

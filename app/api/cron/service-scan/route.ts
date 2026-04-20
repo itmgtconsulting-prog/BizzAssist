@@ -40,7 +40,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { sendCriticalAlert, isCriticalIssue } from '@/lib/service-manager-alerts';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
-import { recordHeartbeat } from '@/app/lib/cronHeartbeat';
+import { withCronMonitor } from '@/app/lib/cronMonitor';
 import { companyInfo } from '@/app/lib/companyInfo';
 import { RESEND_ENDPOINT } from '@/app/lib/serviceEndpoints';
 
@@ -631,287 +631,301 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const now = new Date();
-  const admin = createAdminClient();
+  // BIZZ-305/621/624: heartbeat + Sentry cron-monitoring via shared wrapper.
+  // Tidligere inline recordHeartbeat erstattet af withCronMonitor.
+  return withCronMonitor(
+    { jobName: 'service-scan', schedule: '0 * * * *', intervalMinutes: 60 },
+    async () => {
+      const now = new Date();
+      const admin = createAdminClient();
 
-  // ── 1. Run the bug scan ───────────────────────────────────────────────────
-  let issues: ScanIssue[];
-  let summary: string;
-  let scanStatus: 'completed' | 'failed';
+      // ── 1. Run the bug scan ───────────────────────────────────────────────────
+      let issues: ScanIssue[];
+      let summary: string;
+      let scanStatus: 'completed' | 'failed';
 
-  try {
-    const result = await runScan();
-    issues = result.issues;
-    summary = result.summary;
-    scanStatus = 'completed';
-  } catch (scanErr) {
-    logger.error('[service-scan] runScan threw:', scanErr);
-    issues = [
-      {
-        type: 'config_error',
-        severity: 'error',
-        message: 'Scan afbrudt af uventet fejl',
-        source: 'static',
-        context: scanErr instanceof Error ? scanErr.message : 'Ukendt fejl',
-      },
-    ];
-    summary = 'Scan mislykkedes pga. intern fejl.';
-    scanStatus = 'failed';
-  }
-
-  // ── 1b. BIZZ-306: External API + infrastructure health checks ─────────────
-  try {
-    const healthRes = await fetch(`${request.nextUrl.origin}/api/health?deep=true`, {
-      headers: { cookie: request.headers.get('cookie') ?? '' },
-      signal: AbortSignal.timeout(15000),
-    });
-    if (healthRes.ok) {
-      const health = await healthRes.json();
-
-      // Check external APIs
-      const apis = health.checks?.external_apis ?? {};
-      for (const [name, info] of Object.entries(apis) as [
-        string,
-        { status: string; latency_ms: number },
-      ][]) {
-        if (info.status === 'down') {
-          issues.push({
+      try {
+        const result = await runScan();
+        issues = result.issues;
+        summary = result.summary;
+        scanStatus = 'completed';
+      } catch (scanErr) {
+        logger.error('[service-scan] runScan threw:', scanErr);
+        issues = [
+          {
             type: 'config_error',
             severity: 'error',
-            message: `Ekstern API nede: ${name}`,
+            message: 'Scan afbrudt af uventet fejl',
             source: 'static',
-            context: `Latency: ${info.latency_ms}ms`,
-          });
-        } else if (info.status === 'slow') {
-          issues.push({
-            type: 'config_error',
-            severity: 'warning',
-            message: `Ekstern API langsom: ${name} (${info.latency_ms}ms)`,
-            source: 'static',
-          });
+            context: scanErr instanceof Error ? scanErr.message : 'Ukendt fejl',
+          },
+        ];
+        summary = 'Scan mislykkedes pga. intern fejl.';
+        scanStatus = 'failed';
+      }
+
+      // ── 1b. BIZZ-306: External API + infrastructure health checks ─────────────
+      try {
+        const healthRes = await fetch(`${request.nextUrl.origin}/api/health?deep=true`, {
+          headers: { cookie: request.headers.get('cookie') ?? '' },
+          signal: AbortSignal.timeout(15000),
+        });
+        if (healthRes.ok) {
+          const health = await healthRes.json();
+
+          // Check external APIs
+          const apis = health.checks?.external_apis ?? {};
+          for (const [name, info] of Object.entries(apis) as [
+            string,
+            { status: string; latency_ms: number },
+          ][]) {
+            if (info.status === 'down') {
+              issues.push({
+                type: 'config_error',
+                severity: 'error',
+                message: `Ekstern API nede: ${name}`,
+                source: 'static',
+                context: `Latency: ${info.latency_ms}ms`,
+              });
+            } else if (info.status === 'slow') {
+              issues.push({
+                type: 'config_error',
+                severity: 'warning',
+                message: `Ekstern API langsom: ${name} (${info.latency_ms}ms)`,
+                source: 'static',
+              });
+            }
+          }
+
+          // Check certificates
+          const certs = health.checks?.certificates ?? [];
+          for (const cert of certs as {
+            name: string;
+            status: string;
+            daysRemaining: number | null;
+          }[]) {
+            if (cert.status === 'expired' || cert.status === 'critical') {
+              issues.push({
+                type: 'config_error',
+                severity: 'error',
+                message: `Certifikat ${cert.status}: ${cert.name} (${cert.daysRemaining ?? 0} dage)`,
+                source: 'static',
+                context: 'certificate_expiry',
+              });
+            } else if (cert.status === 'warning') {
+              issues.push({
+                type: 'config_error',
+                severity: 'warning',
+                message: `Certifikat udløber snart: ${cert.name} (${cert.daysRemaining} dage)`,
+                source: 'static',
+                context: 'certificate_expiry',
+              });
+            }
+          }
+
+          // Check Redis
+          if (health.checks?.redis === 'error') {
+            issues.push({
+              type: 'config_error',
+              severity: 'error',
+              message: 'Upstash Redis ikke tilgængelig',
+              source: 'static',
+            });
+          }
+
+          // Update summary if new issues found
+          const infraIssues = issues.filter(
+            (i) => i.source === 'static' && i.message.includes('API')
+          );
+          if (infraIssues.length > 0) {
+            summary += ` | Infrastruktur: ${infraIssues.length} problemer fundet.`;
+          }
+        }
+      } catch {
+        // Health check failure is non-fatal
+        logger.error('[service-scan] Deep health check failed (non-fatal)');
+      }
+
+      // ── 2. Persist scan record ────────────────────────────────────────────────
+      const { data: scanData, error: scanInsertErr } = await admin
+        .from('service_manager_scans')
+        .insert({
+          scan_type: 'scheduled',
+          status: scanStatus,
+          triggered_by: null, // Cron — no user
+          issues_found: issues,
+          summary,
+        })
+        .select('id')
+        .single();
+
+      if (scanInsertErr || !scanData) {
+        logger.error('[service-scan] Kunne ikke oprette scan-record:', scanInsertErr?.message);
+        return NextResponse.json({ error: 'Kunne ikke oprette scan-record' }, { status: 500 });
+      }
+
+      const scanId = scanData.id as string;
+
+      await logActivity('scheduled_scan_completed', {
+        scan_id: scanId,
+        status: scanStatus,
+        issue_count: issues.length,
+        error_count: issues.filter((i) => i.severity === 'error').length,
+        warning_count: issues.filter((i) => i.severity === 'warning').length,
+      });
+
+      // ── 3. Propose fixes for new error-severity issues ────────────────────────
+      const errorIssues = issues.filter((i) => i.severity === 'error');
+      let proposedFixCount = 0;
+      const fixResults: { issueIndex: number; fixId: string; classification: string }[] = [];
+
+      for (
+        let idx = 0;
+        idx < issues.length && proposedFixCount < MAX_FIX_PROPOSALS_PER_RUN;
+        idx++
+      ) {
+        const issue = issues[idx];
+        if (issue.severity !== 'error') continue;
+
+        // Skip if an active fix proposal already exists for this exact message
+        // (prevents re-proposing the same fix on every hourly run)
+        const { data: existingData } = await admin
+          .from('service_manager_fixes')
+          .select('id, status')
+          .eq('issue_index', idx)
+          .in('status', ['proposed', 'approved'])
+          // Look for fixes from the last 48 hours with the same message
+          .gte('created_at', new Date(now.getTime() - 48 * 60 * 60 * 1000).toISOString())
+          .maybeSingle();
+
+        if (existingData) {
+          logger.log(
+            `[service-scan] Issue ${idx} already has active fix ${existingData.id} — skipping`
+          );
+          continue;
+        }
+
+        // Ask Claude to propose a fix
+        let claudeResult: ClaudeFixResponse;
+        try {
+          claudeResult = await proposeFixWithClaude(issue, summary);
+        } catch (aiErr) {
+          logger.error(`[service-scan] Claude API error for issue ${idx}:`, aiErr);
+          continue;
+        }
+
+        // Apply safety guards
+        let finalClassification = claudeResult.classification;
+        let finalReasoning = claudeResult.reasoning;
+
+        if (finalClassification !== 'rejected' && claudeResult.proposed_diff) {
+          const lineCount = countChangedLines(claudeResult.proposed_diff);
+          if (lineCount > MAX_LINES_CHANGED) {
+            finalClassification = 'rejected';
+            finalReasoning = `Afvist: ${lineCount} linjer ændret (maks ${MAX_LINES_CHANGED}). ${finalReasoning}`;
+          }
+
+          if (finalClassification !== 'rejected') {
+            const blocked = findBlockedPattern(claudeResult.proposed_diff);
+            if (blocked) {
+              finalClassification = 'rejected';
+              finalReasoning = `Afvist pga. blokeret mønster. ${blocked}. ${finalReasoning}`;
+            }
+          }
+        }
+
+        if (finalClassification !== 'rejected' && !claudeResult.proposed_diff.trim()) {
+          finalClassification = 'rejected';
+          finalReasoning = `Afvist: Claude returnerede et tomt diff. ${finalReasoning}`;
+        }
+
+        // Persist the fix proposal
+        const { data: fixData, error: fixInsertErr } = await admin
+          .from('service_manager_fixes')
+          .insert({
+            scan_id: scanId,
+            issue_index: idx,
+            file_path: claudeResult.file_path,
+            proposed_diff: claudeResult.proposed_diff,
+            classification: finalClassification,
+            status: finalClassification === 'rejected' ? 'rejected' : 'proposed',
+            claude_reasoning: finalReasoning,
+            rejection_reason: finalClassification === 'rejected' ? finalReasoning : null,
+          })
+          .select('id, status, classification')
+          .single();
+
+        if (fixInsertErr || !fixData) {
+          logger.error('[service-scan] Kunne ikke gemme fix-forslag:', fixInsertErr?.message);
+          continue;
+        }
+
+        fixResults.push({
+          issueIndex: idx,
+          fixId: fixData.id as string,
+          classification: finalClassification,
+        });
+
+        await logActivity('auto_fix_proposed', {
+          fix_id: fixData.id,
+          scan_id: scanId,
+          issue_index: idx,
+          issue_type: issue.type,
+          file_path: claudeResult.file_path,
+          classification: finalClassification,
+          lines_changed: claudeResult.proposed_diff
+            ? countChangedLines(claudeResult.proposed_diff)
+            : 0,
+          triggered_by: 'cron',
+        });
+
+        if (finalClassification !== 'rejected') {
+          proposedFixCount++;
         }
       }
 
-      // Check certificates
-      const certs = health.checks?.certificates ?? [];
-      for (const cert of certs as {
-        name: string;
-        status: string;
-        daysRemaining: number | null;
-      }[]) {
-        if (cert.status === 'expired' || cert.status === 'critical') {
-          issues.push({
-            type: 'config_error',
-            severity: 'error',
-            message: `Certifikat ${cert.status}: ${cert.name} (${cert.daysRemaining ?? 0} dage)`,
-            source: 'static',
-            context: 'certificate_expiry',
-          });
-        } else if (cert.status === 'warning') {
-          issues.push({
-            type: 'config_error',
-            severity: 'warning',
-            message: `Certifikat udløber snart: ${cert.name} (${cert.daysRemaining} dage)`,
-            source: 'static',
-            context: 'certificate_expiry',
-          });
-        }
-      }
+      // ── 4. Send immediate critical alerts for high-severity issues ───────────
+      // These fire before the general alert email so critical failures get
+      // dedicated, immediately-actionable notifications with their own subject line.
+      const criticalIssues = errorIssues.filter((issue) =>
+        isCriticalIssue(issue.type, issue.message, issue.context)
+      );
 
-      // Check Redis
-      if (health.checks?.redis === 'error') {
-        issues.push({
-          type: 'config_error',
-          severity: 'error',
-          message: 'Upstash Redis ikke tilgængelig',
-          source: 'static',
+      for (const critical of criticalIssues) {
+        await sendCriticalAlert({
+          description: critical.message,
+          affectedPath: critical.context?.includes('Funktion: ')
+            ? critical.context.replace('Funktion: ', '')
+            : undefined,
+          scanId,
+          issueType: critical.type,
+          context: critical.context,
+          detectedAt: now,
         });
       }
 
-      // Update summary if new issues found
-      const infraIssues = issues.filter((i) => i.source === 'static' && i.message.includes('API'));
-      if (infraIssues.length > 0) {
-        summary += ` | Infrastruktur: ${infraIssues.length} problemer fundet.`;
+      // ── 5. Send general alert email if any error issues were found ────────────
+      if (errorIssues.length > 0) {
+        await sendAlertEmail(issues, scanId, proposedFixCount, now);
       }
-    }
-  } catch {
-    // Health check failure is non-fatal
-    logger.error('[service-scan] Deep health check failed (non-fatal)');
-  }
 
-  // ── 2. Persist scan record ────────────────────────────────────────────────
-  const { data: scanData, error: scanInsertErr } = await admin
-    .from('service_manager_scans')
-    .insert({
-      scan_type: 'scheduled',
-      status: scanStatus,
-      triggered_by: null, // Cron — no user
-      issues_found: issues,
-      summary,
-    })
-    .select('id')
-    .single();
-
-  if (scanInsertErr || !scanData) {
-    logger.error('[service-scan] Kunne ikke oprette scan-record:', scanInsertErr?.message);
-    return NextResponse.json({ error: 'Kunne ikke oprette scan-record' }, { status: 500 });
-  }
-
-  const scanId = scanData.id as string;
-
-  await logActivity('scheduled_scan_completed', {
-    scan_id: scanId,
-    status: scanStatus,
-    issue_count: issues.length,
-    error_count: issues.filter((i) => i.severity === 'error').length,
-    warning_count: issues.filter((i) => i.severity === 'warning').length,
-  });
-
-  // ── 3. Propose fixes for new error-severity issues ────────────────────────
-  const errorIssues = issues.filter((i) => i.severity === 'error');
-  let proposedFixCount = 0;
-  const fixResults: { issueIndex: number; fixId: string; classification: string }[] = [];
-
-  for (let idx = 0; idx < issues.length && proposedFixCount < MAX_FIX_PROPOSALS_PER_RUN; idx++) {
-    const issue = issues[idx];
-    if (issue.severity !== 'error') continue;
-
-    // Skip if an active fix proposal already exists for this exact message
-    // (prevents re-proposing the same fix on every hourly run)
-    const { data: existingData } = await admin
-      .from('service_manager_fixes')
-      .select('id, status')
-      .eq('issue_index', idx)
-      .in('status', ['proposed', 'approved'])
-      // Look for fixes from the last 48 hours with the same message
-      .gte('created_at', new Date(now.getTime() - 48 * 60 * 60 * 1000).toISOString())
-      .maybeSingle();
-
-    if (existingData) {
       logger.log(
-        `[service-scan] Issue ${idx} already has active fix ${existingData.id} — skipping`
+        `[service-scan] Done: ${issues.length} issues, ${errorIssues.length} errors, ${proposedFixCount} fixes proposed`
       );
-      continue;
+
+      // Heartbeat-write + Sentry check-in håndteres af withCronMonitor —
+      // BIZZ-305's inline recordHeartbeat er fjernet da det nu er centralt.
+
+      return NextResponse.json({
+        ok: true,
+        scanId,
+        issueCount: issues.length,
+        errorCount: errorIssues.length,
+        warningCount: issues.filter((i) => i.severity === 'warning').length,
+        fixesProposed: proposedFixCount,
+        fixes: fixResults,
+        summary,
+      });
     }
-
-    // Ask Claude to propose a fix
-    let claudeResult: ClaudeFixResponse;
-    try {
-      claudeResult = await proposeFixWithClaude(issue, summary);
-    } catch (aiErr) {
-      logger.error(`[service-scan] Claude API error for issue ${idx}:`, aiErr);
-      continue;
-    }
-
-    // Apply safety guards
-    let finalClassification = claudeResult.classification;
-    let finalReasoning = claudeResult.reasoning;
-
-    if (finalClassification !== 'rejected' && claudeResult.proposed_diff) {
-      const lineCount = countChangedLines(claudeResult.proposed_diff);
-      if (lineCount > MAX_LINES_CHANGED) {
-        finalClassification = 'rejected';
-        finalReasoning = `Afvist: ${lineCount} linjer ændret (maks ${MAX_LINES_CHANGED}). ${finalReasoning}`;
-      }
-
-      if (finalClassification !== 'rejected') {
-        const blocked = findBlockedPattern(claudeResult.proposed_diff);
-        if (blocked) {
-          finalClassification = 'rejected';
-          finalReasoning = `Afvist pga. blokeret mønster. ${blocked}. ${finalReasoning}`;
-        }
-      }
-    }
-
-    if (finalClassification !== 'rejected' && !claudeResult.proposed_diff.trim()) {
-      finalClassification = 'rejected';
-      finalReasoning = `Afvist: Claude returnerede et tomt diff. ${finalReasoning}`;
-    }
-
-    // Persist the fix proposal
-    const { data: fixData, error: fixInsertErr } = await admin
-      .from('service_manager_fixes')
-      .insert({
-        scan_id: scanId,
-        issue_index: idx,
-        file_path: claudeResult.file_path,
-        proposed_diff: claudeResult.proposed_diff,
-        classification: finalClassification,
-        status: finalClassification === 'rejected' ? 'rejected' : 'proposed',
-        claude_reasoning: finalReasoning,
-        rejection_reason: finalClassification === 'rejected' ? finalReasoning : null,
-      })
-      .select('id, status, classification')
-      .single();
-
-    if (fixInsertErr || !fixData) {
-      logger.error('[service-scan] Kunne ikke gemme fix-forslag:', fixInsertErr?.message);
-      continue;
-    }
-
-    fixResults.push({
-      issueIndex: idx,
-      fixId: fixData.id as string,
-      classification: finalClassification,
-    });
-
-    await logActivity('auto_fix_proposed', {
-      fix_id: fixData.id,
-      scan_id: scanId,
-      issue_index: idx,
-      issue_type: issue.type,
-      file_path: claudeResult.file_path,
-      classification: finalClassification,
-      lines_changed: claudeResult.proposed_diff ? countChangedLines(claudeResult.proposed_diff) : 0,
-      triggered_by: 'cron',
-    });
-
-    if (finalClassification !== 'rejected') {
-      proposedFixCount++;
-    }
-  }
-
-  // ── 4. Send immediate critical alerts for high-severity issues ───────────
-  // These fire before the general alert email so critical failures get
-  // dedicated, immediately-actionable notifications with their own subject line.
-  const criticalIssues = errorIssues.filter((issue) =>
-    isCriticalIssue(issue.type, issue.message, issue.context)
   );
-
-  for (const critical of criticalIssues) {
-    await sendCriticalAlert({
-      description: critical.message,
-      affectedPath: critical.context?.includes('Funktion: ')
-        ? critical.context.replace('Funktion: ', '')
-        : undefined,
-      scanId,
-      issueType: critical.type,
-      context: critical.context,
-      detectedAt: now,
-    });
-  }
-
-  // ── 5. Send general alert email if any error issues were found ────────────
-  if (errorIssues.length > 0) {
-    await sendAlertEmail(issues, scanId, proposedFixCount, now);
-  }
-
-  logger.log(
-    `[service-scan] Done: ${issues.length} issues, ${errorIssues.length} errors, ${proposedFixCount} fixes proposed`
-  );
-
-  // BIZZ-305: Record heartbeat for watchdog monitoring
-  const durationMs = Date.now() - now.getTime();
-  recordHeartbeat('service-scan', 'success', durationMs, 60);
-
-  return NextResponse.json({
-    ok: true,
-    scanId,
-    issueCount: issues.length,
-    errorCount: errorIssues.length,
-    warningCount: issues.filter((i) => i.severity === 'warning').length,
-    fixesProposed: proposedFixCount,
-    fixes: fixResults,
-    summary,
-  });
 }

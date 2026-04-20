@@ -17,6 +17,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { tenantDb } from '@/lib/supabase/admin';
 import { logger } from '@/app/lib/logger';
+import { withCronMonitor } from '@/app/lib/cronMonitor';
 
 const MIN_OCCURRENCES = 3;
 const LOOKBACK_DAYS = 7;
@@ -87,63 +88,71 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  try {
-    const since = new Date(Date.now() - LOOKBACK_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  // BIZZ-621 + BIZZ-624: heartbeat + Sentry cron-monitoring.
+  // ai-feedback-triage er ikke i vercel.json endnu (manuel trigger via POST);
+  // bruger ugentlig default så watchdog ved hvad intervallet er.
+  return withCronMonitor(
+    { jobName: 'ai-feedback-triage', schedule: '0 2 * * 1', intervalMinutes: 10080 },
+    async () => {
+      try {
+        const since = new Date(Date.now() - LOOKBACK_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
-    // Fetch recent feedback entries without JIRA tickets
-    const { data: entries, error } = await tenantDb('tenant')
-      .from('ai_feedback_log')
-      .select('id, question_text, feedback_type')
-      .is('jira_ticket_id', null)
-      .gte('created_at', since)
-      .order('created_at', { ascending: false })
-      .limit(500);
+        // Fetch recent feedback entries without JIRA tickets
+        const { data: entries, error } = await tenantDb('tenant')
+          .from('ai_feedback_log')
+          .select('id, question_text, feedback_type')
+          .is('jira_ticket_id', null)
+          .gte('created_at', since)
+          .order('created_at', { ascending: false })
+          .limit(500);
 
-    if (error) {
-      logger.error('[ai-feedback-triage] Query error:', error);
-      return NextResponse.json({ error: 'Query failed' }, { status: 500 });
-    }
-
-    if (!entries || entries.length === 0) {
-      return NextResponse.json({ ok: true, ticketsCreated: 0 });
-    }
-
-    // Group by first 50 chars of question (simple pattern matching)
-    const patterns: Record<string, { count: number; ids: number[]; sample: string }> = {};
-    for (const e of entries as { id: number; question_text: string; feedback_type: string }[]) {
-      const key = e.question_text.slice(0, 50).toLowerCase().trim();
-      if (!patterns[key]) {
-        patterns[key] = { count: 0, ids: [], sample: e.question_text };
-      }
-      patterns[key].count++;
-      patterns[key].ids.push(e.id);
-    }
-
-    // Filter patterns with 3+ occurrences
-    const recurring = Object.values(patterns).filter((p) => p.count >= MIN_OCCURRENCES);
-
-    let ticketsCreated = 0;
-    for (const pattern of recurring) {
-      const summary = `[AI Gap] Brugere spoerger om: ${pattern.sample.slice(0, 80)}`;
-      const description = `${pattern.count} forekomster i de seneste ${LOOKBACK_DAYS} dage.\n\nEksempel: "${pattern.sample}"\n\nFeedback entry IDs: ${pattern.ids.join(', ')}\n\nAuto-oprettet af ai-feedback-triage cron.`;
-
-      const ticketKey = await createJiraTicket(summary, description);
-
-      if (ticketKey) {
-        // Update feedback entries with the JIRA ticket ID
-        for (const id of pattern.ids) {
-          await tenantDb('tenant')
-            .from('ai_feedback_log')
-            .update({ jira_ticket_id: ticketKey })
-            .eq('id', id);
+        if (error) {
+          logger.error('[ai-feedback-triage] Query error:', error);
+          return NextResponse.json({ error: 'Query failed' }, { status: 500 });
         }
-        ticketsCreated++;
+
+        if (!entries || entries.length === 0) {
+          return NextResponse.json({ ok: true, ticketsCreated: 0 });
+        }
+
+        // Group by first 50 chars of question (simple pattern matching)
+        const patterns: Record<string, { count: number; ids: number[]; sample: string }> = {};
+        for (const e of entries as { id: number; question_text: string; feedback_type: string }[]) {
+          const key = e.question_text.slice(0, 50).toLowerCase().trim();
+          if (!patterns[key]) {
+            patterns[key] = { count: 0, ids: [], sample: e.question_text };
+          }
+          patterns[key].count++;
+          patterns[key].ids.push(e.id);
+        }
+
+        // Filter patterns with 3+ occurrences
+        const recurring = Object.values(patterns).filter((p) => p.count >= MIN_OCCURRENCES);
+
+        let ticketsCreated = 0;
+        for (const pattern of recurring) {
+          const summary = `[AI Gap] Brugere spoerger om: ${pattern.sample.slice(0, 80)}`;
+          const description = `${pattern.count} forekomster i de seneste ${LOOKBACK_DAYS} dage.\n\nEksempel: "${pattern.sample}"\n\nFeedback entry IDs: ${pattern.ids.join(', ')}\n\nAuto-oprettet af ai-feedback-triage cron.`;
+
+          const ticketKey = await createJiraTicket(summary, description);
+
+          if (ticketKey) {
+            // Update feedback entries with the JIRA ticket ID
+            for (const id of pattern.ids) {
+              await tenantDb('tenant')
+                .from('ai_feedback_log')
+                .update({ jira_ticket_id: ticketKey })
+                .eq('id', id);
+            }
+            ticketsCreated++;
+          }
+        }
+
+        return NextResponse.json({ ok: true, ticketsCreated, patterns: recurring.length });
+      } catch (err) {
+        logger.error('[ai-feedback-triage] POST error:', err);
+        return NextResponse.json({ error: 'Internal error' }, { status: 500 });
       }
     }
-
-    return NextResponse.json({ ok: true, ticketsCreated, patterns: recurring.length });
-  } catch (err) {
-    logger.error('[ai-feedback-triage] POST error:', err);
-    return NextResponse.json({ error: 'Internal error' }, { status: 500 });
-  }
+  );
 }

@@ -30,7 +30,7 @@ import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 import { checkAllCertificates, type CertExpiryInfo } from '@/app/lib/certExpiry';
-import { recordHeartbeat } from '@/app/lib/cronHeartbeat';
+import { withCronMonitor } from '@/app/lib/cronMonitor';
 import { companyInfo } from '@/app/lib/companyInfo';
 import { RESEND_ENDPOINT } from '@/app/lib/serviceEndpoints';
 
@@ -603,29 +603,40 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const now = new Date();
-  const since = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  // BIZZ-305/621/624: heartbeat + Sentry cron-monitoring via shared wrapper.
+  // Tidligere inline recordHeartbeat-kald erstattet af withCronMonitor som
+  // samlet håndterer både heartbeat-write og Sentry check-in.
+  return withCronMonitor(
+    { jobName: 'daily-status', schedule: '0 6 * * *', intervalMinutes: 1440 },
+    async () => {
+      const now = new Date();
+      const since = new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
-  const stats = await collectStats(since);
+      const stats = await collectStats(since);
 
-  // Subject uses Danish date formatted in CET timezone
-  const dateLabel = now.toLocaleDateString('da-DK', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    timeZone: 'Europe/Copenhagen',
-  });
-  const subject = `BizzAssist Daglig Status \u2014 ${dateLabel}`;
+      // Subject uses Danish date formatted in CET timezone
+      const dateLabel = now.toLocaleDateString('da-DK', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        timeZone: 'Europe/Copenhagen',
+      });
+      const subject = `BizzAssist Daglig Status \u2014 ${dateLabel}`;
 
-  const html = buildEmailHtml(stats, now);
-  const sent = await sendStatusEmail(html, subject);
+      const html = buildEmailHtml(stats, now);
+      const sent = await sendStatusEmail(html, subject);
 
-  // BIZZ-305: Record heartbeat for watchdog monitoring
-  recordHeartbeat('daily-status', sent ? 'success' : 'error', Date.now() - now.getTime(), 1440);
+      // Hvis email-afsendelse fejler, kast så withCronMonitor markerer runet
+      // som error i både heartbeat-tabel og Sentry.
+      if (!sent) {
+        throw new Error('daily-status email afsendelse fejlede');
+      }
 
-  return NextResponse.json({
-    sent,
-    reportDate: now.toISOString(),
-    stats,
-  });
+      return NextResponse.json({
+        sent,
+        reportDate: now.toISOString(),
+        stats,
+      });
+    }
+  );
 }

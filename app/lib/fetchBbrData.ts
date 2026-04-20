@@ -694,8 +694,7 @@ export async function fetchBbrAreasByBfe(
   if (!dawaId) return null;
   const vt = nowDafDateTime();
 
-  const nodes = await fetchBBRGraphQL(
-    `query($vt: DafDateTime!, $id: String!) {
+  const bbrQuery = `query($vt: DafDateTime!, $id: String!) {
       BBR_Bygning(first: 100, virkningstid: $vt, where: { husnummer: { eq: $id } }) {
         nodes {
           id_lokalId
@@ -705,9 +704,34 @@ export async function fetchBbrAreasByBfe(
           status
         }
       }
-    }`,
-    { vt, id: dawaId }
-  );
+    }`;
+
+  let nodes = await fetchBBRGraphQL(bbrQuery, { vt, id: dawaId });
+
+  // BIZZ-629: For ejerlejligheder peger dawaId på adresse-UUID'en (med
+  // etage/dør) — ikke adgangsadresse-UUID'en BBR_Bygning.husnummer kræver.
+  // BIZZ-576's UUID-skift brød derfor Bolig/Erhverv-mapping på kortene.
+  // Hvis første opslag intet gav, prøv at resolve adresse → adgangsadresse
+  // via DAWA og gentag BBR-queryen mod den rigtige UUID.
+  if (!Array.isArray(nodes) || nodes.length === 0) {
+    try {
+      const { fetchDawa } = await import('@/app/lib/dawa');
+      const probeRes = await fetchDawa(
+        `https://api.dataforsyningen.dk/adresser/${dawaId}?struktur=mini`,
+        { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
+        { caller: 'fetchBbrAreasByBfe.adresse-probe' }
+      );
+      if (probeRes.ok) {
+        const adresse = (await probeRes.json()) as { adgangsadresseid?: string | null };
+        const adgangsId = adresse.adgangsadresseid;
+        if (adgangsId && adgangsId !== dawaId) {
+          nodes = await fetchBBRGraphQL(bbrQuery, { vt, id: adgangsId });
+        }
+      }
+    } catch {
+      // Ignorer probe-fejl — returnerer null nedenfor hvis nodes stadig er tom.
+    }
+  }
 
   if (!Array.isArray(nodes) || nodes.length === 0) return null;
 

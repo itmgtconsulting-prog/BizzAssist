@@ -135,6 +135,9 @@ export default async function sitemap({
   // altid false og staticEntries endte tom — selv på side 0. Coerce til
   // number før sammenligning.
   const pageId = typeof id === 'string' ? parseInt(id, 10) : id;
+  // BIZZ-645: Log så vi kan se hvad der sker i prod logs hvis responset
+  // er tomt. Fjernes når sitemap er bekræftet fungerende.
+  logger.log(`[sitemap] called id=${id} pageId=${pageId}`);
   // Statiske sider injiceres kun på første side
   const staticEntries: MetadataRoute.Sitemap = pageId === 0 ? STATIC_PAGES : [];
   const staticCount = staticEntries.length;
@@ -166,6 +169,9 @@ export default async function sitemap({
       priority: entry.type === 'virksomhed' ? 0.8 : 0.7,
     }));
 
+    logger.log(
+      `[sitemap] id=${pageId} static=${staticCount} db=${dbEntries.length} total=${staticEntries.length + dbEntries.length}`
+    );
     return [...staticEntries, ...dbEntries];
   } catch (err) {
     logger.error('[sitemap] sitemap() fejl:', err);

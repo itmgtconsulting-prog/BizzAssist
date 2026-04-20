@@ -33,6 +33,7 @@ import { logger } from '@/app/lib/logger';
 import { parseBody } from '@/app/lib/validate';
 import { writeAuditLog } from '@/app/lib/auditLog';
 import { companyInfo } from '@/app/lib/companyInfo';
+import { assertAiAllowed } from '@/app/lib/aiGate';
 
 /** Zod schema for POST /api/support/chat request body */
 const supportChatSchema = z
@@ -154,6 +155,10 @@ export async function POST(request: NextRequest): Promise<Response> {
   if (!user) {
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
   }
+
+  // BIZZ-649: Central AI billing-gate.
+  const blocked = await assertAiAllowed(user.id);
+  if (blocked) return blocked;
 
   const adminClient = createAdminClient();
 

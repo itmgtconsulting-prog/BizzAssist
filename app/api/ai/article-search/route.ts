@@ -36,6 +36,7 @@ import { createClient } from '@supabase/supabase-js';
 import { checkRateLimit, braveRateLimit } from '@/app/lib/rateLimit';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
+import { assertAiAllowed } from '@/app/lib/aiGate';
 import { BRAVE_SEARCH_ENDPOINT } from '@/app/lib/serviceEndpoints';
 
 export const runtime = 'nodejs';
@@ -745,6 +746,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (limited) return limited;
   const auth = await resolveTenantId();
   if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  // BIZZ-649: Central AI billing-gate. Blokerer brugere uden budget før
+  // Anthropic-kald gennemføres.
+  const blocked = await assertAiAllowed(auth.userId);
+  if (blocked) return blocked as NextResponse;
 
   const apiKey = process.env.BIZZASSIST_CLAUDE_KEY?.trim();
   if (!apiKey) {

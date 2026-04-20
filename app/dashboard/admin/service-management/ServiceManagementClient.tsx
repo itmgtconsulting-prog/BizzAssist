@@ -73,13 +73,19 @@ interface ServiceDef {
   staticStatus?: ServiceStatus;
   /** Optional static note shown beneath the status badge */
   note?: string;
-  /** URL to fetch Statuspage v2 JSON from (when live === true, mutually exclusive with pingUrl) */
+  /** URL to fetch Statuspage v2 JSON from (mutually exclusive with pingUrl/probeId) */
   statusUrl?: string;
   /**
-   * URL to HTTP-probe via the ping endpoint (when live === true, mutually exclusive with statusUrl).
+   * URL to HTTP-probe via the ping endpoint (mutually exclusive with statusUrl/probeId).
    * Used for services that do not have a Statuspage API (e.g. Datafordeleren).
    */
   pingUrl?: string;
+  /**
+   * Server-side authenticated probe identifier (mutually exclusive with statusUrl/pingUrl).
+   * BIZZ-622: Hits the service with credentials held server-side (never exposed to
+   * the browser) to verify the service is actually reachable + authenticating.
+   */
+  probeId?: string;
 }
 
 /** Shape of a Atlassian Statuspage v2 /api/v2/status.json response */
@@ -141,9 +147,10 @@ const SERVICES: ServiceDef[] = [
     role: 'Rate Limiting',
     icon: Zap,
     link: 'https://console.upstash.com',
-    live: false,
-    staticStatus: 'operational',
-    note: 'No public status API — assumed operational',
+    // BIZZ-622: Authenticated Redis REST PING via server-side proxy
+    live: true,
+    probeId: 'upstash',
+    note: 'Probed via authenticated Redis REST PING',
   },
   {
     id: 'anthropic',
@@ -169,9 +176,10 @@ const SERVICES: ServiceDef[] = [
     role: 'Email',
     icon: Mail,
     link: 'https://resend.com/emails',
-    live: false,
-    staticStatus: 'operational',
-    note: 'No public status API — assumed operational',
+    // BIZZ-622: Authenticated GET /domains via server-side proxy
+    live: true,
+    probeId: 'resend',
+    note: 'Probed via authenticated GET /domains',
   },
   {
     id: 'datafordeler',
@@ -179,12 +187,15 @@ const SERVICES: ServiceDef[] = [
     role: 'BBR / MAT / DAR / VUR',
     icon: Server,
     link: 'https://datafordeler.dk',
-    // BIZZ-377: Use a live HTTP ping probe against the public API gateway.
-    // Datafordeleren has no Statuspage API, so we HEAD-probe the root
-    // endpoint and interpret a successful HTTP response as operational.
+    // BIZZ-377: Used to HEAD-probe api.datafordeler.dk — but that always
+    // returned HTTP 401 (Basic Auth required) which the UI rendered as
+    // "Ukendt".
+    // BIZZ-622: Switched to an authenticated server-side probe that attaches
+    // DATAFORDELER_USER/PASS so we can distinguish "reachable + authenticating"
+    // from "server down".
     live: true,
-    pingUrl: 'https://api.datafordeler.dk',
-    note: 'No Statuspage API — probed via HTTP HEAD',
+    probeId: 'datafordeler',
+    note: 'Probed via authenticated BBR schema request',
   },
   {
     id: 'cvr',
@@ -192,9 +203,10 @@ const SERVICES: ServiceDef[] = [
     role: 'Virksomhedsdata',
     icon: Search,
     link: 'http://distribution.virk.dk',
-    live: false,
-    staticStatus: 'operational',
-    note: 'No public status API — assumed operational',
+    // BIZZ-622: Live probe against the Erhvervsstyrelsen ES distribution.
+    live: true,
+    probeId: 'cvr',
+    note: 'Probed via distribution.virk.dk ES search',
   },
   {
     id: 'brave',
@@ -202,9 +214,10 @@ const SERVICES: ServiceDef[] = [
     role: 'AI websøgning',
     icon: Search,
     link: 'https://api.search.brave.com',
-    live: false,
-    staticStatus: 'operational',
-    note: 'No public status API — assumed operational',
+    // BIZZ-622: Live authenticated probe against Brave Search API.
+    live: true,
+    probeId: 'brave',
+    note: 'Probed via authenticated search query',
   },
   {
     id: 'mapbox',
@@ -214,6 +227,28 @@ const SERVICES: ServiceDef[] = [
     link: 'https://account.mapbox.com',
     live: true,
     statusUrl: 'https://status.mapbox.com/api/v2/status.json',
+  },
+  {
+    id: 'mediastack',
+    name: 'Mediastack',
+    role: 'News feed',
+    icon: Globe,
+    link: 'https://mediastack.com/dashboard',
+    // BIZZ-622: Live authenticated probe against Mediastack news endpoint.
+    live: true,
+    probeId: 'mediastack',
+    note: 'Probed via authenticated news query',
+  },
+  {
+    id: 'twilio',
+    name: 'Twilio',
+    role: 'SMS',
+    icon: Mail,
+    link: 'https://console.twilio.com',
+    // BIZZ-622: Live probe against the Twilio account resource.
+    live: true,
+    probeId: 'twilio',
+    note: 'Probed via authenticated account lookup',
   },
 ];
 
@@ -300,6 +335,59 @@ async function fetchPingStatus(pingUrl: string): Promise<ServiceState> {
       description: result.ok
         ? `HTTP ${result.httpStatus}`
         : `HTTP ${result.httpStatus} — kan ikke nås`,
+      checkedAt: new Date().toISOString(),
+    };
+  } catch {
+    return {
+      status: 'unknown',
+      description: 'Probe fejlede — netværksfejl',
+      checkedAt: new Date().toISOString(),
+    };
+  }
+}
+
+/**
+ * Runs an authenticated server-side probe for a known service. Credentials
+ * stay on the server — the client only sends the service identifier.
+ *
+ * BIZZ-622: Added for services without a Statuspage API (Datafordeler,
+ * Upstash, Resend, CVR ES, Brave, Mediastack, Twilio).
+ *
+ * @param probeId - Server-side probe identifier
+ * @returns Resolved ServiceState based on the probe result
+ */
+async function fetchProbeStatus(probeId: string): Promise<ServiceState> {
+  const proxyUrl = `/api/admin/service-status?probe=${encodeURIComponent(probeId)}`;
+  try {
+    const resp = await fetch(proxyUrl, {
+      signal: AbortSignal.timeout(10000),
+      cache: 'no-store',
+    });
+    if (!resp.ok) {
+      return {
+        status: 'unknown',
+        description: 'HTTP fejl ved statushentning',
+        checkedAt: new Date().toISOString(),
+      };
+    }
+    const result = (await resp.json()) as {
+      ok: boolean;
+      httpStatus: number;
+      detail?: string;
+    };
+    let description: string;
+    if (result.ok) {
+      description = `HTTP ${result.httpStatus}`;
+    } else if (result.detail === 'missing_credentials') {
+      description = 'Mangler credentials i miljøet';
+    } else if (result.httpStatus === 0) {
+      description = 'Probe fejlede — netværksfejl';
+    } else {
+      description = `HTTP ${result.httpStatus} — kan ikke nås`;
+    }
+    return {
+      status: result.ok ? 'operational' : 'unknown',
+      description,
       checkedAt: new Date().toISOString(),
     };
   } catch {
@@ -511,13 +599,15 @@ export default function ServiceManagementClient() {
       return next;
     });
 
-    // Collect all live services that have either a Statuspage URL or a ping URL
-    const liveServices = SERVICES.filter((s) => s.live && (s.statusUrl ?? s.pingUrl));
+    // Collect all live services that have a Statuspage URL, ping URL or probe ID
+    const liveServices = SERVICES.filter((s) => s.live && (s.statusUrl ?? s.pingUrl ?? s.probeId));
 
     const results = await Promise.allSettled(
-      liveServices.map((svc) =>
-        svc.statusUrl ? fetchStatuspageStatus(svc.statusUrl) : fetchPingStatus(svc.pingUrl!)
-      )
+      liveServices.map((svc) => {
+        if (svc.statusUrl) return fetchStatuspageStatus(svc.statusUrl);
+        if (svc.probeId) return fetchProbeStatus(svc.probeId);
+        return fetchPingStatus(svc.pingUrl!);
+      })
     );
 
     setStates((prev) => {

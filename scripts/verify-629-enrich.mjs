@@ -38,7 +38,7 @@ const testBfes = [
 for (const t of testBfes) {
   console.log(`═══ BFE ${t.bfe} — ${t.name} ═══`);
   const resp = await page.evaluate(async (bfe) => {
-    const r = await fetch(`/api/ejendomme-by-owner/enrich?bfe=${bfe}`, { credentials: 'include' });
+    const r = await fetch(`/api/ejendomme-by-owner/enrich?bfe=${bfe}&_cb=${Date.now()}`, { credentials: 'include', cache: 'no-store' });
     if (!r.ok) return { error: `HTTP ${r.status}`, body: (await r.text()).slice(0, 300) };
     return await r.json();
   }, t.bfe);

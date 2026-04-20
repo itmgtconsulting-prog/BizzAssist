@@ -735,12 +735,16 @@ async function resolveBfeToAdgangsadresseId(bfe: number): Promise<string | null>
 }
 
 /**
- * BIZZ-629 v5: Slå BFE op i Vurderingsportalen ES og hent adgangsAdresseID.
- * Bruges som fallback når DAWA /jordstykker ikke kender BFE'en (gælder
- * ejerlejligheder og erhvervsejendomme hvis BFE ikke er et jordstykke-BFE).
+ * BIZZ-629 v5: Slå BFE op i Vurderingsportalen ES og resolve til en DAWA
+ * adgangsadresse-UUID.
  *
- * @param bfe - BFE-nummer
- * @returns adgangsadresse-UUID eller null hvis ikke findbart
+ * OBS: Vurderingsportalens felt "adgangsAdresseID" er IKKE en DAWA-UUID — den
+ * peger på BBR's bygnings-UUID og returnerer tom hvis brugt direkte i
+ * BBR_Bygning.husnummer-filteret. Vi henter i stedet addresse-teksten og
+ * slår den op i DAWA /adresser for at få den rigtige adgangsadresse-UUID.
+ *
+ * @param bfe - BFE-nummer (ejerlejlighed eller erhvervsejendom)
+ * @returns DAWA adgangsadresse-UUID eller null hvis ikke findbart
  */
 async function lookupAdgangsadresseByBfeViaVurderingsportalen(bfe: number): Promise<string | null> {
   try {
@@ -761,11 +765,29 @@ async function lookupAdgangsadresseByBfeViaVurderingsportalen(bfe: number): Prom
     );
     if (!esRes.ok) return null;
     const data = (await esRes.json()) as {
-      hits?: { hits?: Array<{ _source: { adgangsAdresseID?: string } }> };
+      hits?: {
+        hits?: Array<{
+          _score?: number;
+          _source: { address?: string; isParentProperty?: boolean };
+        }>;
+      };
     };
     const hits = data.hits?.hits ?? [];
-    for (const hit of hits) {
-      const adgId = hit._source?.adgangsAdresseID;
+    // Prioriter isParentProperty=true hits — disse sidder på moderejendommen.
+    const sorted = [...hits].sort(
+      (a, b) => (b._source?.isParentProperty ? 1 : 0) - (a._source?.isParentProperty ? 1 : 0)
+    );
+    for (const hit of sorted) {
+      const address = hit._source?.address;
+      if (!address) continue;
+      const dawaRes = await fetchDawa(
+        `${DAWA_BASE_URL}/adresser?q=${encodeURIComponent(address)}&per_side=1&struktur=mini`,
+        { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
+        { caller: 'lookupAdgangsadresseByBfeViaVurderingsportalen.dawa' }
+      );
+      if (!dawaRes.ok) continue;
+      const adrArr = (await dawaRes.json()) as Array<{ adgangsadresseid?: string }>;
+      const adgId = adrArr[0]?.adgangsadresseid;
       if (adgId) return adgId;
     }
     return null;

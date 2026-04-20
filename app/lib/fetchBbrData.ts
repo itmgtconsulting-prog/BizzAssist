@@ -694,6 +694,69 @@ export async function fetchBbrAreasByBfe(
   if (!dawaId) return null;
   const vt = nowDafDateTime();
 
+  // BIZZ-637: For ejerlejligheder er dawaId et adresse-UUID (med etage/dør),
+  // og de korrekte areal-felter sidder i BBR_Enhed — ikke BBR_Bygning, der
+  // ville returnere hele bygningens samlede areal. Prøv BBR_Enhed FØRST:
+  // hvis der er enhed-match, bruger vi enh027/028 (bolig/erhverv pr. enhed)
+  // plus enh026 som samlet. Kun når BBR_Enhed ikke matcher (normal ejendom
+  // uden etage/dør) falder vi tilbage til BBR_Bygning-queryen.
+  try {
+    const enhedNodes = await fetchBBRGraphQL(
+      `query($vt: DafDateTime!, $id: String!) {
+        BBR_Enhed(first: 50, virkningstid: $vt, where: { adresseIdentificerer: { eq: $id } }) {
+          nodes {
+            id_lokalId
+            enh026EnhedensSamledeAreal
+            enh027ArealTilBeboelse
+            enh028ArealTilErhverv
+            status
+          }
+        }
+      }`,
+      { vt, id: dawaId }
+    );
+    if (Array.isArray(enhedNodes) && enhedNodes.length > 0) {
+      // Dedupliker + filtrér nedrevne (status 7)
+      const seen = new Set<string>();
+      let bolig = 0;
+      let erhverv = 0;
+      let samlet = 0;
+      let any = false;
+      for (const n of enhedNodes as Array<{
+        id_lokalId?: string;
+        enh026EnhedensSamledeAreal?: number | null;
+        enh027ArealTilBeboelse?: number | null;
+        enh028ArealTilErhverv?: number | null;
+        status?: string | number | null;
+      }>) {
+        if (!n.id_lokalId || seen.has(n.id_lokalId)) continue;
+        seen.add(n.id_lokalId);
+        if (n.status != null && String(n.status) === '7') continue;
+        if (n.enh027ArealTilBeboelse != null) {
+          bolig += Number(n.enh027ArealTilBeboelse);
+          any = true;
+        }
+        if (n.enh028ArealTilErhverv != null) {
+          erhverv += Number(n.enh028ArealTilErhverv);
+          any = true;
+        }
+        if (n.enh026EnhedensSamledeAreal != null) {
+          samlet += Number(n.enh026EnhedensSamledeAreal);
+          any = true;
+        }
+      }
+      if (any) {
+        return {
+          boligAreal: bolig > 0 ? bolig : null,
+          erhvervsAreal: erhverv > 0 ? erhverv : null,
+          samletBygningsareal: samlet > 0 ? samlet : null,
+        };
+      }
+    }
+  } catch {
+    // Ignorer BBR_Enhed-fejl — fald igennem til Bygning-opslaget nedenfor.
+  }
+
   const bbrQuery = `query($vt: DafDateTime!, $id: String!) {
       BBR_Bygning(first: 100, virkningstid: $vt, where: { husnummer: { eq: $id } }) {
         nodes {

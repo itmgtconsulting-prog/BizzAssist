@@ -1289,6 +1289,55 @@ export function allocateTokensBySource(
   };
 }
 
+/**
+ * BIZZ-649 P0: Ren gate-decision for om AI-kald skal tillades.
+ * Ekstraheret fra route-handleren så vi kan unit-teste alle permutationer
+ * af subscription-state uden at mocke Anthropic.
+ *
+ * Returnerer:
+ *   - 'allow'           → fortsæt til Anthropic
+ *   - 'no_subscription' → 403 Aktivt abonnement kræves
+ *   - 'quota_exceeded'  → 429 Token kvote opbrugt for denne måned
+ *   - 'zero_budget'     → 402 Payment Required (plan=0 + bonus=0 + topUp=0)
+ *
+ * @param state - Snapshot af subscription-felter (undefined hvis ingen sub)
+ * @returns Decision + effective limit (til debugging/logging)
+ */
+export function decideAiGate(
+  state:
+    | {
+        status?: string;
+        tokensUsedThisMonth?: number;
+        planTokens?: number;
+        bonusTokens?: number;
+        topUpTokens?: number;
+      }
+    | null
+    | undefined
+): {
+  decision: 'allow' | 'no_subscription' | 'quota_exceeded' | 'zero_budget';
+  isTrial: boolean;
+  effectiveLimit: number;
+} {
+  const subStatus = state?.status ?? '';
+  const isTrial = subStatus === 'trialing';
+  if (!state || (subStatus !== 'active' && subStatus !== 'trialing')) {
+    return { decision: 'no_subscription', isTrial, effectiveLimit: 0 };
+  }
+  const planTokens = state.planTokens ?? 0;
+  const bonusTokens = state.bonusTokens ?? 0;
+  const topUpTokens = state.topUpTokens ?? 0;
+  const tokensUsedThisMonth = state.tokensUsedThisMonth ?? 0;
+  const effectiveLimit = planTokens + bonusTokens + topUpTokens;
+  if (effectiveLimit === 0) {
+    return { decision: 'zero_budget', isTrial, effectiveLimit: 0 };
+  }
+  if (tokensUsedThisMonth >= effectiveLimit) {
+    return { decision: 'quota_exceeded', isTrial, effectiveLimit };
+  }
+  return { decision: 'allow', isTrial, effectiveLimit };
+}
+
 // ─── Handler ────────────────────────────────────────────────────────────────
 
 export async function POST(request: NextRequest): Promise<Response> {
@@ -1327,52 +1376,70 @@ export async function POST(request: NextRequest): Promise<Response> {
     | null
     | undefined;
   const subStatus = sub?.status ?? '';
-  if (!sub || (subStatus !== 'active' && subStatus !== 'trialing')) {
-    return Response.json(
-      { error: 'Aktivt abonnement kræves for at bruge AI-assistenten' },
-      { status: 403 }
-    );
-  }
 
-  // Guard: reject immediately if token quota is exhausted.
+  // BIZZ-649 P0: Hent plan-tokens fra plan_configs før gate-check.
   // BIZZ-641: Under trial blokeres plan-tokens — effektiv grænse er kun
   // topUpTokens + bonusTokens (manuelt tildelt af admin). Efter aktivering
   // tilføjes plan-tokens normalt.
   // BIZZ-643: Track per-kilde-forbrug separat (planTokensUsed) så vi kan
-  // vise balance pr. kilde i UI + gennemføre prioritets-dekrement i
-  // allocateTokensBySource().
-  const tokensUsedThisMonth = sub.tokensUsedThisMonth ?? 0;
-  const planTokensUsed = sub.planTokensUsed ?? 0;
-  const bonusTokens = sub.bonusTokens ?? 0;
-  const topUpTokens = sub.topUpTokens ?? 0;
+  // vise balance pr. kilde i UI + gennemføre prioritets-dekrement.
+  const tokensUsedThisMonth = sub?.tokensUsedThisMonth ?? 0;
+  const planTokensUsed = sub?.planTokensUsed ?? 0;
+  const bonusTokens = sub?.bonusTokens ?? 0;
+  const topUpTokens = sub?.topUpTokens ?? 0;
   let planTokens = 0;
-  let effectiveTokenLimit = 0;
-  if (sub.planId) {
+  if (sub?.planId) {
     const { data: planRow } = await adminClient
       .from('plan_configs')
       .select('ai_tokens_per_month')
       .eq('plan_id', sub.planId)
       .single<{ ai_tokens_per_month: number }>();
     planTokens = subStatus === 'trialing' ? 0 : (planRow?.ai_tokens_per_month ?? 0);
-    effectiveTokenLimit = planTokens + bonusTokens + topUpTokens;
-  } else {
-    effectiveTokenLimit = bonusTokens + topUpTokens;
   }
-  if (effectiveTokenLimit > 0 && tokensUsedThisMonth >= effectiveTokenLimit) {
+
+  // BIZZ-649: Gate-decision via ren funktion (decideAiGate) så alle
+  // permutationer er unit-testede — kernen er at blokere 'active' bruger
+  // med plan=0 + bonus=0 + topUp=0 (billing-lækage før commit).
+  const gate = decideAiGate({
+    status: subStatus,
+    tokensUsedThisMonth,
+    planTokens,
+    bonusTokens,
+    topUpTokens,
+  });
+  if (gate.decision === 'no_subscription') {
+    return Response.json(
+      { error: 'Aktivt abonnement kræves for at bruge AI-assistenten' },
+      { status: 403 }
+    );
+  }
+  if (gate.decision === 'quota_exceeded') {
     return Response.json({ error: 'Token kvote opbrugt for denne måned' }, { status: 429 });
   }
-  // BIZZ-641: Under trial uden token-pakke → 402 Payment Required med CTA.
-  if (subStatus === 'trialing' && effectiveTokenLimit === 0) {
+  if (gate.decision === 'zero_budget') {
+    // P0 billing-lækage-guard — Sentry-breadcrumb så vi kan se hvis en
+    // bruger forsøger at kalde AI uden budget (normalt blokeret af UI).
+    Sentry.addBreadcrumb({
+      category: 'billing',
+      message: 'AI chat blocked: zero_budget',
+      level: 'info',
+      data: { isTrial: gate.isTrial, userId, planId: sub?.planId ?? null },
+    });
     return Response.json(
       {
-        error:
-          'AI-tokens er låst indtil dit abonnement starter. Køb en token-pakke for at bruge AI nu.',
+        error: gate.isTrial
+          ? 'AI-tokens er låst indtil dit abonnement starter. Køb en token-pakke for at bruge AI nu.'
+          : 'Dit abonnement har ingen AI-tokens. Køb en token-pakke eller opgrader plan for at bruge AI.',
         code: 'trial_ai_blocked',
         cta: 'buy_token_pack',
       },
       { status: 402 }
     );
   }
+  // gate.decision === 'allow' — fortsæt til Anthropic. gate.effectiveLimit
+  // holdes tilgængelig via gate-objektet hvis vi senere vil logge remaining-
+  // budget i en Sentry-breadcrumb.
+  void gate.effectiveLimit;
 
   const apiKey = process.env.BIZZASSIST_CLAUDE_KEY?.trim();
   if (!apiKey) {

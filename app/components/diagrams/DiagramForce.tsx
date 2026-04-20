@@ -1016,8 +1016,22 @@ function DiagramForce({
         allOverflowNodes.push(...ownerOverflow);
 
         if (props.length === 0) continue;
-        // If this owner's properties don't all fit on current line, start new line
-        if (countOnLine > 0 && countOnLine + props.length > MAX_PER_ROW) {
+
+        // BIZZ-585: Person-owners får dedikerede rækker — deres ejendomme
+        // blandes ALDRIG med søskende-virksomheders ejendomme på samme linje.
+        // Tidligere kunne fx en persons 6. ejendom ende på en linje der også
+        // indeholdt holdingselskabers ejendomme, hvilket gjorde layoutet
+        // forvirrende. Nu starter og afslutter vi altid en ny linje ved
+        // person-owners.
+        const ownerNode = nodeById.get(ownerId);
+        const isPersonOwner = ownerNode?.type === 'person' || ownerNode?.type === 'main';
+
+        if (isPersonOwner && countOnLine > 0) {
+          // Forrige linje havde andet indhold — start person's ejendomme på ny linje
+          currentLine++;
+          countOnLine = 0;
+        } else if (countOnLine > 0 && countOnLine + props.length > MAX_PER_ROW) {
+          // Ikke-person owner: standard wrap-regel
           currentLine++;
           countOnLine = 0;
         }
@@ -1035,6 +1049,12 @@ function DiagramForce({
           countOnLine = props.length % MAX_PER_ROW || MAX_PER_ROW;
         } else {
           countOnLine += props.length;
+        }
+        // BIZZ-585: Efter person-owner: tving næste owner til ny linje så
+        // person-ejendomme forbliver isoleret på deres egen række-blok.
+        if (isPersonOwner && countOnLine > 0) {
+          currentLine++;
+          countOnLine = 0;
         }
       }
       // BIZZ-563 v3: overflow-noder placeres NU globalt EFTER ALLE noder
@@ -1849,13 +1869,23 @@ function DiagramForce({
 
         // Property edges rendered with emerald color to match property nodes
         const isPropertyEdge = toNode?.type === 'property' || edge.to.startsWith('props-overflow-');
+        // BIZZ-585: Person→property edges stippled med lysere emerald så
+        // personligt-ejede-relationer er visuelt adskilt fra virksomheds-
+        // ejendom-relationer. Brugeren kan dermed hurtigt identificere
+        // hvilke ejendomme der ejes direkte af personen vs via selskab.
+        const isPersonToProperty = isPropertyEdge && fromNode?.type === 'person';
         const strokeColor = isCoOwnerEdge
           ? 'rgba(167,139,250,0.55)'
-          : isPropertyEdge
-            ? 'rgba(52,211,153,0.65)'
-            : edge.from === effectiveGraph.mainId || edge.to === effectiveGraph.mainId
-              ? 'rgba(96,165,250,0.85)'
-              : 'rgba(148,163,184,0.75)';
+          : isPersonToProperty
+            ? 'rgba(110,231,183,0.75)' // Lysere emerald-400
+            : isPropertyEdge
+              ? 'rgba(52,211,153,0.65)'
+              : edge.from === effectiveGraph.mainId || edge.to === effectiveGraph.mainId
+                ? 'rgba(96,165,250,0.85)'
+                : 'rgba(148,163,184,0.75)';
+        // BIZZ-585: Dashed stroke for person→property — samme signaleringsstil
+        // som co-owner-edges men med emerald i stedet for lilla.
+        const dashArray = isCoOwnerEdge ? '4 3' : isPersonToProperty ? '5 3' : undefined;
 
         return (
           <g key={`e-${i}`}>
@@ -1864,7 +1894,7 @@ function DiagramForce({
               fill="none"
               stroke={strokeColor}
               strokeWidth={isCoOwnerEdge ? 1.5 : 2.25}
-              strokeDasharray={isCoOwnerEdge ? '4 3' : undefined}
+              strokeDasharray={dashArray}
             />
             <polygon
               points={`${ex},${ey} ${ex - 5},${ey - 9} ${ex + 5},${ey - 9}`}

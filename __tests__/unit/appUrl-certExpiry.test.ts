@@ -37,6 +37,21 @@ describe('getAppUrl', () => {
     process.env.NEXT_PUBLIC_APP_URL = 'http://localhost:3000';
     expect(getAppUrl()).toBe('http://localhost:3000');
   });
+
+  it('BIZZ-645: trim fjerner trailing newline fra env-var', () => {
+    process.env.NEXT_PUBLIC_APP_URL = 'https://bizzassist.dk\n';
+    expect(getAppUrl()).toBe('https://bizzassist.dk');
+  });
+
+  it('BIZZ-645: trim fjerner CR+LF fra env-var', () => {
+    process.env.NEXT_PUBLIC_APP_URL = 'https://bizzassist.dk\r\n';
+    expect(getAppUrl()).toBe('https://bizzassist.dk');
+  });
+
+  it('BIZZ-645: trim kombineret med trailing-slash-strip', () => {
+    process.env.NEXT_PUBLIC_APP_URL = '  https://bizzassist.dk/\n';
+    expect(getAppUrl()).toBe('https://bizzassist.dk');
+  });
 });
 
 describe('checkCertExpiry — status-klassifikation', () => {

@@ -40,21 +40,21 @@ interface CronDef {
 const CRONS: CronDef[] = [
   {
     jobName: 'generate-sitemap-companies',
-    schedule: '0 2 * * 0',
-    intervalMinutes: 7 * 24 * 60,
-    description: 'Ugentlig sitemap-generering for CVR-sider',
+    schedule: '23 2 * * *',
+    intervalMinutes: 24 * 60,
+    description: 'Daglig sitemap-generering for CVR-sider',
   },
   {
     jobName: 'generate-sitemap-properties',
-    schedule: '0 3 * * 0',
-    intervalMinutes: 7 * 24 * 60,
-    description: 'Ugentlig sitemap-generering for BFE-sider',
+    schedule: '37 3 * * *',
+    intervalMinutes: 24 * 60,
+    description: 'Daglig sitemap-generering for BFE-sider',
   },
   {
     jobName: 'generate-sitemap-vp-properties',
-    schedule: '0 4 * * 0',
-    intervalMinutes: 7 * 24 * 60,
-    description: 'Ugentlig sitemap for Vurderingsportalen-hits',
+    schedule: '51 4 * * *',
+    intervalMinutes: 24 * 60,
+    description: 'Daglig sitemap for Vurderingsportalen-hits',
   },
   {
     jobName: 'poll-properties',

@@ -664,18 +664,21 @@ export async function GET(request: NextRequest) {
 
   // BIZZ-621 + BIZZ-624: Hver phase har egen schedule i vercel.json og skal
   // tracked som separat cron-job så watchdog + Sentry ser dem uafhængigt.
+  // BIZZ-647: Skiftet fra ugentlig (0 2/3/4 * * 0) til daglig (23 2/37 3/51 4 * * *)
+  // så nye ejendomme/virksomheder indekseres inden for 24t i stedet for 7 dage.
   const phaseConfig = {
-    companies: { schedule: '0 2 * * 0' },
-    properties: { schedule: '0 3 * * 0' },
-    'vp-properties': { schedule: '0 4 * * 0' },
+    companies: { schedule: '23 2 * * *' },
+    properties: { schedule: '37 3 * * *' },
+    'vp-properties': { schedule: '51 4 * * *' },
   }[phase];
 
   return withCronMonitor(
     {
       jobName: `generate-sitemap-${phase}`,
       schedule: phaseConfig.schedule,
-      // Weekly cron → 10080 minutter (7 dage)
-      intervalMinutes: 10080,
+      // BIZZ-647: Daglig cron → 1440 minutter (24t) — bruges af watchdog til
+      // overdue-detection og cron-status-dashboardet.
+      intervalMinutes: 1440,
     },
     async () => {
       const admin = createAdminClient();

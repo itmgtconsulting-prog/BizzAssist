@@ -33,7 +33,12 @@ export default function robots(): MetadataRoute.Robots {
   }
 
   // Vi er her kun i produktion (isProduction===true), så env var er sikker at bruge.
-  const baseUrl = (process.env.NEXT_PUBLIC_APP_URL ?? 'https://bizzassist.dk').replace(/\/$/, '');
+  // BIZZ-645: trim() fjerner trailing newlines/whitespace fra Vercel-env-var så
+  // Sitemap: header ikke breakes op. Uden trim blev "Sitemap: https://bizzassist.dk\n/sitemap/0.xml"
+  // eftersom NEXT_PUBLIC_APP_URL-værdien på Vercel indeholdt en trailing \n.
+  const baseUrl = (process.env.NEXT_PUBLIC_APP_URL ?? 'https://bizzassist.dk')
+    .trim()
+    .replace(/\/$/, '');
 
   // Production: Tillad offentlige SEO-sider, bloker alt andet.
   // Next.js paginerede sitemaps serveres på /sitemap/[id] — index er /sitemap/0.xml.

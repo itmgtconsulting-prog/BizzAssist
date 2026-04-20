@@ -114,6 +114,12 @@ export interface DiagramEdge {
   to: string;
   /** Ownership percentage label */
   ejerandel?: string;
+  /**
+   * BIZZ-585/619: True når edgen er en person→sole-owned-ejendom-relation.
+   * Rendereren tegner stiplet emerald-linje for at adskille visuelt fra
+   * person→virksomhed-edges og company→property-edges.
+   */
+  personallyOwned?: boolean;
 }
 
 /** Complete graph structure for diagram rendering */
@@ -820,8 +826,11 @@ export function buildPersonDiagramGraph(
   // tabellen (se BIZZ-534).
   if (personalProperties && personalProperties.length > 0) {
     const aktive = personalProperties.filter((p) => p.aktiv !== false);
-    const shown = aktive.slice(0, MAX_PROPS_PER_COMPANY);
-    for (const p of shown) {
+    // BIZZ-619: Person-noden har typisk få (< 20) personligt ejede ejendomme
+    // — uden cap. Den gamle MAX_PROPS_PER_COMPANY=5-cap gav "5 af 9"
+    // på Jakob's persondiagram. Limit'en giver kun mening for virksomheder
+    // der kan eje hundredvis af BFE'er; personens liste er altid kort.
+    for (const p of aktive) {
       const propId = `bfe-${p.bfeNummer}`;
       // Hvis noden allerede er tilføjet via et company-ownership-spor,
       // skipper vi duplikering af selve noden men tilføjer stadig den
@@ -830,6 +839,9 @@ export function buildPersonDiagramGraph(
         from: mainId,
         to: propId,
         ejerandel: p.ejerandel ?? undefined,
+        // BIZZ-585: Person→sole-owned-ejendom-edge stiples for at adskille
+        // visuelt fra person→virksomhed-edges.
+        personallyOwned: true,
       });
       if (seenIds.has(propId)) continue;
       seenIds.add(propId);
@@ -849,16 +861,6 @@ export function buildPersonDiagramGraph(
         bfeNummer: p.bfeNummer,
         link,
       });
-    }
-    if (aktive.length > MAX_PROPS_PER_COMPANY) {
-      const overflowId = `props-overflow-person-${personEnhedsNummer}`;
-      const remaining = aktive.length - MAX_PROPS_PER_COMPANY;
-      nodes.push({
-        id: overflowId,
-        label: `+${remaining} ejendomme`,
-        type: 'property',
-      });
-      edges.push({ from: mainId, to: overflowId });
     }
   }
 

@@ -138,37 +138,9 @@ async function _getOAuthToken(): Promise<string | null> {
 }
 
 // ─── Rå typer fra EJF GraphQL schema ────────────────────────────────────────
-
-/** EJF_Ejerskifte — kobler BFE til handelsoplysning */
-interface RawEjerskifte {
-  bestemtFastEjendomBFENr: number | null;
-  overtagelsesdato: string | null;
-  overdragelsesmaade: string | null;
-  handelsoplysningerLokalId: string | null;
-  status: string | null;
-  // BIZZ-481: Udvidede felter
-  betinget?: boolean | null;
-  fristDato?: string | null;
-  forretningshaendelse?: string | null;
-  virkningTil?: string | null;
-}
-
-/** EJF_Handelsoplysninger — prisdata for en handel */
-interface RawHandelsoplysning {
-  id_lokalId: string;
-  kontantKoebesum: number | null;
-  samletKoebesum: number | null;
-  loesoeresum: number | null;
-  entreprisesum: number | null;
-  koebsaftaleDato: string | null;
-  valutakode: string | null;
-  status: string | null;
-  // BIZZ-480: Udvidede felter
-  skoedetekst?: string | null;
-  afstaaelsesdato?: string | null;
-  betalingsforpligtelsesdato?: string | null;
-  husdyrbesaetningsum?: number | null;
-}
+// BIZZ-633: EJF_Ejerskifte + EJF_Handelsoplysninger er ikke i vores grant
+// (jf. BIZZ-584). Vi bruger nu EJFCustom_EjerskabBegraenset som primær kilde
+// og merger med Tinglysning-adkomster klient-side for priser.
 
 // ─── GraphQL helpers ─────────────────────────────────────────────────────────
 
@@ -282,57 +254,76 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
   }
 
   try {
-    // ── Trin 1: Hent ejerskifter for BFE → få handelsoplysningerLokalId ──
-    // BIZZ-481: Udvidet med betinget, fristDato, forretningshaendelse, virkningTil
-    const ejerskifteQuery = `{
-      EJF_Ejerskifte(
-        first: 200
+    // ── BIZZ-633 / BIZZ-584: EJF_Ejerskifte + EJF_Handelsoplysninger er IKKE
+    // i vores Datafordeler-grant. De tidligere queries fejlede konstant med
+    // "EJF_Ejerskifte query fejlede" og resulterede i 0 handler.
+    //
+    // Vi har derimod grant til EJFCustom_EjerskabBegraenset (samme kilde som
+    // /api/ejerskab og /api/ejendomme-by-owner). Vi bygger ejerskifter ud
+    // fra unikke virkningFra-tidspunkter: hver unik ejer-registrering for
+    // et BFE repræsenterer en ejerskifte-hændelse. Prisoplysninger er ikke
+    // tilgængelige via EJFCustom — klienten merger med Tinglysning-
+    // adkomster for købesummer + købernavne.
+    const ejerskabQuery = `{
+      EJFCustom_EjerskabBegraenset(
+        first: 500
         where: {
           bestemtFastEjendomBFENr: { eq: ${bfeNummer} }
         }
       ) {
         nodes {
           bestemtFastEjendomBFENr
-          overtagelsesdato
-          overdragelsesmaade
-          handelsoplysningerLokalId
+          ejendeVirksomhedCVRNr
+          ejendePersonBegraenset { navn { navn } }
+          ejerforholdskode
+          faktiskEjerandel_taeller
+          faktiskEjerandel_naevner
           status
-          betinget
-          fristDato
-          forretningshaendelse
-          virkningTil
+          virkningFra
         }
       }
     }`;
 
-    // BIZZ-633: Query FlexibleCurrent (aktuelle) + HistoriskCurrent (alle
-    // historiske ejerskifter) parallelt og merge på
-    // handelsoplysningerLokalId. FlexibleCurrent returnerer kun gældende
-    // ejerskifter; HistoriskCurrent returnerer også udslettede/afsluttede
-    // ejerskifter — nødvendigt for den fulde handelskæde når en ejendom
-    // har skiftet ejer flere gange.
+    interface RawEjerskab {
+      bestemtFastEjendomBFENr: number | null;
+      ejendeVirksomhedCVRNr: number | null;
+      ejendePersonBegraenset?: { navn?: { navn?: string | null } | null } | null;
+      ejerforholdskode?: string | null;
+      faktiskEjerandel_taeller?: number | null;
+      faktiskEjerandel_naevner?: number | null;
+      status?: string | null;
+      virkningFra?: string | null;
+    }
+
+    // Primær-kilde FlexibleCurrent (aktuelle). HistoriskCurrent-forsøget
+    // beholdes som parallel fallback — hvis endpointet ikke er i grant
+    // rammer det 403 og vi bruger kun FlexibleCurrent's resultat.
     const [flexibleResult, historiskResult] = await Promise.allSettled([
-      queryEJF<RawEjerskifte>(ejerskifteQuery, 'EJF_Ejerskifte', token),
-      queryEJF<RawEjerskifte>(ejerskifteQuery, 'EJF_Ejerskifte', token, EJF_GQL_HISTORISK_ENDPOINT),
+      queryEJF<RawEjerskab>(ejerskabQuery, 'EJFCustom_EjerskabBegraenset', token),
+      queryEJF<RawEjerskab>(
+        ejerskabQuery,
+        'EJFCustom_EjerskabBegraenset',
+        token,
+        EJF_GQL_HISTORISK_ENDPOINT
+      ),
     ]);
 
-    const ejerskifteResult = flexibleResult.status === 'fulfilled' ? flexibleResult.value : null;
-    const historiskEjerskifte =
-      historiskResult.status === 'fulfilled' ? historiskResult.value : null;
+    const flexibleEjerskab = flexibleResult.status === 'fulfilled' ? flexibleResult.value : null;
+    const historiskEjerskab = historiskResult.status === 'fulfilled' ? historiskResult.value : null;
 
-    if (ejerskifteResult?.authError) {
+    if (flexibleEjerskab?.authError && historiskEjerskab?.authError) {
       return NextResponse.json(
         { bfeNummer, handler: [], fejl: null, manglerNoegle: false, manglerAdgang: true },
         { status: 200 }
       );
     }
 
-    if (!ejerskifteResult && !historiskEjerskifte) {
+    if (!flexibleEjerskab && !historiskEjerskab) {
       return NextResponse.json(
         {
           bfeNummer,
           handler: [],
-          fejl: 'EJF_Ejerskifte query fejlede',
+          fejl: 'EJFCustom_EjerskabBegraenset query fejlede',
           manglerNoegle: false,
           manglerAdgang: false,
         },
@@ -340,156 +331,63 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
       );
     }
 
-    // Merge ejerskifter fra begge kilder, dedupliker på
-    // handelsoplysningerLokalId (unikt pr. handel). Nogle records findes
-    // kun i en af de to — derfor union, ikke intersection.
-    const ejerskifterById = new Map<string, RawEjerskifte>();
-    const flexibleNodes = ejerskifteResult?.nodes ?? [];
-    const historiskNodes = historiskEjerskifte?.nodes ?? [];
-    for (const e of [...flexibleNodes, ...historiskNodes]) {
-      const key =
-        e.handelsoplysningerLokalId ?? `${e.bestemtFastEjendomBFENr}-${e.overtagelsesdato}`;
-      if (!key) continue;
-      if (!ejerskifterById.has(key)) ejerskifterById.set(key, e);
-    }
-    const ejerskifter = Array.from(ejerskifterById.values());
-
-    // Saml unikke handelsoplysningerLokalIds
-    const handelsIds = [
-      ...new Set(
-        ejerskifter
-          .map((e) => e.handelsoplysningerLokalId)
-          .filter((id): id is string => id != null && id.length > 0)
-      ),
-    ];
-
-    // Hvis ingen handelsoplysninger → returner ejerskifter uden prisdata
-    if (handelsIds.length === 0) {
-      const handler: HandelData[] = ejerskifter
-        .filter((e) => e.overtagelsesdato != null)
-        .map((e) => ({
-          kontantKoebesum: null,
-          samletKoebesum: null,
-          loesoeresum: null,
-          entreprisesum: null,
-          koebsaftaleDato: null,
-          overtagelsesdato: e.overtagelsesdato,
-          overdragelsesmaade: e.overdragelsesmaade ?? null,
-          valutakode: null,
-        }))
-        .sort((a, b) => (b.overtagelsesdato ?? '').localeCompare(a.overtagelsesdato ?? ''));
-
-      // BIZZ-633: Cache response før return
-      const responseData: SalgshistorikResponse = {
-        bfeNummer,
-        handler,
-        fejl: null,
-        manglerNoegle: false,
-        manglerAdgang: false,
-      };
-      salgshistorikCache.set(bfeNummer, responseData);
-      return NextResponse.json(responseData, {
-        status: 200,
-        headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
-      });
+    // Merge ejerskab-noder fra begge kilder, dedupliker på (cvr|person,
+    // virkningFra). Hver unik kombination = én ejerskab-episode.
+    const ejerskabById = new Map<string, RawEjerskab>();
+    const allNodes = [...(flexibleEjerskab?.nodes ?? []), ...(historiskEjerskab?.nodes ?? [])];
+    for (const n of allNodes) {
+      if (!n.virkningFra) continue;
+      const ownerKey =
+        n.ejendeVirksomhedCVRNr != null
+          ? `cvr-${n.ejendeVirksomhedCVRNr}`
+          : `person-${n.ejendePersonBegraenset?.navn?.navn ?? 'ukendt'}`;
+      const key = `${ownerKey}__${n.virkningFra}`;
+      if (!ejerskabById.has(key)) ejerskabById.set(key, n);
     }
 
-    // ── Trin 2: Hent handelsoplysninger via id_lokalId ──
-    // BIZZ-480: Udvidet med skoedetekst, afstaaelsesdato,
-    // betalingsforpligtelsesdato, husdyrbesaetningsum
-    const idsStr = handelsIds.map((id) => `"${id}"`).join(', ');
-    const handelsQuery = `{
-      EJF_Handelsoplysninger(
-        first: 200
-        where: {
-          id_lokalId: { in: [${idsStr}] }
-        }
-      ) {
-        nodes {
-          id_lokalId
-          kontantKoebesum
-          samletKoebesum
-          loesoeresum
-          entreprisesum
-          koebsaftaleDato
-          valutakode
-          status
-          skoedetekst
-          afstaaelsesdato
-          betalingsforpligtelsesdato
-          husdyrbesaetningsum
-        }
-      }
-    }`;
+    // Byg ejerandel-label fra taeller/naevner (fx 1/2 → "50%")
+    const formatAndel = (n: RawEjerskab): string | null => {
+      const t = n.faktiskEjerandel_taeller;
+      const na = n.faktiskEjerandel_naevner;
+      if (t == null || na == null || na === 0) return null;
+      const pct = (t / na) * 100;
+      return pct === Math.round(pct) ? `${pct}%` : `${pct.toFixed(1)}%`;
+    };
 
-    // BIZZ-633: Merge handelsoplysninger fra begge kilder også. Ældre
-    // handler ligger i HistoriskCurrent; nyere i FlexibleCurrent.
-    const [handelsFlexible, handelsHistorisk] = await Promise.allSettled([
-      queryEJF<RawHandelsoplysning>(handelsQuery, 'EJF_Handelsoplysninger', token),
-      queryEJF<RawHandelsoplysning>(
-        handelsQuery,
-        'EJF_Handelsoplysninger',
-        token,
-        EJF_GQL_HISTORISK_ENDPOINT
-      ),
-    ]);
+    // ejerforholdskode → menneske-læsbar overdragelsesmaade når muligt
+    const overdragelseLabel = (n: RawEjerskab): string | null => {
+      if (!n.ejerforholdskode) return null;
+      // Kode-navne er oftest korte identifiers; vis rå så brugeren kan se
+      // dem. UI merger med Tinglysning-adkomsttype som senere tekst-label.
+      return n.ejerforholdskode;
+    };
 
-    const handelsResult = handelsFlexible.status === 'fulfilled' ? handelsFlexible.value : null;
-    const handelsHistoriskResult =
-      handelsHistorisk.status === 'fulfilled' ? handelsHistorisk.value : null;
-
-    if (handelsResult?.authError) {
-      return NextResponse.json(
-        { bfeNummer, handler: [], fejl: null, manglerNoegle: false, manglerAdgang: true },
-        { status: 200 }
-      );
-    }
-
-    // Byg opslag: handelsoplysningerLokalId → prisdata (union af kilder)
-    const handelsMap = new Map<string, RawHandelsoplysning>();
-    for (const h of [...(handelsResult?.nodes ?? []), ...(handelsHistoriskResult?.nodes ?? [])]) {
-      if (!handelsMap.has(h.id_lokalId)) handelsMap.set(h.id_lokalId, h);
-    }
-
-    // ── Sammenkobl ejerskifter med handelsoplysninger ──
-    // BIZZ-480 + 481: Inkluderer udvidede felter fra begge entiteter.
-    const handler: HandelData[] = ejerskifter
-      .map((e) => {
-        const h = e.handelsoplysningerLokalId
-          ? handelsMap.get(e.handelsoplysningerLokalId)
-          : undefined;
-        return {
-          kontantKoebesum: h?.kontantKoebesum ?? null,
-          samletKoebesum: h?.samletKoebesum ?? null,
-          loesoeresum: h?.loesoeresum ?? null,
-          entreprisesum: h?.entreprisesum ?? null,
-          koebsaftaleDato: h?.koebsaftaleDato ?? null,
-          overtagelsesdato: e.overtagelsesdato ?? null,
-          overdragelsesmaade: e.overdragelsesmaade ?? null,
-          valutakode: h?.valutakode ?? null,
-          // BIZZ-480
-          skoedetekst: h?.skoedetekst ?? null,
-          afstaaelsesdato: h?.afstaaelsesdato ?? null,
-          betalingsforpligtelsesdato: h?.betalingsforpligtelsesdato ?? null,
-          husdyrbesaetningsum: h?.husdyrbesaetningsum ?? null,
-          // BIZZ-481
-          betinget: e.betinget ?? null,
-          fristDato: e.fristDato ?? null,
-          forretningshaendelse: e.forretningshaendelse ?? null,
-          virkningTil: e.virkningTil ?? null,
-        };
-      })
-      .filter(
-        (h) => h.kontantKoebesum != null || h.samletKoebesum != null || h.overtagelsesdato != null
-      )
-      .sort((a, b) => {
-        const da = a.koebsaftaleDato ?? a.overtagelsesdato ?? '';
-        const db = b.koebsaftaleDato ?? b.overtagelsesdato ?? '';
-        return db.localeCompare(da); // nyeste først
-      });
+    const handler: HandelData[] = Array.from(ejerskabById.values())
+      .filter((n) => n.virkningFra != null)
+      .map((n) => ({
+        kontantKoebesum: null,
+        samletKoebesum: null,
+        loesoeresum: null,
+        entreprisesum: null,
+        koebsaftaleDato: null,
+        overtagelsesdato: n.virkningFra ?? null,
+        overdragelsesmaade: overdragelseLabel(n),
+        valutakode: null,
+        // BIZZ-633: Ingen handelsoplysninger fra EJFCustom — klienten
+        // merger med Tinglysning-adkomster for priser + købernavne.
+        skoedetekst: null,
+        afstaaelsesdato: null,
+        betalingsforpligtelsesdato: null,
+        husdyrbesaetningsum: null,
+        betinget: null,
+        fristDato: null,
+        forretningshaendelse: formatAndel(n), // Genbruges til at bære andel
+        virkningTil: n.status?.toLowerCase() === 'historisk' ? (n.virkningFra ?? null) : null,
+      }))
+      .sort((a, b) => (b.overtagelsesdato ?? '').localeCompare(a.overtagelsesdato ?? ''));
 
     logger.log(
-      `[salgshistorik] ${handler.length} handler fundet for BFE ${bfeNummer} (${ejerskifter.length} ejerskifter, ${handelsIds.length} handelsoplysninger)`
+      `[salgshistorik] ${handler.length} ejerskab-events fundet for BFE ${bfeNummer} via EJFCustom`
     );
 
     // BIZZ-633: Cache response før return

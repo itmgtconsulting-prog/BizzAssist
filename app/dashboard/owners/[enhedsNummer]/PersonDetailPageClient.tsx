@@ -1926,20 +1926,35 @@ export default function PersonDetailPageClient({
             </span>
           </div>
 
-          <div className="flex gap-1 -mb-px overflow-x-auto scrollbar-hide">
-            {tabDef.map(({ id, label, icon }) => (
-              <button
-                key={id}
-                onClick={() => setAktivTab(id)}
-                className={`flex items-center gap-1 px-2 py-1.5 text-xs font-medium border-b-2 transition-all whitespace-nowrap ${
-                  aktivTab === id
-                    ? 'border-blue-500 text-blue-300'
-                    : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600'
-                }`}
-              >
-                {icon} {label}
-              </button>
-            ))}
+          {/* BIZZ-595/596: Tab-navigation med WAI-ARIA tablist-pattern så
+              både skærmlæsere og Playwright (role=tab + name) kan navigere
+              korrekt. Tidligere rendrede buttons uden role, hvilket gjorde
+              Playwright-verifikation umulig — tab-klik ramte heller aldrig. */}
+          <div
+            className="flex gap-1 -mb-px overflow-x-auto scrollbar-hide"
+            role="tablist"
+            aria-label={lang === 'da' ? 'Person-detalje faner' : 'Person detail tabs'}
+          >
+            {tabDef.map(({ id, label, icon }) => {
+              const isActive = aktivTab === id;
+              return (
+                <button
+                  key={id}
+                  role="tab"
+                  aria-selected={isActive}
+                  aria-controls={`person-tabpanel-${id}`}
+                  id={`person-tab-${id}`}
+                  onClick={() => setAktivTab(id)}
+                  className={`flex items-center gap-1 px-2 py-1.5 text-xs font-medium border-b-2 transition-all whitespace-nowrap ${
+                    isActive
+                      ? 'border-blue-500 text-blue-300'
+                      : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600'
+                  }`}
+                >
+                  {icon} {label}
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -1997,14 +2012,61 @@ export default function PersonDetailPageClient({
                             {lang === 'da' ? 'Ingen' : 'None'}
                           </p>
                         )}
-                        {/* Ejendomme sektion */}
+                        {/* Ejendomme sektion — BIZZ-595/596: Erstat "Kommer snart"
+                            med faktisk tæller + link til Ejendomme-tab. Tidligere
+                            placeholder efterlod indtryk af at ejendomme-visning var
+                            uimplementeret selv efter BIZZ-595 var "shipped". */}
                         <div className="mt-3 pt-3 border-t border-slate-700/30">
-                          <p className="text-[10px] font-semibold uppercase tracking-wider text-teal-400 mb-2">
-                            {lang === 'da' ? 'Ejendomme' : 'Properties'}
-                          </p>
-                          <p className="text-slate-600 text-[10px]">
-                            {lang === 'da' ? 'Kommer snart' : 'Coming soon'}
-                          </p>
+                          <button
+                            onClick={() => setAktivTab('properties')}
+                            className="group w-full text-left"
+                            aria-label={
+                              lang === 'da' ? 'Gå til ejendomme-tab' : 'Go to properties tab'
+                            }
+                          >
+                            <p className="text-[10px] font-semibold uppercase tracking-wider text-teal-400 mb-2 group-hover:text-teal-300">
+                              {lang === 'da' ? 'Ejendomme' : 'Properties'}
+                            </p>
+                            {(() => {
+                              const aktive = ejendommeData.filter((e) => e.aktiv !== false).length;
+                              const privat = personalBfes.length;
+                              const historiske = ejendommeData.filter(
+                                (e) => e.aktiv === false
+                              ).length;
+                              const totalAktive = aktive + privat;
+                              if (totalAktive + historiske === 0) {
+                                return (
+                                  <p className="text-slate-600 text-[10px]">
+                                    {lang === 'da' ? 'Ingen' : 'None'}
+                                  </p>
+                                );
+                              }
+                              return (
+                                <div className="space-y-1">
+                                  <p className="text-slate-300 text-[11px] group-hover:text-white">
+                                    {lang === 'da'
+                                      ? `${totalAktive} aktiv${totalAktive !== 1 ? 'e' : ''}`
+                                      : `${totalAktive} active`}
+                                    {historiske > 0 && (
+                                      <span className="text-slate-600">
+                                        {' · '}
+                                        {lang === 'da'
+                                          ? `${historiske} historisk${historiske !== 1 ? 'e' : ''}`
+                                          : `${historiske} historical`}
+                                      </span>
+                                    )}
+                                  </p>
+                                  {privat > 0 && (
+                                    <p className="text-slate-500 text-[9px]">
+                                      {lang === 'da'
+                                        ? `Heraf ${privat} personligt ejet`
+                                        : `Incl. ${privat} personally owned`}
+                                    </p>
+                                  )}
+                                </div>
+                              );
+                            })()}
+                          </button>
                         </div>
                       </div>
                     );

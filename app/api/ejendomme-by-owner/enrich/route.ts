@@ -22,7 +22,7 @@ import { resolveTenantId } from '@/lib/api/auth';
 import { parseQuery } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
 import { selectPrimaryOwner, type EjerCandidate } from './selectPrimaryOwner';
-import { fetchBbrAreasByBfe } from '@/app/lib/fetchBbrData';
+import { fetchBbrAreasByBfe, resolveMatrikelArealByBfe } from '@/app/lib/fetchBbrData';
 import { DAWA_BASE_URL } from '@/app/lib/serviceEndpoints';
 import { fetchSalgshistorikMedFallback } from '@/app/lib/fetchSalgshistorikMedFallback';
 
@@ -196,6 +196,18 @@ export async function GET(request: NextRequest) {
     }
     if (matrikelRes.status === 'fulfilled' && matrikelRes.value != null) {
       result.matrikelAreal = matrikelRes.value as number;
+    } else {
+      // BIZZ-629 v5: DAWA /jordstykker?bfenummer=X returnerer tom for
+      // ejerlejligheder og erhvervsejendomme (fx BFE 226629/226630 = Arnold
+      // Nielsens Boulevard 62A/62B). Fald tilbage til Vurderingsportalen-
+      // resolve → adgangsadresse → jordstykke-registreretareal så alle
+      // ejendomstyper viser korrekt matrikel-areal på kortene.
+      try {
+        const fallback = await resolveMatrikelArealByBfe(parseInt(bfe, 10));
+        if (fallback != null) result.matrikelAreal = fallback;
+      } catch {
+        // Ignorer fallback-fejl — matrikelAreal forbliver null
+      }
     }
     if (vurRes.status === 'fulfilled' && vurRes.value) {
       const v = vurRes.value as {

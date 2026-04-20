@@ -1240,14 +1240,24 @@ export async function POST(request: NextRequest): Promise<Response> {
   }
   const { userId, tenantId: resolvedTenantId } = auth;
 
-  // Require an active subscription — read app_metadata via admin client (not exposed to JWT)
+  // BIZZ-641: Accepter både 'active' og 'trialing' — men trial-brugere får
+  // kun AI-adgang via selvstændigt betalte token-pakker (topUpTokens), ikke
+  // via plan-quota. Det forhindrer misbrug hvor brugere opretter trial efter
+  // trial for at forbruge gratis AI.
   const adminClient = createAdminClient();
   const { data: freshUser } = await adminClient.auth.admin.getUserById(userId);
   const sub = freshUser?.user?.app_metadata?.subscription as
-    | { status?: string; tokensUsedThisMonth?: number; bonusTokens?: number; planId?: string }
+    | {
+        status?: string;
+        tokensUsedThisMonth?: number;
+        bonusTokens?: number;
+        topUpTokens?: number;
+        planId?: string;
+      }
     | null
     | undefined;
-  if (!sub || sub.status !== 'active') {
+  const subStatus = sub?.status ?? '';
+  if (!sub || (subStatus !== 'active' && subStatus !== 'trialing')) {
     return Response.json(
       { error: 'Aktivt abonnement kræves for at bruge AI-assistenten' },
       { status: 403 }
@@ -1255,8 +1265,12 @@ export async function POST(request: NextRequest): Promise<Response> {
   }
 
   // Guard: reject immediately if token quota is exhausted.
-  // Fetch effective token limit from plan_configs; fall back to 0 (unlimited) if unavailable.
+  // BIZZ-641: Under trial blokeres plan-tokens — effektiv grænse er kun
+  // topUpTokens + bonusTokens (manuelt tildelt af admin). Efter aktivering
+  // tilføjes plan-tokens normalt.
   const tokensUsedThisMonth = sub.tokensUsedThisMonth ?? 0;
+  const bonusTokens = sub.bonusTokens ?? 0;
+  const topUpTokens = sub.topUpTokens ?? 0;
   let effectiveTokenLimit = 0;
   if (sub.planId) {
     const { data: planRow } = await adminClient
@@ -1264,11 +1278,25 @@ export async function POST(request: NextRequest): Promise<Response> {
       .select('ai_tokens_per_month')
       .eq('plan_id', sub.planId)
       .single<{ ai_tokens_per_month: number }>();
-    const bonusTokens = sub.bonusTokens ?? 0;
-    effectiveTokenLimit = (planRow?.ai_tokens_per_month ?? 0) + bonusTokens;
+    const planTokens = subStatus === 'trialing' ? 0 : (planRow?.ai_tokens_per_month ?? 0);
+    effectiveTokenLimit = planTokens + bonusTokens + topUpTokens;
+  } else {
+    effectiveTokenLimit = bonusTokens + topUpTokens;
   }
   if (effectiveTokenLimit > 0 && tokensUsedThisMonth >= effectiveTokenLimit) {
     return Response.json({ error: 'Token kvote opbrugt for denne måned' }, { status: 429 });
+  }
+  // BIZZ-641: Under trial uden token-pakke → 402 Payment Required med CTA.
+  if (subStatus === 'trialing' && effectiveTokenLimit === 0) {
+    return Response.json(
+      {
+        error:
+          'AI-tokens er låst indtil dit abonnement starter. Køb en token-pakke for at bruge AI nu.',
+        code: 'trial_ai_blocked',
+        cta: 'buy_token_pack',
+      },
+      { status: 402 }
+    );
   }
 
   const apiKey = process.env.BIZZASSIST_CLAUDE_KEY?.trim();

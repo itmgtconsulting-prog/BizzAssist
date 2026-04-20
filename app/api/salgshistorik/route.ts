@@ -23,7 +23,11 @@ import { logger } from '@/app/lib/logger';
 import { getSharedOAuthToken } from '@/app/lib/dfTokenCache';
 import { resolveTenantId } from '@/lib/api/auth';
 import { parseQuery } from '@/app/lib/validate';
-import { EJF_GQL_ENDPOINT, DATAFORDELER_TOKEN_URL } from '@/app/lib/serviceEndpoints';
+import {
+  EJF_GQL_ENDPOINT,
+  EJF_GQL_HISTORISK_ENDPOINT,
+  DATAFORDELER_TOKEN_URL,
+} from '@/app/lib/serviceEndpoints';
 import { LruCache } from '@/app/lib/lruCache';
 
 // BIZZ-633: LRU-cache for salgshistorik-svar. Samme BFE slås op mange
@@ -181,10 +185,11 @@ interface GqlResult<T> {
 async function queryEJF<T>(
   query: string,
   entityName: string,
-  token: string
+  token: string,
+  endpoint: string = EJF_GQL_ENDPOINT
 ): Promise<{ nodes: T[]; authError: boolean } | null> {
   try {
-    const res = await fetch(proxyUrl(EJF_GQL_ENDPOINT), {
+    const res = await fetch(proxyUrl(endpoint), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -300,11 +305,20 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
       }
     }`;
 
-    const ejerskifteResult = await queryEJF<RawEjerskifte>(
-      ejerskifteQuery,
-      'EJF_Ejerskifte',
-      token
-    );
+    // BIZZ-633: Query FlexibleCurrent (aktuelle) + HistoriskCurrent (alle
+    // historiske ejerskifter) parallelt og merge på
+    // handelsoplysningerLokalId. FlexibleCurrent returnerer kun gældende
+    // ejerskifter; HistoriskCurrent returnerer også udslettede/afsluttede
+    // ejerskifter — nødvendigt for den fulde handelskæde når en ejendom
+    // har skiftet ejer flere gange.
+    const [flexibleResult, historiskResult] = await Promise.allSettled([
+      queryEJF<RawEjerskifte>(ejerskifteQuery, 'EJF_Ejerskifte', token),
+      queryEJF<RawEjerskifte>(ejerskifteQuery, 'EJF_Ejerskifte', token, EJF_GQL_HISTORISK_ENDPOINT),
+    ]);
+
+    const ejerskifteResult = flexibleResult.status === 'fulfilled' ? flexibleResult.value : null;
+    const historiskEjerskifte =
+      historiskResult.status === 'fulfilled' ? historiskResult.value : null;
 
     if (ejerskifteResult?.authError) {
       return NextResponse.json(
@@ -313,7 +327,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
       );
     }
 
-    if (!ejerskifteResult) {
+    if (!ejerskifteResult && !historiskEjerskifte) {
       return NextResponse.json(
         {
           bfeNummer,
@@ -326,7 +340,19 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
       );
     }
 
-    const ejerskifter = ejerskifteResult.nodes;
+    // Merge ejerskifter fra begge kilder, dedupliker på
+    // handelsoplysningerLokalId (unikt pr. handel). Nogle records findes
+    // kun i en af de to — derfor union, ikke intersection.
+    const ejerskifterById = new Map<string, RawEjerskifte>();
+    const flexibleNodes = ejerskifteResult?.nodes ?? [];
+    const historiskNodes = historiskEjerskifte?.nodes ?? [];
+    for (const e of [...flexibleNodes, ...historiskNodes]) {
+      const key =
+        e.handelsoplysningerLokalId ?? `${e.bestemtFastEjendomBFENr}-${e.overtagelsesdato}`;
+      if (!key) continue;
+      if (!ejerskifterById.has(key)) ejerskifterById.set(key, e);
+    }
+    const ejerskifter = Array.from(ejerskifterById.values());
 
     // Saml unikke handelsoplysningerLokalIds
     const handelsIds = [
@@ -396,11 +422,21 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
       }
     }`;
 
-    const handelsResult = await queryEJF<RawHandelsoplysning>(
-      handelsQuery,
-      'EJF_Handelsoplysninger',
-      token
-    );
+    // BIZZ-633: Merge handelsoplysninger fra begge kilder også. Ældre
+    // handler ligger i HistoriskCurrent; nyere i FlexibleCurrent.
+    const [handelsFlexible, handelsHistorisk] = await Promise.allSettled([
+      queryEJF<RawHandelsoplysning>(handelsQuery, 'EJF_Handelsoplysninger', token),
+      queryEJF<RawHandelsoplysning>(
+        handelsQuery,
+        'EJF_Handelsoplysninger',
+        token,
+        EJF_GQL_HISTORISK_ENDPOINT
+      ),
+    ]);
+
+    const handelsResult = handelsFlexible.status === 'fulfilled' ? handelsFlexible.value : null;
+    const handelsHistoriskResult =
+      handelsHistorisk.status === 'fulfilled' ? handelsHistorisk.value : null;
 
     if (handelsResult?.authError) {
       return NextResponse.json(
@@ -409,12 +445,10 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
       );
     }
 
-    // Byg opslag: handelsoplysningerLokalId → prisdata
+    // Byg opslag: handelsoplysningerLokalId → prisdata (union af kilder)
     const handelsMap = new Map<string, RawHandelsoplysning>();
-    if (handelsResult?.nodes) {
-      for (const h of handelsResult.nodes) {
-        handelsMap.set(h.id_lokalId, h);
-      }
+    for (const h of [...(handelsResult?.nodes ?? []), ...(handelsHistoriskResult?.nodes ?? [])]) {
+      if (!handelsMap.has(h.id_lokalId)) handelsMap.set(h.id_lokalId, h);
     }
 
     // ── Sammenkobl ejerskifter med handelsoplysninger ──

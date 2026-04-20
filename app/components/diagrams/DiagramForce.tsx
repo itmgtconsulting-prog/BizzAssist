@@ -1524,6 +1524,38 @@ export default function DiagramForce({
     return () => clearTimeout(timer);
   }, [isFullscreen]);
 
+  // ── BIZZ-604: Re-fit når containeren bliver synlig (tab-skift) ──
+  // Når diagrammet er mountet i en skjult tab, er clientWidth 0 og auto-fit
+  // skipper. ResizeObserver registrerer transitionen fra 0 → positiv bredde
+  // (eller en betydelig størrelsesændring) og trigger re-fit så nodes
+  // centreres i det faktiske viewport.
+  useEffect(() => {
+    const c = containerRef.current;
+    if (!c || typeof ResizeObserver === 'undefined') return;
+    let lastW = c.clientWidth;
+    let lastH = c.clientHeight;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const cr = entry.contentRect;
+        // Trigger re-fit når containeren går fra ~usynlig til synlig
+        // (cW < 50 → cW ≥ 50) eller ved stor størrelsesændring (>20% delta).
+        const becameVisible = lastW < 50 && cr.width >= 50;
+        const significantResize =
+          lastW >= 50 &&
+          (Math.abs(cr.width - lastW) / Math.max(lastW, 1) > 0.2 ||
+            Math.abs(cr.height - lastH) / Math.max(lastH, 1) > 0.2);
+        if (becameVisible || significantResize) {
+          initialFitDone.current = false;
+          setFitTrigger((t) => t + 1);
+        }
+        lastW = cr.width;
+        lastH = cr.height;
+      }
+    });
+    observer.observe(c);
+    return () => observer.disconnect();
+  }, []);
+
   // ── Expand/collapse all helpers ──
   // Nodes that have expandable children (expandableChildren > 0)
   const allExpandableIds = useMemo(

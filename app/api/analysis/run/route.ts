@@ -1027,8 +1027,18 @@ export async function POST(request: NextRequest): Promise<Response> {
 
   // ── API key ─────────────────────────────────────────────────────────────────
   const apiKey = process.env.BIZZASSIST_CLAUDE_KEY?.trim();
-  if (!apiKey)
-    return NextResponse.json({ error: 'BIZZASSIST_CLAUDE_KEY ikke konfigureret' }, { status: 500 });
+  if (!apiKey) {
+    // BIZZ-651: Generisk besked + buy-tokens CTA
+    return NextResponse.json(
+      {
+        error:
+          'AI er midlertidigt utilgængelig. Bekræft at dit abonnement er aktivt, eller køb en token-pakke for at fortsætte.',
+        code: 'ai_unavailable',
+        cta: 'buy_token_pack',
+      },
+      { status: 503 }
+    );
+  }
 
   // ── Parse + validate body ────────────────────────────────────────────────────
   const parsed = await parseBody(request, analysisRunSchema);

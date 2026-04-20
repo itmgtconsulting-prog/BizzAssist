@@ -828,7 +828,7 @@ export async function provisionTenantSchema(schemaName: string, tenantId: string
     // Ikke-fatal — ny tenant kan stadig bruge kerne-funktionalitet selv
     // hvis AI-tabeller mangler. Log til Sentry via eksisterende logger.
 
-    console.warn(
+    logger.warn(
       `[provisionTenantSchema] ai_tables ikke oprettet for "${schemaName}": ${aiErr.message}`
     );
   }

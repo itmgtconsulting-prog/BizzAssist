@@ -798,6 +798,16 @@ export default function PersonDetailPageClient({
   const [handlerLoading, setHandlerLoading] = useState(false);
   const handlerFetchedRef = useRef(false);
 
+  /**
+   * BIZZ-594: Personligt ejede ejendomme via bulk-data-lookup (ejf_ejerskab).
+   * Hentes progressivt når diagram-fanen aktiveres så vi har alle 9+ BFE'er
+   * for personen — ikke kun de 2 som enhedsNummer-sporet rammer. Nodes
+   * tilføjes med adresse via bfe-addresses-endpointet, så rendering matcher
+   * virksomhedsdiagrammets property-noder.
+   */
+  const [personalBfes, setPersonalBfes] = useState<DiagramPropertySummary[]>([]);
+  const personalBfesFetchedRef = useRef(false);
+
   /** Detekterer desktop vs. mobil — nyheder-panel vises som sidebar på desktop, overlay på mobil */
   const [isDesktop, setIsDesktop] = useState(true);
   useEffect(() => {
@@ -1376,6 +1386,93 @@ export default function PersonDetailPageClient({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aktivTab, derived, relatedCompanies, fetchEjendommeProgressively]);
+
+  /**
+   * BIZZ-594: Fetch personligt ejede ejendomme (bulk-data) når diagram eller
+   * ejendomme-tab aktiveres. Lookupen bruger person-bridge til at resolve
+   * (navn, fødselsdato) og dernæst person-properties til at få alle gældende
+   * BFE'er. BFE'erne beriges med adresser via bfe-addresses. Resultatet er
+   * en komplet liste af personens personligt ejede ejendomme — tilgængelig
+   * for diagram-renderen, så alle ejendomme vises på person-noden (ikke kun
+   * de 2 enhedsNummer-sporet rammer).
+   */
+  useEffect(() => {
+    if (aktivTab !== 'relations' && aktivTab !== 'properties') return;
+    if (!data) return;
+    if (personalBfesFetchedRef.current) return;
+    personalBfesFetchedRef.current = true;
+
+    const personEnhedsNummer = data.enhedsNummer;
+    let cancelled = false;
+    (async () => {
+      try {
+        const bridgeRes = await fetch(
+          `/api/ejerskab/person-bridge?enhedsNummer=${personEnhedsNummer}`,
+          { signal: AbortSignal.timeout(15000) }
+        );
+        if (!bridgeRes.ok) return;
+        const bridge = (await bridgeRes.json()) as {
+          navn?: string;
+          foedselsdato?: string;
+        };
+        if (!bridge.navn || !bridge.foedselsdato) return;
+
+        const ppRes = await fetch(
+          `/api/ejerskab/person-properties?navn=${encodeURIComponent(bridge.navn)}&fdato=${bridge.foedselsdato}`,
+          { signal: AbortSignal.timeout(10000) }
+        );
+        if (!ppRes.ok) return;
+        const pp = (await ppRes.json()) as { bfes?: number[] };
+        const bfes = Array.isArray(pp.bfes) ? pp.bfes : [];
+        if (bfes.length === 0) return;
+
+        // Berig BFE'er med adresse så diagram-noderne viser "Søbyvej 11, 2650
+        // Hvidovre" i stedet for "BFE 2081243".
+        const addrRes = await fetch(`/api/bfe-addresses?bfes=${bfes.join(',')}`, {
+          signal: AbortSignal.timeout(10000),
+        });
+        const addrMap: Record<
+          string,
+          {
+            adresse: string | null;
+            postnr: string | null;
+            by: string | null;
+            dawaId: string | null;
+            ejendomstype: string | null;
+            etage: string | null;
+            doer: string | null;
+          }
+        > = addrRes.ok ? await addrRes.json() : {};
+
+        if (cancelled) return;
+        const enriched: DiagramPropertySummary[] = bfes.map((bfe) => {
+          const a = addrMap[String(bfe)] ?? {};
+          return {
+            bfeNummer: bfe,
+            ownerCvr: '',
+            adresse: a.adresse ?? null,
+            postnr: a.postnr ?? null,
+            by: a.by ?? null,
+            kommune: null,
+            kommuneKode: null,
+            ejendomstype: a.ejendomstype ?? null,
+            dawaId: a.dawaId ?? null,
+            etage: a.etage ?? null,
+            doer: a.doer ?? null,
+            aktiv: true,
+          };
+        });
+        setPersonalBfes(enriched);
+      } catch {
+        // Ignorer fejl — falder tilbage til tomt datasæt (diagram viser så
+        // kun de ejendomme enhedsNummer-sporet fangede).
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [aktivTab, data]);
 
   /**
    * Lazy-loader personbogsdata for alle tilknyttede virksomheder når Tinglysning-tab aktiveres.
@@ -1992,7 +2089,10 @@ export default function PersonDetailPageClient({
                 relatedCompanies,
                 noeglePersonerMap,
                 andreVirksomheder,
-                propertiesByCvr
+                propertiesByCvr,
+                // BIZZ-594: Personligt ejede ejendomme fra bulk-data-lookup —
+                // tilføjes som direkte property-noder hængt af person-noden.
+                personalBfes
               );
               return (
                 <DiagramForce

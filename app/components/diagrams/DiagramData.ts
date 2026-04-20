@@ -62,6 +62,8 @@ export interface DiagramPropertySummary {
   doer?: string | null;
   /** Ejer-andel (f.eks. "50%", "100%") */
   ejerandel?: string | null;
+  /** BIZZ-455/594: false hvis ejendommen er solgt — historisk ejerskab */
+  aktiv?: boolean;
 }
 
 /** A node in the diagram graph */
@@ -524,7 +526,13 @@ export function buildPersonDiagramGraph(
     }
   >,
   andreVirksomheder?: PersonCompany[],
-  propertiesByCvr?: Map<number, DiagramPropertySummary[]>
+  propertiesByCvr?: Map<number, DiagramPropertySummary[]>,
+  /**
+   * BIZZ-594: Personligt ejede ejendomme (ikke via virksomhed). Tilføjes som
+   * property-noder hængt direkte af person-noden. Data kommer typisk fra
+   * /api/ejerskab/person-properties (bulk-data-lookup mod ejf_ejerskab).
+   */
+  personalProperties?: DiagramPropertySummary[]
 ): DiagramGraph {
   const nodes: DiagramNode[] = [];
   const edges: DiagramEdge[] = [];
@@ -791,6 +799,53 @@ export function buildPersonDiagramGraph(
         });
         edges.push({ from: companyNode.id, to: overflowId });
       }
+    }
+  }
+
+  // ── BIZZ-594: Personligt ejede ejendomme (bulk-data-lookup) ──────────────
+  // Tilføjer direkte property-noder hængt af person-noden. Supplerer
+  // propertiesByCvr-sporet med ejendomme som personen ejer UDEN via-
+  // virksomhed-strukturen (typisk privatbolig, fritidshus og ejendomme
+  // købt som privatperson). Data stammer normalt fra ejf_ejerskab-bulk-
+  // tabellen (se BIZZ-534).
+  if (personalProperties && personalProperties.length > 0) {
+    const aktive = personalProperties.filter((p) => p.aktiv !== false);
+    const shown = aktive.slice(0, MAX_PROPS_PER_COMPANY);
+    for (const p of shown) {
+      const propId = `bfe-${p.bfeNummer}`;
+      // Hvis noden allerede er tilføjet via et company-ownership-spor,
+      // skipper vi duplikering af selve noden men tilføjer stadig den
+      // direkte person→property-edge så ejerskabet er tydeligt.
+      edges.push({
+        from: mainId,
+        to: propId,
+        ejerandel: p.ejerandel ?? undefined,
+      });
+      if (seenIds.has(propId)) continue;
+      seenIds.add(propId);
+      const link = p.dawaId ? `/dashboard/ejendomme/${p.dawaId}` : undefined;
+      const postBy = [p.postnr, p.by].filter(Boolean).join(' ');
+      const rawAddr = p.adresse ?? `BFE ${p.bfeNummer}`;
+      const baseAddr = p.etage ? `${rawAddr}, ${p.etage}.${p.doer ? ` ${p.doer}` : ''}` : rawAddr;
+      const mainLabel = postBy ? `${baseAddr}, ${postBy}` : baseAddr;
+      nodes.push({
+        id: propId,
+        label: mainLabel,
+        sublabel: p.ejendomstype ?? undefined,
+        type: 'property',
+        bfeNummer: p.bfeNummer,
+        link,
+      });
+    }
+    if (aktive.length > MAX_PROPS_PER_COMPANY) {
+      const overflowId = `props-overflow-person-${personEnhedsNummer}`;
+      const remaining = aktive.length - MAX_PROPS_PER_COMPANY;
+      nodes.push({
+        id: overflowId,
+        label: `+${remaining} ejendomme`,
+        type: 'property',
+      });
+      edges.push({ from: mainId, to: overflowId });
     }
   }
 

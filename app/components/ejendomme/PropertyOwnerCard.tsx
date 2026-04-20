@@ -362,8 +362,10 @@ export default function PropertyOwnerCard({
                 )}
               </span>
             </div>
-            {/* BIZZ-556: Eksplicit "Ejer"-label så brugeren ikke er i tvivl om navnet er ejer, administrator eller bygherre */}
-            {enriched.ejerNavn && (
+            {/* BIZZ-556: Eksplicit "Ejer"-label så brugeren ikke er i tvivl om navnet er ejer, administrator eller bygherre.
+                BIZZ-628: Skjult når showOwner=false (grupperet kontekst) — ejeren fremgår
+                allerede af gruppe-overskriften så linjen er redundant og stjæler plads. */}
+            {showOwner && enriched.ejerNavn && (
               <div
                 className="flex items-center gap-1.5 col-span-2"
                 title={da ? 'Tinglyst ejer' : 'Registered owner'}

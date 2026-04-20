@@ -25,10 +25,8 @@ import type { DiagramGraph } from '@/app/components/diagrams/DiagramData';
 import { logger } from '@/app/lib/logger';
 
 /** BIZZ-600: DiagramForce uses d3-force — dynamic() keeps d3-force out of initial bundle */
-const DiagramForce = dynamic(
-  () => import(/* d3-force */ '@/app/components/diagrams/DiagramForce'),
-  { ssr: false }
-);
+// prettier-ignore
+const DiagramForce = dynamic(/* d3-force */ () => import('@/app/components/diagrams/DiagramForce'), { ssr: false });
 
 interface EjerDetalje {
   navn: string;

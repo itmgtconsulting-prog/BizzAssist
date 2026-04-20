@@ -424,13 +424,12 @@ export default function PropertyOwnerCard({
             )}
           </span>
         </div>
-      ) : !detailHref ? (
-        <div className="px-4 pb-3 pt-0">
-          <span className="flex items-center w-full px-3 py-1.5 rounded-lg bg-slate-900/40 text-slate-500 text-[10px]">
-            {da ? 'DAWA-id mangler' : 'DAWA id missing'}
-          </span>
-        </div>
       ) : null}
+      {/* BIZZ-626: "DAWA-id mangler"-badge fjernet — den signalerede
+          teknisk state der ikke var meningsfuld for slutbrugeren. Kort uden
+          detailHref renderes som ikke-klikbart (den ydre Link-wrapper
+          returnerer plain CardContent) og den visuelle hover-cue er også
+          allerede gated på detailHref. */}
 
       {/* Hover affordance — kun på aktive, klikbare kort */}
       {aktiv && detailHref && (

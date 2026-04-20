@@ -7,7 +7,7 @@
  * @param props - DiagramVariantProps
  */
 
-import { useMemo, useRef, useState, useEffect, useCallback } from 'react';
+import { memo, useMemo, useRef, useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   forceSimulation,
@@ -129,9 +129,14 @@ interface ForceLink extends SimulationLinkDatum<ForceNode> {
  * Persons rendered in purple, companies in slate, main in blue.
  * Click the expand badge on a subsidiary to show/hide its co-owners.
  *
+ * BIZZ-600: Wrapped i React.memo i bunden af filen — D3-simuleringen er
+ * tung og skal ikke genstarte når forældre-komponenten rerender af
+ * urelaterede årsager (fx tab-skift, notifikationer). Props-stabilitet
+ * sikres af parents via useMemo/useCallback.
+ *
  * @param props - graph + lang + optional onNodeClick override
  */
-export default function DiagramForce({
+function DiagramForce({
   graph,
   lang,
   onNodeClick,
@@ -2552,3 +2557,10 @@ export default function DiagramForce({
     </div>
   );
 }
+
+// BIZZ-600: Memoize med default shallow-compare — graph, lang og
+// onNodeClick skal være stable refs fra parent (memoiseres typisk via
+// useMemo/useCallback) for at memoet rammer. Dynamic import i parents
+// behøver ikke default-export-ændring fordi memo(Fn) også er en gyldig
+// funktionel komponent.
+export default memo(DiagramForce);

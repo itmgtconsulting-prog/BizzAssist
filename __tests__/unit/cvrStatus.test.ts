@@ -2,7 +2,11 @@
  * Unit tests for cvrStatus.ts — CVR ES livsforloeb + sammensatStatus lookup.
  */
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { hentCvrStatus, hentCvrStatusBatch } from '@/app/lib/cvrStatus';
+import {
+  hentCvrStatus,
+  hentCvrStatusBatch,
+  __clearCvrStatusCacheForTests,
+} from '@/app/lib/cvrStatus';
 
 const ORIGINAL_FETCH = globalThis.fetch;
 
@@ -52,6 +56,8 @@ describe('cvrStatus.hentCvrStatus', () => {
   beforeEach(() => {
     process.env.CVR_ES_USER = 'u';
     process.env.CVR_ES_PASS = 'p';
+    // BIZZ-600: Ryd LRU-cache så tests ikke deler cached resultater
+    __clearCvrStatusCacheForTests();
   });
   afterEach(() => {
     globalThis.fetch = ORIGINAL_FETCH;
@@ -127,6 +133,8 @@ describe('cvrStatus.hentCvrStatusBatch', () => {
   beforeEach(() => {
     process.env.CVR_ES_USER = 'u';
     process.env.CVR_ES_PASS = 'p';
+    // BIZZ-600: Ryd LRU-cache så tests ikke deler cached resultater
+    __clearCvrStatusCacheForTests();
   });
   afterEach(() => {
     globalThis.fetch = ORIGINAL_FETCH;

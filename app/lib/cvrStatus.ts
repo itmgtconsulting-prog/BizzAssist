@@ -12,8 +12,23 @@
  */
 
 import { logger } from '@/app/lib/logger';
+import { LruCache } from '@/app/lib/lruCache';
 
 const CVR_ES_BASE = 'http://distribution.virk.dk/cvr-permanent';
+
+// BIZZ-600: LRU-cache for CVR-status. Samme CVR slås op mange gange
+// på tværs af ejerskab-routes (ejendomme-by-owner, chain, filter osv.).
+// Cache holder 150 entries i 1 time — trimmes automatisk ved overskridelse.
+const cvrStatusCache = new LruCache<number, CvrStatus>({ maxSize: 150, ttlMs: 3_600_000 });
+
+/**
+ * Internal test helper — nulstiller cvrStatus LRU så unit-tests kan
+ * verificere fetch-mocks uden cached-hit-interference. Ikke beregnet til
+ * produktions-brug.
+ */
+export function __clearCvrStatusCacheForTests(): void {
+  cvrStatusCache.clear();
+}
 
 export interface CvrStatus {
   cvr: number;
@@ -43,6 +58,10 @@ function gyldigNu<T extends Periodic>(arr: T[]): T | null {
  * @returns CvrStatus eller null ved fejl
  */
 export async function hentCvrStatus(cvr: number): Promise<CvrStatus | null> {
+  // BIZZ-600: Returnér cached resultat hvis tilgængeligt.
+  const cached = cvrStatusCache.get(cvr);
+  if (cached) return cached;
+
   const user = process.env.CVR_ES_USER ?? '';
   const pass = process.env.CVR_ES_PASS ?? '';
   if (!user || !pass) return null;
@@ -66,7 +85,11 @@ export async function hentCvrStatus(cvr: number): Promise<CvrStatus | null> {
       hits?: { hits?: Array<{ _source?: { Vrvirksomhed?: unknown } }> };
     };
     const hit = json.hits?.hits?.[0]?._source?.Vrvirksomhed as Record<string, unknown> | undefined;
-    if (!hit) return { cvr, navn: null, isCeased: false };
+    if (!hit) {
+      const result: CvrStatus = { cvr, navn: null, isCeased: false };
+      cvrStatusCache.set(cvr, result);
+      return result;
+    }
 
     const navne = Array.isArray(hit.navne) ? (hit.navne as (Periodic & { navn?: string })[]) : [];
     const navn = gyldigNu(navne)?.navn ?? null;
@@ -77,7 +100,9 @@ export async function hentCvrStatus(cvr: number): Promise<CvrStatus | null> {
     const sammensatStatus = typeof meta?.sammensatStatus === 'string' ? meta.sammensatStatus : '';
     const isCeased = harSlutdato || sammensatStatus === 'Ophørt';
 
-    return { cvr, navn, isCeased };
+    const result: CvrStatus = { cvr, navn, isCeased };
+    cvrStatusCache.set(cvr, result);
+    return result;
   } catch (err) {
     logger.warn('[cvrStatus] lookup failed:', err instanceof Error ? err.message : err);
     return null;

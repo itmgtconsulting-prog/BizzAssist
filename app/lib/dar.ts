@@ -32,6 +32,32 @@ export type { DawaAutocompleteResult, DawaAdresse, DawaJordstykke } from './dawa
 import type { DawaAutocompleteResult, DawaAdresse, DawaJordstykke } from './dawa';
 import { logger } from '@/app/lib/logger';
 import { DAR_ENDPOINT } from '@/app/lib/serviceEndpoints';
+import { LruCache } from '@/app/lib/lruCache';
+
+// BIZZ-600: LRU-cache for DAR adresse-lookups. Samme adresse-UUID slås
+// typisk op flere gange i samme session (search → detail → related).
+// TTL 24 timer — DAR-data er stabilt på den skala.
+const darAdresseCache = new LruCache<string, DawaAdresse>({
+  maxSize: 150,
+  ttlMs: 86_400_000,
+});
+
+// BIZZ-600: LRU-cache for plandata zone-opslag — kvantiseret på 4 decimaler
+// (~11m præcision) så koordinater inden for samme jordstykke deler cache.
+// Zoneændringer er sjældne, TTL 24 timer er sikkert.
+const zoneCache = new LruCache<string, string | null>({
+  maxSize: 150,
+  ttlMs: 86_400_000,
+});
+
+/**
+ * Internal test helpers — nulstiller LRU-caches så unit-tests kan
+ * verificere fetch-mocks uden cached-hit-interference.
+ */
+export function __clearDarCachesForTests(): void {
+  darAdresseCache.clear();
+  zoneCache.clear();
+}
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  * Constants
@@ -625,6 +651,10 @@ export async function darAutocomplete(q: string): Promise<DawaAutocompleteResult
  * @returns DawaAdresse-kompatibelt objekt eller null
  */
 export async function darHentAdresse(id: string): Promise<DawaAdresse | null> {
+  // BIZZ-600: Cache-hit returnerer direkte uden DAR-kald.
+  const cached = darAdresseCache.get(id);
+  if (cached) return cached;
+
   const ts = nowTs();
   const escaped = id.replace(/"/g, '\\"');
 
@@ -806,7 +836,7 @@ export async function darHentAdresse(id: string): Promise<DawaAdresse | null> {
       );
     }
 
-    return {
+    const result: DawaAdresse = {
       id: hn.id_lokalId,
       vejnavn: vejNode?.vejnavn ?? parsed.vejnavn,
       husnr: hn.husnummertekst || parsed.husnr,
@@ -826,6 +856,9 @@ export async function darHentAdresse(id: string): Promise<DawaAdresse | null> {
       // BIZZ-508: Vejkode fra NavngivenVejKommunedel — kommunens lokale vejnummer
       vejkode: nvkNode?.vejkode ?? undefined,
     };
+    // BIZZ-600: Cache kun succesfulde opslag — fejl skal retries.
+    darAdresseCache.set(id, result);
+    return result;
   } catch (err) {
     // DAR fejlede — fallback til DAWA mens den stadig virker
     logger.error('darHentAdresse fejl, falder tilbage til DAWA:', err);
@@ -1188,6 +1221,12 @@ const PLANDATA_WFS_ENDPOINT = 'https://geoserver.plandata.dk/geoserver/wfs';
  * @param lat - Breddegrad (WGS84)
  */
 export async function hentZoneFraPlandata(lng: number, lat: number): Promise<string | null> {
+  // BIZZ-600: Cache-nøgle kvantiseret til 4 decimaler (~11m) så mindre
+  // koordinat-variationer inden for samme jordstykke deler cache.
+  const cacheKey = `${lng.toFixed(4)}_${lat.toFixed(4)}`;
+  const cached = zoneCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
   // SRID=4326; prefix is load-bearing — without it GeoServer treats coords
   // as EPSG:25832 (UTM32N) and returns zero features.
   const cql = encodeURIComponent(`INTERSECTS(geometri,SRID=4326;POINT(${lng} ${lat}))`);
@@ -1222,7 +1261,9 @@ export async function hentZoneFraPlandata(lng: number, lat: number): Promise<str
         props.zone ?? props.zone_navn ?? props.zonekode ?? props.zoneKode ?? props.betegnelse;
       if (typeof rawZone !== 'string' || rawZone.length === 0) continue;
 
-      return normaliseZone(rawZone);
+      const normalized = normaliseZone(rawZone);
+      zoneCache.set(cacheKey, normalized);
+      return normalized;
     } catch (err) {
       logger.warn(
         `hentZoneFraPlandata: layer=${typeName} failed`,
@@ -1232,6 +1273,8 @@ export async function hentZoneFraPlandata(lng: number, lat: number): Promise<str
     }
   }
 
+  // Cache også null-resultater så vi ikke re-spørger på hvert kald.
+  zoneCache.set(cacheKey, null);
   return null;
 }
 

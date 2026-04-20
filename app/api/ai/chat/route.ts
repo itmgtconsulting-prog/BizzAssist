@@ -1652,6 +1652,15 @@ export async function POST(request: NextRequest): Promise<Response> {
 
             // Send token usage summary before closing stream
             const totalTokens = totalInputTokens + totalOutputTokens;
+            // BIZZ-643: Beregn allocation før vi sender usage-event så vi
+            // kan inkludere per-kilde-remaining i samme SSE-block.
+            const allocation = allocateTokensBySource(totalTokens, {
+              planTokens,
+              planTokensUsed,
+              bonusTokens,
+              topUpTokens,
+              tokensUsedThisMonth,
+            });
             sse(
               controller,
               JSON.stringify({
@@ -1659,6 +1668,10 @@ export async function POST(request: NextRequest): Promise<Response> {
                   inputTokens: totalInputTokens,
                   outputTokens: totalOutputTokens,
                   totalTokens,
+                  // BIZZ-643: Per-kilde-balance så UI kan vise Plan/Bonus/Købt.
+                  planRemaining: Math.max(0, planTokens - allocation.planTokensUsed),
+                  bonusRemaining: allocation.bonusTokens,
+                  topUpRemaining: allocation.topUpTokens,
                 },
               })
             );
@@ -1667,25 +1680,15 @@ export async function POST(request: NextRequest): Promise<Response> {
             controller.close();
 
             // Fire-and-forget: persist token usage so quota check works next request
-            // BIZZ-643: Dekrementér pr. kilde (plan→bonus→topUp) frem for
-            // blot at inkrementere det aggregate forbrug.
-            {
-              const allocation = allocateTokensBySource(totalTokens, {
-                planTokens,
-                planTokensUsed,
-                bonusTokens,
-                topUpTokens,
-                tokensUsedThisMonth,
-              });
-              adminClient.auth.admin
-                .updateUserById(userId, {
-                  app_metadata: {
-                    ...freshUser?.user?.app_metadata,
-                    subscription: { ...sub, ...allocation },
-                  },
-                })
-                .catch(() => {}); // non-critical — best-effort tracking
-            }
+            // BIZZ-643: Allocation beregnet ovenfor — genbruges her.
+            adminClient.auth.admin
+              .updateUserById(userId, {
+                app_metadata: {
+                  ...freshUser?.user?.app_metadata,
+                  subscription: { ...sub, ...allocation },
+                },
+              })
+              .catch(() => {}); // non-critical — best-effort tracking
 
             // Fire-and-forget: record in tenant.ai_token_usage for auditable per-tenant billing
             if (resolvedTenantId) {
@@ -1740,6 +1743,15 @@ export async function POST(request: NextRequest): Promise<Response> {
           })
         );
         const totalTokens = totalInputTokens + totalOutputTokens;
+        // BIZZ-643: Allocation beregnet før usage-event så per-kilde-remaining
+        // kan inkluderes i samme SSE-block.
+        const allocation = allocateTokensBySource(totalTokens, {
+          planTokens,
+          planTokensUsed,
+          bonusTokens,
+          topUpTokens,
+          tokensUsedThisMonth,
+        });
         sse(
           controller,
           JSON.stringify({
@@ -1747,6 +1759,9 @@ export async function POST(request: NextRequest): Promise<Response> {
               inputTokens: totalInputTokens,
               outputTokens: totalOutputTokens,
               totalTokens,
+              planRemaining: Math.max(0, planTokens - allocation.planTokensUsed),
+              bonusRemaining: allocation.bonusTokens,
+              topUpRemaining: allocation.topUpTokens,
             },
           })
         );
@@ -1754,24 +1769,14 @@ export async function POST(request: NextRequest): Promise<Response> {
         controller.close();
 
         // Fire-and-forget: persist token usage so quota check works next request
-        // BIZZ-643: Samme prioritets-dekrement som ved normal-afslutning.
-        {
-          const allocation = allocateTokensBySource(totalTokens, {
-            planTokens,
-            planTokensUsed,
-            bonusTokens,
-            topUpTokens,
-            tokensUsedThisMonth,
-          });
-          adminClient.auth.admin
-            .updateUserById(userId, {
-              app_metadata: {
-                ...freshUser?.user?.app_metadata,
-                subscription: { ...sub, ...allocation },
-              },
-            })
-            .catch(() => {}); // non-critical — best-effort tracking
-        }
+        adminClient.auth.admin
+          .updateUserById(userId, {
+            app_metadata: {
+              ...freshUser?.user?.app_metadata,
+              subscription: { ...sub, ...allocation },
+            },
+          })
+          .catch(() => {}); // non-critical — best-effort tracking
 
         // Fire-and-forget: record in tenant.ai_token_usage for auditable per-tenant billing
         if (resolvedTenantId) {

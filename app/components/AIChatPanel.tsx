@@ -82,6 +82,17 @@ function AIChatPanel() {
    * Nul = ingen banner. Når sat, rendres CTA-banner øverst i chat-panelet.
    */
   const [trialBlocked, setTrialBlocked] = useState<{ message: string } | null>(null);
+  /**
+   * BIZZ-643: Per-kilde token-balance efter hvert AI-kald.
+   * Serveren sender planRemaining + bonusRemaining + topUpRemaining med
+   * usage-event. Rendres som linje "Plan: X, Bonus: Y, Købt: Z" i chat-UI
+   * så brugeren kan se præcis hvor deres tokens kommer fra.
+   */
+  const [tokenBalance, setTokenBalance] = useState<{
+    plan: number;
+    bonus: number;
+    topUp: number;
+  } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   /** AbortController for at kunne stoppe streaming */
@@ -415,7 +426,15 @@ function AIChatPanel() {
                 t?: string;
                 error?: string;
                 status?: string;
-                usage?: { inputTokens: number; outputTokens: number; totalTokens: number };
+                usage?: {
+                  inputTokens: number;
+                  outputTokens: number;
+                  totalTokens: number;
+                  /** BIZZ-643: Per-kilde-balance efter dette AI-kald */
+                  planRemaining?: number;
+                  bonusRemaining?: number;
+                  topUpRemaining?: number;
+                };
               };
               // Only update UI if user is still viewing this conversation
               const isActive = chatCtx.activeId === convId;
@@ -429,6 +448,18 @@ function AIChatPanel() {
                 addTokenUsage(parsed.usage.totalTokens);
                 // Server already persists tokens — removed to prevent double-counting (BIZZ-343)
                 // syncTokenUsageToServer(parsed.usage.totalTokens);
+                // BIZZ-643: Opdatér per-kilde-balance hvis serveren sendte den.
+                if (
+                  parsed.usage.planRemaining != null ||
+                  parsed.usage.bonusRemaining != null ||
+                  parsed.usage.topUpRemaining != null
+                ) {
+                  setTokenBalance({
+                    plan: parsed.usage.planRemaining ?? 0,
+                    bonus: parsed.usage.bonusRemaining ?? 0,
+                    topUp: parsed.usage.topUpRemaining ?? 0,
+                  });
+                }
               } else if (parsed.status) {
                 if (isActive) {
                   setToolStatus(parsed.status);
@@ -676,6 +707,36 @@ function AIChatPanel() {
             )}
           </p>
         )}
+
+        {/* BIZZ-643: Per-kilde-balance efter seneste AI-kald.
+            Serveren sender planRemaining/bonusRemaining/topUpRemaining
+            med usage-event og vi viser dem her så brugeren kan se
+            hvor tokens kommer fra. Skjules hvis alle 3 er 0 (første
+            load inden svar). */}
+        {tokenBalance &&
+          (tokenBalance.plan > 0 || tokenBalance.bonus > 0 || tokenBalance.topUp > 0) && (
+            <p
+              className="px-4 pb-2 text-[10px] text-slate-500 font-mono"
+              title={
+                lang === 'da'
+                  ? 'Balance pr. kilde efter seneste kald'
+                  : 'Balance per source after last call'
+              }
+            >
+              <span className="text-slate-400">{lang === 'da' ? 'Plan: ' : 'Plan: '}</span>
+              {tokenBalance.plan.toLocaleString(lang === 'da' ? 'da-DK' : 'en-GB')}
+              <span className="text-slate-600 mx-1.5">·</span>
+              <span className="text-slate-400">{lang === 'da' ? 'Bonus: ' : 'Bonus: '}</span>
+              {tokenBalance.bonus.toLocaleString(lang === 'da' ? 'da-DK' : 'en-GB')}
+              <span className="text-slate-600 mx-1.5">·</span>
+              <span className="text-emerald-400/80">
+                {lang === 'da' ? 'Købt: ' : 'Purchased: '}
+              </span>
+              <span className="text-emerald-400">
+                {tokenBalance.topUp.toLocaleString(lang === 'da' ? 'da-DK' : 'en-GB')}
+              </span>
+            </p>
+          )}
 
         {/* AI disclaimer */}
         <p className="px-4 pb-2 text-xs text-slate-500">

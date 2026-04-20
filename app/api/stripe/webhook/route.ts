@@ -661,12 +661,60 @@ async function handlePaymentSucceeded(invoice: Stripe.Invoice): Promise<void> {
   const existingMeta = userData?.user?.app_metadata ?? {};
   const existingSub = (existingMeta.subscription as Record<string, unknown>) ?? {};
   const currentStatus = (existingSub.status as string) ?? null;
-  if (currentStatus === 'past_due' || currentStatus === 'payment_failed') {
-    const { error: statusErr } = await admin.auth.admin.updateUserById(userId, {
+
+  // BIZZ-643: Ved billing-period-skift (recurring invoice.payment_succeeded
+  // der ikke er første checkout) skal plan-quota nulstilles så brugeren får
+  // frisk månedlig token-balance. bonusTokens + topUpTokens bevares fordi
+  // de ikke er tid-baseret. tokensUsedThisMonth nulstilles også som
+  // aggregate. Kun for 'subscription_cycle' billing_reason — ignore
+  // 'subscription_create' (første betaling, ny sub håndteres af
+  // checkout.session.completed).
+  const billingReasonRaw = (invoice as unknown as Record<string, unknown>).billing_reason as
+    | string
+    | undefined;
+  const isRenewal = billingReasonRaw === 'subscription_cycle';
+  let resetApplied = false;
+  if (isRenewal) {
+    const { error: resetErr } = await admin.auth.admin.updateUserById(userId, {
       app_metadata: {
         ...existingMeta,
         subscription: {
           ...existingSub,
+          planTokensUsed: 0,
+          tokensUsedThisMonth: 0,
+          // status-fallback håndteres nedenfor hvis nødvendigt
+        },
+      },
+    });
+    if (resetErr) {
+      logger.error(
+        '[stripe/webhook] invoice.payment_succeeded: planTokensUsed reset failed',
+        resetErr
+      );
+      Sentry.captureException(resetErr, {
+        tags: { webhook_event: 'invoice.payment_succeeded', step: 'planTokensUsed_reset' },
+        extra: { userId, billingReason: billingReasonRaw },
+      });
+    } else {
+      resetApplied = true;
+      logger.log(
+        `[stripe/webhook] invoice.payment_succeeded: reset planTokensUsed+tokensUsedThisMonth=0 for billing-cycle (user=${userId})`
+      );
+    }
+  }
+
+  if (currentStatus === 'past_due' || currentStatus === 'payment_failed') {
+    // Hvis status-reset også skal køre, merge ind i seneste sub-state.
+    // Hvis resetApplied allerede clear'ede plan-tokens, re-læs for at
+    // undgå overskrivning.
+    const base = resetApplied
+      ? { ...existingSub, planTokensUsed: 0, tokensUsedThisMonth: 0 }
+      : existingSub;
+    const { error: statusErr } = await admin.auth.admin.updateUserById(userId, {
+      app_metadata: {
+        ...existingMeta,
+        subscription: {
+          ...base,
           status: 'active',
           nextPaymentAttempt: null,
           graceExpiresAt: null,

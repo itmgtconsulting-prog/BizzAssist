@@ -28,10 +28,33 @@ import { parseQuery } from '@/app/lib/validate';
 export const runtime = 'nodejs';
 export const maxDuration = 15;
 
+/**
+ * BIZZ-596: Detaljerede ejerskabsdata per ejendom. Suppler den flade bfes[]
+ * med ejerandel (brøk → procent) og virkning_fra så UI kan vise "50%
+ * siden 2003-04-23" på personligt ejede kort.
+ */
+export interface PersonProperty {
+  /** BFE-nummer */
+  bfeNummer: number;
+  /** Ejerandels-brøk tæller (fx 1) */
+  ejerandel_taeller: number | null;
+  /** Ejerandels-brøk nævner (fx 2 → 50%) */
+  ejerandel_naevner: number | null;
+  /** Formateret ejerandel (fx "50%" eller "100%") — udledt på server */
+  ejerandel: string | null;
+  /** Dato hvor ejerskabet trådte i kraft (ISO 8601) */
+  virkningFra: string | null;
+}
+
 /** Response shape */
 export interface PersonPropertiesResponse {
   /** BFE-numre for ejendomme personen ejer (gældende ejerskab) */
   bfes: number[];
+  /**
+   * BIZZ-596: Detaljerede ejerskabsdata per BFE — ejerandel + virkningFra.
+   * Samme rækkefølge som `bfes`. Optional for bagudkompatibilitet.
+   */
+  properties?: PersonProperty[];
   /** Antal fundne ejendomme */
   count: number;
   /** Tidspunkt for seneste bulk-ingest af EJF-data (data freshness) */
@@ -97,9 +120,11 @@ export async function GET(req: NextRequest): Promise<NextResponse<PersonProperti
       .maybeSingle();
     const sourceFreshness = (lastRun?.finished_at as string | null) ?? null;
 
-    // Lookup via case-insensitive navn + eksakt fdato (matcher index)
+    // Lookup via case-insensitive navn + eksakt fdato (matcher index).
+    // BIZZ-596: Inkluderer ejerandel-brøk + virkning_fra så UI kan vise
+    // "50% siden 2003" på personligt ejede kort.
     const { data: rows, error } = await ejfTbl
-      .select('bfe_nummer')
+      .select('bfe_nummer, ejerandel_taeller, ejerandel_naevner, virkning_fra')
       .ilike('ejer_navn', navn)
       .eq('ejer_foedselsdato', fdato)
       .eq('ejer_type', 'person')
@@ -114,11 +139,40 @@ export async function GET(req: NextRequest): Promise<NextResponse<PersonProperti
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const bfes = [...new Set(((rows ?? []) as any[]).map((r) => Number(r.bfe_nummer)))];
+    const rawRows = ((rows ?? []) as any[]).map((r) => ({
+      bfe: Number(r.bfe_nummer),
+      taeller: r.ejerandel_taeller != null ? Number(r.ejerandel_taeller) : null,
+      naevner: r.ejerandel_naevner != null ? Number(r.ejerandel_naevner) : null,
+      virkningFra: (r.virkning_fra as string | null) ?? null,
+    }));
+
+    // Dedupliker pr. BFE — beholder den første hit pr. BFE (skulle være 1:1
+    // i praksis fordi (bfe, ejer_ejf_id, virkning_fra) er unique og vi
+    // filtrerer på status=gældende).
+    const seenBfe = new Set<number>();
+    const properties = [];
+    const bfes: number[] = [];
+    for (const r of rawRows) {
+      if (seenBfe.has(r.bfe)) continue;
+      seenBfe.add(r.bfe);
+      bfes.push(r.bfe);
+      const pct =
+        r.taeller != null && r.naevner != null && r.naevner > 0
+          ? `${Math.round((r.taeller / r.naevner) * 100)}%`
+          : null;
+      properties.push({
+        bfeNummer: r.bfe,
+        ejerandel_taeller: r.taeller,
+        ejerandel_naevner: r.naevner,
+        ejerandel: pct,
+        virkningFra: r.virkningFra,
+      });
+    }
 
     return NextResponse.json(
       {
         bfes,
+        properties,
         count: bfes.length,
         sourceFreshness,
         // Hvis vi aldrig har kørt cron, signalér dette så UI kan vise

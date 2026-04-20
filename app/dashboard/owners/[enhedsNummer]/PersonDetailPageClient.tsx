@@ -1422,9 +1422,29 @@ export default function PersonDetailPageClient({
           { signal: AbortSignal.timeout(10000) }
         );
         if (!ppRes.ok) return;
-        const pp = (await ppRes.json()) as { bfes?: number[] };
+        // BIZZ-596: Endpointet returnerer nu også `properties[]` med
+        // ejerandel + virkningFra per BFE. Falder tilbage til `bfes[]`-
+        // arrayet for bagudkompatibilitet.
+        const pp = (await ppRes.json()) as {
+          bfes?: number[];
+          properties?: Array<{
+            bfeNummer: number;
+            ejerandel: string | null;
+            virkningFra: string | null;
+          }>;
+        };
         const bfes = Array.isArray(pp.bfes) ? pp.bfes : [];
         if (bfes.length === 0) return;
+        const propDetailsByBfe = new Map<
+          number,
+          { ejerandel: string | null; virkningFra: string | null }
+        >();
+        for (const p of pp.properties ?? []) {
+          propDetailsByBfe.set(p.bfeNummer, {
+            ejerandel: p.ejerandel,
+            virkningFra: p.virkningFra,
+          });
+        }
 
         // Berig BFE'er med adresse så diagram-noderne viser "Søbyvej 11, 2650
         // Hvidovre" i stedet for "BFE 2081243".
@@ -1447,6 +1467,7 @@ export default function PersonDetailPageClient({
         if (cancelled) return;
         const enriched: DiagramPropertySummary[] = bfes.map((bfe) => {
           const a = addrMap[String(bfe)] ?? {};
+          const details = propDetailsByBfe.get(bfe);
           return {
             bfeNummer: bfe,
             ownerCvr: '',
@@ -1459,6 +1480,10 @@ export default function PersonDetailPageClient({
             dawaId: a.dawaId ?? null,
             etage: a.etage ?? null,
             doer: a.doer ?? null,
+            // BIZZ-596: Inkludér ejerandel fra ejf_ejerskab så person→property-
+            // edgen i diagrammet og Personligt ejet-kortet viser "50%" når
+            // relevant (fx Søbyvej 11 delt 50/50 med Kamilla).
+            ejerandel: details?.ejerandel ?? null,
             aktiv: true,
           };
         });

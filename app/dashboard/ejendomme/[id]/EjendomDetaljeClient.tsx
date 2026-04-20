@@ -1861,6 +1861,18 @@ export default function EjendomDetaljeClient({
      * `koeber` + `andel`-felterne.
      */
     koebere?: { navn: string; cvr: string | null; andel: string | null }[];
+    // BIZZ-481: Udvidede EJF_Ejerskifte felter
+    /** True når handlen er tinglyst med uopfyldte betingelser — vigtigt advarselsflag */
+    betinget?: boolean | null;
+    /** Frist for opfyldelse af betingelser (ISO 8601) */
+    fristDato?: string | null;
+    /** Officiel forretningshændelse fra EJF — præcis klassificering i stedet for gæt */
+    forretningshaendelse?: string | null;
+    // BIZZ-480: Udvidede EJF_Handelsoplysninger felter
+    /** Afståelsesdato — kan afvige fra overtagelsesdato */
+    afstaaelsesdato?: string | null;
+    /** Skødetekst — beskrivelse fra skødet */
+    skoedetekst?: string | null;
   }
 
   /**
@@ -1908,6 +1920,12 @@ export default function EjendomDetaljeClient({
         tinglysningsdato: bestMatch?.tinglysningsdato ?? null,
         tinglysningsafgift: bestMatch?.tinglysningsafgift ?? null,
         kilde: bestMatch ? 'begge' : 'ejf',
+        // BIZZ-480 + BIZZ-481: Propager nye EJF-felter til UI-laget.
+        betinget: h.betinget ?? null,
+        fristDato: h.fristDato ?? null,
+        forretningshaendelse: h.forretningshaendelse ?? null,
+        afstaaelsesdato: h.afstaaelsesdato ?? null,
+        skoedetekst: h.skoedetekst ?? null,
       });
     }
 
@@ -4438,17 +4456,54 @@ export default function EjendomDetaljeClient({
                                     )}
                                   </td>
                                   <td className="px-4 py-2.5">
-                                    <span
-                                      className={`text-xs px-2 py-0.5 rounded-full ${
-                                        overdragelse?.toLowerCase().includes('frit')
-                                          ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20'
-                                          : overdragelse?.toLowerCase().includes('tvang')
-                                            ? 'text-red-400 bg-red-500/10 border border-red-500/20'
-                                            : 'text-slate-400 bg-slate-500/10 border border-slate-500/20'
-                                      }`}
-                                    >
-                                      {overdragelse ?? '—'}
-                                    </span>
+                                    <div className="flex flex-col gap-1">
+                                      <span
+                                        className={`text-xs px-2 py-0.5 rounded-full inline-block w-fit ${
+                                          overdragelse?.toLowerCase().includes('frit')
+                                            ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20'
+                                            : overdragelse?.toLowerCase().includes('tvang')
+                                              ? 'text-red-400 bg-red-500/10 border border-red-500/20'
+                                              : 'text-slate-400 bg-slate-500/10 border border-slate-500/20'
+                                        }`}
+                                      >
+                                        {overdragelse ?? '—'}
+                                      </span>
+                                      {/* BIZZ-481: Betinget-badge med frist-dato — vigtigt
+                                          advarselsflag på tinglyste handler med uopfyldte
+                                          betingelser (købesum ikke fuldt betalt, skøder
+                                          afhænger af tilladelser etc.). */}
+                                      {h.betinget && (
+                                        <span
+                                          className="text-[10px] px-2 py-0.5 rounded-full inline-block w-fit text-amber-300 bg-amber-500/10 border border-amber-500/20"
+                                          title={
+                                            da
+                                              ? 'Tinglyst med uopfyldte betingelser'
+                                              : 'Recorded with unfulfilled conditions'
+                                          }
+                                        >
+                                          ⚠ {da ? 'Betinget' : 'Conditional'}
+                                          {h.fristDato && (
+                                            <span className="ml-1 text-amber-400/80">
+                                              {' · '}
+                                              {da ? 'Frist' : 'Deadline'}{' '}
+                                              {new Date(h.fristDato).toLocaleDateString(
+                                                da ? 'da-DK' : 'en-GB',
+                                                { year: 'numeric', month: 'short', day: 'numeric' }
+                                              )}
+                                            </span>
+                                          )}
+                                        </span>
+                                      )}
+                                      {/* BIZZ-481: Officiel forretningshaendelse-klassificering
+                                          fra EJF (fx "Salg", "Arv", "Gave", "Fusion"). Vises når
+                                          den afviger fra den fritekstede overdragelsesmaade. */}
+                                      {h.forretningshaendelse &&
+                                        h.forretningshaendelse !== overdragelse && (
+                                          <span className="text-[10px] text-slate-500 italic">
+                                            {h.forretningshaendelse}
+                                          </span>
+                                        )}
+                                    </div>
                                   </td>
                                   <td className="px-4 py-2.5 text-right text-white font-medium tabular-nums">
                                     {h.samletKoebesum != null

@@ -1192,6 +1192,48 @@ export default function PersonDetailPageClient({
     return ejerVirksomheder.filter((v) => !subsidiCvrs.has(v.cvr));
   }, [derived, relatedCompanies]);
 
+  /**
+   * BIZZ-597 Fase 3: Memoized person-diagram-graf. Tidligere blev
+   * buildPersonDiagramGraph kaldt INLINE i JSX (IIFE) på hver render
+   * hvilket trigger D3-simulering genstart + re-layout selv når kun
+   * urelaterede state-ændringer (notifikationer, tab-skift) skete.
+   * Virksomhedsfanen memoiserer samme måde (VirksomhedDetaljeClient linje
+   * 540-573); nu er person-siden symmetrisk.
+   */
+  const personDiagramGraph = useMemo(() => {
+    if (!data) return { nodes: [], edges: [], mainId: '' };
+    // BIZZ-571: Person-diagram ekskluderer solgte ejendomme — samme regel
+    // som virksomheds-diagrammet.
+    const aktiveEjendomme = ejendommeData.filter((p) => p.aktiv !== false);
+    const propertiesByCvr =
+      aktiveEjendomme.length > 0
+        ? aktiveEjendomme.reduce((map, p) => {
+            const cvrNum = parseInt(p.ownerCvr, 10);
+            if (!map.has(cvrNum)) map.set(cvrNum, []);
+            map.get(cvrNum)!.push(p as DiagramPropertySummary);
+            return map;
+          }, new Map<number, DiagramPropertySummary[]>())
+        : undefined;
+    return buildPersonDiagramGraph(
+      data.navn,
+      data.enhedsNummer,
+      topLevelEjer,
+      relatedCompanies,
+      noeglePersonerMap,
+      derived?.andreVirksomheder ?? [],
+      propertiesByCvr,
+      personalBfes
+    );
+  }, [
+    data,
+    topLevelEjer,
+    relatedCompanies,
+    noeglePersonerMap,
+    derived?.andreVirksomheder,
+    ejendommeData,
+    personalBfes,
+  ]);
+
   /** Hent nøglepersoner (bestyrelse+direktion) for alle virksomheder (ejede + andre roller) */
   useEffect(() => {
     if (noeglePersonerFetchedRef.current) return;
@@ -2154,54 +2196,30 @@ export default function PersonDetailPageClient({
           )}
 
           {/* ══ RELATIONSDIAGRAM — BIZZ-337: variant toggle matcher virksomhedssiden ══ */}
-          {aktivTab === 'relations' &&
-            (() => {
-              // BIZZ-571: Person-diagram ekskluderer solgte (historiske)
-              // ejendomme — samme regel som virksomheds-diagrammet.
-              const aktiveEjendomme = ejendommeData.filter((p) => p.aktiv !== false);
-              const propertiesByCvr =
-                aktiveEjendomme.length > 0
-                  ? aktiveEjendomme.reduce((map, p) => {
-                      const cvrNum = parseInt(p.ownerCvr, 10);
-                      if (!map.has(cvrNum)) map.set(cvrNum, []);
-                      map.get(cvrNum)!.push(p as DiagramPropertySummary);
-                      return map;
-                    }, new Map<number, DiagramPropertySummary[]>())
-                  : undefined;
-              const diagramGraph = buildPersonDiagramGraph(
-                data.navn,
-                data.enhedsNummer,
-                topLevelEjer,
-                relatedCompanies,
-                noeglePersonerMap,
-                andreVirksomheder,
-                propertiesByCvr,
-                // BIZZ-594: Personligt ejede ejendomme fra bulk-data-lookup —
-                // tilføjes som direkte property-noder hængt af person-noden.
-                personalBfes
-              );
-              return (
-                <DiagramForce
-                  graph={diagramGraph}
-                  lang={lang}
-                  // BIZZ-571: Person-diagram åbner uden ejendomme synlige for at
-                  // undgå overfyldt view. Ejendomme-toggle i toolbar kan aktivere
-                  // dem. Virksomheds-diagrammet beholder default ON (uændret).
-                  defaultShowProperties={false}
-                  onNodeClick={(node) => {
-                    // BIZZ-368: clicking a company node in the person diagram should switch to
-                    // the overview tab (staying on this page) rather than navigating to the
-                    // company page. Property and person nodes without a meaningful tab target
-                    // fall back to normal navigation.
-                    if (node.type === 'company' || node.type === 'main') {
-                      setAktivTab('overview');
-                    } else if (node.link) {
-                      window.location.href = node.link;
-                    }
-                  }}
-                />
-              );
-            })()}
+          {aktivTab === 'relations' && (
+            <DiagramForce
+              // BIZZ-597 Fase 3: Bruger memoized personDiagramGraph i stedet for
+              // at genskabe grafen inline — matcher virksomhedssidens pattern.
+              // D3-simulering genstarter nu kun når diagram-data reelt ændrer sig.
+              graph={personDiagramGraph}
+              lang={lang}
+              // BIZZ-571: Person-diagram åbner uden ejendomme synlige for at
+              // undgå overfyldt view. Ejendomme-toggle i toolbar kan aktivere
+              // dem. Virksomheds-diagrammet beholder default ON (uændret).
+              defaultShowProperties={false}
+              onNodeClick={(node) => {
+                // BIZZ-368: clicking a company node in the person diagram should switch to
+                // the overview tab (staying on this page) rather than navigating to the
+                // company page. Property and person nodes without a meaningful tab target
+                // fall back to normal navigation.
+                if (node.type === 'company' || node.type === 'main') {
+                  setAktivTab('overview');
+                } else if (node.link) {
+                  window.location.href = node.link;
+                }
+              }}
+            />
+          )}
 
           {/* ══ EJENDOMME ══ */}
           {aktivTab === 'properties' && (

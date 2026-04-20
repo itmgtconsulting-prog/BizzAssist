@@ -1581,6 +1581,23 @@ function DiagramForce({
     return () => observer.disconnect();
   }, []);
 
+  // ── BIZZ-597 Fase 3: Auto-expand root person-node ved mount ──
+  // Når diagrammets main-node er en person (person-siden) med enhedsNummer,
+  // kalder vi expandPersonDynamic automatisk så personens virksomheder +
+  // ejendomme hentes uden at brugeren skal trykke "Udvid" manuelt.
+  // Virksomhedsdiagrammer (main-node type=main/company) påvirkes ikke.
+  const autoExpandDoneRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const mainNode = graph.nodes.find((n) => n.id === graph.mainId);
+    if (!mainNode || mainNode.type !== 'person') return;
+    if (mainNode.enhedsNummer == null) return;
+    if (autoExpandDoneRef.current.has(mainNode.id)) return;
+    if (expandedDynamic.has(mainNode.id)) return;
+    if (loadingExpansion.has(mainNode.id)) return;
+    autoExpandDoneRef.current.add(mainNode.id);
+    void expandPersonDynamic(mainNode.id, mainNode.enhedsNummer);
+  }, [graph, expandPersonDynamic, expandedDynamic, loadingExpansion]);
+
   // ── Expand/collapse all helpers ──
   // Nodes that have expandable children (expandableChildren > 0)
   const allExpandableIds = useMemo(

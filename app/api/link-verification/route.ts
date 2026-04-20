@@ -81,150 +81,168 @@ export interface LinkVerificationSummary {
 // ─── GET ─────────────────────────────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
-  const auth = await resolveTenantId();
-  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  const cvr = req.nextUrl.searchParams.get('cvr') ?? '';
-  if (!cvr) {
-    return NextResponse.json({ error: 'cvr er påkrævet' }, { status: 400 });
-  }
-
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
-    return NextResponse.json([], { status: 200 });
-  }
-
-  // Service-client til at hente aggregerede counts (bypasser RLS for reads)
-  const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
-
-  // Hent brugerens session via cookie-client
-  const sessionClient = await getSessionClient();
-  const {
-    data: { user },
-  } = await sessionClient.auth.getUser();
-
-  // Hent aggregerede counts for alle links under dette CVR
-  const { data: counts, error: countsErr } = await serviceClient
-    .from('link_verification_counts')
-    .select('cvr, link_url, platform, link_type, verified_count, rejected_count')
-    .eq('cvr', cvr);
-
-  if (countsErr) {
-    logger.error('[link-verification GET] counts error:', countsErr.message);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
-  }
-
-  // Hent brugerens egne verdicts (kun hvis autentificeret)
-  const userVerdicts = new Map<string, 'verified' | 'rejected'>();
-  if (user) {
-    const { data: ownVerdicts } = await serviceClient
-      .from('link_verifications')
-      .select('link_url, verdict, platform, link_type')
-      .eq('cvr', cvr)
-      .eq('user_id', user.id);
-
-    for (const row of (ownVerdicts ?? []) as VerdictRow[]) {
-      userVerdicts.set(row.link_url, row.verdict);
+  // BIZZ-598: Wrap i try/catch så uventet Supabase-fejl ikke kaskader stack.
+  try {
+    const auth = await resolveTenantId();
+    if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const cvr = req.nextUrl.searchParams.get('cvr') ?? '';
+    if (!cvr) {
+      return NextResponse.json({ error: 'cvr er påkrævet' }, { status: 400 });
     }
+
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
+      return NextResponse.json([], { status: 200 });
+    }
+
+    // Service-client til at hente aggregerede counts (bypasser RLS for reads)
+    const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+
+    // Hent brugerens session via cookie-client
+    const sessionClient = await getSessionClient();
+    const {
+      data: { user },
+    } = await sessionClient.auth.getUser();
+
+    // Hent aggregerede counts for alle links under dette CVR
+    const { data: counts, error: countsErr } = await serviceClient
+      .from('link_verification_counts')
+      .select('cvr, link_url, platform, link_type, verified_count, rejected_count')
+      .eq('cvr', cvr);
+
+    if (countsErr) {
+      logger.error('[link-verification GET] counts error:', countsErr.message);
+      return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    }
+
+    // Hent brugerens egne verdicts (kun hvis autentificeret)
+    const userVerdicts = new Map<string, 'verified' | 'rejected'>();
+    if (user) {
+      const { data: ownVerdicts } = await serviceClient
+        .from('link_verifications')
+        .select('link_url, verdict, platform, link_type')
+        .eq('cvr', cvr)
+        .eq('user_id', user.id);
+
+      for (const row of (ownVerdicts ?? []) as VerdictRow[]) {
+        userVerdicts.set(row.link_url, row.verdict);
+      }
+    }
+
+    // Sammensæt svar
+    const result: LinkVerificationSummary[] = (counts as CountRow[]).map((c) => ({
+      link_url: c.link_url,
+      platform: c.platform,
+      link_type: c.link_type,
+      verified_count: Number(c.verified_count),
+      rejected_count: Number(c.rejected_count),
+      user_verdict: userVerdicts.get(c.link_url) ?? null,
+    }));
+
+    writeAuditLog({ action: 'link.verify', resource_type: 'link', resource_id: 'unknown' });
+    return NextResponse.json(result);
+  } catch (err) {
+    logger.error('[link-verification GET] uventet fejl:', err);
+    return NextResponse.json({ error: 'Intern serverfejl' }, { status: 500 });
   }
-
-  // Sammensæt svar
-  const result: LinkVerificationSummary[] = (counts as CountRow[]).map((c) => ({
-    link_url: c.link_url,
-    platform: c.platform,
-    link_type: c.link_type,
-    verified_count: Number(c.verified_count),
-    rejected_count: Number(c.rejected_count),
-    user_verdict: userVerdicts.get(c.link_url) ?? null,
-  }));
-
-  writeAuditLog({ action: 'link.verify', resource_type: 'link', resource_id: 'unknown' });
-  return NextResponse.json(result);
 }
 
 // ─── POST ────────────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
-  const auth = await resolveTenantId();
-  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
-    return NextResponse.json({ error: 'Supabase ikke konfigureret' }, { status: 503 });
+  // BIZZ-598: try/catch wrapping.
+  try {
+    const auth = await resolveTenantId();
+    if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
+      return NextResponse.json({ error: 'Supabase ikke konfigureret' }, { status: 503 });
+    }
+
+    // Validér session
+    const sessionClient = await getSessionClient();
+    const {
+      data: { user },
+    } = await sessionClient.auth.getUser();
+    if (!user) {
+      return NextResponse.json({ error: 'Ikke autoriseret' }, { status: 401 });
+    }
+
+    const parsed = LinkVerificationPostSchema.safeParse(await req.json());
+    if (!parsed.success) {
+      return NextResponse.json({ error: 'Ugyldigt input' }, { status: 400 });
+    }
+    const { cvr, link_url, link_type, platform, verdict } = parsed.data;
+
+    const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+
+    // Upsert: UNIQUE (user_id, cvr, link_url) — opdatér verdict hvis rækken eksisterer
+    const { error } = await serviceClient.from('link_verifications').upsert(
+      {
+        user_id: user.id,
+        cvr,
+        link_url,
+        link_type: link_type ?? null,
+        platform: platform ?? null,
+        verdict,
+      },
+      { onConflict: 'user_id,cvr,link_url' }
+    );
+
+    if (error) {
+      logger.error('[link-verification POST] upsert error:', error.message);
+      return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (err) {
+    logger.error('[link-verification POST] uventet fejl:', err);
+    return NextResponse.json({ error: 'Intern serverfejl' }, { status: 500 });
   }
-
-  // Validér session
-  const sessionClient = await getSessionClient();
-  const {
-    data: { user },
-  } = await sessionClient.auth.getUser();
-  if (!user) {
-    return NextResponse.json({ error: 'Ikke autoriseret' }, { status: 401 });
-  }
-
-  const parsed = LinkVerificationPostSchema.safeParse(await req.json());
-  if (!parsed.success) {
-    return NextResponse.json({ error: 'Ugyldigt input' }, { status: 400 });
-  }
-  const { cvr, link_url, link_type, platform, verdict } = parsed.data;
-
-  const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
-
-  // Upsert: UNIQUE (user_id, cvr, link_url) — opdatér verdict hvis rækken eksisterer
-  const { error } = await serviceClient.from('link_verifications').upsert(
-    {
-      user_id: user.id,
-      cvr,
-      link_url,
-      link_type: link_type ?? null,
-      platform: platform ?? null,
-      verdict,
-    },
-    { onConflict: 'user_id,cvr,link_url' }
-  );
-
-  if (error) {
-    logger.error('[link-verification POST] upsert error:', error.message);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
-  }
-
-  return NextResponse.json({ success: true });
 }
 
 // ─── DELETE ──────────────────────────────────────────────────────────────────
 
 export async function DELETE(req: NextRequest) {
-  const auth = await resolveTenantId();
-  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
-    return NextResponse.json({ error: 'Supabase ikke konfigureret' }, { status: 503 });
+  // BIZZ-598: try/catch wrapping.
+  try {
+    const auth = await resolveTenantId();
+    if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
+      return NextResponse.json({ error: 'Supabase ikke konfigureret' }, { status: 503 });
+    }
+
+    // Validér session
+    const sessionClient = await getSessionClient();
+    const {
+      data: { user },
+    } = await sessionClient.auth.getUser();
+    if (!user) {
+      return NextResponse.json({ error: 'Ikke autoriseret' }, { status: 401 });
+    }
+
+    const cvr = req.nextUrl.searchParams.get('cvr') ?? '';
+    const link_url = req.nextUrl.searchParams.get('link_url') ?? '';
+
+    if (!cvr || !link_url) {
+      return NextResponse.json({ error: 'cvr og link_url er påkrævet' }, { status: 400 });
+    }
+
+    const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+
+    const { error } = await serviceClient
+      .from('link_verifications')
+      .delete()
+      .eq('user_id', user.id)
+      .eq('cvr', cvr)
+      .eq('link_url', link_url);
+
+    if (error) {
+      logger.error('[link-verification DELETE] delete error:', error.message);
+      return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (err) {
+    logger.error('[link-verification DELETE] uventet fejl:', err);
+    return NextResponse.json({ error: 'Intern serverfejl' }, { status: 500 });
   }
-
-  // Validér session
-  const sessionClient = await getSessionClient();
-  const {
-    data: { user },
-  } = await sessionClient.auth.getUser();
-  if (!user) {
-    return NextResponse.json({ error: 'Ikke autoriseret' }, { status: 401 });
-  }
-
-  const cvr = req.nextUrl.searchParams.get('cvr') ?? '';
-  const link_url = req.nextUrl.searchParams.get('link_url') ?? '';
-
-  if (!cvr || !link_url) {
-    return NextResponse.json({ error: 'cvr og link_url er påkrævet' }, { status: 400 });
-  }
-
-  const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
-
-  const { error } = await serviceClient
-    .from('link_verifications')
-    .delete()
-    .eq('user_id', user.id)
-    .eq('cvr', cvr)
-    .eq('link_url', link_url);
-
-  if (error) {
-    logger.error('[link-verification DELETE] delete error:', error.message);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
-  }
-
-  return NextResponse.json({ success: true });
 }

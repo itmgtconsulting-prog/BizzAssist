@@ -21,6 +21,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { fetchBbrForAddress } from '@/app/lib/fetchBbrData';
 import { resolveTenantId } from '@/lib/api/auth';
+import { logger } from '@/app/lib/logger';
 
 /** Zod schema for the [id] dynamic param — UUID format */
 const idParamSchema = z.object({
@@ -57,34 +58,53 @@ export async function GET(
   _req: NextRequest,
   context: { params: Promise<{ id: string }> }
 ): Promise<NextResponse> {
-  const auth = await resolveTenantId();
-  if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  const rawParams = await context.params;
-  const paramResult = idParamSchema.safeParse(rawParams);
-  if (!paramResult.success) {
+  // BIZZ-598: Wrap fetchBbrForAddress (Datafordeler GraphQL) i try/catch
+  // så uventet netværks-/parse-fejl ikke kaskader til klient.
+  try {
+    const auth = await resolveTenantId();
+    if (!auth) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const rawParams = await context.params;
+    const paramResult = idParamSchema.safeParse(rawParams);
+    if (!paramResult.success) {
+      return NextResponse.json(
+        {
+          dawaId: rawParams.id,
+          bbr: null,
+          enheder: null,
+          bygningPunkter: null,
+          ejendomsrelationer: null,
+          ejerlejlighedBfe: null,
+          moderBfe: null,
+          bbrFejl: 'Ugyldigt adresse-id',
+        },
+        { status: 400 }
+      );
+    }
+    const { id } = paramResult.data;
+
+    const result = await fetchBbrForAddress(id);
+
+    return NextResponse.json(
+      { dawaId: id, ...result },
+      {
+        status: 200,
+        headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
+      }
+    );
+  } catch (err) {
+    logger.error('[ejendom/[id]] uventet fejl:', err);
     return NextResponse.json(
       {
-        dawaId: rawParams.id,
+        dawaId: null,
         bbr: null,
         enheder: null,
         bygningPunkter: null,
         ejendomsrelationer: null,
         ejerlejlighedBfe: null,
         moderBfe: null,
-        bbrFejl: 'Ugyldigt adresse-id',
+        bbrFejl: 'Ekstern API fejl',
       },
-      { status: 400 }
+      { status: 500 }
     );
   }
-  const { id } = paramResult.data;
-
-  const result = await fetchBbrForAddress(id);
-
-  return NextResponse.json(
-    { dawaId: id, ...result },
-    {
-      status: 200,
-      headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
-    }
-  );
 }

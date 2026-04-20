@@ -42,6 +42,13 @@ const MAX_BATCH = 50;
 const querySchema = z.object({
   bfes: z.string().regex(/^[\d,]+$/, 'bfes skal være komma-separeret tal'),
   dawaIds: z.string().optional(),
+  /**
+   * BIZZ-634: Komma-separerede ISO-datoer for hver BFE (samme index som
+   * bfes). Sæt for historiske/solgte ejendomme så salgspris kan beregnes
+   * ejer-specifikt. Tom streng accepteres for BFE'er uden kendt dato.
+   */
+  ownerBuyDates: z.string().optional(),
+  ownerSellDates: z.string().optional(),
 });
 
 /** Result-shape per BFE — matcher single-enrich-endpointet 1:1 */
@@ -54,6 +61,10 @@ interface EnrichedRow {
   ejerNavn: string | null;
   koebesum: number | null;
   koebsdato: string | null;
+  /** BIZZ-634: Ejer-specifik salgspris (kun sat for solgte ejendomme) */
+  salgesum: number | null;
+  /** BIZZ-634: Ejer-specifik salgsdato (kun sat for solgte ejendomme) */
+  salgesdato: string | null;
   boligAreal: number | null;
   erhvervsAreal: number | null;
   matrikelAreal: number | null;
@@ -67,6 +78,8 @@ const empty = (): EnrichedRow => ({
   ejerNavn: null,
   koebesum: null,
   koebsdato: null,
+  salgesum: null,
+  salgesdato: null,
   boligAreal: null,
   erhvervsAreal: null,
   matrikelAreal: null,
@@ -80,7 +93,8 @@ async function enrichOne(
   bfe: string,
   dawaId: string | undefined,
   baseUrl: string,
-  cookieHeader: string
+  cookieHeader: string,
+  ownerDates?: { buyDate?: string | null; sellDate?: string | null } | null
 ): Promise<EnrichedRow> {
   const result = empty();
   const fetchOpts: RequestInit = {
@@ -124,7 +138,9 @@ async function enrichOne(
       }),
       // BIZZ-609: Shared salgshistorik helper — EJF primær kilde,
       // Tinglysning adkomst-dokumenter som fallback når EJF mangler handel.
-      fetchSalgshistorikMedFallback(bfe, baseUrl, cookieHeader, 5000),
+      // BIZZ-634: ownerDates threades igennem så historiske ejendomme kan
+      // få ejer-specifik købs- og salgspris.
+      fetchSalgshistorikMedFallback(bfe, baseUrl, cookieHeader, 5000, ownerDates ?? null),
     ]);
 
     if (bbrAreasRes.status === 'fulfilled' && bbrAreasRes.value) {
@@ -151,9 +167,16 @@ async function enrichOne(
       result.erGrundvaerdi = v.erGrundvaerdi;
     }
     if (salgRes.status === 'fulfilled' && salgRes.value) {
-      const s = salgRes.value as { koebesum: number | null; koebsdato: string | null };
+      const s = salgRes.value as {
+        koebesum: number | null;
+        koebsdato: string | null;
+        salgesum?: number | null;
+        salgesdato?: string | null;
+      };
       result.koebesum = s.koebesum;
       result.koebsdato = s.koebsdato;
+      result.salgesum = s.salgesum ?? null;
+      result.salgesdato = s.salgesdato ?? null;
     }
   } catch (err) {
     logger.error(`[enrich-batch] BFE ${bfe} fejl:`, err);
@@ -175,16 +198,27 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   const parsed = parseQuery(request, querySchema);
   if (!parsed.success) return parsed.response;
-  const { bfes, dawaIds } = parsed.data;
+  const { bfes, dawaIds, ownerBuyDates, ownerSellDates } = parsed.data;
 
   const bfeList = bfes.split(',').filter(Boolean).slice(0, MAX_BATCH);
   const dawaList = (dawaIds ?? '').split(',');
+  const buyDateList = (ownerBuyDates ?? '').split(',');
+  const sellDateList = (ownerSellDates ?? '').split(',');
 
   const baseUrl = request.nextUrl.origin;
   const cookieHeader = request.headers.get('cookie') ?? '';
 
   const results = await Promise.all(
-    bfeList.map((bfe, i) => enrichOne(bfe, dawaList[i] || undefined, baseUrl, cookieHeader))
+    bfeList.map((bfe, i) => {
+      const ownerDates =
+        buyDateList[i] || sellDateList[i]
+          ? {
+              buyDate: buyDateList[i] || null,
+              sellDate: sellDateList[i] || null,
+            }
+          : null;
+      return enrichOne(bfe, dawaList[i] || undefined, baseUrl, cookieHeader, ownerDates);
+    })
   );
 
   const out: Record<string, EnrichedRow> = {};

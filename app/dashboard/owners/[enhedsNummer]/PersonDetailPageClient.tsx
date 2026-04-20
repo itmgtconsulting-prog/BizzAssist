@@ -1542,8 +1542,27 @@ export default function PersonDetailPageClient({
     const controller = new AbortController();
     const bfes = missing.map((e) => e.bfeNummer).join(',');
     const dawaIds = missing.map((e) => e.dawaId ?? '').join(',');
+    // BIZZ-634: Vedhæft per-BFE ejer-datoer fra ejendommeData så enrich-batch
+    // kan udvælge ejer-specifik købs- + salgspris for solgte ejendomme.
+    const ejBuyDateByBfe = new Map<number, string>();
+    const ejSellDateByBfe = new Map<number, string>();
+    for (const e of ejendommeData) {
+      if (e.ownerBuyDate) ejBuyDateByBfe.set(e.bfeNummer, e.ownerBuyDate);
+      if (e.solgtDato) ejSellDateByBfe.set(e.bfeNummer, e.solgtDato);
+    }
+    const ownerBuyDates = missing.map((e) => ejBuyDateByBfe.get(e.bfeNummer) ?? '').join(',');
+    const ownerSellDates = missing.map((e) => ejSellDateByBfe.get(e.bfeNummer) ?? '').join(',');
 
-    fetch(`/api/ejendomme-by-owner/enrich-batch?bfes=${bfes}&dawaIds=${dawaIds}`, {
+    const url =
+      `/api/ejendomme-by-owner/enrich-batch?bfes=${bfes}&dawaIds=${dawaIds}` +
+      (ownerBuyDates.replace(/,/g, '')
+        ? `&ownerBuyDates=${encodeURIComponent(ownerBuyDates)}`
+        : '') +
+      (ownerSellDates.replace(/,/g, '')
+        ? `&ownerSellDates=${encodeURIComponent(ownerSellDates)}`
+        : '');
+
+    fetch(url, {
       signal: controller.signal,
     })
       .then((r) => (r.ok ? r.json() : null))

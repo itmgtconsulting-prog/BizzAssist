@@ -95,6 +95,10 @@ interface PropertyOwnerCardProps {
     ejerNavn: string | null;
     koebesum: number | null;
     koebsdato: string | null;
+    /** BIZZ-634: Ejer-specifik salgspris for solgte ejendomme */
+    salgesum?: number | null;
+    /** BIZZ-634: Ejer-specifik salgsdato for solgte ejendomme */
+    salgesdato?: string | null;
     boligAreal: number | null;
     erhvervsAreal: number | null;
     matrikelAreal: number | null;
@@ -119,6 +123,7 @@ export default function PropertyOwnerCard({
 
   // Progressive enrichment state. BIZZ-465 extends with koebesum + koebsdato
   // så nuværende kort kan vise seneste handel uden ekstra UI-kald.
+  // BIZZ-634: Udvidet med salgesum + salgesdato for historiske ejendomme.
   const [enriched, setEnriched] = useState<{
     areal: number | null;
     vurdering: number | null;
@@ -127,6 +132,8 @@ export default function PropertyOwnerCard({
     ejerNavn: string | null;
     koebesum: number | null;
     koebsdato: string | null;
+    salgesum?: number | null;
+    salgesdato?: string | null;
     boligAreal: number | null;
     erhvervsAreal: number | null;
     matrikelAreal: number | null;
@@ -316,7 +323,9 @@ export default function PropertyOwnerCard({
             )}
             {/* BIZZ-465: Købspris + -dato fra seneste handel (EJF Ejerskifte).
                 BIZZ-575 v4: Vis ALTID rækken — "—" når ingen handel er
-                registreret, så layoutet er konsistent på tværs af kort. */}
+                registreret, så layoutet er konsistent på tværs af kort.
+                BIZZ-634: For solgte ejendomme vises både ejerens købspris OG
+                salgspris — samt beregnet gevinst/tab i %. */}
             <div
               className="flex items-center gap-1.5 col-span-2"
               title={
@@ -362,6 +371,51 @@ export default function PropertyOwnerCard({
                 )}
               </span>
             </div>
+            {/* BIZZ-634: Salgspris + gevinst for solgte ejendomme. Vises kun
+                når vi har begge tal så visningen er meningsfuld (enkelt pris
+                uden kontrast giver ikke værdi). */}
+            {!aktiv && enriched.salgesum != null && enriched.salgesum > 0 && (
+              <div
+                className="flex items-center gap-1.5 col-span-2"
+                title={
+                  da
+                    ? 'Salgspris for denne ejer (EJF Ejerskifte til næste ejer)'
+                    : 'Sale price for this owner (EJF Ejerskifte to next owner)'
+                }
+              >
+                <ShoppingCart size={10} className="text-slate-500" aria-hidden="true" />
+                <span className="text-slate-300 text-[11px]">
+                  <span className="text-slate-500">{da ? 'Solgt' : 'Sold'}:</span>{' '}
+                  {formatDkkShort(enriched.salgesum)} DKK
+                  {enriched.salgesdato && (
+                    <span className="text-slate-500 ml-0.5">
+                      (
+                      {new Date(enriched.salgesdato).toLocaleDateString('da-DK', {
+                        year: 'numeric',
+                        month: 'short',
+                      })}
+                      )
+                    </span>
+                  )}
+                  {enriched.koebesum != null &&
+                    enriched.koebesum > 0 &&
+                    (() => {
+                      const diff = enriched.salgesum! - enriched.koebesum;
+                      const pct = (diff / enriched.koebesum) * 100;
+                      const positive = diff >= 0;
+                      return (
+                        <span
+                          className={`ml-2 font-medium ${positive ? 'text-emerald-400' : 'text-red-400'}`}
+                        >
+                          {positive ? '+' : '−'}
+                          {formatDkkShort(Math.abs(diff))} DKK ({positive ? '+' : '−'}
+                          {Math.abs(pct).toFixed(0)}%)
+                        </span>
+                      );
+                    })()}
+                </span>
+              </div>
+            )}
             {/* BIZZ-556: Eksplicit "Ejer"-label så brugeren ikke er i tvivl om navnet er ejer, administrator eller bygherre.
                 BIZZ-628: Skjult når showOwner=false (grupperet kontekst) — ejeren fremgår
                 allerede af gruppe-overskriften så linjen er redundant og stjæler plads. */}

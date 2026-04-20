@@ -1203,8 +1203,20 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
     const controller = new AbortController();
     const bfes = missing.map((e) => e.bfeNummer).join(',');
     const dawaIds = missing.map((e) => e.dawaId ?? '').join(',');
+    // BIZZ-634: Vedhæft ejer-datoer fra ejendomsdata så historiske/solgte
+    // ejendomme kan få ejer-specifik købs- + salgspris på kortene.
+    const ownerBuyDates = missing.map((e) => e.ownerBuyDate ?? '').join(',');
+    const ownerSellDates = missing.map((e) => e.solgtDato ?? '').join(',');
+    const url =
+      `/api/ejendomme-by-owner/enrich-batch?bfes=${bfes}&dawaIds=${dawaIds}` +
+      (ownerBuyDates.replace(/,/g, '')
+        ? `&ownerBuyDates=${encodeURIComponent(ownerBuyDates)}`
+        : '') +
+      (ownerSellDates.replace(/,/g, '')
+        ? `&ownerSellDates=${encodeURIComponent(ownerSellDates)}`
+        : '');
 
-    fetch(`/api/ejendomme-by-owner/enrich-batch?bfes=${bfes}&dawaIds=${dawaIds}`, {
+    fetch(url, {
       signal: controller.signal,
     })
       .then((r) => (r.ok ? r.json() : null))

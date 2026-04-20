@@ -76,6 +76,12 @@ export interface EjendomSummary {
   aktiv?: boolean;
   /** BIZZ-455: Dato hvor CVR ophørte som ejer (ISO-dato) — kun for solgte */
   solgtDato?: string | null;
+  /**
+   * BIZZ-634: Dato hvor den queried CVR/person blev ejer (virkningFra fra
+   * EJF). Bruges af enrich-batch til at udvælge ejer-specifik købs-handel
+   * på historiske ejendomme (undgår at vise næste ejers købspris).
+   */
+  ownerBuyDate?: string | null;
   /** BIZZ-397: Progressive enrichment fields — populated client-side after initial load */
   /** Bygningsareal i m² fra BBR */
   areal?: number | null;
@@ -976,6 +982,8 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
      * beholder den i listen så UI'et kan vise fold-ud med tidligere ejendomme. */
     const aktivByBfe = new Map<number, boolean>();
     const solgtDatoByBfe = new Map<number, string | null>();
+    // BIZZ-634: EJF virkningFra for den queried CVR — ejerens købs-dato.
+    const ownerBuyDateByBfe = new Map<number, string | null>();
     if (cvrNumre.length > 0) {
       const queriedCvrSet = new Set(cvrNumre);
       const bfeList = [...bfeTilCvr.keys()];
@@ -1033,6 +1041,15 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
               const actualCvr = currentOwnerInList.ejendeVirksomhedCVRNr;
               bfeTilCvr.set(bfe, String(actualCvr).padStart(8, '0'));
               aktivByBfe.set(bfe, true);
+              // BIZZ-634: Gem ownerBuyDate for den aktuelle ejer (virkningFra
+              // på det nyeste ejerskab hvor deres CVR optræder).
+              const actualCvrDates = nodes
+                .filter((n) => n.ejendeVirksomhedCVRNr === actualCvr)
+                .map((n) => n.virkningFra)
+                .filter((v): v is string => !!v)
+                .sort();
+              const latestBuy = actualCvrDates[actualCvrDates.length - 1] ?? null;
+              if (latestBuy) ownerBuyDateByBfe.set(bfe, latestBuy);
             } else {
               // No queried CVR is the current owner → property was sold externally
               aktivByBfe.set(bfe, false);
@@ -1048,6 +1065,11 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
                 bfe,
                 soldDate && soldDate !== Infinity ? new Date(soldDate).toISOString() : null
               );
+              // BIZZ-634: Ejerens købs-dato = virkningFra på deres seneste
+              // aktive ejerskab FØR soldDate.
+              if (ourLastDate > 0) {
+                ownerBuyDateByBfe.set(bfe, new Date(ourLastDate).toISOString());
+              }
             }
           })
         );
@@ -1091,6 +1113,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
       ejerandel: bfeTilEjerandel.get(bfe) ?? null,
       aktiv: aktivByBfe.get(bfe) ?? true,
       solgtDato: solgtDatoByBfe.get(bfe) ?? null,
+      ownerBuyDate: ownerBuyDateByBfe.get(bfe) ?? null,
     }));
 
     /* Sortér: adresser først, derefter BFE-numre */

@@ -35,10 +35,20 @@ for (let i = 0; i < 30; i++) {
 }
 await page.waitForTimeout(2000);
 
-// Klik Diagram-tab
-const diaTab = page.getByRole('tab', { name: /Diagram|Relationsdiagram/i }).first();
-await diaTab.click({ timeout: 5000 }).catch(() => {});
-await page.waitForTimeout(8000); // D3-simulation
+// Try URL-based tab navigation first
+await page.goto(`${BASE}/dashboard/owners/4000115446?tab=diagram`);
+await page.waitForLoadState('domcontentloaded');
+for (let i = 0; i < 30; i++) {
+  const skel = await page.getByText(/Indlæser\s+persondata/i).isVisible({ timeout: 500 }).catch(() => false);
+  if (!skel) break;
+  await page.waitForTimeout(500);
+}
+await page.waitForTimeout(3000);
+
+// Try clicking Diagram tab if still on Oversigt
+const diaClick = await page.getByText(/^Diagram$/i).first().click({ timeout: 3000, force: true }).then(() => true).catch(() => false);
+console.log(`Diagram tab clicked (force): ${diaClick}`);
+await page.waitForTimeout(10000); // D3-simulation
 
 await page.screenshot({ path: `${SHOTS}/bizz-619-standard.png`, fullPage: false });
 

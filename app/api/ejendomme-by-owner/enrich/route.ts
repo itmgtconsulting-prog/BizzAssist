@@ -35,6 +35,10 @@ const enrichSchema = z.object({
   // direkte. Tidligere blev der kaldt /api/bbr/bbox?bfe=X som ikke understøtter
   // bfe-param og returnerede tom (areal var derfor altid null på cards).
   dawaId: z.string().uuid().optional().or(z.literal('')),
+  // BIZZ-634: Optional ISO-datoer der muliggør ejer-specifik købs- og
+  // salgspris på historiske ejendomme.
+  ownerBuyDate: z.string().datetime().optional().or(z.literal('')),
+  ownerSellDate: z.string().datetime().optional().or(z.literal('')),
 });
 
 export async function GET(request: NextRequest) {
@@ -46,7 +50,7 @@ export async function GET(request: NextRequest) {
 
   const parsed = parseQuery(request, enrichSchema);
   if (!parsed.success) return parsed.response;
-  const { bfe, dawaId } = parsed.data;
+  const { bfe, dawaId, ownerBuyDate, ownerSellDate } = parsed.data;
 
   const result: {
     areal: number | null;
@@ -57,6 +61,10 @@ export async function GET(request: NextRequest) {
     ejerNavn: string | null;
     koebesum: number | null;
     koebsdato: string | null;
+    /** BIZZ-634: Ejer-specifik salgspris (kun sat for solgte ejendomme) */
+    salgesum: number | null;
+    /** BIZZ-634: Ejer-specifik salgsdato */
+    salgesdato: string | null;
     /** BIZZ-569: Bolig m² fra BBR (sum over bygninger på adressen) */
     boligAreal: number | null;
     /** BIZZ-569: Erhverv m² fra BBR (sum over bygninger på adressen) */
@@ -71,6 +79,8 @@ export async function GET(request: NextRequest) {
     ejerNavn: null,
     koebesum: null,
     koebsdato: null,
+    salgesum: null,
+    salgesdato: null,
     boligAreal: null,
     erhvervsAreal: null,
     matrikelAreal: null,
@@ -161,7 +171,16 @@ export async function GET(request: NextRequest) {
       // BIZZ-609: Brug shared helper der prøver EJF først, falder tilbage til
       // Tinglysning adkomst-dokumenter når EJF mangler handel (typisk
       // intra-koncern-overdragelser og nye ejerlejlighed-BFE'er).
-      fetchSalgshistorikMedFallback(bfe, baseUrl, cookieHeader, 5000),
+      // BIZZ-634: ownerDates threades igennem for ejer-specifik købs-/salgspris.
+      fetchSalgshistorikMedFallback(
+        bfe,
+        baseUrl,
+        cookieHeader,
+        5000,
+        ownerBuyDate || ownerSellDate
+          ? { buyDate: ownerBuyDate || null, sellDate: ownerSellDate || null }
+          : null
+      ),
     ]);
 
     if (bbrAreasRes.status === 'fulfilled' && bbrAreasRes.value) {
@@ -193,9 +212,16 @@ export async function GET(request: NextRequest) {
       result.ejerNavn = e.ejerNavn;
     }
     if (salgRes.status === 'fulfilled' && salgRes.value) {
-      const s = salgRes.value as { koebesum: number | null; koebsdato: string | null };
+      const s = salgRes.value as {
+        koebesum: number | null;
+        koebsdato: string | null;
+        salgesum?: number | null;
+        salgesdato?: string | null;
+      };
       result.koebesum = s.koebesum;
       result.koebsdato = s.koebsdato;
+      result.salgesum = s.salgesum ?? null;
+      result.salgesdato = s.salgesdato ?? null;
     }
   } catch (err) {
     logger.error('[ejendomme-by-owner/enrich] Error:', err);

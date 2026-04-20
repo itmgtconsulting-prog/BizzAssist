@@ -33,7 +33,6 @@ import { logger } from '@/app/lib/logger';
 import { parseBody } from '@/app/lib/validate';
 import { writeAuditLog } from '@/app/lib/auditLog';
 import { companyInfo } from '@/app/lib/companyInfo';
-import { assertAiAllowed } from '@/app/lib/aiGate';
 
 /** Zod schema for POST /api/support/chat request body */
 const supportChatSchema = z
@@ -156,10 +155,13 @@ export async function POST(request: NextRequest): Promise<Response> {
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // BIZZ-649: Central AI billing-gate.
-  const blocked = await assertAiAllowed(user.id);
-  if (blocked) return blocked;
-
+  // BIZZ-652: Support-chat er bevidst IKKE gated via assertAiAllowed — ikke-
+  // betalende brugere skal kunne stille spørgsmål for at nå frem til køb.
+  // Misbrug forhindres i stedet af:
+  //   1. `aiRateLimit` (10 req/min per IP, ovenfor)
+  //   2. `public.support_chat_abuse`-tabel (50k tokens/time, eskalerende lockout)
+  //   3. `ABUSE_TOKEN_THRESHOLD`-check nedenfor per request.
+  // Se JSDoc øverst for det fulde abuse-mønster.
   const adminClient = createAdminClient();
 
   // ── Abuse check — runs BEFORE calling Claude to avoid wasting tokens ──

@@ -33,10 +33,11 @@ function setupLocalStorageMock(): Record<string, string> {
     },
     key: (i: number) => Object.keys(store)[i] ?? null,
   };
-  // @ts-expect-error — vitest jsdom miljø understøtter global window
-  globalThis.window = { localStorage: mockStorage } as Window & typeof globalThis;
-  // @ts-expect-error — også tilgængelig direkte
-  globalThis.localStorage = mockStorage;
+  // vitest jsdom miljø understøtter global window — override
+  (globalThis as unknown as { window: Window }).window = {
+    localStorage: mockStorage,
+  } as Window;
+  (globalThis as unknown as { localStorage: Storage }).localStorage = mockStorage;
   return store;
 }
 
@@ -107,22 +108,22 @@ describe('loadConversations / saveConversations', () => {
   });
 
   it('returnerer tom array ved korrupt JSON', () => {
-    // @ts-expect-error — localStorage er mocked globally
-    globalThis.localStorage.setItem(STORAGE_KEY, '{not valid json');
+    (globalThis as unknown as { localStorage: Storage }).localStorage.setItem(
+      STORAGE_KEY,
+      '{not valid json'
+    );
     expect(loadConversations()).toEqual([]);
   });
 
   it('saveConversations er no-op under SSR (window === undefined)', () => {
     // Midlertidig fjern window — simulér SSR-path
-    // @ts-expect-error -- test mocker global window deliberately
-    const originalWindow = globalThis.window;
-    // @ts-expect-error -- delete globalThis.window for SSR-path simulation
-    delete globalThis.window;
+    const g = globalThis as unknown as { window: Window | undefined };
+    const originalWindow = g.window;
+    g.window = undefined;
     expect(() =>
       saveConversations([{ id: 'x', title: 't', messages: [], createdAt: 'now' }])
     ).not.toThrow();
-    // @ts-expect-error -- restore til oprindelig state efter test
-    globalThis.window = originalWindow;
+    g.window = originalWindow;
   });
 
   it('bruger den rigtige STORAGE_KEY', () => {
@@ -140,10 +141,10 @@ describe('loadConversations / saveConversations', () => {
       clear: () => {},
       key: () => null,
     };
-    // @ts-expect-error -- inject kasteende storage til quota-test
-    globalThis.window = { localStorage: throwingStorage };
-    // @ts-expect-error -- også direkte tilgængelig
-    globalThis.localStorage = throwingStorage;
+    (globalThis as unknown as { window: Window }).window = {
+      localStorage: throwingStorage,
+    } as Window;
+    (globalThis as unknown as { localStorage: Storage }).localStorage = throwingStorage;
     expect(() =>
       saveConversations([{ id: '1', title: 'X', messages: [], createdAt: '2026-01-01' }])
     ).not.toThrow();

@@ -111,8 +111,58 @@ function mapDbError(error: { code?: string; message: string } | null): {
     };
   }
 
+  // PGRST204: PostgREST schema-cache mangler kolonnen — oftest fordi en
+  // migration ikke er kørt på dette Supabase-miljø. Surface migration-
+  // hint til admin så de ved hvad der skal køres.
+  if (code === 'PGRST204') {
+    const missingCol = msg.match(/'([^']+)' column/)?.[1];
+    return {
+      status: 500,
+      body: {
+        error: missingCol
+          ? `Database-kolonnen '${missingCol}' mangler — migration skal køres på dette miljø`
+          : 'Database-schema er ude af sync med koden',
+        detail: msg,
+      },
+    };
+  }
+
   // Fallback — generisk 500 uden detaljer til klient
   return { status: 500, body: { error: 'Internal server error' } };
+}
+
+/**
+ * BIZZ-636: Ekstraherer kolonne-navnet fra en PGRST204-fejlbesked.
+ * PostgREST's fejl-format: "Could not find the 'xyz' column of 'table' in the schema cache"
+ */
+function extractMissingColumn(error: { code?: string; message?: string } | null): string | null {
+  if (error?.code !== 'PGRST204') return null;
+  return error.message?.match(/'([^']+)'\s+column/)?.[1] ?? null;
+}
+
+/**
+ * BIZZ-636: Safe insert der retrier uden en enkelt-kolonne når PGRST204 fyres.
+ * Bruges når dev-miljøets schema-cache mangler nyligt migrerede kolonner —
+ * undgår 500-fejl for brugeren mens migration catches up. Retry'es kun én
+ * gang for at undgå loop på multi-kolonne-migrations der ikke er kørt.
+ */
+async function safeInsertRow(
+  admin: ReturnType<typeof createAdminClient>,
+  row: Record<string, unknown>
+): Promise<{ error: { code?: string; message: string } | null }> {
+  const { error } = await admin.from('plan_configs').insert(row as never);
+  if (!error) return { error: null };
+  const missingCol = extractMissingColumn(error);
+  if (!missingCol) return { error };
+  // Retry uden den manglende kolonne — DB-DEFAULT håndterer den når
+  // migrationen endelig kører.
+  const { [missingCol]: _omit, ...rest } = row;
+  void _omit;
+  logger.warn(
+    `[admin/plans] Retrier INSERT uden manglende kolonne '${missingCol}' (PGRST204 — migration formentlig ikke kørt på dette miljø)`
+  );
+  const { error: retryErr } = await admin.from('plan_configs').insert(rest as never);
+  return { error: retryErr as { code?: string; message: string } | null };
 }
 
 /** Verify caller is admin (app_metadata.isAdmin). */
@@ -276,13 +326,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           updated_at: new Date().toISOString(),
           updated_by: user.id,
         };
-        const { error } = await admin.from('plan_configs').insert(row as never);
+        const { error } = await safeInsertRow(admin, row);
         if (error) {
           logger.error('[admin/plans create] DB error:', {
-            code: (error as { code?: string }).code,
+            code: error.code,
             message: error.message,
           });
-          const mapped = mapDbError(error as { code?: string; message: string });
+          const mapped = mapDbError(error);
           return NextResponse.json(mapped.body, { status: mapped.status });
         }
         // Audit log — fire-and-forget (ISO 27001 A.12.4)

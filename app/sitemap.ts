@@ -21,6 +21,13 @@ import type { MetadataRoute } from 'next';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { logger } from '@/app/lib/logger';
 
+// BIZZ-645: Dynamic rendering er nødvendigt — ellers statisk-genereres
+// sitemap'et ved build-time mod et tomt sitemap_entries og serveres som
+// <urlset></urlset> for altid indtil næste deploy. force-dynamic sikrer
+// at data hentes fra Supabase på hver request. Traffik er lav (Googlebot
+// + Bingbot primært) så Supabase-belastning er negligibel.
+export const dynamic = 'force-dynamic';
+
 // ─── Konstanter ────────────────────────────────────────────────────────────────
 
 /** Antal URL-entries pr. sitemap-fil (Next.js max er 50.000) */

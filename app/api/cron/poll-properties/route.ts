@@ -28,6 +28,7 @@ import { createAdminClient, tenantDb, type TenantDb } from '@/lib/supabase/admin
 import type { SnapshotType, NotificationType } from '@/lib/db/tenant';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
+import { withCronMonitor } from '@/app/lib/cronMonitor';
 
 /** Max antal ejendomme pr. cron-kørsel */
 const MAX_PER_RUN = 150;
@@ -359,72 +360,78 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-  const admin = createAdminClient();
+  // BIZZ-621 + BIZZ-624: heartbeat + Sentry cron-monitoring.
+  return withCronMonitor(
+    { jobName: 'poll-properties', schedule: '0 3 * * *', intervalMinutes: 1440 },
+    async () => {
+      const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+      const admin = createAdminClient();
 
-  // Hent alle tenants
-  const { data: tenants, error: tenantErr } = (await admin
-    .from('tenants')
-    .select('id, schema_name')) as {
-    data: { id: string; schema_name: string }[] | null;
-    error: unknown;
-  };
+      // Hent alle tenants
+      const { data: tenants, error: tenantErr } = (await admin
+        .from('tenants')
+        .select('id, schema_name')) as {
+        data: { id: string; schema_name: string }[] | null;
+        error: unknown;
+      };
 
-  if (tenantErr || !tenants) {
-    logger.error('[cron] Kunne ikke hente tenants:', tenantErr);
-    return NextResponse.json({ error: 'Kunne ikke hente tenants' }, { status: 500 });
-  }
+      if (tenantErr || !tenants) {
+        logger.error('[cron] Kunne ikke hente tenants:', tenantErr);
+        return NextResponse.json({ error: 'Kunne ikke hente tenants' }, { status: 500 });
+      }
 
-  let totalProcessed = 0;
-  let totalChanges = 0;
-  const errors: string[] = [];
+      let totalProcessed = 0;
+      let totalChanges = 0;
+      const errors: string[] = [];
 
-  for (const tenant of tenants) {
-    if (totalProcessed >= MAX_PER_RUN) break;
+      for (const tenant of tenants) {
+        if (totalProcessed >= MAX_PER_RUN) break;
 
-    try {
-      const db = tenantDb(tenant.schema_name);
+        try {
+          const db = tenantDb(tenant.schema_name);
 
-      // Hent alle fulgte ejendomme for denne tenant
-      const { data: monitored } = await db
-        .from('saved_entities')
-        .select('entity_id, label, entity_data, created_by')
-        .eq('tenant_id', tenant.id)
-        .eq('entity_type', 'property')
-        .eq('is_monitored', true)
-        .limit(MAX_PER_RUN - totalProcessed);
+          // Hent alle fulgte ejendomme for denne tenant
+          const { data: monitored } = await db
+            .from('saved_entities')
+            .select('entity_id, label, entity_data, created_by')
+            .eq('tenant_id', tenant.id)
+            .eq('entity_type', 'property')
+            .eq('is_monitored', true)
+            .limit(MAX_PER_RUN - totalProcessed);
 
-      if (!monitored || monitored.length === 0) continue;
+          if (!monitored || monitored.length === 0) continue;
 
-      // Hent alle membership user_ids for notifikationer
-      const { data: members } = await admin
-        .from('tenant_memberships')
-        .select('user_id')
-        .eq('tenant_id', tenant.id);
-      const userIds = (members ?? []).map((m: { user_id: string }) => m.user_id);
+          // Hent alle membership user_ids for notifikationer
+          const { data: members } = await admin
+            .from('tenant_memberships')
+            .select('user_id')
+            .eq('tenant_id', tenant.id);
+          const userIds = (members ?? []).map((m: { user_id: string }) => m.user_id);
 
-      // BIZZ-177: Processer ejendomme i parallelle batches
-      const result = await processEntitiesInBatches(
-        monitored as { entity_id: string; label: string }[],
-        tenant,
-        baseUrl,
-        db,
-        userIds
-      );
+          // BIZZ-177: Processer ejendomme i parallelle batches
+          const result = await processEntitiesInBatches(
+            monitored as { entity_id: string; label: string }[],
+            tenant,
+            baseUrl,
+            db,
+            userIds
+          );
 
-      totalProcessed += monitored.length;
-      totalChanges += result.changes;
-      errors.push(...result.errors);
-    } catch (err) {
-      errors.push(`tenant ${tenant.schema_name}: ${err}`);
+          totalProcessed += monitored.length;
+          totalChanges += result.changes;
+          errors.push(...result.errors);
+        } catch (err) {
+          errors.push(`tenant ${tenant.schema_name}: ${err}`);
+        }
+      }
+
+      return NextResponse.json({
+        ok: true,
+        processed: totalProcessed,
+        changes: totalChanges,
+        errors: errors.length,
+        ...(errors.length > 0 ? { errorDetails: errors.slice(0, 10) } : {}),
+      });
     }
-  }
-
-  return NextResponse.json({
-    ok: true,
-    processed: totalProcessed,
-    changes: totalChanges,
-    errors: errors.length,
-    ...(errors.length > 0 ? { errorDetails: errors.slice(0, 10) } : {}),
-  });
+  );
 }

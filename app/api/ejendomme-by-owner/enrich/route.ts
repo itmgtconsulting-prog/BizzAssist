@@ -22,8 +22,9 @@ import { resolveTenantId } from '@/lib/api/auth';
 import { parseQuery } from '@/app/lib/validate';
 import { logger } from '@/app/lib/logger';
 import { selectPrimaryOwner, type EjerCandidate } from './selectPrimaryOwner';
-import { fetchBbrAreasByBfe } from '@/app/lib/fetchBbrData';
+import { fetchBbrAreasByBfe, resolveMatrikelArealByBfe } from '@/app/lib/fetchBbrData';
 import { DAWA_BASE_URL } from '@/app/lib/serviceEndpoints';
+import { fetchSalgshistorikMedFallback } from '@/app/lib/fetchSalgshistorikMedFallback';
 
 export const runtime = 'nodejs';
 export const maxDuration = 15;
@@ -34,6 +35,10 @@ const enrichSchema = z.object({
   // direkte. Tidligere blev der kaldt /api/bbr/bbox?bfe=X som ikke understøtter
   // bfe-param og returnerede tom (areal var derfor altid null på cards).
   dawaId: z.string().uuid().optional().or(z.literal('')),
+  // BIZZ-634: Optional ISO-datoer der muliggør ejer-specifik købs- og
+  // salgspris på historiske ejendomme.
+  ownerBuyDate: z.string().datetime().optional().or(z.literal('')),
+  ownerSellDate: z.string().datetime().optional().or(z.literal('')),
 });
 
 export async function GET(request: NextRequest) {
@@ -45,7 +50,7 @@ export async function GET(request: NextRequest) {
 
   const parsed = parseQuery(request, enrichSchema);
   if (!parsed.success) return parsed.response;
-  const { bfe, dawaId } = parsed.data;
+  const { bfe, dawaId, ownerBuyDate, ownerSellDate } = parsed.data;
 
   const result: {
     areal: number | null;
@@ -56,6 +61,10 @@ export async function GET(request: NextRequest) {
     ejerNavn: string | null;
     koebesum: number | null;
     koebsdato: string | null;
+    /** BIZZ-634: Ejer-specifik salgspris (kun sat for solgte ejendomme) */
+    salgesum: number | null;
+    /** BIZZ-634: Ejer-specifik salgsdato */
+    salgesdato: string | null;
     /** BIZZ-569: Bolig m² fra BBR (sum over bygninger på adressen) */
     boligAreal: number | null;
     /** BIZZ-569: Erhverv m² fra BBR (sum over bygninger på adressen) */
@@ -70,6 +79,8 @@ export async function GET(request: NextRequest) {
     ejerNavn: null,
     koebesum: null,
     koebsdato: null,
+    salgesum: null,
+    salgesdato: null,
     boligAreal: null,
     erhvervsAreal: null,
     matrikelAreal: null,
@@ -157,37 +168,19 @@ export async function GET(request: NextRequest) {
 
         return { ejerNavn: primary.personNavn };
       }),
-      // BIZZ-465 / BIZZ-575 v5: Seneste handel med faktisk købspris (foretræk
-      // entries WITH price; fallback til seneste dato uden pris så kortet kan
-      // vise "Overtaget DATE (pris ej oplyst)" i stedet for "ingen handel").
-      fetch(`${baseUrl}/api/salgshistorik?bfeNummer=${bfe}`, fetchOpts).then(async (r) => {
-        if (!r.ok) return null;
-        const d = (await r.json()) as {
-          handler?: Array<{
-            kontantKoebesum?: number | null;
-            samletKoebesum?: number | null;
-            loesoeresum?: number | null;
-            entreprisesum?: number | null;
-            overtagelsesdato?: string | null;
-            koebsaftaleDato?: string | null;
-          }>;
-        };
-        const handler = d.handler ?? [];
-        if (handler.length === 0) return null;
-        const findPrice = (h: (typeof handler)[number]): number | null => {
-          const v =
-            h.kontantKoebesum ??
-            h.samletKoebesum ??
-            ((h.loesoeresum ?? 0) + (h.entreprisesum ?? 0) || null);
-          return v && v > 0 ? v : null;
-        };
-        const medPris = handler.find((h) => findPrice(h) != null);
-        const seneste = medPris ?? handler[0];
-        return {
-          koebesum: medPris ? findPrice(medPris) : null,
-          koebsdato: seneste.overtagelsesdato ?? seneste.koebsaftaleDato ?? null,
-        };
-      }),
+      // BIZZ-609: Brug shared helper der prøver EJF først, falder tilbage til
+      // Tinglysning adkomst-dokumenter når EJF mangler handel (typisk
+      // intra-koncern-overdragelser og nye ejerlejlighed-BFE'er).
+      // BIZZ-634: ownerDates threades igennem for ejer-specifik købs-/salgspris.
+      fetchSalgshistorikMedFallback(
+        bfe,
+        baseUrl,
+        cookieHeader,
+        5000,
+        ownerBuyDate || ownerSellDate
+          ? { buyDate: ownerBuyDate || null, sellDate: ownerSellDate || null }
+          : null
+      ),
     ]);
 
     if (bbrAreasRes.status === 'fulfilled' && bbrAreasRes.value) {
@@ -203,6 +196,18 @@ export async function GET(request: NextRequest) {
     }
     if (matrikelRes.status === 'fulfilled' && matrikelRes.value != null) {
       result.matrikelAreal = matrikelRes.value as number;
+    } else {
+      // BIZZ-629 v5: DAWA /jordstykker?bfenummer=X returnerer tom for
+      // ejerlejligheder og erhvervsejendomme (fx BFE 226629/226630 = Arnold
+      // Nielsens Boulevard 62A/62B). Fald tilbage til Vurderingsportalen-
+      // resolve → adgangsadresse → jordstykke-registreretareal så alle
+      // ejendomstyper viser korrekt matrikel-areal på kortene.
+      try {
+        const fallback = await resolveMatrikelArealByBfe(parseInt(bfe, 10));
+        if (fallback != null) result.matrikelAreal = fallback;
+      } catch {
+        // Ignorer fallback-fejl — matrikelAreal forbliver null
+      }
     }
     if (vurRes.status === 'fulfilled' && vurRes.value) {
       const v = vurRes.value as {
@@ -219,9 +224,16 @@ export async function GET(request: NextRequest) {
       result.ejerNavn = e.ejerNavn;
     }
     if (salgRes.status === 'fulfilled' && salgRes.value) {
-      const s = salgRes.value as { koebesum: number | null; koebsdato: string | null };
+      const s = salgRes.value as {
+        koebesum: number | null;
+        koebsdato: string | null;
+        salgesum?: number | null;
+        salgesdato?: string | null;
+      };
       result.koebesum = s.koebesum;
       result.koebsdato = s.koebsdato;
+      result.salgesum = s.salgesum ?? null;
+      result.salgesdato = s.salgesdato ?? null;
     }
   } catch (err) {
     logger.error('[ejendomme-by-owner/enrich] Error:', err);

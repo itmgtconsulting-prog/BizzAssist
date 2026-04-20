@@ -15,6 +15,7 @@
  */
 
 import { createAdminClient } from '@/lib/supabase/admin';
+import { logger } from '@/app/lib/logger';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -260,6 +261,6 @@ export async function logAutoApproval(
         created_by: null, // System action — no user session
       });
   } catch (err) {
-    console.error('[service-manager-rules] logAutoApproval error:', err);
+    logger.error('[service-manager-rules] logAutoApproval error:', err);
   }
 }

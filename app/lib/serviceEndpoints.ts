@@ -26,9 +26,21 @@ export const BBR_GQL_ENDPOINT =
 export const BBR_WFS_ENDPOINT =
   process.env.BBR_WFS_ENDPOINT ?? 'https://wfs.datafordeler.dk/BBR/BBR_WFS/1.0.0/WFS';
 
-/** Datafordeler EJF (Ejerfortegnelse) GraphQL endpoint */
+/** Datafordeler EJF (Ejerfortegnelse) GraphQL endpoint — FlexibleCurrent (aktuelle data) */
 export const EJF_GQL_ENDPOINT =
   process.env.EJF_GQL_ENDPOINT ?? 'https://graphql.datafordeler.dk/flexibleCurrent/v1/';
+
+/**
+ * Datafordeler EJF GraphQL endpoint — HistoriskCurrent (aktuelle versioner
+ * af alle historiske registreringer, inkl. udslettede ejerskifter).
+ *
+ * BIZZ-633: Bruges til at hente komplet handelskæde på ejendomme — ikke
+ * kun seneste ejerskifte. FlexibleCurrent returnerer primært aktive/
+ * gældende records; HistoriskCurrent returnerer alle historisk tinglyste
+ * ejerskifter som stadig er korrekte i registreringen.
+ */
+export const EJF_GQL_HISTORISK_ENDPOINT =
+  process.env.EJF_GQL_HISTORISK_ENDPOINT ?? 'https://graphql.datafordeler.dk/historiskCurrent/v1/';
 
 // ─── Dataforsyningen (DAWA) ────────────────────────────────────────────────
 

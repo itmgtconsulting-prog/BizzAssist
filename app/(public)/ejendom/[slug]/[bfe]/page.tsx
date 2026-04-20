@@ -703,10 +703,31 @@ function JsonLd({
   const adresseNavn = `${adresseKort}, ${adresse.postnr} ${adresse.postnrnavn}`;
   const canonicalUrl = `${getAppUrl()}/ejendom/${slug}/${bfe}`;
 
+  // BIZZ-648: Skiftet fra RealEstateListing → Place/Residence/ApartmentComplex.
+  // RealEstateListing indikerer "til-salg" hvilket er misvisende for et
+  // informations-site. Vi vælger mest specifikke type baseret på BBR
+  // anvendelseskode: 120 (fritliggende enfamiliehus) + 130 (rækkehus) →
+  // Residence; 140 (etagebolig) → ApartmentComplex; øvrige → Place.
+  const anvKode = bbr?.byg021BygningensAnvendelse ? Number(bbr.byg021BygningensAnvendelse) : null;
+  const placeType: 'Residence' | 'ApartmentComplex' | 'Place' =
+    anvKode === 120 || anvKode === 130
+      ? 'Residence'
+      : anvKode === 140
+        ? 'ApartmentComplex'
+        : 'Place';
+
   const realEstateSchema = {
     '@context': 'https://schema.org',
-    '@type': 'RealEstateListing',
+    '@type': placeType,
     name: adresseNavn,
+    url: canonicalUrl,
+    // BIZZ-648: BFE som schema:PropertyValue så Google kan parse det som
+    // struktureret identifier — bedre end bare tekst-strengen.
+    identifier: {
+      '@type': 'PropertyValue',
+      propertyID: 'BFE',
+      value: bfe,
+    },
     address: {
       '@type': 'PostalAddress',
       streetAddress: adresseKort,

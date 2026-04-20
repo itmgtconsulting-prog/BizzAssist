@@ -135,6 +135,11 @@ jobs:
           E2E_BASE_URL: ${{ steps.vercel.outputs.url || '' }}
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder-ci.supabase.co' }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder-anon-key-ci' }}
+          # Required for admin operations used by some API routes (e.g. /api/plans
+          # creates/updates subscription records via service-role). Without it the
+          # fallback local dev server started for push-events on develop/main
+          # throws on first request with "SUPABASE_SERVICE_ROLE_KEY is not set".
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
 
       - name: Upload Playwright report
         uses: actions/upload-artifact@v4

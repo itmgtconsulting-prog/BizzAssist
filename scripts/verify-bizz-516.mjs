@@ -39,7 +39,10 @@ console.log('\n→ Navigate to Vestas /dashboard/companies/10403782 Kronologi ta
 await page.goto(`${BASE}/dashboard/companies/10403782`, { waitUntil: 'domcontentloaded' });
 await page.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => {});
 await page.waitForTimeout(2500);
-const kronTab = page.locator('button').filter({ hasText: /^Kronologi$|^History$/ }).first();
+const kronTab = page
+  .locator('button')
+  .filter({ hasText: /^Kronologi$|^History$/ })
+  .first();
 if (await kronTab.isVisible({ timeout: 3000 }).catch(() => false)) {
   await kronTab.click();
   await page.waitForTimeout(2500);

@@ -8,7 +8,9 @@ import { config as loadDotenv } from 'dotenv';
 import path from 'node:path';
 import url from 'node:url';
 
-loadDotenv({ path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local') });
+loadDotenv({
+  path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local'),
+});
 
 const HOST = process.env.JIRA_HOST || 'bizzassist.atlassian.net';
 const EMAIL = process.env.JIRA_EMAIL || 'itmgtconsulting@gmail.com';
@@ -56,15 +58,21 @@ if (!keys.length) {
 for (const key of keys) {
   const transitions = await req('GET', `/rest/api/3/issue/${key}/transitions`);
   if (transitions.status !== 200) {
-    console.log(`${key}: FAILED to fetch transitions (${transitions.status}) ${transitions.body.slice(0, 200)}`);
+    console.log(
+      `${key}: FAILED to fetch transitions (${transitions.status}) ${transitions.body.slice(0, 200)}`
+    );
     continue;
   }
   const list = JSON.parse(transitions.body).transitions || [];
   const done = list.find((t) => /^done$/i.test(t.name) || t.to?.name?.toLowerCase() === 'done');
   if (!done) {
-    console.log(`${key}: no Done transition available. Options: ${list.map((t) => t.name).join(', ')}`);
+    console.log(
+      `${key}: no Done transition available. Options: ${list.map((t) => t.name).join(', ')}`
+    );
     continue;
   }
-  const res = await req('POST', `/rest/api/3/issue/${key}/transitions`, { transition: { id: done.id } });
+  const res = await req('POST', `/rest/api/3/issue/${key}/transitions`, {
+    transition: { id: done.id },
+  });
   console.log(`${key}: transition ${done.name} (id=${done.id}) → ${res.status}`);
 }

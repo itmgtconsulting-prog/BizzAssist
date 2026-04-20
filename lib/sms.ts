@@ -17,6 +17,8 @@
  * @module lib/sms
  */
 
+import { logger } from '@/app/lib/logger';
+
 /** Maximum SMS length for a single segment. */
 const MAX_SMS_CHARS = 160;
 
@@ -37,7 +39,7 @@ export async function sendCriticalSms(message: string): Promise<void> {
   const toNumber = process.env.ALERT_PHONE_NUMBER;
 
   if (!accountSid || !authToken || !fromNumber || !toNumber) {
-    console.warn(
+    logger.warn(
       '[sms] Twilio env vars ikke sat (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, ' +
         'TWILIO_FROM_NUMBER, ALERT_PHONE_NUMBER) — SMS-alert springes over'
     );
@@ -57,9 +59,9 @@ export async function sendCriticalSms(message: string): Promise<void> {
       to: toNumber,
     });
 
-    console.log('[sms] Kritisk SMS-alert sendt til', toNumber);
+    logger.log('[sms] Kritisk SMS-alert sendt til', toNumber);
   } catch (err) {
     // Non-fatal — email alert has already been sent
-    console.error('[sms] Kunne ikke sende SMS-alert:', err);
+    logger.error('[sms] Kunne ikke sende SMS-alert:', err);
   }
 }

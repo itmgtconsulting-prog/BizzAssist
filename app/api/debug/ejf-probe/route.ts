@@ -100,6 +100,51 @@ const EJF_GQL_PROBES = [
       id_lokalId status virkningFra virkningTil
     } } }`,
   },
+  // BIZZ-583: Schema-probing for ejendomsadministrator (introspection blocked
+  // by HC0046, so we guess fields by analogy to EjerskabBegraenset and see
+  // which ones the server accepts).
+  {
+    name: 'Admin — bestemtFastEjendomBFENr field',
+    query: `{ EJFCustom_EjendomsadministratorBegraenset(first: 1, virkningstid: "${VT}") { nodes {
+      id_lokalId bestemtFastEjendomBFENr
+    } } }`,
+  },
+  {
+    name: 'Admin — relation naming guess A (administratorPersonEllerVirksomhedsadmini)',
+    query: `{ EJFCustom_EjendomsadministratorBegraenset(first: 1, virkningstid: "${VT}") { nodes {
+      id_lokalId administratorPersonEllerVirksomhedsadmini
+    } } }`,
+  },
+  {
+    name: 'Admin — relation naming guess B (ejendomsadministratorAdmini)',
+    query: `{ EJFCustom_EjendomsadministratorBegraenset(first: 1, virkningstid: "${VT}") { nodes {
+      id_lokalId ejendomsadministratorAdmini
+    } } }`,
+  },
+  {
+    name: 'Admin — relation naming guess C (personEllerVirksomhedsadmini)',
+    query: `{ EJFCustom_EjendomsadministratorBegraenset(first: 1, virkningstid: "${VT}") { nodes {
+      id_lokalId personEllerVirksomhedsadmini
+    } } }`,
+  },
+  {
+    name: 'Admin — datatype guess CVRNr + navn',
+    query: `{ EJFCustom_EjendomsadministratorBegraenset(first: 1, virkningstid: "${VT}") { nodes {
+      id_lokalId administratorCVRNr administratorNavn administratorPersonBegraenset { navn { navn } }
+    } } }`,
+  },
+  {
+    name: 'PersonEllerVirksomhedsadmini — navn felt',
+    query: `{ EJFCustom_PersonEllerVirksomhedsadminiBegraenset(first: 1, virkningstid: "${VT}") { nodes {
+      id_lokalId navn CVRNr virksomhedsnavn cprNummer
+    } } }`,
+  },
+  {
+    name: 'PersonEllerVirksomhedsadmini — adresse felter',
+    query: `{ EJFCustom_PersonEllerVirksomhedsadminiBegraenset(first: 1, virkningstid: "${VT}") { nodes {
+      id_lokalId adresselinje1 adresselinje2 postnr by
+    } } }`,
+  },
   // Entitetsbaserede — forventes at fejle (support siger vi ikke har adgang)
   {
     name: 'EJF_Ejerskab (entity — forventer fejl)',

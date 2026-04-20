@@ -169,19 +169,39 @@ function scoreMatch(query: string, text: string): number {
 async function searchAddresses(q: string, normQ: string): Promise<UnifiedSearchResult[]> {
   try {
     const results = await darAutocomplete(q);
-    return results.slice(0, 5).map((r) => {
+    // BIZZ-608: Behold op til 8 results (hovedejendom + lejligheder) så
+    // brugere kan se begge i dropdown. Tidligere cap (5) kunne skære
+    // ejerlejligheder fra når hovedejendommen også matchede.
+    return results.slice(0, 8).map((r) => {
       const normText = normalize(r.tekst);
+      // BIZZ-608: Distinguish mellem hovedejendom (adgangsadresse) og
+      // ejerlejlighed (adresse med etage/dør) i subtitle så brugeren
+      // ved hvilken type ejendom de er ved at åbne.
+      let subtitle: string;
+      if (r.type === 'vejnavn') {
+        subtitle = 'Vej';
+      } else if (r.type === 'adresse') {
+        // Ejerlejlighed — "Lejlighed · 1234 By" eller med etage/dør
+        const etageDoer = [r.adresse.etage, r.adresse.dør].filter(Boolean).join('. ');
+        const stedInfo = `${r.adresse.postnr} ${r.adresse.postnrnavn}`.trim();
+        subtitle = etageDoer ? `Lejlighed · ${etageDoer} · ${stedInfo}` : `Lejlighed · ${stedInfo}`;
+      } else {
+        // Adgangsadresse — hovedejendom eller normal ejendom
+        subtitle = `${r.adresse.postnr} ${r.adresse.postnrnavn}`.trim();
+      }
       return {
         type: 'address' as const,
         id: r.adresse.id,
         title: r.tekst,
-        subtitle: r.type === 'vejnavn' ? 'Vej' : `${r.adresse.postnr} ${r.adresse.postnrnavn}`,
+        subtitle,
         score: Math.max(scoreMatch(normQ, normText), 50), // addresses from DAR are always relevant
         href: `/dashboard/ejendomme/${r.adresse.id}`,
         meta: {
           dawaType: r.type,
           vejnavn: r.adresse.vejnavn,
           husnr: r.adresse.husnr || '',
+          etage: r.adresse.etage ?? '',
+          dør: r.adresse.dør ?? '',
           postnr: r.adresse.postnr,
           postnrnavn: r.adresse.postnrnavn,
           kommunenavn: r.adresse.kommunenavn,

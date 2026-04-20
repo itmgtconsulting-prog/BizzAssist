@@ -7,7 +7,7 @@
  * @param props - DiagramVariantProps
  */
 
-import { useMemo, useRef, useState, useEffect, useCallback } from 'react';
+import { memo, useMemo, useRef, useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   forceSimulation,
@@ -129,9 +129,19 @@ interface ForceLink extends SimulationLinkDatum<ForceNode> {
  * Persons rendered in purple, companies in slate, main in blue.
  * Click the expand badge on a subsidiary to show/hide its co-owners.
  *
+ * BIZZ-600: Wrapped i React.memo i bunden af filen — D3-simuleringen er
+ * tung og skal ikke genstarte når forældre-komponenten rerender af
+ * urelaterede årsager (fx tab-skift, notifikationer). Props-stabilitet
+ * sikres af parents via useMemo/useCallback.
+ *
  * @param props - graph + lang + optional onNodeClick override
  */
-export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVariantProps) {
+function DiagramForce({
+  graph,
+  lang,
+  onNodeClick,
+  defaultShowProperties = true,
+}: DiagramVariantProps) {
   const _router = useRouter();
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -273,9 +283,12 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
             const bfeId = `bfe-${p.bfeNummer}`;
             if (existingIds.has(bfeId)) continue;
             existingIds.add(bfeId);
+            // BIZZ-627: Placeholder "Ejendom" i stedet for "BFE X" når
+            // adresse mangler — BFE vises i 3. linje af node-rendereren.
             const postBy = [p.postnr, p.by].filter(Boolean).join(' ');
-            const baseAddr = p.adresse ?? `BFE ${p.bfeNummer}`;
-            const mainLabel = postBy ? `${baseAddr}, ${postBy}` : baseAddr;
+            const hasAddress = !!p.adresse;
+            const baseAddr = hasAddress ? (p.adresse as string) : 'Ejendom';
+            const mainLabel = hasAddress && postBy ? `${baseAddr}, ${postBy}` : baseAddr;
             newNodes.push({
               id: bfeId,
               label: mainLabel,
@@ -345,12 +358,14 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
                 const postBy = enriched
                   ? [enriched.postnr, enriched.by].filter(Boolean).join(' ')
                   : '';
-                const baseAddr = enriched?.adresse
-                  ? enriched.etage
-                    ? `${enriched.adresse}, ${enriched.etage}.${enriched.doer ? ` ${enriched.doer}` : ''}`
-                    : enriched.adresse
-                  : `BFE ${bfe}`;
-                const mainLabel = postBy ? `${baseAddr}, ${postBy}` : baseAddr;
+                // BIZZ-627: Placeholder "Ejendom" når adresse mangler.
+                const hasAddress = !!enriched?.adresse;
+                const baseAddr = hasAddress
+                  ? enriched!.etage
+                    ? `${enriched!.adresse}, ${enriched!.etage}.${enriched!.doer ? ` ${enriched!.doer}` : ''}`
+                    : (enriched!.adresse as string)
+                  : 'Ejendom';
+                const mainLabel = hasAddress && postBy ? `${baseAddr}, ${postBy}` : baseAddr;
                 newNodes.push({
                   id: bfeId,
                   label: mainLabel,
@@ -409,12 +424,14 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
   /** BIZZ-427: Toggle visibility of ceased/historical owners */
   const [showCeased, setShowCeased] = useState(false);
 
-  /** BIZZ-451: Toggle visibility of property nodes — default ON */
+  /** BIZZ-451: Toggle visibility of property nodes — default ON for virksomhed.
+   *  BIZZ-571: Default OFF for person-diagram (via defaultShowProperties-prop)
+   *  for at undgå overfyldt view på aktive personer. */
   const propertyCount = useMemo(
     () => effectiveGraph.nodes.filter((n) => n.type === 'property').length,
     [effectiveGraph.nodes]
   );
-  const [showProperties, setShowProperties] = useState(true);
+  const [showProperties, setShowProperties] = useState(defaultShowProperties);
 
   /** Fullscreen overlay mode */
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -1004,8 +1021,22 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
         allOverflowNodes.push(...ownerOverflow);
 
         if (props.length === 0) continue;
-        // If this owner's properties don't all fit on current line, start new line
-        if (countOnLine > 0 && countOnLine + props.length > MAX_PER_ROW) {
+
+        // BIZZ-585: Person-owners får dedikerede rækker — deres ejendomme
+        // blandes ALDRIG med søskende-virksomheders ejendomme på samme linje.
+        // Tidligere kunne fx en persons 6. ejendom ende på en linje der også
+        // indeholdt holdingselskabers ejendomme, hvilket gjorde layoutet
+        // forvirrende. Nu starter og afslutter vi altid en ny linje ved
+        // person-owners.
+        const ownerNode = nodeById.get(ownerId);
+        const isPersonOwner = ownerNode?.type === 'person' || ownerNode?.type === 'main';
+
+        if (isPersonOwner && countOnLine > 0) {
+          // Forrige linje havde andet indhold — start person's ejendomme på ny linje
+          currentLine++;
+          countOnLine = 0;
+        } else if (countOnLine > 0 && countOnLine + props.length > MAX_PER_ROW) {
+          // Ikke-person owner: standard wrap-regel
           currentLine++;
           countOnLine = 0;
         }
@@ -1023,6 +1054,12 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
           countOnLine = props.length % MAX_PER_ROW || MAX_PER_ROW;
         } else {
           countOnLine += props.length;
+        }
+        // BIZZ-585: Efter person-owner: tving næste owner til ny linje så
+        // person-ejendomme forbliver isoleret på deres egen række-blok.
+        if (isPersonOwner && countOnLine > 0) {
+          currentLine++;
+          countOnLine = 0;
         }
       }
       // BIZZ-563 v3: overflow-noder placeres NU globalt EFTER ALLE noder
@@ -1517,6 +1554,88 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
     return () => clearTimeout(timer);
   }, [isFullscreen]);
 
+  // ── BIZZ-604: Re-fit når containeren bliver synlig (tab-skift) ──
+  // Når diagrammet er mountet i en skjult tab, er clientWidth 0 og auto-fit
+  // skipper. ResizeObserver registrerer transitionen fra 0 → positiv bredde
+  // (eller en betydelig størrelsesændring) og trigger re-fit så nodes
+  // centreres i det faktiske viewport.
+  useEffect(() => {
+    const c = containerRef.current;
+    if (!c || typeof ResizeObserver === 'undefined') return;
+    let lastW = c.clientWidth;
+    let lastH = c.clientHeight;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const cr = entry.contentRect;
+        // Trigger re-fit når containeren går fra ~usynlig til synlig
+        // (cW < 50 → cW ≥ 50) eller ved stor størrelsesændring (>20% delta).
+        const becameVisible = lastW < 50 && cr.width >= 50;
+        const significantResize =
+          lastW >= 50 &&
+          (Math.abs(cr.width - lastW) / Math.max(lastW, 1) > 0.2 ||
+            Math.abs(cr.height - lastH) / Math.max(lastH, 1) > 0.2);
+        if (becameVisible || significantResize) {
+          initialFitDone.current = false;
+          setFitTrigger((t) => t + 1);
+        }
+        lastW = cr.width;
+        lastH = cr.height;
+      }
+    });
+    observer.observe(c);
+    return () => observer.disconnect();
+  }, []);
+
+  // ── BIZZ-597 Fase 3: Auto-expand root person-node ved mount ──
+  // Når diagrammets main-node er en person (person-siden) med enhedsNummer,
+  // kalder vi expandPersonDynamic automatisk så personens virksomheder +
+  // ejendomme hentes uden at brugeren skal trykke "Udvid" manuelt.
+  // Virksomhedsdiagrammer (main-node type=main/company) påvirkes ikke.
+  const autoExpandDoneRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const mainNode = graph.nodes.find((n) => n.id === graph.mainId);
+    if (!mainNode) return;
+
+    // BIZZ-597 Fase 3: Main-node er selv en person → auto-expand hans
+    // personlige ejendomme + virksomheder så vi får fuld view uden manuel
+    // klik på Udvid.
+    if (mainNode.type === 'person' && mainNode.enhedsNummer != null) {
+      if (!autoExpandDoneRef.current.has(mainNode.id)) {
+        autoExpandDoneRef.current.add(mainNode.id);
+        if (!expandedDynamic.has(mainNode.id) && !loadingExpansion.has(mainNode.id)) {
+          void expandPersonDynamic(mainNode.id, mainNode.enhedsNummer);
+        }
+      }
+      return;
+    }
+
+    // BIZZ-585: På virksomhedsdiagram er main-node en company. Find
+    // co-owner-persons der ejer company'en direkte (fx Jakob ejer JaJR
+    // Holding) og auto-expand dem så deres personligt ejede ejendomme
+    // også vises på diagrammet — ellers får brugeren kun edge til
+    // holding uden indsigt i den ejendoms-portefølje personen har
+    // udenom selskabet.
+    //
+    // Begrænsning: kun person-nodes med udgående edge til mainNode +
+    // tilhørende co-owner-flag auto-expandes. Øvrige person-nodes længere
+    // ude i hierarkiet må bruge manuel Udvid-klik (undgår over-fetching).
+    if (mainNode.type === 'company' || mainNode.type === 'main') {
+      const topOwners = graph.nodes.filter(
+        (n) =>
+          n.type === 'person' &&
+          n.enhedsNummer != null &&
+          graph.edges.some((e) => e.from === n.id && e.to === mainNode.id)
+      );
+      for (const owner of topOwners) {
+        if (autoExpandDoneRef.current.has(owner.id)) continue;
+        if (expandedDynamic.has(owner.id)) continue;
+        if (loadingExpansion.has(owner.id)) continue;
+        autoExpandDoneRef.current.add(owner.id);
+        void expandPersonDynamic(owner.id, owner.enhedsNummer!);
+      }
+    }
+  }, [graph, expandPersonDynamic, expandedDynamic, loadingExpansion]);
+
   // ── Expand/collapse all helpers ──
   // Nodes that have expandable children (expandableChildren > 0)
   const allExpandableIds = useMemo(
@@ -1548,6 +1667,10 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
    * AND fire person-dynamic-expand for any person-node der ikke er udvidet
    * endnu. Det betyder Udvid-knappen nu også henter personligt ejede
    * virksomheder + ejendomme i ét klik.
+   *
+   * BIZZ-619: Udvid slår nu også `showProperties` på — hvis brugeren aktivt
+   * udvider diagrammet, er det i praksis altid fordi de vil se alt, inkl.
+   * personligt ejede ejendomme der ellers er skjult bag toggle'en.
    */
   function expandOneLevel() {
     let didSomething = false;
@@ -1565,6 +1688,13 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
           void expandPersonDynamic(p.id, p.enhedsNummer);
         }
       }
+      didSomething = true;
+    }
+    // Afslør ejendomme når brugeren udvider — ellers vil Udvid-klik ikke
+    // synligt gøre noget for person-diagrammer hvor de nyligt hentede
+    // property-noder er filtered bag showProperties=false.
+    if (!showProperties) {
+      setShowProperties(true);
       didSomething = true;
     }
     if (!didSomething) return;
@@ -1805,13 +1935,23 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
 
         // Property edges rendered with emerald color to match property nodes
         const isPropertyEdge = toNode?.type === 'property' || edge.to.startsWith('props-overflow-');
+        // BIZZ-585: Person→property edges stippled med lysere emerald så
+        // personligt-ejede-relationer er visuelt adskilt fra virksomheds-
+        // ejendom-relationer. Brugeren kan dermed hurtigt identificere
+        // hvilke ejendomme der ejes direkte af personen vs via selskab.
+        const isPersonToProperty = isPropertyEdge && fromNode?.type === 'person';
         const strokeColor = isCoOwnerEdge
           ? 'rgba(167,139,250,0.55)'
-          : isPropertyEdge
-            ? 'rgba(52,211,153,0.65)'
-            : edge.from === effectiveGraph.mainId || edge.to === effectiveGraph.mainId
-              ? 'rgba(96,165,250,0.85)'
-              : 'rgba(148,163,184,0.75)';
+          : isPersonToProperty
+            ? 'rgba(110,231,183,0.75)' // Lysere emerald-400
+            : isPropertyEdge
+              ? 'rgba(52,211,153,0.65)'
+              : edge.from === effectiveGraph.mainId || edge.to === effectiveGraph.mainId
+                ? 'rgba(96,165,250,0.85)'
+                : 'rgba(148,163,184,0.75)';
+        // BIZZ-585: Dashed stroke for person→property — samme signaleringsstil
+        // som co-owner-edges men med emerald i stedet for lilla.
+        const dashArray = isCoOwnerEdge ? '4 3' : isPersonToProperty ? '5 3' : undefined;
 
         return (
           <g key={`e-${i}`}>
@@ -1820,7 +1960,7 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
               fill="none"
               stroke={strokeColor}
               strokeWidth={isCoOwnerEdge ? 1.5 : 2.25}
-              strokeDasharray={isCoOwnerEdge ? '4 3' : undefined}
+              strokeDasharray={dashArray}
             />
             <polygon
               points={`${ex},${ey} ${ex - 5},${ey - 9} ${ex + 5},${ey - 9}`}
@@ -2513,3 +2653,10 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
     </div>
   );
 }
+
+// BIZZ-600: Memoize med default shallow-compare — graph, lang og
+// onNodeClick skal være stable refs fra parent (memoiseres typisk via
+// useMemo/useCallback) for at memoet rammer. Dynamic import i parents
+// behøver ikke default-export-ændring fordi memo(Fn) også er en gyldig
+// funktionel komponent.
+export default memo(DiagramForce);

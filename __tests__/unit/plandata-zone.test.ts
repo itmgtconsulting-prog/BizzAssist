@@ -10,13 +10,13 @@
  *   - Never throws — fetch errors resolve to null
  */
 
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 
 vi.mock('@/app/lib/logger', () => ({
   logger: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-import { hentZoneFraPlandata } from '@/app/lib/dar';
+import { hentZoneFraPlandata, __clearDarCachesForTests } from '@/app/lib/dar';
 
 function mockFetch(makeResponse: (url: string) => { body?: unknown; ok?: boolean }): typeof fetch {
   return vi.fn((input: RequestInfo | URL) => {
@@ -33,6 +33,11 @@ function mockFetch(makeResponse: (url: string) => { body?: unknown; ok?: boolean
 
 describe('hentZoneFraPlandata (BIZZ-509)', () => {
   const originalFetch = global.fetch;
+
+  beforeEach(() => {
+    // BIZZ-600: Ryd LRU-cache så tests ikke deler zone-resultater på tværs
+    __clearDarCachesForTests();
+  });
 
   afterEach(() => {
     global.fetch = originalFetch;
@@ -64,9 +69,11 @@ describe('hentZoneFraPlandata (BIZZ-509)', () => {
     global.fetch = mockFetch(() => ({ body: { features: [{ properties: { zone: '1' } }] } }));
     expect(await hentZoneFraPlandata(12, 55)).toBe('Byzone');
 
+    __clearDarCachesForTests();
     global.fetch = mockFetch(() => ({ body: { features: [{ properties: { zone: '2' } }] } }));
     expect(await hentZoneFraPlandata(12, 55)).toBe('Sommerhuszone');
 
+    __clearDarCachesForTests();
     global.fetch = mockFetch(() => ({ body: { features: [{ properties: { zone: '3' } }] } }));
     expect(await hentZoneFraPlandata(12, 55)).toBe('Landzone');
   });
@@ -84,6 +91,7 @@ describe('hentZoneFraPlandata (BIZZ-509)', () => {
     }));
     expect(await hentZoneFraPlandata(12, 55)).toBe('Landzone');
 
+    __clearDarCachesForTests();
     global.fetch = mockFetch(() => ({
       body: { features: [{ properties: { betegnelse: 'Byzone' } }] },
     }));

@@ -683,19 +683,268 @@ async function fetchBFENummer(dawaId: string): Promise<{
  * @param dawaId  - DAWA adgangsadresse-UUID (husnummer i BBR_Bygning)
  * @returns { boligAreal, erhvervsAreal, samletBygningsareal } — null hvis BBR ikke svarer
  */
+/**
+ * BIZZ-629: Resolve et BFE-nummer til en adgangsadresse-UUID via DAWA
+ * jordstykker. Bruges som fallback i fetchBbrAreasByBfe når klienten ikke
+ * har sendt dawaId med, eller når dawaId'en er stale/ikke matcher
+ * BBR_Bygning.husnummer.
+ *
+ * Strategy: DAWA /jordstykker?bfenummer=X returnerer matriklen for BFE'en.
+ * Derfra kan vi slå adgangsadresser op på samme (ejerlavkode, matrikelnr)
+ * og pick første match. Fungerer for både normale ejendomme og
+ * ejerlejligheder (hovedmatrikel-adressen bruges).
+ *
+ * @param bfe - BFE-nummer
+ * @returns adgangsadresse-UUID eller null hvis ikke findbart
+ */
+async function resolveBfeToAdgangsadresseId(bfe: number): Promise<string | null> {
+  try {
+    const jordRes = await fetchDawa(
+      `${DAWA_BASE_URL}/jordstykker?bfenummer=${bfe}&per_side=1`,
+      { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
+      { caller: 'fetchBbrAreasByBfe.resolve-bfe' }
+    );
+    if (jordRes.ok) {
+      const arr = (await jordRes.json()) as Array<{
+        ejerlav?: { kode?: number };
+        matrikelnr?: string;
+      }>;
+      const jord = arr[0];
+      if (jord?.ejerlav?.kode && jord.matrikelnr) {
+        const adgRes = await fetchDawa(
+          `${DAWA_BASE_URL}/adgangsadresser?ejerlavkode=${jord.ejerlav.kode}&matrikelnr=${encodeURIComponent(jord.matrikelnr)}&per_side=1`,
+          { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
+          { caller: 'fetchBbrAreasByBfe.resolve-adgangsadresse' }
+        );
+        if (adgRes.ok) {
+          const adgArr = (await adgRes.json()) as Array<{ id?: string }>;
+          if (adgArr[0]?.id) return adgArr[0].id;
+        }
+      }
+    }
+    // BIZZ-629 v5: DAWA /jordstykker indekserer KUN jordstykke-BFE'er, ikke
+    // ejerlejlighed- eller erhvervsejendom-BFE'er. For fx BFE 226629 (Arnold
+    // Nielsens Boulevard 62B, erhvervsejendom) returnerer DAWA tom og vi
+    // faldt igennem til null. Vurderingsportalen ES indekserer derimod ALLE
+    // BFE'er (både jordstykker, ejerlejligheder og erhvervsejendomme) og
+    // returnerer adgangsAdresseID direkte — brug det som sekundær fallback.
+    return await lookupAdgangsadresseByBfeViaVurderingsportalen(bfe);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * BIZZ-629 v5 / BIZZ-596: Slå BFE op i Vurderingsportalen ES og resolve til
+ * DAWA adresse-UUID — den fulde unit-adresse (med etage/dør for ejerlejligheder).
+ *
+ * OBS: Vurderingsportalens felter "adresseID" og "adgangsAdresseID" er IKKE
+ * DAWA-UUID'er — de peger på interne IDs. Vi henter adresse-teksten fra
+ * Vurderingsportalen og slår den op i DAWA /adresser for at få den rigtige
+ * DAWA adresse-UUID. Den UUID fungerer som adresseIdentificerer i BBR_Enhed
+ * (matcher lejligheden direkte for ejerlejligheder). BBR_Bygning-fallbacken
+ * i fetchBbrAreasByBfe probe'r adresse → adgangsadresse via DAWA.
+ *
+ * @param bfe - BFE-nummer (ejerlejlighed, erhvervsejendom, eller SFE)
+ * @returns DAWA adresse-UUID (med etage/dør for ejerlejligheder) eller null
+ */
+async function lookupAdgangsadresseByBfeViaVurderingsportalen(bfe: number): Promise<string | null> {
+  try {
+    const esRes = await fetch(
+      'https://api-fs.vurderingsportalen.dk/preliminaryproperties/_search',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        },
+        body: JSON.stringify({
+          size: 5,
+          query: { match_phrase: { bfeNumbers: String(bfe) } },
+        }),
+        signal: AbortSignal.timeout(5000),
+      }
+    );
+    if (!esRes.ok) return null;
+    const data = (await esRes.json()) as {
+      hits?: {
+        hits?: Array<{
+          _score?: number;
+          _source: { address?: string; isParentProperty?: boolean };
+        }>;
+      };
+    };
+    const hits = data.hits?.hits ?? [];
+    // Prioriter isParentProperty=true hits — disse sidder på moderejendommen.
+    const sorted = [...hits].sort(
+      (a, b) => (b._source?.isParentProperty ? 1 : 0) - (a._source?.isParentProperty ? 1 : 0)
+    );
+    for (const hit of sorted) {
+      const address = hit._source?.address;
+      if (!address) continue;
+      const dawaRes = await fetchDawa(
+        `${DAWA_BASE_URL}/adresser?q=${encodeURIComponent(address)}&per_side=1&struktur=mini`,
+        { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
+        { caller: 'lookupAdgangsadresseByBfeViaVurderingsportalen.dawa' }
+      );
+      if (!dawaRes.ok) continue;
+      // BIZZ-596: Returnér den fulde adresse-UUID (id) — IKKE adgangsadresseid.
+      // adresse-UUID indeholder etage/dør for ejerlejligheder og er det BBR_Enhed
+      // kræver i adresseIdentificerer-filteret. BBR_Bygning-pathen probe'r
+      // adresse → adgangsadresse når nødvendigt (se fetchBbrAreasByBfe).
+      const adrArr = (await dawaRes.json()) as Array<{
+        id?: string;
+        adgangsadresseid?: string;
+      }>;
+      const adrId = adrArr[0]?.id ?? adrArr[0]?.adgangsadresseid;
+      if (adrId) return adrId;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * BIZZ-629 v5: Slå matrikel-areal op for et BFE der ikke er et jordstykke-BFE
+ * (fx ejerlejligheder og erhvervsejendomme). DAWA /jordstykker?bfenummer=X
+ * returnerer tom for sådanne BFE'er. Vi må derfor først resolve til en
+ * adgangsadresse, derfra hente jordstykke-referencen (ejerlavkode+matrikelnr)
+ * og slå registreretareal op på selve jordstykket.
+ *
+ * @param bfe - BFE-nummer (ejerlejlighed eller erhvervsejendom)
+ * @returns Matrikel-areal i m² eller null hvis ikke findbart
+ */
+export async function resolveMatrikelArealByBfe(bfe: number): Promise<number | null> {
+  try {
+    const resolvedId = await lookupAdgangsadresseByBfeViaVurderingsportalen(bfe);
+    if (!resolvedId) return null;
+    // BIZZ-596: lookup-helperen returnerer nu adresse-UUID (med etage/dør for
+    // ejerlejligheder). Prøv først som adgangsadresse — hvis 404, prøv som
+    // adresse og chain til dens adgangsadresseid.
+    let ejerlavkode: number | undefined;
+    let matrikelnr: string | undefined;
+
+    const adgRes = await fetchDawa(
+      `${DAWA_BASE_URL}/adgangsadresser/${resolvedId}`,
+      { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
+      { caller: 'resolveMatrikelArealByBfe.adgangsadresse' }
+    );
+    if (adgRes.ok) {
+      const adg = (await adgRes.json()) as {
+        ejerlav?: { kode?: number };
+        matrikelnr?: string;
+      };
+      ejerlavkode = adg.ejerlav?.kode;
+      matrikelnr = adg.matrikelnr;
+    } else {
+      // ID var en adresse-UUID — hent adgangsadresse via /adresser/{id}
+      const adrRes = await fetchDawa(
+        `${DAWA_BASE_URL}/adresser/${resolvedId}`,
+        { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
+        { caller: 'resolveMatrikelArealByBfe.adresse' }
+      );
+      if (!adrRes.ok) return null;
+      const adr = (await adrRes.json()) as {
+        adgangsadresse?: { ejerlav?: { kode?: number }; matrikelnr?: string };
+      };
+      ejerlavkode = adr.adgangsadresse?.ejerlav?.kode;
+      matrikelnr = adr.adgangsadresse?.matrikelnr;
+    }
+    if (!ejerlavkode || !matrikelnr) return null;
+    const jordRes = await fetchDawa(
+      `${DAWA_BASE_URL}/jordstykker/${ejerlavkode}/${encodeURIComponent(matrikelnr)}`,
+      { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
+      { caller: 'resolveMatrikelArealByBfe.jordstykke' }
+    );
+    if (!jordRes.ok) return null;
+    const jord = (await jordRes.json()) as { registreretareal?: number | null };
+    return jord.registreretareal ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchBbrAreasByBfe(
-  _bfe: number,
+  bfe: number,
   dawaId?: string | null
 ): Promise<{
   boligAreal: number | null;
   erhvervsAreal: number | null;
   samletBygningsareal: number | null;
 } | null> {
-  if (!dawaId) return null;
   const vt = nowDafDateTime();
+  // BIZZ-629: Hvis dawaId mangler, prøv at resolve via BFE → DAWA
+  // jordstykker → adgangsadresse på samme matrikel. Giver os en brugbar
+  // UUID til BBR_Bygning-queryen. Uden denne fallback returnerede
+  // fetchBbrAreasByBfe null så snart dawaId manglede — fx ved direkte
+  // API-kald til /enrich?bfe=X uden dawaId-param.
+  let effectiveDawaId: string | null = dawaId ?? null;
+  if (!effectiveDawaId) {
+    effectiveDawaId = await resolveBfeToAdgangsadresseId(bfe);
+    if (!effectiveDawaId) return null;
+  }
 
-  const nodes = await fetchBBRGraphQL(
-    `query($vt: DafDateTime!, $id: String!) {
+  // BIZZ-637: For ejerlejligheder er dawaId et adresse-UUID (med etage/dør),
+  // og de korrekte areal-felter sidder i BBR_Enhed — ikke BBR_Bygning, der
+  // ville returnere hele bygningens samlede areal. Prøv BBR_Enhed FØRST:
+  // hvis der er enhed-match, bruger vi enh027/028 (bolig/erhverv pr. enhed)
+  // plus enh026 som samlet. Kun når BBR_Enhed ikke matcher (normal ejendom
+  // uden etage/dør) falder vi tilbage til BBR_Bygning-queryen.
+  try {
+    const enhedNodes = await fetchBBRGraphQL(
+      `query($vt: DafDateTime!, $id: String!) {
+        BBR_Enhed(first: 50, virkningstid: $vt, where: { adresseIdentificerer: { eq: $id } }) {
+          nodes {
+            id_lokalId
+            enh026EnhedensSamledeAreal
+            enh027ArealTilBeboelse
+            enh028ArealTilErhverv
+            status
+          }
+        }
+      }`,
+      { vt, id: effectiveDawaId }
+    );
+    if (Array.isArray(enhedNodes) && enhedNodes.length > 0) {
+      // Dedupliker + filtrér nedrevne (status 7)
+      const seen = new Set<string>();
+      let bolig = 0;
+      let erhverv = 0;
+      let samlet = 0;
+      for (const n of enhedNodes as Array<{
+        id_lokalId?: string;
+        enh026EnhedensSamledeAreal?: number | null;
+        enh027ArealTilBeboelse?: number | null;
+        enh028ArealTilErhverv?: number | null;
+        status?: string | number | null;
+      }>) {
+        if (!n.id_lokalId || seen.has(n.id_lokalId)) continue;
+        seen.add(n.id_lokalId);
+        if (n.status != null && String(n.status) === '7') continue;
+        if (n.enh027ArealTilBeboelse != null) bolig += Number(n.enh027ArealTilBeboelse);
+        if (n.enh028ArealTilErhverv != null) erhverv += Number(n.enh028ArealTilErhverv);
+        if (n.enh026EnhedensSamledeAreal != null) samlet += Number(n.enh026EnhedensSamledeAreal);
+      }
+      // BIZZ-629: Kun returnér BBR_Enhed-resultatet hvis vi faktisk fik et
+      // positivt areal — ellers fald igennem til BBR_Bygning. Tidligere
+      // satte vi any=true så snart et felt var != null (selv hvis 0), hvilket
+      // betød at kommercielle ejendomme med BBR_Enhed-noder uden beboelse
+      // returnerede { null, null, null } i stedet for de korrekte
+      // bygnings-areal-tal. Regression ift. BIZZ-637.
+      if (bolig > 0 || erhverv > 0 || samlet > 0) {
+        return {
+          boligAreal: bolig > 0 ? bolig : null,
+          erhvervsAreal: erhverv > 0 ? erhverv : null,
+          samletBygningsareal: samlet > 0 ? samlet : null,
+        };
+      }
+    }
+  } catch {
+    // Ignorer BBR_Enhed-fejl — fald igennem til Bygning-opslaget nedenfor.
+  }
+
+  const bbrQuery = `query($vt: DafDateTime!, $id: String!) {
       BBR_Bygning(first: 100, virkningstid: $vt, where: { husnummer: { eq: $id } }) {
         nodes {
           id_lokalId
@@ -705,11 +954,52 @@ export async function fetchBbrAreasByBfe(
           status
         }
       }
-    }`,
-    { vt, id: dawaId }
-  );
+    }`;
 
-  if (!Array.isArray(nodes) || nodes.length === 0) return null;
+  let nodes = await fetchBBRGraphQL(bbrQuery, { vt, id: effectiveDawaId });
+
+  // BIZZ-629: For ejerlejligheder peger dawaId på adresse-UUID'en (med
+  // etage/dør) — ikke adgangsadresse-UUID'en BBR_Bygning.husnummer kræver.
+  // BIZZ-576's UUID-skift brød derfor Bolig/Erhverv-mapping på kortene.
+  // Hvis første opslag intet gav, prøv at resolve adresse → adgangsadresse
+  // via DAWA og gentag BBR-queryen mod den rigtige UUID.
+  if (!Array.isArray(nodes) || nodes.length === 0) {
+    try {
+      const { fetchDawa } = await import('@/app/lib/dawa');
+      const probeRes = await fetchDawa(
+        `https://api.dataforsyningen.dk/adresser/${effectiveDawaId}?struktur=mini`,
+        { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
+        { caller: 'fetchBbrAreasByBfe.adresse-probe' }
+      );
+      if (probeRes.ok) {
+        const adresse = (await probeRes.json()) as { adgangsadresseid?: string | null };
+        const adgangsId = adresse.adgangsadresseid;
+        if (adgangsId && adgangsId !== effectiveDawaId) {
+          nodes = await fetchBBRGraphQL(bbrQuery, { vt, id: adgangsId });
+        }
+      }
+    } catch {
+      // Ignorer probe-fejl — prøver ekstra BFE-baseret fallback nedenfor.
+    }
+  }
+
+  // BIZZ-629: Hvis stadig tom — prøv at resolve BFE → adgangsadresse via
+  // DAWA jordstykker (BFE matcher direkte i jordstykke-indekset). Flere
+  // kommercielle BFE'er havde stale/forkerte dawaId i ejf_ejerskab og kom
+  // derfor igennem som null-areal før denne fallback.
+  if ((!Array.isArray(nodes) || nodes.length === 0) && bfe) {
+    const resolved = await resolveBfeToAdgangsadresseId(bfe);
+    if (resolved && resolved !== effectiveDawaId) {
+      nodes = await fetchBBRGraphQL(bbrQuery, { vt, id: resolved });
+    }
+  }
+
+  if (!Array.isArray(nodes) || nodes.length === 0) {
+    logger.warn(
+      `[fetchBbrAreasByBfe] BBR_Bygning tom for BFE ${bfe} (dawaId=${effectiveDawaId?.slice(0, 8)}…)`
+    );
+    return null;
+  }
 
   // BIZZ-575 v2: Dedupliker på id_lokalId. BBR returnerer ofte samme bygning
   // flere gange (formentlig pga. flere virkningsperioder, ejer-relationer

@@ -12,7 +12,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import url from 'node:url';
 
-loadDotenv({ path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local') });
+loadDotenv({
+  path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local'),
+});
 
 const BASE = process.env.E2E_BASE_URL || 'https://test.bizzassist.dk';
 const EMAIL = process.env.E2E_TEST_EMAIL;
@@ -31,10 +33,10 @@ const browser = await chromium.launch({ headless: true });
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 2200 } });
 const page = await ctx.newPage();
 
-page.on('console', msg => {
+page.on('console', (msg) => {
   if (msg.type() === 'error') console.log(`  [console.error] ${msg.text().slice(0, 200)}`);
 });
-page.on('pageerror', err => console.log(`  [pageerror] ${err.message.slice(0, 200)}`));
+page.on('pageerror', (err) => console.log(`  [pageerror] ${err.message.slice(0, 200)}`));
 
 try {
   console.log(`\n→ Login ${BASE}/login`);
@@ -61,7 +63,10 @@ try {
   await search.waitFor({ timeout: 15000 });
   await search.fill(TEST_ADDRESS);
   await page.waitForTimeout(1500);
-  const firstHit = page.locator('button').filter({ hasText: new RegExp(TEST_ADDRESS.split(' ')[0], 'i') }).first();
+  const firstHit = page
+    .locator('button')
+    .filter({ hasText: new RegExp(TEST_ADDRESS.split(' ')[0], 'i') })
+    .first();
   await firstHit.waitFor({ timeout: 12000 });
   await firstHit.click();
   await page.waitForURL(/\/dashboard\/ejendomme\//, { timeout: 20000 });
@@ -94,26 +99,41 @@ try {
 
     // On BBR tab, click each bygning row to expand (reveals Opgange/Etager detaljer — BIZZ-486)
     if (t === 'BBR') {
-      const bygBtns = page.locator('button').filter({ hasText: /Etagebolig|Parcelhus|Beboelse|Kontor|Butik|Erhverv|Produktion|Rækkehus|Dobbelthus/i });
+      const bygBtns = page.locator('button').filter({
+        hasText:
+          /Etagebolig|Parcelhus|Beboelse|Kontor|Butik|Erhverv|Produktion|Rækkehus|Dobbelthus/i,
+      });
       const count = await bygBtns.count();
       for (let i = 0; i < Math.min(count, 3); i++) {
-        await bygBtns.nth(i).click().catch(() => {});
+        await bygBtns
+          .nth(i)
+          .click()
+          .catch(() => {});
         await page.waitForTimeout(700);
       }
     }
     // On Oversigt tab, click the matrikel detail row if present (reveals arealtype — BIZZ-499)
     if (t === 'Oversigt') {
-      const matBtn = page.locator('button, summary').filter({ hasText: /Matrikelnr|Jordstykke|Matr\./i }).first();
+      const matBtn = page
+        .locator('button, summary')
+        .filter({ hasText: /Matrikelnr|Jordstykke|Matr\./i })
+        .first();
       if (await matBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
         await matBtn.click().catch(() => {});
         await page.waitForTimeout(700);
       }
     }
 
-    const text = (await page.locator('main, [role="main"], body').first().innerText()).replace(/\s+/g, ' ');
+    const text = (await page.locator('main, [role="main"], body').first().innerText()).replace(
+      /\s+/g,
+      ' '
+    );
     const filename = `${OUTDIR}/${t.toLowerCase().replace(/ø/g, 'oe').replace(/å/g, 'aa')}.txt`;
     fs.writeFileSync(filename, text);
-    await page.screenshot({ path: `${OUTDIR}/${t.toLowerCase().replace(/ø/g, 'oe').replace(/å/g, 'aa')}.png`, fullPage: true });
+    await page.screenshot({
+      path: `${OUTDIR}/${t.toLowerCase().replace(/ø/g, 'oe').replace(/å/g, 'aa')}.png`,
+      fullPage: true,
+    });
     dump[t] = text;
     console.log(`  ${t} — ${text.length} chars dumped to ${filename}`);
   }
@@ -123,7 +143,11 @@ try {
   // Verification matrix
   const checks = [
     // ── UI/ejendom ────────
-    ['BIZZ-550', /ejerlejlighed|parcelhus|etagebolig|kontor|erhvervsejendom|række|landbrug|beboelse|handel|industri|fritidsbolig/i, 'property-type badge'],
+    [
+      'BIZZ-550',
+      /ejerlejlighed|parcelhus|etagebolig|kontor|erhvervsejendom|række|landbrug|beboelse|handel|industri|fritidsbolig/i,
+      'property-type badge',
+    ],
     ['BIZZ-551', /\d+\.\s*(tv|th|mf)\b|\d\.\s*sal|etage\s*\d|dør\s+\d/i, 'etage+dør i header'],
     // ── MAT ────────
     ['BIZZ-497', /ejerlav/i, 'ejerlav vist (kode+navn)'],
@@ -131,7 +155,11 @@ try {
     // ── BBR ────────
     ['BIZZ-486', /opgang|etage\b.*\d|etageoversigt|bygnings.?layout/i, 'opgang/etage i BBR'],
     ['BIZZ-487', /kælder|tagetage|kælderareal|tagetageareal/i, 'kælder/tagetage i BBR'],
-    ['BIZZ-488', /ombygning|bevaringsværdig|revisionsdato/i, 'ombygning/bevaringsværdighed/revisionsdato'],
+    [
+      'BIZZ-488',
+      /ombygning|bevaringsværdig|revisionsdato/i,
+      'ombygning/bevaringsværdighed/revisionsdato',
+    ],
     // ── Økonomi ────────
     ['BIZZ-492', /grundværdispecifikation|grundværdi.*specifik/i, 'grundværdispecifikation'],
     ['BIZZ-493', /ejerboligfordeling|boligfordeling/i, 'ejerboligfordeling'],

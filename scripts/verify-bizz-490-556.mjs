@@ -9,7 +9,9 @@ import path from 'node:path';
 import url from 'node:url';
 import fs from 'node:fs';
 
-loadDotenv({ path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local') });
+loadDotenv({
+  path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local'),
+});
 
 const BASE = 'https://test.bizzassist.dk';
 const EMAIL = process.env.E2E_TEST_EMAIL;
@@ -49,16 +51,21 @@ try {
   //            on residential property). Nørrebrogade 100 is a 5-building
   //            boligejendom which is a good candidate.
   const ADDRS = ['Nørrebrogade 100', 'Bibliotekvej 58', 'Amagertorv 18'];
-  let loftFound = false;
+  let _loftFound = false;
   let usedAddr = null;
   for (const addr of ADDRS) {
     console.log(`\n→ BIZZ-490 verify: navigate to ${addr} and open SKAT tab`);
     await page.goto(`${BASE}/dashboard/ejendomme`, { waitUntil: 'domcontentloaded' });
-    const search = page.getByPlaceholder(/adresse.*vejnavn|vejnavn.*postnummer|postnummer/i).first();
+    const search = page
+      .getByPlaceholder(/adresse.*vejnavn|vejnavn.*postnummer|postnummer/i)
+      .first();
     await search.waitFor({ timeout: 15000 });
     await search.fill(addr);
     await page.waitForTimeout(1500);
-    const firstHit = page.locator('button').filter({ hasText: new RegExp(addr.split(' ')[0], 'i') }).first();
+    const firstHit = page
+      .locator('button')
+      .filter({ hasText: new RegExp(addr.split(' ')[0], 'i') })
+      .first();
     await firstHit.waitFor({ timeout: 12000 });
     await firstHit.click();
     await page.waitForURL(/\/dashboard\/ejendomme\//, { timeout: 20000 });
@@ -82,9 +89,11 @@ try {
     const has490 = /grundskatteloft|land-tax ceiling/i.test(skatText);
     const hasBasisaar = /basisår|base year/i.test(skatText);
     const hasLoftvaerdi = /loftværdi|capped value/i.test(skatText);
-    console.log(`  ${addr}: grundskatteloft=${has490 ? '✅' : '❌'}  basisår=${hasBasisaar ? '✅' : '❌'}  loftværdi=${hasLoftvaerdi ? '✅' : '❌'}`);
+    console.log(
+      `  ${addr}: grundskatteloft=${has490 ? '✅' : '❌'}  basisår=${hasBasisaar ? '✅' : '❌'}  loftværdi=${hasLoftvaerdi ? '✅' : '❌'}`
+    );
     if (has490) {
-      loftFound = true;
+      _loftFound = true;
       usedAddr = addr;
       break;
     }
@@ -98,7 +107,9 @@ try {
   await page.waitForTimeout(2500);
 
   // Click Ejendomme tab
-  const ejendommeTab = page.getByRole('tab', { name: /ejendomme|properties/i }).first()
+  const ejendommeTab = page
+    .getByRole('tab', { name: /ejendomme|properties/i })
+    .first()
     .or(page.getByRole('button', { name: /^Ejendomme$/ }).first());
   if (await ejendommeTab.isVisible({ timeout: 3000 }).catch(() => false)) {
     await ejendommeTab.click();
@@ -106,7 +117,9 @@ try {
   }
   // Wait for ejendomme portfolio + enrich API calls
   for (let i = 0; i < 20; i++) {
-    const loading = await page.locator('text=/Henter data|Henter ejendomsport|Indlæser|Loading/i').count();
+    const loading = await page
+      .locator('text=/Henter data|Henter ejendomsport|Indlæser|Loading/i')
+      .count();
     if (loading === 0) break;
     await page.waitForTimeout(1500);
   }
@@ -121,7 +134,9 @@ try {
   const hasKoebtLabel = /\bKøbt:|\bPurchased:/i.test(bodyText);
   console.log(`  BIZZ-556 "Vurd.:" label: ${hasVurdLabel ? '✅' : '❌'}`);
   console.log(`  BIZZ-556 "Ejer:" label: ${hasEjerLabel ? '✅' : '❌'}`);
-  console.log(`  BIZZ-556 "Købt:" label: ${hasKoebtLabel ? '✅ (bonus)' : '— (not present if no purchase data)'}`);
+  console.log(
+    `  BIZZ-556 "Købt:" label: ${hasKoebtLabel ? '✅ (bonus)' : '— (not present if no purchase data)'}`
+  );
 
   console.log(`\nScreenshots: ${OUT}/skat-bizz490.png + ${OUT}/bizz556-company.png`);
 } catch (err) {

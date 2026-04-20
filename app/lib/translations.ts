@@ -268,6 +268,13 @@ export const translations = {
         'AI-assistenten er ikke inkluderet i dit abonnement. Opgrader til Professionel eller Enterprise for at bruge AI.',
       tokensExhausted:
         'Du har brugt alle dine AI-tokens denne måned ({used} / {limit}). Kontakt en administrator for at få tildelt ekstra tokens, eller vent til næste måned.',
+      // BIZZ-642: Trial-gate fra /api/ai/chat (402 trial_ai_blocked)
+      trialBlockedTitle: 'AI-tokens låst under gratis-prøveperiode',
+      trialBlockedBody:
+        'Under gratis-prøveperiode er plan-tokens låst. Køb en token-pakke for at bruge AI-assistenten nu — eller vent til dit abonnement aktiveres.',
+      trialBlockedBuyCta: 'Køb token-pakke',
+      trialBlockedUpgradeCta: 'Opgrader plan',
+      topUpBalance: 'Du har {amount} tokens tilbage fra din token-pakke.',
       contextProperty: 'Ejendomsside for DAWA-adresse {id}',
       contextMap: 'Kortvisning (fuldt kort)',
       contextPropertySearch: 'Ejendomsoversigt (søgning)',
@@ -431,6 +438,16 @@ export const translations = {
       financialDataNote:
         'Regnskabsdata (omsætning, resultat, egenkapital, årsrapporter) kræver system-til-system adgang til Virk.dk. Vi afventer godkendelse fra Erhvervsstyrelsen.',
       loadingPersonbog: 'Henter personbogsdata...',
+      // BIZZ-617: Loading-labels til alignment på tværs af virksomheds-tabs
+      loadingDiagram: 'Henter diagram…',
+      loadingEjendomsportefoelje: 'Henter ejendomsportefølje…',
+      loadingDatterselskaber: 'Henter datterselskaber…',
+      loadingRegnskab: 'Henter regnskabsdata…',
+      loadingPersoner: 'Henter nøglepersoner…',
+      loadingKronologi: 'Henter kronologi…',
+      // BIZZ-618: Ekstra keys til person-detaljesiden
+      loadingRelationsdiagram: 'Henter relationsdiagram…',
+      loadingGruppe: 'Henter gruppedata…',
       personbogError: 'Kunne ikke hente personbogsdata',
       personbogEmpty: 'Ingen tinglyste dokumenter fundet',
       personbogSamletHaeftelse: 'Samlet hæftelse',
@@ -503,6 +520,11 @@ export const translations = {
       noGroup: 'Ingen koncernstruktur fundet',
       noLiens: 'Ingen tinglysninger fundet',
       loadingTinglysning: 'Henter personbogsdata for tilknyttede virksomheder...',
+      // BIZZ-618: Loading-labels til person-detaljesidens tabs
+      loadingEjendomsportefoelje: 'Henter ejendomsportefølje…',
+      loadingRelationsdiagram: 'Henter relationsdiagram…',
+      loadingGruppe: 'Henter gruppedata…',
+      loadingKronologi: 'Henter kronologi…',
       tinglysningError: 'Kunne ikke hente personbogsdata',
       tinglysningEmpty: 'Ingen registreringer i Personbogen for tilknyttede virksomheder',
       tinglysningIngenVirksomheder:
@@ -844,6 +866,13 @@ export const translations = {
         'The AI assistant is not included in your subscription. Upgrade to Professional or Enterprise to use AI.',
       tokensExhausted:
         'You have used all your AI tokens this month ({used} / {limit}). Contact an administrator for extra tokens, or wait until next month.',
+      // BIZZ-642: Trial-gate fra /api/ai/chat (402 trial_ai_blocked)
+      trialBlockedTitle: 'AI tokens locked during free trial',
+      trialBlockedBody:
+        'During the free trial, plan tokens are locked. Buy a token pack to use the AI assistant now — or wait until your subscription activates.',
+      trialBlockedBuyCta: 'Buy token pack',
+      trialBlockedUpgradeCta: 'Upgrade plan',
+      topUpBalance: 'You have {amount} tokens left from your token pack.',
       contextProperty: 'Property page for DAWA address {id}',
       contextMap: 'Map view (full map)',
       contextPropertySearch: 'Property overview (search)',
@@ -1007,6 +1036,16 @@ export const translations = {
       financialDataNote:
         'Financial data (revenue, profit, equity, annual reports) requires system-to-system access to Virk.dk. We are awaiting approval from the Danish Business Authority.',
       loadingPersonbog: 'Loading person register data...',
+      // BIZZ-617: Loading-labels (EN) — alignment på tværs af virksomheds-tabs
+      loadingDiagram: 'Loading diagram…',
+      loadingEjendomsportefoelje: 'Loading property portfolio…',
+      loadingDatterselskaber: 'Loading subsidiaries…',
+      loadingRegnskab: 'Loading financial data…',
+      loadingPersoner: 'Loading key people…',
+      loadingKronologi: 'Loading timeline…',
+      // BIZZ-618: Person-detaljeside keys
+      loadingRelationsdiagram: 'Loading relationship diagram…',
+      loadingGruppe: 'Loading group data…',
       personbogError: 'Could not load person register data',
       personbogEmpty: 'No registered documents found',
       personbogSamletHaeftelse: 'Total lien',
@@ -1079,6 +1118,11 @@ export const translations = {
       noGroup: 'No group structure found',
       noLiens: 'No land registry entries found',
       loadingTinglysning: 'Loading personal register data for affiliated companies...',
+      // BIZZ-618: Loading-labels (EN) til person-detaljesidens tabs
+      loadingEjendomsportefoelje: 'Loading property portfolio…',
+      loadingRelationsdiagram: 'Loading relationship diagram…',
+      loadingGruppe: 'Loading group data…',
+      loadingKronologi: 'Loading timeline…',
       tinglysningError: 'Could not fetch personal register data',
       tinglysningEmpty: 'No registrations in the Personal Register for affiliated companies',
       tinglysningIngenVirksomheder:

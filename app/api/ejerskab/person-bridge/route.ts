@@ -253,14 +253,18 @@ export async function GET(req: NextRequest) {
     // (navn, fdato)-kombination matcher, returner den — ellers fejl.
     try {
       const admin = createAdminClient();
+      // BIZZ-534: Brug .eq() med ix_ejf_person_navn_exact-index (migration 048).
+      // .ilike() uden wildcards ramte ikke det eksisterende lower()-index og
+      // kørte fuld scan på 3M+ rækker → statement timeout.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: rows, error } = await (admin as any)
         .from('ejf_ejerskab')
         .select('ejer_navn, ejer_foedselsdato')
-        .ilike('ejer_navn', person.navn)
+        .eq('ejer_navn', person.navn)
         .eq('ejer_type', 'person')
         .eq('status', 'gældende')
-        .not('ejer_foedselsdato', 'is', null);
+        .not('ejer_foedselsdato', 'is', null)
+        .limit(100);
 
       if (!error && Array.isArray(rows) && rows.length > 0) {
         // Distinct (navn, foedselsdato)-kombinationer

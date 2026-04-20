@@ -57,10 +57,9 @@ import { resolvePlan, formatTokens, isSubscriptionFunctional } from '@/app/lib/s
 import SektionLoader from '@/app/components/SektionLoader';
 import TabLoadingSpinner from '@/app/components/TabLoadingSpinner';
 
-const DiagramForce = dynamic(() => import('@/app/components/diagrams/DiagramForce'), {
-  ssr: false,
-  loading: () => <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />,
-});
+/** BIZZ-600: DiagramForce uses d3-force — dynamic() keeps d3-force out of initial bundle */
+// prettier-ignore
+const DiagramForce = dynamic(/* d3-force */ () => import('@/app/components/diagrams/DiagramForce'), { ssr: false, loading: () => <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" /> });
 
 // ─── Tab Types ──────────────────────────────────────────────────────────────
 
@@ -118,6 +117,27 @@ function erEjerRolle(rolle: string): boolean {
  */
 function erEjerregister(rolle: string): boolean {
   return rolle.toUpperCase() === 'EJERREGISTER';
+}
+
+/**
+ * BIZZ-620: Returnerer true hvis virksomhedsformen implicit gør deltageren
+ * til ejer uden at kræve separat ejerandel-registrering i CVR. Enkeltmands-
+ * virksomhed (ENK) har pr. definition én ejer (deltageren selv) og
+ * I/S-, K/S-, P/S-selskaber registrerer deltagerne som ejere gennem deres
+ * deltagerrolle alene.
+ *
+ * Matcher tilsvarende logik i DiagramForce.expandPersonDynamic (BIZZ-597)
+ * så virksomheder-tabben ikke underrapporterer personligt ejede virksomheder
+ * set ift. diagrammet.
+ */
+function erEjerVedForm(form: string | null): boolean {
+  const f = (form ?? '').toLowerCase();
+  return (
+    f.includes('enkeltmand') ||
+    f.includes('interessent') || // I/S
+    f.includes('kommandit') || // K/S
+    f.includes('partnersels') // P/S
+  );
 }
 
 // ─── Small UI components ────────────────────────────────────────────────────
@@ -775,13 +795,37 @@ export default function PersonDetailPageClient({
   const [ejendommeManglerNoegle, setEjendommeManglerNoegle] = useState(false);
   const [ejendommeManglerAdgang, setEjendommeManglerAdgang] = useState(false);
   const [ejendommeTotalBfe, setEjendommeTotalBfe] = useState(0);
+  /**
+   * BIZZ-597 Fase 2: Pre-enriched data per BFE fra batch-endpoint — matcher
+   * virksomhedsfanens pattern (BIZZ-569). Uden denne fyrer hver
+   * PropertyOwnerCard sit eget /enrich-kald = N+1 fetches med Vercel cold-
+   * start-latency. Batch-endpoint'et henter alle felter i ét kald.
+   */
+  const [preEnrichedByBfe, setPreEnrichedByBfe] = useState<
+    Map<
+      number,
+      {
+        areal: number | null;
+        vurdering: number | null;
+        vurderingsaar: number | null;
+        erGrundvaerdi?: boolean;
+        ejerNavn: string | null;
+        koebesum: number | null;
+        koebsdato: string | null;
+        boligAreal: number | null;
+        erhvervsAreal: number | null;
+        matrikelAreal: number | null;
+      }
+    >
+  >(new Map());
   /** Kommasepereret CVR-nøgle der sidst blev hentet — forhindrer duplicate-fetches */
   const ejendomFetchKeyRef = useRef('');
   /** AbortController for igangværende progressiv ejendomshentning */
   const ejendomAbortRef = useRef<AbortController | null>(null);
 
-  /** BIZZ-399: Ejendomshandler (salgshistorik) — lazy-loaded fra /api/salgshistorik/cvr */
-  const [ejendommeFilter, setEjendommeFilter] = useState<string | null>(null);
+  // BIZZ-631: ejendommeFilter-state fjernet — filter chips er taget ud for at
+  // matche virksomhedsfanens layout. Ejendomshandler-sektionen vises nu altid
+  // når data er tilgængelige.
   /** BIZZ-580: Toggle for visning af tidligere ejede (solgte) ejendomme — default skjult, matcher virksomhedsfanen */
   const [visSolgteEjendomme, setVisSolgteEjendomme] = useState(false);
   const [ejendomshandler, setEjendomshandler] = useState<
@@ -797,6 +841,16 @@ export default function PersonDetailPageClient({
   >([]);
   const [handlerLoading, setHandlerLoading] = useState(false);
   const handlerFetchedRef = useRef(false);
+
+  /**
+   * BIZZ-594: Personligt ejede ejendomme via bulk-data-lookup (ejf_ejerskab).
+   * Hentes progressivt når diagram-fanen aktiveres så vi har alle 9+ BFE'er
+   * for personen — ikke kun de 2 som enhedsNummer-sporet rammer. Nodes
+   * tilføjes med adresse via bfe-addresses-endpointet, så rendering matcher
+   * virksomhedsdiagrammets property-noder.
+   */
+  const [personalBfes, setPersonalBfes] = useState<DiagramPropertySummary[]>([]);
+  const personalBfesFetchedRef = useRef(false);
 
   /** Detekterer desktop vs. mobil — nyheder-panel vises som sidebar på desktop, overlay på mobil */
   const [isDesktop, setIsDesktop] = useState(true);
@@ -966,9 +1020,17 @@ export default function PersonDetailPageClient({
     if (!data || relatedFetchedRef.current) return;
     relatedFetchedRef.current = true;
 
-    /** Kun virksomheder med faktisk ejerandel — matcher ejerVirksomheder i derived */
+    /**
+     * Matcher ejerVirksomheder i derived (BIZZ-620): inkluderer både
+     * virksomheder med registreret ejerandel OG virksomheder hvor formen
+     * (ENK/I/S/K/S/P/S) implicit gør deltageren til ejer.
+     */
     const owned = data.virksomheder.filter(
-      (v) => v.aktiv && v.roller.some((r) => erEjerRolle(r.rolle) && !r.til && r.ejerandel)
+      (v) =>
+        v.aktiv &&
+        (v.roller.some((r) => erEjerRolle(r.rolle) && !r.til && r.ejerandel) ||
+          (erEjerVedForm(v.form) &&
+            v.roller.some((r) => !r.til && !r.rolle.toUpperCase().includes('STIFTER'))))
     );
     if (owned.length === 0) return;
 
@@ -1014,9 +1076,22 @@ export default function PersonDetailPageClient({
       (v) => !v.aktiv || !v.roller.some((r) => !r.til)
     );
 
-    /** Ejer-virksomheder = virksomheder hvor personen har en aktiv ejerrolle MED ejerandel */
+    /**
+     * Ejer-virksomheder = virksomheder hvor personen har en aktiv ejerrolle
+     * MED ejerandel, ELLER virksomheden er af en form (ENK, I/S, K/S, P/S)
+     * hvor deltageren pr. definition er ejer uden separat ejerandel-
+     * registrering (BIZZ-620).
+     *
+     * Uden form-faldback fanges personligt ejede ENK-virksomheder ikke som
+     * ejer, fordi CVR kun registrerer dem som deltagere. Tidligere endte
+     * de derfor fejlagtigt i "Andre roller"-listen på Virksomheder-tab.
+     */
     const ejerVirksomheder = data.virksomheder.filter(
-      (v) => v.aktiv && v.roller.some((r) => erEjerRolle(r.rolle) && !r.til && r.ejerandel)
+      (v) =>
+        v.aktiv &&
+        (v.roller.some((r) => erEjerRolle(r.rolle) && !r.til && r.ejerandel) ||
+          (erEjerVedForm(v.form) &&
+            v.roller.some((r) => !r.til && !r.rolle.toUpperCase().includes('STIFTER'))))
     );
     const ejerCvrs = new Set(ejerVirksomheder.map((v) => v.cvr));
     /** Andre virksomheder = aktive virksomheder der IKKE er i ejerskabsdiagrammet */
@@ -1061,6 +1136,19 @@ export default function PersonDetailPageClient({
       if (ejerR.length > 0 && ejerR.some((r) => r.ejerandel)) {
         const andel = ejerR.find((r) => r.ejerandel)?.ejerandel ?? null;
         rollerPerKategori.ejerandel.push({ v, roller: ejerR.map((r) => r.rolle), andel });
+      } else if (erEjerVedForm(v.form)) {
+        // BIZZ-620: ENK / I/S / K/S / P/S — deltageren er pr. definition
+        // ejer selv uden registreret ejerandel. For ENK markeres 100% som
+        // implicit andel; andre former efterlader andel tomt fordi der kan
+        // være flere deltagere uden registreret fordeling.
+        const formLc = (v.form ?? '').toLowerCase();
+        const implicitAndel = formLc.includes('enkeltmand') ? '100%' : null;
+        const roller = aktive
+          .filter((r) => !r.rolle.toUpperCase().includes('STIFTER'))
+          .map((r) => r.rolle);
+        if (roller.length > 0) {
+          rollerPerKategori.ejerandel.push({ v, roller, andel: implicitAndel });
+        }
       }
       if (bestR.length > 0)
         rollerPerKategori.bestyrelse.push({ v, roller: bestR.map((r) => r.rolle) });
@@ -1158,6 +1246,48 @@ export default function PersonDetailPageClient({
     // Behold kun ejervirksomheder der IKKE er datterselskab af en anden
     return ejerVirksomheder.filter((v) => !subsidiCvrs.has(v.cvr));
   }, [derived, relatedCompanies]);
+
+  /**
+   * BIZZ-597 Fase 3: Memoized person-diagram-graf. Tidligere blev
+   * buildPersonDiagramGraph kaldt INLINE i JSX (IIFE) på hver render
+   * hvilket trigger D3-simulering genstart + re-layout selv når kun
+   * urelaterede state-ændringer (notifikationer, tab-skift) skete.
+   * Virksomhedsfanen memoiserer samme måde (VirksomhedDetaljeClient linje
+   * 540-573); nu er person-siden symmetrisk.
+   */
+  const personDiagramGraph = useMemo(() => {
+    if (!data) return { nodes: [], edges: [], mainId: '' };
+    // BIZZ-571: Person-diagram ekskluderer solgte ejendomme — samme regel
+    // som virksomheds-diagrammet.
+    const aktiveEjendomme = ejendommeData.filter((p) => p.aktiv !== false);
+    const propertiesByCvr =
+      aktiveEjendomme.length > 0
+        ? aktiveEjendomme.reduce((map, p) => {
+            const cvrNum = parseInt(p.ownerCvr, 10);
+            if (!map.has(cvrNum)) map.set(cvrNum, []);
+            map.get(cvrNum)!.push(p as DiagramPropertySummary);
+            return map;
+          }, new Map<number, DiagramPropertySummary[]>())
+        : undefined;
+    return buildPersonDiagramGraph(
+      data.navn,
+      data.enhedsNummer,
+      topLevelEjer,
+      relatedCompanies,
+      noeglePersonerMap,
+      derived?.andreVirksomheder ?? [],
+      propertiesByCvr,
+      personalBfes
+    );
+  }, [
+    data,
+    topLevelEjer,
+    relatedCompanies,
+    noeglePersonerMap,
+    derived?.andreVirksomheder,
+    ejendommeData,
+    personalBfes,
+  ]);
 
   /** Hent nøglepersoner (bestyrelse+direktion) for alle virksomheder (ejede + andre roller) */
   useEffect(() => {
@@ -1376,6 +1506,192 @@ export default function PersonDetailPageClient({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aktivTab, derived, relatedCompanies, fetchEjendommeProgressively]);
+
+  /**
+   * BIZZ-597 Fase 2: Batch-enrichment når properties-tab aktiveres.
+   * Matcher virksomhedsfanens pattern (BIZZ-569) — uden dette fyrer hver
+   * PropertyOwnerCard sit eget /enrich-kald = N+1 fetches med cold-start-
+   * latency. Batch-endpointet henter areal, vurdering, købspris m.v. i ét
+   * kald for alle savnede BFE'er.
+   */
+  useEffect(() => {
+    if (aktivTab !== 'properties') return;
+    // BIZZ-638: Enrich BÅDE virksomhedsejede (ejendommeData) OG personligt
+    // ejede (personalBfes) — sidstnævnte kommer fra ejf_ejerskab-bulkdata
+    // (BIZZ-534/595) og blev tidligere glemt i enrich-loopet så de 9
+    // personligt ejede kort på Jakob's side viste evig skeleton-bars.
+    const combinedBfes: Array<{ bfeNummer: number; dawaId: string | null }> = [
+      ...ejendommeData.map((e) => ({ bfeNummer: e.bfeNummer, dawaId: e.dawaId ?? null })),
+      ...personalBfes.map((p) => ({ bfeNummer: p.bfeNummer, dawaId: p.dawaId ?? null })),
+    ];
+    if (combinedBfes.length === 0) return;
+
+    // Dedup per BFE — en ejendom kan optræde begge steder (fx personligt +
+    // via ENK). Første forekomst vinder dawaId'et (CVR-sporet er typisk
+    // mere korrekt når det findes).
+    const seen = new Set<number>();
+    const missing: typeof combinedBfes = [];
+    for (const item of combinedBfes) {
+      if (seen.has(item.bfeNummer)) continue;
+      seen.add(item.bfeNummer);
+      if (!preEnrichedByBfe.has(item.bfeNummer)) missing.push(item);
+    }
+    if (missing.length === 0) return;
+
+    const controller = new AbortController();
+    const bfes = missing.map((e) => e.bfeNummer).join(',');
+    const dawaIds = missing.map((e) => e.dawaId ?? '').join(',');
+    // BIZZ-634: Vedhæft per-BFE ejer-datoer fra ejendommeData så enrich-batch
+    // kan udvælge ejer-specifik købs- + salgspris for solgte ejendomme.
+    const ejBuyDateByBfe = new Map<number, string>();
+    const ejSellDateByBfe = new Map<number, string>();
+    for (const e of ejendommeData) {
+      if (e.ownerBuyDate) ejBuyDateByBfe.set(e.bfeNummer, e.ownerBuyDate);
+      if (e.solgtDato) ejSellDateByBfe.set(e.bfeNummer, e.solgtDato);
+    }
+    const ownerBuyDates = missing.map((e) => ejBuyDateByBfe.get(e.bfeNummer) ?? '').join(',');
+    const ownerSellDates = missing.map((e) => ejSellDateByBfe.get(e.bfeNummer) ?? '').join(',');
+
+    const url =
+      `/api/ejendomme-by-owner/enrich-batch?bfes=${bfes}&dawaIds=${dawaIds}` +
+      (ownerBuyDates.replace(/,/g, '')
+        ? `&ownerBuyDates=${encodeURIComponent(ownerBuyDates)}`
+        : '') +
+      (ownerSellDates.replace(/,/g, '')
+        ? `&ownerSellDates=${encodeURIComponent(ownerSellDates)}`
+        : '');
+
+    fetch(url, {
+      signal: controller.signal,
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!data || controller.signal.aborted) return;
+        setPreEnrichedByBfe((prev) => {
+          const next = new Map(prev);
+          for (const [bfe, row] of Object.entries(data)) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            next.set(parseInt(bfe, 10), row as any);
+          }
+          return next;
+        });
+      })
+      .catch(() => {});
+
+    return () => controller.abort();
+  }, [aktivTab, ejendommeData, personalBfes, preEnrichedByBfe]);
+
+  /**
+   * BIZZ-594: Fetch personligt ejede ejendomme (bulk-data) når diagram eller
+   * ejendomme-tab aktiveres. Lookupen bruger person-bridge til at resolve
+   * (navn, fødselsdato) og dernæst person-properties til at få alle gældende
+   * BFE'er. BFE'erne beriges med adresser via bfe-addresses. Resultatet er
+   * en komplet liste af personens personligt ejede ejendomme — tilgængelig
+   * for diagram-renderen, så alle ejendomme vises på person-noden (ikke kun
+   * de 2 enhedsNummer-sporet rammer).
+   */
+  useEffect(() => {
+    if (aktivTab !== 'relations' && aktivTab !== 'properties') return;
+    if (!data) return;
+    if (personalBfesFetchedRef.current) return;
+    personalBfesFetchedRef.current = true;
+
+    const personEnhedsNummer = data.enhedsNummer;
+    let cancelled = false;
+    (async () => {
+      try {
+        const bridgeRes = await fetch(
+          `/api/ejerskab/person-bridge?enhedsNummer=${personEnhedsNummer}`,
+          { signal: AbortSignal.timeout(15000) }
+        );
+        if (!bridgeRes.ok) return;
+        const bridge = (await bridgeRes.json()) as {
+          navn?: string;
+          foedselsdato?: string;
+        };
+        if (!bridge.navn || !bridge.foedselsdato) return;
+
+        const ppRes = await fetch(
+          `/api/ejerskab/person-properties?navn=${encodeURIComponent(bridge.navn)}&fdato=${bridge.foedselsdato}`,
+          { signal: AbortSignal.timeout(10000) }
+        );
+        if (!ppRes.ok) return;
+        // BIZZ-596: Endpointet returnerer nu også `properties[]` med
+        // ejerandel + virkningFra per BFE. Falder tilbage til `bfes[]`-
+        // arrayet for bagudkompatibilitet.
+        const pp = (await ppRes.json()) as {
+          bfes?: number[];
+          properties?: Array<{
+            bfeNummer: number;
+            ejerandel: string | null;
+            virkningFra: string | null;
+          }>;
+        };
+        const bfes = Array.isArray(pp.bfes) ? pp.bfes : [];
+        if (bfes.length === 0) return;
+        const propDetailsByBfe = new Map<
+          number,
+          { ejerandel: string | null; virkningFra: string | null }
+        >();
+        for (const p of pp.properties ?? []) {
+          propDetailsByBfe.set(p.bfeNummer, {
+            ejerandel: p.ejerandel,
+            virkningFra: p.virkningFra,
+          });
+        }
+
+        // Berig BFE'er med adresse så diagram-noderne viser "Søbyvej 11, 2650
+        // Hvidovre" i stedet for "BFE 2081243".
+        const addrRes = await fetch(`/api/bfe-addresses?bfes=${bfes.join(',')}`, {
+          signal: AbortSignal.timeout(10000),
+        });
+        const addrMap: Record<
+          string,
+          {
+            adresse: string | null;
+            postnr: string | null;
+            by: string | null;
+            dawaId: string | null;
+            ejendomstype: string | null;
+            etage: string | null;
+            doer: string | null;
+          }
+        > = addrRes.ok ? await addrRes.json() : {};
+
+        if (cancelled) return;
+        const enriched: DiagramPropertySummary[] = bfes.map((bfe) => {
+          const a = addrMap[String(bfe)] ?? {};
+          const details = propDetailsByBfe.get(bfe);
+          return {
+            bfeNummer: bfe,
+            ownerCvr: '',
+            adresse: a.adresse ?? null,
+            postnr: a.postnr ?? null,
+            by: a.by ?? null,
+            kommune: null,
+            kommuneKode: null,
+            ejendomstype: a.ejendomstype ?? null,
+            dawaId: a.dawaId ?? null,
+            etage: a.etage ?? null,
+            doer: a.doer ?? null,
+            // BIZZ-596: Inkludér ejerandel fra ejf_ejerskab så person→property-
+            // edgen i diagrammet og Personligt ejet-kortet viser "50%" når
+            // relevant (fx Søbyvej 11 delt 50/50 med Kamilla).
+            ejerandel: details?.ejerandel ?? null,
+            aktiv: true,
+          };
+        });
+        setPersonalBfes(enriched);
+      } catch {
+        // Ignorer fejl — falder tilbage til tomt datasæt (diagram viser så
+        // kun de ejendomme enhedsNummer-sporet fangede).
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [aktivTab, data]);
 
   /**
    * Lazy-loader personbogsdata for alle tilknyttede virksomheder når Tinglysning-tab aktiveres.
@@ -1609,20 +1925,35 @@ export default function PersonDetailPageClient({
             </span>
           </div>
 
-          <div className="flex gap-1 -mb-px overflow-x-auto scrollbar-hide">
-            {tabDef.map(({ id, label, icon }) => (
-              <button
-                key={id}
-                onClick={() => setAktivTab(id)}
-                className={`flex items-center gap-1 px-2 py-1.5 text-xs font-medium border-b-2 transition-all whitespace-nowrap ${
-                  aktivTab === id
-                    ? 'border-blue-500 text-blue-300'
-                    : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600'
-                }`}
-              >
-                {icon} {label}
-              </button>
-            ))}
+          {/* BIZZ-595/596: Tab-navigation med WAI-ARIA tablist-pattern så
+              både skærmlæsere og Playwright (role=tab + name) kan navigere
+              korrekt. Tidligere rendrede buttons uden role, hvilket gjorde
+              Playwright-verifikation umulig — tab-klik ramte heller aldrig. */}
+          <div
+            className="flex gap-1 -mb-px overflow-x-auto scrollbar-hide"
+            role="tablist"
+            aria-label={lang === 'da' ? 'Person-detalje faner' : 'Person detail tabs'}
+          >
+            {tabDef.map(({ id, label, icon }) => {
+              const isActive = aktivTab === id;
+              return (
+                <button
+                  key={id}
+                  role="tab"
+                  aria-selected={isActive}
+                  aria-controls={`person-tabpanel-${id}`}
+                  id={`person-tab-${id}`}
+                  onClick={() => setAktivTab(id)}
+                  className={`flex items-center gap-1 px-2 py-1.5 text-xs font-medium border-b-2 transition-all whitespace-nowrap ${
+                    isActive
+                      ? 'border-blue-500 text-blue-300'
+                      : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600'
+                  }`}
+                >
+                  {icon} {label}
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -1680,14 +2011,61 @@ export default function PersonDetailPageClient({
                             {lang === 'da' ? 'Ingen' : 'None'}
                           </p>
                         )}
-                        {/* Ejendomme sektion */}
+                        {/* Ejendomme sektion — BIZZ-595/596: Erstat "Kommer snart"
+                            med faktisk tæller + link til Ejendomme-tab. Tidligere
+                            placeholder efterlod indtryk af at ejendomme-visning var
+                            uimplementeret selv efter BIZZ-595 var "shipped". */}
                         <div className="mt-3 pt-3 border-t border-slate-700/30">
-                          <p className="text-[10px] font-semibold uppercase tracking-wider text-teal-400 mb-2">
-                            {lang === 'da' ? 'Ejendomme' : 'Properties'}
-                          </p>
-                          <p className="text-slate-600 text-[10px]">
-                            {lang === 'da' ? 'Kommer snart' : 'Coming soon'}
-                          </p>
+                          <button
+                            onClick={() => setAktivTab('properties')}
+                            className="group w-full text-left"
+                            aria-label={
+                              lang === 'da' ? 'Gå til ejendomme-tab' : 'Go to properties tab'
+                            }
+                          >
+                            <p className="text-[10px] font-semibold uppercase tracking-wider text-teal-400 mb-2 group-hover:text-teal-300">
+                              {lang === 'da' ? 'Ejendomme' : 'Properties'}
+                            </p>
+                            {(() => {
+                              const aktive = ejendommeData.filter((e) => e.aktiv !== false).length;
+                              const privat = personalBfes.length;
+                              const historiske = ejendommeData.filter(
+                                (e) => e.aktiv === false
+                              ).length;
+                              const totalAktive = aktive + privat;
+                              if (totalAktive + historiske === 0) {
+                                return (
+                                  <p className="text-slate-600 text-[10px]">
+                                    {lang === 'da' ? 'Ingen' : 'None'}
+                                  </p>
+                                );
+                              }
+                              return (
+                                <div className="space-y-1">
+                                  <p className="text-slate-300 text-[11px] group-hover:text-white">
+                                    {lang === 'da'
+                                      ? `${totalAktive} aktiv${totalAktive !== 1 ? 'e' : ''}`
+                                      : `${totalAktive} active`}
+                                    {historiske > 0 && (
+                                      <span className="text-slate-600">
+                                        {' · '}
+                                        {lang === 'da'
+                                          ? `${historiske} historisk${historiske !== 1 ? 'e' : ''}`
+                                          : `${historiske} historical`}
+                                      </span>
+                                    )}
+                                  </p>
+                                  {privat > 0 && (
+                                    <p className="text-slate-500 text-[9px]">
+                                      {lang === 'da'
+                                        ? `Heraf ${privat} personligt ejet`
+                                        : `Incl. ${privat} personally owned`}
+                                    </p>
+                                  )}
+                                </div>
+                              );
+                            })()}
+                          </button>
                         </div>
                       </div>
                     );
@@ -1971,94 +2349,50 @@ export default function PersonDetailPageClient({
           )}
 
           {/* ══ RELATIONSDIAGRAM — BIZZ-337: variant toggle matcher virksomhedssiden ══ */}
-          {aktivTab === 'relations' &&
-            (() => {
-              // BIZZ-571: Person-diagram ekskluderer solgte (historiske)
-              // ejendomme — samme regel som virksomheds-diagrammet.
-              const aktiveEjendomme = ejendommeData.filter((p) => p.aktiv !== false);
-              const propertiesByCvr =
-                aktiveEjendomme.length > 0
-                  ? aktiveEjendomme.reduce((map, p) => {
-                      const cvrNum = parseInt(p.ownerCvr, 10);
-                      if (!map.has(cvrNum)) map.set(cvrNum, []);
-                      map.get(cvrNum)!.push(p as DiagramPropertySummary);
-                      return map;
-                    }, new Map<number, DiagramPropertySummary[]>())
-                  : undefined;
-              const diagramGraph = buildPersonDiagramGraph(
-                data.navn,
-                data.enhedsNummer,
-                topLevelEjer,
-                relatedCompanies,
-                noeglePersonerMap,
-                andreVirksomheder,
-                propertiesByCvr
-              );
-              return (
-                <DiagramForce
-                  graph={diagramGraph}
-                  lang={lang}
-                  onNodeClick={(node) => {
-                    // BIZZ-368: clicking a company node in the person diagram should switch to
-                    // the overview tab (staying on this page) rather than navigating to the
-                    // company page. Property and person nodes without a meaningful tab target
-                    // fall back to normal navigation.
-                    if (node.type === 'company' || node.type === 'main') {
-                      setAktivTab('overview');
-                    } else if (node.link) {
-                      window.location.href = node.link;
-                    }
-                  }}
-                />
-              );
-            })()}
+          {aktivTab === 'relations' && (
+            <DiagramForce
+              // BIZZ-597 Fase 3: Bruger memoized personDiagramGraph i stedet for
+              // at genskabe grafen inline — matcher virksomhedssidens pattern.
+              // D3-simulering genstarter nu kun når diagram-data reelt ændrer sig.
+              graph={personDiagramGraph}
+              lang={lang}
+              // BIZZ-571: Person-diagram åbnede tidligere uden ejendomme
+              // synlige for at undgå overfyldt view.
+              // BIZZ-619: Revideret — ejendomme skal vises fra start så
+              // persondiagrammet er symmetrisk med virksomhedsdiagrammets
+              // opførsel. Antal pr. virksomhed er begrænset til 3 via
+              // MAX_PROPS_PER_COMPANY, så overfyldt-risikoen er mindre
+              // relevant end konsistens. Brugeren kan stadig skjule
+              // ejendomme via toolbar-toggle.
+              defaultShowProperties={true}
+              onNodeClick={(node) => {
+                // BIZZ-368: clicking a company node in the person diagram should switch to
+                // the overview tab (staying on this page) rather than navigating to the
+                // company page. Property and person nodes without a meaningful tab target
+                // fall back to normal navigation.
+                if (node.type === 'company' || node.type === 'main') {
+                  setAktivTab('overview');
+                } else if (node.link) {
+                  window.location.href = node.link;
+                }
+              }}
+            />
+          )}
 
           {/* ══ EJENDOMME ══ */}
           {aktivTab === 'properties' && (
             <div className="space-y-4">
-              {(ejendommeLoading || ejendommeLoadingMore) && <TabLoadingSpinner />}
-              {/* BIZZ-399: Filter chips — Alle / Ejendomme / Ejendomshandler */}
-              <div className="flex flex-wrap gap-2">
-                <button
-                  onClick={() => setEjendommeFilter(null)}
-                  className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                    ejendommeFilter === null
-                      ? 'bg-white/10 border-white/30 text-white'
-                      : 'bg-slate-800 border-slate-700/50 text-slate-400 hover:text-slate-300'
-                  }`}
-                >
-                  {lang === 'da' ? 'Alle' : 'All'}
-                </button>
-                <button
-                  onClick={() =>
-                    setEjendommeFilter(ejendommeFilter === 'portefolje' ? null : 'portefolje')
-                  }
-                  className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                    ejendommeFilter === 'portefolje'
-                      ? 'bg-blue-600/30 border-blue-500/50 text-blue-300'
-                      : 'bg-slate-800 border-slate-700/50 text-slate-400 hover:text-slate-300'
-                  }`}
-                >
-                  {lang === 'da' ? 'Ejendomme' : 'Properties'}
-                </button>
-                <button
-                  onClick={() =>
-                    setEjendommeFilter(ejendommeFilter === 'handler' ? null : 'handler')
-                  }
-                  className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                    ejendommeFilter === 'handler'
-                      ? 'bg-emerald-600/30 border-emerald-500/50 text-emerald-300'
-                      : 'bg-slate-800 border-slate-700/50 text-slate-400 hover:text-slate-300'
-                  }`}
-                >
-                  {lang === 'da' ? 'Ejendomshandler' : 'Property trades'}
-                  {ejendomshandler.length > 0 && (
-                    <span className="ml-1.5 text-[10px] opacity-70">
-                      ({ejendomshandler.length})
-                    </span>
-                  )}
-                </button>
-              </div>
+              {/* BIZZ-618: Specifik label for ejendoms-loading */}
+              {(ejendommeLoading || ejendommeLoadingMore) && (
+                <TabLoadingSpinner label={c.loadingEjendomsportefoelje} />
+              )}
+              {/* BIZZ-631: Filter chips (Alle / Ejendomme / Ejendomshandler) er
+                  fjernet så person-Ejendomme-tab matcher virksomhedsfanens layout
+                  1:1 (jf. BIZZ-596/597). Ejendomshandler-sektionen vises nu
+                  unconditionally under ejendoms-griden når data er tilgængelig.
+                  ejendommeFilter-state beholdes midlertidigt for at undgå ripple-
+                  ændringer; den er altid null og render-betingelsen nedenfor vises
+                  konstant. */}
               {/* BIZZ-338: Ingen tilknyttede virksomheder — hverken ejede eller andre roller */}
               {ejendommeFetchComplete &&
                 !ejendommeManglerNoegle &&
@@ -2116,9 +2450,39 @@ export default function PersonDetailPageClient({
                         ? lang === 'da'
                           ? `Indlæser… (${ejendommeData.length} af ${ejendommeTotalBfe} ejendomme)`
                           : `Loading… (${ejendommeData.length} of ${ejendommeTotalBfe} properties)`
-                        : lang === 'da'
-                          ? `${ejendommeData.length} ejendom${ejendommeData.length !== 1 ? 'me' : ''} fundet`
-                          : `${ejendommeData.length} propert${ejendommeData.length !== 1 ? 'ies' : 'y'} found`}
+                        : (() => {
+                            // BIZZ-639 + BIZZ-640: Vis både aktive og historiske
+                            // (solgte) tal på tværs af BÅDE virksomhedsejede
+                            // (ejendommeData) OG personligt ejede (personalBfes).
+                            // Brug Map dedup på bfeNummer så ejendomme der
+                            // optræder begge steder (fx både via CVR og via
+                            // person-bridge) ikke tælles dobbelt.
+                            const alleByBfe = new Map<number, { aktiv: boolean }>();
+                            for (const e of ejendommeData) {
+                              alleByBfe.set(e.bfeNummer, { aktiv: e.aktiv !== false });
+                            }
+                            for (const p of personalBfes) {
+                              // Personligt ejede overskriver ikke — virksomheds-
+                              // entry er allerede kanonisk hvis begge kilder
+                              // rapporterer samme BFE.
+                              if (!alleByBfe.has(p.bfeNummer)) {
+                                alleByBfe.set(p.bfeNummer, { aktiv: p.aktiv !== false });
+                              }
+                            }
+                            const alle = Array.from(alleByBfe.values());
+                            const aktiveCount = alle.filter((e) => e.aktiv).length;
+                            const historiskeCount = alle.filter((e) => !e.aktiv).length;
+                            if (lang === 'da') {
+                              const aktivLabel = `${aktiveCount} aktiv${aktiveCount !== 1 ? 'e' : ''} ejendom${aktiveCount !== 1 ? 'me' : ''}`;
+                              return historiskeCount > 0
+                                ? `${aktivLabel} · ${historiskeCount} historisk${historiskeCount !== 1 ? 'e' : ''}`
+                                : aktivLabel;
+                            }
+                            const aktivLabel = `${aktiveCount} active propert${aktiveCount !== 1 ? 'ies' : 'y'}`;
+                            return historiskeCount > 0
+                              ? `${aktivLabel} · ${historiskeCount} historical`
+                              : aktivLabel;
+                          })()}
                     </p>
                     {/* BIZZ-338: tæller inkluderer nu også andreVirksomheder */}
                     <span className="text-slate-500 text-xs">
@@ -2160,8 +2524,65 @@ export default function PersonDetailPageClient({
                     }
                     const cvrOrder = Array.from(groupedActive.keys());
 
+                    // BIZZ-595: Personligt ejede ejendomme (fra ejf_ejerskab)
+                    // vises som separat sektion øverst på tabben, før de
+                    // virksomhedsejede grupperinger. Filtrerer duplikerer
+                    // ud ift. ejendommeData (hvis en ejendom både er fanget
+                    // via enhedsNummer-sporet og bulk-sporet).
+                    const aktiveBfes = new Set(aktive.map((e) => e.bfeNummer));
+                    const privatEjendomme = personalBfes.filter(
+                      (p) => !aktiveBfes.has(p.bfeNummer)
+                    );
+
                     return (
                       <div className="space-y-4">
+                        {privatEjendomme.length > 0 && (
+                          <div className="space-y-2">
+                            <div className="inline-flex items-center gap-2">
+                              <User size={14} className="text-purple-400/80" aria-hidden />
+                              <h3 className="text-sm font-semibold text-slate-200">
+                                {lang === 'da' ? 'Personligt ejet' : 'Personally owned'}
+                              </h3>
+                              <span className="text-[10px] text-slate-500">
+                                · {privatEjendomme.length}{' '}
+                                {lang === 'da'
+                                  ? privatEjendomme.length === 1
+                                    ? 'ejendom'
+                                    : 'ejendomme'
+                                  : privatEjendomme.length === 1
+                                    ? 'property'
+                                    : 'properties'}
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                              {privatEjendomme.map((ej) => (
+                                <PropertyOwnerCard
+                                  key={`personal-${ej.bfeNummer}`}
+                                  ejendom={
+                                    {
+                                      bfeNummer: ej.bfeNummer,
+                                      ownerCvr: '',
+                                      adresse: ej.adresse,
+                                      postnr: ej.postnr ?? null,
+                                      by: ej.by ?? null,
+                                      kommune: null,
+                                      kommuneKode: null,
+                                      ejendomstype: ej.ejendomstype,
+                                      dawaId: ej.dawaId,
+                                      etage: ej.etage ?? null,
+                                      doer: ej.doer ?? null,
+                                      ejerandel: ej.ejerandel ?? null,
+                                      aktiv: ej.aktiv ?? true,
+                                    } as EjendomSummary
+                                  }
+                                  showOwner={false}
+                                  lang={lang}
+                                  preEnriched={preEnrichedByBfe.get(ej.bfeNummer) ?? null}
+                                />
+                              ))}
+                            </div>
+                          </div>
+                        )}
                         {cvrOrder.map((cvr) => {
                           const props = groupedActive.get(cvr);
                           if (!props || props.length === 0) return null;
@@ -2200,6 +2621,7 @@ export default function PersonDetailPageClient({
                                     ejendom={ej}
                                     showOwner={false}
                                     lang={lang}
+                                    preEnriched={preEnrichedByBfe.get(ej.bfeNummer) ?? null}
                                   />
                                 ))}
                               </div>
@@ -2260,6 +2682,9 @@ export default function PersonDetailPageClient({
                                                 ejendom={ej}
                                                 showOwner={false}
                                                 lang={lang}
+                                                preEnriched={
+                                                  preEnrichedByBfe.get(ej.bfeNummer) ?? null
+                                                }
                                               />
                                             ))}
                                           </div>
@@ -2301,8 +2726,10 @@ export default function PersonDetailPageClient({
                   </div>
                 )}
 
-              {/* BIZZ-399: Ejendomshandler sektion */}
-              {(ejendommeFilter === null || ejendommeFilter === 'handler') && (
+              {/* BIZZ-399/631: Ejendomshandler sektion — vises altid under
+                  ejendoms-griden når data er tilgængelige. Tidligere filter-
+                  chips-condition fjernet så layout matcher virksomhedsfanen. */}
+              {true && (
                 <>
                   {handlerLoading && (
                     <div className="flex items-center justify-center py-8 gap-2">
@@ -2369,7 +2796,8 @@ export default function PersonDetailPageClient({
           {/* ══ GRUPPE ══ */}
           {aktivTab === 'group' && (
             <>
-              {relatedLoading && <TabLoadingSpinner />}
+              {/* BIZZ-618: Specifik label for gruppe-loading */}
+              {relatedLoading && <TabLoadingSpinner label={c.loadingGruppe} />}
               <GroupTab
                 data={data}
                 ejerVirksomheder={topLevelEjer}
@@ -2388,7 +2816,8 @@ export default function PersonDetailPageClient({
           {/* ══ TINGLYSNING (PERSONBOG VIA VIRKSOMHEDER) ══ */}
           {aktivTab === 'liens' && (
             <>
-              {personbogLoading && <TabLoadingSpinner />}
+              {/* BIZZ-618: Personbog-label i stedet for ubeskrevet spinner */}
+              {personbogLoading && <TabLoadingSpinner label={c.loadingTinglysning} />}
               <PersonTinglysningTab
                 personbogMap={personbogMap}
                 loading={personbogLoading}

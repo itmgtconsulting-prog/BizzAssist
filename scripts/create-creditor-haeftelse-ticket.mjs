@@ -9,7 +9,9 @@ import { config as loadDotenv } from 'dotenv';
 import path from 'node:path';
 import url from 'node:url';
 
-loadDotenv({ path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local') });
+loadDotenv({
+  path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local'),
+});
 
 const HOST = process.env.JIRA_HOST || 'bizzassist.atlassian.net';
 const EMAIL = process.env.JIRA_EMAIL;
@@ -44,7 +46,10 @@ function req(method, p, body) {
   });
 }
 
-const meta = await req('GET', `/rest/api/3/issue/createmeta?projectKeys=${PROJECT}&expand=projects.issuetypes`);
+const meta = await req(
+  'GET',
+  `/rest/api/3/issue/createmeta?projectKeys=${PROJECT}&expand=projects.issuetypes`
+);
 const types = JSON.parse(meta.body).projects?.[0]?.issuetypes ?? [];
 const bugType =
   types.find((t) => /^task$/i.test(t.name)) ??
@@ -122,7 +127,9 @@ const description = {
                   content: [
                     {
                       type: 'paragraph',
-                      content: [{ type: 'text', text: 'Salgspris (🛒) — seneste tinglyste handel' }],
+                      content: [
+                        { type: 'text', text: 'Salgspris (🛒) — seneste tinglyste handel' },
+                      ],
                     },
                   ],
                 },
@@ -132,7 +139,10 @@ const description = {
                     {
                       type: 'paragraph',
                       content: [
-                        { type: 'text', text: 'Seneste foreløbige vurdering (📈) — gul tekst + år' },
+                        {
+                          type: 'text',
+                          text: 'Seneste foreløbige vurdering (📈) — gul tekst + år',
+                        },
                       ],
                     },
                   ],
@@ -308,7 +318,8 @@ const description = {
 const payload = {
   fields: {
     project: { key: PROJECT },
-    summary: 'Virksomhed → Tinglysning → Ejendomme: vis hæftelse-beløb + udvidede property-datafelter',
+    summary:
+      'Virksomhed → Tinglysning → Ejendomme: vis hæftelse-beløb + udvidede property-datafelter',
     description,
     issuetype: { id: bugType.id },
     priority: { name: 'Medium' },

@@ -7,9 +7,11 @@ import { chromium } from 'playwright';
 import { config as loadDotenv } from 'dotenv';
 import path from 'node:path';
 import url from 'node:url';
-import fs from 'node:fs';
+import _fs from 'node:fs';
 
-loadDotenv({ path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local') });
+loadDotenv({
+  path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local'),
+});
 
 const BASE = 'https://test.bizzassist.dk';
 const EMAIL = process.env.E2E_TEST_EMAIL;
@@ -42,18 +44,25 @@ try {
   for (const { addr, expect } of tests) {
     console.log(`\n→ Navigating to: ${addr}`);
     await page.goto(`${BASE}/dashboard/ejendomme`, { waitUntil: 'domcontentloaded' });
-    const search = page.getByPlaceholder(/adresse.*vejnavn|vejnavn.*postnummer|postnummer/i).first();
+    const search = page
+      .getByPlaceholder(/adresse.*vejnavn|vejnavn.*postnummer|postnummer/i)
+      .first();
     await search.waitFor({ timeout: 15000 });
     await search.fill(addr);
     await page.waitForTimeout(1500);
-    const firstHit = page.locator('button').filter({ hasText: new RegExp(addr.split(' ')[0].replace('ø', '[øo]'), 'i') }).first();
+    const firstHit = page
+      .locator('button')
+      .filter({ hasText: new RegExp(addr.split(' ')[0].replace('ø', '[øo]'), 'i') })
+      .first();
     await firstHit.waitFor({ timeout: 12000 });
     await firstHit.click();
     await page.waitForURL(/\/dashboard\/ejendomme\//, { timeout: 20000 });
     await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
     await page.waitForTimeout(3000);
 
-    const headerText = (await page.locator('main, body').first().innerText()).replace(/\s+/g, ' ').slice(0, 3000);
+    const headerText = (await page.locator('main, body').first().innerText())
+      .replace(/\s+/g, ' ')
+      .slice(0, 3000);
     const match = expect.test(headerText);
     console.log(`  Zone badge: ${match ? '✅' : '❌'} (testing ${expect})`);
     const zoneMatch = headerText.match(/(Byzone|Landzone|Sommerhuszone)/);

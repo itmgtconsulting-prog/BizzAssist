@@ -33,6 +33,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient, tenantDb } from '@/lib/supabase/admin';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
+import { withCronMonitor } from '@/app/lib/cronMonitor';
 
 /** Maximum number of popular BFE numbers to revalidate per run */
 const MAX_BFE = 50;
@@ -166,26 +167,32 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // 1. Fetch top BFE numbers from activity_log
-  const topBfe = await fetchTopBfeNumbers();
+  // BIZZ-621 + BIZZ-624: heartbeat + Sentry cron-monitoring.
+  return withCronMonitor(
+    { jobName: 'warm-cache', schedule: '0 4 * * *', intervalMinutes: 1440 },
+    async () => {
+      // 1. Fetch top BFE numbers from activity_log
+      const topBfe = await fetchTopBfeNumbers();
 
-  logger.log(
-    `[warm-cache] Top ${topBfe.length} BFE numbers fetched (lookback: ${LOOKBACK_DAYS} days)`
+      logger.log(
+        `[warm-cache] Top ${topBfe.length} BFE numbers fetched (lookback: ${LOOKBACK_DAYS} days)`
+      );
+
+      // 2. Build the list of paths to revalidate
+      const bfePaths = topBfe.map(({ bfe_nummer }) => `/dashboard/ejendomme/${bfe_nummer}`);
+      const allPaths = [...STATIC_PATHS, ...bfePaths];
+
+      // 3. Revalidate each path
+      for (const path of allPaths) {
+        revalidatePath(path);
+      }
+
+      logger.log(`[warm-cache] Revalidated ${allPaths.length} paths`);
+
+      return NextResponse.json({
+        revalidated: allPaths.length,
+        paths: allPaths,
+      });
+    }
   );
-
-  // 2. Build the list of paths to revalidate
-  const bfePaths = topBfe.map(({ bfe_nummer }) => `/dashboard/ejendomme/${bfe_nummer}`);
-  const allPaths = [...STATIC_PATHS, ...bfePaths];
-
-  // 3. Revalidate each path
-  for (const path of allPaths) {
-    revalidatePath(path);
-  }
-
-  logger.log(`[warm-cache] Revalidated ${allPaths.length} paths`);
-
-  return NextResponse.json({
-    revalidated: allPaths.length,
-    paths: allPaths,
-  });
 }

@@ -9,7 +9,9 @@ import { config as loadDotenv } from 'dotenv';
 import path from 'node:path';
 import url from 'node:url';
 
-loadDotenv({ path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local') });
+loadDotenv({
+  path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local'),
+});
 
 const HOST = process.env.JIRA_HOST || 'bizzassist.atlassian.net';
 const EMAIL = process.env.JIRA_EMAIL;
@@ -44,7 +46,10 @@ function req(method, p, body) {
   });
 }
 
-const meta = await req('GET', `/rest/api/3/issue/createmeta?projectKeys=${PROJECT}&expand=projects.issuetypes`);
+const meta = await req(
+  'GET',
+  `/rest/api/3/issue/createmeta?projectKeys=${PROJECT}&expand=projects.issuetypes`
+);
 const types = JSON.parse(meta.body).projects?.[0]?.issuetypes ?? [];
 const bugType =
   types.find((t) => /^task$/i.test(t.name)) ??
@@ -258,7 +263,7 @@ const description = {
               content: [
                 {
                   type: 'text',
-                  text: 'Data-fetch på person-side: genbrug /api/ejendomme-by-owner men forsyn den med personens egen enhedsNummer + en liste af datterselskab-CVR\'er (samme sæt som feeder diagrammet).',
+                  text: "Data-fetch på person-side: genbrug /api/ejendomme-by-owner men forsyn den med personens egen enhedsNummer + en liste af datterselskab-CVR'er (samme sæt som feeder diagrammet).",
                 },
               ],
             },
@@ -310,7 +315,7 @@ const description = {
               content: [
                 {
                   type: 'text',
-                  text: 'Ejendomme-listen på person-fanen matcher diagram-fanens ejendoms-noder 1:1 (samme antal, samme BFE\'er), grupperet efter ejer-enhed.',
+                  text: "Ejendomme-listen på person-fanen matcher diagram-fanens ejendoms-noder 1:1 (samme antal, samme BFE'er), grupperet efter ejer-enhed.",
                 },
               ],
             },

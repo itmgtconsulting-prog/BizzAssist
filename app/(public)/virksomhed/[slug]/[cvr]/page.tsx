@@ -348,7 +348,13 @@ function JsonLd({ v, slug }: { v: VirksomhedPublicData; slug: string }) {
     '@context': 'https://schema.org',
     '@type': schemaType,
     name: v.navn,
-    identifier: v.cvr,
+    // BIZZ-648: CVR som schema:PropertyValue så Google kan parse det som
+    // struktureret identifier — bedre end bare tekst-strengen.
+    identifier: {
+      '@type': 'PropertyValue',
+      propertyID: 'CVR',
+      value: v.cvr,
+    },
     url: canonicalUrl,
     ...(hasAddress
       ? {

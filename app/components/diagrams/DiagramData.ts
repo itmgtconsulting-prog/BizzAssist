@@ -62,6 +62,8 @@ export interface DiagramPropertySummary {
   doer?: string | null;
   /** Ejer-andel (f.eks. "50%", "100%") */
   ejerandel?: string | null;
+  /** BIZZ-455/594: false hvis ejendommen er solgt — historisk ejerskab */
+  aktiv?: boolean;
 }
 
 /** A node in the diagram graph */
@@ -112,6 +114,12 @@ export interface DiagramEdge {
   to: string;
   /** Ownership percentage label */
   ejerandel?: string;
+  /**
+   * BIZZ-585/619: True når edgen er en person→sole-owned-ejendom-relation.
+   * Rendereren tegner stiplet emerald-linje for at adskille visuelt fra
+   * person→virksomhed-edges og company→property-edges.
+   */
+  personallyOwned?: boolean;
 }
 
 /** Complete graph structure for diagram rendering */
@@ -140,6 +148,14 @@ export interface DiagramVariantProps {
    * @param node - The clicked diagram node
    */
   onNodeClick?: (node: DiagramNode) => void;
+  /**
+   * BIZZ-571: Default-state for the "Ejendomme"-toggle. Virksomheds-diagrammet
+   * vil typisk starte med ejendomme vist (true — uændret default), men
+   * person-diagrammet skal starte med ejendomme skjult for at undgå et
+   * overfyldt initial view på aktive personer med mange besiddelser.
+   * Brugeren kan altid toggle manuelt via toolbar-knappen.
+   */
+  defaultShowProperties?: boolean;
 }
 
 /** Max children shown per parent node — overflow becomes an expandable list */
@@ -410,10 +426,15 @@ export function buildDiagramGraph(
         const link = p.dawaId ? `/dashboard/ejendomme/${p.dawaId}` : undefined;
         // Merge address + postnr+by into main label (e.g. "Arnold Nielsens Boulevard 64A, 2650 Hvidovre")
         // BIZZ-551: Append etage + dør for ejerlejligheder
+        // BIZZ-627: Når adresse mangler, vis "Ejendom" som placeholder i stedet
+        // for "BFE X" — BFE-nummeret vises separat i 3. linje i DiagramForce.
+        // Undgår duplikeret BFE-visning og signalerer tydeligt at adresse mangler.
         const postBy = [p.postnr, p.by].filter(Boolean).join(' ');
-        const rawAddr = p.adresse ?? `BFE ${p.bfeNummer}`;
-        const baseAddr = p.etage ? `${rawAddr}, ${p.etage}.${p.doer ? ` ${p.doer}` : ''}` : rawAddr;
-        const mainLabel = postBy ? `${baseAddr}, ${postBy}` : baseAddr;
+        const hasAddress = !!p.adresse;
+        const rawAddr = p.adresse ?? 'Ejendom';
+        const baseAddr =
+          hasAddress && p.etage ? `${rawAddr}, ${p.etage}.${p.doer ? ` ${p.doer}` : ''}` : rawAddr;
+        const mainLabel = hasAddress && postBy ? `${baseAddr}, ${postBy}` : baseAddr;
         nodes.push({
           id: propId,
           label: mainLabel,
@@ -516,7 +537,13 @@ export function buildPersonDiagramGraph(
     }
   >,
   andreVirksomheder?: PersonCompany[],
-  propertiesByCvr?: Map<number, DiagramPropertySummary[]>
+  propertiesByCvr?: Map<number, DiagramPropertySummary[]>,
+  /**
+   * BIZZ-594: Personligt ejede ejendomme (ikke via virksomhed). Tilføjes som
+   * property-noder hængt direkte af person-noden. Data kommer typisk fra
+   * /api/ejerskab/person-properties (bulk-data-lookup mod ejf_ejerskab).
+   */
+  personalProperties?: DiagramPropertySummary[]
 ): DiagramGraph {
   const nodes: DiagramNode[] = [];
   const edges: DiagramEdge[] = [];
@@ -758,10 +785,15 @@ export function buildPersonDiagramGraph(
         const link = p.dawaId ? `/dashboard/ejendomme/${p.dawaId}` : undefined;
         // Merge address + postnr+by into main label (e.g. "Arnold Nielsens Boulevard 64A, 2650 Hvidovre")
         // BIZZ-551: Append etage + dør for ejerlejligheder
+        // BIZZ-627: Når adresse mangler, vis "Ejendom" som placeholder i stedet
+        // for "BFE X" — BFE-nummeret vises separat i 3. linje i DiagramForce.
+        // Undgår duplikeret BFE-visning og signalerer tydeligt at adresse mangler.
         const postBy = [p.postnr, p.by].filter(Boolean).join(' ');
-        const rawAddr = p.adresse ?? `BFE ${p.bfeNummer}`;
-        const baseAddr = p.etage ? `${rawAddr}, ${p.etage}.${p.doer ? ` ${p.doer}` : ''}` : rawAddr;
-        const mainLabel = postBy ? `${baseAddr}, ${postBy}` : baseAddr;
+        const hasAddress = !!p.adresse;
+        const rawAddr = p.adresse ?? 'Ejendom';
+        const baseAddr =
+          hasAddress && p.etage ? `${rawAddr}, ${p.etage}.${p.doer ? ` ${p.doer}` : ''}` : rawAddr;
+        const mainLabel = hasAddress && postBy ? `${baseAddr}, ${postBy}` : baseAddr;
         nodes.push({
           id: propId,
           label: mainLabel,
@@ -783,6 +815,52 @@ export function buildPersonDiagramGraph(
         });
         edges.push({ from: companyNode.id, to: overflowId });
       }
+    }
+  }
+
+  // ── BIZZ-594: Personligt ejede ejendomme (bulk-data-lookup) ──────────────
+  // Tilføjer direkte property-noder hængt af person-noden. Supplerer
+  // propertiesByCvr-sporet med ejendomme som personen ejer UDEN via-
+  // virksomhed-strukturen (typisk privatbolig, fritidshus og ejendomme
+  // købt som privatperson). Data stammer normalt fra ejf_ejerskab-bulk-
+  // tabellen (se BIZZ-534).
+  if (personalProperties && personalProperties.length > 0) {
+    const aktive = personalProperties.filter((p) => p.aktiv !== false);
+    // BIZZ-619: Person-noden har typisk få (< 20) personligt ejede ejendomme
+    // — uden cap. Den gamle MAX_PROPS_PER_COMPANY=5-cap gav "5 af 9"
+    // på Jakob's persondiagram. Limit'en giver kun mening for virksomheder
+    // der kan eje hundredvis af BFE'er; personens liste er altid kort.
+    for (const p of aktive) {
+      const propId = `bfe-${p.bfeNummer}`;
+      // Hvis noden allerede er tilføjet via et company-ownership-spor,
+      // skipper vi duplikering af selve noden men tilføjer stadig den
+      // direkte person→property-edge så ejerskabet er tydeligt.
+      edges.push({
+        from: mainId,
+        to: propId,
+        ejerandel: p.ejerandel ?? undefined,
+        // BIZZ-585: Person→sole-owned-ejendom-edge stiples for at adskille
+        // visuelt fra person→virksomhed-edges.
+        personallyOwned: true,
+      });
+      if (seenIds.has(propId)) continue;
+      seenIds.add(propId);
+      const link = p.dawaId ? `/dashboard/ejendomme/${p.dawaId}` : undefined;
+      // BIZZ-627: Placeholder "Ejendom" i stedet for "BFE X" når adresse mangler.
+      const postBy = [p.postnr, p.by].filter(Boolean).join(' ');
+      const hasAddress = !!p.adresse;
+      const rawAddr = p.adresse ?? 'Ejendom';
+      const baseAddr =
+        hasAddress && p.etage ? `${rawAddr}, ${p.etage}.${p.doer ? ` ${p.doer}` : ''}` : rawAddr;
+      const mainLabel = hasAddress && postBy ? `${baseAddr}, ${postBy}` : baseAddr;
+      nodes.push({
+        id: propId,
+        label: mainLabel,
+        sublabel: p.ejendomstype ?? undefined,
+        type: 'property',
+        bfeNummer: p.bfeNummer,
+        link,
+      });
     }
   }
 

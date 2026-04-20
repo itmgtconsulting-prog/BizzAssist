@@ -24,6 +24,8 @@
  * @see app/api/cron/monitor-email/route.ts — consumes this module
  */
 
+import { logger } from '@/app/lib/logger';
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 /** Default shared mailbox address if env var is not set */
@@ -218,7 +220,7 @@ export async function getAccessToken(): Promise<string> {
   const expiresAt = Date.now() + json.expires_in * 1000 - TOKEN_EXPIRY_BUFFER_MS;
   tokenCache = { value: json.access_token, expiresAt };
 
-  console.log(
+  logger.log(
     `[monitorEmail] Nyt access token hentet, udløber om ~${Math.round(json.expires_in / 60)} min`
   );
 
@@ -265,7 +267,7 @@ export async function fetchUnreadEmails(maxCount = DEFAULT_MAX_COUNT): Promise<G
   try {
     token = await getAccessToken();
   } catch (err) {
-    console.error('[monitorEmail] fetchUnreadEmails: kunne ikke hente token:', err);
+    logger.error('[monitorEmail] fetchUnreadEmails: kunne ikke hente token:', err);
     return [];
   }
 
@@ -290,7 +292,7 @@ export async function fetchUnreadEmails(maxCount = DEFAULT_MAX_COUNT): Promise<G
 
     if (!res.ok) {
       const errText = await res.text().catch(() => '(no body)');
-      console.error(
+      logger.error(
         `[monitorEmail] Graph messages-endpoint returnerede HTTP ${res.status}: ${errText}`
       );
       return [];
@@ -299,10 +301,10 @@ export async function fetchUnreadEmails(maxCount = DEFAULT_MAX_COUNT): Promise<G
     const data = (await res.json()) as { value?: GraphEmail[] };
     const emails = data.value ?? [];
 
-    console.log(`[monitorEmail] Hentede ${emails.length} ulæste emails fra ${address}`);
+    logger.log(`[monitorEmail] Hentede ${emails.length} ulæste emails fra ${address}`);
     return emails;
   } catch (err) {
-    console.error('[monitorEmail] fetchUnreadEmails fejlede:', err);
+    logger.error('[monitorEmail] fetchUnreadEmails fejlede:', err);
     return [];
   }
 }
@@ -323,7 +325,7 @@ export async function markEmailAsRead(messageId: string): Promise<boolean> {
   try {
     token = await getAccessToken();
   } catch (err) {
-    console.error('[monitorEmail] markEmailAsRead: kunne ikke hente token:', err);
+    logger.error('[monitorEmail] markEmailAsRead: kunne ikke hente token:', err);
     return false;
   }
 
@@ -340,7 +342,7 @@ export async function markEmailAsRead(messageId: string): Promise<boolean> {
 
     if (!res.ok) {
       const errText = await res.text().catch(() => '(no body)');
-      console.error(
+      logger.error(
         `[monitorEmail] Kunne ikke markere email ${messageId} som læst: HTTP ${res.status} — ${errText}`
       );
       return false;
@@ -348,7 +350,7 @@ export async function markEmailAsRead(messageId: string): Promise<boolean> {
 
     return true;
   } catch (err) {
-    console.error('[monitorEmail] markEmailAsRead fejlede:', err);
+    logger.error('[monitorEmail] markEmailAsRead fejlede:', err);
     return false;
   }
 }

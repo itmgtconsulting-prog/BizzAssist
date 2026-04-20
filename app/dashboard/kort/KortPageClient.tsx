@@ -1271,14 +1271,18 @@ function KortInner() {
       setMarkeret(-1);
       let lng = r.adresse.x;
       let lat = r.adresse.y;
-      // darAutocomplete kan returnere x=0, y=0 (falsy) for visse adresser —
-      // brug != null så 0 ikke fejlagtigt trigger fallback-opslaget (BIZZ-370)
-      if (lng == null || lat == null) {
+      // BIZZ-370: darAutocomplete kan returnere x=0, y=0 (falsy) for visse
+      // adresser — brug != null så 0 ikke fejlagtigt trigger fallback-opslaget.
+      // BIZZ-630: MEN (0, 0) er altid et uløst DAWA-svar (ligger i Atlanterhavet
+      // ved Vestafrika, ikke Danmark) — triggér fallback i det tilfælde også.
+      const isNull = lng == null || lat == null;
+      const isZeroZero = lng === 0 && lat === 0;
+      if (isNull || isZeroZero) {
         try {
           const res = await fetch(`/api/adresse/lookup?id=${encodeURIComponent(r.adresse.id)}`);
           if (res.ok) {
             const data: { x?: number; y?: number } | null = await res.json();
-            if (data?.x != null && data?.y != null) {
+            if (data?.x != null && data?.y != null && !(data.x === 0 && data.y === 0)) {
               lng = data.x;
               lat = data.y;
             }
@@ -1287,10 +1291,33 @@ function KortInner() {
           /* ignorer netværksfejl */
         }
       }
-      if (lng != null && lat != null) {
-        mapRef.current?.flyTo({ center: [lng, lat], zoom: 17, duration: 1000 });
-        setSøgtMarkør({ lng, lat });
+      // BIZZ-630: Sanity-check koordinater er indenfor Danmarks bounding box
+      // (lng 7-16°E, lat 54-58°N). Udenfor → vis toast i stedet for at flyve
+      // kortet til Atlanterhavet / Europa. Rummer alle danske adresser +
+      // en lille margin for Bornholm/Færøer.
+      const DK_BBOX = { minLng: 7, maxLng: 16, minLat: 54, maxLat: 58 };
+      const isInDenmark =
+        lng != null &&
+        lat != null &&
+        lng >= DK_BBOX.minLng &&
+        lng <= DK_BBOX.maxLng &&
+        lat >= DK_BBOX.minLat &&
+        lat <= DK_BBOX.maxLat;
+
+      if (isInDenmark) {
+        mapRef.current?.flyTo({ center: [lng!, lat!], zoom: 17, duration: 1000 });
+        setSøgtMarkør({ lng: lng!, lat: lat! });
         setPopup(null);
+      } else {
+        logger.warn('[kort] ugyldige koordinater fra DAWA:', {
+          id: r.adresse.id,
+          lng,
+          lat,
+        });
+        // Reset search field så brugeren kan prøve igen uden at kortet
+        // står "stuck" med forkert input.
+        setSøgeTekst('');
+        searchRef.current?.focus();
       }
     },
     [setPopup]

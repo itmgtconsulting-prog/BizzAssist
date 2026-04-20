@@ -8,7 +8,9 @@ import { config as loadDotenv } from 'dotenv';
 import path from 'node:path';
 import url from 'node:url';
 
-loadDotenv({ path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local') });
+loadDotenv({
+  path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local'),
+});
 
 const HOST = process.env.JIRA_HOST || 'bizzassist.atlassian.net';
 const EMAIL = process.env.JIRA_EMAIL;
@@ -43,7 +45,10 @@ function req(method, p, body) {
   });
 }
 
-const meta = await req('GET', `/rest/api/3/issue/createmeta?projectKeys=${PROJECT}&expand=projects.issuetypes`);
+const meta = await req(
+  'GET',
+  `/rest/api/3/issue/createmeta?projectKeys=${PROJECT}&expand=projects.issuetypes`
+);
 const types = JSON.parse(meta.body).projects?.[0]?.issuetypes ?? [];
 const bugType =
   types.find((t) => /^task$/i.test(t.name)) ??
@@ -165,7 +170,11 @@ const description = {
       type: 'paragraph',
       content: [
         { type: 'text', text: 'Men der tegnes desuden en ', marks: [] },
-        { type: 'text', text: 'ekstra linje direkte fra Jakob Juul Rasmussen', marks: [{ type: 'strong' }] },
+        {
+          type: 'text',
+          text: 'ekstra linje direkte fra Jakob Juul Rasmussen',
+          marks: [{ type: 'strong' }],
+        },
         {
           type: 'text',
           text: ' (på niveau med David/Silas/Felix) ned til JaJR Holding 2 ApS eller JAJR Ejendomme ApS — reel ejer-kanten, ikke en andels-kant.',
@@ -200,7 +209,11 @@ const description = {
             {
               type: 'paragraph',
               content: [
-                { type: 'text', text: 'Reelle ejere (UBO) skal IKKE tegnes som en ekstra kant', marks: [{ type: 'strong' }] },
+                {
+                  type: 'text',
+                  text: 'Reelle ejere (UBO) skal IKKE tegnes som en ekstra kant',
+                  marks: [{ type: 'strong' }],
+                },
                 {
                   type: 'text',
                   text: ' — de udledes allerede implicit ved at følge andels-kanterne op til top-personen.',

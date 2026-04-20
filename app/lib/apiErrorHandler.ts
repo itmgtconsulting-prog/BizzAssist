@@ -20,6 +20,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { logRequest } from '@/app/lib/requestLogger';
+import { logger } from '@/app/lib/logger';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -69,7 +70,7 @@ export function withErrorHandler(handler: RouteHandler): RouteHandler {
       const message = err instanceof Error ? err.message : 'Internal server error';
 
       // Log error with context — path + method only, no PII
-      console.error(
+      logger.error(
         JSON.stringify({
           timestamp: new Date().toISOString(),
           level: 'error',

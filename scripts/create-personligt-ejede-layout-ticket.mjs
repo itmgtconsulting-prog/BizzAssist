@@ -9,7 +9,9 @@ import { config as loadDotenv } from 'dotenv';
 import path from 'node:path';
 import url from 'node:url';
 
-loadDotenv({ path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local') });
+loadDotenv({
+  path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local'),
+});
 
 const HOST = process.env.JIRA_HOST || 'bizzassist.atlassian.net';
 const EMAIL = process.env.JIRA_EMAIL;
@@ -44,7 +46,10 @@ function req(method, p, body) {
   });
 }
 
-const meta = await req('GET', `/rest/api/3/issue/createmeta?projectKeys=${PROJECT}&expand=projects.issuetypes`);
+const meta = await req(
+  'GET',
+  `/rest/api/3/issue/createmeta?projectKeys=${PROJECT}&expand=projects.issuetypes`
+);
 const types = JSON.parse(meta.body).projects?.[0]?.issuetypes ?? [];
 const bugType =
   types.find((t) => /^task$/i.test(t.name)) ??
@@ -75,7 +80,10 @@ const description = {
             {
               type: 'paragraph',
               content: [
-                { type: 'text', text: 'URL: test.bizzassist.dk/dashboard/companies/41092807 (JaJR Holding ApS → Diagram)' },
+                {
+                  type: 'text',
+                  text: 'URL: test.bizzassist.dk/dashboard/companies/41092807 (JaJR Holding ApS → Diagram)',
+                },
               ],
             },
           ],
@@ -95,7 +103,10 @@ const description = {
               content: [
                 { type: 'text', text: 'Personligt ejede ejendomme skal placeres på ', marks: [] },
                 { type: 'text', text: 'en separat linje', marks: [{ type: 'strong' }] },
-                { type: 'text', text: ' under personen — ikke blandet med virksomheder i samme lag.' },
+                {
+                  type: 'text',
+                  text: ' under personen — ikke blandet med virksomheder i samme lag.',
+                },
               ],
             },
           ],
@@ -108,7 +119,10 @@ const description = {
               content: [
                 { type: 'text', text: 'Max ', marks: [] },
                 { type: 'text', text: '5 ejendomme pr. linje', marks: [{ type: 'strong' }] },
-                { type: 'text', text: '. Ved flere end 5: wrap til næste linje (også personligt-ejet-dedikeret) med samme vertical spacing.' },
+                {
+                  type: 'text',
+                  text: '. Ved flere end 5: wrap til næste linje (også personligt-ejet-dedikeret) med samme vertical spacing.',
+                },
               ],
             },
           ],
@@ -121,7 +135,10 @@ const description = {
               content: [
                 { type: 'text', text: 'Ejerandel (fx 100%, 50%, 25%) skal vises ', marks: [] },
                 { type: 'text', text: 'på forbindelses-linjen', marks: [{ type: 'strong' }] },
-                { type: 'text', text: ' mellem person-noden og hver ejendoms-boks — samme visuelle stil som ejerandel vises mellem virksomheder (grøn pille-label på edgen).' },
+                {
+                  type: 'text',
+                  text: ' mellem person-noden og hver ejendoms-boks — samme visuelle stil som ejerandel vises mellem virksomheder (grøn pille-label på edgen).',
+                },
               ],
             },
           ],
@@ -152,7 +169,10 @@ const description = {
             {
               type: 'paragraph',
               content: [
-                { type: 'text', text: 'I diagram-layout: reserver dedikerede "personligt ejet ejendoms-rækker" direkte under hver person-node.' },
+                {
+                  type: 'text',
+                  text: 'I diagram-layout: reserver dedikerede "personligt ejet ejendoms-rækker" direkte under hver person-node.',
+                },
               ],
             },
           ],
@@ -163,7 +183,10 @@ const description = {
             {
               type: 'paragraph',
               content: [
-                { type: 'text', text: 'Layout-logik: chunk ejendomsliste i grupper af 5 → hver gruppe = én række under personen. Rækker stackes vertikalt.' },
+                {
+                  type: 'text',
+                  text: 'Layout-logik: chunk ejendomsliste i grupper af 5 → hver gruppe = én række under personen. Rækker stackes vertikalt.',
+                },
               ],
             },
           ],
@@ -174,7 +197,10 @@ const description = {
             {
               type: 'paragraph',
               content: [
-                { type: 'text', text: 'Edge-label: udvid nuværende %-label-renderer til også at acceptere person→ejendom-edges. Data kommer fra EJF ejerandel_taeller/naevner.' },
+                {
+                  type: 'text',
+                  text: 'Edge-label: udvid nuværende %-label-renderer til også at acceptere person→ejendom-edges. Data kommer fra EJF ejerandel_taeller/naevner.',
+                },
               ],
             },
           ],
@@ -195,7 +221,11 @@ const description = {
         },
       ],
     },
-    { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Acceptance criteria' }] },
+    {
+      type: 'heading',
+      attrs: { level: 2 },
+      content: [{ type: 'text', text: 'Acceptance criteria' }],
+    },
     {
       type: 'bulletList',
       content: [
@@ -205,7 +235,10 @@ const description = {
             {
               type: 'paragraph',
               content: [
-                { type: 'text', text: 'På JaJR Holding ApS-diagrammet: Jakobs 6 personligt ejede ejendomme (eller N ejendomme) placeres på 1-2 dedikerede rækker (5 + resten) direkte under ham.' },
+                {
+                  type: 'text',
+                  text: 'På JaJR Holding ApS-diagrammet: Jakobs 6 personligt ejede ejendomme (eller N ejendomme) placeres på 1-2 dedikerede rækker (5 + resten) direkte under ham.',
+                },
               ],
             },
           ],
@@ -216,7 +249,10 @@ const description = {
             {
               type: 'paragraph',
               content: [
-                { type: 'text', text: 'Hver forbindelseslinje person → ejendom har sin ejerandel påført som label (fx 100%).' },
+                {
+                  type: 'text',
+                  text: 'Hver forbindelseslinje person → ejendom har sin ejerandel påført som label (fx 100%).',
+                },
               ],
             },
           ],
@@ -227,7 +263,10 @@ const description = {
             {
               type: 'paragraph',
               content: [
-                { type: 'text', text: 'Virksomheder og personligt ejede ejendomme blandes ikke i samme lag — visuel adskillelse er klar.' },
+                {
+                  type: 'text',
+                  text: 'Virksomheder og personligt ejede ejendomme blandes ikke i samme lag — visuel adskillelse er klar.',
+                },
               ],
             },
           ],
@@ -238,7 +277,10 @@ const description = {
             {
               type: 'paragraph',
               content: [
-                { type: 'text', text: 'Regression-test: personer uden personligt ejede ejendomme (kun virksomheder) har ingen tom "ejendoms-række" — layoutet skrumper pænt.' },
+                {
+                  type: 'text',
+                  text: 'Regression-test: personer uden personligt ejede ejendomme (kun virksomheder) har ingen tom "ejendoms-række" — layoutet skrumper pænt.',
+                },
               ],
             },
           ],
@@ -249,7 +291,10 @@ const description = {
             {
               type: 'paragraph',
               content: [
-                { type: 'text', text: 'Relaterer: BIZZ-581 (personligt ejede ejendomme format+klik), BIZZ-582 (udvid + alignment), BIZZ-568 (overflow-bokse bottom-row), BIZZ-571 (person-diagram align).' },
+                {
+                  type: 'text',
+                  text: 'Relaterer: BIZZ-581 (personligt ejede ejendomme format+klik), BIZZ-582 (udvid + alignment), BIZZ-568 (overflow-bokse bottom-row), BIZZ-571 (person-diagram align).',
+                },
               ],
             },
           ],
@@ -262,7 +307,8 @@ const description = {
 const res = await req('POST', '/rest/api/3/issue', {
   fields: {
     project: { key: PROJECT },
-    summary: 'Diagram: personligt ejede ejendomme på separat linje (max 5 pr. linje) + ejerandel på forbindelses-linjen',
+    summary:
+      'Diagram: personligt ejede ejendomme på separat linje (max 5 pr. linje) + ejerandel på forbindelses-linjen',
     description,
     issuetype: { id: bugType.id },
     priority: { name: 'Medium' },

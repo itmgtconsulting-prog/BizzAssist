@@ -28,6 +28,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
+import { withCronMonitor } from '@/app/lib/cronMonitor';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -198,214 +199,222 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const admin = createAdminClient();
+  // BIZZ-621 + BIZZ-624: heartbeat + Sentry cron-monitoring.
+  // purge-old-data er ikke i vercel.json endnu; bruger daglig schedule som default
+  // så watchdog ved hvad intervallet er når den evt. tilføjes til vercel.json.
+  return withCronMonitor(
+    { jobName: 'purge-old-data', schedule: '0 5 * * *', intervalMinutes: 1440 },
+    async () => {
+      const admin = createAdminClient();
 
-  // Fetch all tenant rows — we need schema_name and closed_at
-  const { data: tenants, error: tenantErr } = (await admin
-    .from('tenants')
-    .select('id, schema_name, closed_at')) as {
-    data: TenantRow[] | null;
-    error: unknown;
-  };
+      // Fetch all tenant rows — we need schema_name and closed_at
+      const { data: tenants, error: tenantErr } = (await admin
+        .from('tenants')
+        .select('id, schema_name, closed_at')) as {
+        data: TenantRow[] | null;
+        error: unknown;
+      };
 
-  if (tenantErr || !tenants) {
-    logger.error('[purge-old-data] Failed to fetch tenants:', tenantErr);
-    return NextResponse.json({ error: 'Failed to fetch tenants' }, { status: 500 });
-  }
-
-  const results: TenantPurgeResult[] = [];
-
-  for (const tenant of tenants) {
-    if (!tenant.schema_name) continue;
-
-    const result: TenantPurgeResult = {
-      tenantId: tenant.id,
-      schemaName: tenant.schema_name,
-      recentEntitiesDeleted: 0,
-      notificationsDeleted: 0,
-      aiConversationsDeleted: 0,
-      recentSearchesDeleted: 0,
-      activityLogDeleted: 0,
-      aiTokenUsageDeleted: 0,
-      embeddingsDeleted: 0,
-    };
-
-    try {
-      const db = tenantDb(admin, tenant.schema_name);
-
-      const isClosedAndExpired =
-        tenant.closed_at !== null &&
-        new Date(tenant.closed_at) < new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-
-      if (isClosedAndExpired) {
-        // ── Post-closure GDPR purge: delete all personal data in this schema ──
-        // Use { count: 'exact' } on delete to get row counts back.
-        const { count: recentCount } = await db
-          .from('recent_entities')
-          .delete({ count: 'exact' })
-          .not('id', 'is', null); // match all rows
-
-        const { count: notifCount } = await db
-          .from('notifications')
-          .delete({ count: 'exact' })
-          .not('id', 'is', null);
-
-        // Also purge all remaining tenant-scoped personal data tables.
-        // No count needed for these (BIZZ-133: search history retention).
-        await db.from('ai_messages').delete().not('id', 'is', null);
-        await db.from('ai_conversations').delete().not('id', 'is', null);
-        await db.from('property_snapshots').delete().not('id', 'is', null);
-        await db.from('saved_entities').delete().not('id', 'is', null);
-        await db.from('recent_searches').delete().not('id', 'is', null);
-        await db.from('activity_log').delete().not('id', 'is', null);
-        // BIZZ-299: Delete embeddings and remaining user data on tenant closure
-        await db.from('document_embeddings').delete().not('id', 'is', null);
-        await db.from('ai_token_usage').delete().not('id', 'is', null);
-        await db.from('support_chat_sessions').delete().not('id', 'is', null);
-
-        result.recentEntitiesDeleted = recentCount ?? 0;
-        result.notificationsDeleted = notifCount ?? 0;
-
-        await writeAuditLog(admin, tenant.schema_name, tenant.id, {
-          event: 'post_closure_purge',
-          recentEntitiesDeleted: result.recentEntitiesDeleted,
-          notificationsDeleted: result.notificationsDeleted,
-          closedAt: tenant.closed_at,
-        });
-      } else {
-        // ── Regular TTL purge for active tenants ──
-
-        // 1. recent_entities: purge rows older than 12 months (by visited_at).
-        //    recent_entities uses visited_at as its primary timestamp column —
-        //    there is no separate created_at column on this table.
-        const twelveMonthsAgo = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString();
-
-        const { count: recentCount } = await db
-          .from('recent_entities')
-          .delete({ count: 'exact' })
-          .lt('visited_at', twelveMonthsAgo);
-
-        result.recentEntitiesDeleted = recentCount ?? 0;
-
-        // 2. notifications: purge read notifications older than 6 months.
-        //    Column name is is_read (boolean), not read.
-        const sixMonthsAgo = new Date(Date.now() - 183 * 24 * 60 * 60 * 1000).toISOString();
-
-        const { count: notifCount } = await db
-          .from('notifications')
-          .delete({ count: 'exact' })
-          .eq('is_read', true)
-          .lt('created_at', sixMonthsAgo);
-
-        result.notificationsDeleted = notifCount ?? 0;
-
-        // 3. ai_conversations: purge threads older than 12 months (GDPR storage limitation).
-        //    Privacy policy states 12-month retention; this enforces it in practice.
-        const { count: aiCount } = await db
-          .from('ai_conversations')
-          .delete({ count: 'exact' })
-          .lt('updated_at', twelveMonthsAgo);
-
-        result.aiConversationsDeleted = aiCount ?? 0;
-
-        // 4. recent_searches: purge rows older than 12 months (BIZZ-133).
-        //    GDPR Art. 5(1)(e) — storage limitation; search queries are personal data.
-        //    Column used is created_at (set at insert time, never updated).
-        const { count: searchCount } = await db
-          .from('recent_searches')
-          .delete({ count: 'exact' })
-          .lt('created_at', twelveMonthsAgo);
-
-        result.recentSearchesDeleted = searchCount ?? 0;
-
-        // 5. activity_log: purge rows older than 12 months (BIZZ-133).
-        //    Audit/activity entries older than 12 months are no longer required for
-        //    operational purposes and must be purged under GDPR storage limitation.
-        const { count: activityCount } = await db
-          .from('activity_log')
-          .delete({ count: 'exact' })
-          .lt('created_at', twelveMonthsAgo);
-
-        result.activityLogDeleted = activityCount ?? 0;
-
-        // 6. ai_token_usage: purge rows older than 13 months (GDPR retention — BIZZ-172).
-        //    Token usage records are personal data (linked to user_id); 13 months covers
-        //    a full billing cycle before they must be erased.
-        const thirteenMonthsAgo = new Date(
-          Date.now() - (13 * 365.25 * 24 * 60 * 60 * 1000) / 12
-        ).toISOString();
-
-        const { count: tokenUsageCount } = await db
-          .from('ai_token_usage')
-          .delete({ count: 'exact' })
-          .lt('created_at', thirteenMonthsAgo);
-
-        result.aiTokenUsageDeleted = tokenUsageCount ?? 0;
-
-        // 7. document_embeddings: purge rows older than 12 months (BIZZ-299 — GDPR).
-        //    Knowledge embeddings are derivative data linked to uploaded documents.
-        //    Tenant closure drops the entire schema, but for active tenants we must
-        //    enforce retention to comply with GDPR data minimization.
-        const { count: embeddingsCount } = await db
-          .from('document_embeddings')
-          .delete({ count: 'exact' })
-          .lt('created_at', twelveMonthsAgo);
-
-        result.embeddingsDeleted = embeddingsCount ?? 0;
-
-        // Write audit log only if something was actually purged
-        if (
-          result.recentEntitiesDeleted > 0 ||
-          result.notificationsDeleted > 0 ||
-          result.aiConversationsDeleted > 0 ||
-          result.recentSearchesDeleted > 0 ||
-          result.activityLogDeleted > 0 ||
-          result.aiTokenUsageDeleted > 0 ||
-          result.embeddingsDeleted > 0
-        ) {
-          await writeAuditLog(admin, tenant.schema_name, tenant.id, {
-            event: 'ttl_purge',
-            recentEntitiesDeleted: result.recentEntitiesDeleted,
-            notificationsDeleted: result.notificationsDeleted,
-            aiConversationsDeleted: result.aiConversationsDeleted,
-            recentSearchesDeleted: result.recentSearchesDeleted,
-            activityLogDeleted: result.activityLogDeleted,
-            aiTokenUsageDeleted: result.aiTokenUsageDeleted,
-            embeddingsDeleted: result.embeddingsDeleted,
-          });
-        }
+      if (tenantErr || !tenants) {
+        logger.error('[purge-old-data] Failed to fetch tenants:', tenantErr);
+        return NextResponse.json({ error: 'Failed to fetch tenants' }, { status: 500 });
       }
-    } catch (err) {
-      result.error = String(err);
-      logger.error(`[purge-old-data] Error processing tenant ${tenant.schema_name}:`, err);
+
+      const results: TenantPurgeResult[] = [];
+
+      for (const tenant of tenants) {
+        if (!tenant.schema_name) continue;
+
+        const result: TenantPurgeResult = {
+          tenantId: tenant.id,
+          schemaName: tenant.schema_name,
+          recentEntitiesDeleted: 0,
+          notificationsDeleted: 0,
+          aiConversationsDeleted: 0,
+          recentSearchesDeleted: 0,
+          activityLogDeleted: 0,
+          aiTokenUsageDeleted: 0,
+          embeddingsDeleted: 0,
+        };
+
+        try {
+          const db = tenantDb(admin, tenant.schema_name);
+
+          const isClosedAndExpired =
+            tenant.closed_at !== null &&
+            new Date(tenant.closed_at) < new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+          if (isClosedAndExpired) {
+            // ── Post-closure GDPR purge: delete all personal data in this schema ──
+            // Use { count: 'exact' } on delete to get row counts back.
+            const { count: recentCount } = await db
+              .from('recent_entities')
+              .delete({ count: 'exact' })
+              .not('id', 'is', null); // match all rows
+
+            const { count: notifCount } = await db
+              .from('notifications')
+              .delete({ count: 'exact' })
+              .not('id', 'is', null);
+
+            // Also purge all remaining tenant-scoped personal data tables.
+            // No count needed for these (BIZZ-133: search history retention).
+            await db.from('ai_messages').delete().not('id', 'is', null);
+            await db.from('ai_conversations').delete().not('id', 'is', null);
+            await db.from('property_snapshots').delete().not('id', 'is', null);
+            await db.from('saved_entities').delete().not('id', 'is', null);
+            await db.from('recent_searches').delete().not('id', 'is', null);
+            await db.from('activity_log').delete().not('id', 'is', null);
+            // BIZZ-299: Delete embeddings and remaining user data on tenant closure
+            await db.from('document_embeddings').delete().not('id', 'is', null);
+            await db.from('ai_token_usage').delete().not('id', 'is', null);
+            await db.from('support_chat_sessions').delete().not('id', 'is', null);
+
+            result.recentEntitiesDeleted = recentCount ?? 0;
+            result.notificationsDeleted = notifCount ?? 0;
+
+            await writeAuditLog(admin, tenant.schema_name, tenant.id, {
+              event: 'post_closure_purge',
+              recentEntitiesDeleted: result.recentEntitiesDeleted,
+              notificationsDeleted: result.notificationsDeleted,
+              closedAt: tenant.closed_at,
+            });
+          } else {
+            // ── Regular TTL purge for active tenants ──
+
+            // 1. recent_entities: purge rows older than 12 months (by visited_at).
+            //    recent_entities uses visited_at as its primary timestamp column —
+            //    there is no separate created_at column on this table.
+            const twelveMonthsAgo = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString();
+
+            const { count: recentCount } = await db
+              .from('recent_entities')
+              .delete({ count: 'exact' })
+              .lt('visited_at', twelveMonthsAgo);
+
+            result.recentEntitiesDeleted = recentCount ?? 0;
+
+            // 2. notifications: purge read notifications older than 6 months.
+            //    Column name is is_read (boolean), not read.
+            const sixMonthsAgo = new Date(Date.now() - 183 * 24 * 60 * 60 * 1000).toISOString();
+
+            const { count: notifCount } = await db
+              .from('notifications')
+              .delete({ count: 'exact' })
+              .eq('is_read', true)
+              .lt('created_at', sixMonthsAgo);
+
+            result.notificationsDeleted = notifCount ?? 0;
+
+            // 3. ai_conversations: purge threads older than 12 months (GDPR storage limitation).
+            //    Privacy policy states 12-month retention; this enforces it in practice.
+            const { count: aiCount } = await db
+              .from('ai_conversations')
+              .delete({ count: 'exact' })
+              .lt('updated_at', twelveMonthsAgo);
+
+            result.aiConversationsDeleted = aiCount ?? 0;
+
+            // 4. recent_searches: purge rows older than 12 months (BIZZ-133).
+            //    GDPR Art. 5(1)(e) — storage limitation; search queries are personal data.
+            //    Column used is created_at (set at insert time, never updated).
+            const { count: searchCount } = await db
+              .from('recent_searches')
+              .delete({ count: 'exact' })
+              .lt('created_at', twelveMonthsAgo);
+
+            result.recentSearchesDeleted = searchCount ?? 0;
+
+            // 5. activity_log: purge rows older than 12 months (BIZZ-133).
+            //    Audit/activity entries older than 12 months are no longer required for
+            //    operational purposes and must be purged under GDPR storage limitation.
+            const { count: activityCount } = await db
+              .from('activity_log')
+              .delete({ count: 'exact' })
+              .lt('created_at', twelveMonthsAgo);
+
+            result.activityLogDeleted = activityCount ?? 0;
+
+            // 6. ai_token_usage: purge rows older than 13 months (GDPR retention — BIZZ-172).
+            //    Token usage records are personal data (linked to user_id); 13 months covers
+            //    a full billing cycle before they must be erased.
+            const thirteenMonthsAgo = new Date(
+              Date.now() - (13 * 365.25 * 24 * 60 * 60 * 1000) / 12
+            ).toISOString();
+
+            const { count: tokenUsageCount } = await db
+              .from('ai_token_usage')
+              .delete({ count: 'exact' })
+              .lt('created_at', thirteenMonthsAgo);
+
+            result.aiTokenUsageDeleted = tokenUsageCount ?? 0;
+
+            // 7. document_embeddings: purge rows older than 12 months (BIZZ-299 — GDPR).
+            //    Knowledge embeddings are derivative data linked to uploaded documents.
+            //    Tenant closure drops the entire schema, but for active tenants we must
+            //    enforce retention to comply with GDPR data minimization.
+            const { count: embeddingsCount } = await db
+              .from('document_embeddings')
+              .delete({ count: 'exact' })
+              .lt('created_at', twelveMonthsAgo);
+
+            result.embeddingsDeleted = embeddingsCount ?? 0;
+
+            // Write audit log only if something was actually purged
+            if (
+              result.recentEntitiesDeleted > 0 ||
+              result.notificationsDeleted > 0 ||
+              result.aiConversationsDeleted > 0 ||
+              result.recentSearchesDeleted > 0 ||
+              result.activityLogDeleted > 0 ||
+              result.aiTokenUsageDeleted > 0 ||
+              result.embeddingsDeleted > 0
+            ) {
+              await writeAuditLog(admin, tenant.schema_name, tenant.id, {
+                event: 'ttl_purge',
+                recentEntitiesDeleted: result.recentEntitiesDeleted,
+                notificationsDeleted: result.notificationsDeleted,
+                aiConversationsDeleted: result.aiConversationsDeleted,
+                recentSearchesDeleted: result.recentSearchesDeleted,
+                activityLogDeleted: result.activityLogDeleted,
+                aiTokenUsageDeleted: result.aiTokenUsageDeleted,
+                embeddingsDeleted: result.embeddingsDeleted,
+              });
+            }
+          }
+        } catch (err) {
+          result.error = String(err);
+          logger.error(`[purge-old-data] Error processing tenant ${tenant.schema_name}:`, err);
+        }
+
+        results.push(result);
+      }
+
+      const totalErrors = results.filter((r) => r.error !== undefined).length;
+
+      // ── Global (public-schema) purges ──────────────────────────────────────────
+
+      // Purge regnskab_cache rows older than 90 days (BIZZ-172).
+      // This is a shared public-schema cache — not tenant-scoped — so it is
+      // purged once here rather than inside the per-tenant loop.
+      let regnskabCacheDeleted = 0;
+      try {
+        const cutoff90d = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+        const { count: cacheCount } = await admin
+          .from('regnskab_cache')
+          .delete({ count: 'exact' })
+          .lt('fetched_at', cutoff90d);
+        regnskabCacheDeleted = cacheCount ?? 0;
+      } catch (err) {
+        logger.error('[purge-old-data] Failed to purge regnskab_cache:', err);
+      }
+
+      return NextResponse.json({
+        ok: true,
+        tenants: results,
+        totalErrors,
+        regnskabCacheDeleted,
+      });
     }
-
-    results.push(result);
-  }
-
-  const totalErrors = results.filter((r) => r.error !== undefined).length;
-
-  // ── Global (public-schema) purges ──────────────────────────────────────────
-
-  // Purge regnskab_cache rows older than 90 days (BIZZ-172).
-  // This is a shared public-schema cache — not tenant-scoped — so it is
-  // purged once here rather than inside the per-tenant loop.
-  let regnskabCacheDeleted = 0;
-  try {
-    const cutoff90d = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
-    const { count: cacheCount } = await admin
-      .from('regnskab_cache')
-      .delete({ count: 'exact' })
-      .lt('fetched_at', cutoff90d);
-    regnskabCacheDeleted = cacheCount ?? 0;
-  } catch (err) {
-    logger.error('[purge-old-data] Failed to purge regnskab_cache:', err);
-  }
-
-  return NextResponse.json({
-    ok: true,
-    tenants: results,
-    totalErrors,
-    regnskabCacheDeleted,
-  });
+  );
 }

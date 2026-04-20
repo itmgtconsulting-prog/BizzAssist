@@ -32,6 +32,32 @@ export type { DawaAutocompleteResult, DawaAdresse, DawaJordstykke } from './dawa
 import type { DawaAutocompleteResult, DawaAdresse, DawaJordstykke } from './dawa';
 import { logger } from '@/app/lib/logger';
 import { DAR_ENDPOINT } from '@/app/lib/serviceEndpoints';
+import { LruCache } from '@/app/lib/lruCache';
+
+// BIZZ-600: LRU-cache for DAR adresse-lookups. Samme adresse-UUID slås
+// typisk op flere gange i samme session (search → detail → related).
+// TTL 24 timer — DAR-data er stabilt på den skala.
+const darAdresseCache = new LruCache<string, DawaAdresse>({
+  maxSize: 150,
+  ttlMs: 86_400_000,
+});
+
+// BIZZ-600: LRU-cache for plandata zone-opslag — kvantiseret på 4 decimaler
+// (~11m præcision) så koordinater inden for samme jordstykke deler cache.
+// Zoneændringer er sjældne, TTL 24 timer er sikkert.
+const zoneCache = new LruCache<string, string | null>({
+  maxSize: 150,
+  ttlMs: 86_400_000,
+});
+
+/**
+ * Internal test helpers — nulstiller LRU-caches så unit-tests kan
+ * verificere fetch-mocks uden cached-hit-interference.
+ */
+export function __clearDarCachesForTests(): void {
+  darAdresseCache.clear();
+  zoneCache.clear();
+}
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  * Constants
@@ -374,6 +400,77 @@ function parseAdresseBetegnelse(betegnelse: string): {
  * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 
 /**
+ * BIZZ-606: Normaliser initial-forkortelser så bruger-input "HC", "H.C."
+ * og "H. C." alle matcher DAWA's officielle form "H C" (space-separated
+ * uden punktummer).
+ *
+ * Detekterer runs af 2-3 på hinanden følgende enkeltbogstavs-initialer
+ * (eventuelt separeret af punktummer/mellemrum) efterfulgt af et proper-
+ * noun-ord (≥3 bogstaver) og producerer stavevarianter. Eksempler:
+ *   "HC Møllersvej"    → + "H C Møllersvej", "H.C. Møllersvej"
+ *   "H.C. Møllersvej"  → + "HC Møllersvej", "H C Møllersvej"
+ *   "A.P. Møllers"     → + "AP Møllers", "A P Møllers"
+ *
+ * Eksporteret for unit-test; bruges internt af darAutocomplete.
+ *
+ * @param s - Input-streng (case bevares — varianter respekterer input)
+ * @returns Liste af stavevarianter (inkl. original)
+ */
+export function expandInitials(s: string): string[] {
+  const results = new Set<string>([s]);
+  // Efterfølgende ord skal have ≥3 bogstaver (rigtigt gadenavn) for at
+  // undgå falske positive som "min gade" (2-3 + kort ord).
+  // Bruger lookbehind i stedet for \b fordi \b i JS-regex kun genkender
+  // ASCII-bogstaver som word-chars — Æ/Ø/Å ville ellers ikke give ordgrænse.
+  const wordBoundary = '(?<![A-Za-zÆØÅæøå])';
+  const streetLookahead = '(?=[A-Za-zÆØÅæøå]{3,})';
+  const patterns: RegExp[] = [
+    // Dotted — hver initial SKAL efterfølges af punktum. Fx "H.C. Møllersvej"
+    // eller "H.C.Møllersvej". Tillader 2-3 initial-positioner.
+    new RegExp(
+      `${wordBoundary}([A-Za-zÆØÅæøå]\\.(?:\\s?[A-Za-zÆØÅæøå]\\.){1,2}\\s?)${streetLookahead}`,
+      'g'
+    ),
+    // Space-separeret — "H C " / "h c " (enkelt-bogstav + mellemrum, gentaget)
+    new RegExp(`${wordBoundary}((?:[A-Za-zÆØÅæøå] ){1,2}[A-Za-zÆØÅæøå] )${streetLookahead}`, 'g'),
+    // Kompakt 2-3 uppercase + mellemrum — "HC Mølle" / "APM Gade"
+    new RegExp(`${wordBoundary}([A-ZÆØÅ]{2,3} )${streetLookahead}`, 'g'),
+  ];
+  const matches: { match: string; start: number; end: number }[] = [];
+  for (const re of patterns) {
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(s)) !== null) {
+      const letters = m[1].replace(/[.\s]/g, '');
+      if (letters.length < 2 || letters.length > 3) continue;
+      // Skip overlap med allerede fundne matches (flere patterns kan ramme
+      // samme span, fx "H C Møllersvej" match'er både pattern 2 og 3)
+      if (matches.some((x) => x.start < m!.index + m![1].length && x.end > m!.index)) continue;
+      matches.push({ match: m[1], start: m.index, end: m.index + m[1].length });
+    }
+  }
+  if (matches.length === 0) return [...results];
+
+  // Uppercase initial-bogstaverne — danske adresser bruger altid store
+  // initialer, så lowercase-input "hc" skal match'e "H C" i DAWA.
+  const stripInitials = (raw: string): string => raw.replace(/[.\s]/g, '').toUpperCase();
+  const rebuild = (formatter: (letters: string) => string): string => {
+    let out = '';
+    let cursor = 0;
+    for (const { match, start, end } of matches) {
+      out += s.slice(cursor, start);
+      out += formatter(stripInitials(match));
+      cursor = end;
+    }
+    out += s.slice(cursor);
+    return out.replace(/ +/g, ' ').trim();
+  };
+  results.add(rebuild((ls) => ls + ' '));
+  results.add(rebuild((ls) => ls.split('').join(' ') + ' '));
+  results.add(rebuild((ls) => ls.split('').join('.') + '. '));
+  return [...results].map((v) => v.trim()).filter((v) => v.length > 0);
+}
+
+/**
  * Henter adresse-autocomplete-forslag fra DAR (Datafordeler GraphQL).
  * Returnerer op til 8 resultater matchende søgestrengen.
  *
@@ -447,24 +544,45 @@ export async function darAutocomplete(q: string): Promise<DawaAutocompleteResult
     return [...results];
   }
 
-  // Build base variants (case), then expand each with diacritics
-  const baseVariants = [...new Set([escaped, titleCase, firstUpper, hnUpperCase])];
-  const allVariants = new Set<string>();
+  // BIZZ-606: Ekstra base-variant hvor 2-3 lowercase-bogstaver i starten
+  // uppercase'es til initial-form ("hc møllersvej" → "HC møllersvej").
+  // Dette samarbejder med expandInitials' uppercase-pattern så variation
+  // "HC/H C/H.C." også genereres for lowercase-input.
+  const lowerPrefixUpper = (() => {
+    const mx = trimmed.match(/^([a-zæøå]{2,3})(\s)/);
+    if (!mx) return trimmed;
+    return mx[1].toUpperCase() + mx[2] + trimmed.slice(mx[0].length);
+  })();
+
+  // Build base variants (case), expand initials, then expand each with diacritics
+  const baseVariants = [
+    ...new Set([escaped, titleCase, firstUpper, hnUpperCase, lowerPrefixUpper]),
+  ];
+  const initialsExpanded = new Set<string>();
   for (const base of baseVariants) {
+    for (const v of expandInitials(base)) initialsExpanded.add(v);
+  }
+  const allVariants = new Set<string>();
+  for (const base of initialsExpanded) {
     for (const expanded of expandDiacritics(base)) {
       allVariants.add(expanded.replace(/"/g, '\\"'));
     }
   }
-  // Cap at 10 variants to avoid excessive API calls
-  const variants = [...allVariants].slice(0, 10);
+  // Cap at 12 variants to avoid excessive API calls (was 10 — initial expansion
+  // adds up to 3 extra variants per initial-run, so slight bump is reasonable)
+  const variants = [...allVariants].slice(0, 12);
 
   try {
-    // Kør queries for alle case-varianter parallelt
+    // BIZZ-608: Kør queries for alle case-varianter parallelt MOD BÅDE
+    // DAR_Husnummer (adgangsadresser = hovedejendomme) OG DAR_Adresse
+    // (adresser med etage/dør = ejerlejligheder). Tidligere fik brugeren kun
+    // hovedejendommen tilbage selvom de måske ledte efter en bestemt
+    // lejlighed — ejerlejligheden var usynlig i dropdown.
     const allResults = await Promise.all(
-      variants.map(async (variant) => {
-        const query = `{
+      variants.flatMap((variant) => [
+        darQuery<{ DAR_Husnummer: { nodes: DarHusnummerRaw[] } }>(`{
           DAR_Husnummer(
-            first: 8
+            first: 6
             virkningstid: "${ts}"
             registreringstid: "${ts}"
             where: { adgangsadressebetegnelse: { startsWith: "${variant}" } }
@@ -476,45 +594,142 @@ export async function darAutocomplete(q: string): Promise<DawaAutocompleteResult
               status
             }
           }
-        }`;
-        return darQuery<{ DAR_Husnummer: { nodes: DarHusnummerRaw[] } }>(query);
-      })
+        }`),
+        // BIZZ-608: DAR_Adresse for ejerlejligheder med etage/dør.
+        // adressebetegnelse indeholder fulde "Vej 1, 2. tv, 1234 By"-strengen.
+        darQuery<{
+          DAR_Adresse: {
+            nodes: Array<{
+              id_lokalId: string;
+              adressebetegnelse?: string;
+              etagebetegnelse?: string;
+              doerbetegnelse?: string;
+              status?: string;
+            }>;
+          };
+        }>(`{
+          DAR_Adresse(
+            first: 6
+            virkningstid: "${ts}"
+            registreringstid: "${ts}"
+            where: { adressebetegnelse: { startsWith: "${variant}" } }
+          ) {
+            nodes {
+              id_lokalId
+              adressebetegnelse
+              etagebetegnelse
+              doerbetegnelse
+              status
+            }
+          }
+        }`),
+      ])
     );
 
-    // Dedupliker på id_lokalId
-    const seen = new Set<string>();
-    const nodes: DarHusnummerRaw[] = [];
-    for (const data of allResults) {
-      for (const h of data?.DAR_Husnummer?.nodes ?? []) {
-        if (!seen.has(h.id_lokalId)) {
-          seen.add(h.id_lokalId);
-          nodes.push(h);
+    // Dedupliker husnumre
+    const seenHn = new Set<string>();
+    const husnumre: DarHusnummerRaw[] = [];
+    // Dedupliker adresser (ejerlejligheder)
+    const seenAdr = new Set<string>();
+    const adresser: Array<{
+      id_lokalId: string;
+      adressebetegnelse?: string;
+      etagebetegnelse?: string;
+      doerbetegnelse?: string;
+    }> = [];
+
+    for (let i = 0; i < allResults.length; i++) {
+      const data = allResults[i];
+      if (i % 2 === 0) {
+        // DAR_Husnummer-resultat
+        const hnData = data as { DAR_Husnummer?: { nodes?: DarHusnummerRaw[] } } | null;
+        for (const h of hnData?.DAR_Husnummer?.nodes ?? []) {
+          if (!seenHn.has(h.id_lokalId)) {
+            seenHn.add(h.id_lokalId);
+            husnumre.push(h);
+          }
+        }
+      } else {
+        // DAR_Adresse-resultat
+        const adrData = data as {
+          DAR_Adresse?: {
+            nodes?: Array<{
+              id_lokalId: string;
+              adressebetegnelse?: string;
+              etagebetegnelse?: string;
+              doerbetegnelse?: string;
+            }>;
+          };
+        } | null;
+        for (const a of adrData?.DAR_Adresse?.nodes ?? []) {
+          // Skip adresser uden etage/dør — de er identiske med adgangsadressen
+          // og ville bare give duplikerede entries.
+          const harSubAdresse =
+            (a.etagebetegnelse && a.etagebetegnelse.length > 0) ||
+            (a.doerbetegnelse && a.doerbetegnelse.length > 0);
+          if (!harSubAdresse) continue;
+          if (!seenAdr.has(a.id_lokalId)) {
+            seenAdr.add(a.id_lokalId);
+            adresser.push(a);
+          }
         }
       }
     }
-    if (nodes.length === 0) {
+
+    if (husnumre.length === 0 && adresser.length === 0) {
       // DAR returned no results — may be IP-blocked; fall back to DAWA
       logger.warn('darAutocomplete: DAR returned 0 results, trying DAWA fallback');
       return _dawaAutocomplete(q);
     }
 
-    return nodes.slice(0, 8).map((h): DawaAutocompleteResult => {
-      const parsed = parseAdresseBetegnelse(h.adgangsadressebetegnelse);
-      return {
-        type: 'adgangsadresse',
-        tekst: rensAdresseStreng(h.adgangsadressebetegnelse),
-        adresse: {
-          id: h.id_lokalId,
-          vejnavn: parsed.vejnavn,
-          husnr: h.husnummertekst || parsed.husnr,
-          postnr: parsed.postnr,
-          postnrnavn: parsed.postnrnavn,
-          kommunenavn: '', // Ikke tilgængelig som tekst i DAR — kun kommunekode
-          x: 0, // Koordinater kræver separat adgangspunkt-opslag
-          y: 0,
-        },
-      };
-    });
+    const husnummerResults: DawaAutocompleteResult[] = husnumre
+      .slice(0, 5)
+      .map((h): DawaAutocompleteResult => {
+        const parsed = parseAdresseBetegnelse(h.adgangsadressebetegnelse);
+        return {
+          type: 'adgangsadresse',
+          tekst: rensAdresseStreng(h.adgangsadressebetegnelse),
+          adresse: {
+            id: h.id_lokalId,
+            vejnavn: parsed.vejnavn,
+            husnr: h.husnummertekst || parsed.husnr,
+            postnr: parsed.postnr,
+            postnrnavn: parsed.postnrnavn,
+            kommunenavn: '',
+            x: 0,
+            y: 0,
+          },
+        };
+      });
+
+    // BIZZ-608: Map adresser (ejerlejligheder) til 'adresse'-type så UI kan
+    // vise "Lejlighed"-badge og linke direkte til den specifikke BFE.
+    const adresseResults: DawaAutocompleteResult[] = adresser
+      .slice(0, 5)
+      .map((a): DawaAutocompleteResult => {
+        const parsed = parseAdresseBetegnelse(a.adressebetegnelse ?? '');
+        return {
+          type: 'adresse',
+          tekst: rensAdresseStreng(a.adressebetegnelse ?? ''),
+          adresse: {
+            id: a.id_lokalId,
+            vejnavn: parsed.vejnavn,
+            husnr: parsed.husnr,
+            etage: a.etagebetegnelse ?? undefined,
+            dør: a.doerbetegnelse ?? undefined,
+            postnr: parsed.postnr,
+            postnrnavn: parsed.postnrnavn,
+            kommunenavn: '',
+            x: 0,
+            y: 0,
+          },
+        };
+      });
+
+    // Interleave: hovedejendomme først, så lejligheder — giver naturlig
+    // rækkefølge hvor brugere der tastede "Arnold Nielsens Blvd 62A" ser
+    // hovedejendommen øverst + de 2 lejligheder under.
+    return [...husnummerResults, ...adresseResults].slice(0, 10);
   } catch (err) {
     logger.error('darAutocomplete fejl, falder tilbage til DAWA:', err);
     // Fallback til DAWA (gratis, ingen auth/IP-krav) — virker indtil 1. juli 2026
@@ -537,6 +752,10 @@ export async function darAutocomplete(q: string): Promise<DawaAutocompleteResult
  * @returns DawaAdresse-kompatibelt objekt eller null
  */
 export async function darHentAdresse(id: string): Promise<DawaAdresse | null> {
+  // BIZZ-600: Cache-hit returnerer direkte uden DAR-kald.
+  const cached = darAdresseCache.get(id);
+  if (cached) return cached;
+
   const ts = nowTs();
   const escaped = id.replace(/"/g, '\\"');
 
@@ -718,7 +937,7 @@ export async function darHentAdresse(id: string): Promise<DawaAdresse | null> {
       );
     }
 
-    return {
+    const result: DawaAdresse = {
       id: hn.id_lokalId,
       vejnavn: vejNode?.vejnavn ?? parsed.vejnavn,
       husnr: hn.husnummertekst || parsed.husnr,
@@ -738,6 +957,9 @@ export async function darHentAdresse(id: string): Promise<DawaAdresse | null> {
       // BIZZ-508: Vejkode fra NavngivenVejKommunedel — kommunens lokale vejnummer
       vejkode: nvkNode?.vejkode ?? undefined,
     };
+    // BIZZ-600: Cache kun succesfulde opslag — fejl skal retries.
+    darAdresseCache.set(id, result);
+    return result;
   } catch (err) {
     // DAR fejlede — fallback til DAWA mens den stadig virker
     logger.error('darHentAdresse fejl, falder tilbage til DAWA:', err);
@@ -1100,6 +1322,12 @@ const PLANDATA_WFS_ENDPOINT = 'https://geoserver.plandata.dk/geoserver/wfs';
  * @param lat - Breddegrad (WGS84)
  */
 export async function hentZoneFraPlandata(lng: number, lat: number): Promise<string | null> {
+  // BIZZ-600: Cache-nøgle kvantiseret til 4 decimaler (~11m) så mindre
+  // koordinat-variationer inden for samme jordstykke deler cache.
+  const cacheKey = `${lng.toFixed(4)}_${lat.toFixed(4)}`;
+  const cached = zoneCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
   // SRID=4326; prefix is load-bearing — without it GeoServer treats coords
   // as EPSG:25832 (UTM32N) and returns zero features.
   const cql = encodeURIComponent(`INTERSECTS(geometri,SRID=4326;POINT(${lng} ${lat}))`);
@@ -1134,7 +1362,9 @@ export async function hentZoneFraPlandata(lng: number, lat: number): Promise<str
         props.zone ?? props.zone_navn ?? props.zonekode ?? props.zoneKode ?? props.betegnelse;
       if (typeof rawZone !== 'string' || rawZone.length === 0) continue;
 
-      return normaliseZone(rawZone);
+      const normalized = normaliseZone(rawZone);
+      zoneCache.set(cacheKey, normalized);
+      return normalized;
     } catch (err) {
       logger.warn(
         `hentZoneFraPlandata: layer=${typeName} failed`,
@@ -1144,6 +1374,8 @@ export async function hentZoneFraPlandata(lng: number, lat: number): Promise<str
     }
   }
 
+  // Cache også null-resultater så vi ikke re-spørger på hvert kald.
+  zoneCache.set(cacheKey, null);
   return null;
 }
 

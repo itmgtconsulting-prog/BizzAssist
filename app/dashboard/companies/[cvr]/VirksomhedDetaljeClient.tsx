@@ -78,14 +78,12 @@ import type { DiagramPropertySummary } from '@/app/components/diagrams/DiagramDa
 import dynamic from 'next/dynamic';
 import VerifiedLinks from '@/app/components/VerifiedLinks';
 import TabLoadingSpinner from '@/app/components/TabLoadingSpinner';
-/** Recharts — single dynamic import keeps recharts in one chunk */
-const RegnskabChart = dynamic(() => import('./RegnskabChart'), { ssr: false });
+/** BIZZ-600: RegnskabChart wraps recharts — lazy-loaded so recharts stays out of initial bundle */
+const RegnskabChart = dynamic(() => import(/* recharts */ './RegnskabChart'), { ssr: false });
 
-/** Lazy-loaded diagram variants */
-const DiagramForce = dynamic(() => import('@/app/components/diagrams/DiagramForce'), {
-  ssr: false,
-  loading: () => <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" />,
-});
+/** BIZZ-600: DiagramForce uses d3-force — dynamic() keeps d3-force out of initial bundle */
+// prettier-ignore
+const DiagramForce = dynamic(/* d3-force */ () => import('@/app/components/diagrams/DiagramForce'), { ssr: false, loading: () => <div className="w-full h-96 bg-slate-800/50 rounded-xl animate-pulse" /> });
 
 // ─── Tracked Companies (localStorage) ────────────────────────────────────────
 
@@ -1203,8 +1201,20 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
     const controller = new AbortController();
     const bfes = missing.map((e) => e.bfeNummer).join(',');
     const dawaIds = missing.map((e) => e.dawaId ?? '').join(',');
+    // BIZZ-634: Vedhæft ejer-datoer fra ejendomsdata så historiske/solgte
+    // ejendomme kan få ejer-specifik købs- + salgspris på kortene.
+    const ownerBuyDates = missing.map((e) => e.ownerBuyDate ?? '').join(',');
+    const ownerSellDates = missing.map((e) => e.solgtDato ?? '').join(',');
+    const url =
+      `/api/ejendomme-by-owner/enrich-batch?bfes=${bfes}&dawaIds=${dawaIds}` +
+      (ownerBuyDates.replace(/,/g, '')
+        ? `&ownerBuyDates=${encodeURIComponent(ownerBuyDates)}`
+        : '') +
+      (ownerSellDates.replace(/,/g, '')
+        ? `&ownerSellDates=${encodeURIComponent(ownerSellDates)}`
+        : '');
 
-    fetch(`/api/ejendomme-by-owner/enrich-batch?bfes=${bfes}&dawaIds=${dawaIds}`, {
+    fetch(url, {
       signal: controller.signal,
     })
       .then((r) => (r.ok ? r.json() : null))
@@ -2203,7 +2213,8 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
 
                       return relatedLoading ? (
                         // BIZZ-478: Ensartet blå TabLoadingSpinner.
-                        <TabLoadingSpinner label={c.loading} />
+                        // BIZZ-617: Specifik label så brugeren ved hvad der hentes
+                        <TabLoadingSpinner label={c.loadingDatterselskaber} />
                       ) : aktive.length > 0 ? (
                         <section className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-5">
                           <h2 className="text-white font-semibold text-sm mb-3 flex items-center gap-2">
@@ -2424,20 +2435,20 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
           {/* ══ EJENDOMME (inkl. ejendomshandler) ══ */}
           {aktivTab === 'properties' && (
             <div className="space-y-4">
-              {(ejendommeLoading || ejendommeLoadingMore) && <TabLoadingSpinner />}
+              {/* BIZZ-617 + BIZZ-635: ÉN tab-level loading spinner. Tidligere
+                  rendrerede vi 2-3 parallelle spinners (tab-level +
+                  portefølje-sektion + indledende) — nu er der kun én. */}
+              {(ejendommeLoading || ejendommeLoadingMore) && ejendommeData.length === 0 && (
+                <TabLoadingSpinner label={c.loadingEjendomsportefoelje} />
+              )}
               {/* BIZZ-441: Filter chips removed — only property portfolio shown */}
 
               {/* ── Ejendomme-portefølje sektion ── */}
               {
                 <div className="space-y-4">
-                  {/* Indledende spinner — BIZZ-478: ensartet blå TabLoadingSpinner */}
-                  {ejendommeLoading && ejendommeData.length === 0 && (
-                    <TabLoadingSpinner
-                      label={
-                        lang === 'da' ? 'Henter ejendomsportefølje…' : 'Loading property portfolio…'
-                      }
-                    />
-                  )}
+                  {/* BIZZ-635: Fjernet intern "Indledende spinner" — den ydre
+                      tab-spinner dækker allerede første-load. Intern duplicate
+                      gav 2 stablede spinners ved tab-åbning. */}
 
                   {/* Mangler nøgle / adgang */}
                   {ejendommeFetchComplete && ejendommeManglerNoegle && (
@@ -2470,9 +2481,28 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                             ? lang === 'da'
                               ? `Indlæser… (${ejendommeData.length} af ${ejendommeTotalBfe} ejendomme)`
                               : `Loading… (${ejendommeData.length} of ${ejendommeTotalBfe} properties)`
-                            : lang === 'da'
-                              ? `${ejendommeData.length} ejendom${ejendommeData.length !== 1 ? 'me' : ''} fundet`
-                              : `${ejendommeData.length} propert${ejendommeData.length !== 1 ? 'ies' : 'y'} found`}
+                            : (() => {
+                                // BIZZ-639: Overskriften skal vise både aktive og
+                                // historiske (solgte) tal. Historisk-tallet
+                                // skjules helt når 0 så overskriften ikke ser
+                                // tom ud for nye/rene porteføljer.
+                                const aktiveCount = ejendommeData.filter(
+                                  (e) => e.aktiv !== false
+                                ).length;
+                                const historiskeCount = ejendommeData.filter(
+                                  (e) => e.aktiv === false
+                                ).length;
+                                if (lang === 'da') {
+                                  const aktivLabel = `${aktiveCount} aktiv${aktiveCount !== 1 ? 'e' : ''} ejendom${aktiveCount !== 1 ? 'me' : ''}`;
+                                  return historiskeCount > 0
+                                    ? `${aktivLabel} · ${historiskeCount} historisk${historiskeCount !== 1 ? 'e' : ''}`
+                                    : aktivLabel;
+                                }
+                                const aktivLabel = `${aktiveCount} active propert${aktiveCount !== 1 ? 'ies' : 'y'}`;
+                                return historiskeCount > 0
+                                  ? `${aktivLabel} · ${historiskeCount} historical`
+                                  : aktivLabel;
+                              })()}
                         </p>
                         {relatedCompanies.length > 0 && (
                           <span className="text-slate-500 text-xs">
@@ -2976,8 +3006,8 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
           {/* ══ GRUPPE ══ */}
           {aktivTab === 'companies' && (
             <div className="space-y-4">
-              {/* Loading */}
-              {relatedLoading && <TabLoadingSpinner />}
+              {/* BIZZ-617: Loading med specifik label */}
+              {relatedLoading && <TabLoadingSpinner label={c.loadingDatterselskaber} />}
 
               {/* Gruppe-hierarki */}
               {!relatedLoading &&
@@ -3516,8 +3546,10 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
           {/* ══ REGNSKAB ══ */}
           {aktivTab === 'financials' && (
             <div className="space-y-4">
-              {/* Første batch loader */}
-              {(xbrlLoading || xbrlLoadingMore || regnskabLoading) && <TabLoadingSpinner />}
+              {/* BIZZ-617: Specifik label på regnskabs-loader */}
+              {(xbrlLoading || xbrlLoadingMore || regnskabLoading) && (
+                <TabLoadingSpinner label={c.loadingRegnskab} />
+              )}
 
               {/* Data — vises så snart første batch er klar */}
               {!xbrlLoading && xbrlData && xbrlData.length > 0 && (
@@ -4090,7 +4122,8 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
           {/* ══ TINGLYSNING ══ */}
           {aktivTab === 'liens' && (
             <div className="bg-slate-800/20 border border-slate-700/30 rounded-2xl overflow-hidden">
-              {personbogLoading && <TabLoadingSpinner />}
+              {/* BIZZ-617: Brug eksisterende loadingPersonbog-key (Personbogen) */}
+              {personbogLoading && <TabLoadingSpinner label={c.loadingPersonbog} />}
               <div className="px-4 py-2.5 border-b border-slate-700/30 flex items-center gap-2">
                 <Scale size={15} className="text-slate-400" />
                 <span className="text-sm font-semibold text-slate-200">

@@ -46,6 +46,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { generateSlug, generateVirksomhedSlug } from '@/app/lib/slug';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
+import { withCronMonitor } from '@/app/lib/cronMonitor';
 import { fetchDawa } from '@/app/lib/dawa';
 import { matListJordstykker, type MatJordstykkeBulk } from '@/app/lib/dar';
 
@@ -661,52 +662,73 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const admin = createAdminClient();
+  // BIZZ-621 + BIZZ-624: Hver phase har egen schedule i vercel.json og skal
+  // tracked som separat cron-job så watchdog + Sentry ser dem uafhængigt.
+  // BIZZ-647: Skiftet fra ugentlig (0 2/3/4 * * 0) til daglig (23 2/37 3/51 4 * * *)
+  // så nye ejendomme/virksomheder indekseres inden for 24t i stedet for 7 dage.
+  const phaseConfig = {
+    companies: { schedule: '23 2 * * *' },
+    properties: { schedule: '37 3 * * *' },
+    'vp-properties': { schedule: '51 4 * * *' },
+  }[phase];
 
-  if (phase === 'companies') {
-    try {
-      const result = await phaseCompanies(admin);
-      return NextResponse.json({
-        ok: true,
-        phase: 'companies',
-        count: result.count,
-        lastCvr: result.lastCvr,
-        done: result.done,
-      });
-    } catch (err) {
-      logger.error('[generate-sitemap] companies phase uventet fejl:', err);
-      return NextResponse.json({ error: 'Intern fejl' }, { status: 500 });
+  return withCronMonitor(
+    {
+      jobName: `generate-sitemap-${phase}`,
+      schedule: phaseConfig.schedule,
+      // BIZZ-647: Daglig cron → 1440 minutter (24t) — bruges af watchdog til
+      // overdue-detection og cron-status-dashboardet.
+      intervalMinutes: 1440,
+    },
+    async () => {
+      const admin = createAdminClient();
+
+      if (phase === 'companies') {
+        try {
+          const result = await phaseCompanies(admin);
+          return NextResponse.json({
+            ok: true,
+            phase: 'companies',
+            count: result.count,
+            lastCvr: result.lastCvr,
+            done: result.done,
+          });
+        } catch (err) {
+          logger.error('[generate-sitemap] companies phase uventet fejl:', err);
+          return NextResponse.json({ error: 'Intern fejl' }, { status: 500 });
+        }
+      }
+
+      if (phase === 'vp-properties') {
+        try {
+          const result = await phaseVpProperties(admin);
+          return NextResponse.json({
+            ok: true,
+            phase: 'vp-properties',
+            count: result.count,
+            lastBfe: result.lastBfe,
+            done: result.done,
+          });
+        } catch (err) {
+          logger.error('[generate-sitemap] vp-properties phase uventet fejl:', err);
+          return NextResponse.json({ error: 'Intern fejl' }, { status: 500 });
+        }
+      }
+
+      // phase === 'properties'
+      try {
+        const result = await phaseProperties(admin);
+        return NextResponse.json({
+          ok: true,
+          phase: 'properties',
+          page: result.page,
+          count: result.count,
+          done: result.done,
+        });
+      } catch (err) {
+        logger.error('[generate-sitemap] properties phase uventet fejl:', err);
+        return NextResponse.json({ error: 'Intern fejl' }, { status: 500 });
+      }
     }
-  }
-
-  if (phase === 'vp-properties') {
-    try {
-      const result = await phaseVpProperties(admin);
-      return NextResponse.json({
-        ok: true,
-        phase: 'vp-properties',
-        count: result.count,
-        lastBfe: result.lastBfe,
-        done: result.done,
-      });
-    } catch (err) {
-      logger.error('[generate-sitemap] vp-properties phase uventet fejl:', err);
-      return NextResponse.json({ error: 'Intern fejl' }, { status: 500 });
-    }
-  }
-
-  // phase === 'properties'
-  try {
-    const result = await phaseProperties(admin);
-    return NextResponse.json({
-      ok: true,
-      phase: 'properties',
-      page: result.page,
-      count: result.count,
-      done: result.done,
-    });
-  } catch (err) {
-    logger.error('[generate-sitemap] properties phase uventet fejl:', err);
-    return NextResponse.json({ error: 'Intern fejl' }, { status: 500 });
-  }
+  );
 }

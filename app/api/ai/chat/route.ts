@@ -280,6 +280,25 @@ const TOOLS: Anthropic.Tool[] = [
       required: ['bfeNummer'],
     },
   },
+  {
+    name: 'hent_ejendomme_for_virksomhed',
+    // BIZZ-591: Giver AI'en samme overblik som Virksomhed → Ejendomme-fanen.
+    // Uden dette har AI kun BBR per-adresse og kan ikke liste en virksomheds
+    // portefølje — AI svarer fejlagtigt "selskabet ejer ingen ejendomme".
+    description:
+      'Lister alle ejendomme ejet af et CVR-nummer (eller flere kommasepareret). Returnerer BFE, adresse, postnr, by, ejendomstype og ejerandel per ejendom. Brug dette ved spørgsmål om en virksomheds ejendomsportefølje eller samlet matrikel-areal. For holdingselskaber: kald først hent_datterselskaber for at få datterselskabs-CVR, dernæst dette tool med alle CVR (kommasepareret) for at få hele koncernens portefølje.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        cvr: {
+          type: 'string',
+          description:
+            '8-cifret CVR-nummer, eller kommasepareret liste (f.eks. "44878704,43924931") for at hente portefølje på tværs af flere selskaber.',
+        },
+      },
+      required: ['cvr'],
+    },
+  },
 ];
 
 // ─── Tool labels (for status messages) ──────────────────────────────────────
@@ -301,6 +320,7 @@ const TOOL_STATUS: Record<string, string> = {
   hent_datterselskaber: 'Henter datterselskaber…',
   soeg_person_cvr: 'Søger efter person i CVR…',
   hent_tinglysning: 'Henter tinglysningsdata…',
+  hent_ejendomme_for_virksomhed: 'Henter ejendomme for virksomhed…',
 };
 
 // ─── System prompt ──────────────────────────────────────────────────────────
@@ -340,6 +360,15 @@ VIGTIGT: Kald så mange tools som muligt i SAMME runde for at spare tid. Vent ik
 - Hvis et tool returnerer fejl eller manglende data, nævn det kort og fortsæt med de øvrige data
 - Kald gerne flere tools for at give et komplet billede
 - BFE-nummer findes i resultatet fra hent_bbr_data (feltet "bfeNummer" i ejendomsrelationer). Kald altid hent_bbr_data efter dawa_adresse_detaljer for at få BFE-nummeret.
+
+## Ærlighed om ukendte felter
+- Hvis du ikke kender betydningen af et teknisk felt (fx plandata-zonekategori, BBR-kode), sig at du ikke kender det — OPFIND IKKE forklaringer.
+- Spekulér ikke om hvorfor et felt har en bestemt værdi; rapportér kun den registrerede værdi og lad brugeren tolke den.
+- Eksempler på felter der IKKE skal forklares spekulativt: zone=Udfaset, ejendomstype=X, juridiskKategori-koder. Rapportér som-er.
+
+## Virksomheds-ejendomme
+- Brug hent_ejendomme_for_virksomhed(cvr) til at liste ALLE ejendomme ejet af et CVR (samme data som Virksomhed → Ejendomme-fanen).
+- For holdingselskaber der selv ikke ejer ejendomme direkte: kald først hent_datterselskaber, dernæst hent_ejendomme_for_virksomhed med alle datter-CVR kommasepareret for at få koncernens samlede portefølje.
 
 ## Workflow ved formueanalyse for en person
 
@@ -744,6 +773,9 @@ async function executeTool(
 
       case 'hent_datterselskaber': {
         // Henter relaterede virksomheder (datterselskaber/kapitalandele) via CVR-public/related.
+        // BIZZ-588: /api/cvr-public/related returnerer { virksomheder: [...] }, ikke et
+        // plain array. Tidligere kode behandlede svaret som array og .filter() blev kaldt
+        // på et object — resulterede i AI-fejl "datterselskabs-opslaget returnerer en API-fejl".
         const relRes = await fetch(
           `${baseUrl}/api/cvr-public/related?cvr=${encodeURIComponent(input.cvr)}`,
           internalFetchOpts
@@ -752,13 +784,25 @@ async function executeTool(
           result = { fejl: toolErrorMessage('Related-API', relRes.status) };
           break;
         }
-        const relData = (await relRes.json()) as Array<{
-          cvr: number;
-          navn: string;
-          ejerandel?: string | null;
-          rolle?: string;
-          aktiv?: boolean;
-        }>;
+        const relJson = (await relRes.json()) as
+          | {
+              virksomheder?: Array<{
+                cvr: number;
+                navn: string;
+                form?: string | null;
+                branche?: string | null;
+                ejerandel?: string | null;
+                ejerandelNum?: number | null;
+                aktiv?: boolean;
+              }>;
+            }
+          | Array<{
+              cvr: number;
+              navn: string;
+              ejerandel?: string | null;
+              aktiv?: boolean;
+            }>;
+        const relData = Array.isArray(relJson) ? relJson : (relJson.virksomheder ?? []);
 
         // Filtrer til aktive datterselskaber med ejerandel
         const datterselskaber = relData
@@ -766,8 +810,9 @@ async function executeTool(
           .map((r) => ({
             cvr: r.cvr,
             navn: r.navn,
+            form: 'form' in r ? r.form : null,
+            branche: 'branche' in r ? r.branche : null,
             ejerandel: r.ejerandel,
-            rolle: r.rolle,
           }));
 
         result = {
@@ -782,6 +827,12 @@ async function executeTool(
       case 'soeg_person_cvr': {
         // Søger CVR ES deltager-indeks på navn med phrase-match.
         // Returnerer enhedsNummer + navnehistorik + aktuelle adresser.
+        //
+        // BIZZ-589: Fix field path. Dokumenterne i /cvr-permanent/deltager har
+        // person-felter nested under Vrdeltagerperson (og virksomheds-felter
+        // under Vrdeltagervirksomhed). Det gamle filter 'navne.navn' matchede
+        // intet, så AI'en kunne ikke finde selv kendte personer som
+        // Jakob Juul Rasmussen (bekræftet via direkte ES-probe).
         const cvrUser = process.env.CVR_ES_USER;
         const cvrPass = process.env.CVR_ES_PASS;
         if (!cvrUser || !cvrPass) {
@@ -794,15 +845,26 @@ async function executeTool(
           query: {
             bool: {
               should: [
-                // Exact phrase match — højest prioritet
-                { match_phrase: { 'navne.navn': { query: input.navn, boost: 3 } } },
-                // Fuzzy match for stavefejl
-                { match: { 'navne.navn': { query: input.navn, fuzziness: 'AUTO', boost: 1 } } },
+                // Person (Vrdeltagerperson) — exact phrase + fuzzy
+                {
+                  match_phrase: {
+                    'Vrdeltagerperson.navne.navn': { query: input.navn, boost: 3 },
+                  },
+                },
+                {
+                  match: {
+                    'Vrdeltagerperson.navne.navn': {
+                      query: input.navn,
+                      fuzziness: 'AUTO',
+                      boost: 1,
+                    },
+                  },
+                },
               ],
               minimum_should_match: 1,
             },
           },
-          _source: ['enhedsNummer', 'navne', 'beliggenhedsadresse'],
+          _source: ['Vrdeltagerperson'],
         };
 
         const res = await fetch('http://distribution.virk.dk/cvr-permanent/deltager/_search', {
@@ -822,18 +884,20 @@ async function executeTool(
 
         const data = (await res.json()) as {
           hits: {
-            total: { value: number };
+            total?: { value?: number };
             hits: Array<{
               _score: number;
               _source: {
-                enhedsNummer: number;
-                navne?: Array<{ navn: string; periode?: { gyldigTil: string | null } }>;
-                beliggenhedsadresse?: Array<{
-                  vejnavn?: string;
-                  husnummerFra?: number;
-                  postnummer?: number;
-                  postdistrikt?: string;
-                }>;
+                Vrdeltagerperson?: {
+                  enhedsNummer?: number;
+                  navne?: Array<{ navn: string; periode?: { gyldigTil: string | null } }>;
+                  beliggenhedsadresse?: Array<{
+                    vejnavn?: string;
+                    husnummerFra?: number;
+                    postnummer?: number;
+                    postdistrikt?: string;
+                  }>;
+                };
               };
             }>;
           };
@@ -841,25 +905,32 @@ async function executeTool(
 
         const hits = data.hits?.hits ?? [];
         result = {
-          antalFundet: data.hits?.total?.value ?? 0,
-          resultater: hits.map((h) => {
-            const src = h._source;
-            // Aktive navne (gyldigTil == null) — ellers seneste
-            const aktivtNavn =
-              src.navne?.find((n) => n.periode?.gyldigTil == null)?.navn ??
-              src.navne?.[src.navne.length - 1]?.navn ??
-              null;
-            const adresse = src.beliggenhedsadresse?.[0];
-            return {
-              enhedsNummer: String(src.enhedsNummer),
-              navn: aktivtNavn,
-              adresse: adresse
-                ? [adresse.vejnavn, adresse.husnummerFra, adresse.postnummer, adresse.postdistrikt]
-                    .filter(Boolean)
-                    .join(' ')
-                : null,
-            };
-          }),
+          antalFundet: data.hits?.total?.value ?? hits.length,
+          resultater: hits
+            .map((h) => {
+              const src = h._source?.Vrdeltagerperson;
+              if (!src?.enhedsNummer) return null;
+              const aktivtNavn =
+                src.navne?.find((n) => n.periode?.gyldigTil == null)?.navn ??
+                src.navne?.[src.navne.length - 1]?.navn ??
+                null;
+              const adresse = src.beliggenhedsadresse?.[0];
+              return {
+                enhedsNummer: String(src.enhedsNummer),
+                navn: aktivtNavn,
+                adresse: adresse
+                  ? [
+                      adresse.vejnavn,
+                      adresse.husnummerFra,
+                      adresse.postnummer,
+                      adresse.postdistrikt,
+                    ]
+                      .filter(Boolean)
+                      .join(' ')
+                  : null,
+              };
+            })
+            .filter((r) => r != null),
         };
         break;
       }
@@ -1007,6 +1078,63 @@ async function executeTool(
         break;
       }
 
+      case 'hent_ejendomme_for_virksomhed': {
+        // BIZZ-591: Wraps /api/ejendomme-by-owner så AI kan liste en virksomheds
+        // ejendomsportefølje (samme som Virksomhed → Ejendomme-fanen).
+        const res = await fetch(
+          `${baseUrl}/api/ejendomme-by-owner?cvr=${encodeURIComponent(input.cvr)}`,
+          internalFetchOpts
+        );
+        if (!res.ok) {
+          result = { fejl: toolErrorMessage('Ejendomme-by-owner', res.status) };
+          break;
+        }
+        const data = (await res.json()) as {
+          ejendomme?: Array<{
+            bfeNummer: number;
+            ownerCvr: string;
+            adresse: string | null;
+            postnr: string | null;
+            by: string | null;
+            kommune: string | null;
+            ejendomstype: string | null;
+            etage: string | null;
+            doer: string | null;
+            ejerandel?: string | null;
+            aktiv?: boolean;
+          }>;
+          totalBfe?: number;
+          fejl?: string | null;
+        };
+        if (data.fejl) {
+          result = { fejl: data.fejl };
+          break;
+        }
+        // Begræns til maks 20 ejendomme i AI-svar så tool-result forbliver kompakt.
+        // Fuld liste kan tilgås via Ejendomme-fanen i UI.
+        const ejendomme = (data.ejendomme ?? [])
+          .filter((e) => e.aktiv !== false)
+          .slice(0, 20)
+          .map((e) => ({
+            bfe: e.bfeNummer,
+            ownerCvr: e.ownerCvr,
+            adresse: e.etage && e.doer ? `${e.adresse ?? ''}, ${e.etage}. ${e.doer}` : e.adresse,
+            postnr: e.postnr,
+            by: e.by,
+            kommune: e.kommune,
+            type: e.ejendomstype,
+            ejerandel: e.ejerandel,
+          }));
+        result = {
+          cvr: input.cvr,
+          antal: ejendomme.length,
+          total: data.totalBfe ?? ejendomme.length,
+          afkortet: (data.ejendomme ?? []).length > 20,
+          ejendomme,
+        };
+        break;
+      }
+
       default:
         return { fejl: `Ukendt tool: ${name}` };
     }
@@ -1093,6 +1221,123 @@ function recordTenantTokenUsage(
   })();
 }
 
+/**
+ * BIZZ-643: Dekrementér AI-token-forbrug i prioritets-rækkefølge:
+ *  1. Plan-tokens (nulstilles månedligt — "use it or lose it")
+ *  2. Bonus-tokens (admin-tildelt, ingen udløb)
+ *  3. Top-up tokens (selvstændigt købt, skal have mest værdi per krone)
+ *
+ * Returnerer de opdaterede per-kilde-tællere der skal persisteres i
+ * app_metadata.subscription. Rækkefølgen sikrer at brugeren ikke brænder
+ * betalte top-up-tokens af før plan-quota er opbrugt.
+ *
+ * @param consumed  - Samlet token-forbrug for dette AI-kald
+ * @param state     - Nuværende subscription-state (tokensUsedThisMonth + per-kilde-felter + balancer)
+ * @returns Nye værdier der kan merges ind i subscription-objekt
+ */
+export function allocateTokensBySource(
+  consumed: number,
+  state: {
+    planTokens: number; // planens månedlige quota (0 under trial)
+    planTokensUsed: number; // allerede brugt af plan-quota denne måned
+    bonusTokens: number; // starting balance, dekrementerer
+    topUpTokens: number; // starting balance, dekrementerer
+    tokensUsedThisMonth: number; // aggregat (backwards-compat)
+  }
+): {
+  planTokensUsed: number;
+  bonusTokens: number;
+  topUpTokens: number;
+  tokensUsedThisMonth: number;
+} {
+  let remaining = Math.max(0, Math.floor(consumed));
+  let planTokensUsed = state.planTokensUsed;
+  let bonusTokens = state.bonusTokens;
+  let topUpTokens = state.topUpTokens;
+
+  // 1. Plan-tokens først — bruger "use it or lose it" kvota før betalte kilder
+  const planRemaining = Math.max(0, state.planTokens - planTokensUsed);
+  if (planRemaining > 0 && remaining > 0) {
+    const take = Math.min(planRemaining, remaining);
+    planTokensUsed += take;
+    remaining -= take;
+  }
+
+  // 2. Bonus-tokens (admin-tildelt)
+  if (bonusTokens > 0 && remaining > 0) {
+    const take = Math.min(bonusTokens, remaining);
+    bonusTokens -= take;
+    remaining -= take;
+  }
+
+  // 3. Top-up-tokens (købt via Stripe) — prioriteres sidst så brugerens
+  // direkte-betalte tokens har længst levetid
+  if (topUpTokens > 0 && remaining > 0) {
+    const take = Math.min(topUpTokens, remaining);
+    topUpTokens -= take;
+    remaining -= take;
+  }
+
+  // Hvis remaining > 0 efter alle kilder: brugeren har overskredet quota.
+  // Vi registrerer stadig forbruget (tokensUsedThisMonth) — gate'n på
+  // næste request stopper dem.
+  return {
+    planTokensUsed,
+    bonusTokens,
+    topUpTokens,
+    tokensUsedThisMonth: state.tokensUsedThisMonth + Math.floor(consumed),
+  };
+}
+
+/**
+ * BIZZ-649 P0: Ren gate-decision for om AI-kald skal tillades.
+ * Ekstraheret fra route-handleren så vi kan unit-teste alle permutationer
+ * af subscription-state uden at mocke Anthropic.
+ *
+ * Returnerer:
+ *   - 'allow'           → fortsæt til Anthropic
+ *   - 'no_subscription' → 403 Aktivt abonnement kræves
+ *   - 'quota_exceeded'  → 429 Token kvote opbrugt for denne måned
+ *   - 'zero_budget'     → 402 Payment Required (plan=0 + bonus=0 + topUp=0)
+ *
+ * @param state - Snapshot af subscription-felter (undefined hvis ingen sub)
+ * @returns Decision + effective limit (til debugging/logging)
+ */
+export function decideAiGate(
+  state:
+    | {
+        status?: string;
+        tokensUsedThisMonth?: number;
+        planTokens?: number;
+        bonusTokens?: number;
+        topUpTokens?: number;
+      }
+    | null
+    | undefined
+): {
+  decision: 'allow' | 'no_subscription' | 'quota_exceeded' | 'zero_budget';
+  isTrial: boolean;
+  effectiveLimit: number;
+} {
+  const subStatus = state?.status ?? '';
+  const isTrial = subStatus === 'trialing';
+  if (!state || (subStatus !== 'active' && subStatus !== 'trialing')) {
+    return { decision: 'no_subscription', isTrial, effectiveLimit: 0 };
+  }
+  const planTokens = state.planTokens ?? 0;
+  const bonusTokens = state.bonusTokens ?? 0;
+  const topUpTokens = state.topUpTokens ?? 0;
+  const tokensUsedThisMonth = state.tokensUsedThisMonth ?? 0;
+  const effectiveLimit = planTokens + bonusTokens + topUpTokens;
+  if (effectiveLimit === 0) {
+    return { decision: 'zero_budget', isTrial, effectiveLimit: 0 };
+  }
+  if (tokensUsedThisMonth >= effectiveLimit) {
+    return { decision: 'quota_exceeded', isTrial, effectiveLimit };
+  }
+  return { decision: 'allow', isTrial, effectiveLimit };
+}
+
 // ─── Handler ────────────────────────────────────────────────────────────────
 
 export async function POST(request: NextRequest): Promise<Response> {
@@ -1112,36 +1357,89 @@ export async function POST(request: NextRequest): Promise<Response> {
   }
   const { userId, tenantId: resolvedTenantId } = auth;
 
-  // Require an active subscription — read app_metadata via admin client (not exposed to JWT)
+  // BIZZ-641: Accepter både 'active' og 'trialing' — men trial-brugere får
+  // kun AI-adgang via selvstændigt betalte token-pakker (topUpTokens), ikke
+  // via plan-quota. Det forhindrer misbrug hvor brugere opretter trial efter
+  // trial for at forbruge gratis AI.
   const adminClient = createAdminClient();
   const { data: freshUser } = await adminClient.auth.admin.getUserById(userId);
   const sub = freshUser?.user?.app_metadata?.subscription as
-    | { status?: string; tokensUsedThisMonth?: number; bonusTokens?: number; planId?: string }
+    | {
+        status?: string;
+        tokensUsedThisMonth?: number;
+        /** BIZZ-643: per-kilde-tracking. Backwards-compat: default 0 når ikke sat. */
+        planTokensUsed?: number;
+        bonusTokens?: number;
+        topUpTokens?: number;
+        planId?: string;
+      }
     | null
     | undefined;
-  if (!sub || sub.status !== 'active') {
-    return Response.json(
-      { error: 'Aktivt abonnement kræves for at bruge AI-assistenten' },
-      { status: 403 }
-    );
-  }
+  const subStatus = sub?.status ?? '';
 
-  // Guard: reject immediately if token quota is exhausted.
-  // Fetch effective token limit from plan_configs; fall back to 0 (unlimited) if unavailable.
-  const tokensUsedThisMonth = sub.tokensUsedThisMonth ?? 0;
-  let effectiveTokenLimit = 0;
-  if (sub.planId) {
+  // BIZZ-649 P0: Hent plan-tokens fra plan_configs før gate-check.
+  // BIZZ-641: Under trial blokeres plan-tokens — effektiv grænse er kun
+  // topUpTokens + bonusTokens (manuelt tildelt af admin). Efter aktivering
+  // tilføjes plan-tokens normalt.
+  // BIZZ-643: Track per-kilde-forbrug separat (planTokensUsed) så vi kan
+  // vise balance pr. kilde i UI + gennemføre prioritets-dekrement.
+  const tokensUsedThisMonth = sub?.tokensUsedThisMonth ?? 0;
+  const planTokensUsed = sub?.planTokensUsed ?? 0;
+  const bonusTokens = sub?.bonusTokens ?? 0;
+  const topUpTokens = sub?.topUpTokens ?? 0;
+  let planTokens = 0;
+  if (sub?.planId) {
     const { data: planRow } = await adminClient
       .from('plan_configs')
       .select('ai_tokens_per_month')
       .eq('plan_id', sub.planId)
       .single<{ ai_tokens_per_month: number }>();
-    const bonusTokens = sub.bonusTokens ?? 0;
-    effectiveTokenLimit = (planRow?.ai_tokens_per_month ?? 0) + bonusTokens;
+    planTokens = subStatus === 'trialing' ? 0 : (planRow?.ai_tokens_per_month ?? 0);
   }
-  if (effectiveTokenLimit > 0 && tokensUsedThisMonth >= effectiveTokenLimit) {
+
+  // BIZZ-649: Gate-decision via ren funktion (decideAiGate) så alle
+  // permutationer er unit-testede — kernen er at blokere 'active' bruger
+  // med plan=0 + bonus=0 + topUp=0 (billing-lækage før commit).
+  const gate = decideAiGate({
+    status: subStatus,
+    tokensUsedThisMonth,
+    planTokens,
+    bonusTokens,
+    topUpTokens,
+  });
+  if (gate.decision === 'no_subscription') {
+    return Response.json(
+      { error: 'Aktivt abonnement kræves for at bruge AI-assistenten' },
+      { status: 403 }
+    );
+  }
+  if (gate.decision === 'quota_exceeded') {
     return Response.json({ error: 'Token kvote opbrugt for denne måned' }, { status: 429 });
   }
+  if (gate.decision === 'zero_budget') {
+    // P0 billing-lækage-guard — Sentry-breadcrumb så vi kan se hvis en
+    // bruger forsøger at kalde AI uden budget (normalt blokeret af UI).
+    Sentry.addBreadcrumb({
+      category: 'billing',
+      message: 'AI chat blocked: zero_budget',
+      level: 'info',
+      data: { isTrial: gate.isTrial, userId, planId: sub?.planId ?? null },
+    });
+    return Response.json(
+      {
+        error: gate.isTrial
+          ? 'AI-tokens er låst indtil dit abonnement starter. Køb en token-pakke for at bruge AI nu.'
+          : 'Dit abonnement har ingen AI-tokens. Køb en token-pakke eller opgrader plan for at bruge AI.',
+        code: 'trial_ai_blocked',
+        cta: 'buy_token_pack',
+      },
+      { status: 402 }
+    );
+  }
+  // gate.decision === 'allow' — fortsæt til Anthropic. gate.effectiveLimit
+  // holdes tilgængelig via gate-objektet hvis vi senere vil logge remaining-
+  // budget i en Sentry-breadcrumb.
+  void gate.effectiveLimit;
 
   const apiKey = process.env.BIZZASSIST_CLAUDE_KEY?.trim();
   if (!apiKey) {
@@ -1351,6 +1649,20 @@ export async function POST(request: NextRequest): Promise<Response> {
     async start(controller) {
       try {
         const MAX_TOOL_ROUNDS = 15;
+        // BIZZ-590: Soft time-budget. Vercel hard-kill ved maxDuration (120s)
+        // afbryder streamen uden at nå MAX_TOOL_ROUNDS-exit branch, og brugeren
+        // får 0 chars output. Når vi rammer SOFT_DEADLINE_MS giver vi Claude
+        // én sidste runde UDEN tools så AI kan syntetisere det allerede
+        // indsamlede data til et delvist svar inden serverless-timeout.
+        //
+        // Sat til 60s for at efterlade ~60s buffer til final Claude-kaldet +
+        // streaming. Ved multi-tool analyser (Q12: 16 tools) bruger hver runde
+        // ~5-8s, så 60s dækker typisk 8-10 runders data-indsamling — nok til
+        // en meningsfuld syntese selv for komplekse cross-source queries.
+        const SOFT_DEADLINE_MS = 60_000;
+        const startedAt = Date.now();
+        const elapsed = () => Date.now() - startedAt;
+        let forceFinalSynthesis = false;
         let round = 0;
 
         /** Track total token usage across all Claude API calls in this request */
@@ -1360,12 +1672,26 @@ export async function POST(request: NextRequest): Promise<Response> {
         while (round < MAX_TOOL_ROUNDS) {
           round++;
 
+          // Ved soft-deadline: suppress tools så Claude afslutter med tekst
+          // baseret på allerede hentede data (giver partial svar i stedet for
+          // 0-chars timeout). Efter denne runde exit'es while-loop via
+          // if (toolUseBlocks.length === 0).
+          if (!forceFinalSynthesis && elapsed() > SOFT_DEADLINE_MS) {
+            forceFinalSynthesis = true;
+            sse(controller, JSON.stringify({ status: 'Samler data til svar…' }));
+            anthropicMessages.push({
+              role: 'user',
+              content:
+                'Tiden er ved at løbe ud — afslut nu med et struktureret svar baseret på de data du allerede har hentet. Stil gerne opfølgningsspørgsmål, men skriv et svar i stedet for at kalde flere tools.',
+            });
+          }
+
           // Call Claude (non-streaming for tool rounds, streaming for final)
           const response = await client.messages.create({
             model: 'claude-sonnet-4-6',
             max_tokens: 4096,
             system: systemPrompt,
-            tools: TOOLS,
+            tools: forceFinalSynthesis ? undefined : TOOLS,
             messages: anthropicMessages,
           });
 
@@ -1393,6 +1719,15 @@ export async function POST(request: NextRequest): Promise<Response> {
 
             // Send token usage summary before closing stream
             const totalTokens = totalInputTokens + totalOutputTokens;
+            // BIZZ-643: Beregn allocation før vi sender usage-event så vi
+            // kan inkludere per-kilde-remaining i samme SSE-block.
+            const allocation = allocateTokensBySource(totalTokens, {
+              planTokens,
+              planTokensUsed,
+              bonusTokens,
+              topUpTokens,
+              tokensUsedThisMonth,
+            });
             sse(
               controller,
               JSON.stringify({
@@ -1400,6 +1735,10 @@ export async function POST(request: NextRequest): Promise<Response> {
                   inputTokens: totalInputTokens,
                   outputTokens: totalOutputTokens,
                   totalTokens,
+                  // BIZZ-643: Per-kilde-balance så UI kan vise Plan/Bonus/Købt.
+                  planRemaining: Math.max(0, planTokens - allocation.planTokensUsed),
+                  bonusRemaining: allocation.bonusTokens,
+                  topUpRemaining: allocation.topUpTokens,
                 },
               })
             );
@@ -1408,14 +1747,12 @@ export async function POST(request: NextRequest): Promise<Response> {
             controller.close();
 
             // Fire-and-forget: persist token usage so quota check works next request
+            // BIZZ-643: Allocation beregnet ovenfor — genbruges her.
             adminClient.auth.admin
               .updateUserById(userId, {
                 app_metadata: {
                   ...freshUser?.user?.app_metadata,
-                  subscription: {
-                    ...sub,
-                    tokensUsedThisMonth: tokensUsedThisMonth + totalTokens,
-                  },
+                  subscription: { ...sub, ...allocation },
                 },
               })
               .catch(() => {}); // non-critical — best-effort tracking
@@ -1473,6 +1810,15 @@ export async function POST(request: NextRequest): Promise<Response> {
           })
         );
         const totalTokens = totalInputTokens + totalOutputTokens;
+        // BIZZ-643: Allocation beregnet før usage-event så per-kilde-remaining
+        // kan inkluderes i samme SSE-block.
+        const allocation = allocateTokensBySource(totalTokens, {
+          planTokens,
+          planTokensUsed,
+          bonusTokens,
+          topUpTokens,
+          tokensUsedThisMonth,
+        });
         sse(
           controller,
           JSON.stringify({
@@ -1480,6 +1826,9 @@ export async function POST(request: NextRequest): Promise<Response> {
               inputTokens: totalInputTokens,
               outputTokens: totalOutputTokens,
               totalTokens,
+              planRemaining: Math.max(0, planTokens - allocation.planTokensUsed),
+              bonusRemaining: allocation.bonusTokens,
+              topUpRemaining: allocation.topUpTokens,
             },
           })
         );
@@ -1491,10 +1840,7 @@ export async function POST(request: NextRequest): Promise<Response> {
           .updateUserById(userId, {
             app_metadata: {
               ...freshUser?.user?.app_metadata,
-              subscription: {
-                ...sub,
-                tokensUsedThisMonth: tokensUsedThisMonth + totalTokens,
-              },
+              subscription: { ...sub, ...allocation },
             },
           })
           .catch(() => {}); // non-critical — best-effort tracking

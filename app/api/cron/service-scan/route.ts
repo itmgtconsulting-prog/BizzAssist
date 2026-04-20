@@ -40,7 +40,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { sendCriticalAlert, isCriticalIssue } from '@/lib/service-manager-alerts';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
-import { recordHeartbeat } from '@/app/lib/cronHeartbeat';
+import { withCronMonitor } from '@/app/lib/cronMonitor';
 import { companyInfo } from '@/app/lib/companyInfo';
 import { RESEND_ENDPOINT } from '@/app/lib/serviceEndpoints';
 
@@ -631,287 +631,777 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const now = new Date();
-  const admin = createAdminClient();
+  // BIZZ-305/621/624: heartbeat + Sentry cron-monitoring via shared wrapper.
+  // Tidligere inline recordHeartbeat erstattet af withCronMonitor.
+  return withCronMonitor(
+    { jobName: 'service-scan', schedule: '0 * * * *', intervalMinutes: 60 },
+    async () => {
+      const now = new Date();
+      const admin = createAdminClient();
 
-  // ── 1. Run the bug scan ───────────────────────────────────────────────────
-  let issues: ScanIssue[];
-  let summary: string;
-  let scanStatus: 'completed' | 'failed';
+      // ── 1. Run the bug scan ───────────────────────────────────────────────────
+      let issues: ScanIssue[];
+      let summary: string;
+      let scanStatus: 'completed' | 'failed';
 
-  try {
-    const result = await runScan();
-    issues = result.issues;
-    summary = result.summary;
-    scanStatus = 'completed';
-  } catch (scanErr) {
-    logger.error('[service-scan] runScan threw:', scanErr);
-    issues = [
-      {
-        type: 'config_error',
-        severity: 'error',
-        message: 'Scan afbrudt af uventet fejl',
-        source: 'static',
-        context: scanErr instanceof Error ? scanErr.message : 'Ukendt fejl',
-      },
-    ];
-    summary = 'Scan mislykkedes pga. intern fejl.';
-    scanStatus = 'failed';
-  }
-
-  // ── 1b. BIZZ-306: External API + infrastructure health checks ─────────────
-  try {
-    const healthRes = await fetch(`${request.nextUrl.origin}/api/health?deep=true`, {
-      headers: { cookie: request.headers.get('cookie') ?? '' },
-      signal: AbortSignal.timeout(15000),
-    });
-    if (healthRes.ok) {
-      const health = await healthRes.json();
-
-      // Check external APIs
-      const apis = health.checks?.external_apis ?? {};
-      for (const [name, info] of Object.entries(apis) as [
-        string,
-        { status: string; latency_ms: number },
-      ][]) {
-        if (info.status === 'down') {
-          issues.push({
+      try {
+        const result = await runScan();
+        issues = result.issues;
+        summary = result.summary;
+        scanStatus = 'completed';
+      } catch (scanErr) {
+        logger.error('[service-scan] runScan threw:', scanErr);
+        issues = [
+          {
             type: 'config_error',
             severity: 'error',
-            message: `Ekstern API nede: ${name}`,
+            message: 'Scan afbrudt af uventet fejl',
             source: 'static',
-            context: `Latency: ${info.latency_ms}ms`,
-          });
-        } else if (info.status === 'slow') {
-          issues.push({
-            type: 'config_error',
-            severity: 'warning',
-            message: `Ekstern API langsom: ${name} (${info.latency_ms}ms)`,
-            source: 'static',
-          });
+            context: scanErr instanceof Error ? scanErr.message : 'Ukendt fejl',
+          },
+        ];
+        summary = 'Scan mislykkedes pga. intern fejl.';
+        scanStatus = 'failed';
+      }
+
+      // ── 1b. BIZZ-306: External API + infrastructure health checks ─────────────
+      try {
+        const healthRes = await fetch(`${request.nextUrl.origin}/api/health?deep=true`, {
+          headers: { cookie: request.headers.get('cookie') ?? '' },
+          signal: AbortSignal.timeout(15000),
+        });
+        if (healthRes.ok) {
+          const health = await healthRes.json();
+
+          // Check external APIs
+          const apis = health.checks?.external_apis ?? {};
+          for (const [name, info] of Object.entries(apis) as [
+            string,
+            { status: string; latency_ms: number },
+          ][]) {
+            if (info.status === 'down') {
+              issues.push({
+                type: 'config_error',
+                severity: 'error',
+                message: `Ekstern API nede: ${name}`,
+                source: 'static',
+                context: `Latency: ${info.latency_ms}ms`,
+              });
+            } else if (info.status === 'slow') {
+              issues.push({
+                type: 'config_error',
+                severity: 'warning',
+                message: `Ekstern API langsom: ${name} (${info.latency_ms}ms)`,
+                source: 'static',
+              });
+            }
+          }
+
+          // Check certificates
+          const certs = health.checks?.certificates ?? [];
+          for (const cert of certs as {
+            name: string;
+            status: string;
+            daysRemaining: number | null;
+          }[]) {
+            if (cert.status === 'expired' || cert.status === 'critical') {
+              issues.push({
+                type: 'config_error',
+                severity: 'error',
+                message: `Certifikat ${cert.status}: ${cert.name} (${cert.daysRemaining ?? 0} dage)`,
+                source: 'static',
+                context: 'certificate_expiry',
+              });
+            } else if (cert.status === 'warning') {
+              issues.push({
+                type: 'config_error',
+                severity: 'warning',
+                message: `Certifikat udløber snart: ${cert.name} (${cert.daysRemaining} dage)`,
+                source: 'static',
+                context: 'certificate_expiry',
+              });
+            }
+          }
+
+          // Check Redis
+          if (health.checks?.redis === 'error') {
+            issues.push({
+              type: 'config_error',
+              severity: 'error',
+              message: 'Upstash Redis ikke tilgængelig',
+              source: 'static',
+            });
+          }
+
+          // Update summary if new issues found
+          const infraIssues = issues.filter(
+            (i) => i.source === 'static' && i.message.includes('API')
+          );
+          if (infraIssues.length > 0) {
+            summary += ` | Infrastruktur: ${infraIssues.length} problemer fundet.`;
+          }
+        }
+      } catch {
+        // Health check failure is non-fatal
+        logger.error('[service-scan] Deep health check failed (non-fatal)');
+      }
+
+      // ── 2. Persist scan record ────────────────────────────────────────────────
+      const { data: scanData, error: scanInsertErr } = await admin
+        .from('service_manager_scans')
+        .insert({
+          scan_type: 'scheduled',
+          status: scanStatus,
+          triggered_by: null, // Cron — no user
+          issues_found: issues,
+          summary,
+        })
+        .select('id')
+        .single();
+
+      if (scanInsertErr || !scanData) {
+        logger.error('[service-scan] Kunne ikke oprette scan-record:', scanInsertErr?.message);
+        return NextResponse.json({ error: 'Kunne ikke oprette scan-record' }, { status: 500 });
+      }
+
+      const scanId = scanData.id as string;
+
+      await logActivity('scheduled_scan_completed', {
+        scan_id: scanId,
+        status: scanStatus,
+        issue_count: issues.length,
+        error_count: issues.filter((i) => i.severity === 'error').length,
+        warning_count: issues.filter((i) => i.severity === 'warning').length,
+      });
+
+      // ── 3. Propose fixes for new error-severity issues ────────────────────────
+      const errorIssues = issues.filter((i) => i.severity === 'error');
+      let proposedFixCount = 0;
+      const fixResults: { issueIndex: number; fixId: string; classification: string }[] = [];
+
+      for (
+        let idx = 0;
+        idx < issues.length && proposedFixCount < MAX_FIX_PROPOSALS_PER_RUN;
+        idx++
+      ) {
+        const issue = issues[idx];
+        if (issue.severity !== 'error') continue;
+
+        // Skip if an active fix proposal already exists for this exact message
+        // (prevents re-proposing the same fix on every hourly run)
+        const { data: existingData } = await admin
+          .from('service_manager_fixes')
+          .select('id, status')
+          .eq('issue_index', idx)
+          .in('status', ['proposed', 'approved'])
+          // Look for fixes from the last 48 hours with the same message
+          .gte('created_at', new Date(now.getTime() - 48 * 60 * 60 * 1000).toISOString())
+          .maybeSingle();
+
+        if (existingData) {
+          logger.log(
+            `[service-scan] Issue ${idx} already has active fix ${existingData.id} — skipping`
+          );
+          continue;
+        }
+
+        // Ask Claude to propose a fix
+        let claudeResult: ClaudeFixResponse;
+        try {
+          claudeResult = await proposeFixWithClaude(issue, summary);
+        } catch (aiErr) {
+          logger.error(`[service-scan] Claude API error for issue ${idx}:`, aiErr);
+          continue;
+        }
+
+        // Apply safety guards
+        let finalClassification = claudeResult.classification;
+        let finalReasoning = claudeResult.reasoning;
+
+        if (finalClassification !== 'rejected' && claudeResult.proposed_diff) {
+          const lineCount = countChangedLines(claudeResult.proposed_diff);
+          if (lineCount > MAX_LINES_CHANGED) {
+            finalClassification = 'rejected';
+            finalReasoning = `Afvist: ${lineCount} linjer ændret (maks ${MAX_LINES_CHANGED}). ${finalReasoning}`;
+          }
+
+          if (finalClassification !== 'rejected') {
+            const blocked = findBlockedPattern(claudeResult.proposed_diff);
+            if (blocked) {
+              finalClassification = 'rejected';
+              finalReasoning = `Afvist pga. blokeret mønster. ${blocked}. ${finalReasoning}`;
+            }
+          }
+        }
+
+        if (finalClassification !== 'rejected' && !claudeResult.proposed_diff.trim()) {
+          finalClassification = 'rejected';
+          finalReasoning = `Afvist: Claude returnerede et tomt diff. ${finalReasoning}`;
+        }
+
+        // Persist the fix proposal
+        const { data: fixData, error: fixInsertErr } = await admin
+          .from('service_manager_fixes')
+          .insert({
+            scan_id: scanId,
+            issue_index: idx,
+            file_path: claudeResult.file_path,
+            proposed_diff: claudeResult.proposed_diff,
+            classification: finalClassification,
+            status: finalClassification === 'rejected' ? 'rejected' : 'proposed',
+            claude_reasoning: finalReasoning,
+            rejection_reason: finalClassification === 'rejected' ? finalReasoning : null,
+          })
+          .select('id, status, classification')
+          .single();
+
+        if (fixInsertErr || !fixData) {
+          logger.error('[service-scan] Kunne ikke gemme fix-forslag:', fixInsertErr?.message);
+          continue;
+        }
+
+        fixResults.push({
+          issueIndex: idx,
+          fixId: fixData.id as string,
+          classification: finalClassification,
+        });
+
+        await logActivity('auto_fix_proposed', {
+          fix_id: fixData.id,
+          scan_id: scanId,
+          issue_index: idx,
+          issue_type: issue.type,
+          file_path: claudeResult.file_path,
+          classification: finalClassification,
+          lines_changed: claudeResult.proposed_diff
+            ? countChangedLines(claudeResult.proposed_diff)
+            : 0,
+          triggered_by: 'cron',
+        });
+
+        if (finalClassification !== 'rejected') {
+          proposedFixCount++;
         }
       }
 
-      // Check certificates
-      const certs = health.checks?.certificates ?? [];
-      for (const cert of certs as {
-        name: string;
-        status: string;
-        daysRemaining: number | null;
-      }[]) {
-        if (cert.status === 'expired' || cert.status === 'critical') {
-          issues.push({
-            type: 'config_error',
-            severity: 'error',
-            message: `Certifikat ${cert.status}: ${cert.name} (${cert.daysRemaining ?? 0} dage)`,
-            source: 'static',
-            context: 'certificate_expiry',
-          });
-        } else if (cert.status === 'warning') {
-          issues.push({
-            type: 'config_error',
-            severity: 'warning',
-            message: `Certifikat udløber snart: ${cert.name} (${cert.daysRemaining} dage)`,
-            source: 'static',
-            context: 'certificate_expiry',
-          });
-        }
-      }
+      // ── 4. Send immediate critical alerts for high-severity issues ───────────
+      // These fire before the general alert email so critical failures get
+      // dedicated, immediately-actionable notifications with their own subject line.
+      const criticalIssues = errorIssues.filter((issue) =>
+        isCriticalIssue(issue.type, issue.message, issue.context)
+      );
 
-      // Check Redis
-      if (health.checks?.redis === 'error') {
-        issues.push({
-          type: 'config_error',
-          severity: 'error',
-          message: 'Upstash Redis ikke tilgængelig',
-          source: 'static',
+      for (const critical of criticalIssues) {
+        await sendCriticalAlert({
+          description: critical.message,
+          affectedPath: critical.context?.includes('Funktion: ')
+            ? critical.context.replace('Funktion: ', '')
+            : undefined,
+          scanId,
+          issueType: critical.type,
+          context: critical.context,
+          detectedAt: now,
         });
       }
 
-      // Update summary if new issues found
-      const infraIssues = issues.filter((i) => i.source === 'static' && i.message.includes('API'));
-      if (infraIssues.length > 0) {
-        summary += ` | Infrastruktur: ${infraIssues.length} problemer fundet.`;
+      // ── 5. Send general alert email if any error issues were found ────────────
+      if (errorIssues.length > 0) {
+        await sendAlertEmail(issues, scanId, proposedFixCount, now);
+      }
+
+      // ── 6. BIZZ-623: Cron-heartbeat-trigger ─────────────────────────────────
+      // Tjek public.cron_heartbeats for jobs der fejler (last_status='error')
+      // ELLER er forsinkede (last_run_at > 2× expected_interval). For hver fejl,
+      // opret en separat service_manager_scans-row med scan_type='cron_failure'
+      // så Service Manager-agenten kan foreslå en fix. Dedup: skip hvis vi
+      // allerede har lavet en cron_failure-scan for samme job inden for de
+      // sidste 4 timer (undgår spam fra persistent fejlede jobs).
+      const cronFailureScans = await checkCronHeartbeatsAndCreateScans(admin, now);
+      if (cronFailureScans > 0) {
+        logger.log(
+          `[service-scan] Oprettede ${cronFailureScans} cron_failure-scan(s) fra heartbeat-check`
+        );
+      }
+
+      // ── 7. BIZZ-611: EJF bulk-ingest freshness check ───────────────────────
+      // Alert hvis seneste ingest-run ikke er afsluttet efter 24t (stuck) eller
+      // hvis seneste succeseful run processerede < 100 rækker (sandsynlig fejl
+      // i data-kilden). Bruges til at fange stille ingest-regressions uden at
+      // admin skal overvåge Supabase manuelt.
+      const ejfIngestIssues = await checkEjfIngestHealthAndCreateScans(admin, now);
+      if (ejfIngestIssues > 0) {
+        logger.log(`[service-scan] Oprettede ${ejfIngestIssues} EJF-ingest-issue-scan(s)`);
+      }
+
+      // ── 8. BIZZ-623 Trigger 2: infra_down detection ─────────────────────────
+      // Probe infrastructure-services (datafordeler, upstash, resend, cvr etc.)
+      // og log hver probe til service_probe_history. Når 2 KONSEKUTIVE probes
+      // af samme service er "down", opretter vi service_manager_scans-row med
+      // scan_type='infra_down' så Service Manager kan notificere + oprette
+      // JIRA-ticket (infra-action, ikke kode-fix). 2-konsekutive filter
+      // forhindrer falske positive fra single-probe-glitches.
+      const infraDownScans = await probeInfraAndDetectDowns(admin, request.nextUrl.origin, now);
+      if (infraDownScans > 0) {
+        logger.log(`[service-scan] Oprettede ${infraDownScans} infra_down scan(s)`);
+      }
+
+      logger.log(
+        `[service-scan] Done: ${issues.length} issues, ${errorIssues.length} errors, ${proposedFixCount} fixes proposed, ${cronFailureScans} cron-failures, ${ejfIngestIssues} ejf-issues, ${infraDownScans} infra-down`
+      );
+
+      // Heartbeat-write + Sentry check-in håndteres af withCronMonitor —
+      // BIZZ-305's inline recordHeartbeat er fjernet da det nu er centralt.
+
+      return NextResponse.json({
+        ok: true,
+        scanId,
+        issueCount: issues.length,
+        errorCount: errorIssues.length,
+        warningCount: issues.filter((i) => i.severity === 'warning').length,
+        fixesProposed: proposedFixCount,
+        fixes: fixResults,
+        cronFailureScans,
+        ejfIngestIssues,
+        infraDownScans,
+        summary,
+      });
+    }
+  );
+}
+
+/**
+ * BIZZ-623: Tjek cron_heartbeats for fejlede eller forsinkede jobs og opret
+ * en service_manager_scans-row med scan_type='cron_failure' per unikke fejl.
+ *
+ * Dedup: vi opretter ikke en ny scan for samme job hvis vi allerede har lavet
+ * en cron_failure-scan for det job inden for de sidste 4 timer. Det forhindrer
+ * at en persistent fejlet cron spammer scan-listen hver time.
+ *
+ * Acceptance (BIZZ-623): "Cron der fejler 2 gange i træk udløser
+ * service_manager_scans med scan_type='cron_failure' inden for 30 min."
+ * Vi er konservative og fyrer allerede på første failure så agenten får
+ * chancen for at analysere ASAP — dedup-vinduet forhindrer spam.
+ *
+ * @param admin - Supabase admin-client
+ * @param now - Reference-tidspunkt (bruges til overdue-beregning + dedup)
+ * @returns Antal cron_failure-scans der blev oprettet
+ */
+async function checkCronHeartbeatsAndCreateScans(
+  admin: ReturnType<typeof createAdminClient>,
+  now: Date
+): Promise<number> {
+  interface HeartbeatRow {
+    job_name: string;
+    last_run_at: string | null;
+    last_status: 'success' | 'error' | null;
+    last_duration_ms: number | null;
+    expected_interval_minutes: number | null;
+    last_error: string | null;
+  }
+
+  let heartbeats: HeartbeatRow[] = [];
+  try {
+    const { data, error } = await admin
+      .from('cron_heartbeats')
+      .select(
+        'job_name, last_run_at, last_status, last_duration_ms, expected_interval_minutes, last_error'
+      )
+      .returns<HeartbeatRow[]>();
+    if (error) {
+      logger.error('[service-scan] cron_heartbeats query fejl:', error.message);
+      return 0;
+    }
+    heartbeats = data ?? [];
+  } catch (err) {
+    // fx PGRST205 hvis migration 041 ikke er kørt — ikke fatalt
+    logger.error('[service-scan] cron_heartbeats query exception:', err);
+    return 0;
+  }
+
+  if (heartbeats.length === 0) return 0;
+
+  // Find jobs der er enten error eller overdue
+  const failing: Array<{
+    jobName: string;
+    reason: 'error' | 'overdue';
+    detail: string;
+    lastRunAt: string | null;
+    lastError: string | null;
+  }> = [];
+
+  for (const hb of heartbeats) {
+    if (hb.last_status === 'error') {
+      failing.push({
+        jobName: hb.job_name,
+        reason: 'error',
+        detail: `Seneste run fejlede: ${hb.last_error ?? 'uspecificeret fejl'}`,
+        lastRunAt: hb.last_run_at,
+        lastError: hb.last_error,
+      });
+      continue;
+    }
+    if (hb.last_run_at && hb.expected_interval_minutes) {
+      const ageMinutes = (now.getTime() - new Date(hb.last_run_at).getTime()) / 60_000;
+      // Overdue tærskel: 2× forventet interval + 5 min grace (samme som
+      // cron-status dashboard for at undgå forskellig behandling).
+      if (ageMinutes > hb.expected_interval_minutes * 2 + 5) {
+        failing.push({
+          jobName: hb.job_name,
+          reason: 'overdue',
+          detail: `Sidst kørt for ${Math.round(ageMinutes)} min siden (forventet hver ${hb.expected_interval_minutes} min)`,
+          lastRunAt: hb.last_run_at,
+          lastError: null,
+        });
       }
     }
-  } catch {
-    // Health check failure is non-fatal
-    logger.error('[service-scan] Deep health check failed (non-fatal)');
   }
 
-  // ── 2. Persist scan record ────────────────────────────────────────────────
-  const { data: scanData, error: scanInsertErr } = await admin
+  if (failing.length === 0) return 0;
+
+  // Dedup: check om der allerede er en cron_failure-scan for samme job inden
+  // for de sidste 4 timer. Vi sammenligner mod summary-feltet der indeholder
+  // job-navnet i format "[cron_failure] <jobName>: ...".
+  const fourHoursAgo = new Date(now.getTime() - 4 * 60 * 60 * 1000).toISOString();
+  // Cast via `as never` — Supabase types er genereret før migration 050
+  // tilføjede 'cron_failure' til scan_type-enum. Skift når types regenereres.
+  const { data: recentCronScans } = await admin
     .from('service_manager_scans')
-    .insert({
-      scan_type: 'scheduled',
-      status: scanStatus,
-      triggered_by: null, // Cron — no user
-      issues_found: issues,
-      summary,
-    })
-    .select('id')
-    .single();
+    .select('summary')
+    .eq('scan_type', 'cron_failure' as never)
+    .gte('created_at', fourHoursAgo);
 
-  if (scanInsertErr || !scanData) {
-    logger.error('[service-scan] Kunne ikke oprette scan-record:', scanInsertErr?.message);
-    return NextResponse.json({ error: 'Kunne ikke oprette scan-record' }, { status: 500 });
+  const alreadyScanned = new Set<string>();
+  for (const s of recentCronScans ?? []) {
+    const summaryStr = (s as { summary?: string }).summary ?? '';
+    const match = summaryStr.match(/\[cron_failure\]\s+([\w-]+):/);
+    if (match) alreadyScanned.add(match[1]);
   }
 
-  const scanId = scanData.id as string;
-
-  await logActivity('scheduled_scan_completed', {
-    scan_id: scanId,
-    status: scanStatus,
-    issue_count: issues.length,
-    error_count: issues.filter((i) => i.severity === 'error').length,
-    warning_count: issues.filter((i) => i.severity === 'warning').length,
-  });
-
-  // ── 3. Propose fixes for new error-severity issues ────────────────────────
-  const errorIssues = issues.filter((i) => i.severity === 'error');
-  let proposedFixCount = 0;
-  const fixResults: { issueIndex: number; fixId: string; classification: string }[] = [];
-
-  for (let idx = 0; idx < issues.length && proposedFixCount < MAX_FIX_PROPOSALS_PER_RUN; idx++) {
-    const issue = issues[idx];
-    if (issue.severity !== 'error') continue;
-
-    // Skip if an active fix proposal already exists for this exact message
-    // (prevents re-proposing the same fix on every hourly run)
-    const { data: existingData } = await admin
-      .from('service_manager_fixes')
-      .select('id, status')
-      .eq('issue_index', idx)
-      .in('status', ['proposed', 'approved'])
-      // Look for fixes from the last 48 hours with the same message
-      .gte('created_at', new Date(now.getTime() - 48 * 60 * 60 * 1000).toISOString())
-      .maybeSingle();
-
-    if (existingData) {
+  let created = 0;
+  for (const f of failing) {
+    if (alreadyScanned.has(f.jobName)) {
       logger.log(
-        `[service-scan] Issue ${idx} already has active fix ${existingData.id} — skipping`
+        `[service-scan] Cron-failure-scan for ${f.jobName} findes allerede (< 4t) — skipper`
       );
       continue;
     }
 
-    // Ask Claude to propose a fix
-    let claudeResult: ClaudeFixResponse;
+    const issue = {
+      type: f.reason === 'error' ? 'runtime_error' : 'config_error',
+      severity: 'error',
+      message: `Cron job '${f.jobName}' ${f.reason === 'error' ? 'fejlede' : 'er forsinket'}`,
+      source: 'cron_heartbeat',
+      context: f.detail,
+    };
+
+    const summary = `[cron_failure] ${f.jobName}: ${f.detail}`;
+    const { error: insertErr } = await admin.from('service_manager_scans').insert({
+      scan_type: 'cron_failure',
+      status: 'completed',
+      triggered_by: null,
+      issues_found: [issue],
+      summary,
+    });
+    if (insertErr) {
+      logger.error(
+        `[service-scan] Kunne ikke oprette cron_failure-scan for ${f.jobName}:`,
+        insertErr.message
+      );
+      continue;
+    }
+    created++;
+  }
+
+  return created;
+}
+
+/**
+ * BIZZ-611: Tjek public.ejf_ingest_runs for sundhedsproblemer med EJF bulk-
+ * ingestion og opret cron_failure-scans hvis noget ser galt ud.
+ *
+ * Detekterer 2 kategorier:
+ *   1. Stuck run: seneste række har finished_at=NULL og started_at > 24t siden.
+ *      Betyder at cronen gik ned eller Vercel timeout'ede uden at skrive
+ *      resultat — data er sandsynligvis ikke opdateret.
+ *   2. Suspicious low volume: seneste SUCCESSFUL run (finished_at != NULL,
+ *      error = NULL) har rows_processed < 100. Forventet bulk-ingest henter
+ *      millioner af rækker — <100 betyder at source-file var tom, URL returnerede
+ *      fejl, eller parser afviste formatet.
+ *
+ * Dedup (samme 4t-vindue som cron-failure-check) forhindrer spam ved persistent
+ * problem. Oprettes som scan_type='cron_failure' så Service Manager-agenten
+ * (BIZZ-623) kan klassificere + foreslå fix eller oprette JIRA-ticket.
+ *
+ * @param admin - Supabase admin-client
+ * @param now - Reference-tidspunkt
+ * @returns Antal ejf-ingest-issue-scans der blev oprettet
+ */
+async function checkEjfIngestHealthAndCreateScans(
+  admin: ReturnType<typeof createAdminClient>,
+  now: Date
+): Promise<number> {
+  interface IngestRow {
+    id: number;
+    started_at: string;
+    finished_at: string | null;
+    rows_processed: number | null;
+    error: string | null;
+  }
+
+  let recentRuns: IngestRow[] = [];
+  try {
+    // ejf_ingest_runs er ikke i generated Supabase types — cast
+    const { data, error } = await (
+      admin as unknown as {
+        from: (t: string) => {
+          select: (c: string) => {
+            order: (
+              col: string,
+              opts: { ascending: boolean }
+            ) => {
+              limit: (n: number) => Promise<{ data: IngestRow[] | null; error: unknown }>;
+            };
+          };
+        };
+      }
+    )
+      .from('ejf_ingest_runs')
+      .select('id, started_at, finished_at, rows_processed, error')
+      .order('started_at', { ascending: false })
+      .limit(5);
+    if (error) {
+      // PGRST205 hvis migration 046 ikke er kørt — ikke fatalt, bare return 0
+      logger.error('[service-scan] ejf_ingest_runs query fejl:', error);
+      return 0;
+    }
+    recentRuns = data ?? [];
+  } catch (err) {
+    logger.error('[service-scan] ejf_ingest_runs exception:', err);
+    return 0;
+  }
+
+  if (recentRuns.length === 0) return 0;
+
+  const issues: Array<{ reason: 'stuck' | 'low_volume'; detail: string }> = [];
+
+  // 1) Stuck run: seneste har finished_at=NULL og er > 24 t gammel
+  const latest = recentRuns[0];
+  if (!latest.finished_at) {
+    const ageHours = (now.getTime() - new Date(latest.started_at).getTime()) / 3_600_000;
+    if (ageHours > 24) {
+      issues.push({
+        reason: 'stuck',
+        detail: `ingest_run id=${latest.id} startede for ${ageHours.toFixed(1)} t siden og er ikke afsluttet (finished_at IS NULL)`,
+      });
+    }
+  }
+
+  // 2) Low volume: seneste SUCCESSFUL (finished_at != NULL og ingen error)
+  // processede < 100 rækker. Bulk-ingest forventes at hente millioner.
+  const latestSuccess = recentRuns.find((r) => r.finished_at && !r.error);
+  if (latestSuccess && (latestSuccess.rows_processed ?? 0) < 100) {
+    issues.push({
+      reason: 'low_volume',
+      detail: `ingest_run id=${latestSuccess.id} processede kun ${latestSuccess.rows_processed ?? 0} rækker (forventet millioner) — sandsynlig kilde-fejl eller tom dump-fil`,
+    });
+  }
+
+  if (issues.length === 0) return 0;
+
+  // Dedup mod sidste 4t af scans for at undgå spam
+  const fourHoursAgo = new Date(now.getTime() - 4 * 60 * 60 * 1000).toISOString();
+  const { data: recentScans } = await admin
+    .from('service_manager_scans')
+    .select('summary')
+    .eq('scan_type', 'cron_failure' as never)
+    .gte('created_at', fourHoursAgo);
+  const alreadyScanned = new Set<string>();
+  for (const s of recentScans ?? []) {
+    const summaryStr = (s as { summary?: string }).summary ?? '';
+    const match = summaryStr.match(/\[ejf_ingest_(stuck|low_volume)\]/);
+    if (match) alreadyScanned.add(match[1]);
+  }
+
+  let created = 0;
+  for (const iss of issues) {
+    if (alreadyScanned.has(iss.reason)) continue;
+    const issue = {
+      type: 'runtime_error',
+      severity: 'error',
+      message: `EJF bulk-ingest ${iss.reason === 'stuck' ? 'hænger' : 'fik for lidt data'}`,
+      source: 'ejf_ingest_runs',
+      context: iss.detail,
+    };
+    const summary = `[ejf_ingest_${iss.reason}] ingest-ejf-bulk: ${iss.detail}`;
+    const { error: insertErr } = await admin.from('service_manager_scans').insert({
+      scan_type: 'cron_failure',
+      status: 'completed',
+      triggered_by: null,
+      issues_found: [issue],
+      summary,
+    });
+    if (insertErr) {
+      logger.error(`[service-scan] Kunne ikke oprette ejf-ingest-scan:`, insertErr.message);
+      continue;
+    }
+    created++;
+  }
+
+  return created;
+}
+
+/**
+ * BIZZ-623 Trigger 2: Probe infrastructure services via /api/admin/service-
+ * status, log each result to service_probe_history, and when 2 consecutive
+ * probes for the SAME service return is_down=true, create a service_manager_
+ * scans row with scan_type='infra_down'.
+ *
+ * 2-konsekutive filter er kernen i acceptance-kriteriet "Ingen falske positive
+ * ved single-probe-glitch". Dedup: 4-timers vindue per service så en
+ * persistent down-service ikke spammer scan-listen.
+ *
+ * @param admin - Supabase admin-client
+ * @param baseUrl - Origin til at kalde /api/admin/service-status?probe=...
+ * @param now - Reference-tidspunkt til dedup
+ * @returns Antal infra_down-scans der blev oprettet
+ */
+async function probeInfraAndDetectDowns(
+  admin: ReturnType<typeof createAdminClient>,
+  baseUrl: string,
+  now: Date
+): Promise<number> {
+  const serviceIds = ['datafordeler', 'upstash', 'resend', 'cvr', 'brave', 'mediastack', 'twilio'];
+
+  // Step 1: probe each service + log to service_probe_history
+  for (const svc of serviceIds) {
+    let isDown = true;
+    let httpStatus = 0;
+    let detail: string | null = null;
     try {
-      claudeResult = await proposeFixWithClaude(issue, summary);
-    } catch (aiErr) {
-      logger.error(`[service-scan] Claude API error for issue ${idx}:`, aiErr);
-      continue;
-    }
-
-    // Apply safety guards
-    let finalClassification = claudeResult.classification;
-    let finalReasoning = claudeResult.reasoning;
-
-    if (finalClassification !== 'rejected' && claudeResult.proposed_diff) {
-      const lineCount = countChangedLines(claudeResult.proposed_diff);
-      if (lineCount > MAX_LINES_CHANGED) {
-        finalClassification = 'rejected';
-        finalReasoning = `Afvist: ${lineCount} linjer ændret (maks ${MAX_LINES_CHANGED}). ${finalReasoning}`;
-      }
-
-      if (finalClassification !== 'rejected') {
-        const blocked = findBlockedPattern(claudeResult.proposed_diff);
-        if (blocked) {
-          finalClassification = 'rejected';
-          finalReasoning = `Afvist pga. blokeret mønster. ${blocked}. ${finalReasoning}`;
+      const secret = process.env.CRON_SECRET ?? '';
+      const res = await fetch(
+        `${baseUrl}/api/admin/service-status?probe=${encodeURIComponent(svc)}`,
+        {
+          headers: secret ? { Authorization: `Bearer ${secret}` } : {},
+          signal: AbortSignal.timeout(8000),
         }
+      );
+      httpStatus = res.status;
+      if (res.ok) {
+        const data = (await res.json()) as { ok?: boolean; detail?: string };
+        isDown = !data.ok;
+        detail = data.detail ?? null;
+      } else {
+        detail = `probe HTTP ${res.status}`;
       }
+    } catch (err) {
+      detail = err instanceof Error ? err.name : 'probe_exception';
     }
 
-    if (finalClassification !== 'rejected' && !claudeResult.proposed_diff.trim()) {
-      finalClassification = 'rejected';
-      finalReasoning = `Afvist: Claude returnerede et tomt diff. ${finalReasoning}`;
+    // Log probe result — service_probe_history ikke i generated types, cast
+    try {
+      await (
+        admin as unknown as {
+          from: (t: string) => {
+            insert: (row: Record<string, unknown>) => Promise<{ error: unknown }>;
+          };
+        }
+      )
+        .from('service_probe_history')
+        .insert({
+          service_id: svc,
+          is_down: isDown,
+          http_status: httpStatus || null,
+          detail,
+        });
+    } catch (err) {
+      logger.error('[service-scan] probe_history insert:', err);
     }
+  }
 
-    // Persist the fix proposal
-    const { data: fixData, error: fixInsertErr } = await admin
-      .from('service_manager_fixes')
-      .insert({
-        scan_id: scanId,
-        issue_index: idx,
-        file_path: claudeResult.file_path,
-        proposed_diff: claudeResult.proposed_diff,
-        classification: finalClassification,
-        status: finalClassification === 'rejected' ? 'rejected' : 'proposed',
-        claude_reasoning: finalReasoning,
-        rejection_reason: finalClassification === 'rejected' ? finalReasoning : null,
-      })
-      .select('id, status, classification')
-      .single();
+  // Step 2: for hver service — hent 2 seneste probes og tjek for 2× down
+  const downServices: Array<{ serviceId: string; lastDetail: string | null }> = [];
+  interface ProbeRow {
+    service_id: string;
+    is_down: boolean;
+    detail: string | null;
+    probed_at: string;
+  }
+  for (const svc of serviceIds) {
+    try {
+      const { data } = await (
+        admin as unknown as {
+          from: (t: string) => {
+            select: (c: string) => {
+              eq: (
+                k: string,
+                v: string
+              ) => {
+                order: (
+                  col: string,
+                  opts: { ascending: boolean }
+                ) => {
+                  limit: (n: number) => Promise<{ data: ProbeRow[] | null; error: unknown }>;
+                };
+              };
+            };
+          };
+        }
+      )
+        .from('service_probe_history')
+        .select('service_id, is_down, detail, probed_at')
+        .eq('service_id', svc)
+        .order('probed_at', { ascending: false })
+        .limit(2);
+      const rows = data ?? [];
+      if (rows.length >= 2 && rows[0].is_down && rows[1].is_down) {
+        downServices.push({ serviceId: svc, lastDetail: rows[0].detail });
+      }
+    } catch {
+      // Best-effort — enkelt service's historik-fejl afbryder ikke resten.
+    }
+  }
 
-    if (fixInsertErr || !fixData) {
-      logger.error('[service-scan] Kunne ikke gemme fix-forslag:', fixInsertErr?.message);
+  if (downServices.length === 0) return 0;
+
+  // Step 3: dedup mod seneste 4t scans (samme mønster som cron_failure)
+  const fourHoursAgo = new Date(now.getTime() - 4 * 60 * 60 * 1000).toISOString();
+  const { data: recentScans } = await admin
+    .from('service_manager_scans')
+    .select('summary')
+    .eq('scan_type', 'infra_down' as never)
+    .gte('created_at', fourHoursAgo);
+  const alreadyScanned = new Set<string>();
+  for (const s of recentScans ?? []) {
+    const summaryStr = (s as { summary?: string }).summary ?? '';
+    const m = summaryStr.match(/\[infra_down\]\s+([\w-]+):/);
+    if (m) alreadyScanned.add(m[1]);
+  }
+
+  let created = 0;
+  for (const d of downServices) {
+    if (alreadyScanned.has(d.serviceId)) continue;
+    const issue = {
+      type: 'infra_outage',
+      severity: 'error',
+      message: `Infra-service '${d.serviceId}' er nede`,
+      source: 'service_probe',
+      context: `2 konsekutive probe-fejl. Seneste detail: ${d.lastDetail ?? 'ukendt'}`,
+    };
+    const summary = `[infra_down] ${d.serviceId}: 2 konsekutive probe-fejl`;
+    const { error } = await admin.from('service_manager_scans').insert({
+      scan_type: 'infra_down',
+      status: 'completed',
+      triggered_by: null,
+      issues_found: [issue],
+      summary,
+    });
+    if (error) {
+      logger.error(`[service-scan] Kunne ikke oprette infra_down for ${d.serviceId}:`, error);
       continue;
     }
-
-    fixResults.push({
-      issueIndex: idx,
-      fixId: fixData.id as string,
-      classification: finalClassification,
-    });
-
-    await logActivity('auto_fix_proposed', {
-      fix_id: fixData.id,
-      scan_id: scanId,
-      issue_index: idx,
-      issue_type: issue.type,
-      file_path: claudeResult.file_path,
-      classification: finalClassification,
-      lines_changed: claudeResult.proposed_diff ? countChangedLines(claudeResult.proposed_diff) : 0,
-      triggered_by: 'cron',
-    });
-
-    if (finalClassification !== 'rejected') {
-      proposedFixCount++;
-    }
+    created++;
   }
 
-  // ── 4. Send immediate critical alerts for high-severity issues ───────────
-  // These fire before the general alert email so critical failures get
-  // dedicated, immediately-actionable notifications with their own subject line.
-  const criticalIssues = errorIssues.filter((issue) =>
-    isCriticalIssue(issue.type, issue.message, issue.context)
-  );
-
-  for (const critical of criticalIssues) {
-    await sendCriticalAlert({
-      description: critical.message,
-      affectedPath: critical.context?.includes('Funktion: ')
-        ? critical.context.replace('Funktion: ', '')
-        : undefined,
-      scanId,
-      issueType: critical.type,
-      context: critical.context,
-      detectedAt: now,
-    });
-  }
-
-  // ── 5. Send general alert email if any error issues were found ────────────
-  if (errorIssues.length > 0) {
-    await sendAlertEmail(issues, scanId, proposedFixCount, now);
-  }
-
-  logger.log(
-    `[service-scan] Done: ${issues.length} issues, ${errorIssues.length} errors, ${proposedFixCount} fixes proposed`
-  );
-
-  // BIZZ-305: Record heartbeat for watchdog monitoring
-  const durationMs = Date.now() - now.getTime();
-  recordHeartbeat('service-scan', 'success', durationMs, 60);
-
-  return NextResponse.json({
-    ok: true,
-    scanId,
-    issueCount: issues.length,
-    errorCount: errorIssues.length,
-    warningCount: issues.filter((i) => i.severity === 'warning').length,
-    fixesProposed: proposedFixCount,
-    fixes: fixResults,
-    summary,
-  });
+  return created;
 }

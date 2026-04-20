@@ -1,0 +1,20 @@
+import { chromium } from 'playwright';
+import { config as loadDotenv } from 'dotenv';
+loadDotenv({ path: '/root/BizzAssist/.env.local' });
+const browser = await chromium.launch({ headless: true });
+const context = await browser.newContext({ ignoreHTTPSErrors: true });
+const page = await context.newPage();
+await page.goto('https://test.bizzassist.dk/login');
+await page.waitForLoadState('domcontentloaded');
+const c = page.getByRole('button', { name: /Acceptér|Accepter/i });
+if (await c.isVisible({ timeout: 2000 }).catch(() => false)) await c.click();
+await page.getByPlaceholder('navn@virksomhed.dk').fill(process.env.E2E_TEST_EMAIL);
+await page.getByPlaceholder('••••••••').fill(process.env.E2E_TEST_PASS);
+await page.getByRole('button', { name: /Log ind/i }).click();
+await page.waitForURL(/\/(dashboard|onboarding)/, { timeout: 30000 });
+const r = await page.evaluate(async () => {
+  const res = await fetch('/api/admin/cron-status', { credentials: 'include' });
+  return { status: res.status, body: (await res.text()).slice(0, 300) };
+});
+console.log(`/api/admin/cron-status: HTTP ${r.status} — ${r.body}`);
+await browser.close();

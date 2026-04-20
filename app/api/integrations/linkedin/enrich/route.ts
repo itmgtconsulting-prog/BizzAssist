@@ -25,6 +25,7 @@ import { resolveTenantId } from '@/lib/api/auth';
 import { tenantDb } from '@/lib/supabase/admin';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { parseBody } from '@/app/lib/validate';
+import { logger } from '@/app/lib/logger';
 
 /** Zod schema for POST /api/integrations/linkedin/enrich request body */
 const linkedinEnrichSchema = z
@@ -76,46 +77,53 @@ function _isEnrichRequest(value: unknown): value is EnrichRequest {
 export async function POST(
   request: NextRequest
 ): Promise<NextResponse<EnrichUnavailableResponse | { error: string }>> {
-  const limited = await checkRateLimit(request, rateLimit);
-  if (limited) return limited as NextResponse<EnrichUnavailableResponse | { error: string }>;
+  // BIZZ-598: Wrap i try/catch så Supabase-fejl ikke kaskader rå stack-trace
+  // til klienten. Logger intern fejl og returnerer generisk 500.
+  try {
+    const limited = await checkRateLimit(request, rateLimit);
+    if (limited) return limited as NextResponse<EnrichUnavailableResponse | { error: string }>;
 
-  const auth = await resolveTenantId();
-  if (!auth) return NextResponse.json({ error: 'Unauthenticated' }, { status: 401 });
+    const auth = await resolveTenantId();
+    if (!auth) return NextResponse.json({ error: 'Unauthenticated' }, { status: 401 });
 
-  // Parse and validate request body
-  const parsed = await parseBody(request, linkedinEnrichSchema);
-  if (!parsed.success)
-    return parsed.response as NextResponse<EnrichUnavailableResponse | { error: string }>;
-  const body = parsed.data;
+    // Parse and validate request body
+    const parsed = await parseBody(request, linkedinEnrichSchema);
+    if (!parsed.success)
+      return parsed.response as NextResponse<EnrichUnavailableResponse | { error: string }>;
+    const body = parsed.data;
 
-  const { tenantId, userId } = auth;
-  // Verify user has LinkedIn connected
-  const { data: integration } = await tenantDb(tenantId)
-    .from('email_integrations')
-    .select('id')
-    .eq('user_id', userId)
-    .eq('provider', 'linkedin')
-    .maybeSingle();
+    const { tenantId, userId } = auth;
+    // Verify user has LinkedIn connected
+    const { data: integration } = await tenantDb(tenantId)
+      .from('email_integrations')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('provider', 'linkedin')
+      .maybeSingle();
 
-  if (!integration) {
-    return NextResponse.json(
-      { error: 'LinkedIn er ikke forbundet. Forbind din LinkedIn-konto under Indstillinger.' },
-      { status: 403 }
-    );
+    if (!integration) {
+      return NextResponse.json(
+        { error: 'LinkedIn er ikke forbundet. Forbind din LinkedIn-konto under Indstillinger.' },
+        { status: 403 }
+      );
+    }
+
+    // ── Temporary stub until LinkedIn Partner Program is approved ─────────────
+    // LinkedIn's people search API requires Partner Program membership.
+    // Standard OAuth apps receive 403 on /v2/search/blended and similar endpoints.
+    // The search URL below lets users manually search LinkedIn with the person's name.
+    const personName = body.personName ?? '';
+    const linkedinSearchUrl = `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(personName)}`;
+
+    return NextResponse.json({
+      available: false,
+      message:
+        'LinkedIn profil-berigelse kræver LinkedIn Partner Program adgang. Søg manuelt via LinkedIn.',
+      linkedinSearchUrl,
+      partnerProgramUrl: 'https://developer.linkedin.com/partner-programs/search',
+    });
+  } catch (err) {
+    logger.error('[linkedin/enrich] Uventet fejl:', err);
+    return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
   }
-
-  // ── Temporary stub until LinkedIn Partner Program is approved ─────────────
-  // LinkedIn's people search API requires Partner Program membership.
-  // Standard OAuth apps receive 403 on /v2/search/blended and similar endpoints.
-  // The search URL below lets users manually search LinkedIn with the person's name.
-  const personName = body.personName ?? '';
-  const linkedinSearchUrl = `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(personName)}`;
-
-  return NextResponse.json({
-    available: false,
-    message:
-      'LinkedIn profil-berigelse kræver LinkedIn Partner Program adgang. Søg manuelt via LinkedIn.',
-    linkedinSearchUrl,
-    partnerProgramUrl: 'https://developer.linkedin.com/partner-programs/search',
-  });
 }

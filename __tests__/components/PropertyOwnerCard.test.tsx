@@ -126,14 +126,20 @@ describe('PropertyOwnerCard', () => {
     expect(link.getAttribute('aria-label')).toMatch(/^View details for /);
   });
 
-  it('renders no-detail fallback message when dawaId is null', () => {
+  // BIZZ-626: "DAWA-id mangler"-badge er fjernet — teknisk state der ikke
+  // var meningsfuld for brugeren. Kort uden dawaId renderes som ikke-klikbart
+  // (ingen Link-wrapper) og tests verificerer nu den egenskab i stedet.
+  it('renders as non-clickable when dawaId is null (DA)', () => {
     render(<PropertyOwnerCard ejendom={ejendomNoDawaId} lang="da" />);
-    expect(screen.getByText(/DAWA-id mangler/)).toBeInTheDocument();
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
+    // BIZZ-626: Den tekniske "DAWA-id mangler"-besked er fjernet
+    expect(screen.queryByText(/DAWA-id mangler/)).not.toBeInTheDocument();
   });
 
-  it('renders no-detail fallback in English when lang=en and dawaId is null', () => {
+  it('renders as non-clickable when dawaId is null (EN)', () => {
     render(<PropertyOwnerCard ejendom={ejendomNoDawaId} lang="en" />);
-    expect(screen.getByText(/DAWA id missing/)).toBeInTheDocument();
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
+    expect(screen.queryByText(/DAWA id missing/)).not.toBeInTheDocument();
   });
 
   it('does NOT render ejer-CVR section when showOwner is false (default)', () => {

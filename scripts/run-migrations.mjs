@@ -1,123 +1,68 @@
 /**
- * Migration runner for BizzAssist Supabase database.
+ * Kør manglende migrations på Supabase-miljø via Management API.
+ * Kører via fetch til /v1/projects/{ref}/database/query endpoint.
  *
- * Uses the Supabase Management API to execute SQL directly —
- * no direct database connection or IPv4 add-on required.
- *
- * Reads all .sql files from supabase/migrations/ in lexicographic
- * order (001_, 002_, …) and applies each one individually.
- * Skips ALL_MIGRATIONS.sql (the combined convenience file).
- *
- * Usage:
- *   node scripts/run-migrations.mjs              # run all pending
- *   node scripts/run-migrations.mjs 005          # run a specific file
- *
- * Prerequisites:
- *   SUPABASE_ACCESS_TOKEN in .env.local
- *   NEXT_PUBLIC_SUPABASE_URL   in .env.local
+ * Idempotent — hver migration bruger IF NOT EXISTS / DO-blocks.
  */
+import fs from 'node:fs';
+const token = process.env.SUPABASE_ACCESS_TOKEN;
 
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+// BIZZ-644: 040 + 043 er tenant-skema-skabeloner der refererer en literal
+// 'tenant' schema (kun til stede på dev). Test/prod bruger tenant_<id>-
+// pattern via provision_tenant_schema. Migration 051 backfiller tenant-
+// scoped tabeller til alle eksisterende tenant_*-schemaer via ny
+// provision_tenant_ai_tables-helper og sikrer nye tenants også får dem.
+const envs = {
+  dev: { ref: 'wkzwxfhyfmvglrqtmebw', migrations: ['040', '041', '042', '043', '045', '046', '047', '049', '050', '051'] },
+  test: { ref: 'rlkjmqjxmkxuclehbrnl', migrations: ['041', '042', '045', '049', '050', '051'] },
+  prod: { ref: 'xsyldjqcntiygrtfcszm', migrations: ['041', '042', '045', '049', '050', '051'] },
+};
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const projectRoot = path.resolve(__dirname, '..');
+const migrationFiles = {
+  '040': '040_ai_feedback_log.sql',
+  '041': '041_cron_heartbeats.sql',
+  '042': '042_consent_log.sql',
+  '043': '043_notification_preferences.sql',
+  '045': '045_plan_configs_payment_grace.sql',
+  '046': '046_ejf_ejerskab_bulk.sql',
+  '047': '047_ejf_ejerskab_id_text.sql',
+  '049': '049_plan_configs_admin_write_rls.sql',
+  '050': '050_service_manager_scan_types_extended.sql',
+  '051': '051_tenant_ai_feedback_notification_backfill.sql',
+};
 
-// ── Load .env.local ──────────────────────────────────────────
-
-const envLines = fs.readFileSync(path.join(projectRoot, '.env.local'), 'utf8').split('\n');
-const env = {};
-for (const line of envLines) {
-  const trimmed = line.trim();
-  if (!trimmed || trimmed.startsWith('#')) continue;
-  const idx = trimmed.indexOf('=');
-  if (idx === -1) continue;
-  env[trimmed.slice(0, idx).trim()] = trimmed.slice(idx + 1).trim();
-}
-
-const accessToken = env['SUPABASE_ACCESS_TOKEN'];
-const supabaseUrl = env['NEXT_PUBLIC_SUPABASE_URL'];
-
-if (!accessToken) {
-  console.error('ERROR: SUPABASE_ACCESS_TOKEN not found in .env.local');
-  console.error('  Get one at: https://supabase.com/dashboard/account/tokens');
-  process.exit(1);
-}
-
-// Extract project ref from URL  (https://xyzabc.supabase.co → xyzabc)
-const projectRef = supabaseUrl?.match(/https:\/\/([^.]+)\.supabase\.co/)?.[1];
-if (!projectRef) {
-  console.error('ERROR: Could not parse project ref from NEXT_PUBLIC_SUPABASE_URL');
-  process.exit(1);
-}
-
-const apiBase = `https://api.supabase.com/v1/projects/${projectRef}/database/query`;
-const headers = { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' };
-
-// ── SQL executor ─────────────────────────────────────────────
-
-/**
- * Executes a SQL string against the Supabase project via Management API.
- *
- * @param {string} sql - The SQL to execute
- * @returns {{ ok: boolean, data: unknown, error: string|null }}
- */
-async function execSQL(sql) {
-  const res = await fetch(apiBase, {
+async function runQuery(ref, sql) {
+  const r = await fetch(`https://api.supabase.com/v1/projects/${ref}/database/query`, {
     method: 'POST',
-    headers,
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ query: sql }),
   });
-  const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
-
-  if (res.status >= 400) {
-    const msg = data?.message || data?.error || JSON.stringify(data);
-    return { ok: false, data, error: msg };
-  }
-  return { ok: true, data, error: null };
+  const body = await r.text();
+  return { status: r.status, body };
 }
 
-// ── Collect migration files ──────────────────────────────────
-
-const migrationsDir = path.join(projectRoot, 'supabase', 'migrations');
-const filter = process.argv[2]; // optional: '005' to run only files matching
-
-const files = fs
-  .readdirSync(migrationsDir)
-  .filter((f) => f.endsWith('.sql') && !f.startsWith('ALL_'))
-  .filter((f) => !filter || f.includes(filter))
-  .sort();
-
-if (files.length === 0) {
-  console.log(filter ? `No migration files matching "${filter}"` : 'No migration files found.');
-  process.exit(0);
+const targetEnv = process.argv[2];
+if (!targetEnv || !envs[targetEnv]) {
+  console.error('Usage: node run-migrations.mjs <dev|test|prod>');
+  process.exit(1);
 }
 
-console.log(`Project: ${projectRef}`);
-console.log(`Running ${files.length} migration(s):\n`);
+const { ref, migrations } = envs[targetEnv];
+console.log(`\n=== Running migrations on ${targetEnv} (${ref}) ===\n`);
 
-// ── Run each migration ───────────────────────────────────────
-
-let passed = 0;
-let failed = 0;
-
-for (const file of files) {
-  const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf8');
-  process.stdout.write(`  ${file} ... `);
-
-  const { ok, error } = await execSQL(sql);
-
-  if (ok) {
-    console.log('✓');
-    passed++;
+for (const mig of migrations) {
+  const file = migrationFiles[mig];
+  if (!file) continue;
+  const sql = fs.readFileSync(`supabase/migrations/${file}`, 'utf8');
+  console.log(`📦 ${file} (${sql.length} bytes)`);
+  const result = await runQuery(ref, sql);
+  if (result.status === 201 || result.status === 200) {
+    console.log(`   ✅ OK (HTTP ${result.status})`);
   } else {
-    console.log('✗ FAILED');
-    console.error(`    ${error}\n`);
-    failed++;
+    console.log(`   ❌ HTTP ${result.status}`);
+    console.log(`   body: ${result.body.slice(0, 400)}`);
+    process.exit(1);
   }
 }
 
-console.log(`\n${passed} passed, ${failed} failed.`);
-if (failed > 0) process.exit(1);
+console.log(`\n✅ Alle migrations kørt på ${targetEnv}`);

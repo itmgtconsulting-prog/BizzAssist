@@ -76,6 +76,12 @@ export interface EjendomSummary {
   aktiv?: boolean;
   /** BIZZ-455: Dato hvor CVR ophørte som ejer (ISO-dato) — kun for solgte */
   solgtDato?: string | null;
+  /**
+   * BIZZ-634: Dato hvor den queried CVR/person blev ejer (virkningFra fra
+   * EJF). Bruges af enrich-batch til at udvælge ejer-specifik købs-handel
+   * på historiske ejendomme (undgår at vise næste ejers købspris).
+   */
+  ownerBuyDate?: string | null;
   /** BIZZ-397: Progressive enrichment fields — populated client-side after initial load */
   /** Bygningsareal i m² fra BBR */
   areal?: number | null;
@@ -279,9 +285,16 @@ async function hentBfeByCvr(
 async function hentBfeByPerson(
   enhedsNummer: number,
   token: string
-): Promise<{ bfeNumre: number[]; authError: boolean } | null> {
+): Promise<{
+  bfeNumre: number[];
+  ejerandelByBfe: Map<number, string>;
+  authError: boolean;
+} | null> {
   const virkningstid = new Date().toISOString();
 
+  // BIZZ-597 Fase 1: Hent ejerandel-brøk så person-query er symmetrisk med
+  // CVR-query (tidligere returnerede person-pathen kun bfeNumre[] — det gav
+  // forkert 100%-ejerskab på kort hvor personen kun ejer 50% fx Søbyvej 11).
   const query = `{
     EJFCustom_EjerskabBegraenset(
       first: 500
@@ -293,6 +306,8 @@ async function hentBfeByPerson(
       nodes {
         bestemtFastEjendomBFENr
         virkningFra
+        faktiskEjerandel_taeller
+        faktiskEjerandel_naevner
       }
     }
   }`;
@@ -312,7 +327,7 @@ async function hentBfeByPerson(
       next: { revalidate: 300 },
     });
 
-    if (res.status === 403) return { bfeNumre: [], authError: true };
+    if (res.status === 403) return { bfeNumre: [], ejerandelByBfe: new Map(), authError: true };
     if (!res.ok) return null;
 
     const json = (await res.json()) as GqlResult<RawEjerskab>;
@@ -321,14 +336,28 @@ async function hentBfeByPerson(
       json.errors?.some(
         (e) => e.extensions?.code === 'DAF-AUTH-0001' || e.message?.includes('not authorized')
       ) ?? false;
-    if (authError) return { bfeNumre: [], authError: true };
+    if (authError) return { bfeNumre: [], ejerandelByBfe: new Map(), authError: true };
 
     const nodes = json.data?.EJFCustom_EjerskabBegraenset?.nodes ?? [];
     const bfeNumre = nodes
       .map((n) => n.bestemtFastEjendomBFENr)
       .filter((b): b is number => b != null);
 
-    return { bfeNumre, authError: false };
+    // BIZZ-597 Fase 1: Byg map af BFE → ejerandel-streng ("50%", "100%").
+    // Samme logik som hentBfeByCvr bruger, så downstream konsumenter kan
+    // behandle person- og CVR-resultater identisk.
+    const ejerandelByBfe = new Map<number, string>();
+    for (const n of nodes) {
+      if (n.bestemtFastEjendomBFENr == null) continue;
+      const t = n.faktiskEjerandel_taeller;
+      const nav = n.faktiskEjerandel_naevner;
+      if (t != null && nav != null && nav > 0) {
+        const pct = Math.round((t / nav) * 100);
+        ejerandelByBfe.set(n.bestemtFastEjendomBFENr, `${pct}%`);
+      }
+    }
+
+    return { bfeNumre, ejerandelByBfe, authError: false };
   } catch {
     return null;
   }
@@ -938,6 +967,12 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
           bfeTilCvr.set(bfe, `person-${enhedsNumre[i]}`);
         }
       }
+      // BIZZ-597 Fase 1: Merge person-ejerandel (symmetrisk med CVR-pathen).
+      // Tidligere blev person-ejendomme vist med hardcoded 100% i UI fordi
+      // ejerandel ikke blev hentet her.
+      for (const [bfe, andel] of result.ejerandelByBfe) {
+        if (!bfeTilEjerandel.has(bfe)) bfeTilEjerandel.set(bfe, andel);
+      }
     }
 
     /* ── Verificér aktivt ejerskab — markér solgte ejendomme ──
@@ -947,6 +982,8 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
      * beholder den i listen så UI'et kan vise fold-ud med tidligere ejendomme. */
     const aktivByBfe = new Map<number, boolean>();
     const solgtDatoByBfe = new Map<number, string | null>();
+    // BIZZ-634: EJF virkningFra for den queried CVR — ejerens købs-dato.
+    const ownerBuyDateByBfe = new Map<number, string | null>();
     if (cvrNumre.length > 0) {
       const queriedCvrSet = new Set(cvrNumre);
       const bfeList = [...bfeTilCvr.keys()];
@@ -1004,6 +1041,15 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
               const actualCvr = currentOwnerInList.ejendeVirksomhedCVRNr;
               bfeTilCvr.set(bfe, String(actualCvr).padStart(8, '0'));
               aktivByBfe.set(bfe, true);
+              // BIZZ-634: Gem ownerBuyDate for den aktuelle ejer (virkningFra
+              // på det nyeste ejerskab hvor deres CVR optræder).
+              const actualCvrDates = nodes
+                .filter((n) => n.ejendeVirksomhedCVRNr === actualCvr)
+                .map((n) => n.virkningFra)
+                .filter((v): v is string => !!v)
+                .sort();
+              const latestBuy = actualCvrDates[actualCvrDates.length - 1] ?? null;
+              if (latestBuy) ownerBuyDateByBfe.set(bfe, latestBuy);
             } else {
               // No queried CVR is the current owner → property was sold externally
               aktivByBfe.set(bfe, false);
@@ -1019,6 +1065,11 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
                 bfe,
                 soldDate && soldDate !== Infinity ? new Date(soldDate).toISOString() : null
               );
+              // BIZZ-634: Ejerens købs-dato = virkningFra på deres seneste
+              // aktive ejerskab FØR soldDate.
+              if (ourLastDate > 0) {
+                ownerBuyDateByBfe.set(bfe, new Date(ourLastDate).toISOString());
+              }
             }
           })
         );
@@ -1062,6 +1113,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
       ejerandel: bfeTilEjerandel.get(bfe) ?? null,
       aktiv: aktivByBfe.get(bfe) ?? true,
       solgtDato: solgtDatoByBfe.get(bfe) ?? null,
+      ownerBuyDate: ownerBuyDateByBfe.get(bfe) ?? null,
     }));
 
     /* Sortér: adresser først, derefter BFE-numre */

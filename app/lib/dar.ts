@@ -374,6 +374,77 @@ function parseAdresseBetegnelse(betegnelse: string): {
  * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 
 /**
+ * BIZZ-606: Normaliser initial-forkortelser så bruger-input "HC", "H.C."
+ * og "H. C." alle matcher DAWA's officielle form "H C" (space-separated
+ * uden punktummer).
+ *
+ * Detekterer runs af 2-3 på hinanden følgende enkeltbogstavs-initialer
+ * (eventuelt separeret af punktummer/mellemrum) efterfulgt af et proper-
+ * noun-ord (≥3 bogstaver) og producerer stavevarianter. Eksempler:
+ *   "HC Møllersvej"    → + "H C Møllersvej", "H.C. Møllersvej"
+ *   "H.C. Møllersvej"  → + "HC Møllersvej", "H C Møllersvej"
+ *   "A.P. Møllers"     → + "AP Møllers", "A P Møllers"
+ *
+ * Eksporteret for unit-test; bruges internt af darAutocomplete.
+ *
+ * @param s - Input-streng (case bevares — varianter respekterer input)
+ * @returns Liste af stavevarianter (inkl. original)
+ */
+export function expandInitials(s: string): string[] {
+  const results = new Set<string>([s]);
+  // Efterfølgende ord skal have ≥3 bogstaver (rigtigt gadenavn) for at
+  // undgå falske positive som "min gade" (2-3 + kort ord).
+  // Bruger lookbehind i stedet for \b fordi \b i JS-regex kun genkender
+  // ASCII-bogstaver som word-chars — Æ/Ø/Å ville ellers ikke give ordgrænse.
+  const wordBoundary = '(?<![A-Za-zÆØÅæøå])';
+  const streetLookahead = '(?=[A-Za-zÆØÅæøå]{3,})';
+  const patterns: RegExp[] = [
+    // Dotted — hver initial SKAL efterfølges af punktum. Fx "H.C. Møllersvej"
+    // eller "H.C.Møllersvej". Tillader 2-3 initial-positioner.
+    new RegExp(
+      `${wordBoundary}([A-Za-zÆØÅæøå]\\.(?:\\s?[A-Za-zÆØÅæøå]\\.){1,2}\\s?)${streetLookahead}`,
+      'g'
+    ),
+    // Space-separeret — "H C " / "h c " (enkelt-bogstav + mellemrum, gentaget)
+    new RegExp(`${wordBoundary}((?:[A-Za-zÆØÅæøå] ){1,2}[A-Za-zÆØÅæøå] )${streetLookahead}`, 'g'),
+    // Kompakt 2-3 uppercase + mellemrum — "HC Mølle" / "APM Gade"
+    new RegExp(`${wordBoundary}([A-ZÆØÅ]{2,3} )${streetLookahead}`, 'g'),
+  ];
+  const matches: { match: string; start: number; end: number }[] = [];
+  for (const re of patterns) {
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(s)) !== null) {
+      const letters = m[1].replace(/[.\s]/g, '');
+      if (letters.length < 2 || letters.length > 3) continue;
+      // Skip overlap med allerede fundne matches (flere patterns kan ramme
+      // samme span, fx "H C Møllersvej" match'er både pattern 2 og 3)
+      if (matches.some((x) => x.start < m!.index + m![1].length && x.end > m!.index)) continue;
+      matches.push({ match: m[1], start: m.index, end: m.index + m[1].length });
+    }
+  }
+  if (matches.length === 0) return [...results];
+
+  // Uppercase initial-bogstaverne — danske adresser bruger altid store
+  // initialer, så lowercase-input "hc" skal match'e "H C" i DAWA.
+  const stripInitials = (raw: string): string => raw.replace(/[.\s]/g, '').toUpperCase();
+  const rebuild = (formatter: (letters: string) => string): string => {
+    let out = '';
+    let cursor = 0;
+    for (const { match, start, end } of matches) {
+      out += s.slice(cursor, start);
+      out += formatter(stripInitials(match));
+      cursor = end;
+    }
+    out += s.slice(cursor);
+    return out.replace(/ +/g, ' ').trim();
+  };
+  results.add(rebuild((ls) => ls + ' '));
+  results.add(rebuild((ls) => ls.split('').join(' ') + ' '));
+  results.add(rebuild((ls) => ls.split('').join('.') + '. '));
+  return [...results].map((v) => v.trim()).filter((v) => v.length > 0);
+}
+
+/**
  * Henter adresse-autocomplete-forslag fra DAR (Datafordeler GraphQL).
  * Returnerer op til 8 resultater matchende søgestrengen.
  *
@@ -447,16 +518,33 @@ export async function darAutocomplete(q: string): Promise<DawaAutocompleteResult
     return [...results];
   }
 
-  // Build base variants (case), then expand each with diacritics
-  const baseVariants = [...new Set([escaped, titleCase, firstUpper, hnUpperCase])];
-  const allVariants = new Set<string>();
+  // BIZZ-606: Ekstra base-variant hvor 2-3 lowercase-bogstaver i starten
+  // uppercase'es til initial-form ("hc møllersvej" → "HC møllersvej").
+  // Dette samarbejder med expandInitials' uppercase-pattern så variation
+  // "HC/H C/H.C." også genereres for lowercase-input.
+  const lowerPrefixUpper = (() => {
+    const mx = trimmed.match(/^([a-zæøå]{2,3})(\s)/);
+    if (!mx) return trimmed;
+    return mx[1].toUpperCase() + mx[2] + trimmed.slice(mx[0].length);
+  })();
+
+  // Build base variants (case), expand initials, then expand each with diacritics
+  const baseVariants = [
+    ...new Set([escaped, titleCase, firstUpper, hnUpperCase, lowerPrefixUpper]),
+  ];
+  const initialsExpanded = new Set<string>();
   for (const base of baseVariants) {
+    for (const v of expandInitials(base)) initialsExpanded.add(v);
+  }
+  const allVariants = new Set<string>();
+  for (const base of initialsExpanded) {
     for (const expanded of expandDiacritics(base)) {
       allVariants.add(expanded.replace(/"/g, '\\"'));
     }
   }
-  // Cap at 10 variants to avoid excessive API calls
-  const variants = [...allVariants].slice(0, 10);
+  // Cap at 12 variants to avoid excessive API calls (was 10 — initial expansion
+  // adds up to 3 extra variants per initial-run, so slight bump is reasonable)
+  const variants = [...allVariants].slice(0, 12);
 
   try {
     // Kør queries for alle case-varianter parallelt

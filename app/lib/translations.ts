@@ -268,6 +268,13 @@ export const translations = {
         'AI-assistenten er ikke inkluderet i dit abonnement. Opgrader til Professionel eller Enterprise for at bruge AI.',
       tokensExhausted:
         'Du har brugt alle dine AI-tokens denne måned ({used} / {limit}). Kontakt en administrator for at få tildelt ekstra tokens, eller vent til næste måned.',
+      // BIZZ-642: Trial-gate fra /api/ai/chat (402 trial_ai_blocked)
+      trialBlockedTitle: 'AI-tokens låst under gratis-prøveperiode',
+      trialBlockedBody:
+        'Under gratis-prøveperiode er plan-tokens låst. Køb en token-pakke for at bruge AI-assistenten nu — eller vent til dit abonnement aktiveres.',
+      trialBlockedBuyCta: 'Køb token-pakke',
+      trialBlockedUpgradeCta: 'Opgrader plan',
+      topUpBalance: 'Du har {amount} tokens tilbage fra din token-pakke.',
       contextProperty: 'Ejendomsside for DAWA-adresse {id}',
       contextMap: 'Kortvisning (fuldt kort)',
       contextPropertySearch: 'Ejendomsoversigt (søgning)',
@@ -859,6 +866,13 @@ export const translations = {
         'The AI assistant is not included in your subscription. Upgrade to Professional or Enterprise to use AI.',
       tokensExhausted:
         'You have used all your AI tokens this month ({used} / {limit}). Contact an administrator for extra tokens, or wait until next month.',
+      // BIZZ-642: Trial-gate fra /api/ai/chat (402 trial_ai_blocked)
+      trialBlockedTitle: 'AI tokens locked during free trial',
+      trialBlockedBody:
+        'During the free trial, plan tokens are locked. Buy a token pack to use the AI assistant now — or wait until your subscription activates.',
+      trialBlockedBuyCta: 'Buy token pack',
+      trialBlockedUpgradeCta: 'Upgrade plan',
+      topUpBalance: 'You have {amount} tokens left from your token pack.',
       contextProperty: 'Property page for DAWA address {id}',
       contextMap: 'Map view (full map)',
       contextPropertySearch: 'Property overview (search)',

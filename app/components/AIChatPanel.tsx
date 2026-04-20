@@ -12,7 +12,17 @@
 
 import { useState, useRef, useEffect, useCallback, memo } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { Send, Bot, Sparkles, Square, Maximize2, X, Plus } from 'lucide-react';
+import {
+  Send,
+  Bot,
+  Sparkles,
+  Square,
+  Maximize2,
+  X,
+  Plus,
+  CreditCard,
+  AlertTriangle,
+} from 'lucide-react';
 import MarkdownContent from '@/app/components/MarkdownContent';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';
@@ -66,6 +76,12 @@ function AIChatPanel() {
   const [toolStatus, setToolStatus] = useState('');
   /** Token usage state — refreshed after each AI response */
   const [tokenInfo, setTokenInfo] = useState<{ used: number; limit: number } | null>(null);
+  /**
+   * BIZZ-642: Trial-gate banner. Sættes når /api/ai/chat returnerer 402 med
+   * code='trial_ai_blocked' — brugeren er i free trial uden token-pakke.
+   * Nul = ingen banner. Når sat, rendres CTA-banner øverst i chat-panelet.
+   */
+  const [trialBlocked, setTrialBlocked] = useState<{ message: string } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   /** AbortController for at kunne stoppe streaming */
@@ -347,6 +363,18 @@ function AIChatPanel() {
       // ── Ikke-streaming fejl (manglende API-nøgle etc.) ──
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: a.serverError }));
+        // BIZZ-642: Trial-gate — vis dedikeret banner med købs-CTA i stedet
+        // for generisk fejl-besked. Brugeren har en fair action (køb
+        // token-pakke) som løser blokeringen med det samme.
+        if (res.status === 402 && err.code === 'trial_ai_blocked') {
+          setTrialBlocked({ message: err.error ?? a.trialBlockedBody });
+          setIsLoading(false);
+          // Fjern den optimistisk-tilføjede user-besked fra UI fordi den
+          // ikke blev besvaret — brugeren kan prøve igen efter køb.
+          setMessages((prev) => prev.slice(0, -1));
+          chatCtx.setMessages(newMessages.slice(0, -1));
+          return;
+        }
         setMessages((prev) => [
           ...prev,
           { role: 'assistant', content: err.error ?? a.genericError },
@@ -354,6 +382,8 @@ function AIChatPanel() {
         setIsLoading(false);
         return;
       }
+      // Ryd banner ved vellykket respons (fx efter bruger har købt pakke)
+      setTrialBlocked(null);
 
       // ── Parse SSE stream ──
       const reader = res.body?.getReader();
@@ -599,6 +629,54 @@ function AIChatPanel() {
               </Wrapper>
             );
           })()}
+        {/* BIZZ-642: Trial-gate banner — vises når /api/ai/chat returnerer
+            402 trial_ai_blocked. Dedikeret CTA lader brugeren købe en
+            token-pakke uden at forlade chat-konteksten. */}
+        {trialBlocked && (
+          <div className="mx-4 mb-2 flex items-start gap-3 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2.5">
+            <AlertTriangle size={14} className="text-amber-400 shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="text-amber-300 text-xs font-semibold mb-0.5">{a.trialBlockedTitle}</p>
+              <p className="text-amber-400/80 text-[11px] leading-relaxed mb-2">
+                {trialBlocked.message}
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  onClick={() => router.push('/dashboard/tokens')}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 text-[11px] font-medium transition-colors"
+                >
+                  <CreditCard size={11} />
+                  {a.trialBlockedBuyCta}
+                </button>
+                <button
+                  onClick={() => router.push('/dashboard/settings/billing')}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-slate-700/40 hover:bg-slate-700/60 text-slate-300 text-[11px] transition-colors"
+                >
+                  {a.trialBlockedUpgradeCta}
+                </button>
+              </div>
+            </div>
+            <button
+              onClick={() => setTrialBlocked(null)}
+              className="text-amber-400/60 hover:text-amber-400 shrink-0 p-0.5"
+              aria-label={lang === 'da' ? 'Luk banner' : 'Close banner'}
+            >
+              <X size={12} />
+            </button>
+          </div>
+        )}
+
+        {/* BIZZ-642: Vis top-up-balance når bruger har købt token-pakke,
+            så de kan se præcis hvor mange tokens der er tilbage. */}
+        {ctxSub?.topUpTokens != null && ctxSub.topUpTokens > 0 && (
+          <p className="px-4 pb-2 text-[10px] text-emerald-400/80">
+            {a.topUpBalance.replace(
+              '{amount}',
+              ctxSub.topUpTokens.toLocaleString(lang === 'da' ? 'da-DK' : 'en-GB')
+            )}
+          </p>
+        )}
+
         {/* AI disclaimer */}
         <p className="px-4 pb-2 text-xs text-slate-500">
           ⚠️ Svar genereret af AI er ikke nødvendigvis korrekte. Verificér altid vigtig information.

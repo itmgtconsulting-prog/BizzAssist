@@ -721,7 +721,6 @@ export async function fetchBbrAreasByBfe(
       let bolig = 0;
       let erhverv = 0;
       let samlet = 0;
-      let any = false;
       for (const n of enhedNodes as Array<{
         id_lokalId?: string;
         enh026EnhedensSamledeAreal?: number | null;
@@ -732,20 +731,17 @@ export async function fetchBbrAreasByBfe(
         if (!n.id_lokalId || seen.has(n.id_lokalId)) continue;
         seen.add(n.id_lokalId);
         if (n.status != null && String(n.status) === '7') continue;
-        if (n.enh027ArealTilBeboelse != null) {
-          bolig += Number(n.enh027ArealTilBeboelse);
-          any = true;
-        }
-        if (n.enh028ArealTilErhverv != null) {
-          erhverv += Number(n.enh028ArealTilErhverv);
-          any = true;
-        }
-        if (n.enh026EnhedensSamledeAreal != null) {
-          samlet += Number(n.enh026EnhedensSamledeAreal);
-          any = true;
-        }
+        if (n.enh027ArealTilBeboelse != null) bolig += Number(n.enh027ArealTilBeboelse);
+        if (n.enh028ArealTilErhverv != null) erhverv += Number(n.enh028ArealTilErhverv);
+        if (n.enh026EnhedensSamledeAreal != null) samlet += Number(n.enh026EnhedensSamledeAreal);
       }
-      if (any) {
+      // BIZZ-629: Kun returnér BBR_Enhed-resultatet hvis vi faktisk fik et
+      // positivt areal — ellers fald igennem til BBR_Bygning. Tidligere
+      // satte vi any=true så snart et felt var != null (selv hvis 0), hvilket
+      // betød at kommercielle ejendomme med BBR_Enhed-noder uden beboelse
+      // returnerede { null, null, null } i stedet for de korrekte
+      // bygnings-areal-tal. Regression ift. BIZZ-637.
+      if (bolig > 0 || erhverv > 0 || samlet > 0) {
         return {
           boligAreal: bolig > 0 ? bolig : null,
           erhvervsAreal: erhverv > 0 ? erhverv : null,

@@ -50,6 +50,8 @@ interface CronRow {
 interface CronStatusResponse {
   summary: { total: number; ok: number; error: number; overdue: number; missing: number };
   crons: CronRow[];
+  /** BIZZ-621: Heartbeat-query fejl (fx missing table) — null hvis alt OK */
+  heartbeatError?: string | null;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -285,6 +287,22 @@ export default function CronStatusClient() {
           <div className="flex items-start gap-3 bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 mb-6">
             <AlertCircle size={16} className="text-red-400 shrink-0 mt-0.5" />
             <p className="text-red-300 text-sm">{error}</p>
+          </div>
+        )}
+
+        {/* BIZZ-621: Heartbeat-query-fejl surface — fx når public.cron_heartbeats
+            ikke eksisterer i det supabase-miljø dashboardet kalder. Vises som
+            amber advarsel, ikke rød fatal — tabellen rendres stadig med alle
+            jobs markeret som "Ingen data". */}
+        {data?.heartbeatError && (
+          <div className="flex items-start gap-3 bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-3 mb-6">
+            <AlertTriangle size={16} className="text-amber-400 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-amber-300 text-sm font-medium">
+                {da ? 'Heartbeat-data kunne ikke hentes' : 'Heartbeat data unavailable'}
+              </p>
+              <p className="text-amber-400/80 text-xs mt-0.5">{data.heartbeatError}</p>
+            </div>
           </div>
         )}
 

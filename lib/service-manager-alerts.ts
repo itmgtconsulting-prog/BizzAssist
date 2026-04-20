@@ -14,6 +14,7 @@ import { RESEND_ENDPOINT } from '@/app/lib/serviceEndpoints';
  */
 
 import { sendCriticalSms } from '@/lib/sms';
+import { logger } from '@/app/lib/logger';
 
 const FROM_ADDRESS = `BizzAssist <${companyInfo.noreplyEmail}>`;
 const TO_ADDRESS = companyInfo.supportEmail;
@@ -176,7 +177,7 @@ function buildCriticalAlertHtml(params: CriticalAlertParams): string {
 export async function sendCriticalAlert(params: CriticalAlertParams): Promise<void> {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
-    console.log('[service-manager-alerts] RESEND_API_KEY ikke sat — kritisk alert springes over');
+    logger.log('[service-manager-alerts] RESEND_API_KEY ikke sat — kritisk alert springes over');
     return;
   }
 
@@ -200,12 +201,12 @@ export async function sendCriticalAlert(params: CriticalAlertParams): Promise<vo
 
     if (!res.ok) {
       const body = await res.text();
-      console.error('[service-manager-alerts] Resend API fejl:', res.status, body);
+      logger.error('[service-manager-alerts] Resend API fejl:', res.status, body);
     } else {
-      console.log('[service-manager-alerts] Kritisk alert sendt til', TO_ADDRESS);
+      logger.log('[service-manager-alerts] Kritisk alert sendt til', TO_ADDRESS);
     }
   } catch (err) {
-    console.error('[service-manager-alerts] Kunne ikke sende kritisk alert:', err);
+    logger.error('[service-manager-alerts] Kunne ikke sende kritisk alert:', err);
   }
 
   // Also send SMS — secondary alert channel

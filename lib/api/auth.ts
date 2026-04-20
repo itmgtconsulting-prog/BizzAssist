@@ -8,6 +8,7 @@
  */
 
 import { createClient } from '@/lib/supabase/server';
+import { logger } from '@/app/lib/logger';
 
 export interface AuthContext {
   tenantId: string;
@@ -59,7 +60,7 @@ export async function resolveUserId(): Promise<string | null> {
     } = await supabase.auth.getUser();
     return user?.id ?? null;
   } catch (err) {
-    console.error('[auth] resolveUserId failed:', err instanceof Error ? err.message : String(err));
+    logger.error('[auth] resolveUserId failed:', err instanceof Error ? err.message : String(err));
     return null;
   }
 }

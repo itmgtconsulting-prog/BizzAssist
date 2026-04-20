@@ -16,8 +16,15 @@ import { NextResponse } from 'next/server';
 export const runtime = 'nodejs';
 
 export async function GET() {
-  return NextResponse.json(
-    { error: 'Diagnostic endpoint disabled in production' },
-    { status: 410 }
-  );
+  // BIZZ-598: Stub endpoint returnerer altid 410 Gone, men tilføj try/catch
+  // så eventuel uforudset build-time eller runtime-fejl ikke bryder
+  // deployet (fx hvis diagnostic senere genaktiveres med external fetch).
+  try {
+    return NextResponse.json(
+      { error: 'Diagnostic endpoint disabled in production' },
+      { status: 410 }
+    );
+  } catch {
+    return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
+  }
 }

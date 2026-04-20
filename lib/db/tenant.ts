@@ -34,6 +34,7 @@
 
 import { createClient as createServerClient } from '@/lib/supabase/server';
 import { createAdminClient, type TenantDb } from '@/lib/supabase/admin';
+import { logger } from '@/app/lib/logger';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -747,7 +748,7 @@ export async function getTenantContext(tenantId: string): Promise<TenantContext>
       if (error) {
         // Audit log failures must not be silently swallowed.
         // Log to Sentry/console but do not throw — never block the main operation.
-        console.error('[AUDIT LOG FAILURE]', error.message, entry);
+        logger.error('[AUDIT LOG FAILURE]', error.message, entry);
       }
     },
 

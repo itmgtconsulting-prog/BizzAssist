@@ -2264,8 +2264,64 @@ export default function PersonDetailPageClient({
                     }
                     const cvrOrder = Array.from(groupedActive.keys());
 
+                    // BIZZ-595: Personligt ejede ejendomme (fra ejf_ejerskab)
+                    // vises som separat sektion øverst på tabben, før de
+                    // virksomhedsejede grupperinger. Filtrerer duplikerer
+                    // ud ift. ejendommeData (hvis en ejendom både er fanget
+                    // via enhedsNummer-sporet og bulk-sporet).
+                    const aktiveBfes = new Set(aktive.map((e) => e.bfeNummer));
+                    const privatEjendomme = personalBfes.filter(
+                      (p) => !aktiveBfes.has(p.bfeNummer)
+                    );
+
                     return (
                       <div className="space-y-4">
+                        {privatEjendomme.length > 0 && (
+                          <div className="space-y-2">
+                            <div className="inline-flex items-center gap-2">
+                              <User size={14} className="text-purple-400/80" aria-hidden />
+                              <h3 className="text-sm font-semibold text-slate-200">
+                                {lang === 'da' ? 'Personligt ejet' : 'Personally owned'}
+                              </h3>
+                              <span className="text-[10px] text-slate-500">
+                                · {privatEjendomme.length}{' '}
+                                {lang === 'da'
+                                  ? privatEjendomme.length === 1
+                                    ? 'ejendom'
+                                    : 'ejendomme'
+                                  : privatEjendomme.length === 1
+                                    ? 'property'
+                                    : 'properties'}
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                              {privatEjendomme.map((ej) => (
+                                <PropertyOwnerCard
+                                  key={`personal-${ej.bfeNummer}`}
+                                  ejendom={
+                                    {
+                                      bfeNummer: ej.bfeNummer,
+                                      ownerCvr: '',
+                                      adresse: ej.adresse,
+                                      postnr: ej.postnr ?? null,
+                                      by: ej.by ?? null,
+                                      kommune: null,
+                                      kommuneKode: null,
+                                      ejendomstype: ej.ejendomstype,
+                                      dawaId: ej.dawaId,
+                                      etage: ej.etage ?? null,
+                                      doer: ej.doer ?? null,
+                                      ejerandel: ej.ejerandel ?? null,
+                                      aktiv: ej.aktiv ?? true,
+                                    } as EjendomSummary
+                                  }
+                                  showOwner={false}
+                                  lang={lang}
+                                />
+                              ))}
+                            </div>
+                          </div>
+                        )}
                         {cvrOrder.map((cvr) => {
                           const props = groupedActive.get(cvr);
                           if (!props || props.length === 0) return null;

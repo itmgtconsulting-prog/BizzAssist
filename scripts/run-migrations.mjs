@@ -7,13 +7,15 @@
 import fs from 'node:fs';
 const token = process.env.SUPABASE_ACCESS_TOKEN;
 
-// OBS: 040 + 043 er tenant-skema-migrations. Test/prod bruger tenant_<id>-
-// pattern via provision_tenant_schema, så disse kan ikke køres direkte —
-// kræver per-tenant apply. Dev har en literal 'tenant' schema og kan køre dem.
+// BIZZ-644: 040 + 043 er tenant-skema-skabeloner der refererer en literal
+// 'tenant' schema (kun til stede på dev). Test/prod bruger tenant_<id>-
+// pattern via provision_tenant_schema. Migration 051 backfiller tenant-
+// scoped tabeller til alle eksisterende tenant_*-schemaer via ny
+// provision_tenant_ai_tables-helper og sikrer nye tenants også får dem.
 const envs = {
-  dev: { ref: 'wkzwxfhyfmvglrqtmebw', migrations: ['040', '041', '042', '043', '045', '046', '047', '049', '050'] },
-  test: { ref: 'rlkjmqjxmkxuclehbrnl', migrations: ['041', '042', '045', '049', '050'] },
-  prod: { ref: 'xsyldjqcntiygrtfcszm', migrations: ['041', '042', '045', '049', '050'] },
+  dev: { ref: 'wkzwxfhyfmvglrqtmebw', migrations: ['040', '041', '042', '043', '045', '046', '047', '049', '050', '051'] },
+  test: { ref: 'rlkjmqjxmkxuclehbrnl', migrations: ['041', '042', '045', '049', '050', '051'] },
+  prod: { ref: 'xsyldjqcntiygrtfcszm', migrations: ['041', '042', '045', '049', '050', '051'] },
 };
 
 const migrationFiles = {
@@ -26,6 +28,7 @@ const migrationFiles = {
   '047': '047_ejf_ejerskab_id_text.sql',
   '049': '049_plan_configs_admin_write_rls.sql',
   '050': '050_service_manager_scan_types_extended.sql',
+  '051': '051_tenant_ai_feedback_notification_backfill.sql',
 };
 
 async function runQuery(ref, sql) {

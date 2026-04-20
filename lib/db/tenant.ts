@@ -813,4 +813,23 @@ export async function provisionTenantSchema(schemaName: string, tenantId: string
   if (error) {
     throw new Error(`Failed to provision tenant schema "${schemaName}": ${error.message}`);
   }
+
+  // BIZZ-644: Oprettet separat fordi provision_tenant_schema er en
+  // monolitisk SQL-funktion der er besværlig at ændre inkrementelt.
+  // Kører efterfølgende for at sikre ai_feedback_log + notification_preferences
+  // oprettes for nye tenants. Idempotent via CREATE TABLE IF NOT EXISTS.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error: aiErr } = await (admin.rpc as any)('provision_tenant_ai_tables', {
+    p_schema_name: schemaName,
+    p_tenant_id: tenantId,
+  });
+
+  if (aiErr) {
+    // Ikke-fatal — ny tenant kan stadig bruge kerne-funktionalitet selv
+    // hvis AI-tabeller mangler. Log til Sentry via eksisterende logger.
+
+    console.warn(
+      `[provisionTenantSchema] ai_tables ikke oprettet for "${schemaName}": ${aiErr.message}`
+    );
+  }
 }

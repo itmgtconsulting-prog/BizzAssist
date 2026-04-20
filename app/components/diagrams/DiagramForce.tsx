@@ -131,7 +131,12 @@ interface ForceLink extends SimulationLinkDatum<ForceNode> {
  *
  * @param props - graph + lang + optional onNodeClick override
  */
-export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVariantProps) {
+export default function DiagramForce({
+  graph,
+  lang,
+  onNodeClick,
+  defaultShowProperties = true,
+}: DiagramVariantProps) {
   const _router = useRouter();
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -409,12 +414,14 @@ export default function DiagramForce({ graph, lang, onNodeClick }: DiagramVarian
   /** BIZZ-427: Toggle visibility of ceased/historical owners */
   const [showCeased, setShowCeased] = useState(false);
 
-  /** BIZZ-451: Toggle visibility of property nodes — default ON */
+  /** BIZZ-451: Toggle visibility of property nodes — default ON for virksomhed.
+   *  BIZZ-571: Default OFF for person-diagram (via defaultShowProperties-prop)
+   *  for at undgå overfyldt view på aktive personer. */
   const propertyCount = useMemo(
     () => effectiveGraph.nodes.filter((n) => n.type === 'property').length,
     [effectiveGraph.nodes]
   );
-  const [showProperties, setShowProperties] = useState(true);
+  const [showProperties, setShowProperties] = useState(defaultShowProperties);
 
   /** Fullscreen overlay mode */
   const [isFullscreen, setIsFullscreen] = useState(false);

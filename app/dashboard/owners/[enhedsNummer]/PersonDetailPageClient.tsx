@@ -1998,6 +1998,10 @@ export default function PersonDetailPageClient({
                 <DiagramForce
                   graph={diagramGraph}
                   lang={lang}
+                  // BIZZ-571: Person-diagram åbner uden ejendomme synlige for at
+                  // undgå overfyldt view. Ejendomme-toggle i toolbar kan aktivere
+                  // dem. Virksomheds-diagrammet beholder default ON (uændret).
+                  defaultShowProperties={false}
                   onNodeClick={(node) => {
                     // BIZZ-368: clicking a company node in the person diagram should switch to
                     // the overview tab (staying on this page) rather than navigating to the

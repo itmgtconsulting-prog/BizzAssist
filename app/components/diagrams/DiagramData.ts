@@ -140,6 +140,14 @@ export interface DiagramVariantProps {
    * @param node - The clicked diagram node
    */
   onNodeClick?: (node: DiagramNode) => void;
+  /**
+   * BIZZ-571: Default-state for the "Ejendomme"-toggle. Virksomheds-diagrammet
+   * vil typisk starte med ejendomme vist (true — uændret default), men
+   * person-diagrammet skal starte med ejendomme skjult for at undgå et
+   * overfyldt initial view på aktive personer med mange besiddelser.
+   * Brugeren kan altid toggle manuelt via toolbar-knappen.
+   */
+  defaultShowProperties?: boolean;
 }
 
 /** Max children shown per parent node — overflow becomes an expandable list */

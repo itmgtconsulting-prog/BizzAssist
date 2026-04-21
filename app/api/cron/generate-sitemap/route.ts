@@ -895,17 +895,19 @@ export async function GET(request: NextRequest) {
   // så nye ejendomme/virksomheder indekseres inden for 24t i stedet for 7 dage.
   const phaseConfig = {
     companies: { schedule: '23 2 * * *' },
-    properties: { schedule: '37 3 * * *' },
+    properties: { schedule: '30 * * * *' },
     'vp-properties': { schedule: '51 4 * * *' },
   }[phase];
+
+  // BIZZ-645: properties-fasen kører nu hver time for at speede full-Denmark
+  // backfill op fra ~30 dage til ~3 dage. Andre phases forbliver daglige.
+  const intervalMinutes = phase === 'properties' ? 60 : 1440;
 
   return withCronMonitor(
     {
       jobName: `generate-sitemap-${phase}`,
       schedule: phaseConfig.schedule,
-      // BIZZ-647: Daglig cron → 1440 minutter (24t) — bruges af watchdog til
-      // overdue-detection og cron-status-dashboardet.
-      intervalMinutes: 1440,
+      intervalMinutes,
     },
     async () => {
       const admin = createAdminClient();

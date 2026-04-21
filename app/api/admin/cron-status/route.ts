@@ -46,9 +46,9 @@ const CRONS: CronDef[] = [
   },
   {
     jobName: 'generate-sitemap-properties',
-    schedule: '37 3 * * *',
-    intervalMinutes: 24 * 60,
-    description: 'Daglig sitemap-generering for BFE-sider',
+    schedule: '30 * * * *',
+    intervalMinutes: 60,
+    description: 'Timebaseret sitemap-generering for BFE-sider (hver :30)',
   },
   {
     jobName: 'generate-sitemap-vp-properties',

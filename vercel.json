@@ -6,7 +6,7 @@
     },
     {
       "path": "/api/cron/generate-sitemap?phase=properties",
-      "schedule": "37 3 * * *"
+      "schedule": "30 * * * *"
     },
     {
       "path": "/api/cron/generate-sitemap?phase=vp-properties",

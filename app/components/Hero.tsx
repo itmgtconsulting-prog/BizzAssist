@@ -32,7 +32,7 @@ export default function Hero() {
       <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-40 pb-20">
         <div className="text-center max-w-4xl mx-auto">
           {/* Headline */}
-          <h1 className="text-5xl sm:text-6xl lg:text-7xl font-bold text-white leading-tight mb-6">
+          <h1 className="text-3xl sm:text-5xl md:text-6xl lg:text-7xl font-bold text-white leading-tight mb-6">
             {hero.title}{' '}
             <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-sky-300">
               {hero.titleHighlight}
@@ -72,12 +72,14 @@ export default function Hero() {
             </div>
             {/* Screenshot with bottom fade */}
             <div className="relative">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src="/images/dashboard-preview.png"
                 alt="BizzAssist Dashboard"
                 className="w-full"
                 loading="lazy"
+                sizes="(max-width: 640px) 100vw, (max-width: 1024px) 80vw, 1200px"
+                width={1200}
+                height={675}
               />
               {/* Fade-out gradient at bottom for smooth blend */}
               <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-[#1e293b] to-transparent" />

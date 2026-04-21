@@ -729,7 +729,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                     setSearchRect({
                       top: rect.bottom + 6,
                       left: rect.left,
-                      width: Math.max(rect.width, 520),
+                      width: Math.min(Math.max(rect.width, 520), window.innerWidth - 16),
                     });
                 }}
                 onFocus={() => {
@@ -740,7 +740,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                     setSearchRect({
                       top: rect.bottom + 6,
                       left: rect.left,
-                      width: Math.max(rect.width, 520),
+                      width: Math.min(Math.max(rect.width, 520), window.innerWidth - 16),
                     });
                 }}
                 onKeyDown={(e) => {
@@ -801,7 +801,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                     style={{
                       position: 'fixed',
                       top: searchRect.top,
-                      left: searchRect.left,
+                      left: Math.min(searchRect.left, window.innerWidth - searchRect.width - 8),
                       width: searchRect.width,
                       zIndex: 9999,
                     }}
@@ -993,7 +993,7 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                     style={{
                       position: 'fixed',
                       top: searchRect.top,
-                      left: searchRect.left,
+                      left: Math.min(searchRect.left, window.innerWidth - searchRect.width - 8),
                       width: searchRect.width,
                       zIndex: 9999,
                     }}

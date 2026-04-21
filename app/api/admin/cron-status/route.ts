@@ -117,6 +117,12 @@ const CRONS: CronDef[] = [
     description: 'Daglig Tinglysning delta-sync — 5-dages rolling window opdaterer ejf_ejerskab',
   },
   {
+    jobName: 'pull-cvr-aendringer',
+    schedule: '30 3 * * *',
+    intervalMinutes: 24 * 60,
+    description: 'Daglig CVR delta-sync — 5-dages rolling window opdaterer cvr_virksomhed',
+  },
+  {
     jobName: 'purge-old-data',
     schedule: '0 2 * * *',
     intervalMinutes: 24 * 60,

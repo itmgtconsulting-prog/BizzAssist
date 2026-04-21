@@ -51,6 +51,10 @@
     {
       "path": "/api/cron/pull-tinglysning-aendringer",
       "schedule": "15 3 * * *"
+    },
+    {
+      "path": "/api/cron/pull-cvr-aendringer",
+      "schedule": "30 3 * * *"
     }
   ]
 }

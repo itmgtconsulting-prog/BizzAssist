@@ -200,7 +200,7 @@ describe('assertAiAllowed — BIZZ-649 P0 central billing gate', () => {
     expect(res!.status).toBe(429);
   });
 
-  it('BIZZ-653: blokerer active-men-ubetalt abonnement uanset plan-tokens', async () => {
+  it('BIZZ-655: blokerer active-men-ubetalt abonnement uanset plan-tokens', async () => {
     // Crossshoppen-scenariet: requires_approval=true plan oprettet som
     // status=active men isPaid=false indtil Stripe/admin bekræfter.
     mockAdminClient({
@@ -225,7 +225,7 @@ describe('assertAiAllowed — BIZZ-649 P0 central billing gate', () => {
     );
   });
 
-  it('BIZZ-653: tillader active + isPaid=true (betalt abonnement)', async () => {
+  it('BIZZ-655: tillader active + isPaid=true (betalt abonnement)', async () => {
     mockAdminClient({
       appMetadata: {
         subscription: {
@@ -241,7 +241,7 @@ describe('assertAiAllowed — BIZZ-649 P0 central billing gate', () => {
     expect(res).toBeNull();
   });
 
-  it('BIZZ-653: tillader active uden isPaid-flag (backwards compat)', async () => {
+  it('BIZZ-655: tillader active uden isPaid-flag (backwards compat)', async () => {
     // Gamle subscriptions uden isPaid-felt skal fortsat virke.
     mockAdminClient({
       appMetadata: {

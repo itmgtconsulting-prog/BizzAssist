@@ -42,7 +42,7 @@ interface SubscriptionSnapshot {
   bonusTokens?: number;
   topUpTokens?: number;
   /**
-   * BIZZ-653: Indikerer om abonnementet faktisk er betalt. Når en bruger
+   * BIZZ-655: Indikerer om abonnementet faktisk er betalt. Når en bruger
    * tilmelder sig en plan med `requires_approval=true` oprettes subscription
    * som `status=active` + `isPaid=false` indtil admin godkender (eller Stripe
    * bekræfter). Uden denne flag ville gate lade ubetalte "active"-brugere
@@ -101,7 +101,7 @@ export async function assertAiAllowed(userId: string): Promise<Response | null> 
     return null;
   }
 
-  // BIZZ-653 politik 4: Ubetalt aktivt abonnement — abonnementet er oprettet
+  // BIZZ-655 politik 4: Ubetalt aktivt abonnement — abonnementet er oprettet
   // men mangler betaling (Stripe pending eller admin-godkendelse afventer).
   // Lad IKKE brugeren forbruge plan-tokens før pengene er på plads.
   // Bemærk: bonus/topUp tillader vi bevidst IKKE her, fordi et ubetalt plan-

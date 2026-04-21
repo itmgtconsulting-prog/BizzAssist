@@ -605,9 +605,12 @@ export async function GET(req: NextRequest) {
             const id = `cvr-${ejer.cvr}`;
             if (!seenIds.has(id)) {
               seenIds.add(id);
+              // BIZZ-692: Brug virksomhedsnavn (fra CVR-enrichment) for selskabsejere,
+              // personNavn for personejere, CVR-nummer som sidste fallback.
+              const ejerLabel = ejer.virksomhedsnavn || ejer.personNavn || `CVR ${ejer.cvr}`;
               nodes.push({
                 id,
-                label: ejer.personNavn || `CVR ${ejer.cvr}`,
+                label: ejerLabel,
                 type: 'company',
                 cvr: parseInt(ejer.cvr, 10),
                 link: `/dashboard/companies/${ejer.cvr}`,
@@ -620,7 +623,7 @@ export async function GET(req: NextRequest) {
             }
             edges.push({ from: id, to: mainId, ejerandel: andel });
             ejerDetaljer.push({
-              navn: ejer.personNavn || `CVR ${ejer.cvr}`,
+              navn: ejer.virksomhedsnavn || ejer.personNavn || `CVR ${ejer.cvr}`,
               cvr: ejer.cvr,
               enhedsNummer: null,
               type: 'selskab',

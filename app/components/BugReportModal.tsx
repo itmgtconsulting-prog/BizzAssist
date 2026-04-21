@@ -116,7 +116,7 @@ const text = {
  * @param lang - UI language ('da' | 'en'), defaults to 'da'
  * @param currentPage - Optional URL path override for the report context
  */
-/** BIZZ-211: memoized to prevent re-renders when parent FeedbackButton state changes */
+/** BIZZ-211: memoized to prevent re-renders when parent modal state changes */
 const BugReportModal = React.memo(function BugReportModal({
   open,
   onClose,

@@ -26,11 +26,20 @@ const withBundleAnalyzer =
  * Referrer-Policy: limits referrer information sent to third parties.
  * Permissions-Policy: disables browser features not needed by BizzAssist.
  */
+// Lighthouse CI kører mod http://localhost:3000 uden TLS. Når HSTS-headeren
+// sendes (selv over loopback) får Chrome en "interstitial" der forhindrer
+// siden i at loade. Skip HSTS når LIGHTHOUSE_CI=1 er sat af workflow'en.
+const isLighthouseCi = process.env.LIGHTHOUSE_CI === '1';
+
 const securityHeaders = [
-  {
-    key: 'Strict-Transport-Security',
-    value: 'max-age=63072000; includeSubDomains; preload',
-  },
+  ...(isLighthouseCi
+    ? []
+    : [
+        {
+          key: 'Strict-Transport-Security',
+          value: 'max-age=63072000; includeSubDomains; preload',
+        },
+      ]),
   {
     key: 'X-Frame-Options',
     value: 'DENY',

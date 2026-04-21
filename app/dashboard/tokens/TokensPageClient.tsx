@@ -288,13 +288,13 @@ function BreakdownCard({
 }) {
   return (
     <div
-      className={`rounded-lg bg-white/[0.03] p-3.5 ${
-        highlight ? 'border border-white/10' : 'border border-transparent'
+      className={`rounded-lg bg-slate-800/40 p-3.5 ${
+        highlight ? 'border border-slate-700/50' : 'border border-slate-700/20'
       }`}
     >
-      <p className="text-white/40 text-xs mb-1">{label}</p>
+      <p className="text-slate-400 text-xs mb-1">{label}</p>
       <p className={`text-lg font-bold ${color}`}>{value}</p>
-      {sub && <p className="text-white/30 text-[11px] mt-0.5">{sub}</p>}
+      {sub && <p className="text-slate-500 text-[11px] mt-0.5">{sub}</p>}
     </div>
   );
 }
@@ -381,7 +381,7 @@ function CreateKeyModal({
       />
 
       {/* Panel */}
-      <div className="relative w-full max-w-md rounded-xl bg-slate-800 border border-white/10 shadow-2xl p-6 space-y-5">
+      <div className="relative w-full max-w-md rounded-xl bg-slate-800 border border-slate-700/50 shadow-2xl p-6 space-y-5">
         {/* Header */}
         <div className="flex items-center justify-between">
           <h2
@@ -394,7 +394,7 @@ function CreateKeyModal({
           <button
             onClick={onClose}
             aria-label="Luk dialog"
-            className="text-white/40 hover:text-white transition-colors"
+            className="text-slate-400 hover:text-slate-100 transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
@@ -403,7 +403,7 @@ function CreateKeyModal({
         <form onSubmit={handleSubmit} className="space-y-4">
           {/* Name */}
           <div>
-            <label htmlFor="key-name" className="block text-sm text-white/70 mb-1.5">
+            <label htmlFor="key-name" className="block text-sm text-slate-200 mb-1.5">
               {t.modalName}
             </label>
             <input
@@ -414,13 +414,13 @@ function CreateKeyModal({
               onChange={(e) => setName(e.target.value)}
               placeholder={t.modalNamePlaceholder}
               maxLength={100}
-              className="w-full px-3 py-2 rounded-lg bg-white/[0.05] border border-white/10 text-white placeholder-white/30 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+              className="w-full px-3 py-2 rounded-lg bg-white/[0.05] border border-slate-700/50 text-white placeholder-white/30 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50"
             />
           </div>
 
           {/* Scopes */}
           <fieldset>
-            <legend className="text-sm text-white/70 mb-2">{t.modalScopes}</legend>
+            <legend className="text-sm text-slate-200 mb-2">{t.modalScopes}</legend>
             <div className="space-y-2">
               {API_SCOPES.map((scope) => (
                 <label
@@ -435,9 +435,9 @@ function CreateKeyModal({
                     onChange={() => toggleScope(scope.value)}
                     className="w-4 h-4 rounded accent-blue-500"
                   />
-                  <span className="text-sm text-white/70 group-hover:text-white transition-colors">
+                  <span className="text-sm text-slate-200 group-hover:text-slate-100 transition-colors">
                     {lang === 'da' ? scope.labelDa : scope.labelEn}
-                    <span className="ml-2 text-white/30 font-mono text-xs">{scope.value}</span>
+                    <span className="ml-2 text-slate-500 font-mono text-xs">{scope.value}</span>
                   </span>
                 </label>
               ))}
@@ -446,7 +446,7 @@ function CreateKeyModal({
 
           {/* Expiry */}
           <div>
-            <label htmlFor="key-expiry" className="block text-sm text-white/70 mb-1.5">
+            <label htmlFor="key-expiry" className="block text-sm text-slate-200 mb-1.5">
               {t.modalExpiry}
             </label>
             <input
@@ -457,7 +457,7 @@ function CreateKeyModal({
               placeholder={t.modalExpiryPlaceholder}
               min={1}
               max={3650}
-              className="w-full px-3 py-2 rounded-lg bg-white/[0.05] border border-white/10 text-white placeholder-white/30 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+              className="w-full px-3 py-2 rounded-lg bg-white/[0.05] border border-slate-700/50 text-white placeholder-white/30 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50"
             />
           </div>
 
@@ -475,7 +475,7 @@ function CreateKeyModal({
               type="button"
               onClick={onClose}
               disabled={creating}
-              className="flex-1 px-4 py-2.5 rounded-lg border border-white/10 text-white/60 hover:text-white hover:border-white/20 transition-colors text-sm disabled:opacity-40"
+              className="flex-1 px-4 py-2.5 rounded-lg border border-slate-700/50 text-slate-300 hover:text-slate-100 hover:border-slate-600 transition-colors text-sm disabled:opacity-40"
             >
               {t.modalCancel}
             </button>
@@ -559,7 +559,7 @@ function TokenRevealModal({
 
         {/* Token value */}
         <div className="relative">
-          <pre className="w-full px-4 py-3 rounded-lg bg-black/40 border border-white/10 text-emerald-400 font-mono text-sm break-all whitespace-pre-wrap select-all">
+          <pre className="w-full px-4 py-3 rounded-lg bg-black/40 border border-slate-700/50 text-emerald-400 font-mono text-sm break-all whitespace-pre-wrap select-all">
             {token}
           </pre>
           <button
@@ -570,7 +570,7 @@ function TokenRevealModal({
             {copied ? (
               <Check className="w-4 h-4 text-emerald-400" />
             ) : (
-              <Copy className="w-4 h-4 text-white/50" />
+              <Copy className="w-4 h-4 text-slate-400" />
             )}
           </button>
         </div>
@@ -581,7 +581,7 @@ function TokenRevealModal({
             href="/api-docs"
             target="_blank"
             rel="noopener noreferrer"
-            className="flex-1 px-4 py-2.5 rounded-lg border border-white/10 text-white/60 hover:text-white hover:border-white/20 transition-colors text-sm text-center"
+            className="flex-1 px-4 py-2.5 rounded-lg border border-slate-700/50 text-slate-300 hover:text-slate-100 hover:border-slate-600 transition-colors text-sm text-center"
           >
             {t.revealDocLink}
           </a>
@@ -792,7 +792,7 @@ export default function TokensPageClient() {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <RefreshCw className="w-6 h-6 text-blue-400 animate-spin" />
-        <span className="ml-3 text-white/60">{t.loading}</span>
+        <span className="ml-3 text-slate-300">{t.loading}</span>
       </div>
     );
   }
@@ -803,7 +803,7 @@ export default function TokensPageClient() {
         {/* ── Back button ── */}
         <button
           onClick={() => router.push('/dashboard')}
-          className="flex items-center gap-2 text-white/50 hover:text-white transition-colors text-sm"
+          className="flex items-center gap-2 text-slate-400 hover:text-slate-100 transition-colors text-sm"
         >
           <ArrowLeft className="w-4 h-4" />
           {t.back}
@@ -818,7 +818,7 @@ export default function TokensPageClient() {
         </div>
 
         {/* ── Tab bar ── */}
-        <div role="tablist" className="flex gap-1 p-1 rounded-lg bg-white/[0.04] w-fit">
+        <div role="tablist" className="flex gap-1 p-1 rounded-lg bg-slate-800/50 w-fit">
           <button
             role="tab"
             aria-selected={activeTab === 'ai'}
@@ -826,7 +826,7 @@ export default function TokensPageClient() {
             aria-controls="panel-ai"
             onClick={() => setActiveTab('ai')}
             className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-              activeTab === 'ai' ? 'bg-blue-600 text-white' : 'text-white/50 hover:text-white'
+              activeTab === 'ai' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-100'
             }`}
           >
             <Zap className="w-4 h-4" />
@@ -839,7 +839,7 @@ export default function TokensPageClient() {
             aria-controls="panel-api"
             onClick={() => setActiveTab('api')}
             className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-              activeTab === 'api' ? 'bg-blue-600 text-white' : 'text-white/50 hover:text-white'
+              activeTab === 'api' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-100'
             }`}
           >
             <Key className="w-4 h-4" />
@@ -873,11 +873,11 @@ export default function TokensPageClient() {
 
           {/* Token Balance Overview */}
           {!sub ? (
-            <div className="rounded-xl bg-slate-800/50 border border-white/5 p-8 text-center text-white/40">
+            <div className="rounded-xl bg-slate-800/40 border border-slate-700/40 p-8 text-center text-slate-400">
               {t.noSubscription}
             </div>
           ) : (
-            <div className="rounded-xl bg-slate-800/50 border border-white/5 p-6 space-y-6">
+            <div className="rounded-xl bg-slate-800/40 border border-slate-700/40 p-6 space-y-6">
               <div className="flex items-center justify-between">
                 <h2 className="text-lg font-semibold text-white flex items-center gap-2">
                   <Zap className="w-5 h-5 text-blue-400" />
@@ -885,7 +885,7 @@ export default function TokensPageClient() {
                 </h2>
                 <button
                   onClick={fetchAiData}
-                  className="flex items-center gap-1.5 text-white/40 hover:text-white/70 transition-colors text-xs"
+                  className="flex items-center gap-1.5 text-slate-400 hover:text-slate-200 transition-colors text-xs"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
                   {t.refresh}
@@ -902,11 +902,11 @@ export default function TokensPageClient() {
                     <span className={`text-3xl font-bold ${textColor(usagePct)}`}>
                       {formatTokens(remaining)}
                     </span>
-                    <span className="text-white/40 text-sm">
+                    <span className="text-slate-400 text-sm">
                       {t.of} {formatTokens(totalAvailable)} — {formatTokens(used)} {t.used}
                     </span>
                   </div>
-                  <div className="w-full h-3 rounded-full bg-white/5 overflow-hidden">
+                  <div className="w-full h-3 rounded-full bg-slate-700/40 overflow-hidden">
                     <div
                       className={`h-full rounded-full transition-all duration-500 ${meterColor(usagePct)}`}
                       style={{ width: `${Math.min(100, usagePct)}%` }}
@@ -949,17 +949,17 @@ export default function TokensPageClient() {
           )}
 
           {/* Buy More Tokens */}
-          <div className="rounded-xl bg-slate-800/50 border border-white/5 p-6 space-y-5">
+          <div className="rounded-xl bg-slate-800/40 border border-slate-700/40 p-6 space-y-5">
             <div>
               <h2 className="text-lg font-semibold text-white flex items-center gap-2">
                 <ShoppingCart className="w-5 h-5 text-amber-400" />
                 {t.buyTitle}
               </h2>
-              <p className="text-white/40 text-sm mt-1">{t.buySubtitle}</p>
+              <p className="text-slate-400 text-sm mt-1">{t.buySubtitle}</p>
             </div>
 
             {packs.length === 0 ? (
-              <div className="text-center py-8 text-white/30 text-sm">{t.noPacks}</div>
+              <div className="text-center py-8 text-slate-500 text-sm">{t.noPacks}</div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {packs.map((pack) => {
@@ -967,14 +967,14 @@ export default function TokensPageClient() {
                   return (
                     <div
                       key={pack.id}
-                      className="rounded-lg bg-white/[0.03] border border-white/5 p-5 flex flex-col items-center gap-3 hover:border-blue-500/30 transition-colors"
+                      className="rounded-lg bg-slate-800/40 border border-slate-700/40 p-5 flex flex-col items-center gap-3 hover:border-blue-500/30 transition-colors"
                     >
                       <Coins className="w-8 h-8 text-amber-400" />
                       <span className="text-2xl font-bold text-white">
                         {formatTokens(pack.tokenAmount)}
                       </span>
-                      <span className="text-white/40 text-xs">{t.tokens}</span>
-                      <span className="text-white/70 text-sm font-medium">
+                      <span className="text-slate-400 text-xs">{t.tokens}</span>
+                      <span className="text-slate-200 text-sm font-medium">
                         {pack.priceDkk.toLocaleString('da-DK')} {t.dkk}
                       </span>
                       <button
@@ -1013,21 +1013,21 @@ export default function TokensPageClient() {
           className="space-y-6"
         >
           {/* Section header */}
-          <div className="rounded-xl bg-slate-800/50 border border-white/5 p-6">
+          <div className="rounded-xl bg-slate-800/40 border border-slate-700/40 p-6">
             <div className="flex items-start justify-between gap-4">
               <div className="space-y-1">
                 <h2 className="text-lg font-semibold text-white flex items-center gap-2">
                   <Shield className="w-5 h-5 text-blue-400" />
                   {t.apiTitle}
                 </h2>
-                <p className="text-white/40 text-sm">{t.apiSubtitle}</p>
+                <p className="text-slate-400 text-sm">{t.apiSubtitle}</p>
               </div>
               <div className="flex items-center gap-3 shrink-0">
                 <a
                   href="/api-docs"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="px-3 py-2 rounded-lg border border-white/10 text-white/50 hover:text-white hover:border-white/20 transition-colors text-xs"
+                  className="px-3 py-2 rounded-lg border border-slate-700/50 text-slate-400 hover:text-slate-100 hover:border-slate-600 transition-colors text-xs"
                 >
                   {t.apiDocsLink}
                 </a>
@@ -1046,34 +1046,34 @@ export default function TokensPageClient() {
           {apiLoading ? (
             <div className="flex items-center justify-center py-12">
               <RefreshCw className="w-5 h-5 text-blue-400 animate-spin" />
-              <span className="ml-3 text-white/50 text-sm">{t.loading}</span>
+              <span className="ml-3 text-slate-400 text-sm">{t.loading}</span>
             </div>
           ) : apiKeys.length === 0 ? (
-            <div className="rounded-xl bg-slate-800/50 border border-white/5 p-12 text-center">
+            <div className="rounded-xl bg-slate-800/40 border border-slate-700/40 p-12 text-center">
               <Key className="w-10 h-10 text-white/20 mx-auto mb-3" />
-              <p className="text-white/30 text-sm">{t.apiNoKeys}</p>
+              <p className="text-slate-500 text-sm">{t.apiNoKeys}</p>
             </div>
           ) : (
-            <div className="rounded-xl bg-slate-800/50 border border-white/5 overflow-hidden">
+            <div className="rounded-xl bg-slate-800/40 border border-slate-700/40 overflow-hidden">
               <table className="w-full">
                 <thead>
-                  <tr className="border-b border-white/5">
-                    <th className="text-left text-xs text-white/40 font-medium px-4 py-3">
+                  <tr className="border-b border-slate-700/40">
+                    <th className="text-left text-xs text-slate-400 font-medium px-4 py-3">
                       {t.apiColName}
                     </th>
-                    <th className="text-left text-xs text-white/40 font-medium px-4 py-3">
+                    <th className="text-left text-xs text-slate-400 font-medium px-4 py-3">
                       {t.apiColPrefix}
                     </th>
-                    <th className="text-left text-xs text-white/40 font-medium px-4 py-3 hidden sm:table-cell">
+                    <th className="text-left text-xs text-slate-400 font-medium px-4 py-3 hidden sm:table-cell">
                       {t.apiColScopes}
                     </th>
-                    <th className="text-left text-xs text-white/40 font-medium px-4 py-3 hidden md:table-cell">
+                    <th className="text-left text-xs text-slate-400 font-medium px-4 py-3 hidden md:table-cell">
                       {t.apiColCreated}
                     </th>
-                    <th className="text-left text-xs text-white/40 font-medium px-4 py-3 hidden lg:table-cell">
+                    <th className="text-left text-xs text-slate-400 font-medium px-4 py-3 hidden lg:table-cell">
                       {t.apiColLastUsed}
                     </th>
-                    <th className="text-right text-xs text-white/40 font-medium px-4 py-3">
+                    <th className="text-right text-xs text-slate-400 font-medium px-4 py-3">
                       {t.apiColActions}
                     </th>
                   </tr>
@@ -1112,14 +1112,14 @@ export default function TokensPageClient() {
 
                       {/* Created */}
                       <td className="px-4 py-3 hidden md:table-cell">
-                        <span className="text-white/40 text-xs">
+                        <span className="text-slate-400 text-xs">
                           {fmtDate(key.created_at, lang, '—')}
                         </span>
                       </td>
 
                       {/* Last used */}
                       <td className="px-4 py-3 hidden lg:table-cell">
-                        <span className="text-white/40 text-xs">
+                        <span className="text-slate-400 text-xs">
                           {fmtDate(key.last_used, lang, t.apiNeverUsed)}
                         </span>
                       </td>

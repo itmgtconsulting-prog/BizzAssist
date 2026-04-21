@@ -372,7 +372,8 @@ async function fetchBygningPunkter(bygningIds: string[]): Promise<BBRBygningPunk
 async function fetchDatafordelerGraphQL(
   base: string,
   query: string,
-  variables: Record<string, string>
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  variables: Record<string, any>
 ): Promise<unknown[] | null> {
   // Read at call time — avoids Turbopack inlining module-level constants as empty strings at build time
   const DF_API_KEY = process.env.DATAFORDELER_API_KEY ?? '';
@@ -427,7 +428,8 @@ async function fetchDatafordelerGraphQL(
  */
 async function fetchBBRGraphQL(
   query: string,
-  variables: Record<string, string>
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  variables: Record<string, any>
 ): Promise<unknown[] | null> {
   return fetchDatafordelerGraphQL(BBR_GQL_ENDPOINT, query, variables);
 }
@@ -991,6 +993,48 @@ export async function fetchBbrAreasByBfe(
     const resolved = await resolveBfeToAdgangsadresseId(bfe);
     if (resolved && resolved !== effectiveDawaId) {
       nodes = await fetchBBRGraphQL(bbrQuery, { vt, id: resolved });
+    }
+  }
+
+  // BIZZ-691: Sidste fallback — BBR_Grund direkte på BFE-nummer.
+  // VP og DAWA jordstykker dækker ikke alle BFE-typer (erhverv, ejerlejlighed).
+  // BBR_Grund.bestemtFastEjendomBFENr matcher alle BFE-typer og giver os
+  // bygnings-UUID'er → BBR_Bygning areal-opslag.
+  if ((!Array.isArray(nodes) || nodes.length === 0) && bfe) {
+    try {
+      const grundNodes = await fetchBBRGraphQL(
+        `query($vt: DafDateTime!, $bfe: Int!) {
+          BBR_Grund(first: 10, virkningstid: $vt, where: { bestemtFastEjendomBFENr: { eq: $bfe } }) {
+            nodes {
+              bygningPaaGrund { bygning { nodes { id_lokalId } } }
+            }
+          }
+        }`,
+        { vt, bfe }
+      );
+      if (Array.isArray(grundNodes) && grundNodes.length > 0) {
+        /* eslint-disable @typescript-eslint/no-explicit-any */
+        const bygIds: string[] = grundNodes.flatMap((g: any) =>
+          (g.bygningPaaGrund?.bygning?.nodes ?? []).map((b: any) => b.id_lokalId).filter(Boolean)
+        );
+        /* eslint-enable @typescript-eslint/no-explicit-any */
+        if (bygIds.length > 0) {
+          const bygQuery = `query($vt: DafDateTime!, $ids: [String!]!) {
+            BBR_Bygning(first: 100, virkningstid: $vt, where: { id_lokalId: { in: $ids } }) {
+              nodes {
+                id_lokalId
+                byg038SamletBygningsareal
+                byg039BygningensSamledeBoligAreal
+                byg040BygningensSamledeErhvervsAreal
+                status
+              }
+            }
+          }`;
+          nodes = await fetchBBRGraphQL(bygQuery, { vt, ids: bygIds });
+        }
+      }
+    } catch {
+      // Ignorer BBR_Grund fallback-fejl
     }
   }
 

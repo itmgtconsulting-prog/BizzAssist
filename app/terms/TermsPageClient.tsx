@@ -30,7 +30,7 @@ export default function TermsPageClient() {
             {lang === 'da' ? 'Vilkår og betingelser' : 'Terms & Conditions'}
           </h1>
           <p className="text-slate-500 text-sm mb-10">
-            {lang === 'da' ? 'Sidst opdateret: 4. april 2026' : 'Last updated: April 4, 2026'}
+            {lang === 'da' ? 'Sidst opdateret: 21. april 2026' : 'Last updated: April 21, 2026'}
           </p>
 
           <div className="prose prose-invert prose-slate max-w-none space-y-8 text-slate-300 leading-relaxed">
@@ -114,6 +114,15 @@ function DanishTerms() {
           </li>
           <li>
             Der ydes ikke refusion for allerede betalte perioder, medmindre lovgivningen kræver det.
+          </li>
+          <li>
+            <strong className="text-white">Fortrydelsesret (forbrugere):</strong> Ved køb af
+            abonnement som forbruger har du som udgangspunkt 14 dages fortrydelsesret jf.
+            forbrugeraftalelovens § 18. Retten bortfalder dog når tjenesten er taget i brug med dit
+            udtrykkelige samtykke, jf. § 18, stk. 2, nr. 13 — fordi BizzAssist leverer digitalt
+            indhold som stilles til rådighed umiddelbart efter tilmelding. Ved at starte dit
+            abonnement bekræfter du at have modtaget denne information og accepterer at
+            fortrydelsesretten bortfalder.
           </li>
         </ul>
       </section>
@@ -259,46 +268,36 @@ function DanishTerms() {
       </section>
 
       <section>
-        <h2 className="text-xl font-semibold text-white mb-3">13. Beta-status</h2>
+        <h2 className="text-xl font-semibold text-white mb-3">13. Beta-version</h2>
         <p>
-          BizzAssist er i øjeblikket i beta-version. Tjenesten leveres &quot;som den er&quot; uden
-          garanti for fejlfri drift. Vi forbeholder os retten til at ændre, opdatere eller fjerne
-          funktionalitet uden forudgående varsel. Data gemt i beta-perioden kan blive nulstillet ved
-          overgang til fuld version.
+          BizzAssist udvikles løbende og visse funktioner kan være markeret som &quot;beta&quot;.
+          Beta-funktioner leveres på samme vilkår som resten af tjenesten (se § 6) men kan have
+          begrænset understøttelse. Data gemt gennem abonnementet bevares ved normal drift og
+          slettes kun på din anmodning eller ved opsigelse af abonnementet jf. § 8 og vores{' '}
+          <Link href="/privacy" className="text-blue-400 hover:underline">
+            privatlivspolitik
+          </Link>
+          .
         </p>
       </section>
 
       <section>
-        <h2 className="text-xl font-semibold text-white mb-3">14. AI og tokens</h2>
-        <p>
-          BizzAssist anvender kunstig intelligens (AI) til mediesøgning, artikelanalyse og
-          virksomhedsresearch. Brug af AI-funktioner forbruger tokens fra din konto.
-        </p>
+        <h2 className="text-xl font-semibold text-white mb-3">14. Priser, moms og valuta</h2>
         <ul className="list-disc pl-6 space-y-1">
-          <li>Tokens købes via in-app køb og tilføjes automatisk til din konto</li>
-          <li>Forbrugte tokens kan ikke refunderes eller tilbageføres</li>
-          <li>Token-forbrug varierer afhængigt af søgningens kompleksitet</li>
+          <li>Alle priser er angivet i danske kroner (DKK) inkl. moms for danske kunder.</li>
           <li>
-            AI-genererede resultater er ikke garanteret korrekte — verificér altid vigtig
-            information
+            For erhvervskunder uden for Danmark håndteres moms efter EU-reglerne om omvendt
+            betalingspligt (reverse charge), når gyldigt VAT-nummer er oplyst.
           </li>
-          <li>Token-priser kan ændres med 30 dages varsel</li>
+          <li>
+            Kvittering og faktura gøres tilgængelige via Stripe kundeportal efter hvert gennemført
+            køb.
+          </li>
         </ul>
       </section>
 
       <section>
-        <h2 className="text-xl font-semibold text-white mb-3">15. In-app køb</h2>
-        <p>BizzAssist tilbyder køb direkte i applikationen. Ved køb af abonnement eller tokens:</p>
-        <ul className="list-disc pl-6 space-y-1">
-          <li>Betaling sker via Stripe</li>
-          <li>Abonnementer fornyes automatisk medmindre de opsiges</li>
-          <li>Refundering følger vores refunderingspolitik</li>
-          <li>Priser er angivet inkl. moms for danske kunder</li>
-        </ul>
-      </section>
-
-      <section>
-        <h2 className="text-xl font-semibold text-white mb-3">16. Kontakt</h2>
+        <h2 className="text-xl font-semibold text-white mb-3">15. Kontakt</h2>
         <p>
           Ved spørgsmål om disse vilkår, kontakt os på{' '}
           <a href={`mailto:${companyInfo.supportEmail}`} className="text-blue-400 hover:underline">
@@ -379,6 +378,14 @@ function EnglishTerms() {
             handled exclusively by Stripe in accordance with the PCI DSS standard.
           </li>
           <li>No refunds are provided for already paid periods, unless required by law.</li>
+          <li>
+            <strong className="text-white">Right of withdrawal (consumers):</strong> Consumers have
+            a 14-day right of withdrawal when purchasing a subscription, under the Danish Consumer
+            Contracts Act § 18. This right is waived once the service has been used with your
+            explicit consent, pursuant to § 18(2)(13), because BizzAssist delivers digital content
+            made available immediately upon sign-up. By starting your subscription you confirm that
+            you have received this information and accept that the right of withdrawal is forfeited.
+          </li>
         </ul>
       </section>
 
@@ -524,49 +531,39 @@ function EnglishTerms() {
       </section>
 
       <section>
-        <h2 className="text-xl font-semibold text-white mb-3">13. Beta status</h2>
+        <h2 className="text-xl font-semibold text-white mb-3">13. Beta version</h2>
         <p>
-          BizzAssist is currently in beta version. The service is provided &quot;as is&quot; without
-          guarantee of error-free operation. We reserve the right to change, update or remove
-          functionality without prior notice. Data stored during the beta period may be reset upon
-          transition to the full version.
+          BizzAssist is under continuous development and certain features may be labelled
+          &quot;beta&quot;. Beta features are provided on the same terms as the rest of the service
+          (see § 6) but may have limited support. Data stored through your subscription is retained
+          during normal operation and is only deleted on request or upon subscription termination,
+          cf. § 8 and our{' '}
+          <Link href="/privacy" className="text-blue-400 hover:underline">
+            privacy policy
+          </Link>
+          .
         </p>
       </section>
 
       <section>
-        <h2 className="text-xl font-semibold text-white mb-3">14. AI and tokens</h2>
-        <p>
-          BizzAssist uses artificial intelligence (AI) for media search, article analysis and
-          business research. Use of AI features consumes tokens from your account.
-        </p>
+        <h2 className="text-xl font-semibold text-white mb-3">14. Prices, VAT and currency</h2>
         <ul className="list-disc pl-6 space-y-1">
-          <li>Tokens are purchased via in-app purchases and added automatically to your account</li>
-          <li>Consumed tokens cannot be refunded or reversed</li>
-          <li>Token consumption varies depending on the complexity of the search</li>
           <li>
-            AI-generated results are not guaranteed to be correct — always verify important
-            information
+            All prices are stated in Danish kroner (DKK) inclusive of VAT for Danish customers.
           </li>
-          <li>Token prices may change with 30 days&apos; notice</li>
+          <li>
+            For EU business customers outside Denmark, VAT is handled under the EU reverse-charge
+            rules when a valid VAT number is provided.
+          </li>
+          <li>
+            Receipts and invoices are made available via the Stripe customer portal after each
+            completed purchase.
+          </li>
         </ul>
       </section>
 
       <section>
-        <h2 className="text-xl font-semibold text-white mb-3">15. In-app purchases</h2>
-        <p>
-          BizzAssist offers purchases directly within the application. When purchasing a
-          subscription or tokens:
-        </p>
-        <ul className="list-disc pl-6 space-y-1">
-          <li>Payment is processed via Stripe</li>
-          <li>Subscriptions renew automatically unless cancelled</li>
-          <li>Refunds are subject to our refund policy</li>
-          <li>Prices are stated inclusive of VAT for Danish customers</li>
-        </ul>
-      </section>
-
-      <section>
-        <h2 className="text-xl font-semibold text-white mb-3">16. Contact</h2>
+        <h2 className="text-xl font-semibold text-white mb-3">15. Contact</h2>
         <p>
           For questions about these terms, contact us at{' '}
           <a href={`mailto:${companyInfo.supportEmail}`} className="text-blue-400 hover:underline">

@@ -508,7 +508,7 @@ function LoginForm() {
                   autoComplete="email"
                   required
                   disabled={loading || isLocked}
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-slate-600 focus:outline-none focus:border-blue-500 transition-colors text-sm disabled:opacity-50"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-slate-600 focus:outline-none focus:border-blue-500 transition-colors text-base disabled:opacity-50"
                 />
               </div>
 

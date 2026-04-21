@@ -39,6 +39,7 @@ import {
   ShieldCheck,
   Wrench,
   Activity,
+  Clock,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 
@@ -531,6 +532,12 @@ export default function AiMediaAgentsClient() {
             className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors whitespace-nowrap"
           >
             <Activity size={14} /> {da ? 'Infrastruktur' : 'Infrastructure'}
+          </Link>
+          <Link
+            href="/dashboard/admin/cron-status"
+            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors whitespace-nowrap"
+          >
+            <Clock size={14} /> {da ? 'Cron-status' : 'Cron Status'}
           </Link>
         </div>
       </div>

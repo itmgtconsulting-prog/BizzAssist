@@ -20,11 +20,6 @@ export default function Navbar() {
 
   return (
     <header className="fixed top-0 left-0 right-0 z-50">
-      {/* Beta-banner */}
-      <div className="w-full bg-amber-400 text-amber-900 text-center text-sm py-1.5 font-medium">
-        Vores løsning er ikke live endnu - forventet beta release medio april 2026
-      </div>
-
       {/* Nav bar */}
       <div
         className={`transition-all duration-300 ${

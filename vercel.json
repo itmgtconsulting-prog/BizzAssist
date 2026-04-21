@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/cron/generate-sitemap?phase=companies",
-      "schedule": "23 2 * * *"
+      "schedule": "23 * * * *"
     },
     {
       "path": "/api/cron/generate-sitemap?phase=properties",
@@ -10,7 +10,7 @@
     },
     {
       "path": "/api/cron/generate-sitemap?phase=vp-properties",
-      "schedule": "51 4 * * *"
+      "schedule": "51 * * * *"
     },
     {
       "path": "/api/cron/poll-properties",

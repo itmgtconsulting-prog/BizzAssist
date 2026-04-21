@@ -57,6 +57,13 @@ const UPSERT_BATCH_SIZE = 500;
 /** Sikkerhedsmargin i ms før maxDuration (stop BFE-loop tidligt) */
 const SAFETY_MARGIN_MS = 30_000;
 
+/**
+ * Concurrency for EJF GraphQL-opslag. 8 parallelle requests holder os under
+ * Datafordeler rate-limits (verificeret 10/s i BIZZ-593) og reducerer
+ * runtime for 5-day window fra ~20 min til ~2-3 min.
+ */
+const EJF_FETCH_CONCURRENCY = 8;
+
 // ─── Types — Tinglysning aendringer response ──────────────────────────────────
 
 interface AendretTinglysningsobjekt {
@@ -191,22 +198,28 @@ async function syncBfesToEjfEjerskab(
   let rowsFailed = 0;
   let batch: EjfRow[] = [];
 
-  for (const bfe of bfes) {
-    // Abort-check før hvert EJF-kald for at undgå Vercel timeout
+  // BIZZ-650: Process BFE'er i chunks af EJF_FETCH_CONCURRENCY parallelle
+  // GraphQL-requests. Serial lookup kunne ikke nå igennem 5K BFE inden
+  // maxDuration=300s. Med concurrency=8 kører vi ~64 BFE/s → ~80s for 5K.
+  for (let i = 0; i < bfes.length; i += EJF_FETCH_CONCURRENCY) {
+    // Abort-check før hver chunk for at undgå Vercel timeout
     if (Date.now() - startTime > maxDuration * 1000 - SAFETY_MARGIN_MS) {
       logger.warn('[tl-delta] Safety margin ramt — flush og stop');
       break;
     }
 
-    const nodes = await fetchEjerskabForBFE(bfe, token);
-    if (nodes === null) {
-      continue; // Error logged i helper
+    const chunk = bfes.slice(i, i + EJF_FETCH_CONCURRENCY);
+    const results = await Promise.all(chunk.map((bfe) => fetchEjerskabForBFE(bfe, token)));
+
+    for (let j = 0; j < chunk.length; j++) {
+      const nodes = results[j];
+      if (nodes === null) continue;
+      for (const node of nodes) {
+        const row = mapNodeToRow(node);
+        if (row) batch.push(row);
+      }
+      bfesProcessed++;
     }
-    for (const node of nodes) {
-      const row = mapNodeToRow(node);
-      if (row) batch.push(row);
-    }
-    bfesProcessed++;
 
     // Flush når batch er fuld
     if (batch.length >= UPSERT_BATCH_SIZE) {

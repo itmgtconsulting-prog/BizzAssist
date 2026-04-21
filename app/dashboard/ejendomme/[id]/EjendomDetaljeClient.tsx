@@ -89,6 +89,8 @@ import dynamic from 'next/dynamic';
 import { logger } from '@/app/lib/logger';
 import TinglysningTab from './TinglysningTab';
 import PropertyOwnerDiagram from './PropertyOwnerDiagram';
+// BIZZ-583: Administrator-sektion via EJFCustom_EjendomsadministratorBegraenset
+import EjendomAdministratorCard from '@/app/components/ejendomme/EjendomAdministratorCard';
 // BIZZ-601: DiagramForce + DiagramGraph-type var kun brugt i
 // PropertyOwnerDiagram — nu extraheret. Fjernet fra master-filen.
 
@@ -3951,6 +3953,15 @@ export default function EjendomDetaljeClient({
             {/* ══ EJERFORHOLD — always mounted for prefetch (BIZZ-410), hidden when not active ══ */}
             <div className={aktivTab === 'ejerforhold' ? '' : 'hidden'}>
               <div className="space-y-2">
+                {/* BIZZ-583: Administrator-kort (ejerforening/adv./udlejer). Skjules
+                    automatisk hvis ejendommen ingen admin-relation har. Bruger
+                    primær BFE fra ejendomsrelationer (samme som andre tabs). */}
+                {bbrData?.ejendomsrelationer?.[0]?.bfeNummer && (
+                  <EjendomAdministratorCard
+                    bfeNummer={bbrData.ejendomsrelationer[0].bfeNummer}
+                    lang={da ? 'da' : 'en'}
+                  />
+                )}
                 {/* Loading state — vis spinner mens BBR eller ejerskab data hentes */}
                 {(ejereLoader || bbrLoader || !bbrData) && (
                   <TabLoadingSpinner

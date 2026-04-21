@@ -1170,6 +1170,40 @@ export async function GET(req: NextRequest): Promise<NextResponse<CVRPublicData 
 
   const cacheTime = vat || enhedsNr ? 3600 : 300;
 
+  // BIZZ-652: Cache-first for vat-lookups. Falder tilbage til live-ES hvis
+  // cache er stale (> 7 dage) eller mangler. Writeback sker via
+  // writebackCvrToCache efter live-fetch så næste opslag rammer cachen.
+  // Navne-søgning + enhedsNummer forbliver live — kræver fulde ES-query
+  // semantik som vi ikke har kopieret til tabellen.
+  if (vat) {
+    try {
+      const admin = createAdminClient();
+      const { fetchCvrFromCache } = await import('@/app/lib/cvrIngest');
+      const cached = await fetchCvrFromCache(admin, vat);
+      if (cached) {
+        const fakeHit = { _source: { Vrvirksomhed: cached } };
+        const mapped = mapESHit(fakeHit);
+        if (mapped) {
+          // PE-data ligger ikke i cachen (separat index) — hentes live for
+          // at bevare response-shape. Typisk <100ms mod ~500ms for virksomhed.
+          const auth = Buffer.from(`${CVR_ES_USER}:${CVR_ES_PASS}`).toString('base64');
+          mapped.productionunits = await fetchProduktionsenheder(mapped.vat, auth);
+          return NextResponse.json(mapped, {
+            headers: {
+              'Cache-Control': `public, s-maxage=${cacheTime}, stale-while-revalidate=600`,
+              'x-cvr-source': 'cache',
+            },
+          });
+        }
+      }
+    } catch (err) {
+      logger.warn(
+        '[cvr-public] Cache lookup fejl — falder til live:',
+        err instanceof Error ? err.message : err
+      );
+    }
+  }
+
   try {
     const auth = Buffer.from(`${CVR_ES_USER}:${CVR_ES_PASS}`).toString('base64');
 
@@ -1209,11 +1243,34 @@ export async function GET(req: NextRequest): Promise<NextResponse<CVRPublicData 
         return NextResponse.json({ error: 'Kunne ikke parse virksomhedsdata' }, { status: 500 });
       }
 
+      // BIZZ-652: Writeback fresh ES hit til cachen så næste opslag rammer.
+      // Fire-and-forget — fejl må ikke påvirke user-response.
+      const source = (hits[0] as { _source?: { Vrvirksomhed?: Record<string, unknown> } })._source
+        ?.Vrvirksomhed;
+      if (source) {
+        void (async () => {
+          try {
+            const admin = createAdminClient();
+            const { writebackCvrToCache } = await import('@/app/lib/cvrIngest');
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            await writebackCvrToCache(admin, source as any);
+          } catch (err) {
+            logger.warn(
+              '[cvr-public] Writeback fejl (ikke fatal):',
+              err instanceof Error ? err.message : err
+            );
+          }
+        })();
+      }
+
       // Hent fulde produktionsenheder fra separat PE-index
       mapped.productionunits = await fetchProduktionsenheder(mapped.vat, auth);
 
       return NextResponse.json(mapped, {
-        headers: { 'Cache-Control': `public, s-maxage=${cacheTime}, stale-while-revalidate=600` },
+        headers: {
+          'Cache-Control': `public, s-maxage=${cacheTime}, stale-while-revalidate=600`,
+          'x-cvr-source': 'live',
+        },
       });
     }
 

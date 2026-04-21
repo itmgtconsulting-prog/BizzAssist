@@ -238,9 +238,10 @@ export function mapVirksomhedToRow(v: VrvirksomhedDoc): CvrRow | null {
 
 /**
  * Maks alder for cache-hit før vi går til live-ES.
- * 7 dage = balancerer friskhed mod cache-hit-rate.
+ * BIZZ-680: Sænket fra 7 → 1 dag — daglig delta-sync (pull-cvr-aendringer)
+ * holder cvr_virksomhed ajour, så 24h TTL er tilstrækkelig.
  */
-export const CVR_CACHE_MAX_AGE_DAYS = 7;
+export const CVR_CACHE_MAX_AGE_DAYS = 1;
 
 /**
  * Slå en virksomhed op i cvr_virksomhed-cachen. Returnerer den rå

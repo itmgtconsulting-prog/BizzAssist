@@ -190,6 +190,52 @@ export async function GET(
   }
   const { cvr } = paramResult.data;
 
+  // ── BIZZ-680: DB-first — query cvr_virksomhed (2.1M rows, <10ms) ──
+  try {
+    const { createAdminClient } = await import('@/lib/supabase/admin');
+    const admin = createAdminClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: row } = (await (admin as any)
+      .from('cvr_virksomhed')
+      .select(
+        'cvr, navn, adresse_json, branche_kode, branche_tekst, virksomhedsform, status, stiftet, ansatte_aar, sidst_opdateret'
+      )
+      .eq('cvr', cvr)
+      .maybeSingle()) as { data: Record<string, unknown> | null };
+
+    if (row?.navn) {
+      const adr = (row.adresse_json ?? {}) as Record<string, unknown>;
+      const vejnavn = typeof adr.vejnavn === 'string' ? adr.vejnavn : '';
+      const husnr = typeof adr.husnummerFra === 'number' ? String(adr.husnummerFra) : '';
+      const bogstav = typeof adr.bogstavFra === 'string' ? adr.bogstavFra : '';
+      const postnr = typeof adr.postnummer === 'number' ? String(adr.postnummer) : '';
+      const by = typeof adr.postdistrikt === 'string' ? adr.postdistrikt : '';
+
+      const selskab: CVRSelskab = {
+        cvr: String(row.cvr),
+        navn: String(row.navn),
+        adresse: `${vejnavn} ${husnr}${bogstav}`.trim(),
+        postnr,
+        by,
+        telefon: null,
+        email: null,
+        branche: row.branche_tekst as string | null,
+        branchekode: row.branche_kode ? Number(row.branche_kode) : null,
+        selskabsform: row.virksomhedsform as string | null,
+        startdato: row.stiftet as string | null,
+        slutdato: null,
+        ansatte: row.ansatte_aar as number | null,
+        reklamebeskyttet: false,
+      };
+      return NextResponse.json(selskab, {
+        headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
+      });
+    }
+  } catch {
+    // DB-first er best-effort — fallback til CVR ES
+  }
+
+  // ── Fallback: CVR ES (ekstern) ──
   if (!CVR_ES_USER || !CVR_ES_PASS) {
     return NextResponse.json(
       { error: 'CVR-adgang ikke konfigureret (CVR_ES_USER/CVR_ES_PASS mangler)' },

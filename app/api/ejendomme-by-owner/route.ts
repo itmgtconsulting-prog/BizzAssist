@@ -867,6 +867,105 @@ export async function GET(request: NextRequest): Promise<NextResponse<EjendommeB
     );
   }
 
+  // ── BIZZ-680: DB-first — query ejf_ejerskab for CVR-baserede ejerskaber ──
+  // For CVR-baserede lookups kan vi hente BFE-numre direkte fra DB (<15ms).
+  // Person-baserede lookups (enhedsNummer) kræver stadig Datafordeler.
+  if (cvrNumre.length > 0 && enhedsNumre.length === 0) {
+    try {
+      const { createAdminClient } = await import('@/lib/supabase/admin');
+      const admin = createAdminClient();
+      const cvrStrings = cvrNumre.map(String);
+
+      // Hent alle gældende ejerskaber for disse CVR-numre
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: dbRows } = (await (admin as any)
+        .from('ejf_ejerskab')
+        .select(
+          'bfe_nummer, ejer_cvr, ejer_navn, ejerandel_taeller, ejerandel_naevner, virkning_fra'
+        )
+        .in('ejer_cvr', cvrStrings)
+        .neq('status', 'historisk')) as { data: Record<string, unknown>[] | null };
+
+      if (dbRows && dbRows.length > 0) {
+        // Unik BFE-liste
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const uniqueBfes = [...new Set(dbRows.map((r: any) => r.bfe_nummer as number))];
+        const totalBfe = uniqueBfes.length;
+        const pageBfes = uniqueBfes.slice(offset, offset + limit);
+
+        // Hent adresser fra DAWA for de paginerede BFE'er
+        const ejendomme: EjendomSummary[] = [];
+        const bfeChunks: number[][] = [];
+        for (let i = 0; i < pageBfes.length; i += 10) {
+          bfeChunks.push(pageBfes.slice(i, i + 10));
+        }
+
+        for (const chunk of bfeChunks) {
+          const settled = await Promise.allSettled(
+            chunk.map(async (bfe) => {
+              try {
+                const dawaRes = await fetch(`https://api.dataforsyningen.dk/bfe/${bfe}`, {
+                  signal: AbortSignal.timeout(5000),
+                });
+                if (!dawaRes.ok) return { bfeNummer: bfe, adresse: null, dawaId: null };
+                const dawa = await dawaRes.json();
+                const adr = dawa.adgangsadresse ?? dawa.jordstykke;
+                return {
+                  bfeNummer: bfe,
+                  adresse: adr?.adressebetegnelse ?? adr?.betegnelse ?? null,
+                  dawaId: adr?.id ?? null,
+                };
+              } catch {
+                return { bfeNummer: bfe, adresse: null, dawaId: null };
+              }
+            })
+          );
+
+          for (const s of settled) {
+            if (s.status === 'fulfilled' && s.value) {
+              const v = s.value;
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const ownerRows = dbRows.filter((r: any) => r.bfe_nummer === v.bfeNummer);
+              ejendomme.push({
+                bfeNummer: v.bfeNummer,
+                adresse: v.adresse,
+                dawaId: v.dawaId,
+                ejendomstype: null,
+                aktiv: true,
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                ejere: ownerRows.map((r: any) => ({
+                  cvr: r.ejer_cvr ? Number(r.ejer_cvr) : null,
+                  navn: r.ejer_navn,
+                  andel:
+                    r.ejerandel_taeller && r.ejerandel_naevner
+                      ? `${r.ejerandel_taeller}/${r.ejerandel_naevner}`
+                      : null,
+                })),
+              } as unknown as EjendomSummary);
+            }
+          }
+        }
+
+        return NextResponse.json({
+          ejendomme,
+          totalBfe,
+          offset,
+          limit,
+          manglerNoegle: false,
+          manglerAdgang: false,
+          fejl: null,
+        });
+      }
+    } catch (dbErr) {
+      logger.warn(
+        '[ejendomme-by-owner] DB-first fejlede:',
+        dbErr instanceof Error ? dbErr.message : dbErr
+      );
+    }
+  }
+
+  // ── Fallback: Datafordeler GraphQL ──
+
   /* Hent OAuth token */
   let token: string | null = null;
 

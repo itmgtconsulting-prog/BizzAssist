@@ -46,7 +46,6 @@ import RecentEntityTagBar from '@/app/components/RecentEntityTagBar';
 import SessionTimeoutWarning from '@/app/components/SessionTimeoutWarning';
 import { useSessionTimeout } from '@/app/hooks/useSessionTimeout';
 import OnboardingModal from '@/app/components/OnboardingModal';
-import FeedbackButton from '@/app/components/FeedbackButton';
 import SubscriptionGate from '@/app/components/SubscriptionGate';
 import PaymentWarningBanner from '@/app/components/PaymentWarningBanner';
 import { companyInfo } from '@/app/lib/companyInfo';
@@ -1233,9 +1232,6 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
           await signOut();
         }}
       />
-
-      {/* Floating feedback button — always visible for beta users */}
-      <FeedbackButton />
     </div>
   );
 }

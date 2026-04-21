@@ -56,10 +56,22 @@ import { matListJordstykker, type MatJordstykkeBulk } from '@/app/lib/dar';
 const CVR_PAGE_SIZE = 200;
 
 /** Antal jordstykker pr. DAWA-side (max 1000) */
+/** Eksplicit maxDuration = 300s (5 min) — max på Vercel Pro — så vi har tid
+ * til at iterere mange kommuner i ét run og ikke kun 20 sider.
+ */
+export const maxDuration = 300;
+
 const JORDSTYKKE_PAGE_SIZE = 1_000;
 
 /** Max antal DAWA-sider pr. kørsel (beskytter mod Vercel 10s timeout) */
-const MAX_JORDSTYKKE_PAGES_PER_RUN = 20;
+/** Sider per run — øget til 250 efter maxDuration=300s giver plads til ~250K
+ * rows per cron-invokation (DAWA ~200ms per side × 250 = ~50s + upsert-tid).
+ * Sikkerheds-tjek i loopet stopper tidligt ved 4 min hvis vi rammer timeout.
+ */
+const MAX_JORDSTYKKE_PAGES_PER_RUN = 250;
+
+/** Stop ved ~4 min for at undgå at Vercel 300s timeout dræber os mid-batch. */
+const JORDSTYKKE_SAFETY_BUDGET_MS = 240_000;
 
 /** Antal rækker der upserts til Supabase ad gangen */
 const UPSERT_BATCH_SIZE = 200;
@@ -360,11 +372,19 @@ async function phaseProperties(
   let kommuneIndex = Math.floor((startPage - 1) / 10000);
   let sideInKommune = ((startPage - 1) % 10000) + 1;
 
+  const runStart = Date.now();
   outer: for (
     let pageCounter = 0;
     pageCounter < MAX_JORDSTYKKE_PAGES_PER_RUN && kommuneIndex < kommunekoder.length;
     pageCounter++
   ) {
+    // Stop tidligt hvis vi nærmer os maxDuration — safety mod Vercel kill
+    if (Date.now() - runStart > JORDSTYKKE_SAFETY_BUDGET_MS) {
+      logger.warn(
+        `[generate-sitemap] Safety budget ramt efter ${pageCounter} sider — gemmer progress og stopper`
+      );
+      break;
+    }
     const kommunekode = kommunekoder[kommuneIndex];
     // BIZZ-510: Try MAT WFS first. Falls back to DAWA per-kommune /jordstykker
     // filter — cap er 25K × side-size = 25M per kommune (aldrig ramt).

@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1100" width="1200" height="1100">
+  <title>Forslag C — 10 borde, 110 siddende (Maskinsalen 1. sal)</title>
+  <desc>Festlokale 1100x950 cm, Ø180 cm runde borde. 4+4+2 layout. Let komprimerede afstande men gangbredde OK til servering.</desc>
+
+  <rect x="0" y="0" width="1200" height="80" fill="#b91c1c"/>
+  <text x="30" y="50" font-family="sans-serif" font-size="32" font-weight="700" fill="#fff">110 SEATS</text>
+  <text x="280" y="38" font-family="sans-serif" font-size="18" font-weight="600" fill="#fff">Dinner Seating · 10× round tables (Ø180 cm) with banquet chairs</text>
+  <text x="280" y="60" font-family="sans-serif" font-size="14" fill="#fee2e2">Maskinsalen, 1st floor · Forslag C · 70-110 cm mellem borde · 50-100 cm til væg</text>
+
+  <g transform="translate(1080, 20)">
+    <rect width="90" height="40" fill="#fff"/>
+    <rect x="5" y="5" width="30" height="30" fill="#b91c1c"/>
+    <text x="42" y="28" font-family="sans-serif" font-size="18" font-weight="700" fill="#b91c1c">1 m²</text>
+  </g>
+
+  <g transform="translate(50, 100)">
+    <path d="M 0,0 L 700,0 L 700,225 L 1100,225 L 1100,950 L 0,950 Z"
+          fill="#f8fafc" stroke="#b91c1c" stroke-width="6"/>
+    <rect x="700" y="0" width="400" height="225" fill="#fee2e2" stroke="#b91c1c" stroke-width="2" stroke-dasharray="6 3"/>
+    <text x="900" y="100" text-anchor="middle" font-family="sans-serif" font-size="22" font-weight="600" fill="#b91c1c">Køkken · Toilet</text>
+    <text x="900" y="130" text-anchor="middle" font-family="sans-serif" font-size="22" font-weight="600" fill="#b91c1c">Hovedindgang</text>
+
+    <rect x="1020" y="260" width="80" height="340" fill="#1e293b"/>
+    <text x="1060" y="430" text-anchor="middle" font-family="sans-serif" font-size="26" font-weight="700" fill="#fff" transform="rotate(-90 1060 430)">BAR</text>
+
+    <rect x="0" y="800" width="180" height="150" fill="#fef3c7" stroke="#b91c1c" stroke-width="2" stroke-dasharray="4 2"/>
+    <text x="90" y="880" text-anchor="middle" font-family="sans-serif" font-size="14" fill="#92400e">Ramp</text>
+    <text x="90" y="896" text-anchor="middle" font-family="sans-serif" font-size="14" fill="#92400e">Entrance</text>
+
+    <!-- Tables: Row 1 (4 tables) y=340, Row 2 (4 tables) y=605, Row 3 (2 tables) y=845 -->
+    <g fill="none" stroke="#b91c1c" stroke-width="3">
+      <circle cx="150" cy="340" r="90"/>
+      <circle cx="420" cy="340" r="90"/>
+      <circle cx="690" cy="340" r="90"/>
+      <circle cx="960" cy="340" r="90"/>
+      <circle cx="150" cy="605" r="90"/>
+      <circle cx="420" cy="605" r="90"/>
+      <circle cx="690" cy="605" r="90"/>
+      <circle cx="960" cy="605" r="90"/>
+      <circle cx="290" cy="845" r="90"/>
+      <circle cx="690" cy="845" r="90"/>
+    </g>
+
+    <g font-family="sans-serif" font-size="22" font-weight="700" fill="#b91c1c" text-anchor="middle">
+      <text x="150" y="336">11</text><text x="420" y="336">11</text><text x="690" y="336">11</text><text x="960" y="336">11</text>
+      <text x="150" y="601">11</text><text x="420" y="601">11</text><text x="690" y="601">11</text><text x="960" y="601">11</text>
+      <text x="290" y="841">11</text><text x="690" y="841">11</text>
+    </g>
+    <g font-family="sans-serif" font-size="14" fill="#b91c1c" text-anchor="middle">
+      <text x="150" y="356">SEATS</text><text x="420" y="356">SEATS</text><text x="690" y="356">SEATS</text><text x="960" y="356">SEATS</text>
+      <text x="150" y="621">SEATS</text><text x="420" y="621">SEATS</text><text x="690" y="621">SEATS</text><text x="960" y="621">SEATS</text>
+      <text x="290" y="861">SEATS</text><text x="690" y="861">SEATS</text>
+    </g>
+    <g font-family="sans-serif" font-size="10" fill="#b91c1c" text-anchor="middle">
+      <text x="150" y="370">Ø180 CM</text><text x="420" y="370">Ø180 CM</text><text x="690" y="370">Ø180 CM</text><text x="960" y="370">Ø180 CM</text>
+      <text x="150" y="635">Ø180 CM</text><text x="420" y="635">Ø180 CM</text><text x="690" y="635">Ø180 CM</text><text x="960" y="635">Ø180 CM</text>
+      <text x="290" y="875">Ø180 CM</text><text x="690" y="875">Ø180 CM</text>
+    </g>
+
+    <text x="-30" y="475" font-family="sans-serif" font-size="14" fill="#b91c1c"
+          transform="rotate(-90 -30 475)">External ramp for gear and wheelchairs</text>
+  </g>
+
+  <g transform="translate(50, 1060)" font-family="sans-serif" font-size="13" fill="#334155">
+    <text x="0" y="0">Alle mål i cm · Room 1100×950 cm · Række 1+2: 4 borde á 11 pers · Række 3: 2 borde · Total 110 siddende</text>
+  </g>
+</svg>

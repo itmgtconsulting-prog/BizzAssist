@@ -32,6 +32,7 @@ import { createClient } from '@supabase/supabase-js';
 import { checkRateLimit, braveRateLimit } from '@/app/lib/rateLimit';
 import { logger } from '@/app/lib/logger';
 import { resolveTenantId } from '@/lib/api/auth';
+import { assertAiAllowed } from '@/app/lib/aiGate';
 
 export const runtime = 'nodejs';
 export const maxDuration = 90;
@@ -709,6 +710,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   /** Faseparameter: 'raw' = kun Serper (hurtigt), 'ai' = Serper + Claude (standard) */
   const phase = request.nextUrl.searchParams.get('phase') ?? 'ai';
+
+  // BIZZ-649: Central AI billing-gate. Gate'n skal først kaldes for 'ai'-
+  // fasen fordi 'raw' bruger ikke Anthropic. Men vi gater også på 'raw' for
+  // at undgå at en 0-token bruger kan kalde Serper i uendelighed og bypasse
+  // afregningen af deres samlede billing-budget.
+  const blocked = await assertAiAllowed(auth.userId);
+  if (blocked) return blocked as NextResponse;
 
   const serperApiKey = process.env.SERPER_API_KEY?.trim();
   if (!serperApiKey)

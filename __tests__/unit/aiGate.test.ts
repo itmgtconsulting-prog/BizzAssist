@@ -200,6 +200,63 @@ describe('assertAiAllowed — BIZZ-649 P0 central billing gate', () => {
     expect(res!.status).toBe(429);
   });
 
+  it('BIZZ-653: blokerer active-men-ubetalt abonnement uanset plan-tokens', async () => {
+    // Crossshoppen-scenariet: requires_approval=true plan oprettet som
+    // status=active men isPaid=false indtil Stripe/admin bekræfter.
+    mockAdminClient({
+      appMetadata: {
+        subscription: {
+          status: 'active',
+          isPaid: false,
+          planId: 'testplan3',
+          tokensUsedThisMonth: 0,
+        },
+      },
+      planRow: { ai_tokens_per_month: 100_000 },
+    });
+    const res = await assertAiAllowed('unpaid-active-user');
+    expect(res).not.toBeNull();
+    expect(res!.status).toBe(402);
+    const body = await res!.json();
+    expect(body.code).toBe('trial_ai_blocked');
+    expect(body.error).toContain('ikke betalt');
+    expect(Sentry.addBreadcrumb).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'AI blocked: active_unpaid' })
+    );
+  });
+
+  it('BIZZ-653: tillader active + isPaid=true (betalt abonnement)', async () => {
+    mockAdminClient({
+      appMetadata: {
+        subscription: {
+          status: 'active',
+          isPaid: true,
+          planId: 'testplan3',
+          tokensUsedThisMonth: 0,
+        },
+      },
+      planRow: { ai_tokens_per_month: 100_000 },
+    });
+    const res = await assertAiAllowed('paid-active-user');
+    expect(res).toBeNull();
+  });
+
+  it('BIZZ-653: tillader active uden isPaid-flag (backwards compat)', async () => {
+    // Gamle subscriptions uden isPaid-felt skal fortsat virke.
+    mockAdminClient({
+      appMetadata: {
+        subscription: {
+          status: 'active',
+          planId: 'testplan3',
+          tokensUsedThisMonth: 0,
+        },
+      },
+      planRow: { ai_tokens_per_month: 100_000 },
+    });
+    const res = await assertAiAllowed('legacy-active-user');
+    expect(res).toBeNull();
+  });
+
   it('active user med plan=0 bonus=0 topUp=0 → 402 zero_budget (non-trial messaging)', async () => {
     mockAdminClient({
       appMetadata: {

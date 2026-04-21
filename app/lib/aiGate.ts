@@ -41,6 +41,14 @@ interface SubscriptionSnapshot {
   tokensUsedThisMonth?: number;
   bonusTokens?: number;
   topUpTokens?: number;
+  /**
+   * BIZZ-653: Indikerer om abonnementet faktisk er betalt. Når en bruger
+   * tilmelder sig en plan med `requires_approval=true` oprettes subscription
+   * som `status=active` + `isPaid=false` indtil admin godkender (eller Stripe
+   * bekræfter). Uden denne flag ville gate lade ubetalte "active"-brugere
+   * forbruge plan-tokens uden at have lagt penge.
+   */
+  isPaid?: boolean;
 }
 
 /**
@@ -91,6 +99,31 @@ export async function assertAiAllowed(userId: string): Promise<Response | null> 
   // kunne bruge AI til support/test uden at have aktiv plan.
   if (isAdmin) {
     return null;
+  }
+
+  // BIZZ-653 politik 4: Ubetalt aktivt abonnement — abonnementet er oprettet
+  // men mangler betaling (Stripe pending eller admin-godkendelse afventer).
+  // Lad IKKE brugeren forbruge plan-tokens før pengene er på plads.
+  // Bemærk: bonus/topUp tillader vi bevidst IKKE her, fordi et ubetalt plan-
+  // oprettelse heller ikke bør kunne udnytte admin-tildelte bonus på fremtidig
+  // plan. Hvis en trial-bruger havde topUp, er deres status 'trialing' — ikke
+  // 'active' + isPaid=false.
+  if (sub.status === 'active' && sub.isPaid === false) {
+    Sentry.addBreadcrumb({
+      category: 'billing',
+      message: 'AI blocked: active_unpaid',
+      level: 'info',
+      data: { userId, planId: sub.planId ?? null },
+    });
+    return Response.json(
+      {
+        error:
+          'Dit abonnement er ikke betalt endnu. Fuldfør betalingen, eller køb en token-pakke for at bruge AI nu.',
+        code: 'trial_ai_blocked',
+        cta: 'buy_token_pack',
+      },
+      { status: 402 }
+    );
   }
 
   // Resolve plan-tokens fra plan_configs. Trial-brugere får 0 plan-tokens

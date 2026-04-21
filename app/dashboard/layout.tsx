@@ -31,6 +31,7 @@ import {
   ChevronRight,
   BarChart2,
   Sparkles,
+  Coins,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';
@@ -81,6 +82,10 @@ const navItems = [
     ? [{ icon: BarChart2, key: 'analysis' as const, href: '/dashboard/analysis', adminOnly: false }]
     : []),
   { icon: MessageSquare, key: 'chat' as const, href: '/dashboard/chat', adminOnly: false },
+  // BIZZ-654: Synligt entry-point til token-køb for almindelige brugere —
+  // tidligere kunne man kun nå /dashboard/tokens via trial-blocked-banneret
+  // i AI-chat, så brugere uden chat-interaktion havde ingen synlig CTA.
+  { icon: Coins, key: 'tokens' as const, href: '/dashboard/tokens', adminOnly: false },
   { icon: Shield, key: 'admin' as const, href: '/dashboard/admin/users', adminOnly: true },
 ];
 

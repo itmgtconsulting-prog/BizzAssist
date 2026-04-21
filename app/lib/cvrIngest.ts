@@ -19,7 +19,7 @@ import { logger } from '@/app/lib/logger';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-/** Row shape for cvr_virksomhed upsert — matches migration 054 schema */
+/** Row shape for cvr_virksomhed upsert — matches migration 054 + 057 schema */
 export interface CvrRow {
   cvr: string;
   samt_id: number | null;
@@ -39,6 +39,12 @@ export interface CvrRow {
   sidst_opdateret: string | null;
   sidst_indlaest: string | null;
   sidst_hentet_fra_cvr: string;
+  /**
+   * BIZZ-652: Hele ES _source.Vrvirksomhed gemmes så cache-first runtime-swap
+   * (/api/cvr-public) kan returnere præcis samme response som live-ES via
+   * eksisterende mapESHit. Sat af mapVirksomhedToRow når den kaldes med full-doc.
+   */
+  raw_source: Record<string, unknown> | null;
 }
 
 /** Subset af ES response _source.Vrvirksomhed vi kigger på */
@@ -222,7 +228,72 @@ export function mapVirksomhedToRow(v: VrvirksomhedDoc): CvrRow | null {
     sidst_opdateret: v.sidstOpdateret ?? null,
     sidst_indlaest: v.sidstIndlaest ?? null,
     sidst_hentet_fra_cvr: new Date().toISOString(),
+    // BIZZ-652: Gem hele Vrvirksomhed så runtime-swap (cvr-public) kan
+    // returnere samme response som live-ES via mapESHit.
+    raw_source: v as unknown as Record<string, unknown>,
   };
+}
+
+// ─── Cache lookup + writeback (BIZZ-652 runtime swap) ───────────────────────
+
+/**
+ * Maks alder for cache-hit før vi går til live-ES.
+ * 7 dage = balancerer friskhed mod cache-hit-rate.
+ */
+export const CVR_CACHE_MAX_AGE_DAYS = 7;
+
+/**
+ * Slå en virksomhed op i cvr_virksomhed-cachen. Returnerer den rå
+ * Vrvirksomhed-_source hvis frisk nok, ellers null.
+ *
+ * Cache-policy: hit hvis `sidst_hentet_fra_cvr > now - 7 dage`. Ældre cache
+ * = miss → caller falder tilbage til live-ES + writeback.
+ *
+ * @param admin - Supabase admin-client (bypasser RLS)
+ * @param cvr - CVR-nummer som string (8 cifre)
+ * @returns Hele Vrvirksomhed-dokument fra raw_source, eller null ved miss
+ */
+export async function fetchCvrFromCache(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  admin: any,
+  cvr: string
+): Promise<Record<string, unknown> | null> {
+  const maxAgeMs = CVR_CACHE_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
+  const minFreshness = new Date(Date.now() - maxAgeMs).toISOString();
+
+  const { data, error } = await admin
+    .from('cvr_virksomhed')
+    .select('raw_source, sidst_hentet_fra_cvr')
+    .eq('cvr', cvr)
+    .gte('sidst_hentet_fra_cvr', minFreshness)
+    .maybeSingle();
+
+  if (error) {
+    logger.warn('[cvrIngest] Cache lookup fejl:', error.message);
+    return null;
+  }
+  if (!data) return null;
+  const raw = (data as { raw_source?: Record<string, unknown> | null }).raw_source;
+  return raw ?? null;
+}
+
+/**
+ * Skriv en enkelt Vrvirksomhed-record tilbage til cachen efter live-ES hit.
+ * Wrapper upsertCvrBatch med batch af 1 så vi genbruger dedup/upsert-logik.
+ *
+ * @param admin - Supabase admin-client
+ * @param doc - Rå Vrvirksomhed-doc fra live-ES
+ * @returns true hvis skrevet, false hvis doc ikke kunne mappes
+ */
+export async function writebackCvrToCache(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  admin: any,
+  doc: VrvirksomhedDoc
+): Promise<boolean> {
+  const row = mapVirksomhedToRow(doc);
+  if (!row) return false;
+  const res = await upsertCvrBatch(admin.from('cvr_virksomhed'), [row]);
+  return res.upserted > 0;
 }
 
 // ─── Upsert ───────────────────────────────────────────────────────────────────

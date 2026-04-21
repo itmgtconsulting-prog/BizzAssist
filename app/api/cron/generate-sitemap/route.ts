@@ -247,7 +247,7 @@ async function phaseCompanies(
   let hits: NonNullable<CvrSearchResponse['hits']>['hits'] = [];
 
   try {
-    const res = await fetch('https://distribution.virk.dk/cvr-permanent/virksomhed/_search', {
+    const res = await fetch('http://distribution.virk.dk/cvr-permanent/virksomhed/_search', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

@@ -1446,9 +1446,11 @@ export default function EjendomDetaljeClient({
 
       if (bestMatch && bestIdx >= 0) brugteTlIdx.add(bestIdx);
 
+      // BIZZ-693: EJF har ofte null købesum — fallback til Tinglysning-match
       merged.push({
-        kontantKoebesum: h.kontantKoebesum,
-        samletKoebesum: h.samletKoebesum,
+        kontantKoebesum:
+          h.kontantKoebesum ?? bestMatch?.kontantKoebesum ?? bestMatch?.koebesum ?? null,
+        samletKoebesum: h.samletKoebesum ?? bestMatch?.iAltKoebesum ?? bestMatch?.koebesum ?? null,
         loesoeresum: h.loesoeresum,
         entreprisesum: h.entreprisesum,
         koebsaftaleDato: h.koebsaftaleDato,

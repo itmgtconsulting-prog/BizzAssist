@@ -5,37 +5,30 @@
  * danske ejendomme og virksomheder til SEO-sitemap.
  *
  * Kør via ?phase=companies, ?phase=properties eller ?phase=vp-properties
- * (ét ad gangen for at holde sig under Vercels 10-sekunders function timeout).
  *
- * Phase: companies
- *   Paginerer CVR ElasticSearch (Erhvervsstyrelsen) via search_after sorteret
- *   på cvrNummer. Gemmer seneste cvrNummer i public.ai_settings med nøglen
- *   'sitemap_cvr_after' så næste kørsel kan fortsætte hvor den slap.
- *   Behandler CVR_PAGE_SIZE virksomheder pr. kørsel (ét enkelt ES-request).
+ * Phase: companies (DB-first — BIZZ-680)
+ *   Paginerer `public.cvr_virksomhed`-tabellen (2.1M virksomheder) via
+ *   cursor-baseret pagination sorteret på cvr. Behandler CVR_BATCH_SIZE
+ *   virksomheder pr. kørsel og gemmer cursor i public.ai_settings.
+ *   Markant hurtigere end den tidligere CVR ES-paginering (200/dag → 50K/kørsel).
  *
- * Phase: properties
- *   Paginerer DAWA jordstykker (1000 pr. side, max 20 sider pr. kørsel).
- *   Hvert jordstykke indeholder bfenummer direkte — ingen DAWA adgangsadresser
- *   bruges (de indeholder ikke bfenummer i jordstykke-sub-objektet).
- *   Gemmer fremskridt i public.ai_settings med nøglen 'sitemap_jordstykke_page'
- *   så næste kørsel kan fortsætte hvor den slap.
- *   Skipper jordstykker uden bfenummer.
+ * Phase: properties (DB-first — BIZZ-680)
+ *   Paginerer `public.ejf_ejerskab`-tabellen (7.6M records) for distinkte
+ *   BFE-numre. Behandler PROPERTY_BATCH_SIZE BFE'er pr. kørsel med
+ *   cursor-baseret pagination. Slug genereres fra BFE-nummer (dekorativ) —
+ *   vp-properties-fasen beriger efterfølgende med rigtige adresse-slugs.
  *
- * Phase: vp-properties
- *   Paginerer Vurderingsportalen ElasticSearch (api-fs.vurderingsportalen.dk)
- *   via search_after sorteret på bfeNumbers. Dækker ALLE BFE-numre inkl.
- *   ejerlejligheder som ikke har et jordstykke i DAWA (og dermed mangler i
- *   'properties'-fasen). Behandler VP_PAGE_SIZE BFE'er pr. kørsel (ét ES-request).
- *   Gemmer search_after-cursor i public.ai_settings med nøglen 'sitemap_vp_after'.
- *   Slug bygges fra adresse + etage + dør — BFE-nummeret er den funktionelle ID.
+ * Phase: vp-properties (adresse-enrichment)
+ *   Paginerer Vurderingsportalen ElasticSearch for at berige sitemap-entries
+ *   med rigtige adresse-slugs (vejnavn + husnr + postnr + by). Dækker også
+ *   ejerlejligheder der evt. mangler fra properties-fasen.
  *
  * Sikring:
  *   - Kræver Authorization: Bearer <CRON_SECRET>
  *   - I production: kræver også x-vercel-cron: 1
  *
  * Trigger:
- *   - Vercel Cron: søndag kl. 02:00 UTC (companies), 03:00 UTC (properties),
- *     04:00 UTC (vp-properties)
+ *   - Vercel Cron: se vercel.json for schedule
  *   - Manuel: GET /api/cron/generate-sitemap?phase=companies|properties|vp-properties
  *
  * @module api/cron/generate-sitemap
@@ -43,52 +36,41 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { generateSlug, generateVirksomhedSlug, generateEjendomSlug } from '@/app/lib/slug';
+import { generateSlug, generateVirksomhedSlug } from '@/app/lib/slug';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 import { withCronMonitor } from '@/app/lib/cronMonitor';
-import { fetchDawa } from '@/app/lib/dawa';
-import { matListJordstykker, type MatJordstykkeBulk } from '@/app/lib/dar';
 
 // ─── Konstanter ────────────────────────────────────────────────────────────────
 
-/** Antal virksomheder pr. CVR ES request (lavt for at holde sig under Vercels 10s timeout) */
-const CVR_PAGE_SIZE = 200;
-
-/** Antal jordstykker pr. DAWA-side (max 1000) */
-/** Eksplicit maxDuration = 300s (5 min) — max på Vercel Pro — så vi har tid
- * til at iterere mange kommuner i ét run og ikke kun 20 sider.
- */
+/** Eksplicit maxDuration = 300s (5 min) — max på Vercel Pro */
 export const maxDuration = 300;
 
-const JORDSTYKKE_PAGE_SIZE = 1_000;
+/** Antal virksomheder pr. DB-batch (DB-read er hurtigt → stor batch) */
+const CVR_BATCH_SIZE = 5_000;
 
-/** Max antal DAWA-sider pr. kørsel (beskytter mod Vercel 10s timeout) */
-/** Sider per run — øget til 250 efter maxDuration=300s giver plads til ~250K
- * rows per cron-invokation (DAWA ~200ms per side × 250 = ~50s + upsert-tid).
- * Sikkerheds-tjek i loopet stopper tidligt ved 4 min hvis vi rammer timeout.
- */
-const MAX_JORDSTYKKE_PAGES_PER_RUN = 250;
+/** Antal distinkte BFE-numre pr. DB-batch */
+const PROPERTY_BATCH_SIZE = 5_000;
 
 /** Stop ved ~4 min for at undgå at Vercel 300s timeout dræber os mid-batch. */
-const JORDSTYKKE_SAFETY_BUDGET_MS = 240_000;
+const SAFETY_BUDGET_MS = 240_000;
 
 /** Antal rækker der upserts til Supabase ad gangen */
-const UPSERT_BATCH_SIZE = 200;
+const UPSERT_BATCH_SIZE = 500;
 
 /** Supabase ai_settings nøgle til sidst behandlede cvrNummer */
 const CVR_PROGRESS_KEY = 'sitemap_cvr_after';
 
-/** Supabase ai_settings nøgle til jordstykke-side fremskridt */
-const JORDSTYKKE_PROGRESS_KEY = 'sitemap_jordstykke_page';
+/** Supabase ai_settings nøgle til sidst behandlede BFE-nummer */
+const PROPERTY_PROGRESS_KEY = 'sitemap_bfe_after';
 
-/** Vurderingsportalen ES endpoint — undokumenteret, men bruges af dashboard */
+/** Vurderingsportalen ES endpoint */
 const VP_ES_URL = 'https://api-fs.vurderingsportalen.dk/preliminaryproperties/_search';
 
-/** Antal BFE'er pr. VP ES request (lavt for at holde sig under Vercels 10s timeout) */
+/** Antal BFE'er pr. VP ES request */
 const VP_PAGE_SIZE = 500;
 
-/** Supabase ai_settings nøgle til VP search_after-cursor (sidst sete bfeNumbers) */
+/** Supabase ai_settings nøgle til VP search_after-cursor */
 const VP_PROGRESS_KEY = 'sitemap_vp_after';
 
 // ─── Auth ──────────────────────────────────────────────────────────────────────
@@ -118,30 +100,6 @@ interface SitemapUpsert {
   slug: string;
   entity_id: string;
   updated_at: string;
-}
-
-/** CVR ES response for search_after paginering */
-interface CvrSearchResponse {
-  hits?: {
-    hits?: Array<{
-      _source?: {
-        Vrvirksomhed?: {
-          cvrNummer?: number;
-          virksomhedMetadata?: {
-            nyesteNavn?: { navn?: string };
-          };
-        };
-      };
-      sort?: number[];
-    }>;
-  };
-}
-
-/** DAWA jordstykke — kun de felter vi bruger */
-interface DawaJordstykke {
-  bfenummer?: number | null;
-  ejerlav?: { kode?: number; navn?: string };
-  matrikelnr?: string;
 }
 
 /** VP ES hit — kun de felter vi bruger fra preliminaryproperties-indekset */
@@ -191,551 +149,219 @@ async function upsertBatch(
   return batch.length;
 }
 
-// ─── Phase: companies ──────────────────────────────────────────────────────────
+// ─── Progress helpers ─────────────────────────────────────────────────────────
 
 /**
- * Paginerer CVR ElasticSearch via search_after sorteret på cvrNummer.
- * Behandler CVR_PAGE_SIZE virksomheder per kørsel (ét enkelt ES-request)
- * og gemmer fremskridt i public.ai_settings for at fortsætte ved næste kørsel.
- *
- * Undgår scroll-API'et som kræver en aktiv scroll-session på tværs af kald —
- * search_after med range-query er stateless og timeout-sikkert.
- *
- * @param admin - Supabase admin client til DB-writes
- * @returns Antal virksomheder der blev upserted og om paginering er nulstillet
- */
-async function phaseCompanies(
-  admin: ReturnType<typeof createAdminClient>
-): Promise<{ count: number; lastCvr: number; done: boolean }> {
-  const cvrUser = process.env.CVR_ES_USER ?? '';
-  const cvrPass = process.env.CVR_ES_PASS ?? '';
-
-  if (!cvrUser || !cvrPass) {
-    logger.error('[generate-sitemap] CVR_ES_USER/CVR_ES_PASS mangler');
-    return { count: 0, lastCvr: 0, done: false };
-  }
-
-  // Hent sidst behandlede cvrNummer fra ai_settings
-  const { data: progressRow } = await admin
-    .from('ai_settings')
-    .select('value')
-    .eq('key', CVR_PROGRESS_KEY)
-    .maybeSingle();
-
-  const progressValue = (progressRow as Record<string, unknown> | null)?.['value'];
-  const afterCvr: number = progressValue != null ? Number(progressValue) : 0;
-
-  const authHeader = `Basic ${Buffer.from(`${cvrUser}:${cvrPass}`).toString('base64')}`;
-  const now = new Date().toISOString();
-
-  // Byg search_after query med range på cvrNummer — stateless og hurtigt
-  const query: Record<string, unknown> = {
-    size: CVR_PAGE_SIZE,
-    sort: [{ 'Vrvirksomhed.cvrNummer': 'asc' }],
-    query: {
-      bool: {
-        must: [
-          { term: { 'Vrvirksomhed.reklamebeskyttet': false } },
-          ...(afterCvr > 0 ? [{ range: { 'Vrvirksomhed.cvrNummer': { gt: afterCvr } } }] : []),
-        ],
-        must_not: [{ exists: { field: 'Vrvirksomhed.livsforloeb.periode.gyldigTil' } }],
-      },
-    },
-    _source: ['Vrvirksomhed.cvrNummer', 'Vrvirksomhed.virksomhedMetadata.nyesteNavn.navn'],
-  };
-
-  let hits: NonNullable<CvrSearchResponse['hits']>['hits'] = [];
-
-  try {
-    const res = await fetch('http://distribution.virk.dk/cvr-permanent/virksomhed/_search', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: authHeader,
-      },
-      body: JSON.stringify(query),
-      // 7s timeout — lader 3s til upsert + Vercel overhead inden 10s grænsen
-      signal: AbortSignal.timeout(7000),
-    });
-
-    if (!res.ok) {
-      logger.error('[generate-sitemap] CVR ES request fejlede:', res.status);
-      return { count: 0, lastCvr: afterCvr, done: false };
-    }
-
-    const data = (await res.json()) as CvrSearchResponse;
-    hits = data.hits?.hits ?? [];
-  } catch (err) {
-    logger.error('[generate-sitemap] CVR ES request fejl:', err);
-    return { count: 0, lastCvr: afterCvr, done: false };
-  }
-
-  if (hits.length === 0) {
-    // Ingen flere resultater — fuld scan afsluttet, nulstil fremskridt
-    await admin
-      .from('ai_settings')
-      .upsert({ key: CVR_PROGRESS_KEY, value: 0 }, { onConflict: 'key' });
-    return { count: 0, lastCvr: 0, done: true };
-  }
-
-  // Byg og upsert batch
-  const batch: SitemapUpsert[] = [];
-  let maxCvr = afterCvr;
-
-  for (const hit of hits) {
-    const vvs = hit._source?.Vrvirksomhed;
-    const cvr = vvs?.cvrNummer;
-    const navn = vvs?.virksomhedMetadata?.nyesteNavn?.navn;
-    if (!cvr || !navn) continue;
-
-    if (cvr > maxCvr) maxCvr = cvr;
-
-    batch.push({
-      type: 'virksomhed',
-      slug: generateVirksomhedSlug(navn),
-      entity_id: String(cvr),
-      updated_at: now,
-    });
-  }
-
-  const count = await upsertBatch(admin, batch);
-
-  // Gem fremskridt — næste kørsel starter fra maxCvr
-  if (maxCvr > afterCvr) {
-    await admin
-      .from('ai_settings')
-      .upsert({ key: CVR_PROGRESS_KEY, value: maxCvr }, { onConflict: 'key' });
-  }
-
-  const done = hits.length < CVR_PAGE_SIZE;
-  if (done) {
-    // Kortere side = alle virksomheder behandlet, nulstil
-    await admin
-      .from('ai_settings')
-      .upsert({ key: CVR_PROGRESS_KEY, value: 0 }, { onConflict: 'key' });
-  }
-
-  return { count, lastCvr: maxCvr, done };
-}
-
-// ─── Phase: properties ─────────────────────────────────────────────────────────
-
-/**
- * Paginerer DAWA jordstykker og upserts ejendomme til sitemap_entries.
- *
- * Bruger DAWA jordstykker-endpointet (fremfor adgangsadresser) fordi
- * jordstykker indeholder bfenummer direkte. DAWA adgangsadresser?struktur=nestet
- * returnerer IKKE bfenummer i jordstykke-sub-objektet.
- *
- * Slug genereres fra ejerlav.navn + matrikelnr. Sluggen er dekorativ —
- * den offentlige ejendomsside bruger kun BFE-nummeret til datahentning.
- *
- * Gemmer sidefremskridt i public.ai_settings for at fortsætte
- * ved næste kørsel (Vercel 10s timeout begrænser til MAX_JORDSTYKKE_PAGES_PER_RUN sider).
- *
- * @param admin - Supabase admin client til DB-writes og fremskridt
- * @returns Sidetal, antal upserted og om scan er afsluttet
- */
-async function phaseProperties(
-  admin: ReturnType<typeof createAdminClient>
-): Promise<{ page: number; count: number; done: boolean }> {
-  // Hent gemte fremskridt
-  const { data: progressRow } = await admin
-    .from('ai_settings')
-    .select('value')
-    .eq('key', JORDSTYKKE_PROGRESS_KEY)
-    .maybeSingle();
-
-  const progressValue = (progressRow as Record<string, unknown> | null)?.['value'];
-  let startPage: number = progressValue != null ? Number(progressValue) : 1;
-  if (startPage < 1) startPage = 1;
-
-  const now = new Date().toISOString();
-  let totalCount = 0;
-  let currentPage = startPage;
-  let done = false;
-
-  // BIZZ-645: DAWA /jordstykker caps pagination at side*per_side <= 25_000.
-  // Vi itererer i stedet pr. kommune (98 kommuner i DK, hver < 25K jordstykker)
-  // og pagine inden for kommunen. Fremskridts-cursor er nu "kommune-index
-  // × 10000 + side" så en enkelt int kan encode både kommune og side.
-  //
-  // Kører kun hvis MAT WFS fejler — MAT caps heller ikke, men endpointet
-  // 404'er aktuelt på vores Datafordeler-konto.
-  const kommunekoder = await fetchKommunekoder();
-  if (kommunekoder.length === 0) {
-    logger.error('[generate-sitemap] Kunne ikke hente kommune-liste — afbryder');
-    return { page: currentPage, count: 0, done: false };
-  }
-
-  // Fortolk startPage: 10000 = kommune-index, 1-9999 = side inden for kommune.
-  let kommuneIndex = Math.floor((startPage - 1) / 10000);
-  let sideInKommune = ((startPage - 1) % 10000) + 1;
-
-  const runStart = Date.now();
-
-  // BIZZ-645 (slug-fix): Cache af adresse-map per kommune — hentes én gang
-  // når vi går ind i en kommune, genbruges på tværs af sider i samme kommune.
-  // Når kommuneIndex skifter, bygges ny.
-  let currentKommuneForAddresses: string | null = null;
-  let currentAddressMap: Map<string, AdresseInfo> = new Map();
-
-  outer: for (
-    let pageCounter = 0;
-    pageCounter < MAX_JORDSTYKKE_PAGES_PER_RUN && kommuneIndex < kommunekoder.length;
-    pageCounter++
-  ) {
-    // Stop tidligt hvis vi nærmer os maxDuration — safety mod Vercel kill
-    if (Date.now() - runStart > JORDSTYKKE_SAFETY_BUDGET_MS) {
-      logger.warn(
-        `[generate-sitemap] Safety budget ramt efter ${pageCounter} sider — gemmer progress og stopper`
-      );
-      break;
-    }
-    const kommunekode = kommunekoder[kommuneIndex];
-
-    // BIZZ-645: Hent adresse-map for denne kommune (kun første gang pr. kommune)
-    if (currentKommuneForAddresses !== kommunekode) {
-      currentAddressMap = await fetchAdresserForKommune(kommunekode);
-      currentKommuneForAddresses = kommunekode;
-      logger.log(
-        `[generate-sitemap] Kommune ${kommunekode}: ${currentAddressMap.size} adresser tilgængelige til slug-lookup`
-      );
-    }
-    // BIZZ-510: Try MAT WFS first. Falls back to DAWA per-kommune /jordstykker
-    // filter — cap er 25K × side-size = 25M per kommune (aldrig ramt).
-    let items: MatJordstykkeBulk[] | null = null;
-    let rawPageSize = 0;
-
-    try {
-      const startIndex = (sideInKommune - 1) * JORDSTYKKE_PAGE_SIZE;
-      items = await matListJordstykker(startIndex, JORDSTYKKE_PAGE_SIZE);
-      if (items !== null) rawPageSize = items.length;
-    } catch (err) {
-      logger.error(
-        '[generate-sitemap] MAT WFS kommune',
-        kommunekode,
-        'side',
-        sideInKommune,
-        'kastede — falder tilbage til DAWA:',
-        err
-      );
-    }
-
-    if (items === null) {
-      // DAWA fallback pr. kommune
-      try {
-        const url =
-          `https://api.dataforsyningen.dk/jordstykker` +
-          `?per_side=${JORDSTYKKE_PAGE_SIZE}&side=${sideInKommune}&kommunekode=${kommunekode}`;
-        const res = await fetchDawa(
-          url,
-          { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(10000) },
-          { caller: 'cron.generate-sitemap.jordstykker.fallback' }
-        );
-
-        if (!res.ok) {
-          logger.error(
-            '[generate-sitemap] DAWA jordstykker kommune',
-            kommunekode,
-            'side',
-            sideInKommune,
-            'fejlede:',
-            res.status
-          );
-          // BIZZ-645: HTTP-fejl typisk pga DAWA's 25K-cap i store kommuner
-          // (København har > 100K jordstykker). Spring til næste kommune
-          // i stedet for at break ud af hele cronen — partial coverage er
-          // bedre end total stop. Følge-op-ticket kan bygge ejerlav-iteration.
-          kommuneIndex++;
-          sideInKommune = 1;
-          currentPage = kommuneIndex * 10000 + sideInKommune;
-          continue;
-        }
-
-        const data = (await res.json()) as unknown;
-        if (!Array.isArray(data)) {
-          // Samme mønster: DAWA returnerede error-object i stedet for array
-          // — typisk "Der kan højst pagineres i de første 25000 elementer".
-          logger.warn(
-            '[generate-sitemap] DAWA kommune',
-            kommunekode,
-            'returnerede ikke-array på side',
-            sideInKommune,
-            '— springer til næste kommune'
-          );
-          kommuneIndex++;
-          sideInKommune = 1;
-          currentPage = kommuneIndex * 10000 + sideInKommune;
-          continue;
-        }
-        rawPageSize = data.length;
-        items = data
-          .map((raw): MatJordstykkeBulk | null => {
-            const js = raw as DawaJordstykke;
-            const bfe = js.bfenummer;
-            if (!bfe) return null;
-            return {
-              bfenummer: bfe,
-              matrikelnr: js.matrikelnr ?? '',
-              ejerlavsnavn: js.ejerlav?.navn ?? '',
-              ejerlavskode: js.ejerlav?.kode ?? 0,
-            };
-          })
-          .filter((x): x is MatJordstykkeBulk => x !== null);
-      } catch (err) {
-        logger.error(
-          '[generate-sitemap] DAWA jordstykker kommune',
-          kommunekode,
-          'side',
-          sideInKommune,
-          'fejl:',
-          err
-        );
-        // Netværksfejl — spring også til næste kommune frem for total break.
-        kommuneIndex++;
-        sideInKommune = 1;
-        currentPage = kommuneIndex * 10000 + sideInKommune;
-        continue;
-      }
-    }
-
-    // Build + upsert
-    if (items.length > 0) {
-      let batchStart = 0;
-      const entries = buildEjendomEntries(items, now, currentAddressMap);
-      while (batchStart < entries.length) {
-        const slice = entries.slice(batchStart, batchStart + UPSERT_BATCH_SIZE);
-        totalCount += await upsertBatch(admin, slice);
-        batchStart += UPSERT_BATCH_SIZE;
-      }
-    }
-
-    // Avancer: hvis denne kommune er færdig (rawPageSize < 1000), hop til næste
-    if (rawPageSize < JORDSTYKKE_PAGE_SIZE) {
-      kommuneIndex++;
-      sideInKommune = 1;
-      if (kommuneIndex >= kommunekoder.length) {
-        // Alle kommuner processeret — reset + done
-        await saveProgress(admin, 1);
-        done = true;
-        break outer;
-      }
-    } else {
-      sideInKommune++;
-    }
-
-    // Encode next cursor
-    currentPage = kommuneIndex * 10000 + sideInKommune;
-  }
-
-  if (!done) {
-    await saveProgress(admin, currentPage);
-  }
-  return { page: currentPage, count: totalCount, done };
-}
-
-/**
- * BIZZ-645: Hent list af 98 danske kommunekoder fra DAWA.
- * Cachet in-memory per request (hvert cron-kald starter fresh).
- */
-async function fetchKommunekoder(): Promise<string[]> {
-  try {
-    const res = await fetch('https://api.dataforsyningen.dk/kommuner?struktur=mini', {
-      headers: { Accept: 'application/json' },
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!res.ok) return [];
-    const data = (await res.json()) as Array<{ kode?: string }>;
-    return data.map((k) => k.kode).filter((k): k is string => !!k);
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Bygger SitemapUpsert-entries fra DAWA jordstykker.
- * Skipper jordstykker uden bfenummer.
- *
- * Slug genereres fra ejerlav.navn + matrikelnr da jordstykker ikke har
- * adressedata. Sluggen er dekorativ — BFE-nummeret er den funktionelle ID.
- *
- * BIZZ-510: Input er normaliseret MatJordstykkeBulk (flat shape), så både
- * MAT WFS og DAWA fallback mappes til samme form før upsert.
- *
- * @param data - Array af normaliserede jordstykker
- * @param updatedAt - ISO-tidsstempel for updated_at-feltet
- * @returns Filtreret array af SitemapUpsert klar til upsert
- */
-/**
- * Bygger SitemapUpsert-entries fra jordstykker. Forsøger at lave slug fra
- * den faktiske adresse (vejnavn + husnr + postnr + by) via `addressMap`,
- * som skal populeres med fetchAdresserForKommune() før buildEjendomEntries
- * kaldes. Fallback til ejerlav+matrikelnr når ingen adresse findes (fx
- * ubebyggede jordstykker).
- *
- * BIZZ-645 (slug-fix): Tidligere brugte vi altid cadastral-district-navnet
- * (`ejerlavsnavn`) som slug. Men ejerlav er historisk kort-distriktsnavn
- * ("Udenbys Klædebo Kvarter, København"), ikke gadenavnet — og gav
- * misvisende URLs som `/ejendom/udenbys-klaedebo-kvarter-koebenhavn-2553/…`
- * der redirect'ede til et helt andet adresse-slug via canonical. Nu
- * generates slug primært fra den faktiske adresse.
- *
- * @param data - Jordstykker (kommune-filtreret)
- * @param updatedAt - ISO-tidsstempel
- * @param addressMap - Map fra `ejerlavkode|matrikelnr` til adresse-info.
- *   Kan være tom — vi fallback til cadastral-slug for jordstykker uden match.
- */
-function buildEjendomEntries(
-  data: MatJordstykkeBulk[],
-  updatedAt: string,
-  addressMap: Map<string, AdresseInfo> = new Map()
-): SitemapUpsert[] {
-  const entries: SitemapUpsert[] = [];
-
-  for (const js of data) {
-    if (!js.bfenummer) continue; // Skip jordstykker uden BFE
-
-    const ejerlavNavn = js.ejerlavsnavn || String(js.ejerlavskode || '');
-    const matrikelnr = js.matrikelnr;
-
-    if (!ejerlavNavn && !matrikelnr) continue;
-
-    // BIZZ-645: Forsøg adresse-slug først (brug vejnavn + husnr + postnr + by).
-    // Falder tilbage til ejerlav+matrikelnr hvis intet match i addressMap
-    // (fx ubebyggede grunde eller jordstykker uden registreret adgangsadresse).
-    const addrKey = `${js.ejerlavskode}|${matrikelnr}`;
-    const addr = addressMap.get(addrKey);
-    const slug = addr
-      ? generateEjendomSlug(addr.vejnavn, addr.husnr, addr.postnr, addr.postnrnavn)
-      : generateSlug(`${ejerlavNavn} ${matrikelnr}`);
-
-    entries.push({
-      type: 'ejendom',
-      slug,
-      entity_id: String(js.bfenummer),
-      updated_at: updatedAt,
-    });
-  }
-
-  return entries;
-}
-
-// ─── Address lookup for kommune ──────────────────────────────────────────────
-
-/** Kerne-adressefelter vi skal bruge til slug-generering */
-interface AdresseInfo {
-  vejnavn: string;
-  husnr: string;
-  postnr: string;
-  postnrnavn: string;
-}
-
-/**
- * BIZZ-645: Fetch alle adgangsadresser i en kommune via DAWA `/adgangsadresser`
- * med struktur=flad, og byg et lookup map fra `ejerlavkode|matrikelnr` til
- * adresse-info. Bruges af buildEjendomEntries til at generere rigtige
- * gadenavn-slugs i stedet for cadastral-district-slugs.
- *
- * DAWA caps pagination ved side*per_side <= 25_000 (samme som jordstykker).
- * For store kommuner (København > 100K adresser) får vi kun de første 25K.
- * Det er OK — vi fallback til cadastral-slug for uindekserede jordstykker.
- *
- * @param kommunekode - 4-cifret DAWA kommunekode (fx "0101")
- * @returns Map fra `ejerlavkode|matrikelnr` til AdresseInfo
- */
-async function fetchAdresserForKommune(kommunekode: string): Promise<Map<string, AdresseInfo>> {
-  const map = new Map<string, AdresseInfo>();
-  const perSide = JORDSTYKKE_PAGE_SIZE; // 1000
-  const maxSide = Math.floor(25_000 / perSide); // 25
-
-  for (let side = 1; side <= maxSide; side++) {
-    try {
-      const url =
-        `https://api.dataforsyningen.dk/adgangsadresser` +
-        `?kommunekode=${kommunekode}&per_side=${perSide}&side=${side}&struktur=flad`;
-      const res = await fetchDawa(
-        url,
-        { signal: AbortSignal.timeout(10000) },
-        { caller: 'cron.generate-sitemap.adresser' }
-      );
-      if (!res.ok) break;
-      const data = (await res.json()) as unknown;
-      if (!Array.isArray(data) || data.length === 0) break;
-
-      for (const raw of data) {
-        const a = raw as {
-          ejerlavkode?: number;
-          matrikelnr?: string;
-          vejnavn?: string;
-          husnr?: string;
-          postnr?: string;
-          postnrnavn?: string;
-        };
-        if (!a.ejerlavkode || !a.matrikelnr) continue;
-        if (!a.vejnavn || !a.husnr || !a.postnr || !a.postnrnavn) continue;
-        const key = `${a.ejerlavkode}|${a.matrikelnr}`;
-        // Første vinder — et jordstykke kan have flere adresser, men vi
-        // behøver kun én for slug-formål.
-        if (!map.has(key)) {
-          map.set(key, {
-            vejnavn: a.vejnavn,
-            husnr: a.husnr,
-            postnr: a.postnr,
-            postnrnavn: a.postnrnavn,
-          });
-        }
-      }
-
-      if (data.length < perSide) break; // sidste side
-    } catch (err) {
-      logger.warn(
-        '[generate-sitemap] fetchAdresserForKommune',
-        kommunekode,
-        'side',
-        side,
-        'fejl:',
-        err instanceof Error ? err.message : err
-      );
-      break;
-    }
-  }
-
-  return map;
-}
-
-/**
- * Gemmer jordstykke-sidefremskridt i public.ai_settings.
- * Bruges til at fortsætte ved næste cron-kørsel.
+ * Henter en cursor-værdi fra ai_settings.
  *
  * @param admin - Supabase admin client
- * @param page - Sidetal der skal gemmes som næste startside
+ * @param key - ai_settings nøgle
+ * @returns Gemt værdi som string, eller null hvis ikke sat
+ */
+async function getProgress(
+  admin: ReturnType<typeof createAdminClient>,
+  key: string
+): Promise<string | null> {
+  const { data } = await admin.from('ai_settings').select('value').eq('key', key).maybeSingle();
+  const val = (data as Record<string, unknown> | null)?.['value'];
+  return val != null ? String(val) : null;
+}
+
+/**
+ * Gemmer en cursor-værdi i ai_settings.
+ *
+ * @param admin - Supabase admin client
+ * @param key - ai_settings nøgle
+ * @param value - Cursor-værdi (string/number/null)
  */
 async function saveProgress(
   admin: ReturnType<typeof createAdminClient>,
-  page: number
+  key: string,
+  value: string | number | null
 ): Promise<void> {
-  await admin
-    .from('ai_settings')
-    .upsert({ key: JORDSTYKKE_PROGRESS_KEY, value: page }, { onConflict: 'key' });
+  await admin.from('ai_settings').upsert({ key, value: value ?? 0 }, { onConflict: 'key' });
 }
 
-// ─── Phase: vp-properties ─────────────────────────────────────────────────────
+// ─── Phase: companies (DB-first) ──────────────────────────────────────────────
 
 /**
- * Paginerer Vurderingsportalen ElasticSearch og upserts ejendomme (inkl.
- * ejerlejligheder) til sitemap_entries.
+ * Paginerer cvr_virksomhed-tabellen via cursor-baseret pagination.
+ * Behandler CVR_BATCH_SIZE virksomheder per loop-iteration og kører
+ * op til SAFETY_BUDGET_MS (4 min) inden for én cron-invokation.
  *
- * Bruger search_after-paginering sorteret på bfeNumbers — stateless og
- * timeout-sikkert på tværs af Vercel-kald. Behandler VP_PAGE_SIZE BFE'er
- * pr. kørsel (ét enkelt ES-request) og gemmer cursor i public.ai_settings.
+ * BIZZ-680: Erstatter den tidligere CVR ES-paginering (200/dag) med
+ * direkte DB-reads (50K+ per kørsel). Fuld backfill af 2.1M virksomheder
+ * kan afsluttes på ~40 cron-kørsler i stedet for 10.500.
  *
- * Denne fase supplerer 'properties'-fasen: DAWA jordstykker dækker kun
- * grund-ejendomme. Ejerlejligheder har egne BFE-numre i VP ES men intet
- * jordstykke i DAWA og ville ellers mangle i sitemappet.
+ * @param admin - Supabase admin client til DB-reads og writes
+ * @returns Antal virksomheder upserted, sidst behandlede CVR, og om scan er afsluttet
+ */
+async function phaseCompanies(
+  admin: ReturnType<typeof createAdminClient>
+): Promise<{ count: number; lastCvr: string; done: boolean }> {
+  const cursor = await getProgress(admin, CVR_PROGRESS_KEY);
+  let afterCvr = cursor ?? '0';
+  const now = new Date().toISOString();
+  const runStart = Date.now();
+  let totalCount = 0;
+
+  while (Date.now() - runStart < SAFETY_BUDGET_MS) {
+    // Hent næste batch fra cvr_virksomhed sorteret på cvr (PK)
+    // Tabellen er ikke i genererede Supabase-typer — cast manuelt.
+    const { data, error } = await admin
+      .from('cvr_virksomhed' as 'sitemap_entries')
+      .select('cvr, navn')
+      .gt('cvr', afterCvr)
+      .not('navn', 'is', null)
+      .order('cvr', { ascending: true })
+      .limit(CVR_BATCH_SIZE);
+
+    if (error) {
+      logger.error('[generate-sitemap] DB-read cvr_virksomhed fejl:', error.message);
+      break;
+    }
+
+    const rows = data as unknown as Array<{ cvr: string; navn: string }> | null;
+    if (!rows || rows.length === 0) {
+      // Alle virksomheder processeret — nulstil cursor
+      await saveProgress(admin, CVR_PROGRESS_KEY, '0');
+      return { count: totalCount, lastCvr: afterCvr, done: true };
+    }
+
+    // Byg sitemap-entries fra DB-rækker
+    const batch: SitemapUpsert[] = [];
+    for (const row of rows) {
+      if (!row.cvr || !row.navn) continue;
+      batch.push({
+        type: 'virksomhed',
+        slug: generateVirksomhedSlug(row.navn),
+        entity_id: row.cvr,
+        updated_at: now,
+      });
+    }
+
+    // Upsert i sub-batches
+    let batchStart = 0;
+    while (batchStart < batch.length) {
+      const slice = batch.slice(batchStart, batchStart + UPSERT_BATCH_SIZE);
+      totalCount += await upsertBatch(admin, slice);
+      batchStart += UPSERT_BATCH_SIZE;
+    }
+
+    // Avancer cursor til sidst sete CVR
+    afterCvr = rows[rows.length - 1].cvr;
+    await saveProgress(admin, CVR_PROGRESS_KEY, afterCvr);
+
+    // Kortere side = sidste batch
+    if (rows.length < CVR_BATCH_SIZE) {
+      await saveProgress(admin, CVR_PROGRESS_KEY, '0');
+      return { count: totalCount, lastCvr: afterCvr, done: true };
+    }
+  }
+
+  return { count: totalCount, lastCvr: afterCvr, done: false };
+}
+
+// ─── Phase: properties (DB-first) ─────────────────────────────────────────────
+
+/**
+ * Paginerer ejf_ejerskab-tabellen for distinkte BFE-numre og upserts
+ * ejendomme til sitemap_entries.
  *
- * Slug bygges fra address + floor + door. BFE-nummeret er den funktionelle ID —
- * sluggen er dekorativ og bruges kun til læsbar URL.
+ * BIZZ-680: Erstatter den tidligere DAWA-paginering (25K cap per kommune)
+ * med direkte DB-reads fra ejf_ejerskab (7.6M records). Alle ejendomme
+ * med ejerskab — inkl. ejerlejligheder — dækkes automatisk.
+ *
+ * Slug genereres som `ejendom-{bfe}` (placeholder). vp-properties-fasen
+ * beriger efterfølgende med rigtige adresse-slugs fra Vurderingsportalen.
+ *
+ * @param admin - Supabase admin client
+ * @returns Antal upserted, sidst behandlede BFE, og om scan er afsluttet
+ */
+async function phaseProperties(
+  admin: ReturnType<typeof createAdminClient>
+): Promise<{ count: number; lastBfe: string; done: boolean }> {
+  const cursor = await getProgress(admin, PROPERTY_PROGRESS_KEY);
+  let afterBfe = cursor && cursor !== '0' ? Number(cursor) : 0;
+  const now = new Date().toISOString();
+  const runStart = Date.now();
+  let totalCount = 0;
+
+  while (Date.now() - runStart < SAFETY_BUDGET_MS) {
+    // Hent BFE-numre fra ejf_ejerskab via cursor-pagination.
+    // ejf_ejerskab har indeks på bfe_nummer — returnerer mange rows per BFE
+    // (én per ejer), så vi deduplicerer client-side.
+    // Tabellen er ikke i genererede Supabase-typer — cast manuelt.
+    const { data, error } = await admin
+      .from('ejf_ejerskab' as 'sitemap_entries')
+      .select('bfe_nummer')
+      .gt('bfe_nummer', afterBfe)
+      .order('bfe_nummer', { ascending: true })
+      .limit(PROPERTY_BATCH_SIZE);
+
+    if (error) {
+      logger.error('[generate-sitemap] DB-read ejf_ejerskab fejl:', error.message);
+      break;
+    }
+
+    const rows = data as unknown as Array<{ bfe_nummer: number }> | null;
+    if (!rows || rows.length === 0) {
+      await saveProgress(admin, PROPERTY_PROGRESS_KEY, '0');
+      return { count: totalCount, lastBfe: String(afterBfe), done: true };
+    }
+
+    // Dedup BFE-numre (ejf_ejerskab kan have flere ejere per BFE)
+    const uniqueBfes: number[] = [];
+    let prevBfe = 0;
+    for (const row of rows) {
+      const bfe = row.bfe_nummer;
+      if (bfe && bfe !== prevBfe) {
+        uniqueBfes.push(bfe);
+        prevBfe = bfe;
+      }
+    }
+
+    // Byg sitemap-entries med placeholder-slug (beriges af vp-properties)
+    const batch: SitemapUpsert[] = uniqueBfes.map((bfe) => ({
+      type: 'ejendom' as const,
+      slug: `ejendom-${bfe}`,
+      entity_id: String(bfe),
+      updated_at: now,
+    }));
+
+    // Upsert i sub-batches
+    let batchStart = 0;
+    while (batchStart < batch.length) {
+      const slice = batch.slice(batchStart, batchStart + UPSERT_BATCH_SIZE);
+      totalCount += await upsertBatch(admin, slice);
+      batchStart += UPSERT_BATCH_SIZE;
+    }
+
+    // Avancer cursor til sidst sete BFE (fra rå rows, ikke deduped)
+    afterBfe = rows[rows.length - 1].bfe_nummer as number;
+    await saveProgress(admin, PROPERTY_PROGRESS_KEY, String(afterBfe));
+
+    // Hvis vi fik færre end PROPERTY_BATCH_SIZE er vi færdige
+    if (rows.length < PROPERTY_BATCH_SIZE) {
+      await saveProgress(admin, PROPERTY_PROGRESS_KEY, '0');
+      return { count: totalCount, lastBfe: String(afterBfe), done: true };
+    }
+  }
+
+  return { count: totalCount, lastBfe: String(afterBfe), done: false };
+}
+// ─── Phase: vp-properties (slug-enrichment) ─────────────────────────��───────
+
+/**
+ * Paginerer Vurderingsportalen ElasticSearch og beriger sitemap_entries
+ * med rigtige adresse-slugs (vejnavn + husnr + postnr + by).
+ *
+ * BIZZ-680: Denne fase fungerer nu som slug-enrichment oven på properties-fasen
+ * (som bulk-inserter med placeholder-slugs fra ejf_ejerskab). VP ES indeholder
+ * address-felter for alle BFE-numre inkl. ejerlejligheder. Upsert-on-conflict
+ * opdaterer slug + updated_at for eksisterende entries.
+ *
+ * Kører i loop op til SAFETY_BUDGET_MS med VP_PAGE_SIZE per ES-request.
  *
  * @param admin - Supabase admin client til DB-writes og fremskridt
  * @returns Antal upserted BFE'er, sidst sete BFE og om scan er afsluttet
@@ -743,117 +369,101 @@ async function saveProgress(
 async function phaseVpProperties(
   admin: ReturnType<typeof createAdminClient>
 ): Promise<{ count: number; lastBfe: string | null; done: boolean }> {
-  // Hent search_after-cursor fra forrige kørsel
-  const { data: progressRow } = await admin
-    .from('ai_settings')
-    .select('value')
-    .eq('key', VP_PROGRESS_KEY)
-    .maybeSingle();
+  const cursor = await getProgress(admin, VP_PROGRESS_KEY);
+  let afterBfe: string | null = cursor && cursor !== '0' ? cursor : null;
+  const runStart = Date.now();
+  let totalCount = 0;
 
-  const progressValue = (progressRow as Record<string, unknown> | null)?.['value'];
-  const afterBfe: string | null = progressValue != null ? String(progressValue) : null;
+  while (Date.now() - runStart < SAFETY_BUDGET_MS) {
+    // Byg search_after query — sorteret på bfeNumbers for stateless paginering
+    const query: Record<string, unknown> = {
+      size: VP_PAGE_SIZE,
+      sort: [{ bfeNumbers: 'asc' }],
+      query: { match_all: {} },
+      _source: ['bfeNumbers', 'address', 'floor', 'door'],
+      ...(afterBfe != null ? { search_after: [afterBfe] } : {}),
+    };
 
-  // Byg search_after query — sorteret på bfeNumbers for stateless paginering
-  const query: Record<string, unknown> = {
-    size: VP_PAGE_SIZE,
-    sort: [{ bfeNumbers: 'asc' }],
-    query: { match_all: {} },
-    _source: ['bfeNumbers', 'address', 'floor', 'door'],
-    ...(afterBfe != null ? { search_after: [afterBfe] } : {}),
-  };
+    let hits: VpEsHit[] = [];
 
-  let hits: VpEsHit[] = [];
+    try {
+      const res = await fetch(VP_ES_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        },
+        body: JSON.stringify(query),
+        signal: AbortSignal.timeout(10000),
+      });
 
-  try {
-    const res = await fetch(VP_ES_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        // VP ES kræver en User-Agent der ligner en browser
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      },
-      body: JSON.stringify(query),
-      // 7s timeout — lader 3s til upsert + Vercel overhead inden 10s grænsen
-      signal: AbortSignal.timeout(7000),
-    });
+      if (!res.ok) {
+        logger.error('[generate-sitemap] VP ES request fejlede:', res.status);
+        break;
+      }
 
-    if (!res.ok) {
-      logger.error('[generate-sitemap] VP ES request fejlede:', res.status);
-      return { count: 0, lastBfe: afterBfe, done: false };
+      const data = (await res.json()) as VpEsResponse;
+      hits = data.hits?.hits ?? [];
+    } catch (err) {
+      logger.error('[generate-sitemap] VP ES request fejl:', err);
+      break;
     }
 
-    const data = (await res.json()) as VpEsResponse;
-    hits = data.hits?.hits ?? [];
-  } catch (err) {
-    logger.error('[generate-sitemap] VP ES request fejl:', err);
-    return { count: 0, lastBfe: afterBfe, done: false };
+    if (hits.length === 0) {
+      await saveProgress(admin, VP_PROGRESS_KEY, null);
+      return { count: totalCount, lastBfe: null, done: true };
+    }
+
+    const now = new Date().toISOString();
+    const batch: SitemapUpsert[] = [];
+    let newLastBfe: string | null = afterBfe;
+
+    for (const hit of hits) {
+      const s = hit._source;
+      const bfe = s?.bfeNumbers;
+      if (!bfe) continue;
+
+      const bfeStr = String(bfe);
+      const address = s.address ? String(s.address).trim() : '';
+      const floor = s.floor ? String(s.floor).trim() : '';
+      const door = s.door ? String(s.door).trim() : '';
+
+      if (!address) continue;
+
+      const slugParts = [address, floor, door].filter(Boolean).join(' ');
+
+      batch.push({
+        type: 'ejendom',
+        slug: generateSlug(slugParts),
+        entity_id: bfeStr,
+        updated_at: now,
+      });
+
+      const sortCursor = hit.sort?.[0];
+      newLastBfe = sortCursor != null ? String(sortCursor) : bfeStr;
+    }
+
+    // Upsert i sub-batches — on-conflict opdaterer slug til rigtig adresse
+    let batchStart = 0;
+    while (batchStart < batch.length) {
+      const slice = batch.slice(batchStart, batchStart + UPSERT_BATCH_SIZE);
+      totalCount += await upsertBatch(admin, slice);
+      batchStart += UPSERT_BATCH_SIZE;
+    }
+
+    afterBfe = newLastBfe;
+    if (newLastBfe) {
+      await saveProgress(admin, VP_PROGRESS_KEY, newLastBfe);
+    }
+
+    // Kortere side = sidste side i datasættet
+    if (hits.length < VP_PAGE_SIZE) {
+      await saveProgress(admin, VP_PROGRESS_KEY, null);
+      return { count: totalCount, lastBfe: newLastBfe, done: true };
+    }
   }
 
-  if (hits.length === 0) {
-    // Ingen flere resultater — fuld scan afsluttet, nulstil cursor
-    await admin
-      .from('ai_settings')
-      .upsert({ key: VP_PROGRESS_KEY, value: null }, { onConflict: 'key' });
-    return { count: 0, lastBfe: null, done: true };
-  }
-
-  const now = new Date().toISOString();
-  const batch: SitemapUpsert[] = [];
-  let newLastBfe: string | null = afterBfe;
-
-  for (const hit of hits) {
-    const s = hit._source;
-    const bfe = s?.bfeNumbers;
-    if (!bfe) continue;
-
-    const bfeStr = String(bfe);
-    const address = s.address ? String(s.address).trim() : '';
-    const floor = s.floor ? String(s.floor).trim() : '';
-    const door = s.door ? String(s.door).trim() : '';
-
-    if (!address) continue;
-
-    // Slug bygges fra adresse + etage + dør. Sluggen er dekorativ —
-    // kun BFE-nummeret bruges til datahentning på den offentlige side.
-    const slugParts = [address, floor, door].filter(Boolean).join(' ');
-
-    batch.push({
-      type: 'ejendom',
-      slug: generateSlug(slugParts),
-      entity_id: bfeStr,
-      updated_at: now,
-    });
-
-    // Brug ES sort-værdien som cursor hvis tilgængeligt, ellers BFE-streng
-    const sortCursor = hit.sort?.[0];
-    newLastBfe = sortCursor != null ? String(sortCursor) : bfeStr;
-  }
-
-  // Upsert i batches
-  let totalCount = 0;
-  let batchStart = 0;
-  while (batchStart < batch.length) {
-    const slice = batch.slice(batchStart, batchStart + UPSERT_BATCH_SIZE);
-    totalCount += await upsertBatch(admin, slice);
-    batchStart += UPSERT_BATCH_SIZE;
-  }
-
-  // Gem cursor til næste kørsel
-  if (newLastBfe !== afterBfe) {
-    await admin
-      .from('ai_settings')
-      .upsert({ key: VP_PROGRESS_KEY, value: newLastBfe }, { onConflict: 'key' });
-  }
-
-  const done = hits.length < VP_PAGE_SIZE;
-  if (done) {
-    // Kortere side = sidste side i datasættet, nulstil cursor
-    await admin
-      .from('ai_settings')
-      .upsert({ key: VP_PROGRESS_KEY, value: null }, { onConflict: 'key' });
-  }
-
-  return { count: totalCount, lastBfe: newLastBfe, done };
+  return { count: totalCount, lastBfe: afterBfe, done: false };
 }
 
 // ─── Route handler ─────────────────────────────────────────────────────────────
@@ -889,19 +499,14 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // BIZZ-621 + BIZZ-624: Hver phase har egen schedule i vercel.json og skal
-  // tracked som separat cron-job så watchdog + Sentry ser dem uafhængigt.
-  // BIZZ-647: Skiftet fra ugentlig (0 2/3/4 * * 0) til daglig (23 2/37 3/51 4 * * *)
-  // så nye ejendomme/virksomheder indekseres inden for 24t i stedet for 7 dage.
   const phaseConfig = {
     companies: { schedule: '23 2 * * *' },
     properties: { schedule: '30 * * * *' },
     'vp-properties': { schedule: '51 4 * * *' },
   }[phase];
 
-  // BIZZ-645: properties-fasen kører nu hver time for at speede full-Denmark
-  // backfill op fra ~30 dage til ~3 dage. Andre phases forbliver daglige.
-  const intervalMinutes = phase === 'properties' ? 60 : 1440;
+  // companies + properties kører hourly for hurtig backfill; vp-properties dagligt
+  const intervalMinutes = phase === 'vp-properties' ? 1440 : 60;
 
   return withCronMonitor(
     {
@@ -950,8 +555,8 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({
           ok: true,
           phase: 'properties',
-          page: result.page,
           count: result.count,
+          lastBfe: result.lastBfe,
           done: result.done,
         });
       } catch (err) {

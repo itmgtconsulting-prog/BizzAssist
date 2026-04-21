@@ -97,26 +97,42 @@ export async function GET(
   const dbOffset = pageId === 0 ? 0 : pageId * PAGE_SIZE - staticCount;
   const dbLimit = PAGE_SIZE - staticCount;
 
-  let dbEntries: UrlEntry[] = [];
+  const dbEntries: UrlEntry[] = [];
   try {
     const admin = createAdminClient();
-    const { data, error } = await admin
-      .from('sitemap_entries')
-      .select('type, slug, entity_id, updated_at')
-      .order('updated_at', { ascending: false })
-      .range(dbOffset, dbOffset + dbLimit - 1);
-    if (error) {
-      logger.error('[sitemap/id] Supabase error:', error.message);
-    } else {
-      dbEntries = (data ?? []).map((row) => ({
-        loc:
-          row.type === 'ejendom'
-            ? `${BASE_URL}/ejendom/${row.slug}/${row.entity_id}`
-            : `${BASE_URL}/virksomhed/${row.slug}/${row.entity_id}`,
-        lastmod: new Date(row.updated_at).toISOString().split('T')[0],
-        changefreq: 'monthly',
-        priority: row.type === 'virksomhed' ? 0.8 : 0.7,
-      }));
+    // BIZZ-645: PostgREST/Supabase caps .range() response ved 1000 rækker
+    // medmindre max-rows-config er øget. Vi chunker manuelt i 1000-stykker
+    // indtil hele den ønskede range er hentet, så sitemap kan indeholde
+    // op til PAGE_SIZE (50K) URLs per fil.
+    const CHUNK = 1000;
+    let cursor = dbOffset;
+    const endExclusive = dbOffset + dbLimit;
+    while (cursor < endExclusive) {
+      const chunkEnd = Math.min(cursor + CHUNK - 1, endExclusive - 1);
+      const { data, error } = await admin
+        .from('sitemap_entries')
+        .select('type, slug, entity_id, updated_at')
+        .order('updated_at', { ascending: false })
+        .range(cursor, chunkEnd);
+      if (error) {
+        logger.error('[sitemap/id] Supabase error:', error.message);
+        break;
+      }
+      const rows = data ?? [];
+      if (rows.length === 0) break;
+      for (const row of rows) {
+        dbEntries.push({
+          loc:
+            row.type === 'ejendom'
+              ? `${BASE_URL}/ejendom/${row.slug}/${row.entity_id}`
+              : `${BASE_URL}/virksomhed/${row.slug}/${row.entity_id}`,
+          lastmod: new Date(row.updated_at).toISOString().split('T')[0],
+          changefreq: 'monthly',
+          priority: row.type === 'virksomhed' ? 0.8 : 0.7,
+        });
+      }
+      if (rows.length < CHUNK) break; // final page
+      cursor += CHUNK;
     }
   } catch (err) {
     logger.error('[sitemap/id] exception:', err instanceof Error ? err.message : err);

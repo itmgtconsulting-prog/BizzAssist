@@ -47,6 +47,10 @@
     {
       "path": "/api/cron/ingest-ejf-bulk",
       "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/cron/pull-tinglysning-aendringer",
+      "schedule": "15 3 * * *"
     }
   ]
 }

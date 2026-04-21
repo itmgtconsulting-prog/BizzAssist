@@ -111,6 +111,12 @@ const CRONS: CronDef[] = [
     description: 'Daglig EJF-bulk-ingestion (person→ejendom)',
   },
   {
+    jobName: 'pull-tinglysning-aendringer',
+    schedule: '15 3 * * *',
+    intervalMinutes: 24 * 60,
+    description: 'Daglig Tinglysning delta-sync — 5-dages rolling window opdaterer ejf_ejerskab',
+  },
+  {
     jobName: 'purge-old-data',
     schedule: '0 2 * * *',
     intervalMinutes: 24 * 60,

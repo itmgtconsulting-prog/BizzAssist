@@ -3,7 +3,7 @@
 /**
  * SupportChatWidget — AI-powered floating support chat.
  *
- * Fixed-position chat bubble in the bottom-right corner of the dashboard.
+ * Fixed-position chat bubble in the bottom-left corner of the dashboard.
  * Opens a chat panel where users can ask questions about BizzAssist
  * features, subscriptions, data types, and troubleshooting.
  *
@@ -310,14 +310,14 @@ export default function SupportChatWidget() {
       {/* ── Floating trigger button ── */}
       <button
         onClick={() => setOpen((o) => !o)}
-        className={`fixed bottom-6 right-6 z-40 w-14 h-14 rounded-full shadow-lg hover:shadow-xl transition-all flex items-center justify-center ${
+        className={`fixed bottom-4 left-4 z-40 w-11 h-11 rounded-full shadow-lg hover:shadow-xl transition-all flex items-center justify-center ${
           open
             ? 'bg-slate-700 hover:bg-slate-600 text-white'
             : 'bg-blue-600 hover:bg-blue-500 text-white'
         }`}
         aria-label={txt.title}
       >
-        {open ? <X size={22} /> : <MessageCircle size={22} />}
+        {open ? <X size={18} /> : <MessageCircle size={18} />}
       </button>
 
       {/* ── Chat panel ── */}
@@ -326,8 +326,8 @@ export default function SupportChatWidget() {
           role="dialog"
           aria-modal="true"
           aria-labelledby="support-chat-title"
-          className="fixed bottom-24 right-6 z-40 w-96 max-w-[calc(100vw-3rem)] bg-[#1e293b] border border-white/10 rounded-2xl shadow-2xl flex flex-col overflow-hidden"
-          style={{ maxHeight: 'min(520px, calc(100vh - 8rem))' }}
+          className="fixed bottom-20 left-4 z-40 w-80 max-w-[calc(100vw-2rem)] bg-[#1e293b] border border-white/10 rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+          style={{ maxHeight: 'min(440px, calc(100vh - 7rem))' }}
         >
           {/* ── Header ── */}
           <div className="px-4 py-3 border-b border-white/10 shrink-0">

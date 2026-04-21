@@ -427,11 +427,32 @@ async function phaseProperties(
             'fejlede:',
             res.status
           );
-          break;
+          // BIZZ-645: HTTP-fejl typisk pga DAWA's 25K-cap i store kommuner
+          // (København har > 100K jordstykker). Spring til næste kommune
+          // i stedet for at break ud af hele cronen — partial coverage er
+          // bedre end total stop. Følge-op-ticket kan bygge ejerlav-iteration.
+          kommuneIndex++;
+          sideInKommune = 1;
+          currentPage = kommuneIndex * 10000 + sideInKommune;
+          continue;
         }
 
-        const data = (await res.json()) as unknown[];
-        if (!Array.isArray(data)) break;
+        const data = (await res.json()) as unknown;
+        if (!Array.isArray(data)) {
+          // Samme mønster: DAWA returnerede error-object i stedet for array
+          // — typisk "Der kan højst pagineres i de første 25000 elementer".
+          logger.warn(
+            '[generate-sitemap] DAWA kommune',
+            kommunekode,
+            'returnerede ikke-array på side',
+            sideInKommune,
+            '— springer til næste kommune'
+          );
+          kommuneIndex++;
+          sideInKommune = 1;
+          currentPage = kommuneIndex * 10000 + sideInKommune;
+          continue;
+        }
         rawPageSize = data.length;
         items = data
           .map((raw): MatJordstykkeBulk | null => {
@@ -455,7 +476,11 @@ async function phaseProperties(
           'fejl:',
           err
         );
-        break;
+        // Netværksfejl — spring også til næste kommune frem for total break.
+        kommuneIndex++;
+        sideInKommune = 1;
+        currentPage = kommuneIndex * 10000 + sideInKommune;
+        continue;
       }
     }
 

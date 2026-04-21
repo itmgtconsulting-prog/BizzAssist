@@ -725,7 +725,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   // Claude API-nøgle er kun nødvendig i ai-fasen
   const apiKey = phase !== 'raw' ? process.env.BIZZASSIST_CLAUDE_KEY?.trim() : undefined;
   if (phase !== 'raw' && !apiKey) {
-    // BIZZ-651: Generisk besked + buy-tokens CTA
+    // BIZZ-653: Generisk besked + buy-tokens CTA
     return NextResponse.json(
       {
         error:

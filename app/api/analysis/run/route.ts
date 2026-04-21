@@ -1028,7 +1028,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   // ── API key ─────────────────────────────────────────────────────────────────
   const apiKey = process.env.BIZZASSIST_CLAUDE_KEY?.trim();
   if (!apiKey) {
-    // BIZZ-651: Generisk besked + buy-tokens CTA
+    // BIZZ-653: Generisk besked + buy-tokens CTA
     return NextResponse.json(
       {
         error:

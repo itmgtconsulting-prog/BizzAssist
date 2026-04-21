@@ -1344,7 +1344,7 @@ export function decideAiGate(
 export async function POST(request: NextRequest): Promise<Response> {
   // BIZZ-236: AI access gated by API key availability (not env flag)
   if (!process.env.BIZZASSIST_CLAUDE_KEY) {
-    // BIZZ-651: Lækager ikke env-var-navnet og guider brugeren til token-køb
+    // BIZZ-653: Lækager ikke env-var-navnet og guider brugeren til token-køb
     // som fair CTA (klient-side fanger `code: 'ai_unavailable'` og viser
     // samme banner som trial_ai_blocked).
     return Response.json(
@@ -1408,7 +1408,7 @@ export async function POST(request: NextRequest): Promise<Response> {
 
   const apiKey = process.env.BIZZASSIST_CLAUDE_KEY?.trim();
   if (!apiKey) {
-    // BIZZ-651: Generisk besked + same CTA-kode som 503'en ovenfor.
+    // BIZZ-653: Generisk besked + same CTA-kode som 503'en ovenfor.
     return Response.json(
       {
         error:

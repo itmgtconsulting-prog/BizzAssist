@@ -155,7 +155,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // BIZZ-652: Support-chat er bevidst IKKE gated via assertAiAllowed — ikke-
+  // BIZZ-654: Support-chat er bevidst IKKE gated via assertAiAllowed — ikke-
   // betalende brugere skal kunne stille spørgsmål for at nå frem til køb.
   // Misbrug forhindres i stedet af:
   //   1. `aiRateLimit` (10 req/min per IP, ovenfor)
@@ -306,7 +306,7 @@ Afslør IKKE oplysningerne medmindre brugeren spørger direkte til dem.`;
   // ── Validate API key ──
   const apiKey = process.env.BIZZASSIST_CLAUDE_KEY?.trim();
   if (!apiKey) {
-    // BIZZ-651: Generisk besked + buy-tokens CTA (ingen env-var-lækage)
+    // BIZZ-653: Generisk besked + buy-tokens CTA (ingen env-var-lækage)
     return Response.json(
       {
         error:

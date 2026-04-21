@@ -82,7 +82,7 @@ const navItems = [
     ? [{ icon: BarChart2, key: 'analysis' as const, href: '/dashboard/analysis', adminOnly: false }]
     : []),
   { icon: MessageSquare, key: 'chat' as const, href: '/dashboard/chat', adminOnly: false },
-  // BIZZ-654: Synligt entry-point til token-køb for almindelige brugere —
+  // BIZZ-656: Synligt entry-point til token-køb for almindelige brugere —
   // tidligere kunne man kun nå /dashboard/tokens via trial-blocked-banneret
   // i AI-chat, så brugere uden chat-interaktion havde ingen synlig CTA.
   { icon: Coins, key: 'tokens' as const, href: '/dashboard/tokens', adminOnly: false },

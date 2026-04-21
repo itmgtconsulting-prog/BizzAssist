@@ -10,3 +10,6 @@ test-results/
 public/sw.js
 public/manifest.json
 .claude/
+# Ad-hoc ops/verification scripts — one-off tools, not production code.
+# Linting and formatting would block PRs for throwaway stubs. Matches eslint.config.mjs.
+scripts/

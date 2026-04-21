@@ -31,6 +31,7 @@ jobs:
           NEXT_PUBLIC_SUPABASE_URL: 'https://placeholder.supabase.co'
           NEXT_PUBLIC_SUPABASE_ANON_KEY: 'placeholder'
           NEXT_PUBLIC_APP_URL: 'http://localhost:3000'
+          LIGHTHOUSE_CI: '1'
 
       # Next.js er SSR — Lighthouse behøver en live server for ikke at
       # ramme CHROME_INTERSTITIAL_ERROR. Start Next i baggrund og vent til
@@ -44,6 +45,7 @@ jobs:
           NEXT_PUBLIC_SUPABASE_URL: 'https://placeholder.supabase.co'
           NEXT_PUBLIC_SUPABASE_ANON_KEY: 'placeholder'
           NEXT_PUBLIC_APP_URL: 'http://localhost:3000'
+          LIGHTHOUSE_CI: '1'
 
       - name: Wait for server
         run: |

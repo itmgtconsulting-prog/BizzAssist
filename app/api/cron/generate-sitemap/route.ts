@@ -43,7 +43,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { generateSlug, generateVirksomhedSlug } from '@/app/lib/slug';
+import { generateSlug, generateVirksomhedSlug, generateEjendomSlug } from '@/app/lib/slug';
 import { safeCompare } from '@/lib/safeCompare';
 import { logger } from '@/app/lib/logger';
 import { withCronMonitor } from '@/app/lib/cronMonitor';
@@ -373,6 +373,13 @@ async function phaseProperties(
   let sideInKommune = ((startPage - 1) % 10000) + 1;
 
   const runStart = Date.now();
+
+  // BIZZ-645 (slug-fix): Cache af adresse-map per kommune — hentes én gang
+  // når vi går ind i en kommune, genbruges på tværs af sider i samme kommune.
+  // Når kommuneIndex skifter, bygges ny.
+  let currentKommuneForAddresses: string | null = null;
+  let currentAddressMap: Map<string, AdresseInfo> = new Map();
+
   outer: for (
     let pageCounter = 0;
     pageCounter < MAX_JORDSTYKKE_PAGES_PER_RUN && kommuneIndex < kommunekoder.length;
@@ -386,6 +393,15 @@ async function phaseProperties(
       break;
     }
     const kommunekode = kommunekoder[kommuneIndex];
+
+    // BIZZ-645: Hent adresse-map for denne kommune (kun første gang pr. kommune)
+    if (currentKommuneForAddresses !== kommunekode) {
+      currentAddressMap = await fetchAdresserForKommune(kommunekode);
+      currentKommuneForAddresses = kommunekode;
+      logger.log(
+        `[generate-sitemap] Kommune ${kommunekode}: ${currentAddressMap.size} adresser tilgængelige til slug-lookup`
+      );
+    }
     // BIZZ-510: Try MAT WFS first. Falls back to DAWA per-kommune /jordstykker
     // filter — cap er 25K × side-size = 25M per kommune (aldrig ramt).
     let items: MatJordstykkeBulk[] | null = null;
@@ -487,7 +503,7 @@ async function phaseProperties(
     // Build + upsert
     if (items.length > 0) {
       let batchStart = 0;
-      const entries = buildEjendomEntries(items, now);
+      const entries = buildEjendomEntries(items, now, currentAddressMap);
       while (batchStart < entries.length) {
         const slice = entries.slice(batchStart, batchStart + UPSERT_BATCH_SIZE);
         totalCount += await upsertBatch(admin, slice);
@@ -551,28 +567,141 @@ async function fetchKommunekoder(): Promise<string[]> {
  * @param updatedAt - ISO-tidsstempel for updated_at-feltet
  * @returns Filtreret array af SitemapUpsert klar til upsert
  */
-function buildEjendomEntries(data: MatJordstykkeBulk[], updatedAt: string): SitemapUpsert[] {
+/**
+ * Bygger SitemapUpsert-entries fra jordstykker. Forsøger at lave slug fra
+ * den faktiske adresse (vejnavn + husnr + postnr + by) via `addressMap`,
+ * som skal populeres med fetchAdresserForKommune() før buildEjendomEntries
+ * kaldes. Fallback til ejerlav+matrikelnr når ingen adresse findes (fx
+ * ubebyggede jordstykker).
+ *
+ * BIZZ-645 (slug-fix): Tidligere brugte vi altid cadastral-district-navnet
+ * (`ejerlavsnavn`) som slug. Men ejerlav er historisk kort-distriktsnavn
+ * ("Udenbys Klædebo Kvarter, København"), ikke gadenavnet — og gav
+ * misvisende URLs som `/ejendom/udenbys-klaedebo-kvarter-koebenhavn-2553/…`
+ * der redirect'ede til et helt andet adresse-slug via canonical. Nu
+ * generates slug primært fra den faktiske adresse.
+ *
+ * @param data - Jordstykker (kommune-filtreret)
+ * @param updatedAt - ISO-tidsstempel
+ * @param addressMap - Map fra `ejerlavkode|matrikelnr` til adresse-info.
+ *   Kan være tom — vi fallback til cadastral-slug for jordstykker uden match.
+ */
+function buildEjendomEntries(
+  data: MatJordstykkeBulk[],
+  updatedAt: string,
+  addressMap: Map<string, AdresseInfo> = new Map()
+): SitemapUpsert[] {
   const entries: SitemapUpsert[] = [];
 
   for (const js of data) {
     if (!js.bfenummer) continue; // Skip jordstykker uden BFE
 
-    // Brug ejerlav.navn + matrikelnr som slug-grundlag.
-    // Sluggen er dekorativ — den offentlige side bruger kun BFE til opslag.
     const ejerlavNavn = js.ejerlavsnavn || String(js.ejerlavskode || '');
     const matrikelnr = js.matrikelnr;
 
     if (!ejerlavNavn && !matrikelnr) continue;
 
+    // BIZZ-645: Forsøg adresse-slug først (brug vejnavn + husnr + postnr + by).
+    // Falder tilbage til ejerlav+matrikelnr hvis intet match i addressMap
+    // (fx ubebyggede grunde eller jordstykker uden registreret adgangsadresse).
+    const addrKey = `${js.ejerlavskode}|${matrikelnr}`;
+    const addr = addressMap.get(addrKey);
+    const slug = addr
+      ? generateEjendomSlug(addr.vejnavn, addr.husnr, addr.postnr, addr.postnrnavn)
+      : generateSlug(`${ejerlavNavn} ${matrikelnr}`);
+
     entries.push({
       type: 'ejendom',
-      slug: generateSlug(`${ejerlavNavn} ${matrikelnr}`),
+      slug,
       entity_id: String(js.bfenummer),
       updated_at: updatedAt,
     });
   }
 
   return entries;
+}
+
+// ─── Address lookup for kommune ──────────────────────────────────────────────
+
+/** Kerne-adressefelter vi skal bruge til slug-generering */
+interface AdresseInfo {
+  vejnavn: string;
+  husnr: string;
+  postnr: string;
+  postnrnavn: string;
+}
+
+/**
+ * BIZZ-645: Fetch alle adgangsadresser i en kommune via DAWA `/adgangsadresser`
+ * med struktur=flad, og byg et lookup map fra `ejerlavkode|matrikelnr` til
+ * adresse-info. Bruges af buildEjendomEntries til at generere rigtige
+ * gadenavn-slugs i stedet for cadastral-district-slugs.
+ *
+ * DAWA caps pagination ved side*per_side <= 25_000 (samme som jordstykker).
+ * For store kommuner (København > 100K adresser) får vi kun de første 25K.
+ * Det er OK — vi fallback til cadastral-slug for uindekserede jordstykker.
+ *
+ * @param kommunekode - 4-cifret DAWA kommunekode (fx "0101")
+ * @returns Map fra `ejerlavkode|matrikelnr` til AdresseInfo
+ */
+async function fetchAdresserForKommune(kommunekode: string): Promise<Map<string, AdresseInfo>> {
+  const map = new Map<string, AdresseInfo>();
+  const perSide = JORDSTYKKE_PAGE_SIZE; // 1000
+  const maxSide = Math.floor(25_000 / perSide); // 25
+
+  for (let side = 1; side <= maxSide; side++) {
+    try {
+      const url =
+        `https://api.dataforsyningen.dk/adgangsadresser` +
+        `?kommunekode=${kommunekode}&per_side=${perSide}&side=${side}&struktur=flad`;
+      const res = await fetchDawa(
+        url,
+        { signal: AbortSignal.timeout(10000) },
+        { caller: 'cron.generate-sitemap.adresser' }
+      );
+      if (!res.ok) break;
+      const data = (await res.json()) as unknown;
+      if (!Array.isArray(data) || data.length === 0) break;
+
+      for (const raw of data) {
+        const a = raw as {
+          ejerlavkode?: number;
+          matrikelnr?: string;
+          vejnavn?: string;
+          husnr?: string;
+          postnr?: string;
+          postnrnavn?: string;
+        };
+        if (!a.ejerlavkode || !a.matrikelnr) continue;
+        if (!a.vejnavn || !a.husnr || !a.postnr || !a.postnrnavn) continue;
+        const key = `${a.ejerlavkode}|${a.matrikelnr}`;
+        // Første vinder — et jordstykke kan have flere adresser, men vi
+        // behøver kun én for slug-formål.
+        if (!map.has(key)) {
+          map.set(key, {
+            vejnavn: a.vejnavn,
+            husnr: a.husnr,
+            postnr: a.postnr,
+            postnrnavn: a.postnrnavn,
+          });
+        }
+      }
+
+      if (data.length < perSide) break; // sidste side
+    } catch (err) {
+      logger.warn(
+        '[generate-sitemap] fetchAdresserForKommune',
+        kommunekode,
+        'side',
+        side,
+        'fejl:',
+        err instanceof Error ? err.message : err
+      );
+      break;
+    }
+  }
+
+  return map;
 }
 
 /**

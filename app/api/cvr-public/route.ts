@@ -818,9 +818,14 @@ function mapESHit(hit: Record<string, unknown>): CVRPublicData | null {
   // ── Produktionsenheder (stub — erstattes af separat PE-fetch i route handler) ──
   const productionunits: CVRPublicData['productionunits'] = null;
 
+  // BIZZ-670: Enkeltmandsvirksomheder kan have tomt navn i CVR.
+  // Fallback: ejerens navn → CVR-nummer, så downstream (AI artikel-søgning)
+  // altid har en brugbar companyName.
+  const effectiveNavn = navn || owners[0]?.name || `CVR ${cvr}`;
+
   return {
     vat: cvr,
-    name: navn,
+    name: effectiveNavn,
     address: adresseStreng,
     zipcode: postnr,
     city: by,

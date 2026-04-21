@@ -32,6 +32,29 @@ jobs:
           NEXT_PUBLIC_SUPABASE_ANON_KEY: 'placeholder'
           NEXT_PUBLIC_APP_URL: 'http://localhost:3000'
 
+      # Next.js er SSR — Lighthouse behøver en live server for ikke at
+      # ramme CHROME_INTERSTITIAL_ERROR. Start Next i baggrund og vent til
+      # port 3000 svarer før Lighthouse prober.
+      - name: Start Next.js server
+        run: |
+          npm start &
+          echo $! > .next-server.pid
+        env:
+          SKIP_ENV_VALIDATION: '1'
+          NEXT_PUBLIC_SUPABASE_URL: 'https://placeholder.supabase.co'
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: 'placeholder'
+          NEXT_PUBLIC_APP_URL: 'http://localhost:3000'
+
+      - name: Wait for server
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sSf http://localhost:3000 >/dev/null 2>&1; then
+              echo "server ready after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "server failed to start within 60s"; exit 1
+
       - name: Run Lighthouse CI
         uses: treosh/lighthouse-ci-action@v12
         with:
@@ -41,3 +64,10 @@ jobs:
           budgetPath: .lighthouserc.json
           uploadArtifacts: true
           temporaryPublicStorage: true
+
+      - name: Stop Next.js server
+        if: always()
+        run: |
+          if [ -f .next-server.pid ]; then
+            kill "$(cat .next-server.pid)" || true
+          fi

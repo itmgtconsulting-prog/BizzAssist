@@ -18,6 +18,9 @@ const eslintConfig = defineConfig([
     '.vercel/**',
     // Git worktrees created by Claude Code agents — not the main working tree
     '.claude/**',
+    // Ad-hoc ops/verification scripts — one-off tools run by hand, not production code.
+    // Linting would block PRs for throwaway stub-variables. Keep linting for app/ and __tests__/.
+    'scripts/**',
   ]),
   {
     rules: {

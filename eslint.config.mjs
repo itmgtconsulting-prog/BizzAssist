@@ -66,6 +66,7 @@ const eslintConfig = defineConfig([
       'app/api/admin/domains/**',
       // Anomaly-scan cron is super-admin-equivalent (runs under service role)
       'app/api/cron/domain-anomalies/**',
+      'app/api/cron/domain-retention/**',
       '__tests__/**',
       // Build scripts and verification scripts may touch domain tables directly
       'scripts/**',

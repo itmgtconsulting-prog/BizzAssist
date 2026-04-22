@@ -59,6 +59,10 @@
     {
       "path": "/api/cron/domain-anomalies",
       "schedule": "45 4 * * *"
+    },
+    {
+      "path": "/api/cron/domain-retention",
+      "schedule": "30 3 * * *"
     }
   ]
 }

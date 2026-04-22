@@ -22,11 +22,13 @@ import {
   Settings,
   BookOpen,
   ListChecks,
+  History,
   Plus,
   Trash2,
   Loader2,
   CheckCircle2,
   AlertCircle,
+  RotateCcw,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 
@@ -58,7 +60,16 @@ interface TemplateDetail {
   file_type: string;
 }
 
-type TabKey = 'metadata' | 'instructions' | 'examples' | 'placeholders';
+type TabKey = 'metadata' | 'instructions' | 'examples' | 'placeholders' | 'versions';
+
+interface VersionRow {
+  id: string;
+  version: number;
+  file_path: string;
+  note: string | null;
+  created_at: string;
+  created_by: string | null;
+}
 
 export default function TemplateEditorClient({
   domainId,
@@ -84,6 +95,12 @@ export default function TemplateEditorClient({
   const [examples, setExamples] = useState<ExampleEntry[]>([]);
   const [placeholders, setPlaceholders] = useState<PlaceholderEntry[]>([]);
   const [newExample, setNewExample] = useState('');
+
+  // Versions tab state
+  const [versions, setVersions] = useState<VersionRow[]>([]);
+  const [versionsLoading, setVersionsLoading] = useState(false);
+  const versionFileInputRef = useRef<HTMLInputElement>(null);
+  const [uploadingVersion, setUploadingVersion] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -196,6 +213,64 @@ export default function TemplateEditorClient({
     setPlaceholders(placeholders.map((p, idx) => (idx === i ? { ...p, ...patch } : p)));
   };
 
+  const loadVersions = useCallback(async () => {
+    setVersionsLoading(true);
+    try {
+      const r = await fetch(`/api/domain/${domainId}/templates/${templateId}/versions`);
+      if (r.ok) setVersions((await r.json()) as VersionRow[]);
+    } finally {
+      setVersionsLoading(false);
+    }
+  }, [domainId, templateId]);
+
+  useEffect(() => {
+    if (tab === 'versions') void loadVersions();
+  }, [tab, loadVersions]);
+
+  const uploadVersion = async (file: File) => {
+    setUploadingVersion(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const r = await fetch(`/api/domain/${domainId}/templates/${templateId}/versions`, {
+        method: 'POST',
+        body: fd,
+      });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({ error: 'Unknown' }));
+        setSaveState('error');
+        window.alert(`${da ? 'Upload-fejl' : 'Upload error'}: ${d.error || 'unknown'}`);
+      } else {
+        await load();
+        await loadVersions();
+      }
+    } finally {
+      setUploadingVersion(false);
+    }
+  };
+
+  const rollback = async (versionNum: number) => {
+    if (
+      !window.confirm(
+        da
+          ? `Rull tilbage til version ${versionNum}? Nuværende v${data?.version} bevares i historien.`
+          : `Roll back to version ${versionNum}? Current v${data?.version} stays in history.`
+      )
+    )
+      return;
+    const r = await fetch(
+      `/api/domain/${domainId}/templates/${templateId}/versions/${versionNum}/rollback`,
+      { method: 'POST' }
+    );
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({ error: 'Unknown' }));
+      window.alert(`${da ? 'Fejl' : 'Error'}: ${d.error || 'unknown'}`);
+    } else {
+      await load();
+      await loadVersions();
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -216,6 +291,7 @@ export default function TemplateEditorClient({
     { key: 'instructions', label: da ? 'Instruktioner' : 'Instructions', icon: BookOpen },
     { key: 'examples', label: da ? 'Eksempler' : 'Examples', icon: FileText },
     { key: 'placeholders', label: 'Placeholders', icon: ListChecks },
+    { key: 'versions', label: da ? 'Versioner' : 'Versions', icon: History },
   ];
 
   const saveIndicator =
@@ -454,6 +530,92 @@ export default function TemplateEditorClient({
                   />
                 </li>
               ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {/* Versions */}
+      {tab === 'versions' && (
+        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-slate-400 text-xs">
+              {da
+                ? `Seneste 10 versioner bevares. Nuværende version er v${data.version}.`
+                : `Last 10 versions are kept. Current version is v${data.version}.`}
+            </p>
+            <button
+              onClick={() => versionFileInputRef.current?.click()}
+              disabled={uploadingVersion}
+              className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-md text-white text-xs"
+            >
+              {uploadingVersion ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                <Plus size={12} />
+              )}
+              {da ? 'Upload ny version' : 'Upload new version'}
+            </button>
+            <input
+              ref={versionFileInputRef}
+              type="file"
+              accept=".docx,.pdf,.txt"
+              onChange={(e) => {
+                if (e.target.files?.[0]) void uploadVersion(e.target.files[0]);
+                e.target.value = '';
+              }}
+              className="hidden"
+            />
+          </div>
+
+          {versionsLoading ? (
+            <div className="flex items-center justify-center py-6">
+              <Loader2 className="w-5 h-5 text-blue-400 animate-spin" />
+            </div>
+          ) : versions.length === 0 ? (
+            <p className="text-slate-500 text-sm py-6 text-center">
+              {da ? 'Ingen versioner endnu' : 'No versions yet'}
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {versions.map((v) => {
+                const isCurrent = v.version === data.version;
+                return (
+                  <li
+                    key={v.id}
+                    className={`flex items-center gap-3 p-3 rounded-md border ${
+                      isCurrent
+                        ? 'bg-blue-900/20 border-blue-700/40'
+                        : 'bg-slate-900/50 border-slate-700/40'
+                    }`}
+                  >
+                    <span
+                      className={`px-2 py-0.5 text-[10px] font-semibold rounded ${
+                        isCurrent ? 'bg-blue-600 text-white' : 'bg-slate-700/60 text-slate-300'
+                      }`}
+                    >
+                      v{v.version}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-slate-200 text-xs truncate">
+                        {v.note ?? (da ? 'Ingen note' : 'No note')}
+                      </p>
+                      <p className="text-slate-500 text-[10px]">
+                        {new Date(v.created_at).toLocaleString(da ? 'da-DK' : 'en-GB')}
+                      </p>
+                    </div>
+                    {!isCurrent && (
+                      <button
+                        onClick={() => void rollback(v.version)}
+                        className="flex items-center gap-1 px-2 py-1 bg-amber-600 hover:bg-amber-500 rounded text-white text-[10px] font-medium"
+                      >
+                        <RotateCcw size={10} />
+                        {da ? 'Rul tilbage' : 'Rollback'}
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>

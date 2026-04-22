@@ -1902,6 +1902,45 @@ export default function EjendomDetaljeClient({
               </div>
             </div>
 
+            {/* BIZZ-725: Info banner for udfasede ejendomme — Plandata zone=Udfaset betyder
+                at zone-registreringen er historisk. Typisk er bygninger/enheder flyttet til
+                en nyere registrering på samme matrikel, eller ejendommen er sammenlagt. Vi
+                mangler et "efterfølger-BFE"-felt i data-modellen til at linke direkte til
+                aktiv ejendom — indtil da tilbyder vi en matrikel-søgning som navigations-hjælp. */}
+            {dawaAdresse?.zone === 'Udfaset' && (
+              <div
+                role="status"
+                className="mb-4 flex items-start gap-3 px-4 py-3 bg-amber-900/20 border border-amber-700/40 rounded-lg"
+              >
+                <Building2 size={16} className="text-amber-400 mt-0.5 flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-amber-200 text-sm font-medium">
+                    {da ? 'Udfaset ejendom' : 'Retired property'}
+                  </p>
+                  <p className="text-amber-100/70 text-xs mt-1 leading-relaxed">
+                    {da
+                      ? 'Denne ejendoms zone-registrering er markeret som udfaset. Bygninger og enheder kan være flyttet til en nyere registrering på samme matrikel.'
+                      : 'This property\u2019s zone registration is marked as retired. Buildings and units may have moved to a newer registration on the same matrikel.'}
+                  </p>
+                  {dawaJordstykke && (
+                    <button
+                      onClick={() => {
+                        const query =
+                          `${dawaJordstykke.matrikelnr} ${dawaJordstykke.ejerlav.navn ?? ''}`.trim();
+                        router.push(`/dashboard?q=${encodeURIComponent(query)}`);
+                      }}
+                      className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 bg-amber-500/15 border border-amber-500/30 rounded-md text-amber-300 text-xs font-medium hover:bg-amber-500/25 transition-colors"
+                    >
+                      <Building2 size={11} />
+                      {da
+                        ? 'Find andre ejendomme på matriklen'
+                        : 'Find other properties on matrikel'}
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Tabs */}
             <div role="tablist" className="flex gap-1 -mb-px overflow-x-auto scrollbar-hide">
               {tabs.map((tab) => (

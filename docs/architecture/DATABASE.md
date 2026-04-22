@@ -203,3 +203,53 @@ ALTER TABLE tenant_{TENANT_ID}.audit_log ENABLE ROW LEVEL SECURITY;
 - [ ] AI embeddings stored in tenant-specific namespace
 - [ ] Audit log entry created for all write operations
 - [ ] Migration is reversible (down migration exists)
+
+---
+
+## Migration deployment (BIZZ-735)
+
+Three Supabase environments, three separate secret stores. Migrations must be
+applied to each manually (Supabase CLI `db push` isn't wired in yet) — and
+every env must have `supabase_migrations.schema_migrations` tracking enabled
+so drift is detectable.
+
+| Env  | Project ref            | Migration tracking          |
+| ---- | ---------------------- | --------------------------- |
+| test | `rlkjmqjxmkxuclehbrnl` | enabled (seeded 2026-04-22) |
+| dev  | `wkzwxfhyfmvglrqtmebw` | enabled                     |
+| prod | `xsyldjqcntiygrtfcszm` | enabled                     |
+
+### Applying a new migration
+
+1. Write the migration as `supabase/migrations/NNN_description.sql`
+   (zero-padded 3-digit version, next in sequence).
+2. Apply via Management API SQL (preferred — no local CLI required):
+   ```bash
+   TOKEN=$SUPABASE_ACCESS_TOKEN
+   REF=<project-ref>
+   curl -s -X POST "https://api.supabase.com/v1/projects/$REF/database/query" \
+     -H "Authorization: Bearer $TOKEN" \
+     -H "Content-Type: application/json" \
+     --data-binary @<(jq -Rs '{query: .}' < supabase/migrations/NNN_description.sql)
+   ```
+3. Record as applied in the tracking table:
+   ```sql
+   INSERT INTO supabase_migrations.schema_migrations (version, name, statements)
+   VALUES ('NNN', 'description', '{}')
+   ON CONFLICT (version) DO NOTHING;
+   ```
+4. Repeat for all three envs.
+
+### Drift check (automated)
+
+- Script: `scripts/check-migration-drift.mjs`
+- CI: `.github/workflows/migration-drift.yml` runs weekly (Mondays 06:00 UTC).
+- Exit code 1 when any env is missing a migration that exists locally.
+
+### Incident precedent
+
+**BIZZ-735 (2026-04-22):** Supabase security-advisor alerted that
+`public.regnskab_cache` was publicly accessible in test-env. Migration
+`044_regnskab_cache_rls.sql` had been skipped silently because test-env had
+no migration tracking. Fixed by enabling tracking in all three envs and
+adding this weekly drift check.

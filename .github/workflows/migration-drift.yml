@@ -1,0 +1,24 @@
+name: Migration drift check
+
+# BIZZ-735: Weekly check that supabase_migrations.schema_migrations in all 3
+# Supabase environments matches the local supabase/migrations/ files. Catches
+# silent drift like the regnskab_cache RLS incident where a security migration
+# was skipped in test-env and only surfaced via Supabase security-advisor.
+
+on:
+  schedule:
+    - cron: '0 6 * * 1' # Every Monday 06:00 UTC
+  workflow_dispatch: {} # Allow manual run
+
+jobs:
+  drift-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: Run drift check
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: node scripts/check-migration-drift.mjs

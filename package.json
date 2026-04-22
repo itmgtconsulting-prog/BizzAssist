@@ -21,6 +21,7 @@
     "test:smoke": "playwright test __tests__/e2e/smoke.spec.ts",
     "test:rls": "RLS_TEST=true vitest run --config vitest.rls.config.ts",
     "test:rls:script": "node scripts/test-rls.mjs",
+    "test:domain:integration": "INTEGRATION=1 vitest run __tests__/domain/isolation.integration.test.ts",
     "test:all": "npm run test && npm run test:e2e",
     "validate": "npm run type-check && npm run lint && npm run format:check && npm run test",
     "prepare": "husky",

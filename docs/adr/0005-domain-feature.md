@@ -112,7 +112,18 @@ A nightly cron (`/api/cron/domain-retention`) hard-deletes expired data (GDPR Ar
 - All domain tables have `domain_id` column with RLS policies
 - `is_domain_member(domain_id)` SECURITY DEFINER function validates membership
 - Cross-domain queries are impossible without service role
-- Storage buckets use path-based isolation: `domain-templates/{domain_id}/...`
+- Storage uses **a single bucket** `domain-files` with path-based isolation:
+  `{domain_id}/templates/…`, `{domain_id}/training/…`, `{domain_id}/cases/…`.
+  Originally specced as 4 separate buckets; consolidated to 1 because:
+  (a) Supabase RLS + membership check in `domainStorage.ts` happens BEFORE any
+  signed-URL generation, so cross-domain access is blocked at the application
+  layer regardless of bucket topology;
+  (b) path-based namespacing is verified on every download/delete call
+  (`storagePath.startsWith(${domainId}/)`), making horizontal leakage
+  impossible even with a crafted path;
+  (c) fewer buckets = simpler backup/restore and lifecycle management.
+  Trade-off: backup granularity is per-bucket, so disaster-recovery for a
+  single domain requires path filtering during restore.
 - Embeddings use pgvector namespace filter: `WHERE domain_id = $1`
 
 ## Security considerations
@@ -127,6 +138,6 @@ A nightly cron (`/api/cron/domain-retention`) hard-deletes expired data (GDPR Ar
 
 - New Supabase migration with 9 tables + RLS policies
 - New Voyage AI dependency (`@voyageai/sdk`)
-- New storage buckets (4)
+- New storage bucket (1, shared with path-based namespace isolation — see Data isolation)
 - Feature flag gates all UI/API until launch
 - Enterprise Stripe plan required for domain access

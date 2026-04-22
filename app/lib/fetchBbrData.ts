@@ -954,6 +954,78 @@ export async function fetchBbrAreasByBfe(
     // Ignorer BBR_Enhed-fejl — fald igennem til Bygning-opslaget nedenfor.
   }
 
+  // BIZZ-731: For ejerlejligheder gav den første BBR_Enhed-query med
+  // adresseIdentificerer = adresse-UUID (med etage/dør) ofte 0 matches
+  // fordi BBR_Enhed.adresseIdentificerer i praksis lagrer adgangsadresse-
+  // UUID'en for nogle registreringer. I stedet for at falde direkte ned til
+  // BBR_Bygning (hvor byg039 ofte er null for bygninger med ejerlejligheder),
+  // prøv at resolve adresse → adgangsadresse og hente ALLE enheder i
+  // bygningen, for derefter at matche på ejerlejlighedens adresse-UUID.
+  try {
+    const { fetchDawa: fd } = await import('@/app/lib/dawa');
+    // Probe current effectiveDawaId: er det en adresse (med etage/dør) eller adgangsadresse?
+    const probeRes = await fd(
+      `${DAWA_BASE_URL}/adresser/${effectiveDawaId}?struktur=mini`,
+      { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
+      { caller: 'fetchBbrAreasByBfe.probe-unit' }
+    );
+    if (probeRes.ok) {
+      const adresse = (await probeRes.json()) as {
+        adgangsadresseid?: string | null;
+        id?: string;
+      };
+      const adgangsId = adresse.adgangsadresseid;
+      if (adgangsId && adgangsId !== effectiveDawaId) {
+        // Vi er på en specifik enhed. Hent alle enheder i bygningen (via
+        // adgangsadresse) og filtrér til den der matcher vores adresse-UUID.
+        const buildingEnheder = await fetchBBRGraphQL(
+          `query($vt: DafDateTime!, $id: String!) {
+            BBR_Enhed(first: 200, virkningstid: $vt, where: { adresseIdentificerer: { eq: $id } }) {
+              nodes {
+                id_lokalId
+                adresseIdentificerer
+                enh026EnhedensSamledeAreal
+                enh027ArealTilBeboelse
+                enh028ArealTilErhverv
+                status
+              }
+            }
+          }`,
+          { vt, id: adgangsId }
+        );
+        if (Array.isArray(buildingEnheder) && buildingEnheder.length > 0) {
+          // Find enhed der matcher vores oprindelige adresse-UUID (effectiveDawaId)
+          const match = (
+            buildingEnheder as Array<{
+              id_lokalId?: string;
+              adresseIdentificerer?: string;
+              enh026EnhedensSamledeAreal?: number | null;
+              enh027ArealTilBeboelse?: number | null;
+              enh028ArealTilErhverv?: number | null;
+              status?: string | number | null;
+            }>
+          ).find(
+            (n) => n.adresseIdentificerer === effectiveDawaId && String(n.status ?? '') !== '7'
+          );
+          if (match) {
+            const bolig = Number(match.enh027ArealTilBeboelse ?? 0);
+            const erhverv = Number(match.enh028ArealTilErhverv ?? 0);
+            const samlet = Number(match.enh026EnhedensSamledeAreal ?? 0);
+            if (bolig > 0 || erhverv > 0 || samlet > 0) {
+              return {
+                boligAreal: bolig > 0 ? bolig : null,
+                erhvervsAreal: erhverv > 0 ? erhverv : null,
+                samletBygningsareal: samlet > 0 ? samlet : null,
+              };
+            }
+          }
+        }
+      }
+    }
+  } catch {
+    // Ignorer — fald igennem til Bygning-opslaget nedenfor.
+  }
+
   const bbrQuery = `query($vt: DafDateTime!, $id: String!) {
       BBR_Bygning(first: 100, virkningstid: $vt, where: { husnummer: { eq: $id } }) {
         nodes {

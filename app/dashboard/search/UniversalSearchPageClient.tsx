@@ -22,6 +22,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import {
   Search,
   X,
@@ -33,6 +34,7 @@ import {
   CheckCircle,
   XCircle,
   Briefcase,
+  Home,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';
@@ -306,9 +308,36 @@ function EmptyState({
  * in parallel (debounced 300 ms). Results are shown in three tabs with badge counts.
  * Clicking a result navigates to the appropriate detail page.
  */
+/** BIZZ-763: Shape of a matrikel-search result row. */
+interface MatrikelLejlighed {
+  bfe: number;
+  adresse: string;
+  etage: string | null;
+  doer: string | null;
+  ejer: string;
+  ejertype: 'person' | 'selskab' | 'ukendt';
+  areal: number | null;
+  koebspris: number | null;
+  koebsdato: string | null;
+  dawaId: string | null;
+}
+
 export default function UniversalSearchPageClient() {
   const { lang } = useLanguage();
   const t = translations[lang].searchPage;
+  const da = lang === 'da';
+
+  // BIZZ-763: When navigated from an ejendom-detail's "find other properties
+  // on matrikel" button, the page opens in matrikel-mode. In this mode the
+  // normal text-search is bypassed and results come from /api/ejerlejligheder.
+  const sp = useSearchParams();
+  const matrikelMode = sp.get('type') === 'matrikel';
+  const matEjerlavKode = sp.get('ejerlavKode') ?? '';
+  const matMatrikelnr = sp.get('matrikelnr') ?? '';
+  const matEjerlavNavn = sp.get('ejerlavNavn') ?? '';
+  const [matLejligheder, setMatLejligheder] = useState<MatrikelLejlighed[]>([]);
+  const [matLoading, setMatLoading] = useState(false);
+  const [matError, setMatError] = useState<string | null>(null);
 
   const [query, setQuery] = useState('');
   const [activeTab, setActiveTab] = useState<Tab>('properties');
@@ -327,6 +356,42 @@ export default function UniversalSearchPageClient() {
   const [searched, setSearched] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // BIZZ-763: Matrikel-mode auto-runs one lookup when the page lands with
+  // type=matrikel query params. We call /api/ejerlejligheder which returns
+  // the full list of ejerlejligheder on the jordstykke.
+  useEffect(() => {
+    if (!matrikelMode || !matEjerlavKode || !matMatrikelnr) return;
+    let cancelled = false;
+    setMatLoading(true);
+    setMatError(null);
+    (async () => {
+      try {
+        const params = new URLSearchParams({
+          ejerlavKode: matEjerlavKode,
+          matrikelnr: matMatrikelnr,
+        });
+        const res = await fetch(`/api/ejerlejligheder?${params.toString()}`);
+        if (!res.ok) {
+          if (!cancelled) {
+            setMatError(da ? `Fejl ${res.status}` : `Error ${res.status}`);
+          }
+          return;
+        }
+        const json = (await res.json()) as { lejligheder?: MatrikelLejlighed[] };
+        if (!cancelled) setMatLejligheder(json.lejligheder ?? []);
+      } catch (err) {
+        if (!cancelled) {
+          setMatError(err instanceof Error ? err.message : 'Unknown error');
+        }
+      } finally {
+        if (!cancelled) setMatLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [matrikelMode, matEjerlavKode, matMatrikelnr, da]);
 
   /** Focus the input on mount */
   useEffect(() => {
@@ -439,6 +504,99 @@ export default function UniversalSearchPageClient() {
       setActiveTab('people');
     }
   }, [searched, anyLoading, properties.length, companies.length, people.length, activeTab]);
+
+  // BIZZ-763: Matrikel-mode dedicated view — shown when arriving from an
+  // ejendom-detail page's "find other properties on matrikel" button.
+  if (matrikelMode) {
+    return (
+      <div className="flex-1 flex flex-col min-h-0 bg-[#0a1020] overflow-auto">
+        <div className="max-w-4xl mx-auto w-full px-6 py-8 space-y-6">
+          <div>
+            <Link
+              href="/dashboard/search"
+              className="text-slate-400 hover:text-white text-sm inline-flex items-center gap-1"
+            >
+              <X size={14} /> {da ? 'Tilbage til fri søgning' : 'Back to free-text search'}
+            </Link>
+            <h1 className="text-2xl font-bold text-white mt-3 mb-1">
+              {da ? 'Ejendomme på matriklen' : 'Properties on matrikel'}
+            </h1>
+            <p className="text-slate-400 text-sm">
+              {da ? 'Matrikel' : 'Matrikel'}{' '}
+              <span className="font-mono text-slate-300">{matMatrikelnr}</span>
+              {matEjerlavNavn && (
+                <>
+                  {', '}
+                  {matEjerlavNavn}
+                </>
+              )}
+              {' · '}
+              {da ? 'Ejerlavkode' : 'Ejerlav code'}{' '}
+              <span className="font-mono text-slate-300">{matEjerlavKode}</span>
+            </p>
+          </div>
+
+          {matLoading ? (
+            <div className="flex items-center gap-2 text-slate-400 text-sm">
+              <Loader2 size={14} className="animate-spin" />
+              {da ? 'Henter ejendomme…' : 'Loading properties…'}
+            </div>
+          ) : matError ? (
+            <div className="bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 text-red-300 text-sm">
+              {matError}
+            </div>
+          ) : matLejligheder.length === 0 ? (
+            <div className="text-center py-16 bg-slate-800/40 border border-slate-700/40 rounded-xl">
+              <Home size={32} className="mx-auto text-slate-600 mb-3" />
+              <p className="text-slate-400 text-sm">
+                {da
+                  ? 'Ingen ejerlejligheder fundet på matriklen.'
+                  : 'No properties found on this matrikel.'}
+              </p>
+            </div>
+          ) : (
+            <>
+              <p className="text-slate-400 text-xs">
+                {matLejligheder.length}{' '}
+                {da
+                  ? matLejligheder.length === 1
+                    ? 'ejendom'
+                    : 'ejendomme'
+                  : matLejligheder.length === 1
+                    ? 'property'
+                    : 'properties'}
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {matLejligheder.map((l) => (
+                  <Link
+                    key={`${l.bfe}-${l.dawaId ?? l.adresse}`}
+                    href={
+                      l.dawaId
+                        ? `/dashboard/ejendomme/${l.dawaId}`
+                        : `/dashboard/ejendomme/${l.bfe}`
+                    }
+                    className="block bg-slate-800/40 hover:bg-slate-800/60 border border-slate-700/40 rounded-xl p-4 transition-colors"
+                  >
+                    <div className="flex items-start gap-3">
+                      <Home size={16} className="text-blue-400 mt-0.5 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-white text-sm font-medium truncate">{l.adresse}</p>
+                        <p className="text-slate-400 text-xs mt-0.5">
+                          BFE <span className="font-mono">{l.bfe || '—'}</span>
+                          {l.areal != null && ` · ${l.areal} m²`}
+                          {l.ejer && l.ejer !== '–' && ` · ${l.ejer}`}
+                        </p>
+                      </div>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-[#0a1020]">

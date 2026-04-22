@@ -1930,9 +1930,19 @@ export default function EjendomDetaljeClient({
                   {dawaJordstykke && (
                     <button
                       onClick={() => {
-                        const query =
-                          `${dawaJordstykke.matrikelnr} ${dawaJordstykke.ejerlav.navn ?? ''}`.trim();
-                        router.push(`/dashboard?q=${encodeURIComponent(query)}`);
+                        // BIZZ-763: Navigate to the universal search with
+                        // matrikel query params so the search page runs a
+                        // dedicated matrikel lookup (all ejerlejligheder on
+                        // the jordstykke) instead of a generic text search.
+                        const params = new URLSearchParams({
+                          type: 'matrikel',
+                          ejerlavKode: String(dawaJordstykke.ejerlav.kode ?? ''),
+                          matrikelnr: String(dawaJordstykke.matrikelnr ?? ''),
+                        });
+                        if (dawaJordstykke.ejerlav.navn) {
+                          params.set('ejerlavNavn', dawaJordstykke.ejerlav.navn);
+                        }
+                        router.push(`/dashboard/search?${params.toString()}`);
                       }}
                       className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 bg-amber-500/15 border border-amber-500/30 rounded-md text-amber-300 text-xs font-medium hover:bg-amber-500/25 transition-colors"
                     >

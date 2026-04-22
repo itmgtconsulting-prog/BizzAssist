@@ -27,6 +27,8 @@ import { darResolveAdresseId } from '@/app/lib/dar';
 const ejerlejlighederQuerySchema = z.object({
   ejerlavKode: z.string().regex(/^\d+$/, 'ejerlavKode skal være et heltal'),
   matrikelnr: z.string().min(1, 'matrikelnr er påkrævet'),
+  /** BIZZ-695: Optional moderBfe for DAWA fallback owner lookup */
+  moderBfe: z.coerce.number().int().positive().optional(),
 });
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -201,7 +203,8 @@ function parseDoerSortValue(doer: string | null | undefined): number {
  */
 async function resolveLejlighederViaDawa(
   ejerlavKode: string,
-  matrikelnr: string
+  matrikelnr: string,
+  moderBfe?: number
 ): Promise<Ejerlejlighed[]> {
   const DAWA_BASE = 'https://dawa.aws.dk';
 
@@ -215,7 +218,38 @@ async function resolveLejlighederViaDawa(
   const adgangsadresser = (await adgRes.json()) as Array<{ id: string; adressebetegnelse: string }>;
   if (adgangsadresser.length === 0) return [];
 
-  // Step 2: For each adgangsadresse, find all adresser with etage/dør
+  // Step 2: Pre-load owner from ejf_ejerskab using moderBfe (= ejerlejligheds-BFE)
+  // BIZZ-695: Klienten sender ejerlejlighedBfe som moderBfe parameter.
+  let cachedOwner: { navn: string; type: 'person' | 'selskab' | 'ukendt' } | null = null;
+  if (moderBfe) {
+    try {
+      // Look up ejerskab for the moderBfe itself — ejf_ejerskab might have it
+      const { createAdminClient } = await import('@/lib/supabase/admin');
+      const admin = createAdminClient();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: moderRows } = (await (admin as any)
+        .from('ejf_ejerskab')
+        .select('ejer_navn, ejer_type')
+        .eq('bfe_nummer', moderBfe)
+        .eq('status', 'gældende')
+        .limit(1)) as { data: Array<{ ejer_navn: string; ejer_type: string }> | null };
+      if (moderRows && moderRows.length > 0) {
+        cachedOwner = {
+          navn: moderRows[0].ejer_navn,
+          type:
+            moderRows[0].ejer_type === 'virksomhed'
+              ? 'selskab'
+              : moderRows[0].ejer_type === 'person'
+                ? 'person'
+                : 'ukendt',
+        };
+      }
+    } catch {
+      /* non-fatal */
+    }
+  }
+
+  // Step 3: For each adgangsadresse, find all adresser with etage/dør
   const lejligheder: Ejerlejlighed[] = [];
 
   for (const adg of adgangsadresser) {
@@ -237,77 +271,17 @@ async function resolveLejlighederViaDawa(
     const units = adresser.filter((a) => a.etage != null && a.etage !== '');
 
     for (const unit of units) {
-      // Step 3: Look up BFE and owner from ejf_ejerskab
-      let ejerNavn = '–';
-      let ejertype: 'person' | 'selskab' | 'ukendt' = 'ukendt';
-      let bfe = 0;
-      const koebspris: number | null = null;
-      const koebsdato: string | null = null;
-      const areal: number | null = null;
-
-      // Try to resolve BFE via DAWA /adresser/{id} → bfenummer
-      try {
-        const bfeRes = await fetchDawa(
-          `${DAWA_BASE}/adresser/${unit.id}?struktur=nestet`,
-          { signal: AbortSignal.timeout(3000), next: { revalidate: 86400 } },
-          { caller: 'ejerlejligheder.dawa-bfe' }
-        );
-        if (bfeRes.ok) {
-          const adrData = (await bfeRes.json()) as {
-            adgangsadresse?: { jordstykke?: { bfenummer?: number } };
-          };
-          bfe = adrData.adgangsadresse?.jordstykke?.bfenummer ?? 0;
-        }
-      } catch {
-        /* ignore */
-      }
-
-      // Look up owner from ejf_ejerskab if we have a BFE
-      if (bfe > 0) {
-        try {
-          const { createAdminClient } = await import('@/lib/supabase/admin');
-          const admin = createAdminClient();
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { data: rows } = (await (admin as any)
-            .from('ejf_ejerskab')
-            .select('ejer_navn, ejer_type, ejer_cvr, virkning_fra')
-            .eq('bfe_nummer', bfe)
-            .eq('status', 'gældende')
-            .order('virkning_fra', { ascending: false })
-            .limit(1)) as {
-            data: Array<{
-              ejer_navn: string;
-              ejer_type: string;
-              ejer_cvr: string | null;
-              virkning_fra: string;
-            }> | null;
-          };
-
-          if (rows && rows.length > 0) {
-            ejerNavn = rows[0].ejer_navn;
-            ejertype =
-              rows[0].ejer_type === 'virksomhed'
-                ? 'selskab'
-                : rows[0].ejer_type === 'person'
-                  ? 'person'
-                  : 'ukendt';
-          }
-        } catch {
-          /* DB fallback non-fatal */
-        }
-      }
-
       lejligheder.push({
-        bfe,
+        bfe: 0,
         adresse: unit.betegnelse,
         etage: unit.etage,
         doer: unit.dør,
         beskrivelse: unit.betegnelse,
-        ejer: ejerNavn,
-        ejertype,
-        areal,
-        koebspris,
-        koebsdato,
+        ejer: cachedOwner?.navn ?? '–',
+        ejertype: cachedOwner?.type ?? 'ukendt',
+        areal: null,
+        koebspris: null,
+        koebsdato: null,
         dawaId: unit.id,
       });
     }
@@ -335,7 +309,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
 
   const parsed = parseQuery(request, ejerlejlighederQuerySchema);
   if (!parsed.success) return parsed.response as NextResponse<EjerlejlighederResponse>;
-  const { ejerlavKode, matrikelnr } = parsed.data;
+  const { ejerlavKode, matrikelnr, moderBfe } = parsed.data;
 
   if ((!CERT_PATH && !CERT_B64) || !CERT_PASSWORD) {
     return NextResponse.json(
@@ -382,7 +356,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
       // BIZZ-695: Tinglysning dækker ikke alle matrikler. Fallback til DAWA:
       // Find alle adgangsadresser på matriklen → hent adresser med etage/dør → berig med EJF ejerskab fra DB.
       try {
-        const dawaFallback = await resolveLejlighederViaDawa(ejerlavKode, matrikelnr);
+        const dawaFallback = await resolveLejlighederViaDawa(ejerlavKode, matrikelnr, moderBfe);
         if (dawaFallback.length > 0) {
           logger.log(
             `[ejerlejligheder] DAWA fallback: ${dawaFallback.length} lejligheder for ejerlav ${ejerlavKode} matr. ${matrikelnr}`

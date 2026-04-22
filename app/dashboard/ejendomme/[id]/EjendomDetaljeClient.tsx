@@ -896,6 +896,8 @@ export default function EjendomDetaljeClient({
       ejerlavKode: String(rel.ejerlavKode),
       matrikelnr: rel.matrikelnr,
     });
+    // BIZZ-695: Send ejerlejlighedBfe so DAWA fallback can look up owners via ejf_ejerskab
+    if (bbrData?.ejerlejlighedBfe) params.set('moderBfe', String(bbrData.ejerlejlighedBfe));
     fetch(`/api/ejerlejligheder?${params}`, { signal: controller.signal })
       .then((r) => (r.ok ? r.json() : { lejligheder: [] }))
       .then((data: { lejligheder: import('@/app/api/ejerlejligheder/route').Ejerlejlighed[] }) => {

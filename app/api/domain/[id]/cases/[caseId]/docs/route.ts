@@ -16,6 +16,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { assertDomainMember } from '@/app/lib/domainAuth';
 import { uploadDomainFile } from '@/app/lib/domainStorage';
+import { extractTextFromBuffer } from '@/app/lib/domainTextExtraction';
 import { isDomainFeatureEnabled } from '@/app/lib/featureFlags';
 import { logger } from '@/app/lib/logger';
 
@@ -108,6 +109,15 @@ export async function POST(request: NextRequest, context: RouteContext): Promise
     const buffer = Buffer.from(arrayBuf);
     const { path } = await uploadDomainFile(domainId, 'cases', file.name, buffer, mime);
 
+    // BIZZ-714: Synchronous text extraction — mammoth/pdf-parse/mailparser run
+    // inline so the AI pipeline has content available immediately. For very
+    // large files this can slow the upload response; max file size is already
+    // capped at 50 MB and parsing each format completes well within 30s p95.
+    const extraction = await extractTextFromBuffer(buffer, fileType);
+    const parseStatus = extraction.ok ? (extraction.truncated ? 'truncated' : 'ok') : 'failed';
+    const extractedText = extraction.ok ? extraction.text : null;
+    const parseError = extraction.ok ? null : extraction.error.slice(0, 500);
+
     // Insert doc row
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: docRow, error: insertErr } = (await (admin as any)
@@ -119,8 +129,11 @@ export async function POST(request: NextRequest, context: RouteContext): Promise
         file_type: fileType,
         size_bytes: buffer.length,
         uploaded_by: ctx.userId,
+        extracted_text: extractedText,
+        parse_status: parseStatus,
+        parse_error: parseError,
       })
-      .select('id, name, file_path, file_type, size_bytes, created_at')
+      .select('id, name, file_path, file_type, size_bytes, parse_status, created_at')
       .single()) as { data: { id: string } | null; error: { message: string } | null };
 
     if (insertErr || !docRow) {

@@ -35,6 +35,9 @@ interface CaseDoc {
   size_bytes: number | null;
   uploaded_by: string | null;
   created_at: string;
+  /** BIZZ-714: text-extraction outcome */
+  parse_status?: 'pending' | 'ok' | 'failed' | 'truncated';
+  parse_error?: string | null;
 }
 
 interface CaseDetail {
@@ -396,7 +399,25 @@ export default function CaseDetailClient({
                   {doc.file_type}
                 </span>
                 <div className="flex-1 min-w-0">
-                  <p className="text-slate-200 text-sm truncate">{doc.name}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-slate-200 text-sm truncate">{doc.name}</p>
+                    {doc.parse_status === 'failed' && (
+                      <span
+                        title={doc.parse_error ?? undefined}
+                        className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-rose-900/40 text-rose-300 shrink-0"
+                      >
+                        {da ? 'Parse-fejl' : 'Parse failed'}
+                      </span>
+                    )}
+                    {doc.parse_status === 'truncated' && (
+                      <span
+                        title={da ? 'Kun første 500k tegn bevaret' : 'Only first 500k chars kept'}
+                        className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-amber-900/40 text-amber-300 shrink-0"
+                      >
+                        {da ? 'Trunkeret' : 'Truncated'}
+                      </span>
+                    )}
+                  </div>
                   <p className="text-slate-500 text-xs">
                     {formatSize(doc.size_bytes)} ·{' '}
                     {new Date(doc.created_at).toLocaleDateString(da ? 'da-DK' : 'en-GB')}

@@ -59,7 +59,9 @@ export async function GET(_req: NextRequest, context: RouteContext): Promise<Nex
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: docs } = await (admin as any)
     .from('domain_case_doc')
-    .select('id, name, file_path, file_type, tags, size_bytes, uploaded_by, created_at')
+    .select(
+      'id, name, file_path, file_type, tags, size_bytes, uploaded_by, created_at, parse_status, parse_error'
+    )
     .eq('case_id', caseId)
     .is('deleted_at', null)
     .order('created_at', { ascending: false });

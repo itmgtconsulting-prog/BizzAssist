@@ -21,6 +21,7 @@ import { parseQuery } from '@/app/lib/validate';
 import { fetchDawa } from '@/app/lib/dawa';
 import { darResolveAdresseId } from '@/app/lib/dar';
 import { resolveEnhedByDawaId } from '@/app/lib/fetchBbrData';
+import { fetchTinglysningPriceRowsByBfe } from '@/app/lib/tinglysningPrices';
 // EJF/Datafordeler er ikke nødvendig — alt data hentes fra tinglysning summarisk XML
 
 // ─── Query param validation ─────────────────────────────────────────────────
@@ -305,23 +306,134 @@ async function resolveLejlighederViaDawa(
     }
   }
 
-  // BIZZ-724: Berig hver lejlighed med BFE + areal (fra BBR_Enhed) og købsdato
-  // (fra lokal ejf_ejerskab). Parallelliseret pr. lejlighed for at holde latency
-  // lav; fejl på én lejlighed skal ikke blokere de andre. Købspris afventer
-  // BIZZ-685/693 salgshistorik-refactor — lad forblive null indtil den lander.
+  // BIZZ-724 iter 3: Primær per-lejlighed-berigelse via Tinglysning
+  // /ejendom/adresse — returnerer den specifikke ejerlejligheds-BFE + UUID
+  // pr. adresse med etage/dør. Det er vejen til korrekt lejligheds-BFE
+  // (fx 226629 for 62B, 226630 for 62A) og samtidig gateway til summarisk-XML
+  // med areal + købspris + købsdato. Fejl på en enkelt lejlighed logges som
+  // non-fatal og falder tilbage til BBR_Enhed/matrikel-fallback.
+  await Promise.all(
+    lejligheder.map(async (lej) => {
+      try {
+        // Parse vejnavn + husnr fra betegnelse ("Arnold Nielsens Blvd 62A, st., 2650 Hvidovre")
+        const addrPart = lej.adresse.split(',')[0].trim();
+        const m = addrPart.match(/^(.+?)\s+(\d+\w*)$/);
+        const postMatch = lej.adresse.match(/(\d{4})/);
+        if (!m || !postMatch) return;
+        const [, vejnavn, husnummer] = m;
+        const postnummer = postMatch[1];
+        const etage = lej.etage ?? undefined;
+        const sidedoer = lej.doer ?? undefined;
+        const params = new URLSearchParams({
+          vejnavn,
+          husnummer,
+          postnummer,
+          ...(etage ? { etage } : {}),
+          ...(sidedoer ? { sidedoer } : {}),
+        });
+        const res = await tlFetch(`/ejendom/adresse?${params.toString()}`);
+        if (res.status !== 200 || !res.body) return;
+        let tlItem: TLSearchItem | null = null;
+        try {
+          const parsed = JSON.parse(res.body) as TLSearchResponse;
+          tlItem = parsed.items?.[0] ?? null;
+        } catch {
+          return;
+        }
+        if (!tlItem) return;
+        // ejendomsnummer is the unit-specific BFE
+        const bfe = tlItem.ejendomsnummer ? parseInt(tlItem.ejendomsnummer, 10) : 0;
+        if (bfe > 0) lej.bfe = bfe;
+
+        // Fetch summarisk XML → areal + købspris + købsdato + ejer-navn
+        const sumRes = await tlFetch(`/ejdsummarisk/${tlItem.uuid}`);
+        if (sumRes.status === 200 && sumRes.body) {
+          const xml = sumRes.body;
+          // Ejerlejlighedens areal (primær) eller generisk areal
+          const ejlAreal = xml.match(
+            /[Ee]jerlejlighedens\s+tinglyste?\s+areal[^<]*<[^>]*>[^<]*<[^>]*>(\d+)\s*kvm/i
+          );
+          if (ejlAreal) {
+            lej.areal = parseInt(ejlAreal[1], 10);
+          } else {
+            const alt = xml.match(/<(?:ns\d+:)?Areal>(\d+)<\/(?:ns\d+:)?Areal>/);
+            if (alt) lej.areal = parseInt(alt[1], 10);
+          }
+
+          // Seneste adkomst: koebspris + koebsdato + ejer
+          const adkomstSection =
+            xml.match(/AdkomstSummariskSamling[\s\S]*?<\/[^:]*:?AdkomstSummariskSamling/)?.[0] ??
+            '';
+          const adkomstEntries = [
+            ...adkomstSection.matchAll(/AdkomstSummarisk>([\s\S]*?)<\/[^:]*:?AdkomstSummarisk/g),
+          ];
+          if (adkomstEntries.length > 0) {
+            const last = adkomstEntries[adkomstEntries.length - 1][1];
+            const kontant = last.match(/KontantKoebesum[^>]*>([^<]+)/)?.[1];
+            const iAlt = last.match(/IAltKoebesum[^>]*>([^<]+)/)?.[1];
+            const price = kontant ? parseInt(kontant, 10) : iAlt ? parseInt(iAlt, 10) : null;
+            if (price != null && !isNaN(price)) lej.koebspris = price;
+            const dato =
+              last.match(/KoebsaftaleDato[^>]*>([^<]+)/)?.[1]?.split('+')[0] ??
+              last.match(/SkoedeOvertagelsesDato[^>]*>([^<]+)/)?.[1]?.split('+')[0] ??
+              last.match(/TinglysningsDato[^>]*>([^<]+)/)?.[1]?.split('T')[0] ??
+              null;
+            if (dato) lej.koebsdato = dato;
+          }
+        }
+      } catch (err) {
+        logger.warn('[ejerlejligheder] per-lejlighed TL enrichment fejl:', err);
+      }
+    })
+  );
+
+  // Fallback: for lejligheder der stadig mangler BFE eller areal, prøv
+  // BBR_Enhed → adgangsadresse → matrikel-BFE chain'en. Kun et sikkerhedsnet
+  // — primær-pathen ovenfor dækker ejerlejligheder som er tinglyst med
+  // individuel ejendomsnummer, hvilket er ~alle bolig-ejerlejligheder.
+  await Promise.all(
+    lejligheder.map(async (lej) => {
+      if (lej.bfe > 0 && lej.areal != null) return;
+      if (!lej.dawaId) return;
+      try {
+        const enhed = await resolveEnhedByDawaId(lej.dawaId);
+        if (enhed?.bfe && lej.bfe === 0) lej.bfe = enhed.bfe;
+        if (enhed?.areal != null && lej.areal == null) lej.areal = enhed.areal;
+      } catch {
+        /* non-fatal */
+      }
+    })
+  );
+
+  // Sidste skridt: for lejligheder med BFE men ingen koebspris/koebsdato fra
+  // summarisk, prøv salgshistorik-API (BIZZ-685) som nu indeholder Tinglysning
+  // /dokaktuel pris-enrichment + reverse-inference. Giver pris på rækker hvor
+  // den seneste adkomst var en arv/gave uden pris, men tidligere handler havde.
   try {
     const { createAdminClient } = await import('@/lib/supabase/admin');
     const admin = createAdminClient();
     await Promise.all(
       lejligheder.map(async (lej) => {
-        if (!lej.dawaId) return;
+        if (!lej.bfe || lej.bfe === 0) return;
+        if (lej.koebspris != null && lej.koebsdato) return;
         try {
-          const enhed = await resolveEnhedByDawaId(lej.dawaId);
-          if (enhed?.bfe) lej.bfe = enhed.bfe;
-          if (enhed?.areal != null) lej.areal = enhed.areal;
+          const priceRows = await fetchTinglysningPriceRowsByBfe(lej.bfe);
+          if (priceRows.length > 0) {
+            const latest = priceRows[priceRows.length - 1];
+            if (lej.koebspris == null) {
+              lej.koebspris = latest.kontantKoebesum ?? latest.iAltKoebesum ?? null;
+            }
+            if (!lej.koebsdato) {
+              lej.koebsdato =
+                latest.overtagelsesdato ??
+                latest.koebsaftaleDato ??
+                latest.tinglysningsdato ??
+                null;
+            }
+          }
 
-          // Lookup købsdato fra ejf_ejerskab når BFE er kendt
-          if (lej.bfe && lej.bfe > 0) {
+          // Ejf_ejerskab fallback for koebsdato når summarisk mangler
+          if (!lej.koebsdato) {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const { data: rows } = (await (admin as any)
               .from('ejf_ejerskab')
@@ -334,12 +446,12 @@ async function resolveLejlighederViaDawa(
             if (virkningFra) lej.koebsdato = virkningFra;
           }
         } catch {
-          /* per-lejlighed fejl er non-fatal */
+          /* non-fatal */
         }
       })
     );
   } catch (err) {
-    logger.warn('[ejerlejligheder] Enrichment fejlede:', err);
+    logger.warn('[ejerlejligheder] Salgshistorik-fallback fejlede:', err);
   }
 
   // Sort: by adresse → etage → dør

@@ -46,11 +46,14 @@ import { withCronMonitor } from '@/app/lib/cronMonitor';
 /** Eksplicit maxDuration = 300s (5 min) — max på Vercel Pro */
 export const maxDuration = 300;
 
-/** Antal virksomheder pr. DB-batch (DB-read er hurtigt → stor batch) */
-const CVR_BATCH_SIZE = 5_000;
+/** Antal virksomheder pr. DB-batch.
+ * Supabase PostgREST capper ved 1000 rækker per request uanset .limit().
+ * Sæt til 1000 så done-check (rows.length < BATCH_SIZE) virker korrekt.
+ */
+const CVR_BATCH_SIZE = 1_000;
 
-/** Antal distinkte BFE-numre pr. DB-batch */
-const PROPERTY_BATCH_SIZE = 5_000;
+/** Antal BFE-rækker pr. DB-batch (PostgREST 1000-row cap) */
+const PROPERTY_BATCH_SIZE = 1_000;
 
 /** Stop ved ~4 min for at undgå at Vercel 300s timeout dræber os mid-batch. */
 const SAFETY_BUDGET_MS = 240_000;

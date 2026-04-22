@@ -13,7 +13,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { darAutocomplete } from '@/app/lib/dar';
-import { fetchDawa } from '@/app/lib/dawa';
 import { DAWA_BASE_URL } from '@/app/lib/serviceEndpoints';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { parseQuery } from '@/app/lib/validate';
@@ -205,10 +204,13 @@ async function searchAddresses(q: string, normQ: string): Promise<UnifiedSearchR
         const probeResults = await Promise.all(
           adgangsadresser.map(async (adg) => {
             try {
-              const probeRes = await fetchDawa(
-                `${DAWA_BASE_URL}/adresser?adgangsadresseid=${adg.adresse.id}&struktur=mini&per_side=10`,
-                { signal: AbortSignal.timeout(3000), next: { revalidate: 3600 } },
-                { caller: 'search.adgangsadresse-units' }
+              // BIZZ-723 v2: Use plain fetch without next: { revalidate } — that
+              // option combined with AbortSignal seemed to cause silent failures
+              // in the Vercel runtime for this specific call. DAWA responses are
+              // small and this only fires once per search, so un-cached is fine.
+              const probeRes = await fetch(
+                `${DAWA_BASE_URL}/adresser?adgangsadresseid=${encodeURIComponent(adg.adresse.id)}&struktur=mini&per_side=10`,
+                { signal: AbortSignal.timeout(3000) }
               );
               if (!probeRes.ok) return [];
               return (await probeRes.json()) as Array<{
@@ -218,7 +220,10 @@ async function searchAddresses(q: string, normQ: string): Promise<UnifiedSearchR
                 betegnelse?: string;
                 adressebetegnelse?: string;
               }>;
-            } catch {
+            } catch (err) {
+              logger.warn(
+                `[search/723] probe fetch failed for adg ${adg.adresse.id.slice(0, 8)}: ${err instanceof Error ? err.message : err}`
+              );
               return [];
             }
           })

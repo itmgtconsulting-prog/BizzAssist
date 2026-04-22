@@ -1433,6 +1433,34 @@ export async function resolveEnhedByDawaId(dawaId: string): Promise<{
     /* VP is optional — non-fatal */
   }
 
+  // Step 4: BIZZ-724 last-resort BFE fallback — return the matrikel's
+  // (jordstykke) BFE so callers at least get a non-zero number that drives
+  // downstream salgshistorik + enrichment lookups. Not ideal (the ejerlejligheds-
+  // specific BFE would be preferable) but for erhvervsenheder that aren't in
+  // BBR_Enhed indexed via adgangsadresse *and* aren't in Vurderingsportalen's
+  // ES index, this is the pragmatic match.
+  if (matchedBfe == null) {
+    try {
+      const { fetchDawa: fd } = await import('@/app/lib/dawa');
+      const adrRes = await fd(
+        `${DAWA_BASE_URL}/adresser/${dawaId}?struktur=mini`,
+        { signal: AbortSignal.timeout(3000), next: { revalidate: 86400 } },
+        { caller: 'resolveEnhedByDawaId.matrikel-fallback' }
+      );
+      if (adrRes.ok) {
+        const adr = (await adrRes.json()) as {
+          adgangsadresse?: { jordstykke?: { bfenummer?: number } };
+        };
+        const jordBfe = adr.adgangsadresse?.jordstykke?.bfenummer;
+        if (typeof jordBfe === 'number' && jordBfe > 0) {
+          matchedBfe = jordBfe;
+        }
+      }
+    } catch {
+      /* non-fatal */
+    }
+  }
+
   if (matchedBfe == null && matchedAreal == null) return null;
   return { bfe: matchedBfe, areal: matchedAreal };
 }

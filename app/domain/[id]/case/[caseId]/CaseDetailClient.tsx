@@ -25,6 +25,8 @@ import {
   Save,
   X,
   Sparkles,
+  LayoutDashboard,
+  Bot,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 
@@ -84,6 +86,9 @@ export default function CaseDetailClient({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  // BIZZ-745: tab state — aligns case-page layout with person/company/ejendom
+  // detail pages. 'ai' is placeholder for now (iter 2 wires the chat panel).
+  const [activeTab, setActiveTab] = useState<'overview' | 'documents' | 'ai'>('overview');
 
   // Inline-edit buffers
   const [editName, setEditName] = useState('');
@@ -312,93 +317,145 @@ export default function CaseDetailClient({
         </div>
       )}
 
-      {/* Metadata panel */}
-      <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-6 space-y-4">
-        <div className="flex items-center gap-2 mb-2">
-          <Briefcase size={20} className="text-blue-400" />
-          <h1 className="text-lg font-bold text-white">{da ? 'Sagsdetaljer' : 'Case details'}</h1>
-        </div>
-
-        <label className="block">
-          <span className="text-slate-300 text-xs">{da ? 'Sagsnavn' : 'Case name'}</span>
-          <input
-            type="text"
-            value={editName}
-            onChange={(e) => setEditName(e.target.value)}
-            maxLength={200}
-            className="mt-1 w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-md text-white text-sm"
-          />
-        </label>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <label className="block">
-            <span className="text-slate-300 text-xs">{da ? 'Klient-reference' : 'Client ref'}</span>
-            <input
-              type="text"
-              value={editClientRef}
-              onChange={(e) => setEditClientRef(e.target.value)}
-              className="mt-1 w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-md text-white text-sm"
-            />
-          </label>
-          <label className="block">
-            <span className="text-slate-300 text-xs">Status</span>
-            <select
-              value={editStatus}
-              onChange={(e) => setEditStatus(e.target.value as 'open' | 'closed' | 'archived')}
-              className="mt-1 w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-md text-white text-sm"
-            >
-              <option value="open">{da ? 'Åben' : 'Open'}</option>
-              <option value="closed">{da ? 'Lukket' : 'Closed'}</option>
-              <option value="archived">{da ? 'Arkiveret' : 'Archived'}</option>
-            </select>
-          </label>
-        </div>
-
-        <label className="block">
-          <span className="text-slate-300 text-xs">{da ? 'Noter' : 'Notes'}</span>
-          <textarea
-            value={editNotes}
-            onChange={(e) => setEditNotes(e.target.value)}
-            rows={4}
-            className="mt-1 w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-md text-white text-sm font-mono"
-          />
-        </label>
-
-        <div className="flex items-center justify-between pt-2">
-          <button
-            onClick={deleteCase}
-            className="text-rose-400 hover:text-rose-300 text-xs flex items-center gap-1"
-          >
-            <Trash2 size={12} />
-            {da ? 'Slet sag' : 'Delete case'}
-          </button>
-          <div className="flex items-center gap-2">
+      {/* BIZZ-745: Tab-bar — aligns with person/company/ejendom detail-pages */}
+      <div
+        className="flex gap-1 -mb-px overflow-x-auto border-b border-slate-700/40"
+        role="tablist"
+      >
+        {(
+          [
+            {
+              id: 'overview' as const,
+              icon: LayoutDashboard,
+              labelDa: 'Overblik',
+              labelEn: 'Overview',
+            },
+            {
+              id: 'documents' as const,
+              icon: FileText,
+              labelDa: 'Dokumenter',
+              labelEn: 'Documents',
+            },
+            { id: 'ai' as const, icon: Bot, labelDa: 'AI Assistent', labelEn: 'AI Assistant' },
+          ] as const
+        ).map((tab) => {
+          const Icon = tab.icon;
+          const label = da ? tab.labelDa : tab.labelEn;
+          const isActive = tab.id === activeTab;
+          return (
             <button
-              onClick={() => void openGenerateModal()}
-              disabled={data.docs.length === 0}
-              className="flex items-center gap-2 px-3 py-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 rounded-md text-white text-sm font-medium"
-              title={
-                data.docs.length === 0
-                  ? da
-                    ? 'Upload mindst 1 dokument først'
-                    : 'Upload at least 1 document first'
-                  : undefined
-              }
+              key={tab.id}
+              role="tab"
+              aria-selected={isActive}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 transition-colors whitespace-nowrap ${
+                isActive
+                  ? 'border-blue-500 text-blue-300 font-medium'
+                  : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600'
+              }`}
             >
-              <Sparkles size={14} />
-              {da ? 'Generér dokument' : 'Generate document'}
+              <Icon size={14} /> {label}
             </button>
-            <button
-              onClick={save}
-              disabled={saving}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-md text-white text-sm font-medium"
-            >
-              {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-              {da ? 'Gem ændringer' : 'Save changes'}
-            </button>
-          </div>
-        </div>
+          );
+        })}
       </div>
+
+      {/* Metadata panel — only in overview */}
+      {activeTab === 'overview' && (
+        <>
+          {/* Metadata panel */}
+          <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-6 space-y-4">
+            <div className="flex items-center gap-2 mb-2">
+              <Briefcase size={20} className="text-blue-400" />
+              <h1 className="text-lg font-bold text-white">
+                {da ? 'Sagsdetaljer' : 'Case details'}
+              </h1>
+            </div>
+
+            <label className="block">
+              <span className="text-slate-300 text-xs">{da ? 'Sagsnavn' : 'Case name'}</span>
+              <input
+                type="text"
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                maxLength={200}
+                className="mt-1 w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-md text-white text-sm"
+              />
+            </label>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <label className="block">
+                <span className="text-slate-300 text-xs">
+                  {da ? 'Klient-reference' : 'Client ref'}
+                </span>
+                <input
+                  type="text"
+                  value={editClientRef}
+                  onChange={(e) => setEditClientRef(e.target.value)}
+                  className="mt-1 w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-md text-white text-sm"
+                />
+              </label>
+              <label className="block">
+                <span className="text-slate-300 text-xs">Status</span>
+                <select
+                  value={editStatus}
+                  onChange={(e) => setEditStatus(e.target.value as 'open' | 'closed' | 'archived')}
+                  className="mt-1 w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-md text-white text-sm"
+                >
+                  <option value="open">{da ? 'Åben' : 'Open'}</option>
+                  <option value="closed">{da ? 'Lukket' : 'Closed'}</option>
+                  <option value="archived">{da ? 'Arkiveret' : 'Archived'}</option>
+                </select>
+              </label>
+            </div>
+
+            <label className="block">
+              <span className="text-slate-300 text-xs">{da ? 'Noter' : 'Notes'}</span>
+              <textarea
+                value={editNotes}
+                onChange={(e) => setEditNotes(e.target.value)}
+                rows={4}
+                className="mt-1 w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-md text-white text-sm font-mono"
+              />
+            </label>
+
+            <div className="flex items-center justify-between pt-2">
+              <button
+                onClick={deleteCase}
+                className="text-rose-400 hover:text-rose-300 text-xs flex items-center gap-1"
+              >
+                <Trash2 size={12} />
+                {da ? 'Slet sag' : 'Delete case'}
+              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => void openGenerateModal()}
+                  disabled={data.docs.length === 0}
+                  className="flex items-center gap-2 px-3 py-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 rounded-md text-white text-sm font-medium"
+                  title={
+                    data.docs.length === 0
+                      ? da
+                        ? 'Upload mindst 1 dokument først'
+                        : 'Upload at least 1 document first'
+                      : undefined
+                  }
+                >
+                  <Sparkles size={14} />
+                  {da ? 'Generér dokument' : 'Generate document'}
+                </button>
+                <button
+                  onClick={save}
+                  disabled={saving}
+                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-md text-white text-sm font-medium"
+                >
+                  {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                  {da ? 'Gem ændringer' : 'Save changes'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Generate-document modal */}
       {showGenerateModal && (
@@ -477,114 +534,156 @@ export default function CaseDetailClient({
         </div>
       )}
 
-      {/* Upload zone */}
-      <div
-        onDragOver={(e) => {
-          e.preventDefault();
-          setIsDragging(true);
-        }}
-        onDragLeave={() => setIsDragging(false)}
-        onDrop={onDrop}
-        onClick={() => fileInputRef.current?.click()}
-        role="button"
-        tabIndex={0}
-        className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${
-          isDragging
-            ? 'border-blue-400 bg-blue-900/20'
-            : 'border-slate-700 hover:border-slate-600 hover:bg-slate-800/40'
-        }`}
-      >
-        <Upload size={24} className="mx-auto text-slate-500 mb-2" />
-        <p className="text-slate-300 text-sm font-medium">
-          {da ? 'Træk filer herhen eller klik for at vælge' : 'Drop files here or click to select'}
-        </p>
-        <p className="text-slate-500 text-xs mt-1">
-          {da
-            ? `docx, pdf, txt, eml, msg · max ${MAX_FILE_SIZE_MB} MB pr. fil`
-            : `docx, pdf, txt, eml, msg · max ${MAX_FILE_SIZE_MB} MB per file`}
-        </p>
-        {uploadingCount > 0 && (
-          <div className="mt-3 flex items-center justify-center gap-2 text-blue-300 text-xs">
-            <Loader2 size={12} className="animate-spin" />
-            {da ? `Uploader ${uploadingCount}…` : `Uploading ${uploadingCount}…`}
+      {activeTab === 'documents' && (
+        <>
+          {/* Upload zone */}
+          <div
+            onDragOver={(e) => {
+              e.preventDefault();
+              setIsDragging(true);
+            }}
+            onDragLeave={() => setIsDragging(false)}
+            onDrop={onDrop}
+            onClick={() => fileInputRef.current?.click()}
+            role="button"
+            tabIndex={0}
+            className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${
+              isDragging
+                ? 'border-blue-400 bg-blue-900/20'
+                : 'border-slate-700 hover:border-slate-600 hover:bg-slate-800/40'
+            }`}
+          >
+            <Upload size={24} className="mx-auto text-slate-500 mb-2" />
+            <p className="text-slate-300 text-sm font-medium">
+              {da
+                ? 'Træk filer herhen eller klik for at vælge'
+                : 'Drop files here or click to select'}
+            </p>
+            <p className="text-slate-500 text-xs mt-1">
+              {da
+                ? `docx, pdf, txt, eml, msg · max ${MAX_FILE_SIZE_MB} MB pr. fil`
+                : `docx, pdf, txt, eml, msg · max ${MAX_FILE_SIZE_MB} MB per file`}
+            </p>
+            {uploadingCount > 0 && (
+              <div className="mt-3 flex items-center justify-center gap-2 text-blue-300 text-xs">
+                <Loader2 size={12} className="animate-spin" />
+                {da ? `Uploader ${uploadingCount}…` : `Uploading ${uploadingCount}…`}
+              </div>
+            )}
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept=".docx,.pdf,.txt,.eml,.msg,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf,text/plain,message/rfc822,application/vnd.ms-outlook"
+              onChange={(e) => {
+                if (e.target.files) void uploadFiles(e.target.files);
+                e.target.value = '';
+              }}
+              className="hidden"
+            />
           </div>
-        )}
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          accept=".docx,.pdf,.txt,.eml,.msg,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf,text/plain,message/rfc822,application/vnd.ms-outlook"
-          onChange={(e) => {
-            if (e.target.files) void uploadFiles(e.target.files);
-            e.target.value = '';
-          }}
-          className="hidden"
-        />
-      </div>
 
-      {/* Doc list */}
-      <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-slate-700/40 flex items-center justify-between">
-          <h2 className="text-white font-medium text-sm flex items-center gap-2">
-            <FileText size={16} className="text-slate-400" />
-            {da ? 'Dokumenter' : 'Documents'} ({data.docs.length})
-          </h2>
-        </div>
-        {data.docs.length === 0 ? (
-          <div className="py-8 text-center text-slate-500 text-sm">
-            {da ? 'Ingen dokumenter endnu' : 'No documents yet'}
+          {/* Doc list */}
+          <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
+            <div className="px-4 py-3 border-b border-slate-700/40 flex items-center justify-between">
+              <h2 className="text-white font-medium text-sm flex items-center gap-2">
+                <FileText size={16} className="text-slate-400" />
+                {da ? 'Dokumenter' : 'Documents'} ({data.docs.length})
+              </h2>
+            </div>
+            {data.docs.length === 0 ? (
+              <div className="py-8 text-center text-slate-500 text-sm">
+                {da ? 'Ingen dokumenter endnu' : 'No documents yet'}
+              </div>
+            ) : (
+              <ul className="divide-y divide-slate-700/30">
+                {data.docs.map((doc) => (
+                  <li key={doc.id} className="px-4 py-3 flex items-center gap-3">
+                    <span className="px-2 py-0.5 text-[10px] font-semibold rounded bg-slate-700/60 text-slate-300 uppercase">
+                      {doc.file_type}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="text-slate-200 text-sm truncate">{doc.name}</p>
+                        {doc.parse_status === 'failed' && (
+                          <span
+                            title={doc.parse_error ?? undefined}
+                            className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-rose-900/40 text-rose-300 shrink-0"
+                          >
+                            {da ? 'Parse-fejl' : 'Parse failed'}
+                          </span>
+                        )}
+                        {doc.parse_status === 'truncated' && (
+                          <span
+                            title={
+                              da ? 'Kun første 500k tegn bevaret' : 'Only first 500k chars kept'
+                            }
+                            className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-amber-900/40 text-amber-300 shrink-0"
+                          >
+                            {da ? 'Trunkeret' : 'Truncated'}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-slate-500 text-xs">
+                        {formatSize(doc.size_bytes)} ·{' '}
+                        {new Date(doc.created_at).toLocaleDateString(da ? 'da-DK' : 'en-GB')}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => downloadDoc(doc)}
+                      aria-label={da ? 'Download' : 'Download'}
+                      className="text-slate-400 hover:text-white"
+                    >
+                      <Download size={14} />
+                    </button>
+                    <button
+                      onClick={() => deleteDoc(doc)}
+                      aria-label={da ? 'Slet' : 'Delete'}
+                      className="text-rose-400 hover:text-rose-300"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
-        ) : (
-          <ul className="divide-y divide-slate-700/30">
-            {data.docs.map((doc) => (
-              <li key={doc.id} className="px-4 py-3 flex items-center gap-3">
-                <span className="px-2 py-0.5 text-[10px] font-semibold rounded bg-slate-700/60 text-slate-300 uppercase">
-                  {doc.file_type}
-                </span>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <p className="text-slate-200 text-sm truncate">{doc.name}</p>
-                    {doc.parse_status === 'failed' && (
-                      <span
-                        title={doc.parse_error ?? undefined}
-                        className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-rose-900/40 text-rose-300 shrink-0"
-                      >
-                        {da ? 'Parse-fejl' : 'Parse failed'}
-                      </span>
-                    )}
-                    {doc.parse_status === 'truncated' && (
-                      <span
-                        title={da ? 'Kun første 500k tegn bevaret' : 'Only first 500k chars kept'}
-                        className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-amber-900/40 text-amber-300 shrink-0"
-                      >
-                        {da ? 'Trunkeret' : 'Truncated'}
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-slate-500 text-xs">
-                    {formatSize(doc.size_bytes)} ·{' '}
-                    {new Date(doc.created_at).toLocaleDateString(da ? 'da-DK' : 'en-GB')}
-                  </p>
-                </div>
-                <button
-                  onClick={() => downloadDoc(doc)}
-                  aria-label={da ? 'Download' : 'Download'}
-                  className="text-slate-400 hover:text-white"
-                >
-                  <Download size={14} />
-                </button>
-                <button
-                  onClick={() => deleteDoc(doc)}
-                  aria-label={da ? 'Slet' : 'Delete'}
-                  className="text-rose-400 hover:text-rose-300"
-                >
-                  <Trash2 size={14} />
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+        </>
+      )}
+
+      {/* BIZZ-745: AI Assistent tab — placeholder for iter 2.
+          Iter 2 wires AIChatPanel with case context + template-picker
+          + doc-selection + iterative document preview. */}
+      {activeTab === 'ai' && (
+        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-8 text-center space-y-4">
+          <Bot size={40} className="text-purple-400 mx-auto" />
+          <div>
+            <h2 className="text-white text-lg font-bold">
+              {da ? 'AI Assistent — kommer snart' : 'AI Assistant — coming soon'}
+            </h2>
+            <p className="text-slate-400 text-sm mt-1 max-w-md mx-auto">
+              {da
+                ? 'Den integrerede AI-dialog med skabelon-valg, dokument-selektion og iterativt preview er planlagt til iter 2 (BIZZ-745 follow-up).'
+                : 'The integrated AI dialog with template selection, doc picking and iterative preview is planned for iter 2 (BIZZ-745 follow-up).'}
+            </p>
+          </div>
+          <div className="pt-2">
+            <button
+              onClick={() => void openGenerateModal()}
+              disabled={data.docs.length === 0}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 rounded-md text-white text-sm font-medium"
+            >
+              <Sparkles size={14} />
+              {da ? 'Generér dokument (nuværende flow)' : 'Generate document (current flow)'}
+            </button>
+            <p className="text-slate-500 text-xs mt-2">
+              {da
+                ? 'Den eksisterende generation-modal tager allerede skabelon + instruktioner.'
+                : 'The existing generation modal already takes template + instructions.'}
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

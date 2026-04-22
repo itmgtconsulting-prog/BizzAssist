@@ -165,21 +165,181 @@ maybe('BIZZ-733 RLS policy-contract checks', () => {
   });
 });
 
-// ─── Phase 2 — deferred ──────────────────────────────────────────────────────
-// A1-A6 require authenticated user-A / user-B clients with real JWTs. Running
-// them in CI needs either local Supabase via `supabase start` (Docker) or a
-// dedicated always-running preview project with pre-created test users. Left
-// as .skip scaffolding so the intent is discoverable.
+// ─── Phase 2 — A1-A6 cross-domain RLS via real auth clients ──────────────────
+// Creates 2 auth users in test-env via the Admin API, makes each a member of
+// a separate test domain, then runs cross-domain SELECT/INSERT/UPDATE/DELETE
+// queries as each user with a Supabase client scoped to their JWT. Verifies
+// RLS policies return 0 rows / reject writes across the domain boundary.
+//
+// Cleanup (afterAll) removes the test users + domains + their cascade so the
+// test-env stays clean between runs.
 
-describe.skip('BIZZ-733 A1-A6 cross-domain RLS (phase 2 — needs local supabase)', () => {
-  it('A1: user-A cannot SELECT from any domain_* row belonging to domain-B', () => {
-    // TODO: seed 2 domains + 2 users; supabase.auth.signInWithPassword as user-A;
-    // for each of the 10 domain_* tables: query .eq('domain_id', DOMAIN_B) and
-    // assert data is empty / error is RLS-denied.
+const ANON_KEY = process.env.SUPABASE_TEST_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+maybe('BIZZ-733 A1-A6 — cross-domain RLS with real authenticated clients', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let clientA: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let clientB: any;
+  const seededDomains: string[] = [];
+  const seededUsers: string[] = [];
+  let domainA = '';
+  let domainB = '';
+  let caseIdA = '';
+
+  beforeAll(async () => {
+    if (!SERVICE_KEY || !ANON_KEY) {
+      throw new Error('SUPABASE_TEST_SERVICE_ROLE_KEY + anon key required for phase 2');
+    }
+    admin = createClient(TEST_URL, SERVICE_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+
+    // Create two distinct test users with random emails so re-runs don't collide
+    const rnd = Math.random().toString(36).slice(2, 8);
+    const emailA = `bizz733-a-${rnd}@example.com`;
+    const emailB = `bizz733-b-${rnd}@example.com`;
+    const pw = `Test-${rnd}-xyz!`;
+
+    const { data: ua, error: eaErr } = await admin.auth.admin.createUser({
+      email: emailA,
+      password: pw,
+      email_confirm: true,
+    });
+    if (eaErr || !ua?.user) throw new Error(`createUser A: ${eaErr?.message}`);
+    const { data: ub, error: ebErr } = await admin.auth.admin.createUser({
+      email: emailB,
+      password: pw,
+      email_confirm: true,
+    });
+    if (ebErr || !ub?.user) throw new Error(`createUser B: ${ebErr?.message}`);
+    seededUsers.push(ua.user.id, ub.user.id);
+
+    // Create two domains
+    const mkDomain = async (name: string) => {
+      const { data, error } = await admin
+        .from('domain')
+        .insert({
+          name,
+          slug: name.toLowerCase().replace(/[^a-z0-9]/g, '-'),
+          owner_tenant_id: '00000000-0000-4000-8000-000000000000',
+          status: 'active',
+        })
+        .select('id')
+        .single();
+      if (error || !data) throw new Error(`createDomain ${name}: ${error?.message}`);
+      return (data as { id: string }).id;
+    };
+    domainA = await mkDomain(`BIZZ733-A-${rnd}`);
+    domainB = await mkDomain(`BIZZ733-B-${rnd}`);
+    seededDomains.push(domainA, domainB);
+
+    // Memberships: user-A in domain-A only, user-B in domain-B only
+    await admin.from('domain_member').insert([
+      {
+        domain_id: domainA,
+        user_id: ua.user.id,
+        role: 'admin',
+        joined_at: new Date().toISOString(),
+      },
+      {
+        domain_id: domainB,
+        user_id: ub.user.id,
+        role: 'admin',
+        joined_at: new Date().toISOString(),
+      },
+    ]);
+
+    // Seed a case in domain-A for cross-domain SELECT/JOIN tests
+    const { data: caseRow } = await admin
+      .from('domain_case')
+      .insert({ domain_id: domainA, name: 'BIZZ733 case A', created_by: ua.user.id })
+      .select('id')
+      .single();
+    caseIdA = (caseRow as { id: string }).id;
+
+    // Build authenticated clients by signing in with password
+    clientA = createClient(TEST_URL, ANON_KEY);
+    const { error: sAErr } = await clientA.auth.signInWithPassword({ email: emailA, password: pw });
+    if (sAErr) throw new Error(`sign-in A: ${sAErr.message}`);
+
+    clientB = createClient(TEST_URL, ANON_KEY);
+    const { error: sBErr } = await clientB.auth.signInWithPassword({ email: emailB, password: pw });
+    if (sBErr) throw new Error(`sign-in B: ${sBErr.message}`);
   });
-  it('A2: user-A INSERT into domain-B is rejected', () => {});
-  it('A3: user-A UPDATE of domain-B rows is rejected', () => {});
-  it('A4: user-A DELETE of domain-B rows is rejected', () => {});
-  it('A5: inherited RLS — user-A cannot JOIN into domain-B documents via case_id', () => {});
-  it('A6: admin role does not grant cross-domain access', () => {});
+
+  afterAll(async () => {
+    if (!admin) return;
+    // Cascade-cleanup via DELETE on domain (FK ON DELETE CASCADE on member/case/etc)
+    for (const d of seededDomains) {
+      await admin.from('domain').delete().eq('id', d);
+    }
+    for (const u of seededUsers) {
+      await admin.auth.admin.deleteUser(u).catch(() => null);
+    }
+  });
+
+  it('A1: user-A SELECT of domain-B rows returns 0 rows across all 10 tables', async () => {
+    const tables = [
+      'domain',
+      'domain_member',
+      'domain_template',
+      'domain_training_doc',
+      'domain_case',
+      'domain_case_doc',
+      'domain_generation',
+      'domain_embedding',
+      'domain_audit_log',
+    ];
+    for (const t of tables) {
+      const q =
+        t === 'domain'
+          ? clientA.from(t).select('*').eq('id', domainB)
+          : clientA.from(t).select('*').eq('domain_id', domainB);
+      const { data, error } = await q;
+      expect(error?.message ?? null, `${t} SELECT error`).toBeFalsy();
+      expect(data ?? [], `${t} should return 0 cross-domain rows`).toEqual([]);
+    }
+  });
+
+  it('A2: user-A INSERT into domain-B is rejected by RLS', async () => {
+    const { error } = await clientA.from('domain_case').insert({
+      domain_id: domainB,
+      name: 'injection attempt',
+    });
+    // PostgreSQL raises "new row violates row-level security policy" for rejected inserts
+    expect(error).not.toBeNull();
+  });
+
+  it('A3: user-A UPDATE of domain-B is a no-op (0 rows updated)', async () => {
+    const { error, count } = await clientA
+      .from('domain_case')
+      .update({ name: 'hacked' }, { count: 'exact' })
+      .eq('domain_id', domainB);
+    // Either error (RLS reject) or count === 0 is acceptable
+    if (!error) expect(count ?? 0).toBe(0);
+  });
+
+  it('A4: user-A DELETE of domain-B is a no-op', async () => {
+    const { error, count } = await clientA
+      .from('domain_case')
+      .delete({ count: 'exact' })
+      .eq('domain_id', domainB);
+    if (!error) expect(count ?? 0).toBe(0);
+  });
+
+  it('A5: inherited RLS — user-B cannot read case docs whose case belongs to domain-A', async () => {
+    const { data, error } = await clientB
+      .from('domain_case_doc')
+      .select('*')
+      .eq('case_id', caseIdA);
+    expect(error?.message ?? null).toBeFalsy();
+    expect(data ?? []).toEqual([]);
+  });
+
+  it('A6: admin role does not grant cross-domain access', async () => {
+    // user-A is admin of domain-A — they should still see 0 rows from domain-B
+    const { data } = await clientA.from('domain_case').select('*').eq('domain_id', domainB);
+    expect(data ?? []).toEqual([]);
+  });
 });

@@ -1674,30 +1674,44 @@ export default function EjendomDetaljeClient({
             <div className="mb-3">
               <div className="flex items-center gap-3">
                 <h1 className="text-white text-xl font-bold">{adresseStreng}</h1>
-                {/* Child unit (ejerlejlighed med etage): link til moderejandommen */}
-                {bbrData?.ejerlejlighedBfe && bbrData?.moderBfe && !!dawaAdresse?.etage && (
+                {/* BIZZ-728: Child unit (enhed med etage/dør) — link til hovedejendom.
+                    Virker for ejerlejligheder OG erhvervsenheder o.lign. — vi navigerer
+                    altid til parent-adgangsadresse (uden etage). moderBfe-stien bruges som
+                    fallback hvis Vurderingsportalen har den (giver korrekt hovedejendom-BFE
+                    til title), ellers navigerer vi direkte til adgangsadressen. */}
+                {bbrData?.parentAdgangsadresseId && !!dawaAdresse?.etage && (
                   <button
                     onClick={async () => {
-                      try {
-                        const jsRes = await fetch(
-                          `/api/adresse/jordstykke?bfe=${bbrData.moderBfe}`
-                        );
-                        if (jsRes.ok) {
-                          const js = await jsRes.json();
-                          if (js?.adgangsadresseId) {
-                            router.push(`/dashboard/ejendomme/${js.adgangsadresseId}`);
-                            return;
+                      // Prefer moderBfe-path when Vurderingsportalen gave us a real
+                      // hovedejendom-BFE (ejerlejligheder) — ellers gå direkte til
+                      // adgangsadressen.
+                      if (bbrData.moderBfe) {
+                        try {
+                          const jsRes = await fetch(
+                            `/api/adresse/jordstykke?bfe=${bbrData.moderBfe}`
+                          );
+                          if (jsRes.ok) {
+                            const js = await jsRes.json();
+                            if (js?.adgangsadresseId) {
+                              router.push(`/dashboard/ejendomme/${js.adgangsadresseId}`);
+                              return;
+                            }
                           }
+                        } catch {
+                          /* fall through to adgangsadresse */
                         }
-                      } catch {
-                        /* ignore */
                       }
+                      router.push(`/dashboard/ejendomme/${bbrData.parentAdgangsadresseId}`);
                     }}
                     className="flex items-center gap-1.5 px-3 py-1 bg-amber-500/15 border border-amber-500/30 rounded-lg text-amber-400 text-xs font-medium hover:bg-amber-500/25 transition-colors flex-shrink-0"
                     title={
                       lang === 'da'
-                        ? `Gå til hovedejendommen (BFE ${bbrData.moderBfe})`
-                        : `Go to parent property (BFE ${bbrData.moderBfe})`
+                        ? bbrData.moderBfe
+                          ? `Gå til hovedejendommen (BFE ${bbrData.moderBfe})`
+                          : 'Gå til hovedejendommen (bygning/adgangsadresse)'
+                        : bbrData.moderBfe
+                          ? `Go to parent property (BFE ${bbrData.moderBfe})`
+                          : 'Go to parent property (building/address)'
                     }
                   >
                     <Building2 size={12} />

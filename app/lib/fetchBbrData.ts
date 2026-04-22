@@ -242,6 +242,14 @@ export interface EjendomApiResponse {
   ejerlejlighedBfe: number | null;
   /** BFE-nummer for moderejendommen (null hvis det ikke er en ejerlejlighed) */
   moderBfe: number | null;
+  /**
+   * BIZZ-728: Adgangsadresse-UUID for hovedejendommen når vi er på en enhed
+   * (adresse med etage/dør). Null når vi allerede er på adgangsadresse-niveau
+   * eller ikke kan opløse parent. Bruges til "Gå til hovedejendom"-knap uden
+   * at kræve Vurderingsportalen-match — virker derfor også for erhvervsenheder
+   * og andre units hvor Vurderingsportalen ikke har opdeling.
+   */
+  parentAdgangsadresseId: string | null;
   /** BIZZ-486: Opgange (stairwells) per bygning */
   opgange: LiveBBROpgang[] | null;
   /** BIZZ-486: Etager (floors) per bygning */
@@ -1893,6 +1901,12 @@ export async function fetchBbrForAddress(
       ? 'BBR-data ikke tilgængeligt. Tjek at DATAFORDELER_API_KEY er sat i .env.local.'
       : null;
 
+  // BIZZ-728: Parent adgangsadresse — sat når input-dawaId er en "adresse" (med etage/dør)
+  // og adgangsadresseId derfor er forskellig. Bruges til "Gå til hovedejendom"-navigation
+  // uafhængigt af Vurderingsportalen-opslag, så det også virker for erhvervsenheder o.lign.
+  const parentAdgangsadresseId =
+    adgangsadresseId && adgangsadresseId !== dawaId ? adgangsadresseId : null;
+
   return {
     bbr,
     enheder,
@@ -1900,6 +1914,7 @@ export async function fetchBbrForAddress(
     ejendomsrelationer,
     ejerlejlighedBfe,
     moderBfe,
+    parentAdgangsadresseId,
     opgange,
     etager,
     tekniskeAnlaeg,

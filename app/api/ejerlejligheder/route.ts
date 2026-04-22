@@ -185,6 +185,145 @@ function parseDoerSortValue(doer: string | null | undefined): number {
   return isNaN(num) ? 50 : num + 10;
 }
 
+// ─── DAWA fallback ──────────────────────────────────────────────────────────
+
+/**
+ * BIZZ-695: Fallback til DAWA + ejf_ejerskab når Tinglysning returnerer 0 lejligheder.
+ *
+ * Flow:
+ *   1. Find adgangsadresser på matriklen via DAWA /jordstykker → husnumre
+ *   2. For hver adgangsadresse: hent alle adresser med etage/dør via DAWA /adresser
+ *   3. For hver adresse: slå BFE op og hent ejerskab fra ejf_ejerskab DB
+ *
+ * @param ejerlavKode - Ejerlavkode fra BBR ejendomsrelation
+ * @param matrikelnr - Matrikelnummer fra BBR ejendomsrelation
+ * @returns Array af Ejerlejlighed med adresse, ejer og DAWA-id
+ */
+async function resolveLejlighederViaDawa(
+  ejerlavKode: string,
+  matrikelnr: string
+): Promise<Ejerlejlighed[]> {
+  const DAWA_BASE = 'https://dawa.aws.dk';
+
+  // Step 1: Find adgangsadresser på matriklen
+  const adgRes = await fetchDawa(
+    `${DAWA_BASE}/adgangsadresser?ejerlavkode=${ejerlavKode}&matrikelnr=${encodeURIComponent(matrikelnr)}&per_side=20`,
+    { signal: AbortSignal.timeout(8000), next: { revalidate: 86400 } },
+    { caller: 'ejerlejligheder.dawa-fallback' }
+  );
+  if (!adgRes.ok) return [];
+  const adgangsadresser = (await adgRes.json()) as Array<{ id: string; adressebetegnelse: string }>;
+  if (adgangsadresser.length === 0) return [];
+
+  // Step 2: For each adgangsadresse, find all adresser with etage/dør
+  const lejligheder: Ejerlejlighed[] = [];
+
+  for (const adg of adgangsadresser) {
+    const adrRes = await fetchDawa(
+      `${DAWA_BASE}/adresser?adgangsadresseid=${adg.id}&per_side=50&struktur=mini`,
+      { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
+      { caller: 'ejerlejligheder.dawa-adresser' }
+    );
+    if (!adrRes.ok) continue;
+    const adresser = (await adrRes.json()) as Array<{
+      id: string;
+      betegnelse: string;
+      etage: string | null;
+      dør: string | null;
+      adgangsadresseid: string;
+    }>;
+
+    // Only include addresses WITH etage (= individual units, not the access address itself)
+    const units = adresser.filter((a) => a.etage != null && a.etage !== '');
+
+    for (const unit of units) {
+      // Step 3: Look up BFE and owner from ejf_ejerskab
+      let ejerNavn = '–';
+      let ejertype: 'person' | 'selskab' | 'ukendt' = 'ukendt';
+      let bfe = 0;
+      const koebspris: number | null = null;
+      const koebsdato: string | null = null;
+      const areal: number | null = null;
+
+      // Try to resolve BFE via DAWA /adresser/{id} → bfenummer
+      try {
+        const bfeRes = await fetchDawa(
+          `${DAWA_BASE}/adresser/${unit.id}?struktur=nestet`,
+          { signal: AbortSignal.timeout(3000), next: { revalidate: 86400 } },
+          { caller: 'ejerlejligheder.dawa-bfe' }
+        );
+        if (bfeRes.ok) {
+          const adrData = (await bfeRes.json()) as {
+            adgangsadresse?: { jordstykke?: { bfenummer?: number } };
+          };
+          bfe = adrData.adgangsadresse?.jordstykke?.bfenummer ?? 0;
+        }
+      } catch {
+        /* ignore */
+      }
+
+      // Look up owner from ejf_ejerskab if we have a BFE
+      if (bfe > 0) {
+        try {
+          const { createAdminClient } = await import('@/lib/supabase/admin');
+          const admin = createAdminClient();
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: rows } = (await (admin as any)
+            .from('ejf_ejerskab')
+            .select('ejer_navn, ejer_type, ejer_cvr, virkning_fra')
+            .eq('bfe_nummer', bfe)
+            .eq('status', 'gældende')
+            .order('virkning_fra', { ascending: false })
+            .limit(1)) as {
+            data: Array<{
+              ejer_navn: string;
+              ejer_type: string;
+              ejer_cvr: string | null;
+              virkning_fra: string;
+            }> | null;
+          };
+
+          if (rows && rows.length > 0) {
+            ejerNavn = rows[0].ejer_navn;
+            ejertype =
+              rows[0].ejer_type === 'virksomhed'
+                ? 'selskab'
+                : rows[0].ejer_type === 'person'
+                  ? 'person'
+                  : 'ukendt';
+          }
+        } catch {
+          /* DB fallback non-fatal */
+        }
+      }
+
+      lejligheder.push({
+        bfe,
+        adresse: unit.betegnelse,
+        etage: unit.etage,
+        doer: unit.dør,
+        beskrivelse: unit.betegnelse,
+        ejer: ejerNavn,
+        ejertype,
+        areal,
+        koebspris,
+        koebsdato,
+        dawaId: unit.id,
+      });
+    }
+  }
+
+  // Sort: by adresse → etage → dør
+  lejligheder.sort((a, b) => {
+    const aEtage = parseEtageSortValue(a.etage);
+    const bEtage = parseEtageSortValue(b.etage);
+    if (aEtage !== bEtage) return aEtage - bEtage;
+    return parseDoerSortValue(a.doer) - parseDoerSortValue(b.doer);
+  });
+
+  return lejligheder;
+}
+
 // ─── Route handler ──────────────────────────────────────────────────────────
 
 export async function GET(request: NextRequest): Promise<NextResponse<EjerlejlighederResponse>> {
@@ -240,6 +379,29 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
     });
 
     if (lejlighedItems.length === 0) {
+      // BIZZ-695: Tinglysning dækker ikke alle matrikler. Fallback til DAWA:
+      // Find alle adgangsadresser på matriklen → hent adresser med etage/dør → berig med EJF ejerskab fra DB.
+      try {
+        const dawaFallback = await resolveLejlighederViaDawa(ejerlavKode, matrikelnr);
+        if (dawaFallback.length > 0) {
+          logger.log(
+            `[ejerlejligheder] DAWA fallback: ${dawaFallback.length} lejligheder for ejerlav ${ejerlavKode} matr. ${matrikelnr}`
+          );
+          return NextResponse.json(
+            { lejligheder: dawaFallback, fejl: null },
+            {
+              status: 200,
+              headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },
+            }
+          );
+        }
+      } catch (dawaErr) {
+        logger.warn(
+          '[ejerlejligheder] DAWA fallback fejlede:',
+          dawaErr instanceof Error ? dawaErr.message : dawaErr
+        );
+      }
+
       return NextResponse.json(
         { lejligheder: [], fejl: null },
         {

@@ -1458,8 +1458,13 @@ export default function EjendomDetaljeClient({
         koebsaftaleDato: h.koebsaftaleDato,
         overtagelsesdato: h.overtagelsesdato,
         overdragelsesmaade: h.overdragelsesmaade,
-        koeber: bestMatch?.navn ?? null,
-        koebercvr: bestMatch?.cvr ?? null,
+        // BIZZ-685/693: prefer Tinglysning match (has adkomst-detaljer),
+        // fall back til ejf-enriched navn fra /api/salgshistorik så rækker
+        // ikke længere vises som tomme købere når Tinglysning ikke matcher.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        koeber: bestMatch?.navn ?? (h as any).koeber ?? null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        koebercvr: bestMatch?.cvr ?? (h as any).koeberCvr ?? null,
         adkomstType: bestMatch?.adkomstType ?? null,
         andel: bestMatch?.andel ?? null,
         tinglysningsdato: bestMatch?.tinglysningsdato ?? null,

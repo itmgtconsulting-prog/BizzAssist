@@ -66,6 +66,14 @@ export interface HandelData {
   /** Valutakode (typisk DKK) */
   valutakode: string | null;
 
+  // ─── BIZZ-685/693: ejer-navn fra local ejf_ejerskab ─────────────────────
+  /** Købernavn fra local ejf_ejerskab når EJF GraphQL ikke returnerer det */
+  koeber?: string | null;
+  /** Købers CVR hvis virksomhed */
+  koeberCvr?: string | null;
+  /** Ejertype */
+  koeberType?: 'person' | 'virksomhed' | null;
+
   // ─── BIZZ-480: Udvidede EJF_Handelsoplysninger felter ─────────────────────
   /** Skødetekst — kontekst om handlen */
   skoedetekst?: string | null;
@@ -381,6 +389,19 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
         overtagelsesdato: n.virkningFra ?? null,
         overdragelsesmaade: overdragelseLabel(n),
         valutakode: null,
+        // BIZZ-685/693: ejer-navn/cvr fra EJF-node hvis til stede — enriches
+        // derefter nedenfor med local ejf_ejerskab lookup for at udfylde
+        // rækker der mangler navn (typisk historiske ejerskifter).
+        koeber:
+          n.ejendePersonBegraenset?.navn?.navn ??
+          (n.ejendeVirksomhedCVRNr != null ? `CVR ${n.ejendeVirksomhedCVRNr}` : null),
+        koeberCvr: n.ejendeVirksomhedCVRNr != null ? String(n.ejendeVirksomhedCVRNr) : null,
+        koeberType:
+          n.ejendeVirksomhedCVRNr != null
+            ? ('virksomhed' as const)
+            : n.ejendePersonBegraenset
+              ? ('person' as const)
+              : null,
         // BIZZ-633: Ingen handelsoplysninger fra EJFCustom — klienten
         // merger med Tinglysning-adkomster for priser + købernavne.
         skoedetekst: null,
@@ -397,6 +418,63 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
           (n.status?.toLowerCase() === 'historisk' ? (n.virkningFra ?? null) : null),
       }))
       .sort((a, b) => (b.overtagelsesdato ?? '').localeCompare(a.overtagelsesdato ?? ''));
+
+    // BIZZ-685/693: Enrich rows that are missing koeber/koeberCvr with data
+    // from local public.ejf_ejerskab. Matches on (bfe_nummer, virkning_fra)
+    // so historical ownership episodes get owner-names even when EJF GraphQL
+    // returns a node without a resolvable person/virksomhed ref.
+    const missingNameIdx = handler
+      .map((h, i) => ({ h, i }))
+      .filter(({ h }) => !h.koeber && h.overtagelsesdato);
+    if (missingNameIdx.length > 0) {
+      try {
+        const { createAdminClient } = await import('@/lib/supabase/admin');
+        const admin = createAdminClient();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: localRows } = await (admin as any)
+          .from('ejf_ejerskab')
+          .select('ejer_navn, ejer_cvr, ejer_type, virkning_fra')
+          .eq('bfe_nummer', bfeNummer)
+          .order('virkning_fra', { ascending: false })
+          .limit(200);
+        const byDate = new Map<
+          string,
+          { ejer_navn: string; ejer_cvr: string | null; ejer_type: string | null }
+        >();
+        for (const r of (localRows ?? []) as Array<{
+          ejer_navn: string;
+          ejer_cvr: string | null;
+          ejer_type: string | null;
+          virkning_fra: string;
+        }>) {
+          // Key by date only — multiple ejere on the same date merge to the first seen
+          const dateKey = r.virkning_fra.slice(0, 10);
+          if (!byDate.has(dateKey)) {
+            byDate.set(dateKey, {
+              ejer_navn: r.ejer_navn,
+              ejer_cvr: r.ejer_cvr,
+              ejer_type: r.ejer_type,
+            });
+          }
+        }
+        for (const { h, i } of missingNameIdx) {
+          const dateKey = (h.overtagelsesdato ?? '').slice(0, 10);
+          const match = byDate.get(dateKey);
+          if (match) {
+            handler[i].koeber = match.ejer_navn;
+            handler[i].koeberCvr = match.ejer_cvr;
+            handler[i].koeberType =
+              match.ejer_type === 'virksomhed'
+                ? 'virksomhed'
+                : match.ejer_type === 'person'
+                  ? 'person'
+                  : null;
+          }
+        }
+      } catch (err) {
+        logger.warn('[salgshistorik] local ejf_ejerskab enrichment failed:', err);
+      }
+    }
 
     logger.log(
       `[salgshistorik] ${handler.length} ejerskab-events fundet for BFE ${bfeNummer} via EJFCustom`

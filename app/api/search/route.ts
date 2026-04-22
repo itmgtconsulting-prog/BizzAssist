@@ -267,8 +267,17 @@ async function searchAddresses(q: string, normQ: string): Promise<UnifiedSearchR
 
     // Merge extras into results — cap at 12 so the dropdown doesn't overflow
     // (was 8). Hovedejendomme + alle under-adresser + andre ejerlejligheder.
+    // BIZZ-723 TEMP DEBUG: expose probe stats in the first-hit meta so we can
+    // inspect what's happening without runtime log access. Remove once fix verified.
+    const debugStats = {
+      adgCount: String(adgangsadresser.length),
+      extraCount: String(extraAdresseResults.length),
+      existingAdrCount: String(existingAdresseIds.size),
+      rawResultsCount: String(results.length),
+    };
+
     const merged = [...results, ...extraAdresseResults];
-    return merged.slice(0, 12).map((r) => {
+    const mapped = merged.slice(0, 12).map((r, idx) => {
       const normText = normalize(r.tekst);
       // BIZZ-608: Distinguish mellem hovedejendom (adgangsadresse) og
       // ejerlejlighed (adresse med etage/dør) i subtitle så brugeren
@@ -301,9 +310,11 @@ async function searchAddresses(q: string, normQ: string): Promise<UnifiedSearchR
           postnr: r.adresse.postnr,
           postnrnavn: r.adresse.postnrnavn,
           kommunenavn: r.adresse.kommunenavn,
+          ...(idx === 0 ? debugStats : {}),
         },
       };
     });
+    return mapped;
   } catch (err) {
     logger.error('[search] Address search failed:', err);
     return [];

@@ -183,6 +183,16 @@ async function runGeneration(
     context.case_doc_chunks.length > 0
       ? `Relevant case-doc excerpts:\n${context.case_doc_chunks.map((c) => c.content).join('\n---\n')}`
       : null,
+    context.bizzassist_data.length > 0
+      ? `BizzAssist reference data (CVR / BFE lookups for entities in the case docs):\n${context.bizzassist_data
+          .map(
+            (e) =>
+              `=== ${e.kind.toUpperCase()} ${e.id} ===\n${
+                typeof e.data === 'string' ? e.data : JSON.stringify(e.data)
+              }`
+          )
+          .join('\n\n')}`
+      : null,
     context.template.examples.length > 0
       ? `Examples:\n${context.template.examples.map((e) => e.text).join('\n---\n')}`
       : null,

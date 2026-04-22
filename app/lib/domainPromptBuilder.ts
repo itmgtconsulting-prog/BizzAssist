@@ -13,6 +13,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { searchDomainEmbeddings } from '@/app/lib/domainEmbedding';
 import { embedTexts, NoEmbeddingProviderError } from '@/app/lib/domainEmbed';
 import { extractEntities } from '@/app/lib/domainEntityExtract';
+import { enrichEntities } from '@/app/lib/domainEnrichEntities';
 import { PROMPT_INJECTION_GUARD_SUFFIX } from '@/app/lib/domainGenerationSchema';
 import { logger } from '@/app/lib/logger';
 
@@ -235,12 +236,18 @@ export async function buildGenerationContext(
   const combinedCaseText = inlineCaseDocs.map((d) => d.text).join('\n\n');
   const entities = extractEntities(combinedCaseText);
 
-  // BizzAssist data enrichment is intentionally deferred (BIZZ-717 / follow-
-  // up): we return the extracted entity IDs so the generation route can
-  // decide whether to hit CVR/BBR APIs and splice results into the prompt.
-  // Doing it here synchronously would add latency + network risk to a
-  // pure-composition helper.
-  const bizzassist: BizzAssistEntity[] = [];
+  // BizzAssist-data enrichment: hit local cvr_virksomhed + ejf_ejerskab +
+  // BBR areas for each extracted CVR / BFE. Runs only against cached
+  // BizzAssist data (no external API calls besides BBR, which uses the
+  // existing Datafordeler-GraphQL helper) so the builder stays cheap and
+  // non-blocking — failures are swallowed per-entity.
+  let bizzassist: BizzAssistEntity[] = [];
+  try {
+    bizzassist = await enrichEntities({ cvrs: entities.cvrs, bfes: entities.bfes });
+  } catch (err) {
+    logger.warn('[promptBuilder] entity enrichment failed:', err);
+    warnings.push('entity-enrichment-unavailable');
+  }
 
   // 5. Compose system-prompt suffix — BIZZ-734 guard always included
   const systemParts: string[] = [];
@@ -260,6 +267,10 @@ export async function buildGenerationContext(
   tokens += caseDocChunks.reduce((s, c) => s + estimateTokens(c.content), 0);
   tokens += inlineCaseDocs.reduce((s, d) => s + estimateTokens(d.text), 0);
   tokens += template.examples.reduce((s, e) => s + estimateTokens(e.text ?? ''), 0);
+  tokens += bizzassist.reduce(
+    (s, e) => s + estimateTokens(typeof e.data === 'string' ? e.data : JSON.stringify(e.data)),
+    0
+  );
 
   if (tokens > MAX_CONTEXT_TOKENS) {
     // Drop training chunks first — they're the least-direct signal

@@ -74,16 +74,23 @@ interface DomainAdminTabsProps {
   domainId: string;
   /** Domain display name — shown in the header next to the shield icon. */
   domainName?: string;
+  /** BIZZ-761: href prefix for tab links. Defaults to `/domain/{id}/admin`
+   *  (tenant-scope). Super-admin surface passes `/dashboard/admin/domains/{id}`
+   *  so the tabs stay inside the admin layout chain. */
+  hrefBase?: string;
+  /** BIZZ-761: where the back-arrow points. Defaults to `/domain/{id}` for
+   *  tenant members; super-admin uses `/dashboard/admin/domains` to return
+   *  to the list. */
+  backHref?: string;
 }
 
 /**
  * Compute which tab is active from the pathname. Uses longest-suffix match
  * so /admin/templates/[templateId] still highlights the "Templates" tab.
  */
-function activeTabIdFor(pathname: string, domainId: string): string {
-  const base = `/domain/${domainId}/admin`;
-  if (pathname === base) return 'overview';
-  const remainder = pathname.slice(base.length);
+function activeTabIdFor(pathname: string, hrefBase: string): string {
+  if (pathname === hrefBase) return 'overview';
+  const remainder = pathname.slice(hrefBase.length);
   // Pick the tab whose suffix (non-empty) is the longest prefix of remainder.
   let best = 'overview';
   let bestLen = 0;
@@ -98,11 +105,18 @@ function activeTabIdFor(pathname: string, domainId: string): string {
 }
 
 /** Renders the domain-admin tab-bar with back-arrow and optional header. */
-export function DomainAdminTabs({ domainId, domainName }: DomainAdminTabsProps) {
+export function DomainAdminTabs({
+  domainId,
+  domainName,
+  hrefBase,
+  backHref,
+}: DomainAdminTabsProps) {
   const { lang } = useLanguage();
   const da = lang === 'da';
   const pathname = usePathname();
-  const activeId = activeTabIdFor(pathname, domainId);
+  const effectiveHrefBase = hrefBase ?? `/domain/${domainId}/admin`;
+  const effectiveBackHref = backHref ?? `/domain/${domainId}`;
+  const activeId = activeTabIdFor(pathname, effectiveHrefBase);
 
   return (
     <div className="border-b border-slate-700/40 bg-slate-900/40">
@@ -110,9 +124,9 @@ export function DomainAdminTabs({ domainId, domainName }: DomainAdminTabsProps) 
         {/* Header row: back + domain name */}
         <div className="flex items-center gap-3 mb-4">
           <Link
-            href={`/domain/${domainId}`}
+            href={effectiveBackHref}
             className="text-slate-400 hover:text-slate-200 transition-colors"
-            aria-label={da ? 'Tilbage til domain' : 'Back to domain'}
+            aria-label={da ? 'Tilbage' : 'Back'}
           >
             <ArrowLeft size={20} />
           </Link>
@@ -131,7 +145,7 @@ export function DomainAdminTabs({ domainId, domainName }: DomainAdminTabsProps) 
             const Icon = tab.icon;
             const label = da ? tab.labelDa : tab.labelEn;
             const isActive = tab.id === activeId;
-            const href = `/domain/${domainId}/admin${tab.suffix}`;
+            const href = `${effectiveHrefBase}${tab.suffix}`;
             if (isActive) {
               return (
                 <span

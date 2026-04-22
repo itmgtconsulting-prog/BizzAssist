@@ -1084,6 +1084,37 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
   }, [aktivTab]);
 
   /**
+   * BIZZ-732: Prefetch de tungeste data-sæt ved sidens mount i stedet for
+   * først ved tab-klik. Diagram- og Ejendomme-fanen kræver normalt fetchRelated
+   * + fetchEjendomshandler som kan tage flere sekunder. Prefetch'es via
+   * requestIdleCallback (eller setTimeout 0 som fallback) så det ikke
+   * konkurrerer med LCP. fetchedRef-mønsteret i hver fetcher dedupliker, så
+   * efterfølgende tab-klik blot læser cached state.
+   * Liens (personbog/fastejendom/bilbog/andelsbog) prefetcher vi IKKE — de er
+   * mindre trafikerede og tungere pr. request.
+   */
+  useEffect(() => {
+    if (!cvr) return;
+    let cancelled = false;
+    const schedule = (fn: () => void) => {
+      if (typeof window === 'undefined') return;
+      const ric = (window as unknown as { requestIdleCallback?: (cb: () => void) => number })
+        .requestIdleCallback;
+      if (typeof ric === 'function') ric(fn);
+      else setTimeout(fn, 0);
+    };
+    schedule(() => {
+      if (cancelled) return;
+      fetchRelated();
+      fetchEjendomshandler();
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cvr]);
+
+  /**
    * Henter ejendomsportefølje progressivt: første batch (5) vises straks,
    * efterfølgende batches tilføjes automatisk i baggrunden.
    * Bruger AbortController til at annullere igangværende hentning ved CVR-ændring.

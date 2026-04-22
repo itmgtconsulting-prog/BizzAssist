@@ -1441,7 +1441,12 @@ export default function PersonDetailPageClient({
    * også vises i Ejendomme-tab.
    */
   useEffect(() => {
-    if ((aktivTab !== 'properties' && aktivTab !== 'relations') || !derived) return;
+    // BIZZ-732: Ikke længere tab-gated — prefetch ejendomme + relaterede
+    // virksomheder så snart derived er klar, så Ejendomme- og Diagram-fanen
+    // ikke kræver ny venten ved tab-klik. fetchEjendommeProgressively har
+    // sin egen key-based deduplication (ejendomFetchKeyRef) så effekten
+    // genkøres ikke unødigt.
+    if (!derived) return;
 
     /* Saml CVR-numre for direkte ejede virksomheder */
     const ejerCvrs = derived.ejerVirksomheder.map((v) => String(v.cvr).padStart(8, '0'));
@@ -1505,7 +1510,7 @@ export default function PersonDetailPageClient({
         .finally(() => setHandlerLoading(false));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [aktivTab, derived, relatedCompanies, fetchEjendommeProgressively]);
+  }, [derived, relatedCompanies, fetchEjendommeProgressively]);
 
   /**
    * BIZZ-597 Fase 2: Batch-enrichment når properties-tab aktiveres.

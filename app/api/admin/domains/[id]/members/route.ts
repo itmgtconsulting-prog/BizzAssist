@@ -94,6 +94,23 @@ export async function POST(request: NextRequest, context: RouteContext): Promise
 
   const admin = createAdminClient();
 
+  // BIZZ-722 Lag 8: Email domain guard — check whitelist before adding member
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: guardResult } = (await (admin as any).rpc('check_domain_email_guard', {
+    p_domain_id: domainId,
+    p_email: email,
+  })) as { data: { allowed: boolean; enforcement: string; warning?: string } | null };
+
+  if (guardResult && !guardResult.allowed) {
+    return NextResponse.json(
+      { error: guardResult.warning || 'Email-domæne er ikke tilladt for dette domain' },
+      { status: 403 }
+    );
+  }
+
+  // Include warning in response if soft-check (warn mode)
+  const emailGuardWarning = guardResult?.warning || null;
+
   // Check if user exists
   const { data: usersPage } = await admin.auth.admin.listUsers({ perPage: 1000 });
   const existingUser = usersPage?.users?.find((u) => u.email === email);
@@ -143,7 +160,7 @@ export async function POST(request: NextRequest, context: RouteContext): Promise
   });
 
   return NextResponse.json(
-    { ok: true, userId: targetUserId, invited: !existingUser },
+    { ok: true, userId: targetUserId, invited: !existingUser, emailGuardWarning },
     { status: 201 }
   );
 }

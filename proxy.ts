@@ -20,6 +20,7 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextRequest, NextResponse } from 'next/server';
 import { applyGlobalRateLimit } from '@/app/lib/globalRateLimit';
+import { isDomainFeatureEnabledServer } from '@/app/lib/featureFlags';
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -117,6 +118,15 @@ export async function proxy(req: NextRequest): Promise<NextResponse> {
   // userId is null here — authenticated tier is applied per-route instead.
   const rateLimitResponse = await applyGlobalRateLimit(req, null);
   if (rateLimitResponse) return rateLimitResponse;
+
+  // ── 0b. BIZZ-699: Block /domain/** and /api/domain/** when feature is disabled
+  // Returns 404 so domain routes are invisible when the flag is off.
+  if (
+    (pathname.startsWith('/domain') || pathname.startsWith('/api/domain')) &&
+    !isDomainFeatureEnabledServer()
+  ) {
+    return new NextResponse(null, { status: 404 });
+  }
 
   // ── 1. Enforce HTTPS in production ────────────────────────────────────────
   if (process.env.NODE_ENV === 'production' && protocol === 'http:') {

@@ -24,6 +24,7 @@ import {
   Briefcase,
   Save,
   X,
+  Sparkles,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 
@@ -94,6 +95,15 @@ export default function CaseDetailClient({
   const [isDragging, setIsDragging] = useState(false);
   const [uploadingCount, setUploadingCount] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // BIZZ-717: Generation modal state
+  const [showGenerateModal, setShowGenerateModal] = useState(false);
+  const [templates, setTemplates] = useState<
+    Array<{ id: string; name: string; file_type: string }>
+  >([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState('');
+  const [genInstructions, setGenInstructions] = useState('');
+  const [generating, setGenerating] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -203,6 +213,45 @@ export default function CaseDetailClient({
     }
     const { url } = (await r.json()) as { url: string };
     window.open(url, '_blank', 'noopener');
+  };
+
+  const openGenerateModal = async () => {
+    setShowGenerateModal(true);
+    const r = await fetch(`/api/domain/${domainId}/templates`);
+    if (r.ok) {
+      const list = (await r.json()) as Array<{
+        id: string;
+        name: string;
+        file_type: string;
+        status: string;
+      }>;
+      setTemplates(list.filter((t) => t.status === 'active'));
+    }
+  };
+
+  const generateDocument = async () => {
+    if (!selectedTemplateId) return;
+    setGenerating(true);
+    setNotice(null);
+    try {
+      const r = await fetch(`/api/domain/${domainId}/case/${caseId}/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          template_id: selectedTemplateId,
+          user_instructions: genInstructions.trim() || undefined,
+        }),
+      });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({ error: 'Unknown' }));
+        setNotice({ kind: 'err', text: d.error || 'Generation fejlede' });
+      } else {
+        const { generation_id } = (await r.json()) as { generation_id: string };
+        router.push(`/domain/${domainId}/generation/${generation_id}`);
+      }
+    } finally {
+      setGenerating(false);
+    }
   };
 
   const deleteCase = async () => {
@@ -323,16 +372,110 @@ export default function CaseDetailClient({
             <Trash2 size={12} />
             {da ? 'Slet sag' : 'Delete case'}
           </button>
-          <button
-            onClick={save}
-            disabled={saving}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-md text-white text-sm font-medium"
-          >
-            {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-            {da ? 'Gem ændringer' : 'Save changes'}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => void openGenerateModal()}
+              disabled={data.docs.length === 0}
+              className="flex items-center gap-2 px-3 py-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 rounded-md text-white text-sm font-medium"
+              title={
+                data.docs.length === 0
+                  ? da
+                    ? 'Upload mindst 1 dokument først'
+                    : 'Upload at least 1 document first'
+                  : undefined
+              }
+            >
+              <Sparkles size={14} />
+              {da ? 'Generér dokument' : 'Generate document'}
+            </button>
+            <button
+              onClick={save}
+              disabled={saving}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-md text-white text-sm font-medium"
+            >
+              {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+              {da ? 'Gem ændringer' : 'Save changes'}
+            </button>
+          </div>
         </div>
       </div>
+
+      {/* Generate-document modal */}
+      {showGenerateModal && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="generate-title"
+          className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4"
+          onClick={() => !generating && setShowGenerateModal(false)}
+        >
+          <div
+            className="bg-slate-900 border border-slate-700 rounded-xl p-6 max-w-lg w-full space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2
+              id="generate-title"
+              className="text-lg font-bold text-white flex items-center gap-2"
+            >
+              <Sparkles size={18} className="text-purple-400" />
+              {da ? 'Generér dokument' : 'Generate document'}
+            </h2>
+            <label className="block">
+              <span className="text-slate-300 text-sm">{da ? 'Skabelon' : 'Template'}</span>
+              <select
+                value={selectedTemplateId}
+                onChange={(e) => setSelectedTemplateId(e.target.value)}
+                className="mt-1 w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-md text-white text-sm"
+              >
+                <option value="">{da ? 'Vælg skabelon…' : 'Select template…'}</option>
+                {templates.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name} ({t.file_type})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="text-slate-300 text-sm">
+                {da ? 'Ekstra instruktioner (valgfri)' : 'Extra instructions (optional)'}
+              </span>
+              <textarea
+                value={genInstructions}
+                onChange={(e) => setGenInstructions(e.target.value)}
+                rows={4}
+                placeholder={
+                  da
+                    ? 'fx: Fokusér på boligværdien fra 2023. Brug formel tone.'
+                    : 'e.g. Focus on the 2023 valuation. Use formal tone.'
+                }
+                className="mt-1 w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-md text-white text-sm"
+              />
+            </label>
+            <p className="text-slate-500 text-xs">
+              {da
+                ? `Genererer baseret på ${data.docs.length} dokument${data.docs.length === 1 ? '' : 'er'} i sagen.`
+                : `Generates using ${data.docs.length} case document${data.docs.length === 1 ? '' : 's'}.`}
+            </p>
+            <div className="flex items-center justify-end gap-2">
+              <button
+                onClick={() => setShowGenerateModal(false)}
+                disabled={generating}
+                className="px-3 py-2 text-slate-400 hover:text-white text-sm disabled:opacity-50"
+              >
+                {da ? 'Annuller' : 'Cancel'}
+              </button>
+              <button
+                onClick={() => void generateDocument()}
+                disabled={!selectedTemplateId || generating}
+                className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 rounded-md text-white text-sm font-medium"
+              >
+                {generating && <Loader2 size={14} className="animate-spin" />}
+                {da ? 'Start generering' : 'Start generation'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Upload zone */}
       <div

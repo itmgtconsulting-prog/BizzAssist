@@ -197,9 +197,6 @@ async function searchAddresses(q: string, normQ: string): Promise<UnifiedSearchR
       };
     }> = [];
     if (adgangsadresser.length > 0) {
-      logger.warn(
-        `[search/723] probing ${adgangsadresser.length} adgangsadresser for units, q="${q}"`
-      );
       try {
         const probeResults = await Promise.all(
           adgangsadresser.map(async (adg) => {
@@ -231,9 +228,6 @@ async function searchAddresses(q: string, normQ: string): Promise<UnifiedSearchR
         for (let i = 0; i < adgangsadresser.length; i++) {
           const adg = adgangsadresser[i];
           const units = probeResults[i];
-          logger.warn(
-            `[search/723] adg ${adg.adresse.husnr} (id=${adg.adresse.id.slice(0, 8)}) returned ${units.length} units`
-          );
           for (const u of units) {
             // Skip units without etage/dør — they're the same as adgangsadresse.
             if (!u.id || !(u.etage || u.dør)) continue;
@@ -267,19 +261,8 @@ async function searchAddresses(q: string, normQ: string): Promise<UnifiedSearchR
 
     // Merge extras into results — cap at 12 so the dropdown doesn't overflow
     // (was 8). Hovedejendomme + alle under-adresser + andre ejerlejligheder.
-    // BIZZ-723 TEMP DEBUG: expose probe stats in the first-hit meta so we can
-    // inspect what's happening without runtime log access. Remove once fix verified.
-    const debugStats = {
-      adgCount: String(adgangsadresser.length),
-      extraCount: String(extraAdresseResults.length),
-      existingAdrCount: String(existingAdresseIds.size),
-      rawResultsCount: String(results.length),
-      rawTypes: results.map((r) => r.type + ':' + (r.adresse?.id?.slice(0, 8) || '?')).join(','),
-      extraIds: extraAdresseResults.map((e) => e.adresse.id.slice(0, 8)).join(','),
-    };
-
     const merged = [...results, ...extraAdresseResults];
-    const mapped = merged.slice(0, 12).map((r, idx) => {
+    const mapped = merged.slice(0, 12).map((r) => {
       const normText = normalize(r.tekst);
       // BIZZ-608: Distinguish mellem hovedejendom (adgangsadresse) og
       // ejerlejlighed (adresse med etage/dør) i subtitle så brugeren
@@ -312,7 +295,6 @@ async function searchAddresses(q: string, normQ: string): Promise<UnifiedSearchR
           postnr: r.adresse.postnr,
           postnrnavn: r.adresse.postnrnavn,
           kommunenavn: r.adresse.kommunenavn,
-          ...(idx === 0 ? debugStats : {}),
         },
       };
     });
@@ -563,9 +545,9 @@ export async function GET(request: NextRequest) {
     searchPeople(q, normQ, baseUrl, cookieHeader),
   ]);
 
-  // Group by type — max 5 per category, sorted by score within each group
-  // Then interleave: addresses first, then companies, then people (each sorted by score)
-  const addrResults = addresses.slice(0, 5).sort((a, b) => b.score - a.score);
+  // Group by type — max 10 addresses (BIZZ-723: hovedejendom + lejligheder på
+  // samme matrikel kan let overstige 5), 5 companies, 5 people. Sorted by score.
+  const addrResults = addresses.slice(0, 10).sort((a, b) => b.score - a.score);
   const compResults = companies.slice(0, 5).sort((a, b) => b.score - a.score);
   const pplResults = people.slice(0, 5).sort((a, b) => b.score - a.score);
 

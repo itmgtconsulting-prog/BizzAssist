@@ -42,17 +42,26 @@ export default function TemplatesListClient({ domainId }: { domainId: string }) 
   // BIZZ-747: search — list becomes unusable at 100+ templates without it
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'archived'>('all');
+  // BIZZ-756: sort dropdown (name/date/status)
+  const [sortBy, setSortBy] = useState<'name-asc' | 'date-desc' | 'status'>('date-desc');
 
-  const filteredTemplates = templates.filter((t) => {
-    if (statusFilter !== 'all' && t.status !== statusFilter) return false;
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      if (!t.name.toLowerCase().includes(q) && !(t.description ?? '').toLowerCase().includes(q)) {
-        return false;
+  const filteredTemplates = templates
+    .filter((t) => {
+      if (statusFilter !== 'all' && t.status !== statusFilter) return false;
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        if (!t.name.toLowerCase().includes(q) && !(t.description ?? '').toLowerCase().includes(q)) {
+          return false;
+        }
       }
-    }
-    return true;
-  });
+      return true;
+    })
+    .sort((a, b) => {
+      if (sortBy === 'name-asc') return a.name.localeCompare(b.name, 'da');
+      if (sortBy === 'status') return a.status.localeCompare(b.status);
+      // date-desc (default)
+      return (b.updated_at ?? '').localeCompare(a.updated_at ?? '');
+    });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -157,6 +166,16 @@ export default function TemplatesListClient({ domainId }: { domainId: string }) 
             <option value="all">{da ? 'Alle statusser' : 'All statuses'}</option>
             <option value="active">{da ? 'Aktive' : 'Active'}</option>
             <option value="archived">{da ? 'Arkiveret' : 'Archived'}</option>
+          </select>
+          {/* BIZZ-756: sort dropdown */}
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as 'name-asc' | 'date-desc' | 'status')}
+            className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-3 py-2 text-white text-xs focus:border-blue-500 focus:outline-none"
+          >
+            <option value="date-desc">{da ? 'Nyeste først' : 'Newest first'}</option>
+            <option value="name-asc">{da ? 'Navn A–Å' : 'Name A–Z'}</option>
+            <option value="status">Status</option>
           </select>
         </div>
       )}

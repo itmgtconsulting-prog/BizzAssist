@@ -322,24 +322,26 @@ async function resolveLejlighederViaDawa(
         if (!m || !postMatch) return;
         const [, vejnavn, husnummer] = m;
         const postnummer = postMatch[1];
-        const etage = lej.etage ?? undefined;
-        const sidedoer = lej.doer ?? undefined;
-        const params = new URLSearchParams({
-          vejnavn,
-          husnummer,
-          postnummer,
-          ...(etage ? { etage } : {}),
-          ...(sidedoer ? { sidedoer } : {}),
-        });
+        // Tinglysning test-miljø returnerer {} når etage/sidedoer er sat, selv
+        // om ejerlejligheden findes uden disse filtre. Vi søger uden etage/dør
+        // og filtrerer derefter på vedroerende='Ejerlejlighed:' — alle etager
+        // i samme opgang hører typisk til samme juridiske ejerlejlighed.
+        const params = new URLSearchParams({ vejnavn, husnummer, postnummer });
         const res = await tlFetch(`/ejendom/adresse?${params.toString()}`);
         if (res.status !== 200 || !res.body) return;
-        let tlItem: TLSearchItem | null = null;
+        let items: TLSearchItem[] = [];
         try {
           const parsed = JSON.parse(res.body) as TLSearchResponse;
-          tlItem = parsed.items?.[0] ?? null;
+          items = parsed.items ?? [];
         } catch {
           return;
         }
+        // Prefer the ejerlejlighed entry over hovedejendom — hovedejendom har
+        // typisk ejendomsVurdering=0 og vedroerende indeholder 'Hovedejendom'.
+        const tlItem =
+          items.find((it) => /ejerlejlighed/i.test(it.vedroerende)) ??
+          items.find((it) => !/hovedejendom/i.test(it.vedroerende)) ??
+          items[0];
         if (!tlItem) return;
         // ejendomsnummer is the unit-specific BFE
         const bfe = tlItem.ejendomsnummer ? parseInt(tlItem.ejendomsnummer, 10) : 0;

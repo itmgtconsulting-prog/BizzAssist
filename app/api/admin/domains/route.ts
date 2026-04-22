@@ -144,6 +144,23 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  // BIZZ-737 follow-up: add the creating super-admin as the first domain_member
+  // admin. Without this, the creator can't access /domain/[id]/* routes because
+  // the layout's assertDomainMember check returns 404 (no membership row).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error: memberErr } = await (admin as any).from('domain_member').insert({
+    domain_id: domain!.id,
+    user_id: userId,
+    role: 'admin',
+    invited_by: userId,
+    joined_at: new Date().toISOString(),
+  });
+  if (memberErr) {
+    logger.error('[admin/domains] Initial member insert failed:', memberErr.message);
+    // Non-fatal: domain row is created. Surface in audit-log so super-admin
+    // can re-add themselves via the user-management UI if needed.
+  }
+
   // Audit log
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   await (admin as any).from('domain_audit_log').insert({

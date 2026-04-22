@@ -61,6 +61,7 @@ const eslintConfig = defineConfig([
       'app/lib/domainStorage.ts',
       'app/lib/domainAuth.ts',
       'app/lib/domainEmbeddingWorker.ts',
+      'app/lib/domainPromptBuilder.ts',
       // Domain admin API routes — scoped by assertDomainAdmin at entry
       'app/api/domain/**',
       // Super-admin API routes — operate across domains by design

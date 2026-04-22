@@ -121,7 +121,7 @@ export default function TrainingDocsClient({ domainId }: { domainId: string }) {
       <div>
         <h1 className="text-xl font-bold text-white flex items-center gap-2">
           <FileText size={22} className="text-cyan-400" />
-          {da ? 'Træningsdokumenter' : 'Training documents'}
+          {da ? 'Dokumenter' : 'Documents'}
         </h1>
         <p className="text-slate-500 text-sm mt-1">
           {da

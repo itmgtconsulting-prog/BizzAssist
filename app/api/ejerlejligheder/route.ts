@@ -20,6 +20,7 @@ import { resolveTenantId } from '@/lib/api/auth';
 import { parseQuery } from '@/app/lib/validate';
 import { fetchDawa } from '@/app/lib/dawa';
 import { darResolveAdresseId } from '@/app/lib/dar';
+import { resolveEnhedByDawaId } from '@/app/lib/fetchBbrData';
 // EJF/Datafordeler er ikke nødvendig — alt data hentes fra tinglysning summarisk XML
 
 // ─── Query param validation ─────────────────────────────────────────────────
@@ -302,6 +303,43 @@ async function resolveLejlighederViaDawa(
         dawaId: unit.id,
       });
     }
+  }
+
+  // BIZZ-724: Berig hver lejlighed med BFE + areal (fra BBR_Enhed) og købsdato
+  // (fra lokal ejf_ejerskab). Parallelliseret pr. lejlighed for at holde latency
+  // lav; fejl på én lejlighed skal ikke blokere de andre. Købspris afventer
+  // BIZZ-685/693 salgshistorik-refactor — lad forblive null indtil den lander.
+  try {
+    const { createAdminClient } = await import('@/lib/supabase/admin');
+    const admin = createAdminClient();
+    await Promise.all(
+      lejligheder.map(async (lej) => {
+        if (!lej.dawaId) return;
+        try {
+          const enhed = await resolveEnhedByDawaId(lej.dawaId);
+          if (enhed?.bfe) lej.bfe = enhed.bfe;
+          if (enhed?.areal != null) lej.areal = enhed.areal;
+
+          // Lookup købsdato fra ejf_ejerskab når BFE er kendt
+          if (lej.bfe && lej.bfe > 0) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { data: rows } = (await (admin as any)
+              .from('ejf_ejerskab')
+              .select('virkning_fra')
+              .eq('bfe_nummer', lej.bfe)
+              .eq('status', 'gældende')
+              .order('virkning_fra', { ascending: false })
+              .limit(1)) as { data: Array<{ virkning_fra: string | null }> | null };
+            const virkningFra = rows?.[0]?.virkning_fra ?? null;
+            if (virkningFra) lej.koebsdato = virkningFra;
+          }
+        } catch {
+          /* per-lejlighed fejl er non-fatal */
+        }
+      })
+    );
+  } catch (err) {
+    logger.warn('[ejerlejligheder] Enrichment fejlede:', err);
   }
 
   // Sort: by adresse → etage → dør

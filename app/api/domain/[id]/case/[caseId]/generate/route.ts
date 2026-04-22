@@ -18,6 +18,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { assertDomainMember } from '@/app/lib/domainAuth';
+import { assertDomainAiAllowed } from '@/app/lib/domainAiGate';
 import { buildGenerationContext } from '@/app/lib/domainPromptBuilder';
 import {
   parseGenerationOutput,
@@ -321,6 +322,12 @@ export async function POST(request: NextRequest, context: RouteContext): Promise
   if (!templateId) {
     return NextResponse.json({ error: 'template_id is required' }, { status: 400 });
   }
+
+  // BIZZ-720: domain-level AI gate (monthly token cap). User-level gate is
+  // handled separately in aiGate.ts for non-domain routes; domain routes only
+  // meter against the domain's budget since the feature is enterprise-plan.
+  const domainBlocked = await assertDomainAiAllowed(domainId);
+  if (domainBlocked) return domainBlocked as unknown as NextResponse;
 
   const result = await runGeneration(domainId, caseId, templateId, userInstructions, ctx.userId);
   if (!result.ok) {

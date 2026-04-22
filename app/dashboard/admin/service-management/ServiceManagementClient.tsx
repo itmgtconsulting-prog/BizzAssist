@@ -42,6 +42,9 @@ import {
   RefreshCw,
   AlertTriangle,
 } from 'lucide-react';
+
+/* Search + Server + Activity + AlertTriangle reused by BIZZ-739 KPI row
+   + filter above the service grid. */
 import { AdminNavTabs } from '../AdminNavTabs';
 import { useLanguage } from '@/app/context/LanguageContext';
 
@@ -573,6 +576,8 @@ export default function ServiceManagementClient() {
   });
 
   const [isRefreshing, setIsRefreshing] = useState(false);
+  // BIZZ-739: search — aligns layout with /users + /billing
+  const [searchQuery, setSearchQuery] = useState('');
 
   /**
    * Runs all live health checks in parallel with 5 s timeouts.
@@ -637,6 +642,8 @@ export default function ServiceManagementClient() {
   const allStates = Object.values(states);
   const operationalCount = allStates.filter((s) => s.status === 'operational').length;
   const issueCount = allStates.filter((s) => s.status === 'degraded' || s.status === 'down').length;
+  const degradedCount = allStates.filter((s) => s.status === 'degraded').length;
+  const downCount = allStates.filter((s) => s.status === 'down').length;
 
   return (
     <div className="min-h-full bg-[#0a1020] text-white">
@@ -680,6 +687,52 @@ export default function ServiceManagementClient() {
           className="flex gap-1 -mb-px overflow-x-auto mb-6 border-b border-slate-700/50"
         />
 
+        {/* BIZZ-739: KPI stats-cards — matches /dashboard/admin/users + /billing */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+          <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-4">
+            <div className="flex items-center gap-2 mb-2 text-slate-400 text-xs uppercase tracking-wide">
+              <Server size={14} className="text-blue-400" />
+              {da ? 'Total' : 'Total'}
+            </div>
+            <p className="text-2xl font-bold text-white">{SERVICES.length}</p>
+          </div>
+          <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-4">
+            <div className="flex items-center gap-2 mb-2 text-slate-400 text-xs uppercase tracking-wide">
+              <Activity size={14} className="text-emerald-400" />
+              {da ? 'Operationelle' : 'Operational'}
+            </div>
+            <p className="text-2xl font-bold text-white">{operationalCount}</p>
+          </div>
+          <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-4">
+            <div className="flex items-center gap-2 mb-2 text-slate-400 text-xs uppercase tracking-wide">
+              <AlertTriangle size={14} className="text-amber-400" />
+              {da ? 'Degraderet' : 'Degraded'}
+            </div>
+            <p className="text-2xl font-bold text-white">{degradedCount}</p>
+          </div>
+          <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-4">
+            <div className="flex items-center gap-2 mb-2 text-slate-400 text-xs uppercase tracking-wide">
+              <AlertTriangle size={14} className="text-red-400" />
+              {da ? 'Nede' : 'Down'}
+            </div>
+            <p className="text-2xl font-bold text-white">{downCount}</p>
+          </div>
+        </div>
+
+        {/* BIZZ-739: Search — filters the service grid below */}
+        <div className="flex gap-3 items-center mb-4">
+          <div className="relative flex-1 max-w-xs">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={da ? 'Søg service…' : 'Search service…'}
+              className="w-full bg-slate-800/60 border border-slate-700/50 rounded-lg pl-9 pr-3 py-2 text-white text-xs placeholder:text-slate-500 focus:border-blue-500 focus:outline-none"
+            />
+          </div>
+        </div>
+
         {/* DAWA global warning (shown once if < 90 days) */}
         {daysUntilDawaDeprecation < 90 && (
           <div className="flex items-start gap-3 bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-3 mb-6">
@@ -699,7 +752,11 @@ export default function ServiceManagementClient() {
 
         {/* Service cards grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {SERVICES.map((svc) => (
+          {SERVICES.filter((svc) => {
+            if (!searchQuery.trim()) return true;
+            const q = searchQuery.toLowerCase();
+            return svc.name.toLowerCase().includes(q) || svc.id.toLowerCase().includes(q);
+          }).map((svc) => (
             <ServiceCard
               key={svc.id}
               service={svc}

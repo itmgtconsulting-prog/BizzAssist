@@ -27,6 +27,7 @@ import {
   Globe,
   FileText,
   RefreshCw,
+  Search,
 } from 'lucide-react';
 import { AdminNavTabs } from '../AdminNavTabs';
 import { useLanguage } from '@/app/context/LanguageContext';
@@ -60,6 +61,9 @@ export default function AnalyticsClient() {
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // BIZZ-739: search input + language filter — aligns layout with users/billing
+  const [searchQuery, setSearchQuery] = useState('');
+  const [langFilter, setLangFilter] = useState<'all' | 'da' | 'en'>('all');
 
   /** Fetch analytics data from API. */
   const fetchData = async () => {
@@ -152,6 +156,34 @@ export default function AnalyticsClient() {
       {/* ─── Content ─── */}
       <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-6">
         <div className="max-w-5xl mx-auto space-y-6">
+          {/* BIZZ-739: Search + language filter — aligns with /users + /billing */}
+          {data && !loading && (
+            <div className="flex gap-3 items-center">
+              <div className="relative flex-1 max-w-xs">
+                <Search
+                  size={14}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
+                />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder={da ? 'Søg spørgsmål eller side…' : 'Search question or page…'}
+                  className="w-full bg-slate-800/60 border border-slate-700/50 rounded-lg pl-9 pr-3 py-2 text-white text-xs placeholder:text-slate-500 focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+              <select
+                value={langFilter}
+                onChange={(e) => setLangFilter(e.target.value as 'all' | 'da' | 'en')}
+                className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-3 py-2 text-white text-xs focus:border-blue-500 focus:outline-none"
+              >
+                <option value="all">{da ? 'Alle sprog' : 'All languages'}</option>
+                <option value="da">Dansk</option>
+                <option value="en">English</option>
+              </select>
+            </div>
+          )}
+
           {/* Loading state */}
           {loading && !data && (
             <div className="text-center py-20">
@@ -285,20 +317,30 @@ export default function AnalyticsClient() {
                   <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
                     <XCircle size={15} className="text-red-400" /> {t.topUnmatched}
                   </h3>
-                  {data.topUnmatched.length === 0 ? (
+                  {data.topUnmatched.filter(
+                    (i) =>
+                      !searchQuery.trim() ||
+                      i.question.toLowerCase().includes(searchQuery.toLowerCase())
+                  ).length === 0 ? (
                     <p className="text-slate-600 text-xs">{t.noData}</p>
                   ) : (
                     <div className="space-y-2 max-h-64 overflow-y-auto">
-                      {data.topUnmatched.map((item, i) => (
-                        <div key={i} className="flex items-start justify-between gap-3">
-                          <p className="text-slate-300 text-xs leading-relaxed flex-1 line-clamp-2">
-                            {item.question}
-                          </p>
-                          <span className="text-xs text-slate-500 whitespace-nowrap font-mono">
-                            {item.count}x
-                          </span>
-                        </div>
-                      ))}
+                      {data.topUnmatched
+                        .filter(
+                          (it) =>
+                            !searchQuery.trim() ||
+                            it.question.toLowerCase().includes(searchQuery.toLowerCase())
+                        )
+                        .map((item, i) => (
+                          <div key={i} className="flex items-start justify-between gap-3">
+                            <p className="text-slate-300 text-xs leading-relaxed flex-1 line-clamp-2">
+                              {item.question}
+                            </p>
+                            <span className="text-xs text-slate-500 whitespace-nowrap font-mono">
+                              {item.count}x
+                            </span>
+                          </div>
+                        ))}
                     </div>
                   )}
                 </div>
@@ -308,20 +350,30 @@ export default function AnalyticsClient() {
                   <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
                     <FileText size={15} className="text-amber-400" /> {t.topPages}
                   </h3>
-                  {data.topPages.length === 0 ? (
+                  {data.topPages.filter(
+                    (i) =>
+                      !searchQuery.trim() ||
+                      i.page.toLowerCase().includes(searchQuery.toLowerCase())
+                  ).length === 0 ? (
                     <p className="text-slate-600 text-xs">{t.noData}</p>
                   ) : (
                     <div className="space-y-2">
-                      {data.topPages.map((item, i) => (
-                        <div key={i} className="flex items-center justify-between gap-3">
-                          <span className="text-slate-300 text-xs truncate flex-1">
-                            {item.page}
-                          </span>
-                          <span className="text-xs text-slate-500 whitespace-nowrap font-mono">
-                            {item.count}
-                          </span>
-                        </div>
-                      ))}
+                      {data.topPages
+                        .filter(
+                          (it) =>
+                            !searchQuery.trim() ||
+                            it.page.toLowerCase().includes(searchQuery.toLowerCase())
+                        )
+                        .map((item, i) => (
+                          <div key={i} className="flex items-center justify-between gap-3">
+                            <span className="text-slate-300 text-xs truncate flex-1">
+                              {item.page}
+                            </span>
+                            <span className="text-xs text-slate-500 whitespace-nowrap font-mono">
+                              {item.count}
+                            </span>
+                          </div>
+                        ))}
                     </div>
                   )}
                 </div>
@@ -332,29 +384,45 @@ export default function AnalyticsClient() {
                 <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
                   <MessageCircleQuestion size={15} className="text-amber-400" /> {t.recentUnmatched}
                 </h3>
-                {data.recentUnmatched.length === 0 ? (
+                {data.recentUnmatched.filter(
+                  (i) =>
+                    (langFilter === 'all' || i.lang === langFilter) &&
+                    (!searchQuery.trim() ||
+                      i.question.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                      (i.page ?? '').toLowerCase().includes(searchQuery.toLowerCase()))
+                ).length === 0 ? (
                   <p className="text-slate-600 text-xs">{t.noData}</p>
                 ) : (
                   <div className="space-y-3">
-                    {data.recentUnmatched.map((item, i) => (
-                      <div key={i} className="flex items-start gap-3 text-xs">
-                        <span className="text-slate-600 whitespace-nowrap font-mono">
-                          {new Date(item.createdAt).toLocaleDateString(da ? 'da-DK' : 'en-GB', {
-                            month: 'short',
-                            day: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
-                        </span>
-                        <span className="px-1.5 py-0.5 rounded bg-slate-700 text-slate-400 uppercase text-[10px]">
-                          {item.lang}
-                        </span>
-                        <p className="text-slate-300 leading-relaxed flex-1">{item.question}</p>
-                        {item.page && (
-                          <span className="text-slate-600 truncate max-w-[120px]">{item.page}</span>
-                        )}
-                      </div>
-                    ))}
+                    {data.recentUnmatched
+                      .filter(
+                        (it) =>
+                          (langFilter === 'all' || it.lang === langFilter) &&
+                          (!searchQuery.trim() ||
+                            it.question.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                            (it.page ?? '').toLowerCase().includes(searchQuery.toLowerCase()))
+                      )
+                      .map((item, i) => (
+                        <div key={i} className="flex items-start gap-3 text-xs">
+                          <span className="text-slate-600 whitespace-nowrap font-mono">
+                            {new Date(item.createdAt).toLocaleDateString(da ? 'da-DK' : 'en-GB', {
+                              month: 'short',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </span>
+                          <span className="px-1.5 py-0.5 rounded bg-slate-700 text-slate-400 uppercase text-[10px]">
+                            {item.lang}
+                          </span>
+                          <p className="text-slate-300 leading-relaxed flex-1">{item.question}</p>
+                          {item.page && (
+                            <span className="text-slate-600 truncate max-w-[120px]">
+                              {item.page}
+                            </span>
+                          )}
+                        </div>
+                      ))}
                   </div>
                 )}
               </div>

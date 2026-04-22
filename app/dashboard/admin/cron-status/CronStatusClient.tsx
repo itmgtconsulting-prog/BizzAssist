@@ -20,6 +20,7 @@ import {
   CheckCircle2,
   AlertCircle,
   HelpCircle,
+  Search,
 } from 'lucide-react';
 import { AdminNavTabs } from '../AdminNavTabs';
 import { useLanguage } from '@/app/context/LanguageContext';
@@ -135,6 +136,9 @@ export default function CronStatusClient() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  // BIZZ-739: search + status filter — aligns layout with /users + /billing
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<CronStatus | 'all'>('all');
 
   /**
    * Henter seneste cron-status fra API. Bruges både til første load og
@@ -219,6 +223,75 @@ export default function CronStatusClient() {
           role="tablist"
         />
 
+        {/* BIZZ-739: KPI stats-cards — matches /dashboard/admin/users + /billing */}
+        {data && !error && (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+            <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-4">
+              <div className="flex items-center gap-2 mb-2 text-slate-400 text-xs uppercase tracking-wide">
+                <CheckCircle2 size={14} className="text-emerald-400" />
+                {da ? 'OK' : 'OK'}
+              </div>
+              <p className="text-2xl font-bold text-white">
+                {data.summary.ok}
+                <span className="text-slate-500 text-sm font-normal ml-1">
+                  / {data.summary.total}
+                </span>
+              </p>
+            </div>
+            <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-4">
+              <div className="flex items-center gap-2 mb-2 text-slate-400 text-xs uppercase tracking-wide">
+                <AlertCircle size={14} className="text-red-400" />
+                {da ? 'Fejl' : 'Errors'}
+              </div>
+              <p className="text-2xl font-bold text-white">{data.summary.error}</p>
+            </div>
+            <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-4">
+              <div className="flex items-center gap-2 mb-2 text-slate-400 text-xs uppercase tracking-wide">
+                <AlertTriangle size={14} className="text-amber-400" />
+                {da ? 'Forsinket' : 'Overdue'}
+              </div>
+              <p className="text-2xl font-bold text-white">{data.summary.overdue}</p>
+            </div>
+            <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-4">
+              <div className="flex items-center gap-2 mb-2 text-slate-400 text-xs uppercase tracking-wide">
+                <HelpCircle size={14} className="text-slate-500" />
+                {da ? 'Ingen data' : 'No data'}
+              </div>
+              <p className="text-2xl font-bold text-white">{data.summary.missing}</p>
+            </div>
+          </div>
+        )}
+
+        {/* BIZZ-739: Search + status filter */}
+        {data && !error && data.crons.length > 0 && (
+          <div className="flex gap-3 items-center mb-4">
+            <div className="relative flex-1 max-w-xs">
+              <Search
+                size={14}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
+              />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder={da ? 'Søg job…' : 'Search job…'}
+                className="w-full bg-slate-800/60 border border-slate-700/50 rounded-lg pl-9 pr-3 py-2 text-white text-xs placeholder:text-slate-500 focus:border-blue-500 focus:outline-none"
+              />
+            </div>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as CronStatus | 'all')}
+              className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-3 py-2 text-white text-xs focus:border-blue-500 focus:outline-none"
+            >
+              <option value="all">{da ? 'Alle statusser' : 'All statuses'}</option>
+              <option value="ok">{da ? 'OK' : 'OK'}</option>
+              <option value="error">{da ? 'Fejl' : 'Errors'}</option>
+              <option value="overdue">{da ? 'Forsinket' : 'Overdue'}</option>
+              <option value="missing">{da ? 'Ingen data' : 'No data'}</option>
+            </select>
+          </div>
+        )}
+
         {/* Error banner */}
         {error && (
           <div className="flex items-start gap-3 bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 mb-6">
@@ -263,62 +336,78 @@ export default function CronStatusClient() {
                 </tr>
               </thead>
               <tbody>
-                {data.crons.map((c) => {
-                  const cfg = statusConfig(c.status, da);
-                  return (
-                    <tr
-                      key={c.jobName}
-                      className="border-t border-slate-700/30 hover:bg-slate-800/30 transition-colors"
-                    >
-                      <td className="px-4 py-3">
-                        <div className="flex flex-col gap-0.5">
-                          <span className="text-white font-mono text-xs">{c.jobName}</span>
-                          <span className="text-slate-500 text-[10px]">{c.description}</span>
-                          <span className="text-slate-600 text-[10px] font-mono">{c.schedule}</span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-slate-400 font-mono">
-                        {formatInterval(c.intervalMinutes)}
-                      </td>
-                      <td className="px-4 py-3 text-slate-300">
-                        <div className="flex flex-col gap-0.5">
-                          <span className="text-xs">{formatAgo(c.lastRunAt, da)}</span>
-                          {c.lastRunAt && (
+                {data.crons
+                  .filter((c) => {
+                    if (statusFilter !== 'all' && c.status !== statusFilter) return false;
+                    if (searchQuery.trim()) {
+                      const q = searchQuery.toLowerCase();
+                      if (
+                        !c.jobName.toLowerCase().includes(q) &&
+                        !(c.description ?? '').toLowerCase().includes(q)
+                      ) {
+                        return false;
+                      }
+                    }
+                    return true;
+                  })
+                  .map((c) => {
+                    const cfg = statusConfig(c.status, da);
+                    return (
+                      <tr
+                        key={c.jobName}
+                        className="border-t border-slate-700/30 hover:bg-slate-800/30 transition-colors"
+                      >
+                        <td className="px-4 py-3">
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-white font-mono text-xs">{c.jobName}</span>
+                            <span className="text-slate-500 text-[10px]">{c.description}</span>
                             <span className="text-slate-600 text-[10px] font-mono">
-                              {new Date(c.lastRunAt).toLocaleString(da ? 'da-DK' : 'en-GB', {
-                                month: 'short',
-                                day: '2-digit',
-                                hour: '2-digit',
-                                minute: '2-digit',
-                              })}
+                              {c.schedule}
                             </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-slate-400 tabular-nums">
-                        {formatDuration(c.lastDurationMs)}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-col gap-1.5">
-                          <span
-                            className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-xs font-medium w-fit ${cfg.bg} ${cfg.color}`}
-                          >
-                            <cfg.Icon size={12} />
-                            {cfg.label}
-                          </span>
-                          {c.status === 'error' && c.lastError && (
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-slate-400 font-mono">
+                          {formatInterval(c.intervalMinutes)}
+                        </td>
+                        <td className="px-4 py-3 text-slate-300">
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-xs">{formatAgo(c.lastRunAt, da)}</span>
+                            {c.lastRunAt && (
+                              <span className="text-slate-600 text-[10px] font-mono">
+                                {new Date(c.lastRunAt).toLocaleString(da ? 'da-DK' : 'en-GB', {
+                                  month: 'short',
+                                  day: '2-digit',
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-slate-400 tabular-nums">
+                          {formatDuration(c.lastDurationMs)}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex flex-col gap-1.5">
                             <span
-                              className="text-red-400/80 text-[10px] max-w-sm line-clamp-2"
-                              title={c.lastError}
+                              className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-xs font-medium w-fit ${cfg.bg} ${cfg.color}`}
                             >
-                              {c.lastError}
+                              <cfg.Icon size={12} />
+                              {cfg.label}
                             </span>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
+                            {c.status === 'error' && c.lastError && (
+                              <span
+                                className="text-red-400/80 text-[10px] max-w-sm line-clamp-2"
+                                title={c.lastError}
+                              >
+                                {c.lastError}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
               </tbody>
             </table>
           </div>

@@ -22,6 +22,8 @@ import {
   CheckCircle,
   XCircle,
   ArrowLeft,
+  Search,
+  Archive,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 
@@ -48,6 +50,11 @@ export default function DomainsListClient() {
   const [domains, setDomains] = useState<DomainRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // BIZZ-739: search + status filter — pattern matches /dashboard/admin/users
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'suspended' | 'archived'>(
+    'all'
+  );
 
   /** Fetch domains from API */
   const fetchDomains = useCallback(async () => {
@@ -128,6 +135,49 @@ export default function DomainsListClient() {
     }
   };
 
+  // BIZZ-739: stats for KPI row
+  const totalCount = domains.length;
+  const activeCount = domains.filter((d) => d.status === 'active').length;
+  const suspendedCount = domains.filter((d) => d.status === 'suspended').length;
+  const archivedCount = domains.filter((d) => d.status === 'archived').length;
+
+  // BIZZ-739: apply search + status filter
+  const filteredDomains = domains.filter((d) => {
+    if (statusFilter !== 'all' && d.status !== statusFilter) return false;
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      if (!d.name.toLowerCase().includes(q) && !d.slug.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  const statCards = [
+    {
+      label: da ? 'Total' : 'Total',
+      value: totalCount,
+      icon: Building2,
+      color: 'text-blue-400',
+    },
+    {
+      label: da ? 'Aktive' : 'Active',
+      value: activeCount,
+      icon: CheckCircle,
+      color: 'text-emerald-400',
+    },
+    {
+      label: da ? 'Suspenderede' : 'Suspended',
+      value: suspendedCount,
+      icon: AlertTriangle,
+      color: 'text-amber-400',
+    },
+    {
+      label: da ? 'Arkiveret' : 'Archived',
+      value: archivedCount,
+      icon: Archive,
+      color: 'text-slate-400',
+    },
+  ];
+
   return (
     <div className="max-w-6xl mx-auto px-4 py-8 space-y-6">
       {/* Header */}
@@ -154,6 +204,52 @@ export default function DomainsListClient() {
         </Link>
       </div>
 
+      {/* BIZZ-739: Stats card row — matches /dashboard/admin/users + /billing */}
+      {!loading && !error && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {statCards.map((c) => (
+            <div
+              key={c.label}
+              className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-4"
+            >
+              <div className="flex items-center gap-2 mb-2 text-slate-400 text-xs uppercase tracking-wide">
+                <c.icon size={14} className={c.color} />
+                {c.label}
+              </div>
+              <p className="text-2xl font-bold text-white">{c.value}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* BIZZ-739: Search + status filter */}
+      {!loading && !error && totalCount > 0 && (
+        <div className="flex gap-3 items-center">
+          <div className="relative flex-1 max-w-xs">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={da ? 'Søg navn eller slug…' : 'Search name or slug…'}
+              className="w-full bg-slate-800/60 border border-slate-700/50 rounded-lg pl-9 pr-3 py-2 text-white text-xs placeholder:text-slate-500 focus:border-blue-500 focus:outline-none"
+            />
+          </div>
+          <select
+            value={statusFilter}
+            onChange={(e) =>
+              setStatusFilter(e.target.value as 'all' | 'active' | 'suspended' | 'archived')
+            }
+            className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-3 py-2 text-white text-xs focus:border-blue-500 focus:outline-none"
+          >
+            <option value="all">{da ? 'Alle statusser' : 'All statuses'}</option>
+            <option value="active">{da ? 'Aktive' : 'Active'}</option>
+            <option value="suspended">{da ? 'Suspenderede' : 'Suspended'}</option>
+            <option value="archived">{da ? 'Arkiveret' : 'Archived'}</option>
+          </select>
+        </div>
+      )}
+
       {/* Table */}
       {loading ? (
         <div className="flex items-center justify-center py-20">
@@ -166,6 +262,13 @@ export default function DomainsListClient() {
           <Building2 size={40} className="text-slate-600 mx-auto mb-3" />
           <p className="text-slate-400 text-sm">
             {da ? 'Ingen domains oprettet endnu.' : 'No domains created yet.'}
+          </p>
+        </div>
+      ) : filteredDomains.length === 0 ? (
+        <div className="text-center py-20">
+          <Search size={32} className="text-slate-600 mx-auto mb-3" />
+          <p className="text-slate-400 text-sm">
+            {da ? 'Ingen domains matcher filteret.' : 'No domains match the filter.'}
           </p>
         </div>
       ) : (
@@ -195,7 +298,7 @@ export default function DomainsListClient() {
               </tr>
             </thead>
             <tbody>
-              {domains.map((d) => (
+              {filteredDomains.map((d) => (
                 <tr
                   key={d.id}
                   className="border-b border-slate-700/20 hover:bg-slate-700/10 transition-colors"

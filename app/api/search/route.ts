@@ -198,7 +198,7 @@ async function searchAddresses(q: string, normQ: string): Promise<UnifiedSearchR
       };
     }> = [];
     if (adgangsadresser.length > 0) {
-      logger.info(
+      logger.warn(
         `[search/723] probing ${adgangsadresser.length} adgangsadresser for units, q="${q}"`
       );
       try {
@@ -226,7 +226,7 @@ async function searchAddresses(q: string, normQ: string): Promise<UnifiedSearchR
         for (let i = 0; i < adgangsadresser.length; i++) {
           const adg = adgangsadresser[i];
           const units = probeResults[i];
-          logger.info(
+          logger.warn(
             `[search/723] adg ${adg.adresse.husnr} (id=${adg.adresse.id.slice(0, 8)}) returned ${units.length} units`
           );
           for (const u of units) {

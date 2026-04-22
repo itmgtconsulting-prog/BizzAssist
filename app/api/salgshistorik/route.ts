@@ -29,6 +29,7 @@ import {
   DATAFORDELER_TOKEN_URL,
 } from '@/app/lib/serviceEndpoints';
 import { LruCache } from '@/app/lib/lruCache';
+import { fetchTinglysningPriceRowsByBfe, indexPriceRowsByDate } from '@/app/lib/tinglysningPrices';
 
 // BIZZ-633: LRU-cache for salgshistorik-svar. Samme BFE slås op mange
 // gange i samme session (økonomi-tab, ejendoms-kort, diagram-berigelse).
@@ -474,6 +475,54 @@ export async function GET(request: NextRequest): Promise<NextResponse<Salgshisto
       } catch (err) {
         logger.warn('[salgshistorik] local ejf_ejerskab enrichment failed:', err);
       }
+    }
+
+    // ─── BIZZ-685/693 iter 2: Tinglysning price enrichment ───────────────────
+    // For rows where EJF returned no price (all rows in practice — EJF's
+    // GraphQL never exposes KontantKoebesum), chain to Tinglysning's summarisk
+    // XML to fold in price + koebsaftaleDato + tinglysningsdato. Matched on
+    // overtagelsesdato → YYYY-MM-DD. Failures are swallowed so users still
+    // see the EJF-owned rows when Tinglysning is down.
+    try {
+      const priceRows = await fetchTinglysningPriceRowsByBfe(bfeNummer);
+      if (priceRows.length > 0) {
+        const byDate = indexPriceRowsByDate(priceRows);
+        for (const row of handler) {
+          const dateKey = (row.overtagelsesdato ?? '').slice(0, 10);
+          if (!dateKey) continue;
+          const priceRow = byDate.get(dateKey);
+          if (!priceRow) continue;
+          if (row.kontantKoebesum == null && priceRow.kontantKoebesum != null) {
+            row.kontantKoebesum = priceRow.kontantKoebesum;
+          }
+          if (row.samletKoebesum == null && priceRow.iAltKoebesum != null) {
+            row.samletKoebesum = priceRow.iAltKoebesum;
+          }
+          if (!row.koebsaftaleDato && priceRow.koebsaftaleDato) {
+            row.koebsaftaleDato = priceRow.koebsaftaleDato;
+          }
+        }
+
+        // Reverse-inference for rows still missing a price: when an ejer
+        // exits on the same date the next ejer enters, that entry price
+        // IS the exit price. Walk the sorted list and copy forward.
+        // handler is sorted descending (newest first), so we look at the
+        // successor (index-1) for each row missing a price.
+        for (let i = handler.length - 1; i >= 1; i--) {
+          const row = handler[i];
+          if (row.kontantKoebesum != null || row.samletKoebesum != null) continue;
+          const successor = handler[i - 1];
+          if (!successor) continue;
+          if (successor.overtagelsesdato !== row.virkningTil) continue;
+          if (successor.kontantKoebesum != null) {
+            row.kontantKoebesum = successor.kontantKoebesum;
+          } else if (successor.samletKoebesum != null) {
+            row.samletKoebesum = successor.samletKoebesum;
+          }
+        }
+      }
+    } catch (err) {
+      logger.warn('[salgshistorik] tinglysning price enrichment failed:', err);
     }
 
     logger.log(

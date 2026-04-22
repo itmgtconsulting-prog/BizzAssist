@@ -274,6 +274,8 @@ async function searchAddresses(q: string, normQ: string): Promise<UnifiedSearchR
       extraCount: String(extraAdresseResults.length),
       existingAdrCount: String(existingAdresseIds.size),
       rawResultsCount: String(results.length),
+      rawTypes: results.map((r) => r.type + ':' + (r.adresse?.id?.slice(0, 8) || '?')).join(','),
+      extraIds: extraAdresseResults.map((e) => e.adresse.id.slice(0, 8)).join(','),
     };
 
     const merged = [...results, ...extraAdresseResults];

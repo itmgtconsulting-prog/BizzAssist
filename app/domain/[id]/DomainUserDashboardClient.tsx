@@ -11,7 +11,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import Link from 'next/link';
-import { Briefcase, Plus, Search, Loader2, Shield } from 'lucide-react';
+import { Briefcase, Plus, Search, Loader2, Shield, Archive, Trash2, X } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { DomainCaseList, type DomainCaseSummary } from './DomainCaseList';
 
@@ -43,6 +43,19 @@ export default function DomainUserDashboardClient({ domainId }: { domainId: stri
   const [status, setStatus] = useState<'open' | 'closed' | 'archived' | 'all'>('open');
   const [search, setSearch] = useState('');
   const [role, setRole] = useState<'admin' | 'member' | null>(null);
+  // BIZZ-759: bulk-selection state
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -80,6 +93,62 @@ export default function DomainUserDashboardClient({ domainId }: { domainId: stri
   }, [search, load]);
 
   const statusCount = useMemo(() => cases.length, [cases]);
+
+  // BIZZ-759: bulk actions — iterate the selected IDs and fire per-case PATCH
+  // or DELETE calls. The existing /api/domain/[id]/cases/[caseId] endpoints
+  // already validate membership + admin role per request, so no new API is
+  // needed. After completion we reload the list and clear selection.
+  const bulkArchive = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+    if (
+      !window.confirm(
+        da
+          ? `Arkivér ${selectedIds.size} sag${selectedIds.size === 1 ? '' : 'er'}?`
+          : `Archive ${selectedIds.size} case${selectedIds.size === 1 ? '' : 's'}?`
+      )
+    )
+      return;
+    setBulkBusy(true);
+    try {
+      await Promise.all(
+        Array.from(selectedIds).map((id) =>
+          fetch(`/api/domain/${domainId}/cases/${id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: 'archived' }),
+          })
+        )
+      );
+      clearSelection();
+      await load();
+    } finally {
+      setBulkBusy(false);
+    }
+  }, [domainId, selectedIds, clearSelection, load, da]);
+
+  const bulkDelete = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+    if (
+      !window.confirm(
+        da
+          ? `SLET ${selectedIds.size} sag${selectedIds.size === 1 ? '' : 'er'} permanent? Alle dokumenter + generationer går tabt.`
+          : `DELETE ${selectedIds.size} case${selectedIds.size === 1 ? '' : 's'} permanently? All documents + generations will be lost.`
+      )
+    )
+      return;
+    setBulkBusy(true);
+    try {
+      await Promise.all(
+        Array.from(selectedIds).map((id) =>
+          fetch(`/api/domain/${domainId}/cases/${id}`, { method: 'DELETE' })
+        )
+      );
+      clearSelection();
+      await load();
+    } finally {
+      setBulkBusy(false);
+    }
+  }, [domainId, selectedIds, clearSelection, load, da]);
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
@@ -152,13 +221,57 @@ export default function DomainUserDashboardClient({ domainId }: { domainId: stri
         </div>
       </div>
 
+      {/* BIZZ-759: bulk-action toolbar — visible only when >=1 selected.
+          Admin-only for delete; any member may bulk-archive. */}
+      {selectedIds.size > 0 && (
+        <div className="flex items-center gap-2 bg-blue-500/10 border border-blue-500/30 rounded-lg px-4 py-2">
+          <span className="text-blue-300 text-sm font-medium">
+            {selectedIds.size} {da ? 'valgt' : 'selected'}
+          </span>
+          <div className="flex-1" />
+          <button
+            onClick={bulkArchive}
+            disabled={bulkBusy}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600/30 hover:bg-amber-600/50 disabled:opacity-50 text-amber-200 text-xs font-medium rounded-md transition-colors border border-amber-500/40"
+          >
+            <Archive size={12} />
+            {da ? 'Arkivér' : 'Archive'}
+          </button>
+          {role === 'admin' && (
+            <button
+              onClick={bulkDelete}
+              disabled={bulkBusy}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600/30 hover:bg-red-600/50 disabled:opacity-50 text-red-200 text-xs font-medium rounded-md transition-colors border border-red-500/40"
+            >
+              <Trash2 size={12} />
+              {da ? 'Slet' : 'Delete'}
+            </button>
+          )}
+          <button
+            onClick={clearSelection}
+            disabled={bulkBusy}
+            aria-label={da ? 'Ryd valg' : 'Clear selection'}
+            className="text-slate-400 hover:text-white transition-colors"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
       {/* BIZZ-760: Cases grid via shared component */}
       {loading ? (
         <div className="flex items-center justify-center py-16">
           <Loader2 className="w-6 h-6 text-blue-400 animate-spin" />
         </div>
       ) : (
-        <DomainCaseList domainId={domainId} cases={cases} showCreateEmptyAction />
+        <DomainCaseList
+          domainId={domainId}
+          cases={cases}
+          showCreateEmptyAction
+          selectable
+          selectedIds={selectedIds}
+          onToggleSelect={toggleSelect}
+        />
       )}
     </div>
   );

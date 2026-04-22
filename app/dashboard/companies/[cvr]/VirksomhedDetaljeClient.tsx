@@ -1731,7 +1731,30 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
           )}
 
           {/* ══ RELATIONSDIAGRAM (Force Graph — original) ══ */}
-          {aktivTab === 'diagram' && <DiagramForce graph={diagramGraphStable} lang={lang} />}
+          {aktivTab === 'diagram' && (
+            <div className="relative">
+              <DiagramForce graph={diagramGraphStable} lang={lang} />
+              {/* BIZZ-729: Loading overlay — ejendomme loades progressivt men diagrammet
+                  rebuilds kun ved ejendommeFetchComplete=true for at undgå re-simulation.
+                  Uden denne indikator ser diagrammet "færdigt" ud indtil ejendomme pludselig
+                  popper ind. Viser spinner + progress-counter mens hentning står på. */}
+              {(ejendommeLoading || ejendommeLoadingMore) && (
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className="absolute top-3 right-3 flex items-center gap-2 px-3 py-2 bg-blue-900/90 backdrop-blur-sm border border-blue-500/40 rounded-lg shadow-lg text-blue-100 text-xs font-medium pointer-events-none animate-pulse"
+                >
+                  <Loader2 size={14} className="animate-spin text-blue-300" />
+                  <span>
+                    {lang === 'da' ? 'Henter ejendomme' : 'Loading properties'}
+                    {ejendommeTotalBfe > 0
+                      ? ` — ${ejendommeData.length}/${ejendommeTotalBfe}`
+                      : '…'}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* ══ EJENDOMME ══ */}
           {aktivTab === 'properties' && (

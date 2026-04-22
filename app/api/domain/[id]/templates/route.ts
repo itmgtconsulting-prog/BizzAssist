@@ -25,6 +25,7 @@ import { assertDomainMember, assertDomainAdmin } from '@/app/lib/domainAuth';
 import { uploadDomainFile } from '@/app/lib/domainStorage';
 import { extractTextFromBuffer, type DomainFileType } from '@/app/lib/domainTextExtraction';
 import { detectPlaceholders } from '@/app/lib/domainPlaceholderDetect';
+import { embedDomainSource } from '@/app/lib/domainEmbeddingWorker';
 import { isDomainFeatureEnabled } from '@/app/lib/featureFlags';
 import { logger } from '@/app/lib/logger';
 
@@ -158,6 +159,15 @@ export async function POST(request: NextRequest, context: RouteContext): Promise
     if (insertErr || !tplRow) {
       logger.error('[domain/templates] Insert error:', insertErr?.message);
       return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
+    }
+
+    // BIZZ-715: fire embedding worker — non-fatal on provider-missing
+    if (extraction.ok && extraction.text) {
+      try {
+        await embedDomainSource(domainId, 'template', tplRow.id, extraction.text);
+      } catch (embedErr) {
+        logger.warn('[domain/templates] Embedding skipped:', embedErr);
+      }
     }
 
     // Create initial version row so versioning (BIZZ-710) has a baseline

@@ -17,6 +17,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { assertDomainMember } from '@/app/lib/domainAuth';
 import { uploadDomainFile } from '@/app/lib/domainStorage';
 import { extractTextFromBuffer } from '@/app/lib/domainTextExtraction';
+import { embedDomainSource } from '@/app/lib/domainEmbeddingWorker';
 import { isDomainFeatureEnabled } from '@/app/lib/featureFlags';
 import { logger } from '@/app/lib/logger';
 
@@ -139,6 +140,17 @@ export async function POST(request: NextRequest, context: RouteContext): Promise
     if (insertErr || !docRow) {
       logger.error('[domain/cases/docs] Insert error:', insertErr?.message);
       return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
+    }
+
+    // BIZZ-715: Fire embedding worker after row is saved. Non-blocking
+    // failure — embeddings are a retrieval-quality feature, not a correctness
+    // precondition. If no provider is configured the worker skips cleanly.
+    if (extractedText) {
+      try {
+        await embedDomainSource(domainId, 'case_doc', docRow.id, extractedText);
+      } catch (embedErr) {
+        logger.warn('[domain/cases/docs] Embedding skipped:', embedErr);
+      }
     }
 
     // Audit + bump case.updated_at

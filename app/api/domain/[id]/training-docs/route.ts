@@ -19,6 +19,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { assertDomainMember, assertDomainAdmin } from '@/app/lib/domainAuth';
 import { uploadDomainFile } from '@/app/lib/domainStorage';
 import { extractTextFromBuffer } from '@/app/lib/domainTextExtraction';
+import { embedDomainSource } from '@/app/lib/domainEmbeddingWorker';
 import { isDomainFeatureEnabled } from '@/app/lib/featureFlags';
 import { logger } from '@/app/lib/logger';
 
@@ -161,6 +162,15 @@ export async function POST(request: NextRequest, context: RouteContext): Promise
     if (insertErr || !row) {
       logger.error('[domain/training-docs] Insert error:', insertErr?.message);
       return NextResponse.json({ error: 'Ekstern API fejl' }, { status: 500 });
+    }
+
+    // BIZZ-715: fire embedding worker — non-fatal on provider-missing
+    if (extraction.ok && extraction.text) {
+      try {
+        await embedDomainSource(domainId, 'training', row.id, extraction.text);
+      } catch (embedErr) {
+        logger.warn('[domain/training-docs] Embedding skipped:', embedErr);
+      }
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

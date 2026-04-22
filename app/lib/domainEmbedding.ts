@@ -75,7 +75,7 @@ export async function searchDomainEmbeddings(
  */
 export async function insertDomainEmbedding(
   domainId: string,
-  sourceType: 'template' | 'training_doc' | 'case_doc',
+  sourceType: 'template' | 'training' | 'case_doc',
   sourceId: string,
   content: string,
   embedding: number[],

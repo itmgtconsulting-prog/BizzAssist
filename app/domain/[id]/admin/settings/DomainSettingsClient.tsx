@@ -10,8 +10,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import Link from 'next/link';
-import { Loader2, Save, ArrowLeft, Settings, Cpu, Clock, Shield } from 'lucide-react';
+import { Loader2, Save, Settings, Cpu, Clock, Shield } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 
 interface DomainSettingsRow {
@@ -138,13 +137,7 @@ export default function DomainSettingsClient({ domainId }: { domainId: string })
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-6">
-      <Link
-        href={`/domain/${domainId}/admin`}
-        className="inline-flex items-center gap-2 text-slate-400 hover:text-white text-sm transition-colors"
-      >
-        <ArrowLeft size={14} />
-        {da ? 'Tilbage til dashboard' : 'Back to dashboard'}
-      </Link>
+      {/* BIZZ-752: Back-nav i DomainAdminTabs (layout.tsx) */}
 
       <div>
         <h1 className="text-xl font-bold text-white">

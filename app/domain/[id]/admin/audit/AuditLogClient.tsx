@@ -10,8 +10,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import Link from 'next/link';
-import { ArrowLeft, ScrollText, Download, Loader2 } from 'lucide-react';
+import { ScrollText, Download, Loader2 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 
 interface AuditRow {
@@ -98,13 +97,7 @@ export default function AuditLogClient({ domainId }: { domainId: string }) {
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8 space-y-6">
-      <Link
-        href={`/domain/${domainId}/admin`}
-        className="inline-flex items-center gap-2 text-slate-400 hover:text-white text-sm"
-      >
-        <ArrowLeft size={14} />
-        {da ? 'Tilbage til dashboard' : 'Back to dashboard'}
-      </Link>
+      {/* BIZZ-752: Back-nav i DomainAdminTabs (layout.tsx) */}
 
       <div className="flex items-center justify-between">
         <div>

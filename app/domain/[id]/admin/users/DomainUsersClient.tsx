@@ -11,8 +11,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import Link from 'next/link';
-import { ArrowLeft, Loader2, UserPlus, Trash2, ShieldCheck, User as UserIcon } from 'lucide-react';
+import { Loader2, UserPlus, Trash2, ShieldCheck, User as UserIcon, Search } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 
 interface DomainMember {
@@ -40,6 +39,23 @@ export default function DomainUsersClient({ domainId }: { domainId: string }) {
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<'admin' | 'member'>('member');
   const [inviting, setInviting] = useState(false);
+  // BIZZ-750: search — matches /dashboard/admin/users pattern
+  const [searchQuery, setSearchQuery] = useState('');
+  const [roleFilter, setRoleFilter] = useState<'all' | 'admin' | 'member'>('all');
+
+  const filteredMembers = members.filter((m) => {
+    if (roleFilter !== 'all' && m.role !== roleFilter) return false;
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      if (
+        !(m.email ?? '').toLowerCase().includes(q) &&
+        !(m.fullName ?? '').toLowerCase().includes(q)
+      ) {
+        return false;
+      }
+    }
+    return true;
+  });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -128,13 +144,8 @@ export default function DomainUsersClient({ domainId }: { domainId: string }) {
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
-      <Link
-        href={`/domain/${domainId}/admin`}
-        className="inline-flex items-center gap-2 text-slate-400 hover:text-white text-sm"
-      >
-        <ArrowLeft size={14} />
-        {da ? 'Tilbage til dashboard' : 'Back to dashboard'}
-      </Link>
+      {/* BIZZ-752: Back-nav fjernet — DomainAdminTabs i layout.tsx har
+          allerede en tilbage-pil til /domain/[id]. */}
 
       <div className="flex items-center justify-between">
         <div>
@@ -164,6 +175,31 @@ export default function DomainUsersClient({ domainId }: { domainId: string }) {
         </div>
       )}
 
+      {/* BIZZ-750: Search + role filter */}
+      {!loading && members.length > 0 && (
+        <div className="flex gap-3 items-center">
+          <div className="relative flex-1 max-w-xs">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={da ? 'Søg email eller navn…' : 'Search email or name…'}
+              className="w-full bg-slate-800/60 border border-slate-700/50 rounded-lg pl-9 pr-3 py-2 text-white text-xs placeholder:text-slate-500 focus:border-blue-500 focus:outline-none"
+            />
+          </div>
+          <select
+            value={roleFilter}
+            onChange={(e) => setRoleFilter(e.target.value as 'all' | 'admin' | 'member')}
+            className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-3 py-2 text-white text-xs focus:border-blue-500 focus:outline-none"
+          >
+            <option value="all">{da ? 'Alle roller' : 'All roles'}</option>
+            <option value="admin">Admin</option>
+            <option value="member">Member</option>
+          </select>
+        </div>
+      )}
+
       {/* Members table */}
       <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
         {loading ? (
@@ -173,6 +209,10 @@ export default function DomainUsersClient({ domainId }: { domainId: string }) {
         ) : members.length === 0 ? (
           <div className="text-center py-10 text-slate-400 text-sm">
             {da ? 'Ingen brugere endnu' : 'No users yet'}
+          </div>
+        ) : filteredMembers.length === 0 ? (
+          <div className="text-center py-10 text-slate-400 text-sm">
+            {da ? 'Ingen brugere matcher filteret.' : 'No users match the filter.'}
           </div>
         ) : (
           <table className="w-full text-sm">
@@ -186,20 +226,21 @@ export default function DomainUsersClient({ domainId }: { domainId: string }) {
               </tr>
             </thead>
             <tbody>
-              {members.map((m) => (
+              {filteredMembers.map((m) => (
                 <tr key={m.id} className="border-b border-slate-700/20 text-slate-300">
                   <td className="px-4 py-3">{m.email ?? '—'}</td>
                   <td className="px-4 py-3">{m.fullName ?? '—'}</td>
                   <td className="px-4 py-3">
+                    {/* BIZZ-757: role badges — green for admin, slate for member */}
                     <span
-                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border ${
                         m.role === 'admin'
-                          ? 'bg-purple-900/40 text-purple-300'
-                          : 'bg-slate-700/40 text-slate-300'
+                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                          : 'bg-slate-700/40 text-slate-300 border-slate-600/30'
                       }`}
                     >
                       {m.role === 'admin' ? <ShieldCheck size={12} /> : <UserIcon size={12} />}
-                      {m.role}
+                      {m.role === 'admin' ? (da ? 'Admin' : 'Admin') : da ? 'Member' : 'Member'}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-slate-400 text-xs">

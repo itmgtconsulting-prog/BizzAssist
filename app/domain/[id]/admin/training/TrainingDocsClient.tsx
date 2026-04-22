@@ -11,8 +11,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import Link from 'next/link';
-import { ArrowLeft, FileText, Upload, Trash2, Loader2 } from 'lucide-react';
+import { FileText, Upload, Trash2, Loader2 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 
 interface TrainingDoc {
@@ -110,13 +109,7 @@ export default function TrainingDocsClient({ domainId }: { domainId: string }) {
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-6">
-      <Link
-        href={`/domain/${domainId}/admin`}
-        className="inline-flex items-center gap-2 text-slate-400 hover:text-white text-sm"
-      >
-        <ArrowLeft size={14} />
-        {da ? 'Tilbage til dashboard' : 'Back to dashboard'}
-      </Link>
+      {/* BIZZ-752: Back-nav i DomainAdminTabs (layout.tsx) */}
 
       <div>
         <h1 className="text-xl font-bold text-white flex items-center gap-2">

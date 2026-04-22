@@ -12,7 +12,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, FileText, Upload, Loader2 } from 'lucide-react';
+import { FileText, Upload, Loader2, Search } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 
 interface TemplateSummary {
@@ -39,6 +39,20 @@ export default function TemplatesListClient({ domainId }: { domainId: string }) 
   const [uploading, setUploading] = useState(false);
   const [notice, setNotice] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // BIZZ-747: search — list becomes unusable at 100+ templates without it
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'archived'>('all');
+
+  const filteredTemplates = templates.filter((t) => {
+    if (statusFilter !== 'all' && t.status !== statusFilter) return false;
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      if (!t.name.toLowerCase().includes(q) && !(t.description ?? '').toLowerCase().includes(q)) {
+        return false;
+      }
+    }
+    return true;
+  });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -78,13 +92,7 @@ export default function TemplatesListClient({ domainId }: { domainId: string }) 
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-6">
-      <Link
-        href={`/domain/${domainId}/admin`}
-        className="inline-flex items-center gap-2 text-slate-400 hover:text-white text-sm"
-      >
-        <ArrowLeft size={14} />
-        {da ? 'Tilbage til dashboard' : 'Back to dashboard'}
-      </Link>
+      {/* BIZZ-752: Back-nav i DomainAdminTabs (layout.tsx) */}
 
       <div className="flex items-center justify-between">
         <div>
@@ -128,6 +136,31 @@ export default function TemplatesListClient({ domainId }: { domainId: string }) 
         </div>
       )}
 
+      {/* BIZZ-747: Search + status filter */}
+      {!loading && templates.length > 0 && (
+        <div className="flex gap-3 items-center">
+          <div className="relative flex-1 max-w-xs">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={da ? 'Søg skabelon…' : 'Search templates…'}
+              className="w-full bg-slate-800/60 border border-slate-700/50 rounded-lg pl-9 pr-3 py-2 text-white text-xs placeholder:text-slate-500 focus:border-blue-500 focus:outline-none"
+            />
+          </div>
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as 'all' | 'active' | 'archived')}
+            className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-3 py-2 text-white text-xs focus:border-blue-500 focus:outline-none"
+          >
+            <option value="all">{da ? 'Alle statusser' : 'All statuses'}</option>
+            <option value="active">{da ? 'Aktive' : 'Active'}</option>
+            <option value="archived">{da ? 'Arkiveret' : 'Archived'}</option>
+          </select>
+        </div>
+      )}
+
       <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden">
         {loading ? (
           <div className="flex items-center justify-center py-10">
@@ -139,9 +172,13 @@ export default function TemplatesListClient({ domainId }: { domainId: string }) 
               ? 'Ingen skabeloner endnu. Upload en skabelon for at starte.'
               : 'No templates yet. Upload one to get started.'}
           </div>
+        ) : filteredTemplates.length === 0 ? (
+          <div className="text-center py-10 text-slate-500 text-sm">
+            {da ? 'Ingen skabeloner matcher filteret.' : 'No templates match the filter.'}
+          </div>
         ) : (
           <ul className="divide-y divide-slate-700/30">
-            {templates.map((t) => (
+            {filteredTemplates.map((t) => (
               <li key={t.id}>
                 <Link
                   href={`/domain/${domainId}/admin/templates/${t.id}`}

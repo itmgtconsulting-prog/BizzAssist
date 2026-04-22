@@ -301,7 +301,15 @@ export default function DomainsListClient() {
               {filteredDomains.map((d) => (
                 <tr
                   key={d.id}
-                  className="border-b border-slate-700/20 hover:bg-slate-700/10 transition-colors"
+                  onClick={(e) => {
+                    // BIZZ-746: row click → drill-down. Skip when user clicked
+                    // one of the action buttons (they have their own onClick +
+                    // stopPropagation on the wrapper div).
+                    const target = e.target as HTMLElement;
+                    if (target.closest('button') || target.closest('a')) return;
+                    router.push(`/dashboard/admin/domains/${d.id}`);
+                  }}
+                  className="border-b border-slate-700/20 hover:bg-slate-700/10 transition-colors cursor-pointer"
                 >
                   <td className="px-4 py-3">
                     <Link
@@ -323,7 +331,7 @@ export default function DomainsListClient() {
                       year: 'numeric',
                     })}
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-end gap-2">
                       <button
                         onClick={() => toggleStatus(d.id, d.status)}

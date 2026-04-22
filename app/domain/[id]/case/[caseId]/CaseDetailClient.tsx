@@ -294,13 +294,24 @@ export default function CaseDetailClient({
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-6">
-      <Link
-        href={`/domain/${domainId}`}
-        className="inline-flex items-center gap-2 text-slate-400 hover:text-white text-sm"
-      >
-        <ArrowLeft size={14} />
-        {da ? 'Tilbage til sager' : 'Back to cases'}
-      </Link>
+      {/* BIZZ-758: breadcrumb — Domain > Sager > [case name] */}
+      <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-sm text-slate-400">
+        <Link
+          href={`/domain/${domainId}`}
+          className="inline-flex items-center gap-1 hover:text-white transition-colors"
+        >
+          <ArrowLeft size={14} />
+          {da ? 'Domain' : 'Domain'}
+        </Link>
+        <span className="text-slate-600">/</span>
+        <Link href={`/domain/${domainId}`} className="hover:text-white transition-colors">
+          {da ? 'Sager' : 'Cases'}
+        </Link>
+        <span className="text-slate-600">/</span>
+        <span className="text-slate-200 truncate max-w-xs" title={data.name}>
+          {data.name}
+        </span>
+      </nav>
 
       {notice && (
         <div

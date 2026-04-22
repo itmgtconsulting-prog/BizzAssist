@@ -40,7 +40,12 @@ export type AdminTabId =
   | 'service-manager'
   | 'service-management'
   | 'cron-status'
-  | 'domains';
+  | 'domains'
+  // BIZZ-749: pages below don't appear in the tab-bar but render it so
+  // users have a way back to the main admin surface. Neither value matches
+  // a TAB id, so no tab is highlighted — the surface is "in between".
+  | 'ai-feedback'
+  | 'release-manager';
 
 interface TabDef {
   id: AdminTabId;

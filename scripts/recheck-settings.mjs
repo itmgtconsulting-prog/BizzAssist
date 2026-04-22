@@ -1,0 +1,30 @@
+import { chromium } from 'playwright';
+import { config as loadDotenv } from 'dotenv';
+import path from 'node:path';
+import url from 'node:url';
+loadDotenv({ path: path.join(path.dirname(url.fileURLToPath(import.meta.url)), '..', '.env.local') });
+const BASE = 'https://test.bizzassist.dk';
+const DOMAIN_ID = 'a6e72582-5c6c-44b8-bde4-bf1ca0f27622';
+const b = await chromium.launch({ headless: true });
+const ctx = await b.newContext({ viewport: { width: 1440, height: 900 } });
+const page = await ctx.newPage();
+await page.goto(`${BASE}/login`, { waitUntil: 'domcontentloaded' });
+await page.waitForTimeout(1500);
+await page.fill('input[type=email]', process.env.E2E_TEST_EMAIL);
+await page.fill('input[type=password]', process.env.E2E_TEST_PASS);
+await page.click('button[type=submit]');
+try { await page.waitForURL(/dashboard/, { timeout: 45000 }); } catch { await page.waitForTimeout(5000); }
+await page.waitForTimeout(2000);
+const r = await page.evaluate(async (id) => {
+  const res = await fetch(`/api/domain/${id}/admin/settings`);
+  const body = res.ok ? await res.json() : await res.text();
+  return { status: res.status, body };
+}, DOMAIN_ID);
+console.log('API /admin/settings:', r.status);
+console.log('Body:', JSON.stringify(r.body).slice(0, 400));
+await page.goto(`${BASE}/domain/${DOMAIN_ID}/admin/settings`, { waitUntil: 'domcontentloaded' });
+await page.waitForTimeout(2500);
+await page.screenshot({ path: '/tmp/verify-screenshots/domain/4-admin-settings-fixed.png', fullPage: false });
+const body = await page.evaluate(() => document.body.innerText);
+console.log('\nUI state:', body.slice(0, 400).replace(/\s+/g, ' '));
+await b.close();

@@ -20,6 +20,7 @@ import {
   RefreshCw,
   ExternalLink,
 } from 'lucide-react';
+import { AdminNavTabs } from '../AdminNavTabs';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -120,6 +121,10 @@ export default function AIFeedbackClient() {
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
+      {/* BIZZ-749: shared admin tab-bar — activeTab points at a non-existing
+          id so no tab is highlighted; users can still navigate out. */}
+      <AdminNavTabs activeTab="ai-feedback" da={da} className="flex gap-1 -mb-px overflow-x-auto" />
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>

@@ -9,6 +9,10 @@
 
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { z } from 'zod';
+
+/** Strict UUID v4 validation — rejects non-UUID domainId before it hits the DB. */
+const uuidSchema = z.string().uuid();
 
 /** Resolved domain context */
 export interface DomainContext {
@@ -36,6 +40,10 @@ export interface DomainSummary {
  * @returns DomainContext or null
  */
 export async function resolveDomainId(domainId: string): Promise<DomainContext | null> {
+  // BIZZ-722 Lag 3: Validate domainId as UUID before any DB query
+  const parsed = uuidSchema.safeParse(domainId);
+  if (!parsed.success) return null;
+
   const supabase = await createClient();
   const {
     data: { user },

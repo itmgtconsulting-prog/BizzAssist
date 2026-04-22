@@ -229,20 +229,37 @@ async function resolveLejlighederViaDawa(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: moderRows } = (await (admin as any)
         .from('ejf_ejerskab')
-        .select('ejer_navn, ejer_type')
+        .select('ejer_navn, ejer_type, ejer_cvr')
         .eq('bfe_nummer', moderBfe)
         .eq('status', 'gældende')
-        .limit(1)) as { data: Array<{ ejer_navn: string; ejer_type: string }> | null };
+        .limit(1)) as {
+        data: Array<{ ejer_navn: string; ejer_type: string; ejer_cvr: string | null }> | null;
+      };
       if (moderRows && moderRows.length > 0) {
-        cachedOwner = {
-          navn: moderRows[0].ejer_navn,
-          type:
-            moderRows[0].ejer_type === 'virksomhed'
-              ? 'selskab'
-              : moderRows[0].ejer_type === 'person'
-                ? 'person'
-                : 'ukendt',
-        };
+        let navn = moderRows[0].ejer_navn;
+        const ejerType =
+          moderRows[0].ejer_type === 'virksomhed'
+            ? ('selskab' as const)
+            : moderRows[0].ejer_type === 'person'
+              ? ('person' as const)
+              : ('ukendt' as const);
+
+        // Enrich virksomhedsnavn fra cvr_virksomhed når ejer_navn bare er "CVR XXXXXXXX"
+        if (ejerType === 'selskab' && moderRows[0].ejer_cvr && navn.startsWith('CVR ')) {
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { data: cvrRow } = (await (admin as any)
+              .from('cvr_virksomhed')
+              .select('navn')
+              .eq('cvr', moderRows[0].ejer_cvr)
+              .maybeSingle()) as { data: { navn: string } | null };
+            if (cvrRow?.navn) navn = cvrRow.navn;
+          } catch {
+            /* CVR lookup non-fatal */
+          }
+        }
+
+        cachedOwner = { navn, type: ejerType };
       }
     } catch {
       /* non-fatal */

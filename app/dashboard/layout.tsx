@@ -34,6 +34,7 @@ import {
   Coins,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
+import { isDomainFeatureEnabled } from '@/app/lib/featureFlags';
 import { translations } from '@/app/lib/translations';
 import { erDawaId } from '@/app/lib/dawa';
 import { gemRecentEjendom } from '@/app/lib/recentEjendomme';
@@ -127,6 +128,15 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
   const [profileOpen, setProfileOpen] = useState(false);
   const profileRef = useRef<HTMLDivElement>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  /**
+   * BIZZ-711: Domains the current user is a member of. Used to show the
+   * Domain menu conditionally. Empty array = no menu. Fetch is skipped in
+   * prod via isDomainFeatureEnabled() — even for actual members, the menu
+   * only renders when the feature flag is true (prod-safety).
+   */
+  const [userDomains, setUserDomains] = useState<
+    Array<{ id: string; name: string; slug: string; role: 'admin' | 'member' }>
+  >([]);
   /** Blocks dashboard rendering until subscription check passes */
   const [accessGranted, setAccessGranted] = useState(false);
   /** Whether user has an active paid subscription (gates search + AI) */
@@ -302,6 +312,29 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
             // Admin users bypass all subscription gates
             if (json.isAdmin) {
               setIsAdmin(true);
+            }
+
+            // BIZZ-711: Fetch user's domain memberships only when the feature
+            // flag is on — guarantees prod-safety (menu never renders in prod
+            // until NEXT_PUBLIC_DOMAIN_FEATURE_ENABLED is flipped).
+            if (isDomainFeatureEnabled()) {
+              fetch('/api/domain/mine')
+                .then((r) => (r.ok ? r.json() : []))
+                .then((d) => {
+                  if (Array.isArray(d)) {
+                    setUserDomains(
+                      d as Array<{
+                        id: string;
+                        name: string;
+                        slug: string;
+                        role: 'admin' | 'member';
+                      }>
+                    );
+                  }
+                })
+                .catch(() => {
+                  /* non-fatal — menu just stays hidden */
+                });
             }
 
             if (serverSub && serverSub.planId) {
@@ -682,6 +715,19 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                   </Link>
                 );
               })}
+            {/* BIZZ-711: Domain-menu — kun synlig når (a) feature-flag er true
+                og (b) bruger er medlem af ≥ 1 domain. Flag er kilde til
+                synlighed, ikke membership, så prod-safety er garanteret
+                uanset om brugeren rent faktisk er domain-medlem i DB'en.
+                Single domain → direkte link. Multi → collapsible dropdown. */}
+            {isDomainFeatureEnabled() && userDomains.length > 0 && (
+              <DomainNavMenu
+                domains={userDomains}
+                collapsed={sidebarCollapsed}
+                pathname={pathname}
+                onNavigate={() => setSidebarOpen(false)}
+              />
+            )}
           </nav>
 
           {/* AI Chat panel moved to topbar drawer — see AIChatDrawer below */}
@@ -1273,6 +1319,117 @@ interface OverlayPlanOption {
   freeTrialDays: number;
   color: string;
   stripePriceId?: string | null;
+}
+
+/**
+ * BIZZ-711: Sidebar nav-item for the Domain feature.
+ *
+ * Renders:
+ *   - nothing when the user has no domains (caller already guards this)
+ *   - a single Link when the user has exactly one domain
+ *   - a Shield-icon header + nested list when the user has multiple domains
+ *
+ * The header is keyboard-operable (button with aria-expanded) and matches
+ * the visual style of the primary nav items. Collapsed-sidebar mode shows
+ * only the icon.
+ *
+ * @param domains - Domains the current user is a member of
+ * @param collapsed - Sidebar collapsed state (icon-only)
+ * @param pathname - Current route pathname for active-state styling
+ * @param onNavigate - Called after user clicks a link (closes mobile drawer)
+ */
+function DomainNavMenu({
+  domains,
+  collapsed,
+  pathname,
+  onNavigate,
+}: {
+  domains: Array<{ id: string; name: string; slug: string; role: 'admin' | 'member' }>;
+  collapsed: boolean;
+  pathname: string;
+  onNavigate: () => void;
+}) {
+  const { lang } = useLanguage();
+  const da = lang === 'da';
+  const [open, setOpen] = useState(true);
+
+  // Single domain → simple Link, same shape as the other nav items
+  if (domains.length === 1) {
+    const d = domains[0];
+    const href = `/domain/${d.id}`;
+    const active = pathname.startsWith(href);
+    return (
+      <Link
+        href={href}
+        prefetch={false}
+        onClick={onNavigate}
+        title={collapsed ? d.name : undefined}
+        className={`flex items-center rounded-xl text-sm font-medium transition-all ${
+          collapsed ? 'justify-center px-0 py-3' : 'gap-3 px-4 py-3'
+        } ${
+          active ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white hover:bg-white/5'
+        }`}
+      >
+        <Shield size={18} />
+        {!collapsed && <span className="truncate">{da ? 'Domain' : 'Domain'}</span>}
+      </Link>
+    );
+  }
+
+  // Multi-domain → collapsible dropdown with count badge
+  const anyActive = domains.some((d) => pathname.startsWith(`/domain/${d.id}`));
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-controls="domain-nav-submenu"
+        title={collapsed ? `${da ? 'Domain' : 'Domain'} (${domains.length})` : undefined}
+        className={`w-full flex items-center rounded-xl text-sm font-medium transition-all ${
+          collapsed ? 'justify-center px-0 py-3' : 'gap-3 px-4 py-3'
+        } ${
+          anyActive
+            ? 'bg-blue-600/20 text-white'
+            : 'text-slate-400 hover:text-white hover:bg-white/5'
+        }`}
+      >
+        <Shield size={18} />
+        {!collapsed && (
+          <>
+            <span className="truncate flex-1 text-left">{da ? 'Domain' : 'Domain'}</span>
+            <span className="ml-auto inline-flex items-center justify-center min-w-[20px] px-1.5 py-0.5 bg-slate-700/60 rounded-full text-[10px] font-semibold">
+              {domains.length}
+            </span>
+          </>
+        )}
+      </button>
+      {!collapsed && open && (
+        <ul id="domain-nav-submenu" className="mt-1 ml-7 space-y-0.5">
+          {domains.map((d) => {
+            const href = `/domain/${d.id}`;
+            const active = pathname.startsWith(href);
+            return (
+              <li key={d.id}>
+                <Link
+                  href={href}
+                  prefetch={false}
+                  onClick={onNavigate}
+                  className={`block px-3 py-2 rounded-lg text-xs truncate transition-colors ${
+                    active
+                      ? 'bg-blue-600/20 text-blue-200'
+                      : 'text-slate-400 hover:text-white hover:bg-white/5'
+                  }`}
+                >
+                  {d.name}
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 /**

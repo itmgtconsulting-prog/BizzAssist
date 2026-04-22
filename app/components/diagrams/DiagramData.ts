@@ -824,23 +824,45 @@ export function buildPersonDiagramGraph(
   // virksomhed-strukturen (typisk privatbolig, fritidshus og ejendomme
   // købt som privatperson). Data stammer normalt fra ejf_ejerskab-bulk-
   // tabellen (se BIZZ-534).
+  //
+  // BIZZ-730: Tidligere hang ejendommene direkte under person-noden på samme
+  // lag som virksomhederne — visuelt blandet. Ved at indskyde en virtuel
+  // container-node "Personligt ejede ejendomme" (type='status') mellem person
+  // og ejendomme tvinges ejendommene ét lag længere ned i layouten, så de
+  // vises klart adskilt fra virksomhederne uden at ændre ejerskabs-semantikken
+  // (ejendommene ejes stadig af personen, ikke af containeren).
   if (personalProperties && personalProperties.length > 0) {
     const aktive = personalProperties.filter((p) => p.aktiv !== false);
+    // Tilføj container-noden kun hvis der rent faktisk er personligt ejede
+    // ejendomme — ellers forurenes diagrammet med en tom gruppe.
+    const propGroupId = 'personal-props-group';
+    if (aktive.length > 0) {
+      nodes.push({
+        id: propGroupId,
+        label: 'Personligt ejede ejendomme',
+        sublabel: `${aktive.length} ejendom${aktive.length === 1 ? '' : 'me'}`,
+        type: 'status',
+      });
+      edges.push({
+        from: mainId,
+        to: propGroupId,
+        personallyOwned: true,
+      });
+    }
     // BIZZ-619: Person-noden har typisk få (< 20) personligt ejede ejendomme
     // — uden cap. Den gamle MAX_PROPS_PER_COMPANY=5-cap gav "5 af 9"
     // på Jakob's persondiagram. Limit'en giver kun mening for virksomheder
     // der kan eje hundredvis af BFE'er; personens liste er altid kort.
     for (const p of aktive) {
       const propId = `bfe-${p.bfeNummer}`;
-      // Hvis noden allerede er tilføjet via et company-ownership-spor,
-      // skipper vi duplikering af selve noden men tilføjer stadig den
-      // direkte person→property-edge så ejerskabet er tydeligt.
+      // Edge går nu fra container-noden, ikke direkte fra person. Det bevarer
+      // layout-adskillelsen (property-noder kommer ét lag længere ned end
+      // virksomhederne). personallyOwned-flaget bibeholdes så stiplet linje
+      // stadig signalerer privat ejerskab.
       edges.push({
-        from: mainId,
+        from: propGroupId,
         to: propId,
         ejerandel: p.ejerandel ?? undefined,
-        // BIZZ-585: Person→sole-owned-ejendom-edge stiples for at adskille
-        // visuelt fra person→virksomhed-edges.
         personallyOwned: true,
       });
       if (seenIds.has(propId)) continue;

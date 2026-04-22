@@ -13,17 +13,11 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import { Briefcase, Plus, Search, Loader2, Shield } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
+import { DomainCaseList, type DomainCaseSummary } from './DomainCaseList';
 
-interface DomainCase {
-  id: string;
-  name: string;
-  client_ref: string | null;
-  status: 'open' | 'closed' | 'archived';
-  tags: string[];
-  created_by: string | null;
-  created_at: string;
-  updated_at: string;
-}
+// BIZZ-760: case row shape now lives in DomainCaseList — re-exported here
+// so the fetcher typing stays local.
+type DomainCase = DomainCaseSummary;
 
 const STATUS_FILTERS: Array<{
   key: 'open' | 'closed' | 'archived' | 'all';
@@ -158,68 +152,13 @@ export default function DomainUserDashboardClient({ domainId }: { domainId: stri
         </div>
       </div>
 
-      {/* Cases grid */}
+      {/* BIZZ-760: Cases grid via shared component */}
       {loading ? (
         <div className="flex items-center justify-center py-16">
           <Loader2 className="w-6 h-6 text-blue-400 animate-spin" />
         </div>
-      ) : cases.length === 0 ? (
-        <div className="text-center py-16 bg-slate-800/40 border border-slate-700/40 rounded-xl">
-          <Briefcase size={32} className="mx-auto text-slate-600 mb-3" />
-          <p className="text-slate-400 text-sm">{da ? 'Ingen sager fundet' : 'No cases found'}</p>
-          <Link
-            href={`/domain/${domainId}/new-case`}
-            className="mt-4 inline-flex items-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-500 rounded-md text-white text-sm font-medium"
-          >
-            <Plus size={14} />
-            {da ? 'Opret første sag' : 'Create first case'}
-          </Link>
-        </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {cases.map((c) => (
-            <Link
-              key={c.id}
-              href={`/domain/${domainId}/case/${c.id}`}
-              className="block bg-slate-800/40 border border-slate-700/40 rounded-xl p-4 hover:bg-slate-800/60 transition-colors"
-            >
-              <div className="flex items-start justify-between gap-2 mb-2">
-                <h3 className="text-white font-medium text-sm truncate flex-1">{c.name}</h3>
-                <span
-                  className={`px-2 py-0.5 text-[10px] font-semibold rounded-full shrink-0 ${
-                    c.status === 'open'
-                      ? 'bg-emerald-900/40 text-emerald-300'
-                      : c.status === 'closed'
-                        ? 'bg-slate-700/40 text-slate-300'
-                        : 'bg-amber-900/40 text-amber-300'
-                  }`}
-                >
-                  {c.status}
-                </span>
-              </div>
-              {c.client_ref && <p className="text-slate-400 text-xs mb-2">{c.client_ref}</p>}
-              {c.tags.length > 0 && (
-                <div className="flex flex-wrap gap-1 mb-2">
-                  {c.tags.slice(0, 3).map((t) => (
-                    <span
-                      key={t}
-                      className="px-1.5 py-0.5 bg-slate-700/40 text-slate-300 text-[10px] rounded"
-                    >
-                      {t}
-                    </span>
-                  ))}
-                  {c.tags.length > 3 && (
-                    <span className="text-slate-500 text-[10px]">+{c.tags.length - 3}</span>
-                  )}
-                </div>
-              )}
-              <p className="text-slate-500 text-xs">
-                {da ? 'Opdateret' : 'Updated'}{' '}
-                {new Date(c.updated_at).toLocaleDateString(da ? 'da-DK' : 'en-GB')}
-              </p>
-            </Link>
-          ))}
-        </div>
+        <DomainCaseList domainId={domainId} cases={cases} showCreateEmptyAction />
       )}
     </div>
   );

@@ -1289,11 +1289,25 @@ export async function resolveEnhedByDawaId(dawaId: string): Promise<{
   if (!dawaId) return null;
   const vt = nowDafDateTime();
 
-  // BBR_Enhed by adresseIdentificerer can match either the adresse-UUID
-  // directly OR the adgangsadresse — depending on how the unit was
-  // registered. Query both paths and pick the best match.
+  type EnhedNode = {
+    id_lokalId?: string;
+    adresseIdentificerer?: string;
+    enh026EnhedensSamledeAreal?: number | null;
+    enh027ArealTilBeboelse?: number | null;
+    enh028ArealTilErhverv?: number | null;
+    status?: string | number | null;
+  };
+
+  const pickAreal = (n: EnhedNode): number | null => {
+    const bolig = Number(n.enh027ArealTilBeboelse ?? 0);
+    const erhverv = Number(n.enh028ArealTilErhverv ?? 0);
+    const samlet = Number(n.enh026EnhedensSamledeAreal ?? 0);
+    return bolig > 0 ? bolig : erhverv > 0 ? erhverv : samlet > 0 ? samlet : null;
+  };
+
+  // Step 1: Try direct BBR_Enhed match by adresseIdentificerer = dawaId
+  let matchedAreal: number | null = null;
   try {
-    // Path A: direct adresse-UUID match
     const directNodes = await fetchBBRGraphQL(
       `query($vt: DafDateTime!, $id: String!) {
         BBR_Enhed(first: 20, virkningstid: $vt, where: { adresseIdentificerer: { eq: $id } }) {
@@ -1303,83 +1317,124 @@ export async function resolveEnhedByDawaId(dawaId: string): Promise<{
             enh027ArealTilBeboelse
             enh028ArealTilErhverv
             status
-            ejerlejlighed { nodes { bfeNummer } }
           }
         }
       }`,
       { vt, id: dawaId }
     );
-
-    type EnhedNode = {
-      id_lokalId?: string;
-      adresseIdentificerer?: string;
-      enh026EnhedensSamledeAreal?: number | null;
-      enh027ArealTilBeboelse?: number | null;
-      enh028ArealTilErhverv?: number | null;
-      status?: string | number | null;
-      ejerlejlighed?: { nodes?: Array<{ bfeNummer?: number | null }> };
-    };
-
-    const pickAreal = (n: EnhedNode): number | null => {
-      const bolig = Number(n.enh027ArealTilBeboelse ?? 0);
-      const erhverv = Number(n.enh028ArealTilErhverv ?? 0);
-      const samlet = Number(n.enh026EnhedensSamledeAreal ?? 0);
-      const best = bolig > 0 ? bolig : erhverv > 0 ? erhverv : samlet > 0 ? samlet : null;
-      return best;
-    };
-    const pickBfe = (n: EnhedNode): number | null => {
-      const el = n.ejerlejlighed?.nodes?.[0]?.bfeNummer;
-      return typeof el === 'number' ? el : null;
-    };
-
     const directList = Array.isArray(directNodes) ? (directNodes as EnhedNode[]) : [];
     const directMatch = directList.find((n) => String(n.status ?? '') !== '7');
-    if (directMatch) {
-      const areal = pickAreal(directMatch);
-      const bfe = pickBfe(directMatch);
-      if (areal != null || bfe != null) return { bfe, areal };
-    }
+    if (directMatch) matchedAreal = pickAreal(directMatch);
+  } catch {
+    /* fall through */
+  }
 
-    // Path B: probe adgangsadresseid → query building's enheder → filter by our adresse-UUID
-    const { fetchDawa: fd } = await import('@/app/lib/dawa');
-    const probeRes = await fd(
-      `${DAWA_BASE_URL}/adresser/${dawaId}?struktur=mini`,
-      { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
-      { caller: 'resolveEnhedByDawaId.probe' }
-    );
-    if (probeRes.ok) {
-      const adresse = (await probeRes.json()) as { adgangsadresseid?: string | null };
-      const adgangsId = adresse.adgangsadresseid;
-      if (adgangsId && adgangsId !== dawaId) {
-        const buildingNodes = await fetchBBRGraphQL(
-          `query($vt: DafDateTime!, $id: String!) {
-            BBR_Enhed(first: 200, virkningstid: $vt, where: { adresseIdentificerer: { eq: $id } }) {
-              nodes {
-                id_lokalId
-                adresseIdentificerer
-                enh026EnhedensSamledeAreal
-                enh027ArealTilBeboelse
-                enh028ArealTilErhverv
-                status
-                ejerlejlighed { nodes { bfeNummer } }
+  // Step 2: If no direct match, probe adgangsadresse and filter by adresseIdentificerer
+  if (matchedAreal == null) {
+    try {
+      const { fetchDawa: fd } = await import('@/app/lib/dawa');
+      const probeRes = await fd(
+        `${DAWA_BASE_URL}/adresser/${dawaId}?struktur=mini`,
+        { signal: AbortSignal.timeout(5000), next: { revalidate: 86400 } },
+        { caller: 'resolveEnhedByDawaId.probe' }
+      );
+      if (probeRes.ok) {
+        const adresse = (await probeRes.json()) as { adgangsadresseid?: string | null };
+        const adgangsId = adresse.adgangsadresseid;
+        if (adgangsId && adgangsId !== dawaId) {
+          const buildingNodes = await fetchBBRGraphQL(
+            `query($vt: DafDateTime!, $id: String!) {
+              BBR_Enhed(first: 200, virkningstid: $vt, where: { adresseIdentificerer: { eq: $id } }) {
+                nodes {
+                  id_lokalId
+                  adresseIdentificerer
+                  enh026EnhedensSamledeAreal
+                  enh027ArealTilBeboelse
+                  enh028ArealTilErhverv
+                  status
+                }
               }
+            }`,
+            { vt, id: adgangsId }
+          );
+          const list = Array.isArray(buildingNodes) ? (buildingNodes as EnhedNode[]) : [];
+          const match = list.find(
+            (n) => n.adresseIdentificerer === dawaId && String(n.status ?? '') !== '7'
+          );
+          if (match) matchedAreal = pickAreal(match);
+        }
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+
+  // Step 3: Resolve BFE via Vurderingsportalen ES — their index maps
+  // (vejnavn, husnr, etage, dør) → specific ejerlejligheds-BFE.
+  // Reuse the existing DAWA-resolve pattern: probe for adresse-betegnelse
+  // then match the VP row that has a bfeNumber we can parse.
+  let matchedBfe: number | null = null;
+  try {
+    const { fetchDawa: fd } = await import('@/app/lib/dawa');
+    const adrRes = await fd(
+      `${DAWA_BASE_URL}/adresser/${dawaId}?struktur=mini`,
+      { signal: AbortSignal.timeout(3000), next: { revalidate: 86400 } },
+      { caller: 'resolveEnhedByDawaId.vp-prep' }
+    );
+    if (adrRes.ok) {
+      const adr = (await adrRes.json()) as {
+        betegnelse?: string;
+        adressebetegnelse?: string;
+        etage?: string;
+        dør?: string;
+      };
+      const betegnelse = (adr.betegnelse ?? adr.adressebetegnelse ?? '').split(',')[0].trim();
+      if (betegnelse) {
+        const esRes = await fetch(
+          'https://api-fs.vurderingsportalen.dk/preliminaryproperties/_search',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            },
+            body: JSON.stringify({
+              size: 20,
+              query: { bool: { must: [{ match_phrase: { address: betegnelse } }] } },
+            }),
+            signal: AbortSignal.timeout(5000),
+          }
+        );
+        if (esRes.ok) {
+          const esData = (await esRes.json()) as {
+            hits?: {
+              hits?: Array<{ _source: { bfeNumbers?: unknown; floor?: string; door?: string } }>;
+            };
+          };
+          const targetFloor = (adr.etage ?? '').toLowerCase();
+          const targetDoor = (adr.dør ?? '').toLowerCase();
+          for (const hit of esData.hits?.hits ?? []) {
+            const s = hit._source;
+            if (!s.bfeNumbers) continue;
+            const hitFloor = String(s.floor ?? '').toLowerCase();
+            const hitDoor = String(s.door ?? '').toLowerCase();
+            if (hitFloor !== targetFloor) continue;
+            if (targetDoor && hitDoor !== targetDoor) continue;
+            const candidate = parseInt(String(s.bfeNumbers), 10);
+            if (!isNaN(candidate)) {
+              matchedBfe = candidate;
+              break;
             }
-          }`,
-          { vt, id: adgangsId }
-        );
-        const list = Array.isArray(buildingNodes) ? (buildingNodes as EnhedNode[]) : [];
-        const match = list.find(
-          (n) => n.adresseIdentificerer === dawaId && String(n.status ?? '') !== '7'
-        );
-        if (match) {
-          return { bfe: pickBfe(match), areal: pickAreal(match) };
+          }
         }
       }
     }
   } catch {
-    /* non-fatal — return null */
+    /* VP is optional — non-fatal */
   }
-  return null;
+
+  if (matchedBfe == null && matchedAreal == null) return null;
+  return { bfe: matchedBfe, areal: matchedAreal };
 }
 
 /** Returns a DafDateTime string for the current moment (CET/CEST). */

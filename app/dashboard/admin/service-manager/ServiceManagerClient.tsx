@@ -30,7 +30,6 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link';
 import {
   ArrowLeft,
   Activity,
@@ -45,14 +44,9 @@ import {
   ChevronRight,
   Rocket,
   Bug,
-  Settings,
-  BarChart3,
-  Bot,
   ShieldCheck,
-  Users,
-  CreditCard,
-  AlertCircle,
   Wrench,
+  AlertCircle,
   Sparkles,
   ThumbsUp,
   ThumbsDown,
@@ -63,6 +57,7 @@ import {
   Zap,
   ListChecks,
 } from 'lucide-react';
+import { AdminNavTabs } from '../AdminNavTabs';
 import { useLanguage } from '@/app/context/LanguageContext';
 import type {
   VercelDeployment,
@@ -1079,60 +1074,8 @@ export default function ServiceManagerClient() {
           </div>
         </div>
 
-        {/* Admin tab navigation */}
-        <div className="flex gap-1 -mb-px overflow-x-auto mt-4">
-          <Link
-            href="/dashboard/admin/users"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors"
-          >
-            <Users size={14} /> {da ? 'Brugere' : 'Users'}
-          </Link>
-          <Link
-            href="/dashboard/admin/billing"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors"
-          >
-            <CreditCard size={14} /> {da ? 'Fakturering' : 'Billing'}
-          </Link>
-          <Link
-            href="/dashboard/admin/plans"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors"
-          >
-            <Settings size={14} /> {da ? 'Planer' : 'Plans'}
-          </Link>
-          <Link
-            href="/dashboard/admin/analytics"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors"
-          >
-            <BarChart3 size={14} /> {da ? 'Analyse' : 'Analytics'}
-          </Link>
-          <Link
-            href="/dashboard/admin/ai-media-agents"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors whitespace-nowrap"
-          >
-            <Bot size={14} /> {da ? 'AI-agenter' : 'AI Agents'}
-          </Link>
-          <Link
-            href="/dashboard/admin/security"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors whitespace-nowrap"
-          >
-            <ShieldCheck size={14} /> {da ? 'Sikkerhed' : 'Security'}
-          </Link>
-          <span className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-blue-500 text-blue-300 font-medium cursor-default whitespace-nowrap">
-            <Wrench size={14} /> Service Manager
-          </span>
-          <Link
-            href="/dashboard/admin/service-management"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors whitespace-nowrap"
-          >
-            <Activity size={14} /> {da ? 'Infrastruktur' : 'Infrastructure'}
-          </Link>
-          <Link
-            href="/dashboard/admin/cron-status"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors whitespace-nowrap"
-          >
-            <Clock size={14} /> {da ? 'Cron-status' : 'Cron Status'}
-          </Link>
-        </div>
+        {/* Admin tab navigation — BIZZ-737: shared component */}
+        <AdminNavTabs activeTab="service-manager" da={da} />
       </div>
 
       {/* ─── Body ─── */}

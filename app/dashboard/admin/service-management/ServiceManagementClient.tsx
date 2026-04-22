@@ -31,23 +31,18 @@ import {
   Server,
   Database,
   Zap,
+  Activity,
+  Clock,
   CreditCard,
   Mail,
   Map,
   Search,
-  Activity,
   Globe,
   ExternalLink,
   RefreshCw,
   AlertTriangle,
-  Users,
-  Settings,
-  BarChart3,
-  Bot,
-  ShieldCheck,
-  Wrench,
-  Clock,
 } from 'lucide-react';
+import { AdminNavTabs } from '../AdminNavTabs';
 import { useLanguage } from '@/app/context/LanguageContext';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -678,61 +673,12 @@ export default function ServiceManagementClient() {
           </button>
         </div>
 
-        {/* Admin tab navigation */}
-        <div className="flex gap-1 -mb-px overflow-x-auto mb-6 border-b border-slate-700/50">
-          <Link
-            href="/dashboard/admin/users"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors"
-          >
-            <Users size={14} /> {da ? 'Brugere' : 'Users'}
-          </Link>
-          <Link
-            href="/dashboard/admin/billing"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors"
-          >
-            <CreditCard size={14} /> {da ? 'Fakturering' : 'Billing'}
-          </Link>
-          <Link
-            href="/dashboard/admin/plans"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors"
-          >
-            <Settings size={14} /> {da ? 'Planer' : 'Plans'}
-          </Link>
-          <Link
-            href="/dashboard/admin/analytics"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors"
-          >
-            <BarChart3 size={14} /> {da ? 'Analyse' : 'Analytics'}
-          </Link>
-          <Link
-            href="/dashboard/admin/ai-media-agents"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors whitespace-nowrap"
-          >
-            <Bot size={14} /> {da ? 'AI-agenter' : 'AI Agents'}
-          </Link>
-          <Link
-            href="/dashboard/admin/security"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors whitespace-nowrap"
-          >
-            <ShieldCheck size={14} /> {da ? 'Sikkerhed' : 'Security'}
-          </Link>
-          <Link
-            href="/dashboard/admin/service-manager"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors whitespace-nowrap"
-          >
-            <Wrench size={14} /> Service Manager
-          </Link>
-          {/* Active tab — this page */}
-          <span className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-blue-500 text-blue-300 font-medium cursor-default whitespace-nowrap">
-            <Activity size={14} /> {da ? 'Infrastruktur' : 'Infrastructure'}
-          </span>
-          <Link
-            href="/dashboard/admin/cron-status"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors whitespace-nowrap"
-          >
-            <Clock size={14} /> {da ? 'Cron-status' : 'Cron Status'}
-          </Link>
-        </div>
+        {/* Admin tab navigation — BIZZ-737: shared component */}
+        <AdminNavTabs
+          activeTab="service-management"
+          da={da}
+          className="flex gap-1 -mb-px overflow-x-auto mb-6 border-b border-slate-700/50"
+        />
 
         {/* DAWA global warning (shown once if < 90 days) */}
         {daysUntilDawaDeprecation < 90 && (

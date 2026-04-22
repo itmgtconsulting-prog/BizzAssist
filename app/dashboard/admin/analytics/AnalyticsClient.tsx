@@ -18,7 +18,6 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link';
 import {
   ArrowLeft,
   BarChart3,
@@ -28,15 +27,8 @@ import {
   Globe,
   FileText,
   RefreshCw,
-  Users,
-  CreditCard,
-  Settings,
-  Bot,
-  ShieldCheck,
-  Wrench,
-  Activity,
-  Clock,
 } from 'lucide-react';
+import { AdminNavTabs } from '../AdminNavTabs';
 import { useLanguage } from '@/app/context/LanguageContext';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -153,60 +145,8 @@ export default function AnalyticsClient() {
           </button>
         </div>
 
-        {/* Tab navigation */}
-        <div className="flex gap-1 -mb-px overflow-x-auto mt-4">
-          <Link
-            href="/dashboard/admin/users"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors"
-          >
-            <Users size={14} /> {da ? 'Brugere' : 'Users'}
-          </Link>
-          <Link
-            href="/dashboard/admin/billing"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors"
-          >
-            <CreditCard size={14} /> {da ? 'Fakturering' : 'Billing'}
-          </Link>
-          <Link
-            href="/dashboard/admin/plans"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors"
-          >
-            <Settings size={14} /> {da ? 'Planer' : 'Plans'}
-          </Link>
-          <span className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-blue-500 text-blue-300 font-medium cursor-default">
-            <BarChart3 size={14} /> {da ? 'Analyse' : 'Analytics'}
-          </span>
-          <Link
-            href="/dashboard/admin/ai-media-agents"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors whitespace-nowrap"
-          >
-            <Bot size={14} /> {da ? 'AI-agenter' : 'AI Agents'}
-          </Link>
-          <Link
-            href="/dashboard/admin/security"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors whitespace-nowrap"
-          >
-            <ShieldCheck size={14} /> {da ? 'Sikkerhed' : 'Security'}
-          </Link>
-          <Link
-            href="/dashboard/admin/service-manager"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors whitespace-nowrap"
-          >
-            <Wrench size={14} /> Service Manager
-          </Link>
-          <Link
-            href="/dashboard/admin/service-management"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors whitespace-nowrap"
-          >
-            <Activity size={14} /> {da ? 'Infrastruktur' : 'Infrastructure'}
-          </Link>
-          <Link
-            href="/dashboard/admin/cron-status"
-            className="flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600 transition-colors whitespace-nowrap"
-          >
-            <Clock size={14} /> {da ? 'Cron-status' : 'Cron Status'}
-          </Link>
-        </div>
+        {/* Tab navigation — BIZZ-737: shared component */}
+        <AdminNavTabs activeTab="analytics" da={da} />
       </div>
 
       {/* ─── Content ─── */}

@@ -62,6 +62,12 @@ const eslintConfig = defineConfig([
       'app/lib/domainAuth.ts',
       'app/lib/domainEmbeddingWorker.ts',
       'app/lib/domainPromptBuilder.ts',
+      'app/lib/domainEnrichEntities.ts',
+      // BIZZ-720: Stripe → domain sync updates domain + domain_audit_log
+      // by primary key; webhook auth is Stripe signature verification.
+      'app/lib/domainStripeSync.ts',
+      // Stripe webhook handlers call syncDomainSubscription directly.
+      'app/api/stripe/webhook/**',
       // Domain admin API routes — scoped by assertDomainAdmin at entry
       'app/api/domain/**',
       // Super-admin API routes — operate across domains by design

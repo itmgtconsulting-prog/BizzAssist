@@ -26,6 +26,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { sendRecurringPaymentEmail, sendPaymentFailedEmail } from '@/app/lib/email';
 import { logger } from '@/app/lib/logger';
 import { writeAuditLog } from '@/app/lib/auditLog';
+import { syncDomainSubscription } from '@/app/lib/domainStripeSync';
 
 /**
  * BIZZ-543: Shared 3-step fallback lookup that resolves a Supabase user ID
@@ -292,6 +293,19 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session): Promis
     return;
   }
 
+  // BIZZ-720: If this was an enterprise_domain purchase, propagate
+  // activation to the domain row (status + max_tokens_per_month).
+  // The checkout session should carry `domain_id` in metadata when
+  // created from the domain-onboarding flow — we use it as the
+  // primary key and fall back to stripe_customer_id lookup otherwise.
+  await syncDomainSubscription({
+    planId,
+    customerId: session.customer as string | null,
+    subscriptionId: (session.subscription as string | null) ?? null,
+    status: 'active',
+    domainIdHint: session.metadata?.domain_id ?? null,
+  });
+
   logger.log(`[stripe/webhook] Activated plan "${planId}" — ok`);
 }
 
@@ -398,6 +412,17 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription): Pro
     return;
   }
 
+  // BIZZ-720: Propagate status change to the domain row when this is an
+  // enterprise_domain subscription. Past_due keeps status=active so the
+  // grace banner at the tenant layer handles the warning — only unpaid /
+  // canceled flips the domain to suspended.
+  await syncDomainSubscription({
+    planId,
+    customerId,
+    subscriptionId: subscription.id,
+    status,
+  });
+
   logger.log(`[stripe/webhook] Updated subscription: plan=${planId}, status=${status}`);
 }
 
@@ -460,6 +485,16 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription): Pro
     });
     return;
   }
+
+  // BIZZ-720: Suspend any enterprise_domain linked to this subscription.
+  // The sync helper no-ops when planId !== enterprise_domain; we read it
+  // from existingSub so a cancellation without metadata still propagates.
+  await syncDomainSubscription({
+    planId: (existingSub.planId as string | undefined) ?? null,
+    customerId,
+    subscriptionId: subscription.id,
+    status: 'cancelled',
+  });
 
   logger.log(`[stripe/webhook] Cancelled subscription — ok`);
 }

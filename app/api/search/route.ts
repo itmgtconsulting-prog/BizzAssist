@@ -198,6 +198,9 @@ async function searchAddresses(q: string, normQ: string): Promise<UnifiedSearchR
       };
     }> = [];
     if (adgangsadresser.length > 0) {
+      logger.info(
+        `[search/723] probing ${adgangsadresser.length} adgangsadresser for units, q="${q}"`
+      );
       try {
         const probeResults = await Promise.all(
           adgangsadresser.map(async (adg) => {
@@ -223,6 +226,9 @@ async function searchAddresses(q: string, normQ: string): Promise<UnifiedSearchR
         for (let i = 0; i < adgangsadresser.length; i++) {
           const adg = adgangsadresser[i];
           const units = probeResults[i];
+          logger.info(
+            `[search/723] adg ${adg.adresse.husnr} (id=${adg.adresse.id.slice(0, 8)}) returned ${units.length} units`
+          );
           for (const u of units) {
             // Skip units without etage/dør — they're the same as adgangsadresse.
             if (!u.id || !(u.etage || u.dør)) continue;

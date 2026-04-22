@@ -225,31 +225,60 @@ export default function UsersClient() {
         {/* Tab navigation — BIZZ-737: shared component */}
         <AdminNavTabs activeTab="users" da={da} />
 
-        {/* Search + plan filter */}
-        <div className="flex gap-3 mt-4 items-center">
-          <div className="relative flex-1 max-w-xs">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder={da ? 'Søg navn eller email…' : 'Search name or email…'}
-              className="w-full bg-slate-800/60 border border-slate-700/50 rounded-lg pl-9 pr-3 py-2 text-white text-xs placeholder:text-slate-500 focus:border-blue-500 focus:outline-none"
-            />
+        {/* BIZZ-754: Dedicated filter-card (grouped filters + reset), matches
+            ejendomme-style filter pattern. Previously the search + plan-filter
+            sat inline under the tab-bar — easy to miss. */}
+        <div className="mt-4 bg-slate-900/40 border border-slate-700/40 rounded-xl p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-slate-400 text-xs uppercase tracking-wide font-medium">
+              {da ? 'Filtre' : 'Filters'}
+            </p>
+            {(searchQuery || planFilter !== 'all') && (
+              <button
+                onClick={() => {
+                  setSearchQuery('');
+                  setPlanFilter('all');
+                }}
+                className="text-xs text-slate-400 hover:text-blue-300 transition-colors"
+              >
+                {da ? 'Nulstil filtre' : 'Reset filters'}
+              </button>
+            )}
           </div>
-          <select
-            value={planFilter}
-            onChange={(e) => setPlanFilter(e.target.value)}
-            className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-3 py-2 text-white text-xs focus:border-blue-500 focus:outline-none"
-          >
-            <option value="all">{da ? 'Alle planer' : 'All plans'}</option>
-            <option value="none">{da ? 'Uden plan' : 'No plan'}</option>
-            {allPlans.map((p) => (
-              <option key={p.id} value={p.id}>
-                {da ? p.nameDa : p.nameEn}
-              </option>
-            ))}
-          </select>
+          <div className="flex gap-3 items-center flex-wrap">
+            <label className="block flex-1 min-w-[180px] max-w-xs">
+              <span className="sr-only">{da ? 'Søg' : 'Search'}</span>
+              <div className="relative">
+                <Search
+                  size={14}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
+                />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder={da ? 'Søg navn eller email…' : 'Search name or email…'}
+                  className="w-full bg-slate-800/60 border border-slate-700/50 rounded-lg pl-9 pr-3 py-2 text-white text-xs placeholder:text-slate-500 focus:border-blue-500 focus:outline-none"
+                />
+              </div>
+            </label>
+            <label className="block">
+              <span className="sr-only">{da ? 'Plan' : 'Plan'}</span>
+              <select
+                value={planFilter}
+                onChange={(e) => setPlanFilter(e.target.value)}
+                className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-3 py-2 text-white text-xs focus:border-blue-500 focus:outline-none"
+              >
+                <option value="all">{da ? 'Alle planer' : 'All plans'}</option>
+                <option value="none">{da ? 'Uden plan' : 'No plan'}</option>
+                {allPlans.map((pl) => (
+                  <option key={pl.id} value={pl.id}>
+                    {da ? pl.nameDa : pl.nameEn}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
         </div>
 
         {/* Quick stats + add user button */}

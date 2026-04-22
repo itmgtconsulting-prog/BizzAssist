@@ -1123,16 +1123,19 @@ function PropertyMap({
     window.localStorage.setItem(ZOOM_STORAGE_KEY, String(e.viewState.zoom));
   }, []);
 
-  /** Vis fallback UI hvis Mapbox-token mangler */
+  /** Vis fallback UI hvis Mapbox-token mangler (BIZZ-727).
+   *  Bemærk: NEXT_PUBLIC_* vars inlines ved build-time, så tokenet skal være sat
+   *  i Vercel Preview/Production FØR deployment — ikke kun lokalt. */
   if (!harToken) {
     return (
       <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900 text-center px-6 gap-3">
         <MapIcon size={28} className="text-slate-500" />
         <p className="text-slate-400 text-sm font-medium">Kortvisning ikke aktiveret</p>
-        <p className="text-slate-500 text-xs leading-relaxed">
-          Tilføj{' '}
+        <p className="text-slate-500 text-xs leading-relaxed max-w-xs">
           <code className="bg-slate-800 px-1 rounded text-blue-300">NEXT_PUBLIC_MAPBOX_TOKEN</code>{' '}
-          til <code className="bg-slate-800 px-1 rounded text-blue-300">.env.local</code>
+          mangler i dette miljø. Sæt den i Vercel Dashboard (Preview + Production) og redeploy,
+          eller tilføj den til{' '}
+          <code className="bg-slate-800 px-1 rounded text-blue-300">.env.local</code> i udvikling.
         </p>
       </div>
     );

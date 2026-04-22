@@ -70,8 +70,9 @@ const PROPERTY_PROGRESS_KEY = 'sitemap_bfe_after';
 /** Vurderingsportalen ES endpoint */
 const VP_ES_URL = 'https://api-fs.vurderingsportalen.dk/preliminaryproperties/_search';
 
-/** Antal BFE'er pr. VP ES request */
-const VP_PAGE_SIZE = 500;
+/** Antal BFE'er pr. VP ES request — VP ES tillader op til 10.000 per request,
+ * men 1000 er en god balance mellem throughput og stabilitet. */
+const VP_PAGE_SIZE = 1_000;
 
 /** Supabase ai_settings nøgle til VP search_after-cursor */
 const VP_PROGRESS_KEY = 'sitemap_vp_after';

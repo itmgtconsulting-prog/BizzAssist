@@ -892,6 +892,143 @@ function formatDate(isoDate: string): string {
 }
 
 /**
+/**
+ * BIZZ-680: Bygger CVRPublicData fra de dedikerede DB-kolonner i cvr_virksomhed.
+ * Bruges som fallback når raw_source er utilstrækkelig (bulk-backfill har
+ * populeret kolonnerne men ikke de nested ES-arrays).
+ *
+ * Felter der hentes direkte fra kolonner:
+ *   - navn (fuld virksomhedsnavn)
+ *   - adresse_json (vejnavn, postnr, bynavn, kommune)
+ *   - branche_kode, branche_tekst
+ *   - stiftet, status
+ *   - ansatte_aar, ansatte_kvartal_1-4
+ *   - virksomhedsform
+ *
+ * Felter der forbliver null (kræver fuld ES-doc):
+ *   - owners, deltagere (deltagerRelation[])
+ *   - historik
+ *   - productionunits (hentes separat)
+ *
+ * @param admin - Supabase admin client
+ * @param vat - 8-cifret CVR-nummer
+ * @returns CVRPublicData eller null hvis ikke fundet
+ */
+async function buildCvrDataFromColumns(
+  admin: ReturnType<typeof createAdminClient>,
+  vat: string
+): Promise<CVRPublicData | null> {
+  const { data } = await admin
+    .from('cvr_virksomhed' as 'sitemap_entries')
+    .select(
+      'cvr, navn, adresse_json, branche_kode, branche_tekst, stiftet, ophoert, status, virksomhedsform, ansatte_aar, ansatte_kvartal_1, ansatte_kvartal_2, ansatte_kvartal_3, ansatte_kvartal_4'
+    )
+    .eq('cvr', vat)
+    .maybeSingle();
+
+  const row = data as unknown as {
+    cvr: string;
+    navn: string | null;
+    adresse_json: Record<string, unknown> | null;
+    branche_kode: string | number | null;
+    branche_tekst: string | null;
+    stiftet: string | null;
+    ophoert: string | null;
+    status: string | null;
+    virksomhedsform: string | null;
+    ansatte_aar: number | null;
+    ansatte_kvartal_1: number | null;
+    ansatte_kvartal_2: number | null;
+    ansatte_kvartal_3: number | null;
+    ansatte_kvartal_4: number | null;
+  } | null;
+
+  if (!row || !row.navn) return null;
+
+  // Parse adresse_json — strukturen er en Vrvirksomhed beliggenhedsadresse
+  type AdresseJson = {
+    vejnavn?: string | null;
+    husnummerFra?: number | null;
+    bogstavFra?: string | null;
+    etage?: string | null;
+    sidedoer?: string | null;
+    conavn?: string | null;
+    postnummer?: number | null;
+    postdistrikt?: string | null;
+    bynavn?: string | null;
+    landekode?: string | null;
+    kommune?: { kommuneKode?: number | null; kommuneNavn?: string | null };
+  };
+  const addr = (row.adresse_json ?? {}) as AdresseJson;
+
+  const husnrStr =
+    addr.husnummerFra != null ? String(addr.husnummerFra) + (addr.bogstavFra ?? '') : '';
+  const vejLinje = [addr.vejnavn, husnrStr].filter(Boolean).join(' ').trim();
+  const etageLinje = [
+    addr.etage ? `${addr.etage}.` : null,
+    addr.sidedoer ? `${addr.sidedoer}` : null,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+  const adresseStreng = [addr.conavn, vejLinje, etageLinje].filter(Boolean).join(', ').trim();
+
+  const postnr = addr.postnummer != null ? String(addr.postnummer) : '';
+  const by = addr.postdistrikt ?? addr.bynavn ?? '';
+
+  // Vælg nyeste kvartal med ansatte — ellers årstal
+  const kvartaler = [
+    row.ansatte_kvartal_4,
+    row.ansatte_kvartal_3,
+    row.ansatte_kvartal_2,
+    row.ansatte_kvartal_1,
+  ];
+  const nyesteKvartal = kvartaler.find((v) => typeof v === 'number' && v > 0) ?? null;
+  const ansatte = nyesteKvartal ?? row.ansatte_aar ?? null;
+
+  const branchekode =
+    row.branche_kode != null && !Number.isNaN(Number(row.branche_kode))
+      ? Number(row.branche_kode)
+      : null;
+
+  return {
+    vat: Number(row.cvr),
+    name: row.navn,
+    address: adresseStreng,
+    zipcode: postnr,
+    city: by,
+    phone: null,
+    email: null,
+    industrycode: branchekode,
+    industrydesc: row.branche_tekst,
+    companycode: null,
+    companydesc: row.virksomhedsform,
+    startdate: row.stiftet,
+    enddate: row.ophoert,
+    employees: ansatte != null ? String(ansatte) : null,
+    addressco: addr.conavn ?? null,
+    creditstartdate: null,
+    creditstatus: null,
+    owners: null,
+    productionunits: null,
+    formaal: null,
+    registreretKapital: null,
+    stiftet: row.stiftet,
+    sidstOpdateret: null,
+    reklamebeskyttet: false,
+    kommune: addr.kommune?.kommuneNavn ?? null,
+    statusTekst: row.status,
+    foersteRegnskabsperiode: null,
+    regnskabsaar: null,
+    senesteVedtaegtsdato: null,
+    tegningsregel: null,
+    aarsbeskaeftigelse: [],
+    historik: [],
+    deltagere: [],
+  };
+}
+
+/**
  * Henter produktionsenheder fra det separate produktionsenhed-index i CVR ES.
  * Returnerer fulde PE-data med navn, adresse, branche, ansatte etc.
  *
@@ -1180,6 +1317,12 @@ export async function GET(req: NextRequest): Promise<NextResponse<CVRPublicData 
   // writebackCvrToCache efter live-fetch så næste opslag rammer cachen.
   // Navne-søgning + enhedsNummer forbliver live — kræver fulde ES-query
   // semantik som vi ikke har kopieret til tabellen.
+  //
+  // BIZZ-680 (2026-04-22): Bulk-backfill populerede dedikerede kolonner
+  // (navn, adresse_json, branche_*, stiftet) korrekt men raw_source mangler
+  // nested arrays (navne[], beliggenhedsadresse[] etc.) som mapESHit() kræver.
+  // Derfor: forsøg mapESHit først (for nyere writebacks med fuld raw_source),
+  // og fald tilbage til DB-kolonne-mapping for bulk-backfill-rækker.
   if (vat) {
     try {
       const admin = createAdminClient();
@@ -1187,7 +1330,15 @@ export async function GET(req: NextRequest): Promise<NextResponse<CVRPublicData 
       const cached = await fetchCvrFromCache(admin, vat);
       if (cached) {
         const fakeHit = { _source: { Vrvirksomhed: cached } };
-        const mapped = mapESHit(fakeHit);
+        let mapped = mapESHit(fakeHit);
+
+        // BIZZ-680: Hvis mapESHit returnerede fallback-navn (CVR NNNNNNNN)
+        // er raw_source utilstrækkelig — byg fra dedikerede DB-kolonner.
+        if (!mapped || mapped.name === `CVR ${vat}`) {
+          const fromColumns = await buildCvrDataFromColumns(admin, vat);
+          if (fromColumns) mapped = fromColumns;
+        }
+
         if (mapped) {
           // PE-data ligger ikke i cachen (separat index) — hentes live for
           // at bevare response-shape. Typisk <100ms mod ~500ms for virksomhed.

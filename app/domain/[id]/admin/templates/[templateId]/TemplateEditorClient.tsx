@@ -29,6 +29,9 @@ import {
   CheckCircle2,
   AlertCircle,
   RotateCcw,
+  FolderOpen,
+  ArrowUp,
+  ArrowDown,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 
@@ -60,7 +63,7 @@ interface TemplateDetail {
   file_type: string;
 }
 
-type TabKey = 'metadata' | 'instructions' | 'examples' | 'placeholders' | 'versions';
+type TabKey = 'metadata' | 'instructions' | 'examples' | 'placeholders' | 'documents' | 'versions';
 
 interface VersionRow {
   id: string;
@@ -69,6 +72,31 @@ interface VersionRow {
   note: string | null;
   created_at: string;
   created_by: string | null;
+}
+
+// BIZZ-786: Linked-document attachment shape returned by
+// GET /api/domain/[id]/templates/[templateId]/documents
+interface AttachmentRow {
+  id: string;
+  template_id: string;
+  document_id: string;
+  guidelines: string | null;
+  sort_order: number;
+  created_at: string;
+  document: {
+    id: string;
+    name: string;
+    file_type: string;
+    file_path?: string;
+  } | null;
+}
+
+/** Training doc summary for the "attach new" picker. */
+interface TrainingDocSummary {
+  id: string;
+  name: string;
+  doc_type: string;
+  parse_status: string;
 }
 
 export default function TemplateEditorClient({
@@ -102,6 +130,17 @@ export default function TemplateEditorClient({
   const versionFileInputRef = useRef<HTMLInputElement>(null);
   const [uploadingVersion, setUploadingVersion] = useState(false);
 
+  // BIZZ-786: Documents tab state — attachments + available training docs
+  const [attachments, setAttachments] = useState<AttachmentRow[]>([]);
+  const [attachmentsLoading, setAttachmentsLoading] = useState(false);
+  const [availableDocs, setAvailableDocs] = useState<TrainingDocSummary[]>([]);
+  const [availableLoading, setAvailableLoading] = useState(false);
+  // Track per-attachment draft guidelines so the admin can edit without fire-
+  // and-forget PATCH on every keystroke. Commit via blur or Gem-button.
+  const [guidelineDrafts, setGuidelineDrafts] = useState<Record<string, string>>({});
+  const [attachSelectOpen, setAttachSelectOpen] = useState(false);
+  const [attachError, setAttachError] = useState<string | null>(null);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -123,6 +162,130 @@ export default function TemplateEditorClient({
   useEffect(() => {
     void load();
   }, [load]);
+
+  // BIZZ-786: Documents tab — fetch attachments whenever the tab is opened.
+  const loadAttachments = useCallback(async () => {
+    setAttachmentsLoading(true);
+    setAttachError(null);
+    try {
+      const r = await fetch(`/api/domain/${domainId}/templates/${templateId}/documents`);
+      if (!r.ok) {
+        setAttachError(
+          da ? 'Kunne ikke hente vedhæftede dokumenter' : 'Could not load attachments'
+        );
+        return;
+      }
+      const json = (await r.json()) as { attachments: AttachmentRow[] };
+      const list = Array.isArray(json.attachments) ? json.attachments : [];
+      setAttachments(list);
+      // Seed draft map with existing guidelines
+      const drafts: Record<string, string> = {};
+      list.forEach((a) => {
+        drafts[a.id] = a.guidelines ?? '';
+      });
+      setGuidelineDrafts(drafts);
+    } catch {
+      setAttachError(da ? 'Netværksfejl' : 'Network error');
+    } finally {
+      setAttachmentsLoading(false);
+    }
+  }, [domainId, templateId, da]);
+
+  const loadAvailableDocs = useCallback(async () => {
+    setAvailableLoading(true);
+    try {
+      const r = await fetch(`/api/domain/${domainId}/training-docs`);
+      if (!r.ok) return;
+      const json = (await r.json()) as { docs?: TrainingDocSummary[] } | TrainingDocSummary[];
+      // Endpoint may return array-or-wrapped depending on iteration; handle both.
+      const list = Array.isArray(json) ? json : (json.docs ?? []);
+      setAvailableDocs(list);
+    } finally {
+      setAvailableLoading(false);
+    }
+  }, [domainId]);
+
+  useEffect(() => {
+    if (tab !== 'documents') return;
+    void loadAttachments();
+    void loadAvailableDocs();
+  }, [tab, loadAttachments, loadAvailableDocs]);
+
+  /** Attach a training doc to the template. */
+  const attachDoc = async (documentId: string) => {
+    setAttachError(null);
+    const nextOrder = attachments.reduce((m, a) => Math.max(m, a.sort_order + 1), 0);
+    const r = await fetch(`/api/domain/${domainId}/templates/${templateId}/documents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ documentId, sortOrder: nextOrder }),
+    });
+    if (!r.ok) {
+      if (r.status === 409) {
+        setAttachError(da ? 'Dokumentet er allerede tilknyttet' : 'Document already attached');
+      } else {
+        setAttachError(da ? 'Kunne ikke tilknytte dokument' : 'Failed to attach document');
+      }
+      return;
+    }
+    setAttachSelectOpen(false);
+    await loadAttachments();
+  };
+
+  /** Persist a guideline change for a single attachment. */
+  const saveGuidelines = async (attachmentId: string) => {
+    const text = guidelineDrafts[attachmentId] ?? '';
+    const r = await fetch(`/api/domain/${domainId}/templates/${templateId}/documents`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ attachmentId, guidelines: text || null }),
+    });
+    if (r.ok) {
+      // Update local copy so the diff indicator clears immediately.
+      setAttachments((prev) =>
+        prev.map((a) => (a.id === attachmentId ? { ...a, guidelines: text || null } : a))
+      );
+    }
+  };
+
+  /** Detach (remove link but keep doc) */
+  const detachDoc = async (attachmentId: string) => {
+    if (
+      !window.confirm(
+        da
+          ? 'Fjern denne tilknytning? Selve dokumentet forbliver i videnbasen.'
+          : 'Remove this link? The document itself stays in the knowledge base.'
+      )
+    )
+      return;
+    const url = `/api/domain/${domainId}/templates/${templateId}/documents?attachmentId=${attachmentId}`;
+    const r = await fetch(url, { method: 'DELETE' });
+    if (r.ok) await loadAttachments();
+  };
+
+  /** Move attachment up or down in the sort order. */
+  const moveAttachment = async (attachmentId: string, direction: -1 | 1) => {
+    const idx = attachments.findIndex((a) => a.id === attachmentId);
+    const swapIdx = idx + direction;
+    if (idx < 0 || swapIdx < 0 || swapIdx >= attachments.length) return;
+    const a = attachments[idx];
+    const b = attachments[swapIdx];
+    // Swap sort_order values via two PATCH calls — junction rows are small so
+    // the round-trip cost is trivial.
+    await Promise.all([
+      fetch(`/api/domain/${domainId}/templates/${templateId}/documents`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ attachmentId: a.id, sortOrder: b.sort_order }),
+      }),
+      fetch(`/api/domain/${domainId}/templates/${templateId}/documents`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ attachmentId: b.id, sortOrder: a.sort_order }),
+      }),
+    ]);
+    await loadAttachments();
+  };
 
   // Mark dirty whenever a buffer changes (skip the initial hydration)
   const hydrated = useRef(false);
@@ -291,6 +454,7 @@ export default function TemplateEditorClient({
     { key: 'instructions', label: da ? 'Instruktioner' : 'Instructions', icon: BookOpen },
     { key: 'examples', label: da ? 'Eksempler' : 'Examples', icon: FileText },
     { key: 'placeholders', label: 'Placeholders', icon: ListChecks },
+    { key: 'documents', label: da ? 'Dokumenter' : 'Documents', icon: FolderOpen },
     { key: 'versions', label: da ? 'Versioner' : 'Versions', icon: History },
   ];
 
@@ -530,6 +694,207 @@ export default function TemplateEditorClient({
                   />
                 </li>
               ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {/* BIZZ-786: Documents (linked training docs with per-attachment guidelines) */}
+      {tab === 'documents' && (
+        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-6 space-y-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                <FolderOpen size={16} className="text-blue-400" />
+                {da ? 'Tilknyttede dokumenter' : 'Linked documents'}
+              </h3>
+              <p className="text-xs text-slate-400 mt-1 max-w-xl">
+                {da
+                  ? 'Vælg dokumenter fra videnbasen som er specifikt relevante for denne skabelon. Tilføj guidelines der forklarer AI\u2019en hvordan hvert dokument skal bruges — fx hvornår et afsnit skal citeres, eller hvilke eksempler den skal følge.'
+                  : 'Attach documents from the knowledge base that are specifically relevant for this template. Add guidelines that tell the AI how to use each document — e.g. when to cite a passage or which examples to follow.'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setAttachSelectOpen((v) => !v)}
+              className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium rounded-lg transition-colors"
+            >
+              <Plus size={13} />
+              {da ? 'Tilføj dokument' : 'Attach document'}
+            </button>
+          </div>
+
+          {attachError && (
+            <div className="text-rose-400 text-xs flex items-center gap-1">
+              <AlertCircle size={12} /> {attachError}
+            </div>
+          )}
+
+          {/* Picker: available training docs not yet attached */}
+          {attachSelectOpen && (
+            <div className="bg-slate-900/60 border border-slate-700/40 rounded-lg p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-slate-300 font-medium">
+                  {da ? 'Vælg fra videnbasen' : 'Pick from knowledge base'}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setAttachSelectOpen(false)}
+                  className="text-xs text-slate-500 hover:text-white"
+                >
+                  {da ? 'Luk' : 'Close'}
+                </button>
+              </div>
+              {availableLoading ? (
+                <Loader2 size={14} className="animate-spin text-blue-400" />
+              ) : (
+                (() => {
+                  const attachedIds = new Set(attachments.map((a) => a.document_id));
+                  const pickable = availableDocs.filter((d) => !attachedIds.has(d.id));
+                  if (pickable.length === 0) {
+                    return (
+                      <p className="text-xs text-slate-500">
+                        {da
+                          ? 'Alle tilgængelige dokumenter er allerede tilknyttet. Upload flere i Dokumenter-siden.'
+                          : 'All available documents are already attached. Upload more on the Documents page.'}
+                      </p>
+                    );
+                  }
+                  return (
+                    <ul className="space-y-1 max-h-64 overflow-y-auto">
+                      {pickable.map((d) => (
+                        <li key={d.id}>
+                          <button
+                            type="button"
+                            onClick={() => attachDoc(d.id)}
+                            className="w-full text-left px-3 py-2 rounded-md bg-slate-800/60 hover:bg-slate-700/60 border border-slate-700/40 transition-colors flex items-center gap-2"
+                          >
+                            <FileText size={13} className="text-slate-400 shrink-0" />
+                            <span className="text-sm text-white truncate">{d.name}</span>
+                            <span className="ml-auto text-[10px] text-slate-500 uppercase tracking-wide">
+                              {d.doc_type}
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  );
+                })()
+              )}
+            </div>
+          )}
+
+          {/* Attachments list */}
+          {attachmentsLoading ? (
+            <div className="py-8 flex items-center justify-center">
+              <Loader2 size={18} className="animate-spin text-blue-400" />
+            </div>
+          ) : attachments.length === 0 ? (
+            <div className="py-8 text-center text-xs text-slate-500">
+              {da
+                ? 'Ingen dokumenter tilknyttet endnu. Klik på "Tilføj dokument" for at starte.'
+                : 'No documents linked yet. Click "Attach document" to start.'}
+            </div>
+          ) : (
+            <ul className="space-y-3">
+              {attachments.map((a, idx) => {
+                const draft = guidelineDrafts[a.id] ?? '';
+                const savedVal = a.guidelines ?? '';
+                const dirty = draft !== savedVal;
+                return (
+                  <li
+                    key={a.id}
+                    className="bg-slate-900/40 border border-slate-700/40 rounded-lg p-3 space-y-2"
+                  >
+                    <div className="flex items-center gap-2">
+                      <FileText size={14} className="text-blue-400 shrink-0" />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm text-white font-medium truncate">
+                          {a.document?.name ?? (da ? '(ukendt dokument)' : '(unknown document)')}
+                        </p>
+                        {a.document?.file_type && (
+                          <p className="text-[10px] text-slate-500 uppercase tracking-wide">
+                            {a.document.file_type}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => moveAttachment(a.id, -1)}
+                          disabled={idx === 0}
+                          className="p-1.5 rounded text-slate-400 hover:text-white hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                          aria-label={da ? 'Flyt op' : 'Move up'}
+                        >
+                          <ArrowUp size={12} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => moveAttachment(a.id, 1)}
+                          disabled={idx === attachments.length - 1}
+                          className="p-1.5 rounded text-slate-400 hover:text-white hover:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                          aria-label={da ? 'Flyt ned' : 'Move down'}
+                        >
+                          <ArrowDown size={12} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => detachDoc(a.id)}
+                          className="p-1.5 rounded text-rose-400 hover:text-white hover:bg-rose-600/40 transition-colors"
+                          aria-label={da ? 'Fjern tilknytning' : 'Detach'}
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block">
+                        <span className="text-[11px] text-slate-400 flex items-center justify-between">
+                          <span>
+                            {da
+                              ? 'Guidelines — hvordan skal AI\u2019en bruge dette dokument?'
+                              : 'Guidelines — how should the AI use this document?'}
+                          </span>
+                          <span className="text-slate-600">{draft.length}/4000</span>
+                        </span>
+                        <textarea
+                          value={draft}
+                          onChange={(e) =>
+                            setGuidelineDrafts((prev) => ({ ...prev, [a.id]: e.target.value }))
+                          }
+                          onBlur={() => {
+                            if (dirty) void saveGuidelines(a.id);
+                          }}
+                          maxLength={4000}
+                          rows={3}
+                          placeholder={
+                            da
+                              ? 'Fx: "Brug afsnit 3 som reference for klausul-formulering. Citér aldrig direkte — omformulér på klientens vegne."'
+                              : 'E.g.: "Use section 3 as reference for clause wording. Never cite verbatim — paraphrase on the client\u2019s behalf."'
+                          }
+                          className="mt-1 w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-md text-white text-xs resize-vertical"
+                        />
+                      </label>
+                      {dirty && (
+                        <div className="mt-1 flex items-center justify-between">
+                          <span className="text-[10px] text-amber-400">
+                            {da
+                              ? 'Ikke gemt — tryk udenfor feltet for at gemme'
+                              : 'Unsaved — blur field to save'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => saveGuidelines(a.id)}
+                            className="text-[10px] px-2 py-0.5 rounded bg-blue-600 hover:bg-blue-500 text-white transition-colors"
+                          >
+                            {da ? 'Gem' : 'Save'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>

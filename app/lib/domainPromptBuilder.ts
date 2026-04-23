@@ -53,6 +53,22 @@ export interface CaseDocContext {
   text: string;
 }
 
+/**
+ * BIZZ-786: A document linked to the selected template via the
+ * `domain_template_document` junction. Guidelines tell Claude exactly how
+ * the admin wants this reference doc used for this particular template —
+ * e.g. "treat section 3 as canonical wording" or "use as a style example".
+ */
+export interface TemplateDocContext {
+  attachment_id: string;
+  document_id: string;
+  name: string;
+  file_type: string;
+  guidelines: string | null;
+  sort_order: number;
+  text: string;
+}
+
 export interface BizzAssistEntity {
   kind: 'cvr' | 'bfe';
   id: string;
@@ -61,6 +77,8 @@ export interface BizzAssistEntity {
 
 export interface GenerationContext {
   template: TemplateContext;
+  /** BIZZ-786: Reference docs explicitly linked to this template with per-attachment guidelines. */
+  template_docs: TemplateDocContext[];
   training_chunks: ChunkContext[];
   case_docs: CaseDocContext[];
   /** RAG chunks from case docs — only populated when inline case-docs exceed the cap */
@@ -119,6 +137,59 @@ async function fetchTemplate(admin: unknown, templateId: string): Promise<Templa
   };
 }
 
+/**
+ * BIZZ-786: Fetch training docs explicitly linked to the template via the
+ * `domain_template_document` junction, joined with each doc's extracted text.
+ * Returns an empty list on any error so generation still proceeds.
+ */
+async function fetchTemplateDocs(
+  admin: unknown,
+  domainId: string,
+  templateId: string
+): Promise<TemplateDocContext[]> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = (await (admin as any)
+      .from('domain_template_document')
+      .select(
+        'id, document_id, guidelines, sort_order, document:document_id (id, name, file_type, extracted_text)'
+      )
+      .eq('template_id', templateId)
+      .eq('domain_id', domainId)
+      .order('sort_order', { ascending: true })
+      .order('created_at', { ascending: true })) as {
+      data: Array<{
+        id: string;
+        document_id: string;
+        guidelines: string | null;
+        sort_order: number;
+        document: {
+          id: string;
+          name: string;
+          file_type: string;
+          extracted_text: string | null;
+        } | null;
+      }> | null;
+      error: unknown;
+    };
+    if (error || !data) return [];
+    return data
+      .filter((row) => row.document) // drop orphans (shouldn't happen under FK, but be safe)
+      .map((row) => ({
+        attachment_id: row.id,
+        document_id: row.document_id,
+        name: row.document!.name,
+        file_type: row.document!.file_type,
+        guidelines: row.guidelines,
+        sort_order: row.sort_order,
+        text: row.document!.extracted_text ?? '',
+      }));
+  } catch (err) {
+    logger.warn('[promptBuilder] template-docs fetch failed:', err);
+    return [];
+  }
+}
+
 async function fetchCaseDocs(admin: unknown, caseId: string): Promise<CaseDocContext[]> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data } = await (admin as any)
@@ -165,6 +236,12 @@ export async function buildGenerationContext(
     extracted_text: '',
   };
   if (!template.extracted_text) warnings.push('template-no-extracted-text');
+
+  // 1b. BIZZ-786: Load template-linked reference documents + guidelines.
+  // These are explicitly attached by the domain admin and always take priority
+  // over generic training chunks — they represent "for THIS template, look
+  // at THESE specific docs with THIS guidance".
+  const templateDocs = await fetchTemplateDocs(admin, opts.domainId, opts.templateId);
 
   // 2. Load case docs
   const fetchDocs = opts.fetchers?.caseDocs ?? fetchCaseDocs;
@@ -254,6 +331,31 @@ export async function buildGenerationContext(
   if (template.instructions) {
     systemParts.push('TEMPLATE INSTRUCTIONS:\n' + template.instructions);
   }
+  // BIZZ-786: Surface per-template linked documents + guidelines before the
+  // user instructions so the model treats them as "always-on reference" for
+  // this template. Each doc is labelled so Claude can cite which attachment
+  // informed which decision.
+  if (templateDocs.length > 0) {
+    const docSections = templateDocs
+      .map((d, i) => {
+        const header = `[DOC ${i + 1}] ${d.name} (${d.file_type.toUpperCase()})`;
+        const guidelinesBlock = d.guidelines
+          ? `GUIDELINES: ${d.guidelines}`
+          : 'GUIDELINES: (none specified — use as general reference for this template)';
+        // Cap per-doc text to keep any single doc from dominating the context;
+        // Claude gets the full guidelines and a generous slice of the content.
+        const capped = d.text.length > 8000 ? d.text.slice(0, 8000) + '\n…[truncated]' : d.text;
+        return `${header}\n${guidelinesBlock}\n---\n${capped}`.trim();
+      })
+      .join('\n\n');
+    systemParts.push(
+      'TEMPLATE-SPECIFIC REFERENCE DOCUMENTS:\n' +
+        'These documents were explicitly linked to this template by the domain admin. ' +
+        'Follow the per-document guidelines when using them. ' +
+        'Do not quote verbatim unless a guideline allows it.\n\n' +
+        docSections
+    );
+  }
   if (opts.userInstructions) {
     systemParts.push('USER INSTRUCTIONS:\n' + opts.userInstructions);
   }
@@ -271,9 +373,13 @@ export async function buildGenerationContext(
     (s, e) => s + estimateTokens(typeof e.data === 'string' ? e.data : JSON.stringify(e.data)),
     0
   );
+  // Note: template-doc text is already embedded in system_prompt so it's
+  // counted via estimateTokens(system_prompt) above.
 
   if (tokens > MAX_CONTEXT_TOKENS) {
-    // Drop training chunks first — they're the least-direct signal
+    // Drop training chunks first — they're the least-direct signal. Linked
+    // template docs are NEVER trimmed here; they were explicitly chosen by
+    // the admin as authoritative references for this template.
     while (trainingChunks.length > 0 && tokens > MAX_CONTEXT_TOKENS) {
       const popped = trainingChunks.pop();
       if (popped) tokens -= estimateTokens(popped.content);
@@ -288,6 +394,7 @@ export async function buildGenerationContext(
 
   return {
     template,
+    template_docs: templateDocs,
     training_chunks: trainingChunks,
     case_docs: inlineCaseDocs,
     case_doc_chunks: caseDocChunks,

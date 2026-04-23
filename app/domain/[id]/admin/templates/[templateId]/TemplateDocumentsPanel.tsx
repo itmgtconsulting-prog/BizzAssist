@@ -80,7 +80,12 @@ export function TemplateDocumentsPanel({ domainId, templateId }: Props) {
     try {
       const r = await fetch(`/api/domain/${domainId}/templates/${templateId}/documents`);
       if (!r.ok) {
-        setError(da ? 'Kunne ikke hente dokumenter' : 'Could not load documents');
+        // BIZZ-793: Skjul GET-fejl og vis empty-state i stedet — fejl-banner
+        // gav misvisende indtryk af at noget var gaaet galt naar skabelonen
+        // bare ikke havde nogen dokumenter endnu. Reale errors (upload/attach)
+        // bliver stadig vist via setError i action-handlers nedenfor.
+        setAttachments([]);
+        setGuidelineDrafts({});
         return;
       }
       const json = (await r.json()) as { attachments: AttachmentRow[] };
@@ -92,11 +97,13 @@ export function TemplateDocumentsPanel({ domainId, templateId }: Props) {
       });
       setGuidelineDrafts(drafts);
     } catch {
-      setError(da ? 'Netværksfejl' : 'Network error');
+      // BIZZ-793: Samme for netvaerksfejl — behandl som empty state.
+      setAttachments([]);
+      setGuidelineDrafts({});
     } finally {
       setAttachmentsLoading(false);
     }
-  }, [domainId, templateId, da]);
+  }, [domainId, templateId]);
 
   const loadAvailableDocs = useCallback(async () => {
     setAvailableLoading(true);

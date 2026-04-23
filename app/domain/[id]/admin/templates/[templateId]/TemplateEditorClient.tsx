@@ -217,6 +217,48 @@ export default function TemplateEditorClient({
     setExamples(examples.filter((_, idx) => idx !== i));
   };
 
+  // BIZZ-795: Upload en fil (docx/pdf/txt/xlsx/...) som eksempel. Filen
+  // bliver tekst-ekstraheret server-side via /api/domain/[id]/extract og
+  // teksten indsaettes i examples-listen med filnavn som note.
+  const exampleFileInputRef = useRef<HTMLInputElement>(null);
+  const [examplesUploading, setExamplesUploading] = useState(false);
+  const [examplesUploadError, setExamplesUploadError] = useState<string | null>(null);
+
+  const uploadExampleFile = async (file: File) => {
+    setExamplesUploading(true);
+    setExamplesUploadError(null);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const r = await fetch(`/api/domain/${domainId}/extract`, {
+        method: 'POST',
+        body: fd,
+      });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({ error: 'Kunne ikke læse fil' }));
+        setExamplesUploadError(body.error ?? (da ? 'Kunne ikke læse fil' : 'Could not read file'));
+        return;
+      }
+      const data = (await r.json()) as { text: string; truncated?: boolean };
+      const text = (data.text ?? '').trim();
+      if (!text) {
+        setExamplesUploadError(
+          da ? 'Filen indeholder ingen læsbar tekst' : 'File contains no readable text'
+        );
+        return;
+      }
+      setExamples([
+        ...examples,
+        { text, note: `${file.name}${data.truncated ? ' (truncated)' : ''}` },
+      ]);
+    } catch {
+      setExamplesUploadError(da ? 'Netværksfejl' : 'Network error');
+    } finally {
+      setExamplesUploading(false);
+      if (exampleFileInputRef.current) exampleFileInputRef.current.value = '';
+    }
+  };
+
   const updatePlaceholder = (i: number, patch: Partial<PlaceholderEntry>) => {
     setPlaceholders(placeholders.map((p, idx) => (idx === i ? { ...p, ...patch } : p)));
   };
@@ -465,14 +507,57 @@ export default function TemplateEditorClient({
                 placeholder={da ? 'Indsæt et udfyldt eksempel…' : 'Paste a filled example…'}
                 className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-md text-white text-sm"
               />
-              <button
-                onClick={addExample}
-                disabled={!newExample.trim()}
-                className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-md text-white text-xs font-medium"
-              >
-                <Plus size={12} />
-                {da ? 'Tilføj eksempel' : 'Add example'}
-              </button>
+              {examplesUploadError && (
+                <div className="flex items-center gap-1 text-rose-400 text-xs">
+                  <AlertCircle size={12} /> {examplesUploadError}
+                </div>
+              )}
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={addExample}
+                  disabled={!newExample.trim()}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-md text-white text-xs font-medium"
+                >
+                  <Plus size={12} />
+                  {da ? 'Tilføj eksempel' : 'Add example'}
+                </button>
+                {/* BIZZ-795: Upload fil som eksempel — extracted tekst gaar
+                    ind i examples-listen, filnavn bevares som note. */}
+                <input
+                  ref={exampleFileInputRef}
+                  type="file"
+                  accept=".docx,.xlsx,.xlsm,.xls,.pptx,.rtf,.pdf,.txt,.md,.markdown,.html,.htm,.csv,.tsv,.json,.jsonl,.xml,.yaml,.yml,.log,.eml"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) void uploadExampleFile(f);
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => exampleFileInputRef.current?.click()}
+                  disabled={examplesUploading}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 rounded-md text-white text-xs font-medium"
+                  title={
+                    da
+                      ? 'Upload fil som eksempel (tekst trækkes automatisk ud)'
+                      : 'Upload file as example (text auto-extracted)'
+                  }
+                >
+                  {examplesUploading ? (
+                    <Loader2 size={12} className="animate-spin" />
+                  ) : (
+                    <FileText size={12} />
+                  )}
+                  {examplesUploading
+                    ? da
+                      ? 'Læser fil…'
+                      : 'Reading file…'
+                    : da
+                      ? 'Upload fil som eksempel'
+                      : 'Upload file as example'}
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -611,6 +696,21 @@ export default function TemplateEditorClient({
                       <p className="text-slate-200 text-xs truncate">
                         {v.note ?? (da ? 'Ingen note' : 'No note')}
                       </p>
+                      {/* BIZZ-794: vis filnavn (strip domain+category+timestamp-prefix) */}
+                      {v.file_path && (
+                        <p className="text-slate-400 text-[10px] truncate">
+                          📎{' '}
+                          {(() => {
+                            const raw = v.file_path.split('/').pop() ?? v.file_path;
+                            // Strip "{timestamp}_" prefix: stripped in POST-handler
+                            // as `${ts}_${safe}` — split on first _ and keep rest.
+                            const underscore = raw.indexOf('_');
+                            return underscore > 0 && /^\d+$/.test(raw.slice(0, underscore))
+                              ? raw.slice(underscore + 1)
+                              : raw;
+                          })()}
+                        </p>
+                      )}
                       <p className="text-slate-500 text-[10px]">
                         {new Date(v.created_at).toLocaleString(da ? 'da-DK' : 'en-GB')}
                       </p>

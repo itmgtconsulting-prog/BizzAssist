@@ -21,6 +21,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { logActivity } from '@/app/lib/activityLog';
 import { logger } from '@/app/lib/logger';
 import { parseQuery } from '@/app/lib/validate';
+import { fetchBbrStatusForAdresser } from '@/app/lib/bbrEjendomStatus';
 
 /** Zod schema for autocomplete query params */
 const autocompleteSchema = z.object({
@@ -51,6 +52,26 @@ export async function GET(request: NextRequest) {
 
   try {
     const results = await darAutocomplete(q);
+    // BIZZ-785 iter 2a: berig med server-side is_udfaset flag fra
+    // lokal bbr_ejendom_status-tabel. Batch-lookup pr. adresse-ID.
+    // Tabellen er populated af backfill-scriptet + cron-refresh.
+    // Missing row → status bliver ikke overskrevet (ukendt = aktiv).
+    const adgangsadresseIds = results
+      .filter((r) => r.type === 'adgangsadresse' && r.adresse.id.length >= 20)
+      .map((r) => r.adresse.id);
+    if (adgangsadresseIds.length > 0) {
+      const statusMap = await fetchBbrStatusForAdresser(adgangsadresseIds);
+      for (const r of results) {
+        const entry = statusMap.get(r.adresse.id.toLowerCase());
+        if (entry) {
+          // Server-side verificeret udfaset-flag — overskriver DAR-
+          // status-proxy hvis tilgængelig.
+          if (entry.isUdfaset) {
+            r.status = 'Nedlagt';
+          }
+        }
+      }
+    }
     return NextResponse.json(results, {
       headers: { 'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=120' },
     });

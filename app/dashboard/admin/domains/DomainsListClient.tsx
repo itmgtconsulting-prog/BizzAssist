@@ -21,11 +21,11 @@ import {
   AlertTriangle,
   CheckCircle,
   XCircle,
-  ArrowLeft,
   Search,
   Archive,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
+import { AdminNavTabs } from '../AdminNavTabs';
 
 /** Domain from API */
 interface DomainRow {
@@ -179,17 +179,14 @@ export default function DomainsListClient() {
   ];
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-8 space-y-6">
+    <div className="max-w-7xl mx-auto px-4 py-8 space-y-6">
+      {/* BIZZ-772: Admin tab-bar så brugeren forbliver i admin-konteksten
+          når Domains-tabben er aktiv. Matches alle andre admin-sider. */}
+      <AdminNavTabs activeTab="domains" da={da} />
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <button
-            onClick={() => router.push('/dashboard/admin/users')}
-            className="text-slate-400 hover:text-slate-200 transition-colors"
-            aria-label={da ? 'Tilbage' : 'Back'}
-          >
-            <ArrowLeft size={20} />
-          </button>
           <h1 className="text-xl font-bold text-white flex items-center gap-2">
             <Building2 size={22} className="text-blue-400" />
             {da ? 'Domain Management' : 'Domain Management'}

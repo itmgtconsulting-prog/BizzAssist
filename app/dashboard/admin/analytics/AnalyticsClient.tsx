@@ -155,7 +155,7 @@ export default function AnalyticsClient() {
 
       {/* ─── Content ─── */}
       <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-6">
-        <div className="max-w-5xl mx-auto space-y-6">
+        <div className="max-w-7xl mx-auto space-y-6">
           {/* BIZZ-739: Search + language filter — aligns with /users + /billing */}
           {data && !loading && (
             <div className="flex gap-3 items-center">

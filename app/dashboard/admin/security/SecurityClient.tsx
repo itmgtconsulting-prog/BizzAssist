@@ -239,7 +239,7 @@ export default function SecurityClient() {
 
       {/* ─── Content ─── */}
       <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-6">
-        <div className="max-w-3xl mx-auto space-y-6">
+        <div className="max-w-7xl mx-auto space-y-6">
           {/* BIZZ-768: KPI-cards (matches users+billing layout pattern) */}
           {!loading && !error && (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">

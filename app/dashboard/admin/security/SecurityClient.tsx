@@ -240,6 +240,57 @@ export default function SecurityClient() {
       {/* ─── Content ─── */}
       <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-6">
         <div className="max-w-3xl mx-auto space-y-6">
+          {/* BIZZ-768: KPI-cards (matches users+billing layout pattern) */}
+          {!loading && !error && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-2 text-slate-400 text-xs uppercase tracking-wide">
+                  <Clock size={14} className="text-blue-400" />
+                  {da ? 'Idle-timeout' : 'Idle timeout'}
+                </div>
+                <p className="text-2xl font-bold text-white">
+                  {idleMinutes}
+                  <span className="text-slate-500 text-sm font-normal ml-1">
+                    {da ? 'min' : 'min'}
+                  </span>
+                </p>
+              </div>
+              <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-2 text-slate-400 text-xs uppercase tracking-wide">
+                  <Clock size={14} className="text-amber-400" />
+                  {da ? 'Absolut' : 'Absolute'}
+                </div>
+                <p className="text-2xl font-bold text-white">
+                  {absoluteHours}
+                  <span className="text-slate-500 text-sm font-normal ml-1">
+                    {da ? 'timer' : 'h'}
+                  </span>
+                </p>
+              </div>
+              <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-2 text-slate-400 text-xs uppercase tracking-wide">
+                  <Clock size={14} className="text-purple-400" />
+                  {da ? 'Refresh' : 'Refresh'}
+                </div>
+                <p className="text-2xl font-bold text-white">
+                  {refreshDays}
+                  <span className="text-slate-500 text-sm font-normal ml-1">
+                    {da ? 'dage' : 'd'}
+                  </span>
+                </p>
+              </div>
+              <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-2 text-slate-400 text-xs uppercase tracking-wide">
+                  <ShieldCheck size={14} className="text-emerald-400" />
+                  {da ? '2FA' : '2FA'}
+                </div>
+                <p className="text-sm font-medium text-emerald-300 mt-2">
+                  {da ? 'OAuth via Supabase' : 'OAuth via Supabase'}
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Loading */}
           {loading && <div className="text-center py-12 text-slate-400 text-sm">{t.loading}</div>}
 

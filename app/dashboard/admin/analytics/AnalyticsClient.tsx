@@ -90,7 +90,7 @@ export default function AnalyticsClient() {
   // ── Translations ──
   const t = {
     back: da ? 'Tilbage' : 'Back',
-    title: da ? 'Support-analyse' : 'Support Analytics',
+    title: da ? 'Analyse' : 'Analytics',
     subtitle: da
       ? 'Chatbot-spørgsmål de seneste 30 dage'
       : 'Chatbot questions from the last 30 days',

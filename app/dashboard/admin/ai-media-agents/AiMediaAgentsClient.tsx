@@ -486,6 +486,40 @@ export default function AiMediaAgentsClient() {
       {/* ─── Content ─── */}
       <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-6">
         <div className="max-w-3xl mx-auto space-y-6">
+          {/* BIZZ-767: KPI-cards (matches users+billing layout pattern) */}
+          {!loading && !error && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-2 text-slate-400 text-xs uppercase tracking-wide">
+                  <Bot size={14} className="text-blue-400" />
+                  {da ? 'Gul grænse' : 'Yellow threshold'}
+                </div>
+                <p className="text-2xl font-bold text-white">{confidenceThreshold}%</p>
+              </div>
+              <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-2 text-slate-400 text-xs uppercase tracking-wide">
+                  <CheckCircle size={14} className="text-emerald-400" />
+                  {da ? 'Grøn grænse' : 'Green threshold'}
+                </div>
+                <p className="text-2xl font-bold text-white">{greenThreshold}%</p>
+              </div>
+              <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-2 text-slate-400 text-xs uppercase tracking-wide">
+                  <Globe size={14} className="text-purple-400" />
+                  {da ? 'Primære medier' : 'Primary media'}
+                </div>
+                <p className="text-2xl font-bold text-white">{primaryMediaDomains.length}</p>
+              </div>
+              <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-4">
+                <div className="flex items-center gap-2 mb-2 text-slate-400 text-xs uppercase tracking-wide">
+                  <AlertCircle size={14} className="text-amber-400" />
+                  {da ? 'Ekskluderede' : 'Excluded'}
+                </div>
+                <p className="text-2xl font-bold text-white">{excludedDomains.length}</p>
+              </div>
+            </div>
+          )}
+
           {/* Loading */}
           {loading && (
             <div className="text-center py-20">

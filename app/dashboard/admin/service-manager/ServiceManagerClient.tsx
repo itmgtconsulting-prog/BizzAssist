@@ -100,6 +100,76 @@ interface ActivityRecord {
 // ─── Badge components ─────────────────────────────────────────────────────────
 
 /**
+ * BIZZ-769: Pagination control — next/prev + first/last + page count.
+ * Used in top + bottom position of the deployments table.
+ */
+function PaginationBar({
+  total,
+  pageSize,
+  currentPage,
+  onPageChange,
+  da,
+}: {
+  total: number;
+  pageSize: number;
+  currentPage: number;
+  onPageChange: (p: number) => void;
+  da: boolean;
+}) {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const start = (currentPage - 1) * pageSize + 1;
+  const end = Math.min(total, currentPage * pageSize);
+  return (
+    <div className="flex items-center justify-between gap-2 bg-slate-800/40 border border-slate-700/40 rounded-lg px-3 py-2 text-xs">
+      <span className="text-slate-400">
+        {da ? 'Viser' : 'Showing'}{' '}
+        <span className="text-slate-200">
+          {start}–{end}
+        </span>{' '}
+        {da ? 'af' : 'of'} <span className="text-slate-200">{total}</span>
+      </span>
+      <div className="flex items-center gap-1">
+        <button
+          onClick={() => onPageChange(1)}
+          disabled={currentPage === 1}
+          className="px-2 py-0.5 rounded text-slate-400 hover:bg-slate-700/30 disabled:opacity-40 disabled:cursor-not-allowed"
+          aria-label={da ? 'Første side' : 'First page'}
+        >
+          «
+        </button>
+        <button
+          onClick={() => onPageChange(Math.max(1, currentPage - 1))}
+          disabled={currentPage === 1}
+          className="px-2 py-0.5 rounded text-slate-400 hover:bg-slate-700/30 disabled:opacity-40 disabled:cursor-not-allowed"
+          aria-label={da ? 'Forrige' : 'Previous'}
+        >
+          ‹
+        </button>
+        <span className="px-2 text-slate-300">
+          {da ? 'Side' : 'Page'} {currentPage} / {totalPages}
+        </span>
+        <button
+          onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
+          disabled={currentPage === totalPages}
+          className="px-2 py-0.5 rounded text-slate-400 hover:bg-slate-700/30 disabled:opacity-40 disabled:cursor-not-allowed"
+          aria-label={da ? 'Næste' : 'Next'}
+        >
+          ›
+        </button>
+        <button
+          onClick={() => onPageChange(totalPages)}
+          disabled={currentPage === totalPages}
+          className="px-2 py-0.5 rounded text-slate-400 hover:bg-slate-700/30 disabled:opacity-40 disabled:cursor-not-allowed"
+          aria-label={da ? 'Sidste side' : 'Last page'}
+        >
+          »
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
  * Badge showing a Vercel deployment state with appropriate colour.
  *
  * @param state - The Vercel deployment state string.
@@ -944,11 +1014,18 @@ export default function ServiceManagerClient() {
   /** Ref used to cancel polling when component unmounts */
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // BIZZ-769: client-side pagination state for deployment table.
+  // fetchLimit controls how many records the API returns (10-100);
+  // currentPage + pageSize slice that set for display.
+  const [fetchLimit, setFetchLimit] = useState(50);
+  const [pageSize, setPageSize] = useState(20);
+  const [currentPage, setCurrentPage] = useState(1);
+
   /** Fetch deployment + scan data and activity log */
   const refresh = useCallback(async () => {
     try {
       const [mainRes, activityRes] = await Promise.all([
-        fetch('/api/admin/service-manager'),
+        fetch(`/api/admin/service-manager?limit=${fetchLimit}`),
         fetch('/api/admin/release-agent?limit=50'),
       ]);
 
@@ -972,12 +1049,17 @@ export default function ServiceManagerClient() {
     } catch {
       // Network error — keep existing data
     }
-  }, []);
+  }, [fetchLimit]);
 
   /** Initial load */
   useEffect(() => {
     refresh().finally(() => setLoading(false));
   }, [refresh]);
+
+  // BIZZ-769: Reset to page 1 when fetch-set or page-size changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [fetchLimit, pageSize]);
 
   /** Poll every 4 seconds while any scan is running */
   useEffect(() => {
@@ -1177,12 +1259,55 @@ export default function ServiceManagerClient() {
 
             {/* ─── Recent deployments ─── */}
             <section>
-              <div className="flex items-center gap-2 mb-3">
-                <Rocket size={16} className="text-slate-400" />
-                <h2 className="text-slate-200 text-sm font-semibold">
-                  {da ? 'Seneste deployments' : 'Recent Deployments'}
-                </h2>
+              <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <Rocket size={16} className="text-slate-400" />
+                  <h2 className="text-slate-200 text-sm font-semibold">
+                    {da ? 'Seneste deployments' : 'Recent Deployments'}
+                  </h2>
+                </div>
+                {/* BIZZ-769: page-size selector + fetch-limit selector */}
+                {deployments.length > 0 && (
+                  <div className="flex items-center gap-2 text-xs">
+                    <label className="text-slate-400">
+                      {da ? 'Hent' : 'Fetch'}{' '}
+                      <select
+                        value={fetchLimit}
+                        onChange={(e) => setFetchLimit(parseInt(e.target.value, 10))}
+                        className="bg-slate-800 border border-slate-700 rounded px-2 py-0.5 text-white"
+                      >
+                        <option value={10}>10</option>
+                        <option value={25}>25</option>
+                        <option value={50}>50</option>
+                        <option value={100}>100</option>
+                      </select>
+                    </label>
+                    <label className="text-slate-400">
+                      {da ? 'Pr. side' : 'Per page'}{' '}
+                      <select
+                        value={pageSize}
+                        onChange={(e) => setPageSize(parseInt(e.target.value, 10))}
+                        className="bg-slate-800 border border-slate-700 rounded px-2 py-0.5 text-white"
+                      >
+                        <option value={10}>10</option>
+                        <option value={20}>20</option>
+                        <option value={50}>50</option>
+                      </select>
+                    </label>
+                  </div>
+                )}
               </div>
+
+              {/* BIZZ-769: Top pagination bar */}
+              {deployments.length > pageSize && (
+                <PaginationBar
+                  total={deployments.length}
+                  pageSize={pageSize}
+                  currentPage={currentPage}
+                  onPageChange={setCurrentPage}
+                  da={da}
+                />
+              )}
 
               {deployments.length === 0 ? (
                 <div className="bg-slate-800/30 border border-slate-700/40 rounded-xl px-4 py-6 text-center text-slate-500 text-sm">
@@ -1207,38 +1332,53 @@ export default function ServiceManagerClient() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-700/30">
-                      {deployments.map((d) => (
-                        <tr key={d.uid} className="hover:bg-slate-800/30 transition-colors">
-                          <td className="py-2.5 pr-4">
-                            <DeploymentStateBadge state={d.state} />
-                          </td>
-                          <td className="py-2.5 pr-4 text-white max-w-[260px] truncate">
-                            {d.meta?.githubCommitMessage ?? d.uid}
-                          </td>
-                          <td className="py-2.5 pr-4 text-slate-400 font-mono text-xs">
-                            {d.meta?.githubCommitRef ?? '—'}
-                          </td>
-                          <td className="py-2.5 pr-4">
-                            {d.target === 'production' ? (
-                              <span className="text-emerald-400 text-xs font-medium">
-                                {da ? 'Produktion' : 'Production'}
-                              </span>
-                            ) : (
-                              <span className="text-slate-400 text-xs">Preview</span>
-                            )}
-                          </td>
-                          <td className="py-2.5 text-slate-400 text-xs whitespace-nowrap">
-                            {new Date(d.createdAt).toLocaleString(da ? 'da-DK' : 'en-GB', {
-                              day: '2-digit',
-                              month: 'short',
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })}
-                          </td>
-                        </tr>
-                      ))}
+                      {deployments
+                        .slice((currentPage - 1) * pageSize, currentPage * pageSize)
+                        .map((d) => (
+                          <tr key={d.uid} className="hover:bg-slate-800/30 transition-colors">
+                            <td className="py-2.5 pr-4">
+                              <DeploymentStateBadge state={d.state} />
+                            </td>
+                            <td className="py-2.5 pr-4 text-white max-w-[260px] truncate">
+                              {d.meta?.githubCommitMessage ?? d.uid}
+                            </td>
+                            <td className="py-2.5 pr-4 text-slate-400 font-mono text-xs">
+                              {d.meta?.githubCommitRef ?? '—'}
+                            </td>
+                            <td className="py-2.5 pr-4">
+                              {d.target === 'production' ? (
+                                <span className="text-emerald-400 text-xs font-medium">
+                                  {da ? 'Produktion' : 'Production'}
+                                </span>
+                              ) : (
+                                <span className="text-slate-400 text-xs">Preview</span>
+                              )}
+                            </td>
+                            <td className="py-2.5 text-slate-400 text-xs whitespace-nowrap">
+                              {new Date(d.createdAt).toLocaleString(da ? 'da-DK' : 'en-GB', {
+                                day: '2-digit',
+                                month: 'short',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })}
+                            </td>
+                          </tr>
+                        ))}
                     </tbody>
                   </table>
+                </div>
+              )}
+
+              {/* BIZZ-769: Bottom pagination bar — mirrors the top one */}
+              {deployments.length > pageSize && (
+                <div className="mt-3">
+                  <PaginationBar
+                    total={deployments.length}
+                    pageSize={pageSize}
+                    currentPage={currentPage}
+                    onPageChange={setCurrentPage}
+                    da={da}
+                  />
                 </div>
               )}
             </section>

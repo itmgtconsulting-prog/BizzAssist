@@ -124,7 +124,7 @@ export default function TemplatesListClient({ domainId }: { domainId: string }) 
         <input
           ref={fileInputRef}
           type="file"
-          accept=".docx,.pdf,.txt"
+          accept=".docx,.xlsx,.xlsm,.xls,.pptx,.rtf,.pdf,.txt,.md,.markdown,.html,.htm,.csv,.tsv,.json,.jsonl,.xml,.yaml,.yml,.log"
           onChange={(e) => {
             if (e.target.files?.[0]) void upload(e.target.files[0]);
             e.target.value = '';

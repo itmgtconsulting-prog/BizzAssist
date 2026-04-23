@@ -572,8 +572,8 @@ export default function CaseDetailClient({
             </p>
             <p className="text-slate-500 text-xs mt-1">
               {da
-                ? `docx, pdf, txt, eml, msg · max ${MAX_FILE_SIZE_MB} MB pr. fil`
-                : `docx, pdf, txt, eml, msg · max ${MAX_FILE_SIZE_MB} MB per file`}
+                ? `docx, xlsx, pptx, pdf, txt, md, eml, billeder m.fl. · max ${MAX_FILE_SIZE_MB} MB pr. fil`
+                : `docx, xlsx, pptx, pdf, txt, md, eml, images et al. · max ${MAX_FILE_SIZE_MB} MB per file`}
             </p>
             {uploadingCount > 0 && (
               <div className="mt-3 flex items-center justify-center gap-2 text-blue-300 text-xs">
@@ -585,7 +585,7 @@ export default function CaseDetailClient({
               ref={fileInputRef}
               type="file"
               multiple
-              accept=".docx,.pdf,.txt,.eml,.msg,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf,text/plain,message/rfc822,application/vnd.ms-outlook"
+              accept=".docx,.xlsx,.xlsm,.xls,.pptx,.rtf,.pdf,.txt,.md,.markdown,.html,.htm,.csv,.tsv,.json,.jsonl,.xml,.yaml,.yml,.log,.eml,.msg,.png,.jpg,.jpeg,.gif,.webp"
               onChange={(e) => {
                 if (e.target.files) void uploadFiles(e.target.files);
                 e.target.value = '';

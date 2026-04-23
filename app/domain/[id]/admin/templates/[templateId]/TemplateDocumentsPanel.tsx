@@ -241,7 +241,8 @@ export function TemplateDocumentsPanel({ domainId, templateId }: Props) {
           <input
             ref={fileInputRef}
             type="file"
-            accept=".docx,.pdf,.txt,.md,.html,.htm"
+            // BIZZ-788: accept alle Claude-readable formater.
+            accept=".docx,.xlsx,.xlsm,.xls,.pptx,.rtf,.pdf,.txt,.md,.markdown,.html,.htm,.csv,.tsv,.json,.jsonl,.xml,.yaml,.yml,.log,.eml,.msg,.png,.jpg,.jpeg,.gif,.webp"
             className="hidden"
             onChange={onFileChange}
           />

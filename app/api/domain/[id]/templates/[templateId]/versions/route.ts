@@ -19,6 +19,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { assertDomainMember, assertDomainAdmin } from '@/app/lib/domainAuth';
 import { uploadDomainFile } from '@/app/lib/domainStorage';
 import { extractTextFromBuffer, type DomainFileType } from '@/app/lib/domainTextExtraction';
+import { resolveFileType, supportedLabels } from '@/app/lib/domainFileTypes';
 import { detectPlaceholders } from '@/app/lib/domainPlaceholderDetect';
 import { isDomainFeatureEnabled } from '@/app/lib/featureFlags';
 import { logger } from '@/app/lib/logger';
@@ -30,11 +31,7 @@ type RouteContext = { params: Promise<{ id: string; templateId: string }> };
 /** Max versions to keep per template — BIZZ-710 spec. */
 const MAX_VERSIONS = 10;
 
-const TEMPLATE_MIME_TO_TYPE: Record<string, 'docx' | 'pdf' | 'txt'> = {
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
-  'application/pdf': 'pdf',
-  'text/plain': 'txt',
-};
+// BIZZ-788: file-type validation centraliseret i app/lib/domainFileTypes.ts.
 
 /** GET — list versions for this template (newest first). */
 export async function GET(_req: NextRequest, context: RouteContext): Promise<NextResponse> {
@@ -116,10 +113,10 @@ export async function POST(request: NextRequest, context: RouteContext): Promise
     return NextResponse.json({ error: 'Missing file field' }, { status: 400 });
   }
   const mime = file.type || 'application/octet-stream';
-  const fileType = TEMPLATE_MIME_TO_TYPE[mime];
+  const fileType = resolveFileType(mime, file.name);
   if (!fileType) {
     return NextResponse.json(
-      { error: `Ugyldig filtype: ${mime}. Tilladt: docx, pdf, txt.` },
+      { error: `Ugyldig filtype: ${mime}. Tilladt: ${supportedLabels()}.` },
       { status: 400 }
     );
   }

@@ -180,12 +180,14 @@ export default function TrainingDocsClient({ domainId }: { domainId: string }) {
             {da ? 'Vælg fil' : 'Choose file'}
           </button>
           <span className="text-slate-500 text-xs">
-            {da ? `docx, pdf, txt · max ${MAX_MB} MB` : `docx, pdf, txt · max ${MAX_MB} MB`}
+            {da
+              ? `docx, xlsx, pptx, pdf, txt, md, csv m.fl. · max ${MAX_MB} MB`
+              : `docx, xlsx, pptx, pdf, txt, md, csv et al. · max ${MAX_MB} MB`}
           </span>
           <input
             ref={fileInputRef}
             type="file"
-            accept=".docx,.pdf,.txt,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf,text/plain"
+            accept=".docx,.xlsx,.xlsm,.xls,.pptx,.rtf,.pdf,.txt,.md,.markdown,.html,.htm,.csv,.tsv,.json,.jsonl,.xml,.yaml,.yml,.log,.eml,.msg,.png,.jpg,.jpeg,.gif,.webp"
             onChange={(e) => {
               if (e.target.files?.[0]) void upload(e.target.files[0]);
               e.target.value = '';

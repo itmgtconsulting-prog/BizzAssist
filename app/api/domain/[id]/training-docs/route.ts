@@ -19,6 +19,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { assertDomainMember, assertDomainAdmin } from '@/app/lib/domainAuth';
 import { uploadDomainFile } from '@/app/lib/domainStorage';
 import { extractTextFromBuffer } from '@/app/lib/domainTextExtraction';
+import { resolveFileType, supportedLabels } from '@/app/lib/domainFileTypes';
 import { embedDomainSource } from '@/app/lib/domainEmbeddingWorker';
 import { isDomainFeatureEnabled } from '@/app/lib/featureFlags';
 import { logger } from '@/app/lib/logger';
@@ -30,11 +31,7 @@ type RouteContext = { params: Promise<{ id: string }> };
 /** Training-doc max size: 20 MB (same as templates — keeps RAG context bounded). */
 const MAX_TRAINING_MB = 20;
 const VALID_DOC_TYPES = new Set(['guide', 'policy', 'reference', 'example']);
-const MIME_ACCEPT: Record<string, 'docx' | 'pdf' | 'txt'> = {
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
-  'application/pdf': 'pdf',
-  'text/plain': 'txt',
-};
+// BIZZ-788: file-type validation centraliseret i app/lib/domainFileTypes.ts.
 
 /** GET — list training docs with tags + filter by doc_type (optional). */
 export async function GET(request: NextRequest, context: RouteContext): Promise<NextResponse> {
@@ -104,10 +101,10 @@ export async function POST(request: NextRequest, context: RouteContext): Promise
     );
   }
   const mime = file.type || 'application/octet-stream';
-  const fileType = MIME_ACCEPT[mime];
+  const fileType = resolveFileType(mime, file.name);
   if (!fileType) {
     return NextResponse.json(
-      { error: `Ugyldig filtype: ${mime}. Tilladt: docx, pdf, txt.` },
+      { error: `Ugyldig filtype: ${mime}. Tilladt: ${supportedLabels()}.` },
       { status: 400 }
     );
   }
@@ -120,7 +117,7 @@ export async function POST(request: NextRequest, context: RouteContext): Promise
   const name =
     typeof nameInput === 'string' && nameInput.trim()
       ? nameInput.trim().slice(0, 200)
-      : file.name.replace(/\.(docx|pdf|txt)$/i, '').slice(0, 200);
+      : file.name.replace(/\.[^.]+$/, '').slice(0, 200);
   const description =
     typeof descriptionInput === 'string' ? descriptionInput.trim().slice(0, 1000) : null;
   const docType =

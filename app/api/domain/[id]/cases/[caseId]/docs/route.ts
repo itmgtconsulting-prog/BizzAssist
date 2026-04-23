@@ -17,6 +17,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { assertDomainMember } from '@/app/lib/domainAuth';
 import { uploadDomainFile } from '@/app/lib/domainStorage';
 import { extractTextFromBuffer } from '@/app/lib/domainTextExtraction';
+import { resolveFileType, supportedLabels } from '@/app/lib/domainFileTypes';
 import { embedDomainSource } from '@/app/lib/domainEmbeddingWorker';
 import { isDomainFeatureEnabled } from '@/app/lib/featureFlags';
 import { logger } from '@/app/lib/logger';
@@ -28,14 +29,7 @@ type RouteContext = { params: Promise<{ id: string; caseId: string }> };
 /** Max active docs per case (soft-deleted don't count). */
 const MAX_DOCS_PER_CASE = 50;
 
-/** MIME → file_type mapping matching domain_case_doc.file_type check constraint. */
-const MIME_TO_TYPE: Record<string, 'docx' | 'pdf' | 'txt' | 'eml' | 'msg'> = {
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
-  'application/pdf': 'pdf',
-  'text/plain': 'txt',
-  'message/rfc822': 'eml',
-  'application/vnd.ms-outlook': 'msg',
-};
+// BIZZ-788: file-type validation centraliseret i app/lib/domainFileTypes.ts.
 
 async function verifyCaseInDomain(domainId: string, caseId: string): Promise<boolean> {
   const admin = createAdminClient();
@@ -97,10 +91,10 @@ export async function POST(request: NextRequest, context: RouteContext): Promise
     return NextResponse.json({ error: 'Missing file field' }, { status: 400 });
   }
   const mime = file.type || 'application/octet-stream';
-  const fileType = MIME_TO_TYPE[mime];
+  const fileType = resolveFileType(mime, file.name);
   if (!fileType) {
     return NextResponse.json(
-      { error: `Ugyldig filtype: ${mime}. Tilladt: docx, pdf, txt, eml, msg.` },
+      { error: `Ugyldig filtype: ${mime}. Tilladt: ${supportedLabels()}.` },
       { status: 400 }
     );
   }

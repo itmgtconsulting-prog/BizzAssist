@@ -23,6 +23,7 @@ import {
   XCircle,
   Search,
   Archive,
+  ArrowLeft,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { AdminNavTabs } from '../AdminNavTabs';
@@ -179,27 +180,48 @@ export default function DomainsListClient() {
   ];
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-8 space-y-6">
-      {/* BIZZ-772: Admin tab-bar så brugeren forbliver i admin-konteksten
-          når Domains-tabben er aktiv. Matches alle andre admin-sider. */}
-      <AdminNavTabs activeTab="domains" da={da} />
+    <div className="w-full px-4 py-8 space-y-6">
+      {/* BIZZ-782: Header-struktur matcher Cron-status — back-link + page
+          header (titel + subtitle + action-knap) OVER admin tab-bar. */}
+      <Link
+        href="/dashboard/admin/users"
+        className="inline-flex items-center gap-1.5 text-slate-400 hover:text-white text-sm transition-colors"
+      >
+        <ArrowLeft size={14} />
+        {da ? 'Tilbage til admin' : 'Back to admin'}
+      </Link>
 
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <h1 className="text-xl font-bold text-white flex items-center gap-2">
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+        <div>
+          <h1 className="text-white text-xl font-bold flex items-center gap-2">
             <Building2 size={22} className="text-blue-400" />
             {da ? 'Domain Management' : 'Domain Management'}
           </h1>
+          <p className="text-slate-400 text-sm mt-0.5">
+            {loading
+              ? da
+                ? 'Henter domains…'
+                : 'Loading domains…'
+              : da
+                ? `${totalCount} total · ${activeCount} aktive${suspendedCount > 0 ? ` · ${suspendedCount} suspenderede` : ''}${archivedCount > 0 ? ` · ${archivedCount} arkiveret` : ''}`
+                : `${totalCount} total · ${activeCount} active${suspendedCount > 0 ? ` · ${suspendedCount} suspended` : ''}${archivedCount > 0 ? ` · ${archivedCount} archived` : ''}`}
+          </p>
         </div>
         <Link
           href="/dashboard/admin/domains/new"
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
+          className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors self-start"
         >
           <Plus size={16} />
           {da ? 'Opret Domain' : 'Create Domain'}
         </Link>
       </div>
+
+      {/* BIZZ-782: Admin tab-bar i samme variant som cron-status (border-b) */}
+      <AdminNavTabs
+        activeTab="domains"
+        da={da}
+        className="flex gap-1 -mb-px overflow-x-auto border-b border-slate-700/50"
+      />
 
       {/* BIZZ-739: Stats card row — matches /dashboard/admin/users + /billing */}
       {!loading && !error && (

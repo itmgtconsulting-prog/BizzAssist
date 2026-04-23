@@ -105,10 +105,21 @@ export interface BuildContextOptions {
   templateId: string;
   /** Optional extra instructions from the user at generation time */
   userInstructions?: string;
+  /**
+   * BIZZ-801: Optional subset of case-doc IDs to include as AI context.
+   * When present and non-empty, only the listed docs are loaded. When
+   * null/undefined/empty, the default behaviour applies — all non-deleted
+   * case docs are included.
+   */
+  selectedDocIds?: string[] | null;
   /** Override fetchers — enables dependency-injected tests */
   fetchers?: {
     template?: (admin: unknown, templateId: string) => Promise<TemplateContext | null>;
-    caseDocs?: (admin: unknown, caseId: string) => Promise<CaseDocContext[]>;
+    caseDocs?: (
+      admin: unknown,
+      caseId: string,
+      selectedDocIds?: string[] | null
+    ) => Promise<CaseDocContext[]>;
   };
 }
 
@@ -195,14 +206,23 @@ async function fetchTemplateDocs(
   }
 }
 
-async function fetchCaseDocs(admin: unknown, caseId: string): Promise<CaseDocContext[]> {
+async function fetchCaseDocs(
+  admin: unknown,
+  caseId: string,
+  selectedDocIds?: string[] | null
+): Promise<CaseDocContext[]> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data } = await (admin as any)
+  let q: any = (admin as any)
     .from('domain_case_doc')
     .select('id, name, file_type, extracted_text')
     .eq('case_id', caseId)
     .is('deleted_at', null)
     .order('created_at', { ascending: true });
+  // BIZZ-801: honour explicit doc selection from the user
+  if (selectedDocIds && selectedDocIds.length > 0) {
+    q = q.in('id', selectedDocIds);
+  }
+  const { data } = await q;
   return (
     (data ?? []) as Array<{
       id: string;
@@ -248,9 +268,9 @@ export async function buildGenerationContext(
   // at THESE specific docs with THIS guidance".
   const templateDocs = await fetchTemplateDocs(admin, opts.domainId, opts.templateId);
 
-  // 2. Load case docs
+  // 2. Load case docs (BIZZ-801: honour selectedDocIds subset when given)
   const fetchDocs = opts.fetchers?.caseDocs ?? fetchCaseDocs;
-  const caseDocs = await fetchDocs(admin, opts.caseId);
+  const caseDocs = await fetchDocs(admin, opts.caseId, opts.selectedDocIds);
   const totalCaseDocTokens = caseDocs.reduce((s, d) => s + estimateTokens(d.text), 0);
   let caseDocChunks: ChunkContext[] = [];
   let inlineCaseDocs = caseDocs;

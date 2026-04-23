@@ -14,6 +14,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Loader2, Save, Briefcase } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
+import { CustomerSearchPicker, type CustomerLink } from '../CustomerSearchPicker';
 
 /**
  * New-case form. On submit, POSTs to /api/domain/:id/cases and navigates
@@ -29,6 +30,8 @@ export default function NewCaseClient({ domainId }: { domainId: string }) {
   const [name, setName] = useState('');
   const [clientRef, setClientRef] = useState('');
   const [tagsInput, setTagsInput] = useState('');
+  // BIZZ-802: Optional customer link — user searches BizzAssist db
+  const [customer, setCustomer] = useState<CustomerLink | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -49,6 +52,11 @@ export default function NewCaseClient({ domainId }: { domainId: string }) {
           name: name.trim(),
           client_ref: clientRef.trim() || undefined,
           tags,
+          // BIZZ-802: send customer link if picked — server validates combo
+          client_kind: customer?.kind ?? null,
+          client_cvr: customer?.cvr ?? null,
+          client_person_id: customer?.person_id ?? null,
+          client_name: customer?.name ?? null,
         }),
       });
       if (!r.ok) {
@@ -111,6 +119,22 @@ export default function NewCaseClient({ domainId }: { domainId: string }) {
             className="mt-1 w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-md text-white text-sm"
           />
         </label>
+
+        {/* BIZZ-802: Optional customer link — søg i BizzAssist-databasen
+            (CVR-virksomhed eller person via /api/search) og tilknyt. */}
+        <div className="block">
+          <span className="text-slate-300 text-sm">
+            {da ? 'Kunde (valgfri)' : 'Customer (optional)'}
+          </span>
+          <div className="mt-1">
+            <CustomerSearchPicker value={customer} onChange={setCustomer} />
+          </div>
+          <p className="text-[11px] text-slate-500 mt-1">
+            {da
+              ? 'Søg efter en virksomhed (CVR) eller person allerede i BizzAssist.'
+              : 'Search for a company (CVR) or person already in BizzAssist.'}
+          </p>
+        </div>
 
         <label className="block">
           <span className="text-slate-300 text-sm">

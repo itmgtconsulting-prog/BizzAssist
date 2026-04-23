@@ -21,8 +21,20 @@ import { logger } from '@/app/lib/logger';
 type RouteContext = { params: Promise<{ id: string; caseId: string }> };
 
 /** Fields a member may patch on a case. */
-const PATCHABLE_FIELDS = new Set(['name', 'client_ref', 'status', 'notes', 'tags']);
+// BIZZ-802: customer-link fields added to patchable set
+const PATCHABLE_FIELDS = new Set([
+  'name',
+  'client_ref',
+  'status',
+  'notes',
+  'tags',
+  'client_kind',
+  'client_cvr',
+  'client_person_id',
+  'client_name',
+]);
 const VALID_STATUSES = new Set(['open', 'closed', 'archived']);
+const VALID_CLIENT_KINDS = new Set(['company', 'person']);
 
 /**
  * GET — full case detail with active (non-deleted) docs ordered newest first.
@@ -44,7 +56,7 @@ export async function GET(_req: NextRequest, context: RouteContext): Promise<Nex
   const { data: caseRow, error: caseErr } = await (admin as any)
     .from('domain_case')
     .select(
-      'id, domain_id, name, client_ref, status, tags, notes, created_by, created_at, updated_at'
+      'id, domain_id, name, client_ref, status, tags, notes, created_by, created_at, updated_at, client_kind, client_cvr, client_person_id, client_name'
     )
     .eq('id', caseId)
     .eq('domain_id', domainId)
@@ -110,6 +122,40 @@ export async function PATCH(request: NextRequest, context: RouteContext): Promis
         return NextResponse.json({ error: 'name must be 1-200 chars' }, { status: 400 });
       }
       update[k] = k === 'name' ? v.trim() : v;
+    } else if (k === 'client_kind') {
+      // BIZZ-802: null explicitly allowed (clears the link)
+      if (v === null) update.client_kind = null;
+      else if (typeof v === 'string' && VALID_CLIENT_KINDS.has(v)) update.client_kind = v;
+      else {
+        return NextResponse.json(
+          { error: 'client_kind must be company|person|null' },
+          { status: 400 }
+        );
+      }
+    } else if (k === 'client_cvr' || k === 'client_person_id' || k === 'client_name') {
+      if (v === null) update[k] = null;
+      else if (typeof v === 'string') update[k] = v.trim().slice(0, 200) || null;
+      // ignore invalid types silently — partial updates shouldn't 400 on one bad field
+    }
+  }
+
+  // BIZZ-802: If client_kind is explicitly being set, ensure the id column
+  // matches. If it's being cleared, also clear the companion columns.
+  if ('client_kind' in update) {
+    if (update.client_kind === null) {
+      update.client_cvr = null;
+      update.client_person_id = null;
+      update.client_name = null;
+    } else if (update.client_kind === 'company' && !('client_cvr' in update)) {
+      return NextResponse.json(
+        { error: 'client_cvr is required when setting client_kind=company' },
+        { status: 400 }
+      );
+    } else if (update.client_kind === 'person' && !('client_person_id' in update)) {
+      return NextResponse.json(
+        { error: 'client_person_id is required when setting client_kind=person' },
+        { status: 400 }
+      );
     }
   }
 

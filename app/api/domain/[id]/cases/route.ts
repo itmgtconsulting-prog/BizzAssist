@@ -101,6 +101,37 @@ export async function POST(request: NextRequest, context: RouteContext): Promise
     return NextResponse.json({ error: 'name is required (1-200 chars)' }, { status: 400 });
   }
 
+  // BIZZ-802: Optional structured customer link. Validate kind+id pairing
+  // — if kind='company' a CVR must be present; if 'person' a person_id.
+  const clientKind =
+    body.client_kind === 'company' || body.client_kind === 'person' ? body.client_kind : null;
+  const clientCvr =
+    clientKind === 'company' && typeof body.client_cvr === 'string' && body.client_cvr.trim()
+      ? body.client_cvr.trim()
+      : null;
+  const clientPersonId =
+    clientKind === 'person' &&
+    typeof body.client_person_id === 'string' &&
+    body.client_person_id.trim()
+      ? body.client_person_id.trim()
+      : null;
+  const clientName =
+    clientKind && typeof body.client_name === 'string' && body.client_name.trim()
+      ? body.client_name.trim().slice(0, 200)
+      : null;
+  if (clientKind === 'company' && !clientCvr) {
+    return NextResponse.json(
+      { error: 'client_cvr is required when client_kind=company' },
+      { status: 400 }
+    );
+  }
+  if (clientKind === 'person' && !clientPersonId) {
+    return NextResponse.json(
+      { error: 'client_person_id is required when client_kind=person' },
+      { status: 400 }
+    );
+  }
+
   const admin = createAdminClient();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data, error } = (await (admin as any)
@@ -111,8 +142,14 @@ export async function POST(request: NextRequest, context: RouteContext): Promise
       client_ref: clientRef,
       tags,
       created_by: ctx.userId,
+      client_kind: clientKind,
+      client_cvr: clientCvr,
+      client_person_id: clientPersonId,
+      client_name: clientName,
     })
-    .select('id, name, client_ref, status, tags, created_at')
+    .select(
+      'id, name, client_ref, status, tags, created_at, client_kind, client_cvr, client_person_id, client_name'
+    )
     .single()) as { data: { id: string } | null; error: { message: string } | null };
 
   if (error || !data) {
@@ -128,7 +165,14 @@ export async function POST(request: NextRequest, context: RouteContext): Promise
     action: 'create_case',
     target_type: 'case',
     target_id: data.id,
-    metadata: { name, client_ref: clientRef, tags },
+    metadata: {
+      name,
+      client_ref: clientRef,
+      tags,
+      client_kind: clientKind,
+      client_cvr: clientCvr,
+      client_person_id: clientPersonId,
+    },
   });
 
   return NextResponse.json(data, { status: 201 });

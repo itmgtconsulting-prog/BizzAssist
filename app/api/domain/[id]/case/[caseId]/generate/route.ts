@@ -75,7 +75,8 @@ async function runGeneration(
   caseId: string,
   templateId: string,
   userInstructions: string | undefined,
-  actorUserId: string
+  actorUserId: string,
+  selectedDocIds: string[] | null
 ): Promise<
   | { ok: true; generationId: string; outputPath: string; tokens: number }
   | { ok: false; status: number; error: string; generationId?: string }
@@ -144,6 +145,7 @@ async function runGeneration(
       caseId,
       templateId,
       userInstructions,
+      selectedDocIds,
     });
   } catch (err) {
     return fail(`Context build failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -302,6 +304,8 @@ async function runGeneration(
       placeholder_count: Object.keys(output.placeholders).length,
       unresolved_count: output.unresolved?.length ?? 0,
       warnings: context.warnings,
+      // BIZZ-801: trace the doc-subset that drove this generation
+      selected_doc_ids: selectedDocIds,
     },
   });
 
@@ -329,6 +333,13 @@ export async function POST(request: NextRequest, context: RouteContext): Promise
   const templateId = typeof body.template_id === 'string' ? body.template_id : '';
   const userInstructions =
     typeof body.user_instructions === 'string' ? body.user_instructions.slice(0, 5000) : undefined;
+  // BIZZ-801: Accept optional selected_doc_ids (uuid[] max 50) — when
+  // present, the prompt builder filters case_docs to just these.
+  const rawSelected = Array.isArray(body.selected_doc_ids) ? body.selected_doc_ids : [];
+  const selectedDocIds = rawSelected
+    .filter((v): v is string => typeof v === 'string' && v.length > 0)
+    .slice(0, 50);
+  const selectedDocIdsArg = selectedDocIds.length > 0 ? selectedDocIds : null;
   if (!templateId) {
     return NextResponse.json({ error: 'template_id is required' }, { status: 400 });
   }
@@ -339,7 +350,14 @@ export async function POST(request: NextRequest, context: RouteContext): Promise
   const domainBlocked = await assertDomainAiAllowed(domainId);
   if (domainBlocked) return domainBlocked as unknown as NextResponse;
 
-  const result = await runGeneration(domainId, caseId, templateId, userInstructions, ctx.userId);
+  const result = await runGeneration(
+    domainId,
+    caseId,
+    templateId,
+    userInstructions,
+    ctx.userId,
+    selectedDocIdsArg
+  );
   if (!result.ok) {
     return NextResponse.json(
       { error: result.error, generation_id: result.generationId },

@@ -36,9 +36,15 @@ import {
   Loader2,
   Paperclip,
   Sparkles,
+  Pencil,
+  Save,
+  Building2,
+  User,
+  Upload,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import type { DomainCaseSummary } from './DomainCaseList';
+import { CustomerSearchPicker, type CustomerLink } from './CustomerSearchPicker';
 
 interface TemplateSummary {
   id: string;
@@ -51,6 +57,19 @@ interface TemplateSummary {
 interface CaseDocSummary {
   id: string;
   name: string;
+}
+
+interface CaseDetail {
+  id: string;
+  name: string;
+  client_ref: string | null;
+  status: 'open' | 'closed' | 'archived';
+  notes: string | null;
+  tags: string[];
+  client_kind: 'company' | 'person' | null;
+  client_cvr: string | null;
+  client_person_id: string | null;
+  client_name: string | null;
 }
 
 interface Props {
@@ -173,32 +192,174 @@ export function DomainWorkspaceSplitView({
   const selectedCase = cases.find((c) => c.id === selectedCaseId) ?? null;
 
   // ─── Case detail state ──────────────────────────────────────────────────
+  // BIZZ-799 + BIZZ-800 + BIZZ-802: Fetch full case detail (incl. customer
+  // link) from /cases/:caseId — same endpoint serves docs, so we can drop
+  // the separate /docs call.
+  const [caseDetail, setCaseDetail] = useState<CaseDetail | null>(null);
   const [caseDocs, setCaseDocs] = useState<CaseDocSummary[]>([]);
-  const [caseDocsLoading, setCaseDocsLoading] = useState(false);
+  const [caseLoading, setCaseLoading] = useState(false);
   const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set());
 
-  const loadCaseDocs = useCallback(async () => {
+  // BIZZ-799: edit-mode for case metadata. editing=true swaps display
+  // widgets for input widgets; Save POSTs a PATCH.
+  const [editing, setEditing] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editClientRef, setEditClientRef] = useState('');
+  const [editNotes, setEditNotes] = useState('');
+  const [editStatus, setEditStatus] = useState<'open' | 'closed' | 'archived'>('open');
+  const [editTagsInput, setEditTagsInput] = useState('');
+  const [editCustomer, setEditCustomer] = useState<CustomerLink | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  // BIZZ-800: doc upload state
+  const [uploadBusy, setUploadBusy] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  const loadCaseDetail = useCallback(async () => {
     if (!selectedCaseId) return;
-    setCaseDocsLoading(true);
+    setCaseLoading(true);
     try {
-      const r = await fetch(`/api/domain/${domainId}/cases/${selectedCaseId}/docs`);
+      const r = await fetch(`/api/domain/${domainId}/cases/${selectedCaseId}`);
       if (r.ok) {
-        const json = (await r.json()) as CaseDocSummary[] | { docs: CaseDocSummary[] };
-        setCaseDocs(Array.isArray(json) ? json : (json.docs ?? []));
+        const json = (await r.json()) as CaseDetail & { docs?: CaseDocSummary[] };
+        setCaseDetail({
+          id: json.id,
+          name: json.name,
+          client_ref: json.client_ref,
+          status: json.status,
+          notes: json.notes,
+          tags: json.tags ?? [],
+          client_kind: json.client_kind ?? null,
+          client_cvr: json.client_cvr ?? null,
+          client_person_id: json.client_person_id ?? null,
+          client_name: json.client_name ?? null,
+        });
+        setCaseDocs(json.docs ?? []);
       } else {
+        setCaseDetail(null);
         setCaseDocs([]);
       }
     } catch {
+      setCaseDetail(null);
       setCaseDocs([]);
     } finally {
-      setCaseDocsLoading(false);
+      setCaseLoading(false);
     }
   }, [domainId, selectedCaseId]);
 
   useEffect(() => {
-    void loadCaseDocs();
+    void loadCaseDetail();
     setSelectedDocIds(new Set());
-  }, [loadCaseDocs]);
+    setEditing(false);
+  }, [loadCaseDetail]);
+
+  // Seed edit-form when caseDetail loads or user enters edit mode
+  useEffect(() => {
+    if (!caseDetail) return;
+    setEditName(caseDetail.name);
+    setEditClientRef(caseDetail.client_ref ?? '');
+    setEditNotes(caseDetail.notes ?? '');
+    setEditStatus(caseDetail.status);
+    setEditTagsInput(caseDetail.tags.join(', '));
+    setEditCustomer(
+      caseDetail.client_kind
+        ? {
+            kind: caseDetail.client_kind,
+            cvr: caseDetail.client_cvr,
+            person_id: caseDetail.client_person_id,
+            name: caseDetail.client_name ?? '',
+          }
+        : null
+    );
+  }, [caseDetail]);
+
+  // BIZZ-799: PATCH handler
+  const saveCase = async () => {
+    if (!caseDetail) return;
+    if (!editName.trim() || editName.length > 200) {
+      setSaveError(da ? 'Sagsnavn skal være 1-200 tegn' : 'Name must be 1-200 chars');
+      return;
+    }
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const tags = editTagsInput
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean);
+      const body: Record<string, unknown> = {
+        name: editName.trim(),
+        client_ref: editClientRef.trim() || null,
+        notes: editNotes.trim() || null,
+        status: editStatus,
+        tags,
+        client_kind: editCustomer?.kind ?? null,
+        client_cvr: editCustomer?.cvr ?? null,
+        client_person_id: editCustomer?.person_id ?? null,
+        client_name: editCustomer?.name ?? null,
+      };
+      const r = await fetch(`/api/domain/${domainId}/cases/${selectedCaseId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({ error: 'Ukendt' }));
+        setSaveError(j.error ?? (da ? 'Kunne ikke gemme' : 'Save failed'));
+        return;
+      }
+      setEditing(false);
+      await loadCaseDetail();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // BIZZ-800: upload one or more files to the case
+  const uploadFiles = useCallback(
+    async (files: FileList | File[]) => {
+      if (!selectedCaseId || files.length === 0) return;
+      setUploadBusy(true);
+      setUploadError(null);
+      try {
+        const newIds: string[] = [];
+        for (const f of Array.from(files)) {
+          if (f.size > 50 * 1024 * 1024) {
+            setUploadError(
+              da ? `${f.name} er for stor (max 50 MB)` : `${f.name} is too large (max 50 MB)`
+            );
+            continue;
+          }
+          const fd = new FormData();
+          fd.append('file', f);
+          const r = await fetch(`/api/domain/${domainId}/cases/${selectedCaseId}/docs`, {
+            method: 'POST',
+            body: fd,
+          });
+          if (!r.ok) {
+            const j = await r.json().catch(() => ({ error: 'Ukendt' }));
+            setUploadError(j.error ?? (da ? 'Upload fejlede' : 'Upload failed'));
+            continue;
+          }
+          const j = (await r.json()) as { id?: string };
+          if (j.id) newIds.push(j.id);
+        }
+        await loadCaseDetail();
+        // Auto-select newly uploaded docs so AI uses them as context
+        if (newIds.length > 0) {
+          setSelectedDocIds((prev) => {
+            const next = new Set(prev);
+            for (const id of newIds) next.add(id);
+            return next;
+          });
+        }
+      } finally {
+        setUploadBusy(false);
+      }
+    },
+    [domainId, selectedCaseId, loadCaseDetail, da]
+  );
 
   // ─── Templates ──────────────────────────────────────────────────────────
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
@@ -362,40 +523,117 @@ export function DomainWorkspaceSplitView({
           />
         </div>
 
-        {/* BOTTOM-LEFT: selected case detail */}
+        {/* BOTTOM-LEFT: selected case detail (+ edit + upload) */}
         <div
           className="min-h-0 overflow-y-auto bg-slate-900/20"
           style={{ height: `${100 - leftTopPct}%` }}
         >
-          <div className="px-3 py-2 border-b border-slate-700/40 bg-slate-900/50 sticky top-0 z-10">
+          <div className="px-3 py-2 border-b border-slate-700/40 bg-slate-900/50 sticky top-0 z-10 flex items-center justify-between gap-2">
             <p className="text-xs font-semibold text-slate-300 truncate">
-              {selectedCase?.name ?? (da ? 'Vælg en sag' : 'Select a case')}
+              {caseDetail?.name ?? selectedCase?.name ?? (da ? 'Vælg en sag' : 'Select a case')}
             </p>
+            {caseDetail && !editing && (
+              <button
+                type="button"
+                onClick={() => setEditing(true)}
+                aria-label={da ? 'Rediger sag' : 'Edit case'}
+                className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+                title={da ? 'Rediger sag' : 'Edit case'}
+              >
+                <Pencil size={12} />
+              </button>
+            )}
           </div>
           <div className="p-3 space-y-3">
-            {selectedCase && (
+            {caseLoading && !caseDetail && (
+              <Loader2 size={14} className="animate-spin text-blue-400" />
+            )}
+            {caseDetail && !editing && (
               <>
+                {/* BIZZ-802: Customer link badge */}
+                {caseDetail.client_kind && caseDetail.client_name && (
+                  <div className="flex items-center gap-2 bg-slate-900/60 border border-slate-700/40 rounded-md px-2.5 py-1.5">
+                    {caseDetail.client_kind === 'company' ? (
+                      <Building2 size={13} className="text-emerald-400 shrink-0" />
+                    ) : (
+                      <User size={13} className="text-sky-400 shrink-0" />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs text-white truncate">{caseDetail.client_name}</p>
+                      <p className="text-[10px] text-slate-500 uppercase">
+                        {caseDetail.client_kind === 'company'
+                          ? `CVR ${caseDetail.client_cvr}`
+                          : `Person · ${caseDetail.client_person_id}`}
+                      </p>
+                    </div>
+                    {caseDetail.client_kind === 'company' && caseDetail.client_cvr && (
+                      <Link
+                        href={`/dashboard/companies/${caseDetail.client_cvr}`}
+                        className="text-[10px] text-blue-300 hover:text-blue-200 shrink-0"
+                      >
+                        {da ? 'Åbn →' : 'Open →'}
+                      </Link>
+                    )}
+                  </div>
+                )}
                 <div className="text-xs space-y-1">
-                  {selectedCase.client_ref && (
+                  {caseDetail.client_ref && (
                     <p>
                       <span className="text-slate-500">
                         {da ? 'Klient-reference: ' : 'Client ref: '}
                       </span>
-                      <span className="text-slate-200">{selectedCase.client_ref}</span>
+                      <span className="text-slate-200">{caseDetail.client_ref}</span>
                     </p>
                   )}
                   <p>
                     <span className="text-slate-500">{da ? 'Status: ' : 'Status: '}</span>
-                    <span className="text-slate-200 capitalize">{selectedCase.status}</span>
+                    <span className="text-slate-200 capitalize">{caseDetail.status}</span>
                   </p>
+                  {caseDetail.tags.length > 0 && (
+                    <div className="flex flex-wrap gap-1 pt-0.5">
+                      {caseDetail.tags.map((t) => (
+                        <span
+                          key={t}
+                          className="px-1.5 py-0.5 bg-slate-700/40 text-slate-300 text-[10px] rounded"
+                        >
+                          {t}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {caseDetail.notes && (
+                    <p className="text-slate-300 whitespace-pre-wrap pt-1.5 text-[11px]">
+                      {caseDetail.notes}
+                    </p>
+                  )}
                 </div>
+
+                {/* BIZZ-800: Documents + upload */}
                 <div>
-                  <p className="text-[11px] uppercase tracking-wide text-slate-500 mb-1.5">
-                    {da ? 'Dokumenter' : 'Documents'} · {caseDocs.length}
-                  </p>
-                  {caseDocsLoading ? (
-                    <Loader2 size={14} className="animate-spin text-blue-400" />
-                  ) : caseDocs.length === 0 ? (
+                  <div className="flex items-center justify-between mb-1.5">
+                    <p className="text-[11px] uppercase tracking-wide text-slate-500">
+                      {da ? 'Dokumenter' : 'Documents'} · {caseDocs.length}
+                    </p>
+                    <label className="cursor-pointer inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 transition-colors">
+                      {uploadBusy ? (
+                        <Loader2 size={10} className="animate-spin" />
+                      ) : (
+                        <Upload size={10} />
+                      )}
+                      {da ? 'Upload' : 'Upload'}
+                      <input
+                        type="file"
+                        multiple
+                        hidden
+                        onChange={(e) => {
+                          if (e.target.files) void uploadFiles(e.target.files);
+                          e.target.value = '';
+                        }}
+                      />
+                    </label>
+                  </div>
+                  {uploadError && <p className="text-[10px] text-rose-300 mb-1">{uploadError}</p>}
+                  {caseDocs.length === 0 ? (
                     <p className="text-xs text-slate-500">
                       {da ? 'Ingen dokumenter på sagen.' : 'No documents on this case.'}
                     </p>
@@ -436,6 +674,104 @@ export function DomainWorkspaceSplitView({
                   {da ? 'Åbn i fuld visning →' : 'Open in full view →'}
                 </Link>
               </>
+            )}
+
+            {/* BIZZ-799: Inline edit mode */}
+            {caseDetail && editing && (
+              <div className="space-y-2">
+                <label className="block">
+                  <span className="text-[10px] uppercase tracking-wide text-slate-500">
+                    {da ? 'Sagsnavn' : 'Case name'}
+                  </span>
+                  <input
+                    type="text"
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    maxLength={200}
+                    className="mt-0.5 w-full px-2 py-1.5 bg-slate-900 border border-slate-700 rounded text-white text-xs"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-[10px] uppercase tracking-wide text-slate-500">
+                    {da ? 'Kunde (valgfri)' : 'Customer (optional)'}
+                  </span>
+                  <div className="mt-0.5">
+                    <CustomerSearchPicker value={editCustomer} onChange={setEditCustomer} compact />
+                  </div>
+                </label>
+                <label className="block">
+                  <span className="text-[10px] uppercase tracking-wide text-slate-500">
+                    {da ? 'Klient-ref' : 'Client ref'}
+                  </span>
+                  <input
+                    type="text"
+                    value={editClientRef}
+                    onChange={(e) => setEditClientRef(e.target.value)}
+                    className="mt-0.5 w-full px-2 py-1.5 bg-slate-900 border border-slate-700 rounded text-white text-xs"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-[10px] uppercase tracking-wide text-slate-500">
+                    {da ? 'Status' : 'Status'}
+                  </span>
+                  <select
+                    value={editStatus}
+                    onChange={(e) =>
+                      setEditStatus(e.target.value as 'open' | 'closed' | 'archived')
+                    }
+                    className="mt-0.5 w-full px-2 py-1.5 bg-slate-900 border border-slate-700 rounded text-white text-xs"
+                  >
+                    <option value="open">{da ? 'Åben' : 'Open'}</option>
+                    <option value="closed">{da ? 'Lukket' : 'Closed'}</option>
+                    <option value="archived">{da ? 'Arkiveret' : 'Archived'}</option>
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="text-[10px] uppercase tracking-wide text-slate-500">
+                    {da ? 'Tags (komma)' : 'Tags (comma)'}
+                  </span>
+                  <input
+                    type="text"
+                    value={editTagsInput}
+                    onChange={(e) => setEditTagsInput(e.target.value)}
+                    className="mt-0.5 w-full px-2 py-1.5 bg-slate-900 border border-slate-700 rounded text-white text-xs"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-[10px] uppercase tracking-wide text-slate-500">
+                    {da ? 'Noter' : 'Notes'}
+                  </span>
+                  <textarea
+                    value={editNotes}
+                    onChange={(e) => setEditNotes(e.target.value)}
+                    rows={3}
+                    className="mt-0.5 w-full px-2 py-1.5 bg-slate-900 border border-slate-700 rounded text-white text-xs resize-y"
+                  />
+                </label>
+                {saveError && <p className="text-[10px] text-rose-300">{saveError}</p>}
+                <div className="flex items-center justify-end gap-1.5 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditing(false);
+                      setSaveError(null);
+                    }}
+                    disabled={saving}
+                    className="px-2 py-1 text-[11px] text-slate-400 hover:text-white"
+                  >
+                    {da ? 'Annuller' : 'Cancel'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void saveCase()}
+                    disabled={saving}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded text-white text-[11px] font-medium"
+                  >
+                    {saving ? <Loader2 size={10} className="animate-spin" /> : <Save size={10} />}
+                    {da ? 'Gem' : 'Save'}
+                  </button>
+                </div>
+              </div>
             )}
           </div>
         </div>

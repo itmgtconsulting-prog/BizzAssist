@@ -152,30 +152,42 @@ export default function DomainsListClient() {
     return true;
   });
 
-  const statCards = [
+  // BIZZ-783: Stats as clickable filter pills instead of static KPI cards.
+  // Clicking a pill sets statusFilter so the table below filters to that status.
+  const statPills: Array<{
+    label: string;
+    value: number;
+    icon: typeof Building2;
+    color: string;
+    filter: 'all' | 'active' | 'suspended' | 'archived';
+  }> = [
     {
       label: da ? 'Total' : 'Total',
       value: totalCount,
       icon: Building2,
       color: 'text-blue-400',
+      filter: 'all',
     },
     {
       label: da ? 'Aktive' : 'Active',
       value: activeCount,
       icon: CheckCircle,
       color: 'text-emerald-400',
+      filter: 'active',
     },
     {
       label: da ? 'Suspenderede' : 'Suspended',
       value: suspendedCount,
       icon: AlertTriangle,
       color: 'text-amber-400',
+      filter: 'suspended',
     },
     {
       label: da ? 'Arkiveret' : 'Archived',
       value: archivedCount,
       icon: Archive,
       color: 'text-slate-400',
+      filter: 'archived',
     },
   ];
 
@@ -223,25 +235,41 @@ export default function DomainsListClient() {
         className="flex gap-1 -mb-px overflow-x-auto border-b border-slate-700/50"
       />
 
-      {/* BIZZ-739: Stats card row — matches /dashboard/admin/users + /billing */}
+      {/* BIZZ-783: Stat-pills — clickable filter tags replacing static KPI cards.
+          Active pill gets blue outline + stronger background; clicking toggles
+          statusFilter and filters the table below. */}
       {!loading && !error && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {statCards.map((c) => (
-            <div
-              key={c.label}
-              className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-4"
-            >
-              <div className="flex items-center gap-2 mb-2 text-slate-400 text-xs uppercase tracking-wide">
-                <c.icon size={14} className={c.color} />
-                {c.label}
-              </div>
-              <p className="text-2xl font-bold text-white">{c.value}</p>
-            </div>
-          ))}
+        <div className="flex flex-wrap gap-2">
+          {statPills.map((p) => {
+            const isActive = statusFilter === p.filter;
+            return (
+              <button
+                key={p.filter}
+                type="button"
+                onClick={() => setStatusFilter(p.filter)}
+                aria-pressed={isActive}
+                className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-medium transition-colors ${
+                  isActive
+                    ? 'bg-blue-500/20 border-blue-400/60 text-white'
+                    : 'bg-slate-900/50 border-slate-700/40 text-slate-300 hover:bg-slate-800/60 hover:border-slate-600'
+                }`}
+              >
+                <p.icon size={13} className={p.color} />
+                <span>{p.label}</span>
+                <span
+                  className={`ml-1 px-1.5 py-0.5 rounded-md text-[11px] font-semibold ${
+                    isActive ? 'bg-blue-500/30 text-white' : 'bg-slate-800/80 text-slate-200'
+                  }`}
+                >
+                  {p.value}
+                </span>
+              </button>
+            );
+          })}
         </div>
       )}
 
-      {/* BIZZ-739: Search + status filter */}
+      {/* BIZZ-739: Search (status-filter moved into clickable pills above — BIZZ-783) */}
       {!loading && !error && totalCount > 0 && (
         <div className="flex gap-3 items-center">
           <div className="relative flex-1 max-w-xs">
@@ -254,18 +282,6 @@ export default function DomainsListClient() {
               className="w-full bg-slate-800/60 border border-slate-700/50 rounded-lg pl-9 pr-3 py-2 text-white text-xs placeholder:text-slate-500 focus:border-blue-500 focus:outline-none"
             />
           </div>
-          <select
-            value={statusFilter}
-            onChange={(e) =>
-              setStatusFilter(e.target.value as 'all' | 'active' | 'suspended' | 'archived')
-            }
-            className="bg-slate-800/60 border border-slate-700/50 rounded-lg px-3 py-2 text-white text-xs focus:border-blue-500 focus:outline-none"
-          >
-            <option value="all">{da ? 'Alle statusser' : 'All statuses'}</option>
-            <option value="active">{da ? 'Aktive' : 'Active'}</option>
-            <option value="suspended">{da ? 'Suspenderede' : 'Suspended'}</option>
-            <option value="archived">{da ? 'Arkiveret' : 'Archived'}</option>
-          </select>
         </div>
       )}
 

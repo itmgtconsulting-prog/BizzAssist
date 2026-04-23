@@ -24,6 +24,7 @@ import {
   FileText,
   History,
   Settings,
+  ArrowLeft,
   type LucideIcon,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
@@ -206,22 +207,18 @@ export default function DomainUserDashboardClient({ domainId }: { domainId: stri
   }, [domainId, selectedIds, clearSelection, load, da]);
 
   return (
-    <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
-      {/* BIZZ-781: Page header aligned with company/ejendom/person detail
-          pattern — big title + info-chips below. Domain name falls back to
-          "Domain" while the /api/domain/mine call is in flight. */}
+    <div className="w-full px-4 py-6 space-y-5">
+      {/* BIZZ-798: Layout matcher person-detalje — full-width, "Tilbage til
+          dashboard"-link øverst, header + tabs spanning full content width. */}
+      <Link
+        href="/dashboard"
+        className="inline-flex items-center gap-1.5 text-slate-400 hover:text-white text-xs font-medium transition-colors"
+      >
+        <ArrowLeft size={12} />
+        {da ? 'Tilbage til dashboard' : 'Back to dashboard'}
+      </Link>
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
-          <nav
-            aria-label="Breadcrumb"
-            className="flex items-center gap-1.5 text-xs text-slate-500 mb-2"
-          >
-            <Link href="/dashboard" className="hover:text-slate-300 transition-colors">
-              Dashboard
-            </Link>
-            <span>/</span>
-            <span className="text-slate-400">Domain</span>
-          </nav>
           <h1 className="text-2xl font-bold text-white flex items-center gap-2">
             <Shield size={22} className="text-purple-400" />
             {da ? 'Domain' : 'Domain'}

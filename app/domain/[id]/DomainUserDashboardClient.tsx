@@ -213,6 +213,58 @@ export default function DomainUserDashboardClient({ domainId }: { domainId: stri
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
+      {/* BIZZ-781: Page header aligned with company/ejendom/person detail
+          pattern — big title + info-chips below. Domain name falls back to
+          "Domain" while the /api/domain/mine call is in flight. */}
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <nav
+            aria-label="Breadcrumb"
+            className="flex items-center gap-1.5 text-xs text-slate-500 mb-2"
+          >
+            <Link href="/dashboard" className="hover:text-slate-300 transition-colors">
+              Dashboard
+            </Link>
+            <span>/</span>
+            <span className="text-slate-400">Domain</span>
+          </nav>
+          <h1 className="text-2xl font-bold text-white flex items-center gap-2">
+            <Shield size={22} className="text-purple-400" />
+            {da ? 'Domain' : 'Domain'}
+          </h1>
+          <div className="flex items-center gap-2 mt-2 flex-wrap">
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-500/15 text-blue-300 border border-blue-500/30">
+              <Briefcase size={11} />
+              {statusCount} {da ? 'sager' : 'cases'}
+            </span>
+            {role === 'admin' && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-purple-500/15 text-purple-300 border border-purple-500/30">
+                <Shield size={11} />
+                {da ? 'Admin' : 'Admin'}
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {role === 'admin' && (
+            <Link
+              href={`/domain/${domainId}/admin`}
+              className="flex items-center gap-2 px-3 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700/40 rounded-md text-slate-300 text-sm font-medium transition-colors"
+            >
+              <Shield size={14} className="text-purple-400" />
+              {da ? 'Admin' : 'Admin'}
+            </Link>
+          )}
+          <Link
+            href={`/domain/${domainId}/new-case`}
+            className="flex items-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-500 rounded-md text-white text-sm font-medium transition-colors"
+          >
+            <Plus size={14} />
+            {da ? 'Opret sag' : 'New case'}
+          </Link>
+        </div>
+      </div>
+
       {/* BIZZ-773: Top-level tabs — aligns domain with person/company/ejendom
           detail pattern. Admin-only tabs link out to existing admin routes.
           Iter 2 will bring inline rendering + split-view + AI side-panel. */}
@@ -278,36 +330,7 @@ export default function DomainUserDashboardClient({ domainId }: { domainId: stri
 
       {topTab === 'cases' && (
         <>
-          {/* Header */}
-          <div className="flex items-center justify-between flex-wrap gap-3">
-            <div>
-              <h1 className="text-xl font-bold text-white flex items-center gap-2">
-                <Briefcase size={22} className="text-blue-400" />
-                {da ? 'Sager' : 'Cases'}
-              </h1>
-              <p className="text-slate-500 text-sm mt-1">
-                {statusCount} {da ? 'sager vist' : 'cases shown'}
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              {role === 'admin' && (
-                <Link
-                  href={`/domain/${domainId}/admin`}
-                  className="flex items-center gap-2 px-3 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700/40 rounded-md text-slate-300 text-sm font-medium transition-colors"
-                >
-                  <Shield size={14} className="text-purple-400" />
-                  {da ? 'Admin' : 'Admin'}
-                </Link>
-              )}
-              <Link
-                href={`/domain/${domainId}/new-case`}
-                className="flex items-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-500 rounded-md text-white text-sm font-medium transition-colors"
-              >
-                <Plus size={14} />
-                {da ? 'Opret sag' : 'New case'}
-              </Link>
-            </div>
-          </div>
+          {/* BIZZ-781: header + actions flyttet til sidens top (over tabs) — undgår duplikation */}
 
           {/* Search + status filter */}
           <div className="flex items-center gap-3 flex-wrap">

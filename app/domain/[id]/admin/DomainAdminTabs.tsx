@@ -118,9 +118,33 @@ export function DomainAdminTabs({
   const effectiveBackHref = backHref ?? `/domain/${domainId}`;
   const activeId = activeTabIdFor(pathname, effectiveHrefBase);
 
+  // BIZZ-780: super-admin scope gets a breadcrumb that anchors the user
+  // in the admin-surface: "Admin > Domains > [navn] > [tab]".
+  const isSuperAdminScope = effectiveHrefBase.startsWith('/dashboard/admin/');
+
   return (
     <div className="border-b border-slate-700/40 bg-slate-900/40">
-      <div className="max-w-6xl mx-auto px-4 pt-6">
+      <div className="w-full px-4 pt-6">
+        {/* BIZZ-780: Breadcrumb for super-admin scope */}
+        {isSuperAdminScope && (
+          <nav
+            aria-label="Breadcrumb"
+            className="flex items-center gap-2 text-xs text-slate-500 mb-2"
+          >
+            <Link href="/dashboard/admin/users" className="hover:text-slate-300 transition-colors">
+              Admin
+            </Link>
+            <span>/</span>
+            <Link
+              href="/dashboard/admin/domains"
+              className="hover:text-slate-300 transition-colors"
+            >
+              Domains
+            </Link>
+            <span>/</span>
+            <span className="text-slate-300">{domainName ?? '…'}</span>
+          </nav>
+        )}
         {/* Header row: back + domain name */}
         <div className="flex items-center gap-3 mb-4">
           <Link

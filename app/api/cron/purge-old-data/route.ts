@@ -43,6 +43,8 @@ interface TenantPurgeResult {
   activityLogDeleted: number;
   aiTokenUsageDeleted: number;
   embeddingsDeleted: number;
+  /** BIZZ-818: AI chat-sessions ældre end 12 mdr (archived eksluderet) */
+  aiChatSessionsDeleted: number;
   error?: string;
 }
 
@@ -235,6 +237,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           activityLogDeleted: 0,
           aiTokenUsageDeleted: 0,
           embeddingsDeleted: 0,
+          aiChatSessionsDeleted: 0,
         };
 
         try {
@@ -359,6 +362,18 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
               .lt('created_at', twelveMonthsAgo);
 
             result.embeddingsDeleted = embeddingsCount ?? 0;
+
+            // 8. BIZZ-818: ai_chat_sessions older than 12 months (GDPR Art. 5(1)(e)).
+            //    Archived sessions (archived_at IS NOT NULL) ekskluderes —
+            //    brugeren har aktivt valgt at bevare dem. Messages
+            //    cascader via ON DELETE CASCADE.
+            const { count: aiChatSessionsCount } = await db
+              .from('ai_chat_sessions')
+              .delete({ count: 'exact' })
+              .lt('last_msg_at', twelveMonthsAgo)
+              .is('archived_at', null);
+
+            result.aiChatSessionsDeleted = aiChatSessionsCount ?? 0;
 
             // Write audit log only if something was actually purged
             if (

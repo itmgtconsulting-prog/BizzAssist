@@ -10,10 +10,9 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { FileText, Upload, Loader2, Search } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
+import { InlineTemplateDetailView } from './InlineTemplateDetailView';
 
 interface TemplateSummary {
   id: string;
@@ -32,7 +31,6 @@ const MAX_MB = 20;
 export default function TemplatesListClient({ domainId }: { domainId: string }) {
   const { lang } = useLanguage();
   const da = lang === 'da';
-  const router = useRouter();
 
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -44,6 +42,25 @@ export default function TemplatesListClient({ domainId }: { domainId: string }) 
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'archived'>('all');
   // BIZZ-756: sort dropdown (name/date/status)
   const [sortBy, setSortBy] = useState<'name-asc' | 'date-desc' | 'status'>('date-desc');
+  // BIZZ-789: Åbn skabelon inline i panelet i stedet for at navigere væk.
+  // URL-param 't=<id>' beholdes for deep-linkable state.
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const sp = new URLSearchParams(window.location.search);
+    const t = sp.get('t');
+    if (t) setSelectedTemplateId(t);
+  }, []);
+
+  const setSelectionWithUrl = useCallback((id: string | null) => {
+    setSelectedTemplateId(id);
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    if (id) url.searchParams.set('t', id);
+    else url.searchParams.delete('t');
+    window.history.replaceState(null, '', url.toString());
+  }, []);
 
   const filteredTemplates = templates
     .filter((t) => {
@@ -92,12 +109,27 @@ export default function TemplatesListClient({ domainId }: { domainId: string }) 
         setNotice({ kind: 'err', text: d.error || 'Fejl' });
       } else {
         const { id } = (await r.json()) as { id: string };
-        router.push(`/domain/${domainId}/admin/templates/${id}`);
+        // BIZZ-789: åbn nyuploadet skabelon inline i stedet for at navigere
+        await load();
+        setSelectionWithUrl(id);
       }
     } finally {
       setUploading(false);
     }
   };
+
+  // BIZZ-789: Hvis en skabelon er valgt, render detaljen inline i panelet
+  // (horizontal split med skabelon-felter i top + dokumenter i bund) i
+  // stedet for at navigere væk til /domain/[id]/admin/templates/[id].
+  if (selectedTemplateId) {
+    return (
+      <InlineTemplateDetailView
+        domainId={domainId}
+        templateId={selectedTemplateId}
+        onBack={() => setSelectionWithUrl(null)}
+      />
+    );
+  }
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-6">
@@ -199,9 +231,10 @@ export default function TemplatesListClient({ domainId }: { domainId: string }) 
           <ul className="divide-y divide-slate-700/30">
             {filteredTemplates.map((t) => (
               <li key={t.id}>
-                <Link
-                  href={`/domain/${domainId}/admin/templates/${t.id}`}
-                  className="px-4 py-3 flex items-center gap-3 hover:bg-slate-800/60 transition-colors"
+                <button
+                  type="button"
+                  onClick={() => setSelectionWithUrl(t.id)}
+                  className="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-slate-800/60 transition-colors"
                 >
                   <span className="px-2 py-0.5 text-[10px] font-semibold rounded bg-emerald-900/40 text-emerald-300 uppercase">
                     {t.file_type}
@@ -223,7 +256,7 @@ export default function TemplatesListClient({ domainId }: { domainId: string }) 
                     {t.placeholders?.length ?? 0} {da ? 'felter' : 'fields'}
                   </span>
                   <span className="text-slate-600 text-xs">v{t.version}</span>
-                </Link>
+                </button>
               </li>
             ))}
           </ul>

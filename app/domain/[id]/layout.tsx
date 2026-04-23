@@ -15,6 +15,7 @@
 import { notFound } from 'next/navigation';
 import { isDomainFeatureEnabled } from '@/app/lib/featureFlags';
 import { resolveDomainId } from '@/app/lib/domainAuth';
+import DashboardLayout from '@/app/dashboard/layout';
 
 export default async function DomainMemberLayout({
   children,
@@ -29,5 +30,8 @@ export default async function DomainMemberLayout({
   const ctx = await resolveDomainId(id);
   if (!ctx) notFound();
 
-  return <>{children}</>;
+  // BIZZ-796: Wrap /domain/[id]/* i DashboardLayout (sidebar + topbar + søge-
+  // bar + recent entities) så siden matcher /dashboard/ejendomme/[id],
+  // /dashboard/companies/[cvr] og /dashboard/owners/[id] i look-and-feel.
+  return <DashboardLayout>{children}</DashboardLayout>;
 }

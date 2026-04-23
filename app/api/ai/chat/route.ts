@@ -45,9 +45,19 @@ interface ChatMessage {
   content: string;
 }
 
+/** BIZZ-812: attachment reference til tool-use (generate_document). */
+interface ChatAttachmentRef {
+  file_id: string;
+  name: string;
+  file_type: string;
+}
+
 interface ChatRequestBody {
   messages: ChatMessage[];
   context?: string;
+  /** BIZZ-812: Persistede attachments (ai_file-ids). Tool-dispatcher i
+   *  BIZZ-813 bruger dem til template-fill. Optional + baglæns-kompatibel. */
+  attachments?: ChatAttachmentRef[];
 }
 
 // ─── Tool definitions ───────────────────────────────────────────────────────
@@ -1553,10 +1563,16 @@ export async function POST(request: NextRequest): Promise<Response> {
     return Response.json({ error: 'Ugyldig JSON' }, { status: 400 });
   }
 
-  const { messages, context } = body;
+  const { messages, context, attachments } = body;
   if (!messages || !Array.isArray(messages) || messages.length === 0) {
     return Response.json({ error: 'Ingen beskeder' }, { status: 400 });
   }
+  // BIZZ-812: attachments-array er optional. Hver entry er
+  // { file_id, name, file_type } der refererer til public.ai_file.
+  // Tool-dispatcher i BIZZ-813 læser denne og henter binær til
+  // template-fill. I denne ticket er attachments kun pass-through
+  // (landes ikke på tool-context endnu).
+  void attachments;
 
   // ── Input validation — guard against oversized payloads ──────────────────
   /** Maximum number of messages accepted per request (prevents token amplification). */

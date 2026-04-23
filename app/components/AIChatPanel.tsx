@@ -67,6 +67,12 @@ interface ChatAttachment {
   extracted_text: string;
   preview: string;
   truncated: boolean;
+  /**
+   * BIZZ-812: Server-side persistens-reference til ai_file row. Sendes
+   * med i chat-request så tool-use kan reference binæret. Null hvis
+   * persistens fejlede.
+   */
+  file_id?: string | null;
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -478,12 +484,22 @@ function AIChatPanel() {
     abortRef.current = controller;
 
     try {
+      // BIZZ-812: inkluder attachment file_id-array så tool-dispatcher
+      // (BIZZ-813) kan slå op i ai_file + hente binær til template-fill.
+      const attachmentRefs = attachments
+        .filter((a) => a.file_id != null)
+        .map((a) => ({
+          file_id: a.file_id as string,
+          name: a.name,
+          file_type: a.file_type,
+        }));
       const res = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           messages: newMessages,
           context: buildContext(),
+          attachments: attachmentRefs.length > 0 ? attachmentRefs : undefined,
         }),
         signal: controller.signal,
       });

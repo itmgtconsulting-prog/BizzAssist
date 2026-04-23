@@ -17,11 +17,14 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { randomUUID } from 'node:crypto';
 import { extractTextFromBuffer } from '@/app/lib/domainTextExtraction';
 import { resolveFileType, supportedLabels } from '@/app/lib/domainFileTypes';
 import { resolveTenantId } from '@/lib/api/auth';
 import { checkRateLimit, aiRateLimit } from '@/app/lib/rateLimit';
 import { logger } from '@/app/lib/logger';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { sanitizeFilename } from '@/app/lib/aiFileGeneration';
 
 /** 20 MB cap on any single attachment — keeps extraction snappy and bounds
  * how much context can be shoved into a single chat turn. */
@@ -77,7 +80,60 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
     const full = result.text;
     const preview = full.slice(0, PREVIEW_CHARS) + (full.length > PREVIEW_CHARS ? '…' : '');
+
+    // BIZZ-812: persist binary + ai_file metadata så efterfølgende
+    // tool-call (BIZZ-813 generate_document) kan fill template'et.
+    // Best-effort: hvis upload/DB-insert fejler, loger vi men fortsætter
+    // med status quo (kun tekst-injection) så chat-flow ikke blokeres.
+    const safeName = sanitizeFilename(file.name);
+    const storagePath = `${auth.userId}/${randomUUID()}-${safeName}`;
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    let fileId: string | null = null;
+    try {
+      const admin = createAdminClient();
+      const { error: uploadErr } = await admin.storage
+        .from('ai-attachments')
+        .upload(storagePath, buffer, {
+          contentType: mime,
+          upsert: false,
+        });
+      if (uploadErr) {
+        logger.warn('[ai/attach] storage upload fejl:', uploadErr.message);
+      } else {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: row, error: insertErr } = await (admin as any)
+          .from('ai_file')
+          .insert({
+            user_id: auth.userId,
+            kind: 'attachment',
+            file_path: storagePath,
+            file_name: safeName,
+            file_type: fileType,
+            size_bytes: file.size,
+            metadata: { mime, truncated: result.truncated ?? false },
+            expires_at: expiresAt,
+          })
+          .select('id')
+          .single();
+        if (insertErr || !row) {
+          logger.warn('[ai/attach] ai_file insert fejl:', insertErr?.message ?? 'no row returned');
+          // Ryd storage-blob op så vi ikke efterlader orphan
+          await admin.storage
+            .from('ai-attachments')
+            .remove([storagePath])
+            .catch(() => null);
+        } else {
+          fileId = row.id as string;
+        }
+      }
+    } catch (persistErr) {
+      logger.warn('[ai/attach] persistens-fejl:', persistErr);
+    }
+
     return NextResponse.json({
+      // BIZZ-812: file_id er null hvis persistens fejlede — klienten
+      // behandler det som "kun tekst-injection" fallback.
+      file_id: fileId,
       name: file.name,
       file_type: fileType,
       size: file.size,

@@ -70,6 +70,8 @@ interface ChatAttachment {
   extracted_text: string;
   preview: string;
   truncated: boolean;
+  /** BIZZ-812: Server-side ai_file row-id for tool-use reference. */
+  file_id?: string | null;
 }
 
 /** A persisted conversation stored in localStorage */
@@ -679,6 +681,15 @@ export default function ChatPageClient() {
     abortRef.current = controller;
 
     try {
+      // BIZZ-812: inkluder attachment file_id-array så tool-dispatcher
+      // (BIZZ-813) kan slå op i ai_file + hente binær til template-fill.
+      const attachmentRefs = attachments
+        .filter((a) => a.file_id != null)
+        .map((a) => ({
+          file_id: a.file_id as string,
+          name: a.name,
+          file_type: a.file_type,
+        }));
       const res = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -701,6 +712,7 @@ export default function ChatPageClient() {
                   .join('\n'),
               }
             : {}),
+          ...(attachmentRefs.length > 0 ? { attachments: attachmentRefs } : {}),
         }),
         signal: controller.signal,
       });

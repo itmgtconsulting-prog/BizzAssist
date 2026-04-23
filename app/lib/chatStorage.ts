@@ -20,6 +20,13 @@ export interface ChatAttachmentMeta {
   file_type: string;
   size: number;
   truncated?: boolean;
+  /**
+   * BIZZ-812: Server-side persistens-reference (public.ai_file.id).
+   * Sendes med i chat-request attachments-array så tool-use i BIZZ-813
+   * kan reference binæret. Null hvis persistens fejlede (fallback er
+   * tekst-injection som før).
+   */
+  file_id?: string | null;
 }
 
 /** A single chat message */

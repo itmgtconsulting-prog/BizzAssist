@@ -470,6 +470,114 @@ export function expandInitials(s: string): string[] {
   return [...results].map((v) => v.trim()).filter((v) => v.length > 0);
 }
 
+// ─── BIZZ-794: Vurderingsportalen ES batch-lookup ───────────────────────────
+
+/**
+ * BIZZ-794: Tjek om et sæt adresser har VUR-vurdering i Vurderingsportalen
+ * ES. Batch-query der én gang slår op for alle unikke adresser i stedet
+ * for N enkelt-kald. Timeout 3s — ES-fejl/timeout returnerer tom map så
+ * autocomplete ikke blokeres; callere skal behandle manglende mappings
+ * som "ukendt" (harVurdering=null).
+ *
+ * @param adresserUdenEtage - Liste af "Vejnavn Nr, Postnr By" strenge
+ *   (første komma-del af adgangsadressebetegnelse, uden etage/dør)
+ * @returns Map hvor nøglen er adressen (lowercase) og værdien er true
+ *   hvis mindst én VUR-hit findes.
+ */
+export async function lookupVurForAddresses(
+  adresserUdenEtage: string[]
+): Promise<Map<string, boolean>> {
+  const result = new Map<string, boolean>();
+  if (adresserUdenEtage.length === 0) return result;
+
+  // Dedupliker
+  const unique = Array.from(new Set(adresserUdenEtage.map((a) => a.trim())));
+  if (unique.length === 0) return result;
+
+  const esUrl = 'https://api-fs.vurderingsportalen.dk/preliminaryproperties/_search';
+  const esQuery = {
+    size: Math.min(unique.length * 5, 100), // ~5 hits per adresse, cap 100
+    query: {
+      bool: {
+        should: unique.map((addr) => ({ match_phrase: { address: addr } })),
+        minimum_should_match: 1,
+      },
+    },
+  };
+  try {
+    const res = await fetch(esUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      },
+      body: JSON.stringify(esQuery),
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!res.ok) return result;
+    const data = (await res.json()) as {
+      hits?: { hits?: { _source?: { address?: string; bfeNumbers?: string } }[] };
+    };
+    const hits = data?.hits?.hits ?? [];
+    // Normalizer: begynder med "Vejnavn Nr" før komma — match lowercase
+    // for robusthed over mindre variationer i postnr-by-suffix.
+    for (const hit of hits) {
+      const addr = hit._source?.address;
+      if (!addr) continue;
+      const prefix = addr.split(',')[0].trim().toLowerCase();
+      if (prefix.length === 0) continue;
+      // Match hits'ens adresse mod alle unique-entries der deler samme prefix
+      for (const entry of unique) {
+        const entryPrefix = entry.split(',')[0].trim().toLowerCase();
+        if (entryPrefix === prefix) {
+          result.set(entry.toLowerCase(), true);
+        }
+      }
+    }
+  } catch {
+    // Timeout eller netværksfejl — returner tom map, caller markerer
+    // som harVurdering=null
+  }
+  return result;
+}
+
+/**
+ * BIZZ-794: Klassificér én autocomplete-kandidat som sfe/bygning/
+ * ejerlejlighed baseret på DAR-type og VUR-lookup.
+ *
+ *   - DAR_Adresse (med etage/dør) → 'ejerlejlighed' (harVurdering=true)
+ *   - DAR_Husnummer med VUR-hit   → 'bygning'       (harVurdering=true)
+ *   - DAR_Husnummer uden VUR-hit  → 'sfe'           (harVurdering=false)
+ *
+ * `vejnavn`-type returnerer null (ikke en ejendom).
+ *
+ * @param darType - 'adresse' | 'adgangsadresse' | 'vejnavn' (fra DawaAutocompleteResult.type)
+ * @param harVurMatch - Resultat af Vurderingsportalen ES-lookup (undefined hvis lookup fejlede)
+ */
+export function classifyEjendomType(
+  darType: 'adresse' | 'adgangsadresse' | 'vejnavn',
+  harVurMatch: boolean | undefined
+): {
+  ejendomstype: 'sfe' | 'bygning' | 'ejerlejlighed' | null;
+  harVurdering: boolean | null;
+} {
+  if (darType === 'vejnavn') {
+    return { ejendomstype: null, harVurdering: null };
+  }
+  if (darType === 'adresse') {
+    // DAR_Adresse med etage/dør = ejerlejlighed. Har per definition en
+    // egen vurdering når den returneres fra DAR_Adresse-query.
+    return { ejendomstype: 'ejerlejlighed', harVurdering: true };
+  }
+  // darType === 'adgangsadresse' (DAR_Husnummer)
+  if (harVurMatch === undefined) {
+    return { ejendomstype: null, harVurdering: null };
+  }
+  return harVurMatch
+    ? { ejendomstype: 'bygning', harVurdering: true }
+    : { ejendomstype: 'sfe', harVurdering: false };
+}
+
 /**
  * Henter adresse-autocomplete-forslag fra DAR (Datafordeler GraphQL).
  * Returnerer op til 8 resultater matchende søgestrengen.
@@ -732,10 +840,31 @@ export async function darAutocomplete(q: string): Promise<DawaAutocompleteResult
         };
       });
 
+    // BIZZ-794: Berig husnummer-resultater med ejendomstype-klassifikation
+    // via Vurderingsportalen ES. Non-blocking fallback — hvis lookup
+    // fejler eller timer ud, sætter vi ejendomstype=null så UI viser dem
+    // som ukendt type (ikke skjult). Adresse-resultater (ejerlejligheder)
+    // klassificeres direkte uden ES-opslag.
+    const husnummerAddresses = husnummerResults.map((r) => {
+      const first = r.tekst.split(',')[0].trim();
+      return first;
+    });
+    const vurMap = await lookupVurForAddresses(husnummerAddresses);
+    const husnummerClassified: DawaAutocompleteResult[] = husnummerResults.map((r) => {
+      const first = r.tekst.split(',')[0].trim().toLowerCase();
+      const hit = vurMap.get(first);
+      const { ejendomstype, harVurdering } = classifyEjendomType('adgangsadresse', hit);
+      return { ...r, ejendomstype, harVurdering };
+    });
+    const adresseClassified: DawaAutocompleteResult[] = adresseResults.map((r) => {
+      const { ejendomstype, harVurdering } = classifyEjendomType('adresse', undefined);
+      return { ...r, ejendomstype, harVurdering };
+    });
+
     // Interleave: hovedejendomme først, så lejligheder — giver naturlig
     // rækkefølge hvor brugere der tastede "Arnold Nielsens Blvd 62A" ser
     // hovedejendommen øverst + de 2 lejligheder under.
-    return [...husnummerResults, ...adresseResults].slice(0, 10);
+    return [...husnummerClassified, ...adresseClassified].slice(0, 10);
   } catch (err) {
     logger.error('darAutocomplete fejl, falder tilbage til DAWA:', err);
     // Fallback til DAWA (gratis, ingen auth/IP-krav) — virker indtil 1. juli 2026

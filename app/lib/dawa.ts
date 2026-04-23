@@ -72,6 +72,27 @@ export interface DawaAutocompleteResult {
    * should treat null as "unknown → show".
    */
   status?: string | null;
+  /**
+   * BIZZ-794: Ejendomshierarki-klassifikation.
+   *   - 'sfe': Samlet Fast Ejendom — container uden egen VUR-vurdering
+   *     (fx matrikulær opgangs-struktur med ejerlejligheder underneden).
+   *   - 'bygning': Reel ejendom med egen vurdering (typisk enfamiliehus
+   *     eller erhvervsbygning).
+   *   - 'ejerlejlighed': Enhed med etage/dør under en hovedejendom.
+   * Null for vejnavn-type eller når VUR-opslag ikke var tilgængeligt
+   * (fx DAWA fallback path eller ES timeout). Null skal fortolkes som
+   * "ukendt — vis hit normalt" af UI.
+   */
+  ejendomstype?: 'sfe' | 'bygning' | 'ejerlejlighed' | null;
+  /**
+   * BIZZ-794: Hvorvidt denne adresse har en egen VUR-vurdering (fra
+   * Vurderingsportalen ES). Null når vurderings-lookup ikke kunne
+   * afgøres. Konsistent med ejendomstype:
+   *   - 'bygning' / 'ejerlejlighed' → harVurdering=true
+   *   - 'sfe'                       → harVurdering=false
+   *   - null                        → harVurdering=null
+   */
+  harVurdering?: boolean | null;
   adresse: {
     id: string; // 'vejnavn:…' for vejnavn-type, UUID for adresse/adgangsadresse
     vejnavn: string;

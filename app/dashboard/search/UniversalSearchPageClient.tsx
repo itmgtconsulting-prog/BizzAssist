@@ -102,6 +102,35 @@ function PropertyCard({ result, lang }: { result: DawaAutocompleteResult; lang: 
     .filter(Boolean)
     .join(' · ');
 
+  // BIZZ-794: type-badge for ejendomshierarki-klassifikation.
+  // 'sfe'-hits vises normalt kun når ?visAlle=1 er aktiv (debug-mode);
+  // parent-filter nedenfor styrer synlighed. Denne komponent viser
+  // altid badgen når ejendomstype er kendt.
+  const typeBadge = (() => {
+    if (!result.ejendomstype) return null;
+    const da = lang === 'da';
+    switch (result.ejendomstype) {
+      case 'sfe':
+        return {
+          label: da ? 'SFE' : 'SFE',
+          title: da ? 'Samlet Fast Ejendom (hovedejendom)' : 'Samlet Fast Ejendom (main property)',
+          className: 'bg-amber-500/10 text-amber-300 border-amber-500/20',
+        };
+      case 'bygning':
+        return {
+          label: da ? 'Bygning' : 'Building',
+          title: da ? 'Bygning med egen vurdering' : 'Building with own valuation',
+          className: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20',
+        };
+      case 'ejerlejlighed':
+        return {
+          label: da ? 'Lejlighed' : 'Condo',
+          title: da ? 'Ejerlejlighed' : 'Condominium unit',
+          className: 'bg-blue-500/10 text-blue-300 border-blue-500/20',
+        };
+    }
+  })();
+
   return (
     <Link
       href={href}
@@ -111,7 +140,17 @@ function PropertyCard({ result, lang }: { result: DawaAutocompleteResult; lang: 
         <MapPin size={16} />
       </div>
       <div className="flex-1 min-w-0">
-        <p className="text-white font-medium text-sm truncate leading-snug">{result.tekst}</p>
+        <div className="flex items-center gap-2 flex-wrap">
+          <p className="text-white font-medium text-sm truncate leading-snug">{result.tekst}</p>
+          {typeBadge && (
+            <span
+              title={typeBadge.title}
+              className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium border flex-shrink-0 ${typeBadge.className}`}
+            >
+              {typeBadge.label}
+            </span>
+          )}
+        </div>
         <p className="text-slate-500 text-xs mt-0.5 truncate">
           {subtitle}
           {adresse.id && adresse.id.length < 20 ? ` · ${t.bfe}: ${adresse.id}` : ''}
@@ -846,11 +885,21 @@ export default function UniversalSearchPageClient() {
               // `status` fra DAR kan være "Gældende"/"Nedlagt"/"Henlagt"/null.
               // Ukendt status (null/undefined — fx DAWA fallback) tæller som
               // aktiv — vi skjuler KUN dem vi eksplicit ved er nedlagte.
-              const filteredProps = hideRetiredProperties
-                ? properties.filter(
-                    (r) => !r.status || r.status === 'Gældende' || r.status === 'Foreløbig'
-                  )
-                : properties;
+              //
+              // BIZZ-794: filtrér SFE-hits fra primær liste så brugeren kun
+              // ser reelle ejendomme (bygninger + ejerlejligheder). SFE vises
+              // stadig via drill-down fra bygning/lejlighed-detaljeside.
+              // Debug: ?visAlle=1 i URL viser også SFE'er (til QA/test).
+              const visAlleDebug = sp.get('visAlle') === '1';
+              const filteredProps = properties
+                .filter(
+                  (r) =>
+                    !hideRetiredProperties ||
+                    !r.status ||
+                    r.status === 'Gældende' ||
+                    r.status === 'Foreløbig'
+                )
+                .filter((r) => visAlleDebug || r.ejendomstype !== 'sfe');
               return (
                 <div role="tabpanel" aria-label={t.tabProperties}>
                   {loadingProps ? (

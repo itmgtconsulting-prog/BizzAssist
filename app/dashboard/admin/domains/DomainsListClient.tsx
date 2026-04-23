@@ -264,29 +264,22 @@ export default function DomainsListClient() {
         {da ? 'Tilbage til admin' : 'Back to admin'}
       </Link>
 
-      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-        <div>
-          <h1 className="text-white text-xl font-bold flex items-center gap-2">
-            <Building2 size={22} className="text-blue-400" />
-            {da ? 'Domain Management' : 'Domain Management'}
-          </h1>
-          <p className="text-slate-400 text-sm mt-0.5">
-            {loading
-              ? da
-                ? 'Henter domains…'
-                : 'Loading domains…'
-              : da
-                ? `${totalCount} total · ${activeCount} aktive${suspendedCount > 0 ? ` · ${suspendedCount} suspenderede` : ''}${archivedCount > 0 ? ` · ${archivedCount} arkiveret` : ''}`
-                : `${totalCount} total · ${activeCount} active${suspendedCount > 0 ? ` · ${suspendedCount} suspended` : ''}${archivedCount > 0 ? ` · ${archivedCount} archived` : ''}`}
-          </p>
-        </div>
-        <Link
-          href="/dashboard/admin/domains/new"
-          className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors self-start"
-        >
-          <Plus size={16} />
-          {da ? 'Opret Domain' : 'Create Domain'}
-        </Link>
+      {/* BIZZ-791: "Opret Domain"-knap flyttet ned til søgefelt-rækken —
+          øverste hjørne er nu kun titel + count. */}
+      <div>
+        <h1 className="text-white text-xl font-bold flex items-center gap-2">
+          <Building2 size={22} className="text-blue-400" />
+          {da ? 'Domain Management' : 'Domain Management'}
+        </h1>
+        <p className="text-slate-400 text-sm mt-0.5">
+          {loading
+            ? da
+              ? 'Henter domains…'
+              : 'Loading domains…'
+            : da
+              ? `${totalCount} total · ${activeCount} aktive${suspendedCount > 0 ? ` · ${suspendedCount} suspenderede` : ''}${archivedCount > 0 ? ` · ${archivedCount} arkiveret` : ''}`
+              : `${totalCount} total · ${activeCount} active${suspendedCount > 0 ? ` · ${suspendedCount} suspended` : ''}${archivedCount > 0 ? ` · ${archivedCount} archived` : ''}`}
+        </p>
       </div>
 
       {/* BIZZ-782: Admin tab-bar i samme variant som cron-status (border-b) */}
@@ -330,19 +323,33 @@ export default function DomainsListClient() {
         </div>
       )}
 
-      {/* BIZZ-739: Search (status-filter moved into clickable pills above — BIZZ-783) */}
-      {!loading && !error && totalCount > 0 && (
-        <div className="flex gap-3 items-center">
-          <div className="relative flex-1 max-w-xs">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder={da ? 'Søg navn eller slug…' : 'Search name or slug…'}
-              className="w-full bg-slate-800/60 border border-slate-700/50 rounded-lg pl-9 pr-3 py-2 text-white text-xs placeholder:text-slate-500 focus:border-blue-500 focus:outline-none"
-            />
-          </div>
+      {/* BIZZ-739: Search (status-filter moved into clickable pills above — BIZZ-783).
+          BIZZ-791: "Opret Domain"-knap nu placeret på samme linje som søgefeltet
+          (flyttet fra header). Mobile: knap falder under søgefeltet via flex-wrap. */}
+      {!loading && !error && (
+        <div className="flex flex-wrap gap-3 items-center">
+          {totalCount > 0 && (
+            <div className="relative flex-1 max-w-xs min-w-[200px]">
+              <Search
+                size={14}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
+              />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder={da ? 'Søg navn eller slug…' : 'Search name or slug…'}
+                className="w-full bg-slate-800/60 border border-slate-700/50 rounded-lg pl-9 pr-3 py-2 text-white text-xs placeholder:text-slate-500 focus:border-blue-500 focus:outline-none"
+              />
+            </div>
+          )}
+          <Link
+            href="/dashboard/admin/domains/new"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors ml-auto"
+          >
+            <Plus size={16} />
+            {da ? 'Opret Domain' : 'Create Domain'}
+          </Link>
         </div>
       )}
 

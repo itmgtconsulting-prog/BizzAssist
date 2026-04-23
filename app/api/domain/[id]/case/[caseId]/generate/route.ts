@@ -198,7 +198,30 @@ async function runGeneration(
     context.template.examples.length > 0
       ? `Examples:\n${context.template.examples.map((e) => e.text).join('\n---\n')}`
       : null,
-    'Respond with valid JSON matching the schema: { placeholders, sections[], unresolved? }',
+    // BIZZ-804: Explicit JSON shape — Claude was inventing section keys
+    // like "title"/"content"/"rows" that failed strict schema validation.
+    // Show the exact structure required.
+    [
+      'OUTPUT FORMAT — respond with a single JSON object matching EXACTLY this shape:',
+      '```json',
+      '{',
+      '  "placeholders": {',
+      '    "placeholder_name_1": "resolved value as string",',
+      '    "placeholder_name_2": "another value"',
+      '  },',
+      '  "sections": [',
+      '    { "heading": "Section heading", "body": "Section body as plain text" }',
+      '  ],',
+      '  "unresolved": ["placeholder_name_that_could_not_be_filled"]',
+      '}',
+      '```',
+      'Rules:',
+      '- Every section item must have exactly two keys: "heading" and "body" (both strings).',
+      '- Do NOT use alternative keys like "title", "description", "content", "rows", "items".',
+      '- For tabular / list data (e.g. XLSX templates), encode rows inside placeholders as pre-rendered strings or leave sections as an empty array [].',
+      '- Placeholders values must be strings. Stringify numbers/dates before putting them in.',
+      '- If you cannot fill a placeholder, omit it from placeholders AND add its name to unresolved.',
+    ].join('\n'),
   ].filter(Boolean);
 
   let claudeResponse: string;

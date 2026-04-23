@@ -57,6 +57,51 @@ export type GenerationOutput = z.infer<typeof GenerationOutputSchema>;
  *
  * @param raw - Claude's raw text response (should be a JSON string)
  */
+/**
+ * BIZZ-804: Conservative normaliser that ONLY kicks in for sections where
+ * neither `heading` NOR `body` is present as a string — i.e. Claude
+ * returned alternative keys like `title`/`content`/`rows` instead of the
+ * canonical shape. When heading+body are already present (even
+ * partially), we leave the item untouched so strict validation still
+ * catches injected extra keys, oversized bodies, etc.
+ *
+ * Top-level extra keys are never stripped — `.strict()` must reject
+ * them as an injection defence (PI-3 test).
+ */
+function normaliseSections(value: unknown): unknown {
+  if (!value || typeof value !== 'object') return value;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const obj = value as Record<string, any>;
+  if (!Array.isArray(obj.sections)) return value;
+  obj.sections = obj.sections.map((s) => {
+    if (!s || typeof s !== 'object') return s;
+    const raw = s as Record<string, unknown>;
+    // Skip items that already have the canonical shape — let strict()
+    // judge them, don't coerce away legitimate violations.
+    if (typeof raw.heading === 'string' || typeof raw.body === 'string') return s;
+    const heading =
+      typeof raw.title === 'string' ? raw.title : typeof raw.name === 'string' ? raw.name : '';
+    let body = '';
+    if (typeof raw.content === 'string') body = raw.content;
+    else if (typeof raw.description === 'string') body = raw.description;
+    else if (typeof raw.text === 'string') body = raw.text;
+    else if (Array.isArray(raw.rows)) {
+      body = raw.rows
+        .map((r) =>
+          typeof r === 'string' ? r : typeof r === 'object' && r ? JSON.stringify(r) : String(r)
+        )
+        .join('\n');
+    } else if (Array.isArray(raw.items)) {
+      body = raw.items.map((it) => (typeof it === 'string' ? it : JSON.stringify(it))).join('\n');
+    }
+    // Only coerce if we found at least SOMETHING usable — otherwise let
+    // strict validation fail with a clear error.
+    if (!heading && !body) return s;
+    return { heading, body };
+  });
+  return obj;
+}
+
 export function parseGenerationOutput(
   raw: string
 ): { ok: true; data: GenerationOutput } | { ok: false; error: string } {
@@ -79,6 +124,8 @@ export function parseGenerationOutput(
       error: `Invalid JSON: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
+  // BIZZ-804: Coerce common alias shapes before strict validation
+  parsed = normaliseSections(parsed);
   const result = GenerationOutputSchema.safeParse(parsed);
   if (!result.success) {
     return {

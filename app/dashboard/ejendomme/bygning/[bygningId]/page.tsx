@@ -24,6 +24,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { ArrowLeft, Building2, Ruler, Calendar, Layers, MapPin } from 'lucide-react';
 import { fetchBygningById } from '@/app/lib/fetchBygning';
+import EjendomBreadcrumb from '@/app/components/ejendomme/EjendomBreadcrumb';
 
 export const dynamic = 'force-dynamic';
 
@@ -47,6 +48,17 @@ export default async function BygningDetailPage({ params }: BygningDetailPagePro
   return (
     <div className="bg-[#0a1020] min-h-screen">
       <div className="max-w-4xl mx-auto px-6 py-8 space-y-6">
+        {/* BIZZ-797: Breadcrumb. SFE-link er parkeret til iter 2 fordi
+            det kræver MAT-jordstykke-lookup fra bygning.husnummer
+            (håndteres i BIZZ-796b/797b). */}
+        <EjendomBreadcrumb
+          levels={[
+            { label: 'Dashboard', href: '/dashboard' },
+            { label: 'Ejendomme', href: '/dashboard/ejendomme' },
+            { label: `Bygning ${bygning.anvendelse ?? bygning.id.slice(0, 8)}` },
+          ]}
+        />
+
         {/* Back-link */}
         <Link
           href="/dashboard"

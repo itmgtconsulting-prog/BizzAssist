@@ -26,6 +26,7 @@ import { notFound } from 'next/navigation';
 import { ArrowLeft, Building2, Home } from 'lucide-react';
 import { logger } from '@/app/lib/logger';
 import type { MatrikelResponse } from '@/app/api/matrikel/route';
+import EjendomBreadcrumb from '@/app/components/ejendomme/EjendomBreadcrumb';
 
 export const dynamic = 'force-dynamic';
 
@@ -141,6 +142,17 @@ export default async function SfeDetailPage({ params }: SfeDetailPageProps) {
   return (
     <div className="bg-[#0a1020] min-h-screen">
       <div className="max-w-6xl mx-auto px-6 py-8 space-y-6">
+        {/* BIZZ-797: Breadcrumb giver ensartet navigation på tværs af
+            SFE/bygning/lejlighed. SFE er top-niveau så breadcrumb stopper
+            her. */}
+        <EjendomBreadcrumb
+          levels={[
+            { label: 'Dashboard', href: '/dashboard' },
+            { label: 'Ejendomme', href: '/dashboard/ejendomme' },
+            { label: `SFE ${bfe}` },
+          ]}
+        />
+
         {/* Back-link */}
         <Link
           href="/dashboard"

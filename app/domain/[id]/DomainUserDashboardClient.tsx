@@ -11,7 +11,22 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import Link from 'next/link';
-import { Briefcase, Plus, Search, Loader2, Shield, Archive, Trash2, X } from 'lucide-react';
+import {
+  Briefcase,
+  Plus,
+  Search,
+  Loader2,
+  Shield,
+  Archive,
+  Trash2,
+  X,
+  LayoutDashboard,
+  FileText,
+  FolderOpen,
+  History,
+  Settings,
+  type LucideIcon,
+} from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { DomainCaseList, type DomainCaseSummary } from './DomainCaseList';
 
@@ -94,6 +109,52 @@ export default function DomainUserDashboardClient({ domainId }: { domainId: stri
 
   const statusCount = useMemo(() => cases.length, [cases]);
 
+  // BIZZ-773: top-level tabs — matches person/company/ejendom detail pages.
+  // Only "Sager" is a fully in-page view right now; other tabs link to the
+  // existing admin sub-routes (requires admin role, handled by those
+  // layouts). Split-view + AI side-panel are iter 2.
+  const [topTab, setTopTab] = useState<
+    'overview' | 'cases' | 'templates' | 'documents' | 'audit' | 'settings'
+  >('cases');
+  const topTabs: Array<{
+    id: typeof topTab;
+    icon: LucideIcon;
+    labelDa: string;
+    labelEn: string;
+    adminHref?: string;
+  }> = [
+    { id: 'overview', icon: LayoutDashboard, labelDa: 'Oversigt', labelEn: 'Overview' },
+    { id: 'cases', icon: Briefcase, labelDa: 'Sager', labelEn: 'Cases' },
+    {
+      id: 'templates',
+      icon: FileText,
+      labelDa: 'Skabeloner',
+      labelEn: 'Templates',
+      adminHref: `/domain/${domainId}/admin/templates`,
+    },
+    {
+      id: 'documents',
+      icon: FolderOpen,
+      labelDa: 'Dokumenter',
+      labelEn: 'Documents',
+      adminHref: `/domain/${domainId}/admin/training`,
+    },
+    {
+      id: 'audit',
+      icon: History,
+      labelDa: 'Historik',
+      labelEn: 'Audit log',
+      adminHref: `/domain/${domainId}/admin/audit`,
+    },
+    {
+      id: 'settings',
+      icon: Settings,
+      labelDa: 'Indstillinger',
+      labelEn: 'Settings',
+      adminHref: `/domain/${domainId}/admin/settings`,
+    },
+  ];
+
   // BIZZ-759: bulk actions — iterate the selected IDs and fire per-case PATCH
   // or DELETE calls. The existing /api/domain/[id]/cases/[caseId] endpoints
   // already validate membership + admin role per request, so no new API is
@@ -152,126 +213,196 @@ export default function DomainUserDashboardClient({ domainId }: { domainId: stri
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-xl font-bold text-white flex items-center gap-2">
-            <Briefcase size={22} className="text-blue-400" />
-            {da ? 'Sager' : 'Cases'}
-          </h1>
-          <p className="text-slate-500 text-sm mt-1">
-            {statusCount} {da ? 'sager vist' : 'cases shown'}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {role === 'admin' && (
-            <Link
-              href={`/domain/${domainId}/admin`}
-              className="flex items-center gap-2 px-3 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700/40 rounded-md text-slate-300 text-sm font-medium transition-colors"
-            >
-              <Shield size={14} className="text-purple-400" />
-              {da ? 'Admin' : 'Admin'}
-            </Link>
-          )}
-          <Link
-            href={`/domain/${domainId}/new-case`}
-            className="flex items-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-500 rounded-md text-white text-sm font-medium transition-colors"
-          >
-            <Plus size={14} />
-            {da ? 'Opret sag' : 'New case'}
-          </Link>
-        </div>
-      </div>
-
-      {/* Search + status filter */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder={da ? 'Søg i sager…' : 'Search cases…'}
-            className="w-full pl-9 pr-3 py-2 bg-slate-900 border border-slate-700 rounded-md text-white text-sm"
-          />
-        </div>
-        <div
-          role="tablist"
-          aria-label={da ? 'Status-filter' : 'Status filter'}
-          className="flex gap-1 bg-slate-800/40 border border-slate-700/40 rounded-md p-1"
-        >
-          {STATUS_FILTERS.map((f) => {
-            const active = f.key === status;
+      {/* BIZZ-773: Top-level tabs — aligns domain with person/company/ejendom
+          detail pattern. Admin-only tabs link out to existing admin routes.
+          Iter 2 will bring inline rendering + split-view + AI side-panel. */}
+      <div
+        className="flex gap-1 -mb-px overflow-x-auto border-b border-slate-700/40"
+        role="tablist"
+      >
+        {topTabs.map((tab) => {
+          const Icon = tab.icon;
+          const label = da ? tab.labelDa : tab.labelEn;
+          const isActive = tab.id === topTab;
+          const className = `flex items-center gap-1.5 text-sm px-3 py-2 border-b-2 transition-colors whitespace-nowrap ${
+            isActive
+              ? 'border-blue-500 text-blue-300 font-medium'
+              : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600'
+          }`;
+          // Admin-scoped tabs navigate out when user is admin; member sees
+          // them disabled so they aren't surprised by a 403.
+          if (tab.adminHref) {
+            if (role === 'admin') {
+              return (
+                <Link key={tab.id} role="tab" href={tab.adminHref} className={className}>
+                  <Icon size={14} /> {label}
+                </Link>
+              );
+            }
             return (
-              <button
-                key={f.key}
+              <span
+                key={tab.id}
                 role="tab"
-                aria-selected={active}
-                onClick={() => setStatus(f.key)}
-                className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-                  active
-                    ? 'bg-blue-600 text-white'
-                    : 'text-slate-400 hover:text-white hover:bg-slate-700/40'
-                }`}
+                aria-disabled="true"
+                title={da ? 'Kun admin' : 'Admin only'}
+                className={`${className} opacity-40 cursor-not-allowed`}
               >
-                {da ? f.labelDa : f.labelEn}
-              </button>
+                <Icon size={14} /> {label}
+              </span>
             );
-          })}
-        </div>
+          }
+          return (
+            <button
+              key={tab.id}
+              role="tab"
+              aria-selected={isActive}
+              onClick={() => setTopTab(tab.id)}
+              className={className}
+            >
+              <Icon size={14} /> {label}
+            </button>
+          );
+        })}
       </div>
 
-      {/* BIZZ-759: bulk-action toolbar — visible only when >=1 selected.
-          Admin-only for delete; any member may bulk-archive. */}
-      {selectedIds.size > 0 && (
-        <div className="flex items-center gap-2 bg-blue-500/10 border border-blue-500/30 rounded-lg px-4 py-2">
-          <span className="text-blue-300 text-sm font-medium">
-            {selectedIds.size} {da ? 'valgt' : 'selected'}
-          </span>
-          <div className="flex-1" />
-          <button
-            onClick={bulkArchive}
-            disabled={bulkBusy}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600/30 hover:bg-amber-600/50 disabled:opacity-50 text-amber-200 text-xs font-medium rounded-md transition-colors border border-amber-500/40"
-          >
-            <Archive size={12} />
-            {da ? 'Arkivér' : 'Archive'}
-          </button>
-          {role === 'admin' && (
-            <button
-              onClick={bulkDelete}
-              disabled={bulkBusy}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600/30 hover:bg-red-600/50 disabled:opacity-50 text-red-200 text-xs font-medium rounded-md transition-colors border border-red-500/40"
-            >
-              <Trash2 size={12} />
-              {da ? 'Slet' : 'Delete'}
-            </button>
-          )}
-          <button
-            onClick={clearSelection}
-            disabled={bulkBusy}
-            aria-label={da ? 'Ryd valg' : 'Clear selection'}
-            className="text-slate-400 hover:text-white transition-colors"
-          >
-            <X size={14} />
-          </button>
+      {topTab === 'overview' && (
+        <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-8 text-center">
+          <LayoutDashboard size={32} className="mx-auto text-slate-600 mb-3" />
+          <p className="text-slate-400 text-sm">
+            {da
+              ? 'Overblik — domain-stats og seneste aktivitet kommer i iter 2.'
+              : 'Overview — domain stats and recent activity coming in iter 2.'}
+          </p>
         </div>
       )}
 
-      {/* BIZZ-760: Cases grid via shared component */}
-      {loading ? (
-        <div className="flex items-center justify-center py-16">
-          <Loader2 className="w-6 h-6 text-blue-400 animate-spin" />
-        </div>
-      ) : (
-        <DomainCaseList
-          domainId={domainId}
-          cases={cases}
-          showCreateEmptyAction
-          selectable
-          selectedIds={selectedIds}
-          onToggleSelect={toggleSelect}
-        />
+      {topTab === 'cases' && (
+        <>
+          {/* Header */}
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <h1 className="text-xl font-bold text-white flex items-center gap-2">
+                <Briefcase size={22} className="text-blue-400" />
+                {da ? 'Sager' : 'Cases'}
+              </h1>
+              <p className="text-slate-500 text-sm mt-1">
+                {statusCount} {da ? 'sager vist' : 'cases shown'}
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              {role === 'admin' && (
+                <Link
+                  href={`/domain/${domainId}/admin`}
+                  className="flex items-center gap-2 px-3 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700/40 rounded-md text-slate-300 text-sm font-medium transition-colors"
+                >
+                  <Shield size={14} className="text-purple-400" />
+                  {da ? 'Admin' : 'Admin'}
+                </Link>
+              )}
+              <Link
+                href={`/domain/${domainId}/new-case`}
+                className="flex items-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-500 rounded-md text-white text-sm font-medium transition-colors"
+              >
+                <Plus size={14} />
+                {da ? 'Opret sag' : 'New case'}
+              </Link>
+            </div>
+          </div>
+
+          {/* Search + status filter */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="relative flex-1 min-w-[200px]">
+              <Search
+                size={14}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
+              />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder={da ? 'Søg i sager…' : 'Search cases…'}
+                className="w-full pl-9 pr-3 py-2 bg-slate-900 border border-slate-700 rounded-md text-white text-sm"
+              />
+            </div>
+            <div
+              role="tablist"
+              aria-label={da ? 'Status-filter' : 'Status filter'}
+              className="flex gap-1 bg-slate-800/40 border border-slate-700/40 rounded-md p-1"
+            >
+              {STATUS_FILTERS.map((f) => {
+                const active = f.key === status;
+                return (
+                  <button
+                    key={f.key}
+                    role="tab"
+                    aria-selected={active}
+                    onClick={() => setStatus(f.key)}
+                    className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+                      active
+                        ? 'bg-blue-600 text-white'
+                        : 'text-slate-400 hover:text-white hover:bg-slate-700/40'
+                    }`}
+                  >
+                    {da ? f.labelDa : f.labelEn}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* BIZZ-759: bulk-action toolbar — visible only when >=1 selected.
+          Admin-only for delete; any member may bulk-archive. */}
+          {selectedIds.size > 0 && (
+            <div className="flex items-center gap-2 bg-blue-500/10 border border-blue-500/30 rounded-lg px-4 py-2">
+              <span className="text-blue-300 text-sm font-medium">
+                {selectedIds.size} {da ? 'valgt' : 'selected'}
+              </span>
+              <div className="flex-1" />
+              <button
+                onClick={bulkArchive}
+                disabled={bulkBusy}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600/30 hover:bg-amber-600/50 disabled:opacity-50 text-amber-200 text-xs font-medium rounded-md transition-colors border border-amber-500/40"
+              >
+                <Archive size={12} />
+                {da ? 'Arkivér' : 'Archive'}
+              </button>
+              {role === 'admin' && (
+                <button
+                  onClick={bulkDelete}
+                  disabled={bulkBusy}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600/30 hover:bg-red-600/50 disabled:opacity-50 text-red-200 text-xs font-medium rounded-md transition-colors border border-red-500/40"
+                >
+                  <Trash2 size={12} />
+                  {da ? 'Slet' : 'Delete'}
+                </button>
+              )}
+              <button
+                onClick={clearSelection}
+                disabled={bulkBusy}
+                aria-label={da ? 'Ryd valg' : 'Clear selection'}
+                className="text-slate-400 hover:text-white transition-colors"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          )}
+
+          {/* BIZZ-760: Cases grid via shared component */}
+          {loading ? (
+            <div className="flex items-center justify-center py-16">
+              <Loader2 className="w-6 h-6 text-blue-400 animate-spin" />
+            </div>
+          ) : (
+            <DomainCaseList
+              domainId={domainId}
+              cases={cases}
+              showCreateEmptyAction
+              selectable
+              selectedIds={selectedIds}
+              onToggleSelect={toggleSelect}
+            />
+          )}
+        </>
       )}
     </div>
   );

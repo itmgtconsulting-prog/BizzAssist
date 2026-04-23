@@ -5,7 +5,7 @@
 export default function ServiceManagementLoading() {
   return (
     <div className="min-h-screen bg-[#0a1020] p-8 animate-pulse">
-      <div className="max-w-7xl mx-auto space-y-6">
+      <div className="w-full space-y-6">
         {/* Back link */}
         <div className="h-4 w-28 bg-slate-700/30 rounded" />
 

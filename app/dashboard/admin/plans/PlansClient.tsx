@@ -697,7 +697,7 @@ export default function PlansClient() {
 
       {/* ─── Scrollable content ─── */}
       <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-6">
-        <div className="max-w-7xl mx-auto space-y-6">
+        <div className="w-full space-y-6">
           {/* BIZZ-765: Stats cards — matches /dashboard/admin/users + /billing */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-4">

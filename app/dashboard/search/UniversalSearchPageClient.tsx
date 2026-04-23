@@ -20,7 +20,7 @@
  * @see /api/person-search       — returns { results: PersonSearchResult[] }
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import {
@@ -45,6 +45,20 @@ import type { DawaAutocompleteResult } from '@/app/lib/dawa';
 import type { CVRSearchResult } from '@/app/api/cvr-search/route';
 import type { PersonSearchResult } from '@/app/api/person-search/route';
 import ResizableDivider from '@/app/components/ResizableDivider';
+import FilterPanel from '@/app/components/search/FilterPanel';
+import { useFiltersFromURL } from '@/app/components/search/useFiltersFromURL';
+import {
+  buildEjendomFilterSchemas,
+  buildKommuneOptions,
+  matchEjendomFilter,
+  narrowEjendomFilters,
+} from '@/app/lib/search/ejendomFilterSchema';
+import {
+  buildVirksomhedFilterSchemas,
+  matchVirksomhedFilter,
+  narrowVirksomhedFilters,
+} from '@/app/lib/search/virksomhedFilterSchema';
+import type { FilterSchema } from '@/app/lib/search/filterSchema';
 
 // ─── Tab types ────────────────────────────────────────────────────────────────
 
@@ -418,8 +432,30 @@ export default function UniversalSearchPageClient() {
     if (typeof window === 'undefined') return;
     window.localStorage.setItem('bizzassist-search-filter-width', String(filterWidth));
   }, [filterWidth]);
-  const [hideRetiredProperties, setHideRetiredProperties] = useState(true);
-  const [onlyActiveCompanies, setOnlyActiveCompanies] = useState(true);
+  // BIZZ-804 (BIZZ-788b): filter-state migreres fra hideRetiredProperties
+  // og onlyActiveCompanies til URL-persistent FilterPanel-state via
+  // useFiltersFromURL. allSchemas rummer ejendomme + virksomheder
+  // schemas samtidig så URL-params ikke bliver droppet ved tab-skift.
+  // PropertyCard-filtering sker client-side mod autocomplete-resultat
+  // (data er allerede hentet), og samme mønster for companies.
+  const ejendomSchemas = useMemo(
+    () => buildEjendomFilterSchemas(lang, []),
+    // Options opdateres separat via bottom-up schema-rebuild når
+    // properties-liste er kendt — se `currentTabSchemas` nedenfor.
+    [lang]
+  );
+  const virksomhedSchemas = useMemo(() => buildVirksomhedFilterSchemas(lang), [lang]);
+  const allSchemas = useMemo(
+    () => [...ejendomSchemas, ...virksomhedSchemas],
+    [ejendomSchemas, virksomhedSchemas]
+  );
+  const { filters, setFilter, setFilters } = useFiltersFromURL(allSchemas);
+  // Legacy reader — bevares så matrikel-mode (BIZZ-784) fortsat kan
+  // sende includeUdfasede-query-param uden større refactor.
+  // onlyActiveCompanies er droppet fra state — bruges kun via
+  // matchVirksomhedFilter direkte i companies-tab.
+  const hideRetiredProperties =
+    typeof filters.skjulUdfasede === 'boolean' ? filters.skjulUdfasede : true;
 
   // Results state
   const [properties, setProperties] = useState<DawaAutocompleteResult[]>([]);
@@ -782,92 +818,65 @@ export default function UniversalSearchPageClient() {
           />
         )}
         {filterOpen && (
-          <aside
-            aria-label={da ? 'Filter-panel' : 'Filter panel'}
-            style={{ width: filterWidth }}
-            className="shrink-0 border-l border-slate-700/40 bg-slate-900/40 overflow-y-auto p-4 order-last"
-          >
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-white text-sm font-semibold flex items-center gap-2">
-                <SlidersHorizontal size={14} className="text-blue-400" />
-                {da ? 'Filtre' : 'Filters'}
-              </h2>
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => {
-                    setHideRetiredProperties(true);
-                    setOnlyActiveCompanies(true);
-                  }}
-                  className="text-xs text-slate-400 hover:text-blue-300 transition-colors"
-                >
-                  {da ? 'Nulstil' : 'Reset'}
-                </button>
-                {/* BIZZ-786: collapse-knap så bruger kan lukke panelet direkte
-                    fra header uden at skulle finde toggle over tab-baren */}
-                <button
-                  onClick={() => setFilterOpen(false)}
-                  aria-label={da ? 'Skjul filter-panel' : 'Hide filter panel'}
-                  className="text-slate-400 hover:text-white transition-colors"
-                >
-                  <ChevronRight size={16} />
-                </button>
-              </div>
-            </div>
-
-            {/* Column 1: Ejendomme */}
-            <section className="mb-5 space-y-2">
-              <h3 className="text-emerald-300 text-xs uppercase font-semibold tracking-wide">
-                {da ? 'Ejendomme' : 'Properties'}
-              </h3>
-              <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={hideRetiredProperties}
-                  onChange={(e) => setHideRetiredProperties(e.target.checked)}
-                  className="accent-blue-500"
+          /* BIZZ-804: Tab-aware FilterPanel — schemas skifter efter
+             activeTab så ejendomme-tab viser ejendoms-filtre, companies-
+             tab viser virksomheds-filtre (iter 1 er kun "kun aktive"),
+             personer-tab viser placeholder (BIZZ-790a udvider).
+             allSchemas på useFiltersFromURL holder begge tabs' filter-
+             keys intakt mellem tab-skift. */
+          <div style={{ width: filterWidth }} className="shrink-0 order-last min-h-0">
+            {(() => {
+              const kommuneOptions = buildKommuneOptions(properties, lang);
+              const ejendomSchemasWithKommune: FilterSchema[] = [
+                ...ejendomSchemas.slice(0, 2),
+                {
+                  type: 'multi-select',
+                  key: 'kommune',
+                  label: da ? 'Kommune' : 'Municipality',
+                  options: kommuneOptions,
+                },
+              ];
+              let currentTabSchemas: FilterSchema[] = [];
+              let matchCount: number | null = null;
+              if (activeTab === 'properties') {
+                currentTabSchemas = ejendomSchemasWithKommune;
+                matchCount = properties.filter((p) =>
+                  matchEjendomFilter(p, narrowEjendomFilters(filters))
+                ).length;
+              } else if (activeTab === 'companies') {
+                currentTabSchemas = virksomhedSchemas;
+                matchCount = companies.filter((c) =>
+                  matchVirksomhedFilter(c, narrowVirksomhedFilters(filters))
+                ).length;
+              } else if (activeTab === 'people') {
+                // Person-filter-katalog kommer i BIZZ-790a. Empty
+                // schema viser bare panel-header + placeholder.
+                currentTabSchemas = [];
+                matchCount = people.length;
+              }
+              const handleReset = () => {
+                // Reset kun keys tilhørende current tab — bevar andre
+                // tabs' filter-state så tab-skift ikke mister valg.
+                const next = { ...filters };
+                for (const s of currentTabSchemas) {
+                  if (s.type === 'toggle') next[s.key] = s.default;
+                  else delete next[s.key];
+                }
+                setFilters(next);
+              };
+              return (
+                <FilterPanel
+                  schemas={currentTabSchemas}
+                  filters={filters}
+                  onFilterChange={setFilter}
+                  onReset={handleReset}
+                  matchCount={matchCount}
+                  lang={lang}
+                  onCollapse={() => setFilterOpen(false)}
                 />
-                {da ? 'Skjul udfasede' : 'Hide retired'}
-              </label>
-              <p className="text-[10px] text-slate-500 italic pl-5">
-                {da
-                  ? 'Flere filtre (opførelsesår, areal, energimærke, bygningstype, varmeform, ejerforhold, fredning, zone) kommer i iter 2.'
-                  : 'More filters (year built, area, energy rating, building type, heating, ownership, listed, zone) in iter 2.'}
-              </p>
-            </section>
-
-            {/* Column 2: Virksomheder */}
-            <section className="mb-5 space-y-2">
-              <h3 className="text-blue-300 text-xs uppercase font-semibold tracking-wide">
-                {da ? 'Virksomheder' : 'Companies'}
-              </h3>
-              <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={onlyActiveCompanies}
-                  onChange={(e) => setOnlyActiveCompanies(e.target.checked)}
-                  className="accent-blue-500"
-                />
-                {da ? 'Kun aktive' : 'Active only'}
-              </label>
-              <p className="text-[10px] text-slate-500 italic pl-5">
-                {da
-                  ? 'Flere filtre (virksomhedsform, branche, geografi, stiftet, ansatte) kommer i iter 2.'
-                  : 'More filters (form, industry, geography, founded, employees) in iter 2.'}
-              </p>
-            </section>
-
-            {/* Column 3: Personer */}
-            <section className="mb-2 space-y-2">
-              <h3 className="text-purple-300 text-xs uppercase font-semibold tracking-wide">
-                {da ? 'Personer' : 'People'}
-              </h3>
-              <p className="text-[10px] text-slate-500 italic">
-                {da
-                  ? 'Filtre (rolle, stilling, geografi) kommer i iter 2.'
-                  : 'Filters (role, title, geography) in iter 2.'}
-              </p>
-            </section>
-          </aside>
+              );
+            })()}
+          </div>
         )}
 
         <div className="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
@@ -885,25 +894,23 @@ export default function UniversalSearchPageClient() {
           {hasQuery &&
             activeTab === 'properties' &&
             (() => {
-              // BIZZ-785: filtrér udfasede DAR-adresser på klientsiden.
-              // `status` fra DAR kan være "Gældende"/"Nedlagt"/"Henlagt"/null.
-              // Ukendt status (null/undefined — fx DAWA fallback) tæller som
-              // aktiv — vi skjuler KUN dem vi eksplicit ved er nedlagte.
+              // BIZZ-804 (BIZZ-788b): apply ejendoms-filters fra FilterPanel
+              // via matchEjendomFilter. Dækker skjul-udfasede (BIZZ-785),
+              // ejendomstype multi-select og kommune multi-select.
               //
               // BIZZ-794: filtrér SFE-hits fra primær liste så brugeren kun
               // ser reelle ejendomme (bygninger + ejerlejligheder). SFE vises
               // stadig via drill-down fra bygning/lejlighed-detaljeside.
               // Debug: ?visAlle=1 i URL viser også SFE'er (til QA/test).
+              // Hvis brugeren eksplicit har valgt ejendomstype 'sfe' i
+              // filter-panelet honoreres valget (override af default-skjul).
               const visAlleDebug = sp.get('visAlle') === '1';
+              const ejendomFilters = narrowEjendomFilters(filters);
+              const userValgteTyper = ejendomFilters.ejendomstype ?? [];
+              const visEksplicitSFE = userValgteTyper.includes('sfe');
               const filteredProps = properties
-                .filter(
-                  (r) =>
-                    !hideRetiredProperties ||
-                    !r.status ||
-                    r.status === 'Gældende' ||
-                    r.status === 'Foreløbig'
-                )
-                .filter((r) => visAlleDebug || r.ejendomstype !== 'sfe');
+                .filter((r) => matchEjendomFilter(r, ejendomFilters))
+                .filter((r) => visAlleDebug || visEksplicitSFE || r.ejendomstype !== 'sfe');
               return (
                 <div role="tabpanel" aria-label={t.tabProperties}>
                   {loadingProps ? (
@@ -928,29 +935,38 @@ export default function UniversalSearchPageClient() {
             })()}
 
           {/* Companies tab */}
-          {hasQuery && activeTab === 'companies' && (
-            <div role="tabpanel" aria-label={t.tabCompanies}>
-              {loadingComps ? (
-                <SkeletonList count={6} />
-              ) : companies.filter((r) => !onlyActiveCompanies || r.active).length > 0 ? (
-                <div className="space-y-3">
-                  {companies
-                    .filter((r) => !onlyActiveCompanies || r.active)
-                    .map((r) => (
-                      <CompanyCard key={r.cvr} result={r} lang={lang} />
-                    ))}
+          {hasQuery &&
+            activeTab === 'companies' &&
+            (() => {
+              // BIZZ-804: companies-tab bruger samme FilterPanel-state via
+              // matchVirksomhedFilter. Iter 1 har kun "kun aktive" toggle;
+              // fuld CVR-filter-katalog kommer med BIZZ-789a.
+              const virksomhedFilters = narrowVirksomhedFilters(filters);
+              const filteredCompanies = companies.filter((r) =>
+                matchVirksomhedFilter(r, virksomhedFilters)
+              );
+              return (
+                <div role="tabpanel" aria-label={t.tabCompanies}>
+                  {loadingComps ? (
+                    <SkeletonList count={6} />
+                  ) : filteredCompanies.length > 0 ? (
+                    <div className="space-y-3">
+                      {filteredCompanies.map((r) => (
+                        <CompanyCard key={r.cvr} result={r} lang={lang} />
+                      ))}
+                    </div>
+                  ) : (
+                    searched && (
+                      <EmptyState
+                        query={query}
+                        message={`${t.noResultsFor} "${query.trim()}"`}
+                        icon={<Briefcase size={28} />}
+                      />
+                    )
+                  )}
                 </div>
-              ) : (
-                searched && (
-                  <EmptyState
-                    query={query}
-                    message={`${t.noResultsFor} "${query.trim()}"`}
-                    icon={<Briefcase size={28} />}
-                  />
-                )
-              )}
-            </div>
-          )}
+              );
+            })()}
 
           {/* People tab */}
           {hasQuery && activeTab === 'people' && (

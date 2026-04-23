@@ -32,6 +32,7 @@ import {
   BarChart2,
   Sparkles,
   Coins,
+  LifeBuoy,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { isDomainFeatureEnabled } from '@/app/lib/featureFlags';
@@ -41,6 +42,7 @@ import { gemRecentEjendom } from '@/app/lib/recentEjendomme';
 import { getRecentSearches, saveRecentSearch, type RecentSearch } from '@/app/lib/recentSearches';
 import type { UnifiedSearchResult } from '@/app/api/search/route';
 import AIChatPanel from '@/app/components/AIChatPanel';
+import SupportChatWidget from '@/app/components/SupportChatWidget';
 import ErrorBoundary from '@/app/components/ErrorBoundary';
 import NotifikationsDropdown from '@/app/components/NotifikationsDropdown';
 import RecentEntityTagBar from '@/app/components/RecentEntityTagBar';
@@ -130,6 +132,8 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
   const chatCtx = useAIChatContext();
   const [isPending, startTransition] = useTransition();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  /** BIZZ-808: Support chat state — trigger sidder i sidebar, popup forankres næste sidebar-kanten. */
+  const [supportOpen, setSupportOpen] = useState(false);
   /** Om sidebar er foldet ind til ikoner-only (desktop) */
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -735,6 +739,26 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
                 onNavigate={() => setSidebarOpen(false)}
               />
             )}
+            {/* BIZZ-808: Support-menupunkt — toggler SupportChatWidget som
+                forankret popup ved siden af sidebaren. Ikke et Link; ikke
+                gated af subscription så også free-brugere kan nå support. */}
+            <button
+              type="button"
+              onClick={() => {
+                setSupportOpen((v) => !v);
+                setSidebarOpen(false);
+              }}
+              title={sidebarCollapsed ? s.support : undefined}
+              aria-pressed={supportOpen}
+              className={`flex items-center rounded-xl text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 w-full ${sidebarCollapsed ? 'justify-center px-0 py-3' : 'gap-3 px-4 py-3'} ${
+                supportOpen
+                  ? 'bg-blue-600 text-white'
+                  : 'text-slate-400 hover:text-white hover:bg-white/5'
+              }`}
+            >
+              <LifeBuoy size={18} />
+              {!sidebarCollapsed && <span className="truncate">{s.support}</span>}
+            </button>
           </nav>
 
           {/* AI Chat panel moved to topbar drawer — see AIChatDrawer below */}
@@ -1274,6 +1298,15 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
           <AIChatPanel />
         </ErrorBoundary>
       </div>
+
+      {/* BIZZ-808: Support chat popup — controlled af supportOpen state,
+          forankret til sidebar-kanten (ikke floating over resten af appen). */}
+      <SupportChatWidget
+        open={supportOpen}
+        onClose={() => setSupportOpen(false)}
+        hideFloatingTrigger
+        anchorLeftPx={(sidebarCollapsed ? SIDEBAR_COLLAPSED : sidebarBredde) + 12}
+      />
 
       {/* Plan-selection / pending-approval overlay — shown based on subscription state */}
       {overlayMode && <PlanSelectionOverlay lang={lang} mode={overlayMode} />}

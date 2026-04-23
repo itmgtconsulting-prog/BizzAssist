@@ -6,7 +6,6 @@ import './globals.css';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { LanguageProvider } from '@/app/context/LanguageContext';
 import ServiceWorkerRegistration from '@/app/components/ServiceWorkerRegistration';
-import SupportChatWidget from '@/app/components/SupportChatWidget';
 import HideNextDevIndicator from '@/app/components/HideNextDevIndicator';
 import CookieBanner from '@/app/components/CookieBanner';
 import { Analytics } from '@vercel/analytics/next';
@@ -100,7 +99,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           <LanguageProvider>
             {children}
             <CookieBanner />
-            <SupportChatWidget />
+            {/* BIZZ-808: SupportChatWidget er flyttet ind i DashboardLayout
+                som et menupunkt, så floating-knappen ikke overlapper resten
+                af appen. Offentlige sider har ikke længere in-app support —
+                tilføj separat mount her hvis behov opstår. */}
             <HideNextDevIndicator />
             <ServiceWorkerRegistration />
             {analyticsAllowed && <Analytics />}

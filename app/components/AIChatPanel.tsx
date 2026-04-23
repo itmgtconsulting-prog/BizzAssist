@@ -22,6 +22,10 @@ import {
   Plus,
   CreditCard,
   AlertTriangle,
+  Paperclip,
+  FileText,
+  Loader2,
+  Eye,
 } from 'lucide-react';
 import MarkdownContent from '@/app/components/MarkdownContent';
 import { useLanguage } from '@/app/context/LanguageContext';
@@ -39,6 +43,22 @@ import { Lock } from 'lucide-react';
 interface Message {
   role: 'user' | 'assistant';
   content: string;
+}
+
+/**
+ * BIZZ-806: In-memory attachment held by the chat UI between the user
+ * picking a file and pressing Send. The extracted text is prepended to
+ * the next user message so Claude receives it as context; the `preview`
+ * powers the chip + modal in the input area.
+ */
+interface ChatAttachment {
+  id: string;
+  name: string;
+  file_type: string;
+  size: number;
+  extracted_text: string;
+  preview: string;
+  truncated: boolean;
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -93,6 +113,11 @@ function AIChatPanel() {
     bonus: number;
     topUp: number;
   } | null>(null);
+  /** BIZZ-806: attachments queued for the next message */
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+  const [attachBusy, setAttachBusy] = useState(false);
+  const [attachError, setAttachError] = useState<string | null>(null);
+  const [previewAttachment, setPreviewAttachment] = useState<ChatAttachment | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   /** AbortController for at kunne stoppe streaming */
@@ -261,10 +286,50 @@ function AIChatPanel() {
     return parts.length > 0 ? parts.join('\n\n') : undefined;
   }, [pathname, pageData, a]);
 
+  /**
+   * BIZZ-806: Upload one or more files to /api/ai/attach. Each file gets
+   * its text extracted server-side and stored as a ChatAttachment in
+   * local state — the content is folded into the next sendMessage().
+   */
+  const uploadAttachments = useCallback(
+    async (files: FileList | File[]) => {
+      if (files.length === 0) return;
+      setAttachBusy(true);
+      setAttachError(null);
+      try {
+        for (const f of Array.from(files)) {
+          const fd = new FormData();
+          fd.append('file', f);
+          const r = await fetch('/api/ai/attach', { method: 'POST', body: fd });
+          if (!r.ok) {
+            const j = (await r.json().catch(() => ({ error: 'Ukendt' }))) as { error?: string };
+            setAttachError(j.error ?? (lang === 'da' ? 'Upload fejlede' : 'Upload failed'));
+            continue;
+          }
+          const j = (await r.json()) as Omit<ChatAttachment, 'id'>;
+          setAttachments((prev) => [
+            ...prev,
+            {
+              id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              ...j,
+            },
+          ]);
+        }
+      } finally {
+        setAttachBusy(false);
+      }
+    },
+    [lang]
+  );
+
+  const removeAttachment = useCallback((id: string) => {
+    setAttachments((prev) => prev.filter((a) => a.id !== id));
+  }, []);
+
   /** Send besked til AI og stream svar — blokerer hvis token-grænsen er nået */
   const sendMessage = useCallback(async () => {
     const text = input.trim();
-    if (!text || isLoading) return;
+    if ((!text && attachments.length === 0) || isLoading) return;
 
     // ── Token limit check (uses in-memory subscription context) ──
     const sub = ctxSub;
@@ -335,7 +400,26 @@ function AIChatPanel() {
       }
     }
 
-    const userMsg: Message = { role: 'user', content: text };
+    // BIZZ-806: Fold any attached files into the user message content so
+    // Claude receives the extracted text as part of this turn. We block
+    // each attachment with a header+type label, then the user's prompt.
+    const attachmentBlock = attachments.length
+      ? attachments
+          .map(
+            (att) =>
+              `[Vedhæftet fil: ${att.name} — ${att.file_type.toUpperCase()}, ${Math.round(
+                att.size / 1024
+              )} KB${att.truncated ? ', beskåret' : ''}]\n${att.extracted_text}`
+          )
+          .join('\n\n---\n\n')
+      : '';
+    const composedContent = attachmentBlock
+      ? `${attachmentBlock}\n\n---\n\n${text || '(ingen prompt — brug vedhæftede filer som kontekst)'}`
+      : text;
+    const userMsg: Message = { role: 'user', content: composedContent };
+    // Clear the chat attachments now — they're baked into this turn's
+    // content.
+    setAttachments([]);
     const newMessages = [...messages, userMsg];
 
     // Ensure conversation exists in shared context (persists to localStorage)
@@ -532,7 +616,6 @@ function AIChatPanel() {
       abortRef.current = null;
       refreshTokenInfo();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     input,
     isLoading,
@@ -544,6 +627,8 @@ function AIChatPanel() {
     addTokenUsage,
     ctxSub,
     lang,
+    attachments,
+    chatCtx,
   ]);
 
   return (
@@ -841,8 +926,67 @@ function AIChatPanel() {
           </div>
 
           {/* Input-felt (sidebar) */}
-          <div className="px-3 pb-3 pt-1 shrink-0">
+          <div className="px-3 pb-3 pt-1 shrink-0 space-y-2">
+            {/* BIZZ-806: Attachment-chips vises over input-feltet. Klik
+                åbner preview-modal. Klik på X fjerner. */}
+            {(attachments.length > 0 || attachError) && (
+              <div className="space-y-1">
+                {attachments.map((att) => (
+                  <div
+                    key={att.id}
+                    className="flex items-center gap-2 bg-slate-800/80 border border-slate-700/40 rounded-lg px-2 py-1.5"
+                  >
+                    <FileText size={12} className="text-blue-400 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs text-slate-200 truncate">{att.name}</p>
+                      <p className="text-[10px] text-slate-500 uppercase">
+                        {att.file_type} · {Math.round(att.size / 1024)} KB
+                        {att.truncated && ` · ${lang === 'da' ? 'beskåret' : 'truncated'}`}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setPreviewAttachment(att)}
+                      aria-label={lang === 'da' ? 'Se preview' : 'Preview'}
+                      title={lang === 'da' ? 'Se preview' : 'Preview'}
+                      className="p-1 rounded text-slate-400 hover:text-blue-300 hover:bg-slate-700/40 transition-colors shrink-0"
+                    >
+                      <Eye size={11} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => removeAttachment(att.id)}
+                      aria-label={lang === 'da' ? 'Fjern fil' : 'Remove file'}
+                      className="p-1 rounded text-slate-400 hover:text-rose-300 hover:bg-slate-700/40 transition-colors shrink-0"
+                    >
+                      <X size={11} />
+                    </button>
+                  </div>
+                ))}
+                {attachError && <p className="text-[10px] text-rose-300 px-1">{attachError}</p>}
+              </div>
+            )}
             <div className="flex items-center gap-2 bg-slate-800/60 border border-slate-700/40 rounded-xl px-3 py-2 focus-within:border-blue-500/40 transition-colors">
+              <label
+                className="cursor-pointer text-slate-400 hover:text-blue-400 transition-colors shrink-0"
+                aria-label={lang === 'da' ? 'Vedhæft fil' : 'Attach file'}
+                title={lang === 'da' ? 'Vedhæft fil' : 'Attach file'}
+              >
+                {attachBusy ? (
+                  <Loader2 size={13} className="animate-spin" />
+                ) : (
+                  <Paperclip size={13} />
+                )}
+                <input
+                  type="file"
+                  multiple
+                  hidden
+                  onChange={(e) => {
+                    if (e.target.files) void uploadAttachments(e.target.files);
+                    e.target.value = '';
+                  }}
+                />
+              </label>
               <input
                 ref={inputRef}
                 type="text"
@@ -868,7 +1012,7 @@ function AIChatPanel() {
               ) : (
                 <button
                   onClick={sendMessage}
-                  disabled={!input.trim()}
+                  disabled={!input.trim() && attachments.length === 0}
                   className="text-blue-400 hover:text-blue-300 disabled:text-slate-600 transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded"
                   aria-label={a.sendLabel}
                 >
@@ -878,6 +1022,48 @@ function AIChatPanel() {
             </div>
           </div>
         </>
+      )}
+
+      {/* BIZZ-806: Full preview-modal for attached files */}
+      {previewAttachment && (
+        <div
+          className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="attachment-preview-title"
+          onClick={() => setPreviewAttachment(null)}
+        >
+          <div
+            className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl max-w-2xl w-full max-h-[80vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-4 py-3 border-b border-slate-700/40 flex items-center gap-2">
+              <FileText size={14} className="text-blue-400" />
+              <div className="min-w-0 flex-1">
+                <h3 id="attachment-preview-title" className="text-sm text-white truncate">
+                  {previewAttachment.name}
+                </h3>
+                <p className="text-[10px] text-slate-500 uppercase">
+                  {previewAttachment.file_type} · {Math.round(previewAttachment.size / 1024)} KB
+                  {previewAttachment.truncated && ` · ${lang === 'da' ? 'beskåret' : 'truncated'}`}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPreviewAttachment(null)}
+                aria-label={lang === 'da' ? 'Luk' : 'Close'}
+                className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800"
+              >
+                <X size={14} />
+              </button>
+            </div>
+            <div className="flex-1 min-h-0 overflow-y-auto p-4">
+              <pre className="text-xs text-slate-200 whitespace-pre-wrap font-sans leading-relaxed">
+                {previewAttachment.extracted_text}
+              </pre>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

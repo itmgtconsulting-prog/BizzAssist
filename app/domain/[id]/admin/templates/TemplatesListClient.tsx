@@ -10,10 +10,10 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import Link from 'next/link';
 import { FileText, Upload, Loader2, Search, GripHorizontal, Trash2, Pencil } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { TemplateDocumentsPanel } from './[templateId]/TemplateDocumentsPanel';
+import TemplateEditorClient from './[templateId]/TemplateEditorClient';
 
 interface TemplateSummary {
   id: string;
@@ -46,6 +46,9 @@ export default function TemplatesListClient({ domainId }: { domainId: string }) 
   // BIZZ-789: Åbn skabelon inline i panelet i stedet for at navigere væk.
   // URL-param 't=<id>' beholdes for deep-linkable state.
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+  // BIZZ-792: Bund-panelet kan enten vise tilknyttede dokumenter eller
+  // skabelon-editoren. Pencil-ikon skifter til 'editor', ✕ skifter tilbage.
+  const [bottomMode, setBottomMode] = useState<'docs' | 'editor'>('docs');
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -56,6 +59,8 @@ export default function TemplatesListClient({ domainId }: { domainId: string }) 
 
   const setSelectionWithUrl = useCallback((id: string | null) => {
     setSelectedTemplateId(id);
+    // BIZZ-792: fald altid tilbage til docs-mode når valget ændres/ryddes
+    setBottomMode('docs');
     if (typeof window === 'undefined') return;
     const url = new URL(window.location.href);
     if (id) url.searchParams.set('t', id);
@@ -324,14 +329,18 @@ export default function TemplatesListClient({ domainId }: { domainId: string }) 
                       className="flex items-center gap-1 shrink-0"
                       onClick={(e) => e.stopPropagation()}
                     >
-                      <Link
-                        href={`/domain/${domainId}/admin/templates/${t.id}`}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectionWithUrl(t.id);
+                          setBottomMode('editor');
+                        }}
                         className="p-1.5 rounded text-slate-400 hover:text-white hover:bg-slate-700/60 transition-colors"
-                        title={da ? 'Rediger i fuld visning' : 'Edit in full view'}
+                        title={da ? 'Rediger skabelon' : 'Edit template'}
                         aria-label={da ? 'Rediger skabelon' : 'Edit template'}
                       >
                         <Pencil size={12} />
-                      </Link>
+                      </button>
                       <button
                         type="button"
                         onClick={() => deleteTemplate(t.id, t.name)}
@@ -375,26 +384,84 @@ export default function TemplatesListClient({ domainId }: { domainId: string }) 
             style={{ height: `${100 - topPct}%` }}
           >
             <div className="h-full flex flex-col">
-              {/* BIZZ-791: Kun ✕-knap — skabelon-navn/filetype er overflødigt
-                  da den valgte row allerede er highlighted i listen ovenfor. */}
-              <div className="shrink-0 px-2 py-1 border-b border-slate-700/40 bg-slate-900/50 flex items-center justify-end">
+              {/* BIZZ-791/792: Header med ✕-knap. I editor-mode lukker ✕
+                  editoren og bringer dokumenter tilbage; i docs-mode rydder
+                  ✕ valget af skabelon. */}
+              <div className="shrink-0 px-2 py-1 border-b border-slate-700/40 bg-slate-900/50 flex items-center justify-between">
+                <span className="text-[11px] text-slate-500 pl-2">
+                  {bottomMode === 'editor'
+                    ? da
+                      ? 'Rediger skabelon'
+                      : 'Edit template'
+                    : da
+                      ? 'Tilknyttede dokumenter'
+                      : 'Linked documents'}
+                </span>
                 <button
                   type="button"
-                  onClick={() => setSelectionWithUrl(null)}
+                  onClick={() => {
+                    if (bottomMode === 'editor') {
+                      // BIZZ-792: Luk editor → dokumenter kommer tilbage
+                      setBottomMode('docs');
+                    } else {
+                      setSelectionWithUrl(null);
+                    }
+                  }}
                   className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-                  title={da ? 'Fjern valg' : 'Clear selection'}
-                  aria-label={da ? 'Fjern valg' : 'Clear selection'}
+                  title={
+                    bottomMode === 'editor'
+                      ? da
+                        ? 'Luk editor'
+                        : 'Close editor'
+                      : da
+                        ? 'Fjern valg'
+                        : 'Clear selection'
+                  }
+                  aria-label={
+                    bottomMode === 'editor'
+                      ? da
+                        ? 'Luk editor'
+                        : 'Close editor'
+                      : da
+                        ? 'Fjern valg'
+                        : 'Clear selection'
+                  }
                 >
                   ✕
                 </button>
               </div>
-              <div className="flex-1 min-h-0 overflow-hidden">
-                <TemplateDocumentsPanel domainId={domainId} templateId={selectedTemplateId} />
+              <div className="flex-1 min-h-0 overflow-y-auto bizz-inline-editor">
+                {bottomMode === 'editor' ? (
+                  <TemplateEditorClient domainId={domainId} templateId={selectedTemplateId} />
+                ) : (
+                  <TemplateDocumentsPanel domainId={domainId} templateId={selectedTemplateId} />
+                )}
               </div>
             </div>
           </div>
         </>
       )}
+
+      {/* BIZZ-792: Compact-overrides for editor-komponenten naar den
+          rendres inde i bottom-panelet (smallere/kortere plads). */}
+      <style jsx global>{`
+        .bizz-inline-editor > div {
+          max-width: 100% !important;
+          padding-top: 0.5rem !important;
+          padding-bottom: 0.75rem !important;
+          padding-left: 0.75rem !important;
+          padding-right: 0.75rem !important;
+        }
+        .bizz-inline-editor .max-w-4xl {
+          max-width: 100% !important;
+        }
+        .bizz-inline-editor h1 {
+          font-size: 0.95rem !important;
+        }
+        .bizz-inline-editor [role='tablist'] {
+          font-size: 0.75rem;
+        }
+      `}</style>
     </div>
   );
 }

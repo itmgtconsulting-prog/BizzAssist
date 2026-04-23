@@ -10,7 +10,16 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { FileText, Upload, Loader2, Search, GripHorizontal, Trash2, Pencil } from 'lucide-react';
+import {
+  FileText,
+  Upload,
+  Loader2,
+  Search,
+  GripHorizontal,
+  Trash2,
+  Pencil,
+  Download,
+} from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { TemplateDocumentsPanel } from './[templateId]/TemplateDocumentsPanel';
 import TemplateEditorClient from './[templateId]/TemplateEditorClient';
@@ -329,6 +338,16 @@ export default function TemplatesListClient({ domainId }: { domainId: string }) 
                       className="flex items-center gap-1 shrink-0"
                       onClick={(e) => e.stopPropagation()}
                     >
+                      {/* BIZZ-797: Download current skabelon-fil */}
+                      <a
+                        href={`/api/domain/${domainId}/templates/${t.id}/download`}
+                        download
+                        className="p-1.5 rounded text-slate-400 hover:text-white hover:bg-slate-700/60 transition-colors"
+                        title={da ? 'Download skabelon' : 'Download template'}
+                        aria-label={da ? 'Download skabelon' : 'Download template'}
+                      >
+                        <Download size={12} />
+                      </a>
                       <button
                         type="button"
                         onClick={() => {

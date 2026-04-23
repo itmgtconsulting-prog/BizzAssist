@@ -29,6 +29,7 @@ import {
   CheckCircle2,
   AlertCircle,
   RotateCcw,
+  Download,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 
@@ -715,6 +716,16 @@ export default function TemplateEditorClient({
                         {new Date(v.created_at).toLocaleString(da ? 'da-DK' : 'en-GB')}
                       </p>
                     </div>
+                    {/* BIZZ-797: Download denne specifikke version */}
+                    <a
+                      href={`/api/domain/${domainId}/templates/${templateId}/download?version=${v.version}`}
+                      download
+                      className="flex items-center gap-1 px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-white text-[10px] font-medium"
+                      title={da ? 'Download denne version' : 'Download this version'}
+                    >
+                      <Download size={10} />
+                      {da ? 'Download' : 'Download'}
+                    </a>
                     {!isCurrent && (
                       <button
                         onClick={() => void rollback(v.version)}

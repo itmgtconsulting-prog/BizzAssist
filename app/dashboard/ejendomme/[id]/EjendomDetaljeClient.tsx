@@ -1907,12 +1907,32 @@ export default function EjendomDetaljeClient({
               </div>
             </div>
 
-            {/* BIZZ-725: Info banner for udfasede ejendomme — Plandata zone=Udfaset betyder
-                at zone-registreringen er historisk. Typisk er bygninger/enheder flyttet til
-                en nyere registrering på samme matrikel, eller ejendommen er sammenlagt. Vi
-                mangler et "efterfølger-BFE"-felt i data-modellen til at linke direkte til
-                aktiv ejendom — indtil da tilbyder vi en matrikel-søgning som navigations-hjælp. */}
-            {dawaAdresse?.zone === 'Udfaset' && (
+            {/* BIZZ-725 / BIZZ-787: Info banner for udfasede ejendomme.
+                Root-cause fix: tidligere brugte vi Plandata zone='Udfaset'
+                som signal, men det felt indikerer kun at en zone-POLYGON i
+                Plandata er blevet afløst af en nyere polygon — det har
+                intet med ejendommens tilstand at gøre. Arnold Nielsens
+                Boulevard 62A-62C er et eksempel: alle 6 enheder blev
+                fejlagtigt banner-markeret som udfasede fordi deres
+                zone-polygon var historisk.
+
+                Korrekt signal er BBR bygning-status: hvis ALLE bygninger
+                på ejendommen har status Nedrevet/slettet, Bygning nedrevet
+                eller Bygning bortfaldet, er den fysiske ejendom udfaset.
+                Minst én aktiv bygning → vis ikke banneret. */}
+            {(() => {
+              const retiredStatuses = new Set([
+                'Nedrevet/slettet',
+                'Bygning nedrevet',
+                'Bygning bortfaldet',
+              ]);
+              const bygninger = bbrData?.bbr;
+              const erUdfasetEjendom =
+                !!bygninger &&
+                bygninger.length > 0 &&
+                bygninger.every((b) => b.status !== null && retiredStatuses.has(b.status));
+              return erUdfasetEjendom;
+            })() && (
               <div
                 role="status"
                 className="mb-4 flex items-start gap-3 px-4 py-3 bg-amber-900/20 border border-amber-700/40 rounded-lg"
@@ -1924,8 +1944,8 @@ export default function EjendomDetaljeClient({
                   </p>
                   <p className="text-amber-100/70 text-xs mt-1 leading-relaxed">
                     {da
-                      ? 'Denne ejendoms zone-registrering er markeret som udfaset. Bygninger og enheder kan være flyttet til en nyere registrering på samme matrikel.'
-                      : 'This property\u2019s zone registration is marked as retired. Buildings and units may have moved to a newer registration on the same matrikel.'}
+                      ? 'Alle bygninger på denne ejendom er registreret som nedrevet eller bortfaldet i BBR. Matriklen kan være sammenlagt eller ejendommen genopført under et nyt BFE-nummer.'
+                      : 'All buildings on this property are registered as demolished or withdrawn in BBR. The matrikel may have been merged or the property rebuilt under a new BFE number.'}
                   </p>
                   {dawaJordstykke && (
                     <button

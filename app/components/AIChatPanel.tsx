@@ -169,6 +169,17 @@ function AIChatPanel() {
     }
   }, [chatCtx.activeId, chatCtx.drawerOpen, isLoading]);
 
+  /** BIZZ-810: Keep drawer in sync with fullpage while the app is running.
+   *  When context messages grow past our local copy (because the other
+   *  surface persisted a new turn), adopt them as-is. Guarded by
+   *  !isLoading so we don't clobber our own in-flight compose. */
+  useEffect(() => {
+    if (isLoading) return;
+    if (chatCtx.messages.length > messages.length) {
+      setMessages(chatCtx.messages);
+    }
+  }, [chatCtx.messages, isLoading, messages.length]);
+
   /** Scroll til bunden ved nye beskeder eller stream-opdatering */
   useEffect(() => {
     {
@@ -854,7 +865,7 @@ function AIChatPanel() {
         <>
           {/* Beskeder */}
           <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2.5 min-h-0">
-            {messages.length === 0 && !streamText ? (
+            {messages.length === 0 && !streamText && !chatCtx.streamText ? (
               <div className="flex flex-col items-center justify-center h-full text-center py-4">
                 <div className="w-10 h-10 bg-blue-600/20 rounded-xl flex items-center justify-center mb-3">
                   <Bot size={20} className="text-blue-400" />
@@ -887,20 +898,25 @@ function AIChatPanel() {
                   </div>
                 ))}
 
-                {/* Live streaming-tekst */}
-                {streamText && (
-                  <div className="flex justify-start">
-                    <div className="max-w-[88%] rounded-xl px-3 py-2 text-xs leading-relaxed bg-slate-800/80 text-slate-300 border border-slate-700/40">
-                      <MarkdownContent text={streamText} />
-                      <span className="inline-block w-1.5 h-3.5 bg-blue-400/70 ml-0.5 animate-pulse rounded-sm" />
+                {/* Live streaming-tekst — BIZZ-810: falder tilbage til context
+                    hvis lokal state er tom (fx efter en re-sync). Sikrer at
+                    drawer viser det samme svar som fullpage. */}
+                {(() => {
+                  const effective = streamText || chatCtx.streamText;
+                  return effective ? (
+                    <div className="flex justify-start">
+                      <div className="max-w-[88%] rounded-xl px-3 py-2 text-xs leading-relaxed bg-slate-800/80 text-slate-300 border border-slate-700/40">
+                        <MarkdownContent text={effective} />
+                        <span className="inline-block w-1.5 h-3.5 bg-blue-400/70 ml-0.5 animate-pulse rounded-sm" />
+                      </div>
                     </div>
-                  </div>
-                )}
+                  ) : null;
+                })()}
               </>
             )}
 
             {/* Tænke-animation + tool-status (før streaming starter) */}
-            {isLoading && !streamText && (
+            {(isLoading || chatCtx.isStreaming) && !streamText && !chatCtx.streamText && (
               <div className="flex justify-start">
                 <div className="bg-slate-800/80 border border-slate-700/40 rounded-xl px-3 py-2.5 flex flex-col gap-1.5">
                   <div className="flex gap-1">

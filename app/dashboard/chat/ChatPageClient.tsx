@@ -22,11 +22,25 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { MessageSquare, Plus, Trash2, Send, Square, Bot, Sparkles, Loader2, X } from 'lucide-react';
+import {
+  MessageSquare,
+  Plus,
+  Trash2,
+  Send,
+  Square,
+  Bot,
+  Sparkles,
+  Loader2,
+  X,
+  Paperclip,
+  FileText,
+  Eye,
+} from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { useSubscription } from '@/app/context/SubscriptionContext';
 import { useAIPageContext } from '@/app/context/AIPageContext';
 import { useAIChatContext } from '@/app/context/AIChatContext';
+import { useDocPreview } from '@/app/context/DocPreviewContext';
 import { resolvePlan, isSubscriptionFunctional, formatTokens } from '@/app/lib/subscriptions';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -35,6 +49,20 @@ import { resolvePlan, isSubscriptionFunctional, formatTokens } from '@/app/lib/s
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+}
+
+/**
+ * BIZZ-811: Attachment queued for the next message. Mirrors the shape
+ * used by AIChatPanel (drawer) so both surfaces behave identically.
+ */
+interface ChatAttachment {
+  id: string;
+  name: string;
+  file_type: string;
+  size: number;
+  extracted_text: string;
+  preview: string;
+  truncated: boolean;
 }
 
 /** A persisted conversation stored in localStorage */
@@ -304,6 +332,8 @@ export default function ChatPageClient() {
   const { pageData } = useAIPageContext();
   /** Shared conversation context — syncs with drawer panel */
   const chatCtx = useAIChatContext();
+  /** BIZZ-811: Right-side document preview (opens on-demand from chips) */
+  const docPreview = useDocPreview();
 
   // ── Conversation state (synced with AIChatContext) ──
   const conversations = chatCtx.conversations;
@@ -331,6 +361,48 @@ export default function ChatPageClient() {
   const [streamTextLocal, setStreamText] = useState('');
   const [toolStatusLocal, setToolStatus] = useState('');
   const [isMounted, setIsMounted] = useState(false);
+  /** BIZZ-811: attachments queued for the next message — parity with AIChatPanel */
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+  const [attachBusy, setAttachBusy] = useState(false);
+  const [attachError, setAttachError] = useState<string | null>(null);
+
+  /** BIZZ-811: upload one or more files to /api/ai/attach → store the
+   *  returned ChatAttachment in state so sendMessage can fold the
+   *  extracted text into the next user message. */
+  const uploadAttachments = useCallback(
+    async (files: FileList | File[]) => {
+      if (files.length === 0) return;
+      setAttachBusy(true);
+      setAttachError(null);
+      try {
+        for (const f of Array.from(files)) {
+          const fd = new FormData();
+          fd.append('file', f);
+          const r = await fetch('/api/ai/attach', { method: 'POST', body: fd });
+          if (!r.ok) {
+            const j = (await r.json().catch(() => ({ error: 'Ukendt' }))) as { error?: string };
+            setAttachError(j.error ?? (da ? 'Upload fejlede' : 'Upload failed'));
+            continue;
+          }
+          const j = (await r.json()) as Omit<ChatAttachment, 'id'>;
+          setAttachments((prev) => [
+            ...prev,
+            {
+              id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              ...j,
+            },
+          ]);
+        }
+      } finally {
+        setAttachBusy(false);
+      }
+    },
+    [da]
+  );
+
+  const removeAttachment = useCallback((id: string) => {
+    setAttachments((prev) => prev.filter((a) => a.id !== id));
+  }, []);
 
   // Combine local streaming state with context (drawer may be streaming in background)
   const isLoading = isLoadingLocal || chatCtx.isStreaming;
@@ -517,7 +589,7 @@ export default function ChatPageClient() {
    */
   const sendMessage = useCallback(async () => {
     const text = input.trim();
-    if (!text || isLoading) return;
+    if ((!text && attachments.length === 0) || isLoading) return;
 
     // Subscription check
     const blockReason = checkSubscriptionLimit();
@@ -529,7 +601,7 @@ export default function ChatPageClient() {
     if (!convId) {
       const newConv: Conversation = {
         id: generateId(),
-        title: deriveTitle(text),
+        title: deriveTitle(text || (attachments[0]?.name ?? '')),
         messages: [],
         createdAt: new Date().toISOString(),
       };
@@ -540,7 +612,24 @@ export default function ChatPageClient() {
       setActiveId(convId);
     }
 
-    const userMsg: ChatMessage = { role: 'user', content: text };
+    // BIZZ-811: Fold attachments into the user message so Claude sees the
+    // extracted text as ordinary context. Clears the chips immediately.
+    const attachmentBlock = attachments.length
+      ? attachments
+          .map(
+            (att) =>
+              `[Vedhæftet fil: ${att.name} — ${att.file_type.toUpperCase()}, ${Math.round(
+                att.size / 1024
+              )} KB${att.truncated ? ', beskåret' : ''}]\n${att.extracted_text}`
+          )
+          .join('\n\n---\n\n')
+      : '';
+    const composed = attachmentBlock
+      ? `${attachmentBlock}\n\n---\n\n${text || '(ingen prompt — brug vedhæftede filer som kontekst)'}`
+      : text;
+    setAttachments([]);
+
+    const userMsg: ChatMessage = { role: 'user', content: composed };
     const newMessages: ChatMessage[] = [...messages, userMsg];
 
     // Auto-title from first user message — use context for sync with drawer
@@ -724,6 +813,12 @@ export default function ChatPageClient() {
     persistConversation,
     streamText,
     addTokenUsage,
+    attachments,
+    setConversations,
+    setActiveId,
+    chatCtx,
+    da,
+    pageData,
   ]);
 
   /**
@@ -951,7 +1046,75 @@ export default function ChatPageClient() {
 
         {/* Input bar */}
         <div className="shrink-0 border-t border-white/8 bg-[#0f172a] px-4 py-3">
+          {/* BIZZ-811: Attachment chips + error (shown over the input) */}
+          {(attachments.length > 0 || attachError) && (
+            <div className="max-w-4xl mx-auto mb-2 space-y-1">
+              {attachments.map((att) => (
+                <div
+                  key={att.id}
+                  className="flex items-center gap-2 bg-slate-800/80 border border-slate-700/40 rounded-lg px-3 py-2"
+                >
+                  <FileText size={14} className="text-blue-400 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm text-slate-200 truncate">{att.name}</p>
+                    <p className="text-[10px] text-slate-500 uppercase">
+                      {att.file_type} · {Math.round(att.size / 1024)} KB
+                      {att.truncated && ` · ${da ? 'beskåret' : 'truncated'}`}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      docPreview.open({
+                        key: `fullpage-chat-attachment-${att.id}`,
+                        name: att.name,
+                        fileType: att.file_type,
+                        sizeBytes: att.size,
+                        text: att.extracted_text,
+                        truncated: att.truncated,
+                      })
+                    }
+                    aria-label={da ? 'Se preview' : 'Preview'}
+                    title={da ? 'Se preview' : 'Preview'}
+                    className="p-1.5 rounded text-slate-400 hover:text-blue-300 hover:bg-slate-700/40 transition-colors shrink-0"
+                  >
+                    <Eye size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeAttachment(att.id)}
+                    aria-label={da ? 'Fjern fil' : 'Remove file'}
+                    className="p-1.5 rounded text-slate-400 hover:text-rose-300 hover:bg-slate-700/40 transition-colors shrink-0"
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+              ))}
+              {attachError && <p className="text-[11px] text-rose-300 px-1">{attachError}</p>}
+            </div>
+          )}
           <div className="flex items-end gap-2 max-w-4xl mx-auto">
+            {/* BIZZ-811: Attach file */}
+            <label
+              className="shrink-0 w-11 h-11 flex items-center justify-center bg-slate-800/70 hover:bg-slate-700/70 border border-white/10 text-slate-300 hover:text-blue-300 rounded-xl transition-colors cursor-pointer"
+              aria-label={da ? 'Vedhæft fil' : 'Attach file'}
+              title={da ? 'Vedhæft fil' : 'Attach file'}
+            >
+              {attachBusy ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : (
+                <Paperclip size={16} />
+              )}
+              <input
+                type="file"
+                multiple
+                hidden
+                onChange={(e) => {
+                  if (e.target.files) void uploadAttachments(e.target.files);
+                  e.target.value = '';
+                }}
+              />
+            </label>
             <div className="flex-1 relative">
               <textarea
                 ref={inputRef}
@@ -987,7 +1150,7 @@ export default function ChatPageClient() {
             ) : (
               <button
                 onClick={sendMessage}
-                disabled={!input.trim()}
+                disabled={!input.trim() && attachments.length === 0}
                 aria-label={da ? 'Send besked' : 'Send message'}
                 className="shrink-0 w-11 h-11 flex items-center justify-center bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-xl transition-colors"
               >

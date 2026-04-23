@@ -76,8 +76,8 @@ const TABS: TabDef[] = [
     id: 'plans',
     href: '/dashboard/admin/plans',
     icon: Settings,
-    labelDa: 'Planer',
-    labelEn: 'Plans',
+    labelDa: 'Plan',
+    labelEn: 'Plan',
   },
   {
     id: 'analytics',

@@ -169,6 +169,8 @@ export default function PlansClient() {
 
   // ── Plan state ──
   const [plans, setPlans] = useState<PlanConfig[]>([]);
+  // BIZZ-765: filter pills
+  const [planFilter, setPlanFilter] = useState<'all' | 'ai' | 'no-ai' | 'approval'>('all');
   const [planEdits, setPlanEdits] = useState<Record<string, Partial<PlanConfig>>>({});
   const [planLoading, setPlanLoading] = useState(true);
   const [planError, setPlanError] = useState<string | null>(null);
@@ -195,14 +197,14 @@ export default function PlansClient() {
   // ── Translations ──
   const t = {
     back: da ? 'Tilbage' : 'Back',
-    title: da ? 'Plankonfiguration' : 'Plan Configuration',
+    title: da ? 'Plan' : 'Plan',
     subtitle: da
       ? 'Administrer abonnementsplaner og token-pakker'
       : 'Manage subscription plans and token packs',
     refresh: da ? 'Opdater' : 'Refresh',
     users: da ? 'Brugere' : 'Users',
     billing: da ? 'Fakturering' : 'Billing',
-    plans: da ? 'Planer' : 'Plans',
+    plans: da ? 'Plan' : 'Plan',
     analytics: da ? 'Analyse' : 'Analytics',
     loading: da ? 'Henter data...' : 'Loading data...',
     errorMsg: da ? 'Fejl ved hentning' : 'Error fetching data',
@@ -696,6 +698,69 @@ export default function PlansClient() {
       {/* ─── Scrollable content ─── */}
       <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-6">
         <div className="max-w-7xl mx-auto space-y-6">
+          {/* BIZZ-765: Stats cards — matches /dashboard/admin/users + /billing */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-4">
+              <div className="flex items-center gap-2 mb-2 text-slate-400 text-xs uppercase tracking-wide">
+                <Settings size={14} className="text-blue-400" />
+                {da ? 'Planer' : 'Plans'}
+              </div>
+              <p className="text-2xl font-bold text-white">{plans.length}</p>
+            </div>
+            <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-4">
+              <div className="flex items-center gap-2 mb-2 text-slate-400 text-xs uppercase tracking-wide">
+                <Check size={14} className="text-emerald-400" />
+                {da ? 'AI-aktive' : 'AI-enabled'}
+              </div>
+              <p className="text-2xl font-bold text-white">
+                {plans.filter((pl) => pl.aiEnabled).length}
+              </p>
+            </div>
+            <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-4">
+              <div className="flex items-center gap-2 mb-2 text-slate-400 text-xs uppercase tracking-wide">
+                <AlertTriangle size={14} className="text-amber-400" />
+                {da ? 'Kræver godkendelse' : 'Requires approval'}
+              </div>
+              <p className="text-2xl font-bold text-white">
+                {plans.filter((pl) => pl.requiresApproval).length}
+              </p>
+            </div>
+            <div className="bg-slate-900/50 border border-slate-700/40 rounded-xl p-4">
+              <div className="flex items-center gap-2 mb-2 text-slate-400 text-xs uppercase tracking-wide">
+                <Package size={14} className="text-purple-400" />
+                {da ? 'Token-pakker' : 'Token packs'}
+              </div>
+              <p className="text-2xl font-bold text-white">{packs.length}</p>
+            </div>
+          </div>
+
+          {/* BIZZ-765: Filter pills */}
+          <div className="flex gap-2 items-center flex-wrap">
+            {(
+              [
+                { key: 'all', labelDa: 'Alle', labelEn: 'All' },
+                { key: 'ai', labelDa: 'AI-aktive', labelEn: 'AI-enabled' },
+                { key: 'no-ai', labelDa: 'Uden AI', labelEn: 'No AI' },
+                { key: 'approval', labelDa: 'Kræver godkendelse', labelEn: 'Requires approval' },
+              ] as const
+            ).map((f) => {
+              const active = f.key === planFilter;
+              return (
+                <button
+                  key={f.key}
+                  onClick={() => setPlanFilter(f.key)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                    active
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-slate-800/60 border border-slate-700/50 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {da ? f.labelDa : f.labelEn}
+                </button>
+              );
+            })}
+          </div>
+
           {/* ─── Section 1: Plan Configuration ─────────────────────────────────── */}
           <section className="bg-slate-800/40 border border-slate-700/40 rounded-xl p-6">
             <div className="flex items-center justify-between mb-4">
@@ -1062,364 +1127,381 @@ export default function PlansClient() {
                 )}
 
                 {/* Plan rows */}
-                {plans.map((plan) => {
-                  const badge = getBadgeClasses(getPlanValue(plan, 'color') as string);
-                  const isSaving = savingPlan === plan.id;
-                  const isSaved = savedPlan === plan.id;
-                  const hasChanges = planHasChanges(plan.id);
-                  const isExpanded = expandedPlan === plan.id;
-                  const isDeleting = deletingPlan === plan.id;
+                {plans
+                  .filter((pl) => {
+                    if (planFilter === 'ai') return pl.aiEnabled;
+                    if (planFilter === 'no-ai') return !pl.aiEnabled;
+                    if (planFilter === 'approval') return pl.requiresApproval;
+                    return true;
+                  })
+                  .map((plan) => {
+                    const badge = getBadgeClasses(getPlanValue(plan, 'color') as string);
+                    const isSaving = savingPlan === plan.id;
+                    const isSaved = savedPlan === plan.id;
+                    const hasChanges = planHasChanges(plan.id);
+                    const isExpanded = expandedPlan === plan.id;
+                    const isDeleting = deletingPlan === plan.id;
 
-                  return (
-                    <div
-                      key={plan.id}
-                      className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden hover:bg-slate-800/60 transition-colors"
-                    >
-                      {/* Summary row */}
+                    return (
                       <div
-                        className="flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors"
-                        onClick={() => setExpandedPlan(isExpanded ? null : plan.id)}
+                        key={plan.id}
+                        className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden hover:bg-slate-800/60 transition-colors"
                       >
-                        {/* Color badge + name */}
-                        <span
-                          className={`text-xs font-medium px-2.5 py-0.5 rounded-md border shrink-0 ${badge.bg} ${badge.text} ${badge.border}`}
+                        {/* Summary row */}
+                        <div
+                          className="flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors"
+                          onClick={() => setExpandedPlan(isExpanded ? null : plan.id)}
                         >
-                          {da ? getPlanValue(plan, 'nameDa') : getPlanValue(plan, 'nameEn')}
-                        </span>
+                          {/* Color badge + name */}
+                          <span
+                            className={`text-xs font-medium px-2.5 py-0.5 rounded-md border shrink-0 ${badge.bg} ${badge.text} ${badge.border}`}
+                          >
+                            {da ? getPlanValue(plan, 'nameDa') : getPlanValue(plan, 'nameEn')}
+                          </span>
 
-                        {/* Key info pills */}
-                        <span className="text-slate-400 text-xs">
-                          {getPlanValue(plan, 'priceDkk')} DKK
-                        </span>
-                        <span className="text-slate-600 text-xs">|</span>
-                        <span className="text-slate-400 text-xs">
-                          {getPlanValue(plan, 'aiTokensPerMonth') === -1
-                            ? da
-                              ? 'Ubegranset AI'
-                              : 'Unlimited AI'
-                            : `${Number(getPlanValue(plan, 'aiTokensPerMonth')).toLocaleString()} tokens`}
-                        </span>
-                        <span className="text-slate-600 text-xs">|</span>
-                        <span className="text-slate-400 text-xs">
-                          {Number(getPlanValue(plan, 'durationDays')) > 0
-                            ? `${getPlanValue(plan, 'durationDays')} ${da ? 'dage' : 'days'}`
-                            : `${getPlanValue(plan, 'durationMonths')} ${da ? 'md' : 'mo'}`}
-                        </span>
+                          {/* Key info pills */}
+                          <span className="text-slate-400 text-xs">
+                            {getPlanValue(plan, 'priceDkk')} DKK
+                          </span>
+                          <span className="text-slate-600 text-xs">|</span>
+                          <span className="text-slate-400 text-xs">
+                            {getPlanValue(plan, 'aiTokensPerMonth') === -1
+                              ? da
+                                ? 'Ubegranset AI'
+                                : 'Unlimited AI'
+                              : `${Number(getPlanValue(plan, 'aiTokensPerMonth')).toLocaleString()} tokens`}
+                          </span>
+                          <span className="text-slate-600 text-xs">|</span>
+                          <span className="text-slate-400 text-xs">
+                            {Number(getPlanValue(plan, 'durationDays')) > 0
+                              ? `${getPlanValue(plan, 'durationDays')} ${da ? 'dage' : 'days'}`
+                              : `${getPlanValue(plan, 'durationMonths')} ${da ? 'md' : 'mo'}`}
+                          </span>
 
-                        {/* Status indicators */}
-                        <div className="ml-auto flex items-center gap-2">
-                          {!getPlanValue(plan, 'isActive') && (
-                            <span className="text-xs text-red-400 bg-red-500/20 px-2 py-0.5 rounded-md border border-red-500/30">
-                              {da ? 'Inaktiv' : 'Inactive'}
-                            </span>
-                          )}
-                          {getPlanValue(plan, 'requiresApproval') && (
-                            <span className="text-xs text-amber-400 bg-amber-500/20 px-2 py-0.5 rounded-md border border-amber-500/30">
-                              {da ? 'Godkendelse' : 'Approval'}
-                            </span>
-                          )}
-                          {hasChanges && (
-                            <span className="text-xs text-blue-400 bg-blue-500/20 px-2 py-0.5 rounded-md border border-blue-500/30">
-                              {da ? 'Usaved' : 'Unsaved'}
-                            </span>
-                          )}
-                          {isExpanded ? (
-                            <ChevronUp size={14} className="text-slate-500" />
-                          ) : (
-                            <ChevronDown size={14} className="text-slate-500" />
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Expanded edit form */}
-                      {isExpanded && (
-                        <div className="border-t border-slate-700/40 px-4 py-4 space-y-4 bg-slate-900/30">
-                          {/* Names */}
-                          <div className="grid grid-cols-2 gap-3">
-                            <div>
-                              <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
-                                {t.nameDa}
-                              </label>
-                              <input
-                                type="text"
-                                value={getPlanValue(plan, 'nameDa') as string}
-                                onChange={(e) => updatePlanField(plan.id, 'nameDa', e.target.value)}
-                                className="bg-slate-900/50 border border-slate-700/40 rounded-lg px-2.5 py-1.5 text-white text-sm w-full focus:outline-none focus:border-blue-500/50 transition-colors"
-                              />
-                            </div>
-                            <div>
-                              <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
-                                {t.nameEn}
-                              </label>
-                              <input
-                                type="text"
-                                value={getPlanValue(plan, 'nameEn') as string}
-                                onChange={(e) => updatePlanField(plan.id, 'nameEn', e.target.value)}
-                                className="bg-slate-900/50 border border-slate-700/40 rounded-lg px-2.5 py-1.5 text-white text-sm w-full focus:outline-none focus:border-blue-500/50 transition-colors"
-                              />
-                            </div>
-                          </div>
-
-                          {/* Descriptions */}
-                          <div className="grid grid-cols-2 gap-3">
-                            <div>
-                              <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
-                                {t.descDa}
-                              </label>
-                              <textarea
-                                rows={3}
-                                value={getPlanValue(plan, 'descDa') as string}
-                                onChange={(e) => updatePlanField(plan.id, 'descDa', e.target.value)}
-                                className="bg-slate-900/50 border border-slate-700/40 rounded-lg px-2.5 py-1.5 text-white text-sm w-full focus:outline-none focus:border-blue-500/50 transition-colors resize-y"
-                              />
-                            </div>
-                            <div>
-                              <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
-                                {t.descEn}
-                              </label>
-                              <textarea
-                                rows={3}
-                                value={getPlanValue(plan, 'descEn') as string}
-                                onChange={(e) => updatePlanField(plan.id, 'descEn', e.target.value)}
-                                className="bg-slate-900/50 border border-slate-700/40 rounded-lg px-2.5 py-1.5 text-white text-sm w-full focus:outline-none focus:border-blue-500/50 transition-colors resize-y"
-                              />
-                            </div>
-                          </div>
-
-                          {/* Color */}
-                          <div>
-                            <label className="text-[10px] text-slate-500 uppercase tracking-wider flex items-center gap-1 mb-1.5">
-                              <Palette size={10} /> {t.color}
-                            </label>
-                            {renderColorPicker(getPlanValue(plan, 'color') as string, (c) =>
-                              updatePlanField(plan.id, 'color', c)
+                          {/* Status indicators */}
+                          <div className="ml-auto flex items-center gap-2">
+                            {!getPlanValue(plan, 'isActive') && (
+                              <span className="text-xs text-red-400 bg-red-500/20 px-2 py-0.5 rounded-md border border-red-500/30">
+                                {da ? 'Inaktiv' : 'Inactive'}
+                              </span>
+                            )}
+                            {getPlanValue(plan, 'requiresApproval') && (
+                              <span className="text-xs text-amber-400 bg-amber-500/20 px-2 py-0.5 rounded-md border border-amber-500/30">
+                                {da ? 'Godkendelse' : 'Approval'}
+                              </span>
+                            )}
+                            {hasChanges && (
+                              <span className="text-xs text-blue-400 bg-blue-500/20 px-2 py-0.5 rounded-md border border-blue-500/30">
+                                {da ? 'Usaved' : 'Unsaved'}
+                              </span>
+                            )}
+                            {isExpanded ? (
+                              <ChevronUp size={14} className="text-slate-500" />
+                            ) : (
+                              <ChevronDown size={14} className="text-slate-500" />
                             )}
                           </div>
+                        </div>
 
-                          {/* Numeric fields row 1 */}
-                          <div className="grid grid-cols-5 gap-3">
-                            <div>
-                              <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
-                                {t.price}
-                              </label>
-                              {renderNumInput(plan, 'priceDkk')}
+                        {/* Expanded edit form */}
+                        {isExpanded && (
+                          <div className="border-t border-slate-700/40 px-4 py-4 space-y-4 bg-slate-900/30">
+                            {/* Names */}
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                                  {t.nameDa}
+                                </label>
+                                <input
+                                  type="text"
+                                  value={getPlanValue(plan, 'nameDa') as string}
+                                  onChange={(e) =>
+                                    updatePlanField(plan.id, 'nameDa', e.target.value)
+                                  }
+                                  className="bg-slate-900/50 border border-slate-700/40 rounded-lg px-2.5 py-1.5 text-white text-sm w-full focus:outline-none focus:border-blue-500/50 transition-colors"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                                  {t.nameEn}
+                                </label>
+                                <input
+                                  type="text"
+                                  value={getPlanValue(plan, 'nameEn') as string}
+                                  onChange={(e) =>
+                                    updatePlanField(plan.id, 'nameEn', e.target.value)
+                                  }
+                                  className="bg-slate-900/50 border border-slate-700/40 rounded-lg px-2.5 py-1.5 text-white text-sm w-full focus:outline-none focus:border-blue-500/50 transition-colors"
+                                />
+                              </div>
                             </div>
-                            <div>
-                              <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
-                                {t.aiTokens}
-                              </label>
-                              {renderNumInput(plan, 'aiTokensPerMonth', { allowNeg: true })}
-                            </div>
-                            <div>
-                              <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
-                                {t.durationMonths}
-                              </label>
-                              {renderNumInput(plan, 'durationMonths', { min: 0 })}
-                            </div>
-                            <div>
-                              <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
-                                {t.durationDays}
-                              </label>
-                              {renderNumInput(plan, 'durationDays', { min: 0 })}
-                            </div>
-                            <div>
-                              <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
-                                {t.capMultiplier}
-                              </label>
-                              {renderNumInput(plan, 'tokenAccumulationCapMultiplier', {
-                                allowDot: true,
-                                min: 1,
-                              })}
-                            </div>
-                          </div>
 
-                          {/* Duration hint */}
-                          <p className="text-[10px] text-slate-600 -mt-2">{t.durationHint}</p>
+                            {/* Descriptions */}
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                                  {t.descDa}
+                                </label>
+                                <textarea
+                                  rows={3}
+                                  value={getPlanValue(plan, 'descDa') as string}
+                                  onChange={(e) =>
+                                    updatePlanField(plan.id, 'descDa', e.target.value)
+                                  }
+                                  className="bg-slate-900/50 border border-slate-700/40 rounded-lg px-2.5 py-1.5 text-white text-sm w-full focus:outline-none focus:border-blue-500/50 transition-colors resize-y"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                                  {t.descEn}
+                                </label>
+                                <textarea
+                                  rows={3}
+                                  value={getPlanValue(plan, 'descEn') as string}
+                                  onChange={(e) =>
+                                    updatePlanField(plan.id, 'descEn', e.target.value)
+                                  }
+                                  className="bg-slate-900/50 border border-slate-700/40 rounded-lg px-2.5 py-1.5 text-white text-sm w-full focus:outline-none focus:border-blue-500/50 transition-colors resize-y"
+                                />
+                              </div>
+                            </div>
 
-                          {/* Free trial + grace + toggles */}
-                          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3 items-end">
+                            {/* Color */}
                             <div>
-                              <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
-                                {t.freeTrialDays}
+                              <label className="text-[10px] text-slate-500 uppercase tracking-wider flex items-center gap-1 mb-1.5">
+                                <Palette size={10} /> {t.color}
                               </label>
-                              {renderNumInput(plan, 'freeTrialDays', { min: 0 })}
-                            </div>
-                            <div>
-                              <label
-                                className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1"
-                                title={t.paymentGraceHoursHint}
-                              >
-                                {t.paymentGraceHours}
-                              </label>
-                              {renderNumInput(plan, 'paymentGraceHours', { min: 0 })}
-                            </div>
-                            <label className="flex items-center gap-2 text-sm text-slate-300 pb-1">
-                              {renderToggle(getPlanValue(plan, 'aiEnabled') as boolean, () =>
-                                updatePlanField(
-                                  plan.id,
-                                  'aiEnabled',
-                                  !getPlanValue(plan, 'aiEnabled')
-                                )
+                              {renderColorPicker(getPlanValue(plan, 'color') as string, (c) =>
+                                updatePlanField(plan.id, 'color', c)
                               )}
-                              {t.aiEnabled}
-                            </label>
-                            <label className="flex items-center gap-2 text-sm text-slate-300 pb-1">
-                              {renderToggle(
-                                getPlanValue(plan, 'requiresApproval') as boolean,
-                                () =>
+                            </div>
+
+                            {/* Numeric fields row 1 */}
+                            <div className="grid grid-cols-5 gap-3">
+                              <div>
+                                <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                                  {t.price}
+                                </label>
+                                {renderNumInput(plan, 'priceDkk')}
+                              </div>
+                              <div>
+                                <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                                  {t.aiTokens}
+                                </label>
+                                {renderNumInput(plan, 'aiTokensPerMonth', { allowNeg: true })}
+                              </div>
+                              <div>
+                                <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                                  {t.durationMonths}
+                                </label>
+                                {renderNumInput(plan, 'durationMonths', { min: 0 })}
+                              </div>
+                              <div>
+                                <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                                  {t.durationDays}
+                                </label>
+                                {renderNumInput(plan, 'durationDays', { min: 0 })}
+                              </div>
+                              <div>
+                                <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                                  {t.capMultiplier}
+                                </label>
+                                {renderNumInput(plan, 'tokenAccumulationCapMultiplier', {
+                                  allowDot: true,
+                                  min: 1,
+                                })}
+                              </div>
+                            </div>
+
+                            {/* Duration hint */}
+                            <p className="text-[10px] text-slate-600 -mt-2">{t.durationHint}</p>
+
+                            {/* Free trial + grace + toggles */}
+                            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3 items-end">
+                              <div>
+                                <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                                  {t.freeTrialDays}
+                                </label>
+                                {renderNumInput(plan, 'freeTrialDays', { min: 0 })}
+                              </div>
+                              <div>
+                                <label
+                                  className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1"
+                                  title={t.paymentGraceHoursHint}
+                                >
+                                  {t.paymentGraceHours}
+                                </label>
+                                {renderNumInput(plan, 'paymentGraceHours', { min: 0 })}
+                              </div>
+                              <label className="flex items-center gap-2 text-sm text-slate-300 pb-1">
+                                {renderToggle(getPlanValue(plan, 'aiEnabled') as boolean, () =>
                                   updatePlanField(
                                     plan.id,
-                                    'requiresApproval',
-                                    !getPlanValue(plan, 'requiresApproval')
-                                  ),
-                                'bg-amber-600'
-                              )}
-                              {t.requiresApproval}
-                            </label>
-                            <label className="flex items-center gap-2 text-sm text-slate-300 pb-1">
-                              {renderToggle(
-                                getPlanValue(plan, 'isActive') as boolean,
-                                () =>
-                                  updatePlanField(
-                                    plan.id,
-                                    'isActive',
-                                    !getPlanValue(plan, 'isActive')
-                                  ),
-                                'bg-emerald-600'
-                              )}
-                              {t.active}
-                            </label>
-                          </div>
+                                    'aiEnabled',
+                                    !getPlanValue(plan, 'aiEnabled')
+                                  )
+                                )}
+                                {t.aiEnabled}
+                              </label>
+                              <label className="flex items-center gap-2 text-sm text-slate-300 pb-1">
+                                {renderToggle(
+                                  getPlanValue(plan, 'requiresApproval') as boolean,
+                                  () =>
+                                    updatePlanField(
+                                      plan.id,
+                                      'requiresApproval',
+                                      !getPlanValue(plan, 'requiresApproval')
+                                    ),
+                                  'bg-amber-600'
+                                )}
+                                {t.requiresApproval}
+                              </label>
+                              <label className="flex items-center gap-2 text-sm text-slate-300 pb-1">
+                                {renderToggle(
+                                  getPlanValue(plan, 'isActive') as boolean,
+                                  () =>
+                                    updatePlanField(
+                                      plan.id,
+                                      'isActive',
+                                      !getPlanValue(plan, 'isActive')
+                                    ),
+                                  'bg-emerald-600'
+                                )}
+                                {t.active}
+                              </label>
+                            </div>
 
-                          {/* Sort order */}
-                          <div>
-                            <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
-                              {t.sortOrder}
-                            </label>
-                            <input
-                              type="text"
-                              inputMode="numeric"
-                              value={String(getPlanValue(plan, 'sortOrder') ?? 0)}
-                              onChange={(e) => {
-                                const v = e.target.value.replace(/[^0-9]/g, '');
-                                updatePlanField(plan.id, 'sortOrder', v === '' ? 0 : Number(v));
-                              }}
-                              className="w-24 px-2.5 py-1.5 rounded-lg bg-slate-900/50 border border-slate-700/40 text-white text-sm focus:outline-none focus:border-blue-500/50 transition-colors"
-                            />
-                            <p className="text-[10px] text-slate-600 mt-0.5">{t.sortOrderHint}</p>
-                          </div>
-
-                          {/* Max sales + sales count */}
-                          <div className="grid grid-cols-2 gap-3">
+                            {/* Sort order */}
                             <div>
                               <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
-                                {t.maxSales}
+                                {t.sortOrder}
                               </label>
                               <input
                                 type="text"
                                 inputMode="numeric"
-                                value={
-                                  (getPlanValue(plan, 'maxSales') as number | null) == null
-                                    ? ''
-                                    : String(getPlanValue(plan, 'maxSales'))
-                                }
+                                value={String(getPlanValue(plan, 'sortOrder') ?? 0)}
                                 onChange={(e) => {
                                   const v = e.target.value.replace(/[^0-9]/g, '');
-                                  updatePlanField(
-                                    plan.id,
-                                    'maxSales',
-                                    v === '' ? (null as unknown as number) : Number(v)
-                                  );
+                                  updatePlanField(plan.id, 'sortOrder', v === '' ? 0 : Number(v));
                                 }}
-                                placeholder={t.unlimited}
-                                className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900/50 border border-slate-700/40 text-white text-sm placeholder-slate-600 focus:outline-none focus:border-blue-500/50 transition-colors"
+                                className="w-24 px-2.5 py-1.5 rounded-lg bg-slate-900/50 border border-slate-700/40 text-white text-sm focus:outline-none focus:border-blue-500/50 transition-colors"
                               />
-                              <p className="text-[10px] text-slate-600 mt-0.5">{t.maxSalesHint}</p>
+                              <p className="text-[10px] text-slate-600 mt-0.5">{t.sortOrderHint}</p>
                             </div>
-                            <div>
-                              <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
-                                {t.salesCount}
-                              </label>
-                              <div className="flex items-center gap-2 h-[34px]">
-                                <span className="text-white text-sm font-mono">
-                                  {getPlanValue(plan, 'salesCount') ?? 0}
-                                </span>
-                                {(getPlanValue(plan, 'maxSales') as number | null) != null && (
-                                  <span className="text-slate-500 text-xs">
-                                    / {getPlanValue(plan, 'maxSales')}
+
+                            {/* Max sales + sales count */}
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                                  {t.maxSales}
+                                </label>
+                                <input
+                                  type="text"
+                                  inputMode="numeric"
+                                  value={
+                                    (getPlanValue(plan, 'maxSales') as number | null) == null
+                                      ? ''
+                                      : String(getPlanValue(plan, 'maxSales'))
+                                  }
+                                  onChange={(e) => {
+                                    const v = e.target.value.replace(/[^0-9]/g, '');
+                                    updatePlanField(
+                                      plan.id,
+                                      'maxSales',
+                                      v === '' ? (null as unknown as number) : Number(v)
+                                    );
+                                  }}
+                                  placeholder={t.unlimited}
+                                  className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900/50 border border-slate-700/40 text-white text-sm placeholder-slate-600 focus:outline-none focus:border-blue-500/50 transition-colors"
+                                />
+                                <p className="text-[10px] text-slate-600 mt-0.5">
+                                  {t.maxSalesHint}
+                                </p>
+                              </div>
+                              <div>
+                                <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                                  {t.salesCount}
+                                </label>
+                                <div className="flex items-center gap-2 h-[34px]">
+                                  <span className="text-white text-sm font-mono">
+                                    {getPlanValue(plan, 'salesCount') ?? 0}
                                   </span>
-                                )}
+                                  {(getPlanValue(plan, 'maxSales') as number | null) != null && (
+                                    <span className="text-slate-500 text-xs">
+                                      / {getPlanValue(plan, 'maxSales')}
+                                    </span>
+                                  )}
+                                </div>
                               </div>
                             </div>
-                          </div>
 
-                          {/* Stripe Price ID */}
-                          <div>
-                            <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
-                              Stripe Price ID
-                            </label>
-                            <input
-                              type="text"
-                              value={String(getPlanValue(plan, 'stripePriceId') ?? '')}
-                              onChange={(e) =>
-                                updatePlanField(plan.id, 'stripePriceId', e.target.value)
-                              }
-                              placeholder="price_..."
-                              className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900/50 border border-slate-700/40 text-white text-sm placeholder-slate-600 focus:outline-none focus:border-blue-500/50 transition-colors"
-                            />
-                            <p className="text-[10px] text-slate-600 mt-0.5">
-                              {da
-                                ? 'Fra Stripe Dashboard → Products → Price ID'
-                                : 'From Stripe Dashboard → Products → Price ID'}
-                            </p>
-                          </div>
+                            {/* Stripe Price ID */}
+                            <div>
+                              <label className="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">
+                                Stripe Price ID
+                              </label>
+                              <input
+                                type="text"
+                                value={String(getPlanValue(plan, 'stripePriceId') ?? '')}
+                                onChange={(e) =>
+                                  updatePlanField(plan.id, 'stripePriceId', e.target.value)
+                                }
+                                placeholder="price_..."
+                                className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900/50 border border-slate-700/40 text-white text-sm placeholder-slate-600 focus:outline-none focus:border-blue-500/50 transition-colors"
+                              />
+                              <p className="text-[10px] text-slate-600 mt-0.5">
+                                {da
+                                  ? 'Fra Stripe Dashboard → Products → Price ID'
+                                  : 'From Stripe Dashboard → Products → Price ID'}
+                              </p>
+                            </div>
 
-                          {/* Action buttons */}
-                          <div className="flex items-center gap-2 pt-2 border-t border-slate-700/40">
-                            <button
-                              onClick={() => savePlan(plan.id)}
-                              disabled={isSaving || !hasChanges}
-                              className={`flex items-center gap-1.5 text-sm px-4 py-1.5 rounded-lg transition-colors ${
-                                isSaved
-                                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                                  : hasChanges
-                                    ? 'bg-blue-600 hover:bg-blue-500 border border-blue-500/60 text-white'
-                                    : 'bg-white/5 text-slate-500 cursor-not-allowed border border-slate-700/40'
-                              }`}
-                            >
-                              {isSaving ? (
-                                <>
-                                  <Loader2 size={14} className="animate-spin" /> {t.saving}
-                                </>
-                              ) : isSaved ? (
-                                <>
-                                  <Check size={14} /> {t.saved}
-                                </>
-                              ) : (
-                                <>
-                                  <Save size={14} /> {t.save}
-                                </>
-                              )}
-                            </button>
+                            {/* Action buttons */}
+                            <div className="flex items-center gap-2 pt-2 border-t border-slate-700/40">
+                              <button
+                                onClick={() => savePlan(plan.id)}
+                                disabled={isSaving || !hasChanges}
+                                className={`flex items-center gap-1.5 text-sm px-4 py-1.5 rounded-lg transition-colors ${
+                                  isSaved
+                                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                    : hasChanges
+                                      ? 'bg-blue-600 hover:bg-blue-500 border border-blue-500/60 text-white'
+                                      : 'bg-white/5 text-slate-500 cursor-not-allowed border border-slate-700/40'
+                                }`}
+                              >
+                                {isSaving ? (
+                                  <>
+                                    <Loader2 size={14} className="animate-spin" /> {t.saving}
+                                  </>
+                                ) : isSaved ? (
+                                  <>
+                                    <Check size={14} /> {t.saved}
+                                  </>
+                                ) : (
+                                  <>
+                                    <Save size={14} /> {t.save}
+                                  </>
+                                )}
+                              </button>
 
-                            <button
-                              onClick={() => handleDeletePlan(plan.id)}
-                              disabled={isDeleting}
-                              className="flex items-center gap-1.5 text-sm text-red-400 bg-red-600/20 border border-red-500/30 px-3 py-1.5 rounded-lg hover:bg-red-600/30 transition-colors ml-auto"
-                            >
-                              {isDeleting ? (
-                                <Loader2 size={14} className="animate-spin" />
-                              ) : (
-                                <Trash2 size={14} />
-                              )}
-                              {t.deletePlan}
-                            </button>
+                              <button
+                                onClick={() => handleDeletePlan(plan.id)}
+                                disabled={isDeleting}
+                                className="flex items-center gap-1.5 text-sm text-red-400 bg-red-600/20 border border-red-500/30 px-3 py-1.5 rounded-lg hover:bg-red-600/30 transition-colors ml-auto"
+                              >
+                                {isDeleting ? (
+                                  <Loader2 size={14} className="animate-spin" />
+                                ) : (
+                                  <Trash2 size={14} />
+                                )}
+                                {t.deletePlan}
+                              </button>
+                            </div>
                           </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+                        )}
+                      </div>
+                    );
+                  })}
               </div>
             )}
           </section>

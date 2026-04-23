@@ -227,18 +227,11 @@ export default function DomainUserDashboardClient({ domainId }: { domainId: stri
   }, [domainId, selectedIds, clearSelection, load, da]);
 
   return (
-    <div
-      className="w-full px-4 py-6 space-y-5 transition-[padding-right] duration-150"
-      style={
-        workspaceCaseId
-          ? { paddingRight: 'calc(var(--bizz-workspace-right-w, 520px) + 1.5rem)' }
-          : undefined
-      }
-    >
+    <div className="w-full px-4 py-6 space-y-5">
       {/* BIZZ-798: Layout matcher person-detalje — full-width, "Tilbage til
           dashboard"-link øverst, header + tabs spanning full content width.
-          BIZZ-801: Når workspace er åben, reserveres paddingRight svarende til
-          højre fixed-panels bredde + gap, så tabs/header ikke glider under. */}
+          BIZZ-805: efter pivot til global AI Chat er højre-side panelet
+          fjernet, så ingen paddingRight-reservation er nødvendig længere. */}
       <Link
         href="/dashboard"
         className="inline-flex items-center gap-1.5 text-slate-400 hover:text-white text-xs font-medium transition-colors"

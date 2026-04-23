@@ -35,6 +35,7 @@ import { useSubscriptionAccess } from '@/app/components/SubscriptionGate';
 import { useSubscription } from '@/app/context/SubscriptionContext';
 import { useAIPageContext } from '@/app/context/AIPageContext';
 import { useAIChatContext } from '@/app/context/AIChatContext';
+import { useDocPreview } from '@/app/context/DocPreviewContext';
 import { loadConversations } from '@/app/lib/chatStorage';
 import { Lock } from 'lucide-react';
 
@@ -87,6 +88,8 @@ function AIChatPanel() {
   const { subscription: ctxSub, addTokenUsage } = useSubscription();
   /** Shared conversation context — syncs with fullpage chat */
   const chatCtx = useAIChatContext();
+  /** BIZZ-807: Global right-side document preview panel */
+  const docPreview = useDocPreview();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -117,7 +120,6 @@ function AIChatPanel() {
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [attachBusy, setAttachBusy] = useState(false);
   const [attachError, setAttachError] = useState<string | null>(null);
-  const [previewAttachment, setPreviewAttachment] = useState<ChatAttachment | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   /** AbortController for at kunne stoppe streaming */
@@ -946,7 +948,16 @@ function AIChatPanel() {
                     </div>
                     <button
                       type="button"
-                      onClick={() => setPreviewAttachment(att)}
+                      onClick={() =>
+                        docPreview.open({
+                          key: `chat-attachment-${att.id}`,
+                          name: att.name,
+                          fileType: att.file_type,
+                          sizeBytes: att.size,
+                          text: att.extracted_text,
+                          truncated: att.truncated,
+                        })
+                      }
                       aria-label={lang === 'da' ? 'Se preview' : 'Preview'}
                       title={lang === 'da' ? 'Se preview' : 'Preview'}
                       className="p-1 rounded text-slate-400 hover:text-blue-300 hover:bg-slate-700/40 transition-colors shrink-0"
@@ -1022,48 +1033,6 @@ function AIChatPanel() {
             </div>
           </div>
         </>
-      )}
-
-      {/* BIZZ-806: Full preview-modal for attached files */}
-      {previewAttachment && (
-        <div
-          className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="attachment-preview-title"
-          onClick={() => setPreviewAttachment(null)}
-        >
-          <div
-            className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl max-w-2xl w-full max-h-[80vh] flex flex-col"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="px-4 py-3 border-b border-slate-700/40 flex items-center gap-2">
-              <FileText size={14} className="text-blue-400" />
-              <div className="min-w-0 flex-1">
-                <h3 id="attachment-preview-title" className="text-sm text-white truncate">
-                  {previewAttachment.name}
-                </h3>
-                <p className="text-[10px] text-slate-500 uppercase">
-                  {previewAttachment.file_type} · {Math.round(previewAttachment.size / 1024)} KB
-                  {previewAttachment.truncated && ` · ${lang === 'da' ? 'beskåret' : 'truncated'}`}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setPreviewAttachment(null)}
-                aria-label={lang === 'da' ? 'Luk' : 'Close'}
-                className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800"
-              >
-                <X size={14} />
-              </button>
-            </div>
-            <div className="flex-1 min-h-0 overflow-y-auto p-4">
-              <pre className="text-xs text-slate-200 whitespace-pre-wrap font-sans leading-relaxed">
-                {previewAttachment.extracted_text}
-              </pre>
-            </div>
-          </div>
-        </div>
       )}
     </div>
   );

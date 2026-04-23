@@ -54,6 +54,8 @@ import { cachePlans, type UserSubscription, type PlanDef } from '@/app/lib/subsc
 import { SubscriptionProvider, useSubscription } from '@/app/context/SubscriptionContext';
 import { AIPageProvider } from '@/app/context/AIPageContext';
 import { AIChatContextProvider, useAIChatContext } from '@/app/context/AIChatContext';
+import { DocPreviewProvider } from '@/app/context/DocPreviewContext';
+import { DocPreviewPanel } from '@/app/components/DocPreviewPanel';
 import { createClient } from '@/lib/supabase/client';
 import { hasMigrated, migrateLocalStorageToSupabase } from '@/app/lib/migrateLocalStorage';
 import { initCacheUserId, clearCacheUserId } from '@/app/lib/trackedEjendomme';
@@ -107,7 +109,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     <SubscriptionProvider>
       <AIPageProvider>
         <AIChatContextProvider>
-          <DashboardLayoutInner>{children}</DashboardLayoutInner>
+          <DocPreviewProvider>
+            <DashboardLayoutInner>{children}</DashboardLayoutInner>
+            {/* BIZZ-807: Global doc preview panel — mounted once, subscribes
+                to DocPreviewContext, renders only when a producer opens it. */}
+            <DocPreviewPanel />
+          </DocPreviewProvider>
         </AIChatContextProvider>
       </AIPageProvider>
     </SubscriptionProvider>
@@ -1211,8 +1218,14 @@ function DashboardLayoutInner({ children }: { children: React.ReactNode }) {
             Rendered above main content so it persists across page navigation. */}
         <PaymentWarningBanner />
 
-        {/* Page content — gated by subscription for non-free pages */}
-        <main id="main-content" className="relative z-0 flex-1 flex overflow-y-auto">
+        {/* Page content — gated by subscription for non-free pages.
+            BIZZ-807: paddingRight reserveres til DocPreviewPanel når det er
+            åbent — CSS-variablen sættes af panelet selv og er 0 ellers. */}
+        <main
+          id="main-content"
+          className="relative z-0 flex-1 flex overflow-y-auto transition-[padding-right] duration-150"
+          style={{ paddingRight: 'var(--bizz-docpreview-w, 0px)' }}
+        >
           {pathname === '/dashboard' ||
           pathname.startsWith('/dashboard/settings') ||
           pathname.startsWith('/dashboard/admin') ||

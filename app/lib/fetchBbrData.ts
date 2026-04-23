@@ -434,7 +434,7 @@ async function fetchDatafordelerGraphQL(
  * Sender en GraphQL-forespørgsel til Datafordeler BBR v2.
  * Wrapper om fetchDatafordelerGraphQL med BBR base URL.
  */
-async function fetchBBRGraphQL(
+export async function fetchBBRGraphQL(
   query: string,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   variables: Record<string, any>

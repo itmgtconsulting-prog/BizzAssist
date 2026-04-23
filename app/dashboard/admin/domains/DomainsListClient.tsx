@@ -8,8 +8,7 @@
 
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import {
   Plus,
@@ -24,9 +23,11 @@ import {
   Search,
   Archive,
   ArrowLeft,
+  GripVertical,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { AdminNavTabs } from '../AdminNavTabs';
+import { DomainDetailPanel } from './DomainDetailPanel';
 
 /** Domain from API */
 interface DomainRow {
@@ -47,7 +48,6 @@ interface DomainRow {
 export default function DomainsListClient() {
   const { lang } = useLanguage();
   const da = lang === 'da';
-  const router = useRouter();
   const [domains, setDomains] = useState<DomainRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -56,6 +56,67 @@ export default function DomainsListClient() {
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'suspended' | 'archived'>(
     'all'
   );
+
+  // BIZZ-785: Split-view state — clicking a row opens a detail panel to the
+  // right of the list. Left keeps the full list UI unchanged; only its
+  // effective width shrinks. URL carries `?d=<id>` so a fresh reload restores
+  // the selection and the view is deep-linkable.
+  const [selectedDomainId, setSelectedDomainId] = useState<string | null>(null);
+  const [leftPct, setLeftPct] = useState(55);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Initial sync from URL on mount + persisted divider position.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const sp = new URLSearchParams(window.location.search);
+    const d = sp.get('d');
+    if (d) setSelectedDomainId(d);
+    const saved = Number(window.localStorage.getItem('bizz-domains-split-pct'));
+    if (saved >= 20 && saved <= 80) setLeftPct(saved);
+  }, []);
+
+  // Keep URL in sync with selection without a router navigation so the
+  // existing list state (scroll, search, filter) stays intact.
+  const setSelectionWithUrl = useCallback((id: string | null) => {
+    setSelectedDomainId(id);
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    if (id) url.searchParams.set('d', id);
+    else url.searchParams.delete('d');
+    window.history.replaceState(null, '', url.toString());
+  }, []);
+
+  // Divider drag handler — updates leftPct while dragging and persists it.
+  const startResize = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      const container = containerRef.current;
+      if (!container) return;
+      const onMove = (ev: MouseEvent) => {
+        const rect = container.getBoundingClientRect();
+        const pct = ((ev.clientX - rect.left) / rect.width) * 100;
+        const clamped = Math.max(25, Math.min(80, pct));
+        setLeftPct(clamped);
+      };
+      const onUp = () => {
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        window.localStorage.setItem('bizz-domains-split-pct', String(Math.round(leftPct)));
+      };
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+    },
+    [leftPct]
+  );
+
+  // Resolve the selected domain object for the detail-panel header.
+  const selectedDomain = selectedDomainId
+    ? (domains.find((d) => d.id === selectedDomainId) ?? null)
+    : null;
 
   /** Fetch domains from API */
   const fetchDomains = useCallback(async () => {
@@ -191,7 +252,7 @@ export default function DomainsListClient() {
     },
   ];
 
-  return (
+  const listContent = (
     <div className="w-full px-4 py-8 space-y-6">
       {/* BIZZ-782: Header-struktur matcher Cron-status — back-link + page
           header (titel + subtitle + action-knap) OVER admin tab-bar. */}
@@ -337,22 +398,31 @@ export default function DomainsListClient() {
                 <tr
                   key={d.id}
                   onClick={(e) => {
-                    // BIZZ-746: row click → drill-down. Skip when user clicked
-                    // one of the action buttons (they have their own onClick +
-                    // stopPropagation on the wrapper div).
+                    // BIZZ-746: row click → open detail. BIZZ-785: open in split
+                    // panel on the right instead of a full-page navigation so
+                    // the list stays visible. Skip when the click target is an
+                    // action button/link.
                     const target = e.target as HTMLElement;
                     if (target.closest('button') || target.closest('a')) return;
-                    router.push(`/dashboard/admin/domains/${d.id}`);
+                    setSelectionWithUrl(d.id);
                   }}
-                  className="border-b border-slate-700/20 hover:bg-slate-700/10 transition-colors cursor-pointer"
+                  className={`border-b border-slate-700/20 transition-colors cursor-pointer ${
+                    d.id === selectedDomainId
+                      ? 'bg-blue-500/10 hover:bg-blue-500/15'
+                      : 'hover:bg-slate-700/10'
+                  }`}
                 >
                   <td className="px-4 py-3">
-                    <Link
-                      href={`/dashboard/admin/domains/${d.id}`}
-                      className="text-white font-medium hover:text-blue-300 transition-colors"
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setSelectionWithUrl(d.id);
+                      }}
+                      className="text-white font-medium hover:text-blue-300 transition-colors text-left"
                     >
                       {d.name}
-                    </Link>
+                    </button>
                     <p className="text-slate-500 text-xs">{d.slug}</p>
                   </td>
                   <td className="px-4 py-3">{statusBadge(d.status)}</td>
@@ -394,6 +464,50 @@ export default function DomainsListClient() {
           </table>
         </div>
       )}
+    </div>
+  );
+
+  // BIZZ-785: When no selection, render the list at full width (unchanged
+  // behaviour). When a selection exists, split the viewport into a left
+  // column (list — pressed together but otherwise identical) and a right
+  // column (detail panel). A draggable divider between the two lets the
+  // super-admin choose their preferred split.
+  if (!selectedDomainId) {
+    return listContent;
+  }
+
+  return (
+    <div ref={containerRef} className="flex w-full" style={{ minHeight: 'calc(100vh - 140px)' }}>
+      {/* LEFT: existing list content, just narrower */}
+      <div className="min-w-0 overflow-hidden" style={{ width: `${leftPct}%` }}>
+        {listContent}
+      </div>
+
+      {/* DIVIDER: mouse-drag to resize. Full-height with subtle hover + grip. */}
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-valuenow={Math.round(leftPct)}
+        aria-valuemin={25}
+        aria-valuemax={80}
+        onMouseDown={startResize}
+        className="group relative w-1.5 shrink-0 cursor-col-resize bg-slate-800/40 hover:bg-blue-500/40 transition-colors"
+        title={da ? 'Træk for at justere opdelingen' : 'Drag to resize split'}
+      >
+        <GripVertical
+          size={14}
+          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-slate-600 group-hover:text-blue-300"
+        />
+      </div>
+
+      {/* RIGHT: detail panel */}
+      <div className="min-w-0 overflow-hidden px-4 py-8" style={{ width: `${100 - leftPct}%` }}>
+        <DomainDetailPanel
+          domainId={selectedDomainId}
+          domainName={selectedDomain?.name}
+          onClose={() => setSelectionWithUrl(null)}
+        />
+      </div>
     </div>
   );
 }

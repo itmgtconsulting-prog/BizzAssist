@@ -6,11 +6,6 @@
  * / Historik / Indstillinger while staying inside the DashboardLayout
  * (sidebar + topbar + AdminNavTabs remain visible above).
  *
- * BIZZ-784: Layout now renders a 2-column master-detail split: the list
- * of domains sits in a fixed-width left sidebar and the selected domain's
- * detail fills the right column. The right column is collapsible so the
- * super-admin can let the list fill the viewport.
- *
  * Unlike the tenant-scope /domain/[id]/admin/* layout, this one does not
  * run assertDomainAdmin — super-admins are not automatically a member of
  * every domain, and the parent /dashboard/admin/layout.tsx already gates
@@ -22,7 +17,7 @@
 import { notFound } from 'next/navigation';
 import { isDomainFeatureEnabled } from '@/app/lib/featureFlags';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { DomainDetailSplitView, type DomainSummary } from './DomainDetailSplitView';
+import { DomainAdminTabs } from '@/app/domain/[id]/admin/DomainAdminTabs';
 
 export default async function AdminDomainDetailLayout({
   children,
@@ -36,34 +31,28 @@ export default async function AdminDomainDetailLayout({
   const { id } = await params;
 
   let domainName: string | undefined;
-  let domains: DomainSummary[] = [];
-
   try {
     const admin = createAdminClient();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: current } = (await (admin as any)
+    const { data } = (await (admin as any)
       .from('domain')
       .select('name')
       .eq('id', id)
       .maybeSingle()) as { data: { name: string } | null };
-    domainName = current?.name;
-
-    // BIZZ-784: load all domains for the left-sidebar switcher.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: all } = (await (admin as any)
-      .from('domain')
-      .select('id, name, slug, status')
-      .order('name', { ascending: true })) as { data: DomainSummary[] | null };
-    domains = all ?? [];
+    domainName = data?.name;
   } catch {
-    /* non-fatal — left sidebar will show empty state */
+    /* non-fatal */
   }
 
   return (
-    <div className="w-full px-4 py-6">
-      <DomainDetailSplitView domainId={id} domainName={domainName} domains={domains}>
-        {children}
-      </DomainDetailSplitView>
-    </div>
+    <>
+      <DomainAdminTabs
+        domainId={id}
+        domainName={domainName}
+        hrefBase={`/dashboard/admin/domains/${id}`}
+        backHref="/dashboard/admin/domains"
+      />
+      {children}
+    </>
   );
 }

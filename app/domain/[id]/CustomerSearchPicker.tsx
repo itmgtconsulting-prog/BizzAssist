@@ -15,8 +15,9 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Search, Building2, User, X, Loader2 } from 'lucide-react';
+import { Search, X, Loader2 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
+import { getEntityStyle, type EntityKind } from '@/app/lib/entityStyles';
 
 export interface CustomerLink {
   kind: 'company' | 'person';
@@ -116,14 +117,20 @@ export function CustomerSearchPicker({ value, onChange, placeholder, compact }: 
   const inputBase = compact ? 'px-2 py-1.5 text-xs' : 'px-3 py-2 text-sm';
 
   if (value) {
+    // BIZZ-806: genbrug central entityStyles så selected-view farvekodes
+    // identisk med resten af systemet (virksomhed=blå, person=lilla).
+    const kind: EntityKind = value.kind === 'company' ? 'virksomhed' : 'person';
+    const style = getEntityStyle(kind);
+    const { Icon } = style;
     return (
-      <div className="flex items-center justify-between gap-2 bg-slate-900/60 border border-blue-500/40 rounded-md px-3 py-2">
+      <div
+        className={`flex items-center justify-between gap-2 bg-slate-900/60 border rounded-md px-3 py-2 ${style.chip
+          .split(' ')
+          .filter((c) => c.startsWith('border-'))
+          .join(' ')}`}
+      >
         <div className="flex items-center gap-2 min-w-0">
-          {value.kind === 'company' ? (
-            <Building2 size={14} className="text-emerald-400 shrink-0" />
-          ) : (
-            <User size={14} className="text-sky-400 shrink-0" />
-          )}
+          <Icon size={14} className={`${style.textColor} shrink-0`} />
           <div className="min-w-0">
             <p className="text-sm text-white truncate">{value.name}</p>
             <p className="text-[10px] text-slate-500 uppercase">
@@ -182,27 +189,33 @@ export function CustomerSearchPicker({ value, onChange, placeholder, compact }: 
               {da ? 'Ingen kunder fundet' : 'No customers found'}
             </p>
           )}
-          {results.map((r) => (
-            <button
-              key={`${r.type}-${r.id}`}
-              type="button"
-              onClick={() => pick(r)}
-              className="w-full text-left px-3 py-2 hover:bg-slate-800 flex items-start gap-2 border-b border-slate-800 last:border-0"
-            >
-              {r.type === 'company' ? (
-                <Building2 size={14} className="text-emerald-400 mt-0.5 shrink-0" />
-              ) : (
-                <User size={14} className="text-sky-400 mt-0.5 shrink-0" />
-              )}
-              <div className="min-w-0 flex-1">
-                <p className="text-sm text-white truncate">{r.title}</p>
-                <p className="text-[11px] text-slate-400 truncate">{r.subtitle}</p>
-              </div>
-              <span className="text-[10px] text-slate-600 uppercase mt-0.5 shrink-0">
-                {r.type === 'company' ? 'CVR' : da ? 'Person' : 'Person'}
-              </span>
-            </button>
-          ))}
+          {results.map((r) => {
+            // BIZZ-806: farvekodede ikoner + badges matcher universel
+            // søgning. `company` → virksomhed (blå/Briefcase),
+            // `person` → person (lilla/User).
+            const kind: EntityKind = r.type === 'company' ? 'virksomhed' : 'person';
+            const style = getEntityStyle(kind);
+            const { Icon } = style;
+            return (
+              <button
+                key={`${r.type}-${r.id}`}
+                type="button"
+                onClick={() => pick(r)}
+                className="w-full text-left px-3 py-2 hover:bg-slate-800 flex items-start gap-2 border-b border-slate-800 last:border-0"
+              >
+                <Icon size={14} className={`${style.textColor} mt-0.5 shrink-0`} />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm text-white truncate">{r.title}</p>
+                  <p className="text-[11px] text-slate-400 truncate">{r.subtitle}</p>
+                </div>
+                <span
+                  className={`text-[10px] uppercase mt-0.5 shrink-0 px-1.5 py-0.5 rounded border ${style.chip}`}
+                >
+                  {r.type === 'company' ? 'CVR' : da ? 'Person' : 'Person'}
+                </span>
+              </button>
+            );
+          })}
         </div>
       )}
     </div>

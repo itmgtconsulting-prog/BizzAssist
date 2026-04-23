@@ -35,6 +35,9 @@ import {
   XCircle,
   Briefcase,
   Home,
+  SlidersHorizontal,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { translations } from '@/app/lib/translations';
@@ -342,6 +345,12 @@ export default function UniversalSearchPageClient() {
   const [query, setQuery] = useState('');
   const [activeTab, setActiveTab] = useState<Tab>('properties');
 
+  // BIZZ-774: right-side filter-panel state. Start open when matrikel-mode
+  // so the user can immediately toggle "vis udfasede" for the property list.
+  const [filterOpen, setFilterOpen] = useState(matrikelMode);
+  const [hideRetiredProperties, setHideRetiredProperties] = useState(true);
+  const [onlyActiveCompanies, setOnlyActiveCompanies] = useState(true);
+
   // Results state
   const [properties, setProperties] = useState<DawaAutocompleteResult[]>([]);
   const [companies, setCompanies] = useState<CVRSearchResult[]>([]);
@@ -638,6 +647,19 @@ export default function UniversalSearchPageClient() {
         </div>
       </div>
 
+      {/* BIZZ-774: Filter-panel toggle */}
+      <div className="flex items-center justify-end gap-2 px-6 sm:px-8 pt-3 shrink-0">
+        <button
+          onClick={() => setFilterOpen((v) => !v)}
+          className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white px-3 py-1.5 rounded-lg hover:bg-slate-800/50 transition-colors"
+          aria-expanded={filterOpen}
+        >
+          <SlidersHorizontal size={13} />
+          {da ? 'Filtre' : 'Filters'}
+          {filterOpen ? <ChevronRight size={12} /> : <ChevronLeft size={12} />}
+        </button>
+      </div>
+
       {/* ─── Tab bar ───────────────────────────────────────────────────── */}
       <div
         role="tablist"
@@ -670,86 +692,171 @@ export default function UniversalSearchPageClient() {
         />
       </div>
 
-      {/* ─── Results ───────────────────────────────────────────────────── */}
-      <div className="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
-        {/* Initial state — nothing typed yet */}
-        {!hasQuery && (
-          <div className="flex flex-col items-center justify-center py-20 text-center gap-3">
-            <div className="p-5 bg-slate-800/40 rounded-2xl text-slate-600">
-              <Search size={32} />
+      {/* ─── Results + optional filter side-panel ──────────────────────── */}
+      <div className="flex-1 flex min-h-0">
+        {/* BIZZ-774: Filter-panel right-hand sidebar. Collapsible. 3 columns
+            for ejendomme/virksomheder/personer. Iter 1 ships a handful of
+            working filters + stubs for the rest; full filter backends are
+            tracked as iter 2 (see ticket). */}
+        {filterOpen && (
+          <aside
+            aria-label={da ? 'Filter-panel' : 'Filter panel'}
+            className="w-64 shrink-0 border-l border-slate-700/40 bg-slate-900/40 overflow-y-auto p-4 order-last"
+          >
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-white text-sm font-semibold flex items-center gap-2">
+                <SlidersHorizontal size={14} className="text-blue-400" />
+                {da ? 'Filtre' : 'Filters'}
+              </h2>
+              <button
+                onClick={() => {
+                  setHideRetiredProperties(true);
+                  setOnlyActiveCompanies(true);
+                }}
+                className="text-xs text-slate-400 hover:text-blue-300 transition-colors"
+              >
+                {da ? 'Nulstil' : 'Reset'}
+              </button>
             </div>
-            <p className="text-slate-400 text-sm font-medium">{t.startTyping}</p>
-          </div>
+
+            {/* Column 1: Ejendomme */}
+            <section className="mb-5 space-y-2">
+              <h3 className="text-emerald-300 text-xs uppercase font-semibold tracking-wide">
+                {da ? 'Ejendomme' : 'Properties'}
+              </h3>
+              <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={hideRetiredProperties}
+                  onChange={(e) => setHideRetiredProperties(e.target.checked)}
+                  className="accent-blue-500"
+                />
+                {da ? 'Skjul udfasede' : 'Hide retired'}
+              </label>
+              <p className="text-[10px] text-slate-500 italic pl-5">
+                {da
+                  ? 'Flere filtre (opførelsesår, areal, energimærke, bygningstype, varmeform, ejerforhold, fredning, zone) kommer i iter 2.'
+                  : 'More filters (year built, area, energy rating, building type, heating, ownership, listed, zone) in iter 2.'}
+              </p>
+            </section>
+
+            {/* Column 2: Virksomheder */}
+            <section className="mb-5 space-y-2">
+              <h3 className="text-blue-300 text-xs uppercase font-semibold tracking-wide">
+                {da ? 'Virksomheder' : 'Companies'}
+              </h3>
+              <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={onlyActiveCompanies}
+                  onChange={(e) => setOnlyActiveCompanies(e.target.checked)}
+                  className="accent-blue-500"
+                />
+                {da ? 'Kun aktive' : 'Active only'}
+              </label>
+              <p className="text-[10px] text-slate-500 italic pl-5">
+                {da
+                  ? 'Flere filtre (virksomhedsform, branche, geografi, stiftet, ansatte) kommer i iter 2.'
+                  : 'More filters (form, industry, geography, founded, employees) in iter 2.'}
+              </p>
+            </section>
+
+            {/* Column 3: Personer */}
+            <section className="mb-2 space-y-2">
+              <h3 className="text-purple-300 text-xs uppercase font-semibold tracking-wide">
+                {da ? 'Personer' : 'People'}
+              </h3>
+              <p className="text-[10px] text-slate-500 italic">
+                {da
+                  ? 'Filtre (rolle, stilling, geografi) kommer i iter 2.'
+                  : 'Filters (role, title, geography) in iter 2.'}
+              </p>
+            </section>
+          </aside>
         )}
 
-        {/* Properties tab */}
-        {hasQuery && activeTab === 'properties' && (
-          <div role="tabpanel" aria-label={t.tabProperties}>
-            {loadingProps ? (
-              <SkeletonList count={6} />
-            ) : properties.length > 0 ? (
-              <div className="space-y-3">
-                {properties.map((r) => (
-                  <PropertyCard key={r.adresse.id} result={r} lang={lang} />
-                ))}
+        <div className="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
+          {/* Initial state — nothing typed yet */}
+          {!hasQuery && (
+            <div className="flex flex-col items-center justify-center py-20 text-center gap-3">
+              <div className="p-5 bg-slate-800/40 rounded-2xl text-slate-600">
+                <Search size={32} />
               </div>
-            ) : (
-              searched && (
-                <EmptyState
-                  query={query}
-                  message={`${t.noResultsFor} "${query.trim()}"`}
-                  icon={<MapPin size={28} />}
-                />
-              )
-            )}
-          </div>
-        )}
+              <p className="text-slate-400 text-sm font-medium">{t.startTyping}</p>
+            </div>
+          )}
 
-        {/* Companies tab */}
-        {hasQuery && activeTab === 'companies' && (
-          <div role="tabpanel" aria-label={t.tabCompanies}>
-            {loadingComps ? (
-              <SkeletonList count={6} />
-            ) : companies.length > 0 ? (
-              <div className="space-y-3">
-                {companies.map((r) => (
-                  <CompanyCard key={r.cvr} result={r} lang={lang} />
-                ))}
-              </div>
-            ) : (
-              searched && (
-                <EmptyState
-                  query={query}
-                  message={`${t.noResultsFor} "${query.trim()}"`}
-                  icon={<Briefcase size={28} />}
-                />
-              )
-            )}
-          </div>
-        )}
+          {/* Properties tab */}
+          {hasQuery && activeTab === 'properties' && (
+            <div role="tabpanel" aria-label={t.tabProperties}>
+              {loadingProps ? (
+                <SkeletonList count={6} />
+              ) : properties.length > 0 ? (
+                <div className="space-y-3">
+                  {properties.map((r) => (
+                    <PropertyCard key={r.adresse.id} result={r} lang={lang} />
+                  ))}
+                </div>
+              ) : (
+                searched && (
+                  <EmptyState
+                    query={query}
+                    message={`${t.noResultsFor} "${query.trim()}"`}
+                    icon={<MapPin size={28} />}
+                  />
+                )
+              )}
+            </div>
+          )}
 
-        {/* People tab */}
-        {hasQuery && activeTab === 'people' && (
-          <div role="tabpanel" aria-label={t.tabPeople}>
-            {loadingPeople ? (
-              <SkeletonList count={6} />
-            ) : people.length > 0 ? (
-              <div className="space-y-3">
-                {people.map((r) => (
-                  <PersonCard key={r.enhedsNummer} result={r} lang={lang} />
-                ))}
-              </div>
-            ) : (
-              searched && (
-                <EmptyState
-                  query={query}
-                  message={`${t.noResultsFor} "${query.trim()}"`}
-                  icon={<Users size={28} />}
-                />
-              )
-            )}
-          </div>
-        )}
+          {/* Companies tab */}
+          {hasQuery && activeTab === 'companies' && (
+            <div role="tabpanel" aria-label={t.tabCompanies}>
+              {loadingComps ? (
+                <SkeletonList count={6} />
+              ) : companies.filter((r) => !onlyActiveCompanies || r.active).length > 0 ? (
+                <div className="space-y-3">
+                  {companies
+                    .filter((r) => !onlyActiveCompanies || r.active)
+                    .map((r) => (
+                      <CompanyCard key={r.cvr} result={r} lang={lang} />
+                    ))}
+                </div>
+              ) : (
+                searched && (
+                  <EmptyState
+                    query={query}
+                    message={`${t.noResultsFor} "${query.trim()}"`}
+                    icon={<Briefcase size={28} />}
+                  />
+                )
+              )}
+            </div>
+          )}
+
+          {/* People tab */}
+          {hasQuery && activeTab === 'people' && (
+            <div role="tabpanel" aria-label={t.tabPeople}>
+              {loadingPeople ? (
+                <SkeletonList count={6} />
+              ) : people.length > 0 ? (
+                <div className="space-y-3">
+                  {people.map((r) => (
+                    <PersonCard key={r.enhedsNummer} result={r} lang={lang} />
+                  ))}
+                </div>
+              ) : (
+                searched && (
+                  <EmptyState
+                    query={query}
+                    message={`${t.noResultsFor} "${query.trim()}"`}
+                    icon={<Users size={28} />}
+                  />
+                )
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

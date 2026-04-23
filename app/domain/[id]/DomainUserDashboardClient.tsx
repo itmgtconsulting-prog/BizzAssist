@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { DomainCaseList, type DomainCaseSummary } from './DomainCaseList';
+import { DomainWorkspaceSplitView } from './DomainWorkspaceSplitView';
 
 // BIZZ-760: case row shape now lives in DomainCaseList — re-exported here
 // so the fetcher typing stays local.
@@ -61,6 +62,25 @@ export default function DomainUserDashboardClient({ domainId }: { domainId: stri
   // BIZZ-759: bulk-selection state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  // BIZZ-800: Workspace-mode — klik på en sag åbner 4-kvadrant split-view
+  // med AI-agent + skabelon-vælger + sag-detail. URL-param ?sag=<id>.
+  const [workspaceCaseId, setWorkspaceCaseId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const sp = new URLSearchParams(window.location.search);
+    const s = sp.get('sag');
+    if (s) setWorkspaceCaseId(s);
+  }, []);
+
+  const setWorkspaceWithUrl = useCallback((id: string | null) => {
+    setWorkspaceCaseId(id);
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    if (id) url.searchParams.set('sag', id);
+    else url.searchParams.delete('sag');
+    window.history.replaceState(null, '', url.toString());
+  }, []);
 
   const toggleSelect = useCallback((id: string) => {
     setSelectedIds((prev) => {
@@ -401,11 +421,19 @@ export default function DomainUserDashboardClient({ domainId }: { domainId: stri
             </div>
           )}
 
-          {/* BIZZ-760: Cases grid via shared component */}
+          {/* BIZZ-760 + BIZZ-800: Cases grid ELLER workspace split-view */}
           {loading ? (
             <div className="flex items-center justify-center py-16">
               <Loader2 className="w-6 h-6 text-blue-400 animate-spin" />
             </div>
+          ) : workspaceCaseId ? (
+            <DomainWorkspaceSplitView
+              domainId={domainId}
+              selectedCaseId={workspaceCaseId}
+              cases={cases}
+              onSelectCase={(id) => setWorkspaceWithUrl(id)}
+              onCloseWorkspace={() => setWorkspaceWithUrl(null)}
+            />
           ) : (
             <DomainCaseList
               domainId={domainId}
@@ -414,6 +442,7 @@ export default function DomainUserDashboardClient({ domainId }: { domainId: stri
               selectable
               selectedIds={selectedIds}
               onToggleSelect={toggleSelect}
+              onOpenCase={(id) => setWorkspaceWithUrl(id)}
             />
           )}
         </>

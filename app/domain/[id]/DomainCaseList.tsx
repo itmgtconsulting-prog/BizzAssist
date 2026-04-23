@@ -42,6 +42,12 @@ export interface DomainCaseListProps {
   selectedIds?: Set<string>;
   /** Invoked when the user toggles a card's checkbox. */
   onToggleSelect?: (id: string) => void;
+  /**
+   * BIZZ-800: When provided, intercepts row-click so the parent can open the
+   * case inline in a split-view workspace instead of navigating to the
+   * full-page case detail route.
+   */
+  onOpenCase?: (id: string) => void;
 }
 
 /**
@@ -56,6 +62,7 @@ export function DomainCaseList({
   selectable = false,
   selectedIds,
   onToggleSelect,
+  onOpenCase,
 }: DomainCaseListProps) {
   const { lang } = useLanguage();
   const da = lang === 'da';
@@ -82,16 +89,36 @@ export function DomainCaseList({
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
       {cases.map((c) => {
         const checked = selectedIds?.has(c.id) ?? false;
+        const cardClassName = `block bg-slate-800/40 border rounded-xl p-4 transition-colors ${
+          checked
+            ? 'border-blue-500/60 bg-slate-800/80'
+            : 'border-slate-700/40 hover:bg-slate-800/60'
+        }`;
+        // BIZZ-800: Wrapper der skifter mellem Link og button-div afhængigt
+        // af onOpenCase — samme card-indhold i begge tilfælde.
+        const Wrapper = ({ children }: { children: React.ReactNode }) =>
+          onOpenCase ? (
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => onOpenCase(c.id)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onOpenCase(c.id);
+                }
+              }}
+              className={`${cardClassName} cursor-pointer`}
+            >
+              {children}
+            </div>
+          ) : (
+            <Link href={`/domain/${domainId}/case/${c.id}`} className={cardClassName}>
+              {children}
+            </Link>
+          );
         return (
-          <Link
-            key={c.id}
-            href={`/domain/${domainId}/case/${c.id}`}
-            className={`block bg-slate-800/40 border rounded-xl p-4 transition-colors ${
-              checked
-                ? 'border-blue-500/60 bg-slate-800/80'
-                : 'border-slate-700/40 hover:bg-slate-800/60'
-            }`}
-          >
+          <Wrapper key={c.id}>
             <div className="flex items-start justify-between gap-2 mb-2">
               <div className="flex items-start gap-2 flex-1 min-w-0">
                 {selectable && (
@@ -141,7 +168,7 @@ export function DomainCaseList({
               {da ? 'Opdateret' : 'Updated'}{' '}
               {new Date(c.updated_at).toLocaleDateString(da ? 'da-DK' : 'en-GB')}
             </p>
-          </Link>
+          </Wrapper>
         );
       })}
     </div>

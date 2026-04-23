@@ -63,6 +63,10 @@
     {
       "path": "/api/cron/domain-retention",
       "schedule": "30 3 * * *"
+    },
+    {
+      "path": "/api/cron/purge-ai-files",
+      "schedule": "7 * * * *"
     }
   ]
 }

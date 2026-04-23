@@ -45,6 +45,7 @@ import {
 import { useLanguage } from '@/app/context/LanguageContext';
 import type { DomainCaseSummary } from './DomainCaseList';
 import { CustomerSearchPicker, type CustomerLink } from './CustomerSearchPicker';
+import { DomainGenerationPreview } from './DomainGenerationPreview';
 
 interface TemplateSummary {
   id: string;
@@ -105,6 +106,9 @@ export function DomainWorkspaceSplitView({
   const [leftTopPct, setLeftTopPct] = useState(40);
   const [rightTopPct, setRightTopPct] = useState(55);
   const [topOffsetPx, setTopOffsetPx] = useState(DEFAULT_TOP_OFFSET_PX);
+  // BIZZ-803: Declared early because the CSS-var effect below depends on it.
+  const [previewGenId, setPreviewGenId] = useState<string | null>(null);
+  const PREVIEW_WIDTH_PX = 480;
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -128,14 +132,17 @@ export function DomainWorkspaceSplitView({
 
   // BIZZ-801: Publicér højre-panelets bredde som CSS-variabel så parent-
   // containeren kan reservere padding-right og undgå at tabs/header glider
-  // ind under panelet.
+  // ind under panelet. BIZZ-803: Når preview-panelet er åbent, bredden
+  // inkluderer dets 480px så main-content trækker sig tilsvarende længere
+  // til venstre.
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    document.documentElement.style.setProperty('--bizz-workspace-right-w', `${rightWidthPx}px`);
+    const totalRight = rightWidthPx + (previewGenId ? 480 : 0);
+    document.documentElement.style.setProperty('--bizz-workspace-right-w', `${totalRight}px`);
     return () => {
       document.documentElement.style.removeProperty('--bizz-workspace-right-w');
     };
-  }, [rightWidthPx]);
+  }, [rightWidthPx, previewGenId]);
 
   const leftColRef = useRef<HTMLDivElement>(null);
   const rightColRef = useRef<HTMLDivElement>(null);
@@ -392,57 +399,84 @@ export function DomainWorkspaceSplitView({
     Array<{ role: 'user' | 'assistant'; text: string; timestamp: number }>
   >([]);
   const [aiError, setAiError] = useState<string | null>(null);
+  // previewGenId + PREVIEW_WIDTH_PX declared near top for CSS-var effect.
 
-  const sendAi = async () => {
-    if (!aiPrompt.trim() || aiBusy) return;
-    if (!selectedTemplateId) {
-      setAiError(
-        da
-          ? 'Vælg først en skabelon nedenfor før du sender en besked.'
-          : 'Select a template below before sending a message.'
-      );
-      return;
-    }
-    setAiError(null);
-    const prompt = aiPrompt.trim();
-    setAiMessages((prev) => [...prev, { role: 'user', text: prompt, timestamp: Date.now() }]);
-    setAiPrompt('');
-    setAiBusy(true);
-    try {
-      const r = await fetch(`/api/domain/${domainId}/case/${selectedCaseId}/generate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          template_id: selectedTemplateId,
-          user_instructions: prompt,
-          selected_doc_ids: Array.from(selectedDocIds),
-        }),
-      });
-      if (!r.ok) {
-        const body = await r.json().catch(() => ({ error: 'Ukendt fejl' }));
-        setAiError(body.error ?? (da ? 'Generation fejlede' : 'Generation failed'));
+  // BIZZ-803: Unified sender used both for regular prompts from the chat
+  // input AND for "iterate" actions from the preview panel. When
+  // `promptOverride` is provided we skip the chat-input prompt state and
+  // record a user-message with the override text.
+  const runGenerate = useCallback(
+    async (promptOverride?: string, previousGenerationId?: string) => {
+      const prompt = (promptOverride ?? aiPrompt).trim();
+      if (!prompt || aiBusy) return;
+      if (!selectedTemplateId) {
+        setAiError(
+          da
+            ? 'Vælg først en skabelon nedenfor før du sender en besked.'
+            : 'Select a template below before sending a message.'
+        );
         return;
       }
-      const json = (await r.json()) as { output_path?: string };
+      setAiError(null);
       setAiMessages((prev) => [
         ...prev,
         {
-          role: 'assistant',
-          text: json.output_path
-            ? da
-              ? `✓ Dokument genereret. Hent det via sagens dokumenter-fane.`
-              : `✓ Document generated. Download from case documents.`
-            : da
-              ? '✓ Generation startet.'
-              : '✓ Generation started.',
+          role: 'user',
+          text: previousGenerationId ? `↻ ${prompt}` : prompt,
           timestamp: Date.now(),
         },
       ]);
-    } catch {
-      setAiError(da ? 'Netværksfejl' : 'Network error');
-    } finally {
-      setAiBusy(false);
-    }
+      if (!promptOverride) setAiPrompt('');
+      setAiBusy(true);
+      try {
+        // BIZZ-803: For iterations, include the feedback context so the
+        // AI understands this is a revision of a previous attempt.
+        const effectivePrompt = previousGenerationId
+          ? da
+            ? `FEEDBACK TIL FORRIGE VERSION (${previousGenerationId}): ${prompt}\n\nGenerér venligst en ny version baseret på ovenstående feedback.`
+            : `FEEDBACK ON PREVIOUS VERSION (${previousGenerationId}): ${prompt}\n\nPlease generate a new version incorporating this feedback.`
+          : prompt;
+        const r = await fetch(`/api/domain/${domainId}/case/${selectedCaseId}/generate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            template_id: selectedTemplateId,
+            user_instructions: effectivePrompt,
+            selected_doc_ids: Array.from(selectedDocIds),
+          }),
+        });
+        if (!r.ok && r.status !== 201) {
+          const body = await r.json().catch(() => ({ error: 'Ukendt fejl' }));
+          setAiError(body.error ?? (da ? 'Generation fejlede' : 'Generation failed'));
+          return;
+        }
+        const json = (await r.json()) as { generation_id?: string; output_path?: string };
+        // BIZZ-803: Open preview panel on the generation id so the user
+        // can watch it stream, preview, iterate and approve.
+        if (json.generation_id) {
+          setPreviewGenId(json.generation_id);
+        }
+        setAiMessages((prev) => [
+          ...prev,
+          {
+            role: 'assistant',
+            text: da
+              ? '✓ Dokument genereret — se preview til højre.'
+              : '✓ Document generated — see preview on the right.',
+            timestamp: Date.now(),
+          },
+        ]);
+      } catch {
+        setAiError(da ? 'Netværksfejl' : 'Network error');
+      } finally {
+        setAiBusy(false);
+      }
+    },
+    [aiPrompt, aiBusy, selectedTemplateId, selectedCaseId, domainId, selectedDocIds, da]
+  );
+
+  const sendAi = () => {
+    void runGenerate();
   };
 
   const toggleDoc = (id: string) => {
@@ -777,12 +811,15 @@ export function DomainWorkspaceSplitView({
         </div>
       </div>
 
-      {/* RIGHT — FIXED side-panel, fylder fra topbar til bund */}
+      {/* RIGHT — FIXED side-panel, fylder fra topbar til bund. BIZZ-803:
+          shifts left to make room for the preview panel when a generation
+          opens. */}
       <div
         ref={rightColRef}
-        className="fixed right-0 bottom-0 z-30 bg-slate-950 border-l border-slate-700/40 flex flex-col shadow-2xl"
+        className="fixed bottom-0 z-30 bg-slate-950 border-l border-slate-700/40 flex flex-col shadow-2xl"
         style={{
           top: `${topOffsetPx}px`,
+          right: `${previewGenId ? PREVIEW_WIDTH_PX : 0}px`,
           width: `${rightWidthPx}px`,
         }}
       >
@@ -864,7 +901,27 @@ export function DomainWorkspaceSplitView({
               </div>
             )}
           </div>
-          <div className="shrink-0 border-t border-slate-700/40 p-2 flex gap-2">
+          <div className="shrink-0 border-t border-slate-700/40 p-2 flex items-end gap-2">
+            {/* BIZZ-802: Upload-knap i AI-chat — auto-attach til sag + auto-vælg */}
+            <label
+              className="shrink-0 cursor-pointer inline-flex items-center justify-center h-[44px] w-[34px] rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 transition-colors"
+              title={da ? 'Vedhæft fil — gemmes på sagen' : 'Attach file — saved to case'}
+            >
+              {uploadBusy ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <Paperclip size={14} />
+              )}
+              <input
+                type="file"
+                multiple
+                hidden
+                onChange={(e) => {
+                  if (e.target.files) void uploadFiles(e.target.files);
+                  e.target.value = '';
+                }}
+              />
+            </label>
             <textarea
               value={aiPrompt}
               onChange={(e) => setAiPrompt(e.target.value)}
@@ -968,6 +1025,22 @@ export function DomainWorkspaceSplitView({
           </div>
         </div>
       </div>
+
+      {/* BIZZ-803: Preview panel (3rd side-panel) — opens when a generation
+          starts, sits flush right, pushes the AI panel left. */}
+      {previewGenId && (
+        <DomainGenerationPreview
+          domainId={domainId}
+          generationId={previewGenId}
+          widthPx={PREVIEW_WIDTH_PX}
+          rightOffsetPx={0}
+          topOffsetPx={topOffsetPx}
+          onIterate={(feedback, previousId) => {
+            void runGenerate(feedback, previousId);
+          }}
+          onClose={() => setPreviewGenId(null)}
+        />
+      )}
     </>
   );
 }

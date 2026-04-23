@@ -58,6 +58,8 @@ export default function CreateCaseModal({ initialEntity, onClose }: Props) {
   const [selectedDomainId, setSelectedDomainId] = useState<string>('');
   const [name, setName] = useState('');
   const [clientRef, setClientRef] = useState('');
+  // BIZZ-809: Kort beskrivelse (max 200 tegn) — vises på sagskort
+  const [shortDescription, setShortDescription] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -116,6 +118,7 @@ export default function CreateCaseModal({ initialEntity, onClose }: Props) {
       const body: Record<string, unknown> = {
         name: trimmed,
         client_ref: clientRef.trim() || null,
+        short_description: shortDescription.trim() || null,
       };
       if (initialEntity) {
         if (initialEntity.kind === 'virksomhed') {
@@ -284,6 +287,28 @@ export default function CreateCaseModal({ initialEntity, onClose }: Props) {
                 value={clientRef}
                 onChange={(e) => setClientRef(e.target.value)}
                 className="mt-0.5 w-full bg-slate-800 border border-slate-700 rounded-md px-2.5 py-1.5 text-sm text-white focus:border-blue-500 focus:outline-none"
+              />
+            </label>
+
+            {/* BIZZ-809: Kort beskrivelse (max 200 tegn) — vises som
+                preview på sagskort i listen. Textarea for plads til 2-3
+                linjer, counter viser tegn-antal. */}
+            <label className="block">
+              <span className="text-[10px] uppercase tracking-wide text-slate-500 flex items-center justify-between">
+                <span>{da ? 'Kort beskrivelse (valgfri)' : 'Short description (optional)'}</span>
+                <span className="text-slate-600 tabular-nums">{shortDescription.length}/200</span>
+              </span>
+              <textarea
+                value={shortDescription}
+                onChange={(e) => setShortDescription(e.target.value.slice(0, 200))}
+                rows={2}
+                maxLength={200}
+                placeholder={
+                  da
+                    ? '2-3 linjer om hvad sagen handler om…'
+                    : '2-3 lines about what the case is about…'
+                }
+                className="mt-0.5 w-full bg-slate-800 border border-slate-700 rounded-md px-2.5 py-1.5 text-sm text-white placeholder:text-slate-600 focus:border-blue-500 focus:outline-none resize-none"
               />
             </label>
 

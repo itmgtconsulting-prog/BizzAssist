@@ -32,6 +32,8 @@ const PATCHABLE_FIELDS = new Set([
   'client_cvr',
   'client_person_id',
   'client_name',
+  // BIZZ-809: short_description — kort preview-tekst max 200 tegn
+  'short_description',
 ]);
 const VALID_STATUSES = new Set(['open', 'closed', 'archived']);
 const VALID_CLIENT_KINDS = new Set(['company', 'person']);
@@ -56,7 +58,9 @@ export async function GET(_req: NextRequest, context: RouteContext): Promise<Nex
   const { data: caseRow, error: caseErr } = await (admin as any)
     .from('domain_case')
     .select(
-      'id, domain_id, name, client_ref, status, tags, notes, created_by, created_at, updated_at, client_kind, client_cvr, client_person_id, client_name'
+      // BIZZ-809: short_description inkluderes så detail-viewet kan vise
+      // + editere kort beskrivelse uden separat fetch.
+      'id, domain_id, name, client_ref, status, tags, notes, short_description, created_by, created_at, updated_at, client_kind, client_cvr, client_person_id, client_name'
     )
     .eq('id', caseId)
     .eq('domain_id', domainId)
@@ -136,6 +140,13 @@ export async function PATCH(request: NextRequest, context: RouteContext): Promis
       if (v === null) update[k] = null;
       else if (typeof v === 'string') update[k] = v.trim().slice(0, 200) || null;
       // ignore invalid types silently — partial updates shouldn't 400 on one bad field
+    } else if (k === 'short_description') {
+      // BIZZ-809: null clears; string trims til max 200 tegn eller null
+      if (v === null) update.short_description = null;
+      else if (typeof v === 'string') {
+        const trimmed = v.trim();
+        update.short_description = trimmed ? trimmed.slice(0, 200) : null;
+      }
     }
   }
 

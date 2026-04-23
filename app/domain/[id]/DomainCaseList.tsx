@@ -27,6 +27,8 @@ export interface DomainCaseSummary {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  /** BIZZ-809: Kort beskrivelse (max 200 tegn) vist som preview på kortet. */
+  short_description?: string | null;
 }
 
 export interface DomainCaseListProps {
@@ -149,6 +151,16 @@ export function DomainCaseList({
               </span>
             </div>
             {c.client_ref && <p className="text-slate-400 text-xs mb-2">{c.client_ref}</p>}
+            {/* BIZZ-809: Kort beskrivelse preview — 2 linjer med truncate og
+                tooltip ved hover. Null/empty → vises ikke. */}
+            {c.short_description && (
+              <p
+                title={c.short_description}
+                className="text-slate-300 text-xs mb-2 leading-relaxed line-clamp-2"
+              >
+                {c.short_description}
+              </p>
+            )}
             {c.tags.length > 0 && (
               <div className="flex flex-wrap gap-1 mb-2">
                 {c.tags.slice(0, 3).map((t) => (

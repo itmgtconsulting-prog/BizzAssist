@@ -53,6 +53,8 @@ interface CaseDetail {
   client_cvr: string | null;
   client_person_id: string | null;
   client_name: string | null;
+  /** BIZZ-809: Kort beskrivelse vist som preview på sagskort + editable i detail */
+  short_description: string | null;
 }
 
 interface Props {
@@ -133,6 +135,8 @@ export function DomainWorkspaceSplitView({
   const [editName, setEditName] = useState('');
   const [editClientRef, setEditClientRef] = useState('');
   const [editNotes, setEditNotes] = useState('');
+  // BIZZ-809: kort beskrivelse editable i detail-form
+  const [editShortDescription, setEditShortDescription] = useState('');
   const [editStatus, setEditStatus] = useState<'open' | 'closed' | 'archived'>('open');
   const [editTagsInput, setEditTagsInput] = useState('');
   const [editCustomer, setEditCustomer] = useState<CustomerLink | null>(null);
@@ -160,6 +164,7 @@ export function DomainWorkspaceSplitView({
           client_cvr: json.client_cvr ?? null,
           client_person_id: json.client_person_id ?? null,
           client_name: json.client_name ?? null,
+          short_description: json.short_description ?? null,
         });
         setCaseDocs(json.docs ?? []);
       } else {
@@ -184,6 +189,7 @@ export function DomainWorkspaceSplitView({
     setEditName(caseDetail.name);
     setEditClientRef(caseDetail.client_ref ?? '');
     setEditNotes(caseDetail.notes ?? '');
+    setEditShortDescription(caseDetail.short_description ?? '');
     setEditStatus(caseDetail.status);
     setEditTagsInput(caseDetail.tags.join(', '));
     setEditCustomer(
@@ -221,6 +227,7 @@ export function DomainWorkspaceSplitView({
         client_cvr: editCustomer?.cvr ?? null,
         client_person_id: editCustomer?.person_id ?? null,
         client_name: editCustomer?.name ?? null,
+        short_description: editShortDescription.trim() || null,
       };
       const r = await fetch(`/api/domain/${domainId}/cases/${selectedCaseId}`, {
         method: 'PATCH',
@@ -588,6 +595,28 @@ export function DomainWorkspaceSplitView({
                   value={editTagsInput}
                   onChange={(e) => setEditTagsInput(e.target.value)}
                   className="mt-0.5 w-full px-2 py-1.5 bg-slate-900 border border-slate-700 rounded text-white text-xs"
+                />
+              </label>
+              {/* BIZZ-809: Kort beskrivelse (max 200 tegn). Vises på
+                  sagskort i listen. Char-counter i label. */}
+              <label className="block">
+                <span className="text-[10px] uppercase tracking-wide text-slate-500 flex items-center justify-between">
+                  <span>{da ? 'Kort beskrivelse' : 'Short description'}</span>
+                  <span className="text-slate-600 tabular-nums">
+                    {editShortDescription.length}/200
+                  </span>
+                </span>
+                <textarea
+                  value={editShortDescription}
+                  onChange={(e) => setEditShortDescription(e.target.value.slice(0, 200))}
+                  rows={2}
+                  maxLength={200}
+                  placeholder={
+                    da
+                      ? '2-3 linjer preview vist på sagskort'
+                      : '2-3 lines preview shown on case cards'
+                  }
+                  className="mt-0.5 w-full px-2 py-1.5 bg-slate-900 border border-slate-700 rounded text-white text-xs resize-none"
                 />
               </label>
               <label className="block">

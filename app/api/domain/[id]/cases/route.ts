@@ -46,7 +46,11 @@ export async function GET(request: NextRequest, context: RouteContext): Promise<
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let q: any = (admin as any)
     .from('domain_case')
-    .select('id, name, client_ref, status, tags, created_by, created_at, updated_at')
+    .select(
+      // BIZZ-809: short_description inkluderes i list-responset til preview
+      // på sagskort (max 200 tegn, null hvis ikke sat).
+      'id, name, client_ref, status, tags, short_description, created_by, created_at, updated_at'
+    )
     .eq('domain_id', domainId)
     .order('updated_at', { ascending: false })
     .limit(limit);
@@ -100,6 +104,12 @@ export async function POST(request: NextRequest, context: RouteContext): Promise
   if (!name || name.length > 200) {
     return NextResponse.json({ error: 'name is required (1-200 chars)' }, { status: 400 });
   }
+  // BIZZ-809: short_description valgfri, max 200 tegn. Null ved manglende
+  // eller tom streng.
+  const shortDescription =
+    typeof body.short_description === 'string' && body.short_description.trim()
+      ? body.short_description.trim().slice(0, 200)
+      : null;
 
   // BIZZ-802: Optional structured customer link. Validate kind+id pairing
   // — if kind='company' a CVR must be present; if 'person' a person_id.
@@ -146,9 +156,10 @@ export async function POST(request: NextRequest, context: RouteContext): Promise
       client_cvr: clientCvr,
       client_person_id: clientPersonId,
       client_name: clientName,
+      short_description: shortDescription,
     })
     .select(
-      'id, name, client_ref, status, tags, created_at, client_kind, client_cvr, client_person_id, client_name'
+      'id, name, client_ref, status, tags, short_description, created_at, client_kind, client_cvr, client_person_id, client_name'
     )
     .single()) as { data: { id: string } | null; error: { message: string } | null };
 

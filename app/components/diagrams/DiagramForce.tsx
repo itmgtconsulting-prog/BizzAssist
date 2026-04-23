@@ -387,6 +387,37 @@ function DiagramForce({
           }
         }
 
+        // BIZZ-688: Indskyd virtuel container-node "Personligt ejede ejendomme"
+        // mellem personen og dens direkte-ejede ejendomme så de renderes på
+        // en selvstændig linje/layer i diagrammet, adskilt fra virksomhedsnoder.
+        // Uden denne container får ejendomme samme dybde som virksomheder (begge
+        // er direkte children af personId) og blandes sammen på samme y-række.
+        // Same pattern som buildPersonGraph i DiagramData.ts (BIZZ-594/730).
+        const propertyEdgesFromPerson = newEdges.filter(
+          (e) => e.from === personId && e.to.startsWith('bfe-')
+        );
+        if (propertyEdgesFromPerson.length > 0) {
+          const propGroupId = `personal-props-group-${personId}`;
+          newNodes.push({
+            id: propGroupId,
+            label: lang === 'da' ? 'Personligt ejede ejendomme' : 'Personally owned properties',
+            sublabel:
+              lang === 'da'
+                ? `${propertyEdgesFromPerson.length} ejendomme`
+                : `${propertyEdgesFromPerson.length} properties`,
+            type: 'status',
+          });
+          // Edge person → container (personallyOwned flag for visuel adskillelse)
+          newEdges.push({ from: personId, to: propGroupId, personallyOwned: true });
+          // Re-route property-edges: person→property bliver container→property
+          for (const edge of newEdges) {
+            if (edge.from === personId && edge.to.startsWith('bfe-')) {
+              edge.from = propGroupId;
+              edge.personallyOwned = true;
+            }
+          }
+        }
+
         if (newNodes.length > 0) {
           setExtensionNodes((prev) => [...prev, ...newNodes]);
           setExtensionEdges((prev) => [...prev, ...newEdges]);
@@ -402,7 +433,7 @@ function DiagramForce({
         });
       }
     },
-    [expandedDynamic, loadingExpansion, graph.nodes, extensionNodes]
+    [expandedDynamic, loadingExpansion, graph.nodes, extensionNodes, lang]
   );
 
   /**

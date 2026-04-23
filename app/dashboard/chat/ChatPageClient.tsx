@@ -49,6 +49,13 @@ import { resolvePlan, isSubscriptionFunctional, formatTokens } from '@/app/lib/s
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+  /** BIZZ-812: Attached files metadata — renders as chips in the bubble. */
+  attachments?: Array<{
+    name: string;
+    file_type: string;
+    size: number;
+    truncated?: boolean;
+  }>;
 }
 
 /**
@@ -627,9 +634,20 @@ export default function ChatPageClient() {
     const composed = attachmentBlock
       ? `${attachmentBlock}\n\n---\n\n${text || '(ingen prompt — brug vedhæftede filer som kontekst)'}`
       : text;
+    // BIZZ-812: persist light-weight metadata so chips show in history
+    const attachmentsMeta = attachments.map((att) => ({
+      name: att.name,
+      file_type: att.file_type,
+      size: att.size,
+      truncated: att.truncated,
+    }));
     setAttachments([]);
 
-    const userMsg: ChatMessage = { role: 'user', content: composed };
+    const userMsg: ChatMessage = {
+      role: 'user',
+      content: composed,
+      ...(attachmentsMeta.length > 0 ? { attachments: attachmentsMeta } : {}),
+    };
     const newMessages: ChatMessage[] = [...messages, userMsg];
 
     // Auto-title from first user message — use context for sync with drawer
@@ -987,31 +1005,66 @@ export default function ChatPageClient() {
             </div>
           )}
 
-          {messages.map((msg, idx) => (
-            <div
-              key={idx}
-              className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-            >
-              {msg.role === 'assistant' && (
-                <div className="w-7 h-7 rounded-full bg-blue-600/20 flex items-center justify-center shrink-0 mr-2 mt-0.5">
-                  <Bot size={14} className="text-blue-400" />
-                </div>
-              )}
+          {messages.map((msg, idx) => {
+            // BIZZ-812: hide the attachment text-block from the display
+            // (the AI still sees it via `content`). Chips render separately.
+            const displayContent =
+              msg.role === 'user' && msg.attachments && msg.attachments.length > 0
+                ? msg.content
+                    .split(/\n\n---\n\n/)
+                    .slice(-1)[0]
+                    .replace(/^\(ingen prompt.*\)$/u, '')
+                : msg.content;
+            return (
               <div
-                className={`max-w-[70%] rounded-2xl px-4 py-3 ${
-                  msg.role === 'user'
-                    ? 'bg-blue-600 text-white text-sm'
-                    : 'bg-slate-800/80 border border-white/8'
-                }`}
+                key={idx}
+                className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
               >
-                {msg.role === 'user' ? (
-                  <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</p>
-                ) : (
-                  <MarkdownContent text={msg.content} />
+                {msg.role === 'assistant' && (
+                  <div className="w-7 h-7 rounded-full bg-blue-600/20 flex items-center justify-center shrink-0 mr-2 mt-0.5">
+                    <Bot size={14} className="text-blue-400" />
+                  </div>
                 )}
+                <div
+                  className={`max-w-[70%] rounded-2xl px-4 py-3 ${
+                    msg.role === 'user'
+                      ? 'bg-blue-600 text-white text-sm'
+                      : 'bg-slate-800/80 border border-white/8'
+                  }`}
+                >
+                  {/* BIZZ-812: attachment chips render before the prompt */}
+                  {msg.attachments && msg.attachments.length > 0 && (
+                    <div className="space-y-1 mb-2">
+                      {msg.attachments.map((att, ai) => (
+                        <div
+                          key={ai}
+                          className={`flex items-center gap-2 rounded-md px-2 py-1.5 ${
+                            msg.role === 'user'
+                              ? 'bg-white/10 text-white'
+                              : 'bg-slate-900/60 text-slate-200'
+                          }`}
+                        >
+                          <FileText size={12} className="shrink-0 opacity-80" />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-xs font-medium">{att.name}</p>
+                            <p className="text-[10px] opacity-70 uppercase">
+                              {att.file_type} · {Math.round(att.size / 1024)} KB
+                              {att.truncated && (da ? ' · beskåret' : ' · truncated')}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {msg.role === 'user' ? (
+                    <p className="text-sm whitespace-pre-wrap leading-relaxed">{displayContent}</p>
+                  ) : (
+                    <MarkdownContent text={displayContent} />
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
 
           {/* Streaming message */}
           {isLoading && (

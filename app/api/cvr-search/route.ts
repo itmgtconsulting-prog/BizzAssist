@@ -44,6 +44,23 @@ export interface CVRSearchResult {
   active: boolean;
   /** Ophørsdato (ISO), null hvis aktiv */
   enddate: string | null;
+  /**
+   * BIZZ-805: Konsolideret status fra CVR ES virksomhedMetadata.sammensatStatus.
+   * Mulige værdier: "Normal", "Under konkurs", "Under rekonstruktion",
+   * "Under frivillig likvidation", "Under tvangsopløsning", "Ophørt", "Slettet".
+   * Null hvis feltet ikke er tilgængeligt i ES-svaret.
+   */
+  status: string | null;
+  /**
+   * BIZZ-805: Stiftelsesår (fra virksomhedMetadata.stiftelsesDato). Null
+   * hvis stiftelsesdato ikke er sat eller ikke parseable.
+   */
+  stiftetAar: number | null;
+  /**
+   * BIZZ-805: Kommune-navn fra beliggenhedsadresse. Null hvis ikke sat.
+   * Bruges til kommune-multi-select i filter-panel.
+   */
+  kommuneNavn: string | null;
 }
 
 // ─── Config ──────────────────────────────────────────────────────────────────
@@ -130,6 +147,37 @@ function mapHit(hit: Record<string, unknown>): CVRSearchResult | null {
   const slutdato =
     livsforloeb.find((l) => l.periode?.gyldigTil != null)?.periode?.gyldigTil ?? null;
 
+  // BIZZ-805: status-streng fra sammensatStatus (tidligere kun brugt
+  // lokalt til active-bool). Eksponeres nu så filter-panel kan multi-
+  // select på specifikke statuses ("Under konkurs" osv).
+  const statusString: string | null =
+    typeof sammensatStatus === 'string' && sammensatStatus.length > 0 ? sammensatStatus : null;
+
+  // BIZZ-805: Stiftelsesår fra virksomhedMetadata.stiftelsesDato.
+  // Feltet kommer som ISO-dato eller "YYYY-MM-DD". Parses til int-år;
+  // NaN → null.
+  const stiftetRaw = typeof meta?.stiftelsesDato === 'string' ? meta.stiftelsesDato : null;
+  let stiftetAar: number | null = null;
+  if (stiftetRaw) {
+    const year = parseInt(stiftetRaw.slice(0, 4), 10);
+    stiftetAar = Number.isFinite(year) && year >= 1800 && year <= 2100 ? year : null;
+  }
+
+  // BIZZ-805: Kommune fra beliggenhedsadresse. CVR ES eksponerer
+  // kommunenavn både som string og som objekt; begge håndteres.
+  const kommuneRaw = adr?.kommune as unknown;
+  let kommuneNavn: string | null = null;
+  if (typeof kommuneRaw === 'string') {
+    kommuneNavn = kommuneRaw || null;
+  } else if (
+    kommuneRaw &&
+    typeof kommuneRaw === 'object' &&
+    'navn' in kommuneRaw &&
+    typeof (kommuneRaw as { navn?: unknown }).navn === 'string'
+  ) {
+    kommuneNavn = (kommuneRaw as { navn: string }).navn || null;
+  }
+
   return {
     cvr,
     name,
@@ -140,6 +188,9 @@ function mapHit(hit: Record<string, unknown>): CVRSearchResult | null {
     companyType,
     active,
     enddate: slutdato,
+    status: statusString,
+    stiftetAar,
+    kommuneNavn,
   };
 }
 
@@ -167,11 +218,14 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     _source: [
       'Vrvirksomhed.cvrNummer',
       'Vrvirksomhed.navne',
+      // BIZZ-805: beliggenhedsadresse indeholder kommune som vi nu
+      // eksponerer i CVRSearchResult.kommuneNavn
       'Vrvirksomhed.beliggenhedsadresse',
       'Vrvirksomhed.hovedbranche',
       'Vrvirksomhed.virksomhedsform',
       'Vrvirksomhed.virksomhedsstatus',
       'Vrvirksomhed.livsforloeb',
+      // virksomhedMetadata.sammensatStatus (status) + .stiftelsesDato (stiftetAar)
       'Vrvirksomhed.virksomhedMetadata',
     ],
     query: {

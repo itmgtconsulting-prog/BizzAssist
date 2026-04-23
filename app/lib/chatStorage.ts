@@ -9,10 +9,25 @@
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
+/**
+ * BIZZ-812: Metadata about a file the user attached to this message.
+ * We store name/type/size (NOT the extracted text, which is already
+ * folded into `content` and would blow localStorage quotas). The chip
+ * renderer uses this to show vedhæftninger inline with the bubble.
+ */
+export interface ChatAttachmentMeta {
+  name: string;
+  file_type: string;
+  size: number;
+  truncated?: boolean;
+}
+
 /** A single chat message */
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+  /** BIZZ-812: optional attachment metadata — renders as chips. */
+  attachments?: ChatAttachmentMeta[];
 }
 
 /** A persisted conversation stored in localStorage */

@@ -55,6 +55,8 @@ import {
 } from '@/app/lib/search/ejendomFilterSchema';
 import {
   buildVirksomhedFilterSchemas,
+  buildVirksomhedBrancheOptions,
+  buildVirksomhedKommuneOptions,
   matchVirksomhedFilter,
   narrowVirksomhedFilters,
 } from '@/app/lib/search/virksomhedFilterSchema';
@@ -444,6 +446,8 @@ export default function UniversalSearchPageClient() {
     // properties-liste er kendt — se `currentTabSchemas` nedenfor.
     [lang]
   );
+  // BIZZ-805: default virksomhed-schema uden dynamiske options — options
+  // tilføjes i currentTabSchemas når live-resultater er kendt.
   const virksomhedSchemas = useMemo(() => buildVirksomhedFilterSchemas(lang), [lang]);
   const allSchemas = useMemo(
     () => [...ejendomSchemas, ...virksomhedSchemas],
@@ -844,7 +848,12 @@ export default function UniversalSearchPageClient() {
                   matchEjendomFilter(p, narrowEjendomFilters(filters))
                 ).length;
               } else if (activeTab === 'companies') {
-                currentTabSchemas = virksomhedSchemas;
+                // BIZZ-805: dynamiske options for branche + kommune bygges
+                // fra live-resultater så kun relevante valg vises i panelet.
+                currentTabSchemas = buildVirksomhedFilterSchemas(lang, {
+                  brancheOptions: buildVirksomhedBrancheOptions(companies),
+                  kommuneOptions: buildVirksomhedKommuneOptions(companies),
+                });
                 matchCount = companies.filter((c) =>
                   matchVirksomhedFilter(c, narrowVirksomhedFilters(filters))
                 ).length;

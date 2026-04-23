@@ -44,6 +44,13 @@ import { Lock } from 'lucide-react';
 interface Message {
   role: 'user' | 'assistant';
   content: string;
+  /** BIZZ-812: Attached files (metadata only — extracted text lives in content). */
+  attachments?: Array<{
+    name: string;
+    file_type: string;
+    size: number;
+    truncated?: boolean;
+  }>;
 }
 
 /**
@@ -429,7 +436,20 @@ function AIChatPanel() {
     const composedContent = attachmentBlock
       ? `${attachmentBlock}\n\n---\n\n${text || '(ingen prompt — brug vedhæftede filer som kontekst)'}`
       : text;
-    const userMsg: Message = { role: 'user', content: composedContent };
+    // BIZZ-812: also persist lightweight metadata so chips render in
+    // chat history (the full extracted_text lives in content so the AI
+    // keeps its context, but we hide that block from the bubble view).
+    const attachmentsMeta = attachments.map((att) => ({
+      name: att.name,
+      file_type: att.file_type,
+      size: att.size,
+      truncated: att.truncated,
+    }));
+    const userMsg: Message = {
+      role: 'user',
+      content: composedContent,
+      ...(attachmentsMeta.length > 0 ? { attachments: attachmentsMeta } : {}),
+    };
     // Clear the chat attachments now — they're baked into this turn's
     // content.
     setAttachments([]);
@@ -876,27 +896,64 @@ function AIChatPanel() {
               </div>
             ) : (
               <>
-                {messages.map((msg, i) => (
-                  <div
-                    key={i}
-                    className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                  >
+                {messages.map((msg, i) => {
+                  // BIZZ-812: Strip the attachment text-block from display —
+                  // it's kept in content for the AI's context window but
+                  // renders as chips instead of a wall of text.
+                  const displayContent =
+                    msg.role === 'user' && msg.attachments && msg.attachments.length > 0
+                      ? msg.content
+                          .split(/\n\n---\n\n/)
+                          .slice(-1)[0]
+                          .replace(/^\(ingen prompt.*\)$/u, '')
+                      : msg.content;
+                  return (
                     <div
-                      className={`max-w-[88%] rounded-xl px-3 py-2 text-xs leading-relaxed ${
-                        msg.role === 'user'
-                          ? 'bg-blue-600 text-white whitespace-pre-wrap'
-                          : 'bg-slate-800/80 text-slate-300 border border-slate-700/40'
-                      }`}
+                      key={i}
+                      className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
                     >
-                      {/* BIZZ-223: Use MarkdownContent for assistant, plain text for user */}
-                      {msg.role === 'assistant' ? (
-                        <MarkdownContent text={msg.content} />
-                      ) : (
-                        msg.content
-                      )}
+                      <div
+                        className={`max-w-[88%] rounded-xl px-3 py-2 text-xs leading-relaxed ${
+                          msg.role === 'user'
+                            ? 'bg-blue-600 text-white whitespace-pre-wrap'
+                            : 'bg-slate-800/80 text-slate-300 border border-slate-700/40'
+                        }`}
+                      >
+                        {/* BIZZ-812: Attachment chips above the prompt text */}
+                        {msg.attachments && msg.attachments.length > 0 && (
+                          <div className="space-y-1 mb-1.5">
+                            {msg.attachments.map((att, ai) => (
+                              <div
+                                key={ai}
+                                className={`flex items-center gap-1.5 rounded-md px-1.5 py-1 ${
+                                  msg.role === 'user'
+                                    ? 'bg-white/10 text-white'
+                                    : 'bg-slate-900/60 text-slate-200'
+                                }`}
+                              >
+                                <FileText size={10} className="shrink-0 opacity-80" />
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate text-[10.5px] font-medium">{att.name}</p>
+                                  <p className="text-[9px] opacity-70 uppercase">
+                                    {att.file_type} · {Math.round(att.size / 1024)} KB
+                                    {att.truncated &&
+                                      (lang === 'da' ? ' · beskåret' : ' · truncated')}
+                                  </p>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {/* BIZZ-223: Use MarkdownContent for assistant, plain text for user */}
+                        {msg.role === 'assistant' ? (
+                          <MarkdownContent text={displayContent} />
+                        ) : (
+                          displayContent
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
 
                 {/* Live streaming-tekst — BIZZ-810: falder tilbage til context
                     hvis lokal state er tom (fx efter en re-sync). Sikrer at

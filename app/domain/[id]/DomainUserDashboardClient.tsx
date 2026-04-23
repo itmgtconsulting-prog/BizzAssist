@@ -435,6 +435,7 @@ export default function DomainUserDashboardClient({ domainId }: { domainId: stri
               cases={cases}
               onSelectCase={(id) => setWorkspaceWithUrl(id)}
               onCloseWorkspace={() => setWorkspaceWithUrl(null)}
+              onCaseUpdated={load}
             />
           ) : (
             <DomainCaseList

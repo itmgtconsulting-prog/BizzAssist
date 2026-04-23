@@ -61,6 +61,12 @@ interface Props {
   cases: DomainCaseSummary[];
   onSelectCase: (id: string) => void;
   onCloseWorkspace: () => void;
+  /**
+   * BIZZ-807: Valgfri callback som kaldes når sag ændres (fx via inline-edit
+   * af sagsnavn). Parent bruger den til at reloade cases-listen så venstre
+   * kolonne afspejler navneændringen øjeblikkeligt.
+   */
+  onCaseUpdated?: () => void;
 }
 
 const STORAGE = {
@@ -73,6 +79,7 @@ export function DomainWorkspaceSplitView({
   cases,
   onSelectCase,
   onCloseWorkspace,
+  onCaseUpdated,
 }: Props) {
   const { lang } = useLanguage();
   const da = lang === 'da';
@@ -118,6 +125,11 @@ export function DomainWorkspaceSplitView({
   const [caseLoading, setCaseLoading] = useState(false);
 
   const [editing, setEditing] = useState(false);
+  // BIZZ-807: inline edit-mode for selve sagsnavn — klik på header-titel
+  // åbner input uden at skulle ind i fuld edit-form.
+  const [inlineEditingName, setInlineEditingName] = useState(false);
+  const [inlineNameValue, setInlineNameValue] = useState('');
+  const [savingInlineName, setSavingInlineName] = useState(false);
   const [editName, setEditName] = useState('');
   const [editClientRef, setEditClientRef] = useState('');
   const [editNotes, setEditNotes] = useState('');
@@ -222,6 +234,8 @@ export function DomainWorkspaceSplitView({
       }
       setEditing(false);
       await loadCaseDetail();
+      // BIZZ-807: notify parent så sagsliste afspejler navn/status-ændring
+      onCaseUpdated?.();
     } finally {
       setSaving(false);
     }
@@ -325,16 +339,80 @@ export function DomainWorkspaceSplitView({
         style={{ height: `${100 - topPct}%` }}
       >
         <div className="px-3 py-2 border-b border-slate-700/40 bg-slate-900/50 sticky top-0 z-10 flex items-center justify-between gap-2">
-          <p className="text-xs font-semibold text-slate-300 truncate">
-            {caseDetail?.name ?? selectedCase?.name ?? (da ? 'Vælg en sag' : 'Select a case')}
-          </p>
-          {caseDetail && !editing && (
+          {/* BIZZ-807: Sagsnavn er klik-til-edit. Klik på tekst eller Pencil
+              starter inline-edit; Enter/Blur gemmer; Escape cancel. */}
+          {caseDetail && inlineEditingName ? (
+            <input
+              type="text"
+              autoFocus
+              value={inlineNameValue}
+              onChange={(e) => setInlineNameValue(e.target.value)}
+              maxLength={200}
+              disabled={savingInlineName}
+              onKeyDown={async (e) => {
+                if (e.key === 'Escape') {
+                  setInlineEditingName(false);
+                  setInlineNameValue(caseDetail.name);
+                } else if (e.key === 'Enter') {
+                  e.preventDefault();
+                  (e.currentTarget as HTMLInputElement).blur();
+                }
+              }}
+              onBlur={async () => {
+                const next = inlineNameValue.trim();
+                if (!next || next.length > 200 || next === caseDetail.name) {
+                  setInlineEditingName(false);
+                  setInlineNameValue(caseDetail.name);
+                  return;
+                }
+                setSavingInlineName(true);
+                try {
+                  const r = await fetch(`/api/domain/${domainId}/cases/${selectedCaseId}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: next }),
+                  });
+                  if (r.ok) {
+                    // Reload så sagsliste + detail synker
+                    await loadCaseDetail();
+                    onCaseUpdated?.();
+                  }
+                } finally {
+                  setSavingInlineName(false);
+                  setInlineEditingName(false);
+                }
+              }}
+              className="flex-1 min-w-0 text-xs font-semibold bg-slate-900 border border-blue-500/40 rounded px-2 py-1 text-white focus:outline-none focus:border-blue-400"
+              aria-label={da ? 'Sagsnavn' : 'Case name'}
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                if (!caseDetail) return;
+                setInlineNameValue(caseDetail.name);
+                setInlineEditingName(true);
+              }}
+              disabled={!caseDetail}
+              className="flex-1 min-w-0 text-xs font-semibold text-slate-300 hover:text-white text-left truncate disabled:cursor-default disabled:hover:text-slate-300"
+              title={
+                caseDetail
+                  ? da
+                    ? 'Klik for at redigere sagsnavn'
+                    : 'Click to edit case name'
+                  : undefined
+              }
+            >
+              {caseDetail?.name ?? selectedCase?.name ?? (da ? 'Vælg en sag' : 'Select a case')}
+            </button>
+          )}
+          {caseDetail && !editing && !inlineEditingName && (
             <button
               type="button"
               onClick={() => setEditing(true)}
-              aria-label={da ? 'Rediger sag' : 'Edit case'}
-              className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-              title={da ? 'Rediger sag' : 'Edit case'}
+              aria-label={da ? 'Rediger sag (alle felter)' : 'Edit case (all fields)'}
+              className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800 transition-colors shrink-0"
+              title={da ? 'Rediger alle felter' : 'Edit all fields'}
             >
               <Pencil size={12} />
             </button>

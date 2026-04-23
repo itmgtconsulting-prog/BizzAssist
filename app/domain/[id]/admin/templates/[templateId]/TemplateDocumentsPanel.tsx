@@ -43,9 +43,14 @@ interface AttachmentRow {
   document: {
     id: string;
     name: string;
-    file_type: string;
-    file_path?: string;
+    file_path: string | null;
   } | null;
+}
+
+/** BIZZ-799: Afled file-type fra file_path-endelsen. */
+function extFromPath(path: string | null | undefined): string {
+  if (!path) return '';
+  return path.split('.').pop()?.toLowerCase() ?? '';
 }
 
 interface TrainingDocSummary {
@@ -368,9 +373,9 @@ export function TemplateDocumentsPanel({ domainId, templateId }: Props) {
                     <p className="text-sm text-white font-medium truncate">
                       {a.document?.name ?? (da ? '(ukendt)' : '(unknown)')}
                     </p>
-                    {a.document?.file_type && (
+                    {extFromPath(a.document?.file_path) && (
                       <p className="text-[10px] text-slate-500 uppercase tracking-wide">
-                        {a.document.file_type}
+                        {extFromPath(a.document?.file_path)}
                       </p>
                     )}
                   </div>

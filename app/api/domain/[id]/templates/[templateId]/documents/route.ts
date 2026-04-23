@@ -78,7 +78,9 @@ export async function GET(_req: NextRequest, context: RouteContext): Promise<Nex
   const { data, error } = (await (admin as any)
     .from('domain_template_document')
     .select(
-      'id, template_id, document_id, guidelines, sort_order, created_at, document:document_id (id, name, file_type, file_path)'
+      // BIZZ-799: domain_training_doc har ikke file_type-kolonne — kun
+      // file_path. UI afleder endelsen fra file_path hvis den skal vises.
+      'id, template_id, document_id, guidelines, sort_order, created_at, document:document_id (id, name, file_path)'
     )
     .eq('template_id', templateId)
     .eq('domain_id', domainId)

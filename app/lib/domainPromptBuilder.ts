@@ -152,7 +152,8 @@ async function fetchTemplateDocs(
     const { data, error } = (await (admin as any)
       .from('domain_template_document')
       .select(
-        'id, document_id, guidelines, sort_order, document:document_id (id, name, file_type, extracted_text)'
+        // BIZZ-799: domain_training_doc har ikke file_type-kolonne.
+        'id, document_id, guidelines, sort_order, document:document_id (id, name, file_path, extracted_text)'
       )
       .eq('template_id', templateId)
       .eq('domain_id', domainId)
@@ -166,7 +167,7 @@ async function fetchTemplateDocs(
         document: {
           id: string;
           name: string;
-          file_type: string;
+          file_path: string | null;
           extracted_text: string | null;
         } | null;
       }> | null;
@@ -175,15 +176,19 @@ async function fetchTemplateDocs(
     if (error || !data) return [];
     return data
       .filter((row) => row.document) // drop orphans (shouldn't happen under FK, but be safe)
-      .map((row) => ({
-        attachment_id: row.id,
-        document_id: row.document_id,
-        name: row.document!.name,
-        file_type: row.document!.file_type,
-        guidelines: row.guidelines,
-        sort_order: row.sort_order,
-        text: row.document!.extracted_text ?? '',
-      }));
+      .map((row) => {
+        // BIZZ-799: Afled file_type fra file_path-endelsen.
+        const ext = row.document!.file_path?.split('.').pop()?.toLowerCase() ?? '';
+        return {
+          attachment_id: row.id,
+          document_id: row.document_id,
+          name: row.document!.name,
+          file_type: ext || 'txt',
+          guidelines: row.guidelines,
+          sort_order: row.sort_order,
+          text: row.document!.extracted_text ?? '',
+        };
+      });
   } catch (err) {
     logger.warn('[promptBuilder] template-docs fetch failed:', err);
     return [];

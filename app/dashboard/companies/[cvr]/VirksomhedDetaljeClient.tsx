@@ -55,6 +55,8 @@ import type { RegnskabsAar } from '@/app/api/regnskab/xbrl/route';
 import type { RelateretVirksomhed } from '@/app/api/cvr-public/related/route';
 import type { CvrHandelData } from '@/app/api/salgshistorik/cvr/route';
 import type { EjendomSummary } from '@/app/api/ejendomme-by-owner/route';
+import CreateCaseModal from '@/app/components/sager/CreateCaseModal';
+import { useDomainMemberships } from '@/app/hooks/useDomainMemberships';
 import type { PersonbogHaeftelse, PersonbogDokument } from '@/app/api/tinglysning/personbog/route';
 import type { VirksomhedEjendomsrolle } from '@/app/api/tinglysning/virksomhed/route';
 import type { BilbogBil } from '@/app/api/tinglysning/bilbog/route';
@@ -316,6 +318,9 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
   const [error, setError] = useState<string | null>(null);
   const [aktivTab, setAktivTab] = useState<TabId>('overview');
   const [erFulgt, setErFulgt] = useState(false);
+  // BIZZ-808: Opret sag-modal state
+  const [opretSagOpen, setOpretSagOpen] = useState(false);
+  const { memberships: domainMemberships } = useDomainMemberships();
 
   /**
    * JS-baseret breakpoint detektion (≥900px).
@@ -1666,6 +1671,22 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
                 <Bell size={14} className={erFulgt ? 'fill-blue-400 text-blue-400' : ''} />
                 {erFulgt ? c.following : c.follow}
               </button>
+              {/* BIZZ-808: Opret sag-knap — kun synlig for domain-brugere */}
+              {domainMemberships.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setOpretSagOpen(true)}
+                  className="flex items-center gap-2 px-3 py-1.5 border rounded-lg text-sm transition-all bg-emerald-600/20 hover:bg-emerald-600/30 border-emerald-500/40 text-emerald-300"
+                  aria-label={
+                    lang === 'da'
+                      ? 'Opret sag for denne virksomhed'
+                      : 'Create case for this company'
+                  }
+                >
+                  <Briefcase size={14} />
+                  {lang === 'da' ? 'Opret sag' : 'Create case'}
+                </button>
+              )}
             </div>
           </div>
 
@@ -2530,6 +2551,17 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
             </p>
           </div>
         </div>
+      )}
+      {/* BIZZ-808: Opret sag-modal — virksomhed pre-populeres som kunde */}
+      {opretSagOpen && data && (
+        <CreateCaseModal
+          initialEntity={{
+            kind: 'virksomhed',
+            id: String(data.vat),
+            label: data.name,
+          }}
+          onClose={() => setOpretSagOpen(false)}
+        />
       )}
     </div>
   );

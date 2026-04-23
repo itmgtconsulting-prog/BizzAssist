@@ -29,6 +29,7 @@ import {
   Landmark,
   BarChart3,
   Map as MapIcon,
+  Briefcase,
 } from 'lucide-react';
 /** BIZZ-600: PropertyMap wraps mapbox-gl (browser-only) — dynamic() keeps mapbox-gl out of initial bundle */
 // prettier-ignore
@@ -58,6 +59,8 @@ import { gemRecentEjendom } from '@/app/lib/recentEjendomme';
 import { recordRecentVisit } from '@/app/lib/recordRecentVisit';
 import { erTracked, toggleTrackEjendom, fetchErTracked } from '@/app/lib/trackedEjendomme';
 import FoelgTooltip from '@/app/components/FoelgTooltip';
+import CreateCaseModal from '@/app/components/sager/CreateCaseModal';
+import { useDomainMemberships } from '@/app/hooks/useDomainMemberships';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { useSetAIPageContext } from '@/app/context/AIPageContext';
 import dynamic from 'next/dynamic';
@@ -505,6 +508,9 @@ export default function EjendomDetaljeClient({
   const [foelgToggling, setFoelgToggling] = useState(false);
   /** Vis Følg-tooltip med info om overvåget data */
   const [visFoelgTooltip, setVisFoelgTooltip] = useState(false);
+  /** BIZZ-808: Opret sag-modal state */
+  const [opretSagOpen, setOpretSagOpen] = useState(false);
+  const { memberships: domainMemberships } = useDomainMemberships();
 
   /** Indlaes tracking-tilstand ved mount og lyt efter aendringer.
    *  Viser cached vaerdi med det samme, derefter opdaterer fra Supabase. */
@@ -1673,6 +1679,20 @@ export default function EjendomDetaljeClient({
                   </button>
                   <FoelgTooltip lang={da ? 'da' : 'en'} visible={visFoelgTooltip} />
                 </div>
+                {/* BIZZ-808: Opret sag-knap — kun synlig for domain-brugere */}
+                {domainMemberships.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setOpretSagOpen(true)}
+                    className="flex items-center gap-2 px-3 py-1.5 border rounded-lg text-sm transition-all bg-emerald-600/20 hover:bg-emerald-600/30 border-emerald-500/40 text-emerald-300"
+                    aria-label={
+                      da ? 'Opret sag for denne ejendom' : 'Create case for this property'
+                    }
+                  >
+                    <Briefcase size={14} />
+                    {da ? 'Opret sag' : 'Create case'}
+                  </button>
+                )}
               </div>
             </div>
 
@@ -2238,6 +2258,17 @@ export default function EjendomDetaljeClient({
             </div>,
             document.body
           )}
+        {/* BIZZ-808: Opret sag-modal — ejendom pre-populeres som kunde */}
+        {opretSagOpen && (
+          <CreateCaseModal
+            initialEntity={{
+              kind: 'ejendom',
+              id: String(bbrData?.ejendomsrelationer?.[0]?.bfeNummer ?? id),
+              label: adresseStreng,
+            }}
+            onClose={() => setOpretSagOpen(false)}
+          />
+        )}
       </div>
     );
   }

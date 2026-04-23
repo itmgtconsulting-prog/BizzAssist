@@ -49,6 +49,8 @@ import { saveRecentPerson } from '@/app/lib/recentPersons';
 import { recordRecentVisit } from '@/app/lib/recordRecentVisit';
 import { buildPersonDiagramGraph } from '@/app/components/diagrams/DiagramData';
 import type { DiagramPropertySummary } from '@/app/components/diagrams/DiagramData';
+import CreateCaseModal from '@/app/components/sager/CreateCaseModal';
+import { useDomainMemberships } from '@/app/hooks/useDomainMemberships';
 import dynamic from 'next/dynamic';
 import VerifiedLinks from '@/app/components/VerifiedLinks';
 import { useSubscription } from '@/app/context/SubscriptionContext';
@@ -870,6 +872,9 @@ export default function PersonDetailPageClient({
 
   /** BIZZ-374: Følg-knap state — synced med Supabase saved_entities */
   const [erFulgt, setErFulgt] = useState(false);
+  // BIZZ-808: Opret sag-modal state
+  const [opretSagOpen, setOpretSagOpen] = useState(false);
+  const { memberships: domainMemberships } = useDomainMemberships();
   const [foelgToggling, setFoelgToggling] = useState(false);
 
   /** Sync følg-tilstand fra Supabase ved mount */
@@ -1907,6 +1912,20 @@ export default function PersonDetailPageClient({
                     ? 'Følg'
                     : 'Follow'}
               </button>
+              {/* BIZZ-808: Opret sag-knap — kun synlig for domain-brugere */}
+              {domainMemberships.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setOpretSagOpen(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-sm transition-all bg-emerald-600/20 hover:bg-emerald-600/30 border-emerald-500/40 text-emerald-300"
+                  aria-label={
+                    lang === 'da' ? 'Opret sag for denne person' : 'Create case for this person'
+                  }
+                >
+                  <Briefcase size={14} />
+                  {lang === 'da' ? 'Opret sag' : 'Create case'}
+                </button>
+              )}
             </div>
           </div>
 
@@ -2993,6 +3012,17 @@ export default function PersonDetailPageClient({
             </p>
           </div>
         </div>
+      )}
+      {/* BIZZ-808: Opret sag-modal — person pre-populeres som kunde */}
+      {opretSagOpen && data && (
+        <CreateCaseModal
+          initialEntity={{
+            kind: 'person',
+            id: String(enhedsNummer),
+            label: data.navn,
+          }}
+          onClose={() => setOpretSagOpen(false)}
+        />
       )}
     </div>
   );

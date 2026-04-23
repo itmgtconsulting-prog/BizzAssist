@@ -96,7 +96,11 @@ function SkeletonList({ count = 5 }: { count?: number }) {
 function PropertyCard({ result, lang }: { result: DawaAutocompleteResult; lang: 'da' | 'en' }) {
   const t = translations[lang].searchPage;
   const { adresse } = result;
-  // Property detail page uses the DAWA UUID as the [id] segment
+  // Property detail page uses the DAWA UUID as the [id] segment.
+  // BIZZ-795: SFE-hits linker til ny SFE-detaljeside som viser
+  // komponent-listen (bygninger + lejligheder). Da DAR-UUID ikke er
+  // direkte konverterbar til BFE her, falder vi tilbage til standard
+  // detalje-view — den loader også MAT og kan selv redirecte.
   const href = `/dashboard/ejendomme/${adresse.id}`;
   const subtitle = [adresse.postnr, adresse.postnrnavn, adresse.kommunenavn]
     .filter(Boolean)

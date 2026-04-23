@@ -11,16 +11,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
-import {
-  FileText,
-  Upload,
-  Loader2,
-  Search,
-  FolderOpen,
-  GripHorizontal,
-  Trash2,
-  Pencil,
-} from 'lucide-react';
+import { FileText, Upload, Loader2, Search, GripHorizontal, Trash2, Pencil } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { TemplateDocumentsPanel } from './[templateId]/TemplateDocumentsPanel';
 
@@ -188,10 +179,6 @@ export default function TemplatesListClient({ domainId }: { domainId: string }) 
       setUploading(false);
     }
   };
-
-  const selectedTemplate = selectedTemplateId
-    ? (templates.find((t) => t.id === selectedTemplateId) ?? null)
-    : null;
 
   // BIZZ-789 v2: Panelet er altid et top/bund split. Top = skabeloner-listen
   // (altid synlig), Bund = dokumenter for valgt skabelon (eller placeholder
@@ -388,21 +375,15 @@ export default function TemplatesListClient({ domainId }: { domainId: string }) 
             style={{ height: `${100 - topPct}%` }}
           >
             <div className="h-full flex flex-col">
-              <div className="shrink-0 px-4 py-2 border-b border-slate-700/40 bg-slate-900/50 flex items-center justify-between">
-                <div className="flex items-center gap-2 min-w-0">
-                  <FolderOpen size={13} className="text-blue-400 shrink-0" />
-                  <p className="text-xs text-white font-medium truncate">
-                    {selectedTemplate?.name ?? '—'}
-                  </p>
-                  <span className="text-[10px] text-slate-500 uppercase">
-                    {selectedTemplate?.file_type ?? ''}
-                  </span>
-                </div>
+              {/* BIZZ-791: Kun ✕-knap — skabelon-navn/filetype er overflødigt
+                  da den valgte row allerede er highlighted i listen ovenfor. */}
+              <div className="shrink-0 px-2 py-1 border-b border-slate-700/40 bg-slate-900/50 flex items-center justify-end">
                 <button
                   type="button"
                   onClick={() => setSelectionWithUrl(null)}
-                  className="text-xs text-slate-400 hover:text-white"
+                  className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
                   title={da ? 'Fjern valg' : 'Clear selection'}
+                  aria-label={da ? 'Fjern valg' : 'Clear selection'}
                 >
                   ✕
                 </button>

@@ -53,6 +53,9 @@ import { useLanguage } from '@/app/context/LanguageContext';
 /** Status of an infrastructure component */
 type ServiceStatus = 'operational' | 'degraded' | 'down' | 'unknown' | 'loading';
 
+/** BIZZ-770: Category split — external 3rd-party APIs vs internal components. */
+type ServiceCategory = 'external' | 'internal';
+
 /** A single infrastructure service card definition */
 interface ServiceDef {
   /** Unique identifier */
@@ -84,6 +87,8 @@ interface ServiceDef {
    * the browser) to verify the service is actually reachable + authenticating.
    */
   probeId?: string;
+  /** BIZZ-770: section grouping. Defaults to 'external' for legacy entries. */
+  category?: ServiceCategory;
 }
 
 /** Shape of a Atlassian Statuspage v2 /api/v2/status.json response */
@@ -247,6 +252,87 @@ const SERVICES: ServiceDef[] = [
     live: true,
     probeId: 'twilio',
     note: 'Probed via authenticated account lookup',
+  },
+  // BIZZ-770: Internal components — rendered as a separate section so admins
+  // see "External" (3rd-party APIs, above) vs "Internal" (our own moving
+  // parts). Most don't have live probes yet — they render Unknown until the
+  // underlying metric collection is wired (iter 2).
+  {
+    id: 'database',
+    name: 'Database',
+    role: 'PostgreSQL + pgvector query latency',
+    icon: Database,
+    link: 'https://app.supabase.com',
+    live: false,
+    staticStatus: 'unknown',
+    note: 'Query latency p50/p95 — iter 2',
+    category: 'internal',
+  },
+  {
+    id: 'rate-limiter',
+    name: 'Rate Limiter',
+    role: 'Upstash Redis — blocked requests per route',
+    icon: Zap,
+    link: 'https://console.upstash.com',
+    live: false,
+    staticStatus: 'unknown',
+    note: 'Blocked-count + eviction rate — iter 2',
+    category: 'internal',
+  },
+  {
+    id: 'pgvector',
+    name: 'pgvector',
+    role: 'Embedding queue + re-index status',
+    icon: Activity,
+    link: 'https://app.supabase.com',
+    live: false,
+    staticStatus: 'unknown',
+    note: 'Queue depth + last re-index — iter 2',
+    category: 'internal',
+  },
+  {
+    id: 'cron-jobs',
+    name: 'Cron Jobs',
+    role: 'Duration + retry counts (see Cron-status tab for details)',
+    icon: Clock,
+    link: '/dashboard/admin/cron-status',
+    live: false,
+    staticStatus: 'unknown',
+    note: 'See dedicated Cron-status tab',
+    category: 'internal',
+  },
+  {
+    id: 'audit-log',
+    name: 'Audit Log',
+    role: 'Write-rate + anomaly detection',
+    icon: Server,
+    link: '/dashboard/admin/security',
+    live: false,
+    staticStatus: 'unknown',
+    note: 'Write-rate alerts — iter 2',
+    category: 'internal',
+  },
+  {
+    id: 'email-queue',
+    name: 'Email Queue',
+    role: 'Resend send queue — pending + failed',
+    icon: Mail,
+    link: 'https://resend.com/emails',
+    live: false,
+    staticStatus: 'unknown',
+    note: 'Bounce rate + delivery latency — iter 2',
+    category: 'internal',
+  },
+  {
+    id: 'ai-tokens',
+    name: 'AI Token Burn',
+    role: 'Hourly burn rate + quota violations',
+    icon: Activity,
+    link: 'https://console.anthropic.com',
+    live: false,
+    staticStatus: 'unknown',
+    note: 'Per-tenant quota + model cost — iter 2',
+    category: 'internal',
   },
 ];
 
@@ -750,21 +836,78 @@ export default function ServiceManagementClient() {
           </div>
         )}
 
-        {/* Service cards grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {SERVICES.filter((svc) => {
+        {/* BIZZ-770: Services split into External (3rd-party APIs) + Internal
+            (our own components). Each section is filtered by the same search. */}
+        {(() => {
+          const filtered = SERVICES.filter((svc) => {
             if (!searchQuery.trim()) return true;
             const q = searchQuery.toLowerCase();
             return svc.name.toLowerCase().includes(q) || svc.id.toLowerCase().includes(q);
-          }).map((svc) => (
-            <ServiceCard
-              key={svc.id}
-              service={svc}
-              state={states[svc.id] ?? { status: 'unknown', description: null, checkedAt: null }}
-              da={da}
-            />
-          ))}
-        </div>
+          });
+          const external = filtered.filter((s) => (s.category ?? 'external') === 'external');
+          const internal = filtered.filter((s) => s.category === 'internal');
+          return (
+            <>
+              {external.length > 0 && (
+                <section className="space-y-3">
+                  <h2 className="text-slate-300 text-sm font-semibold flex items-center gap-2">
+                    <Globe size={14} className="text-blue-400" />
+                    {da ? 'Eksterne interfaces' : 'External interfaces'}
+                    <span className="text-slate-500 text-xs font-normal">
+                      {da ? `${external.length} services` : `${external.length} services`}
+                    </span>
+                  </h2>
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                    {external.map((svc) => (
+                      <ServiceCard
+                        key={svc.id}
+                        service={svc}
+                        state={
+                          states[svc.id] ?? {
+                            status: 'unknown',
+                            description: null,
+                            checkedAt: null,
+                          }
+                        }
+                        da={da}
+                      />
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {internal.length > 0 && (
+                <section className="space-y-3 mt-8">
+                  <h2 className="text-slate-300 text-sm font-semibold flex items-center gap-2">
+                    <Server size={14} className="text-purple-400" />
+                    {da ? 'Interne komponenter' : 'Internal components'}
+                    <span className="text-slate-500 text-xs font-normal">
+                      {da
+                        ? `${internal.length} komponenter · iter 2 tilføjer live metrics`
+                        : `${internal.length} components · iter 2 adds live metrics`}
+                    </span>
+                  </h2>
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                    {internal.map((svc) => (
+                      <ServiceCard
+                        key={svc.id}
+                        service={svc}
+                        state={
+                          states[svc.id] ?? {
+                            status: 'unknown',
+                            description: null,
+                            checkedAt: null,
+                          }
+                        }
+                        da={da}
+                      />
+                    ))}
+                  </div>
+                </section>
+              )}
+            </>
+          );
+        })()}
 
         {/* Legend */}
         <div className="flex flex-wrap gap-4 mt-8 text-xs text-slate-500">

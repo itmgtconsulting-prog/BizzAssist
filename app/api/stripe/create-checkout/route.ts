@@ -28,6 +28,11 @@ import { logger } from '@/app/lib/logger';
 /** BIZZ-210: Zod schema for checkout request body — accepts any plan_id from plan_configs */
 const checkoutSchema = z.object({
   planId: z.string().min(1).max(100),
+  /** BIZZ-738: optional domain_id for enterprise_domain plan checkouts.
+   *  When set, the webhook handler (syncDomainSubscription) can match the
+   *  subscription to a specific domain unambiguously — important for
+   *  multi-domain tenants where stripe_customer_id isn't unique. */
+  domainId: z.string().uuid().optional(),
 });
 
 /**
@@ -56,6 +61,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const parsed = await parseBody(req, checkoutSchema);
     if (!parsed.success) return parsed.response;
     const planId = parsed.data.planId as PlanId;
+    const domainId = parsed.data.domainId ?? null;
 
     const admin = createAdminClient();
 
@@ -120,12 +126,17 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         supabase_user_id: user.id,
         user_email: user.email ?? '',
         plan_id: planId,
+        // BIZZ-738: domain_id is present only for enterprise_domain checkouts
+        // created from the domain-onboarding flow. syncDomainSubscription in
+        // the webhook uses it as the preferred lookup key.
+        ...(domainId ? { domain_id: domainId } : {}),
       },
       subscription_data: {
         metadata: {
           supabase_user_id: user.id,
           user_email: user.email ?? '',
           plan_id: planId,
+          ...(domainId ? { domain_id: domainId } : {}),
         },
       },
     };

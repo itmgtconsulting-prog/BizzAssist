@@ -31,6 +31,12 @@ const ejerlejlighederQuerySchema = z.object({
   matrikelnr: z.string().min(1, 'matrikelnr er påkrævet'),
   /** BIZZ-695: Optional moderBfe for DAWA fallback owner lookup */
   moderBfe: z.coerce.number().int().positive().optional(),
+  /**
+   * BIZZ-784: When false (default), the response filters out properties
+   * flagged udfaset=true. Clients pass true to get the full list including
+   * retired registrations.
+   */
+  includeUdfasede: z.coerce.boolean().optional().default(false),
 });
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -49,6 +55,13 @@ export interface Ejerlejlighed {
   koebsdato: string | null;
   /** DAWA adresse-UUID for navigation til ejendomsdetalje */
   dawaId: string | null;
+  /**
+   * BIZZ-784: Heuristic "udfaset" marker. For Tinglysning-path we use
+   * ejendomsVurdering=0 AND grundVaerdi=0 as a proxy for a retired
+   * property (proper BBR-status lookup is deferred to iter 2). Null when
+   * the data is insufficient to decide.
+   */
+  udfaset: boolean | null;
 }
 
 /** API-svar fra denne route */
@@ -302,6 +315,9 @@ async function resolveLejlighederViaDawa(
         koebspris: null,
         koebsdato: null,
         dawaId: unit.id,
+        // BIZZ-784: DAWA-fallback path has no valuation data — mark null so
+        // the filter neither includes nor excludes these by heuristic.
+        udfaset: null,
       });
     }
   }
@@ -478,7 +494,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
 
   const parsed = parseQuery(request, ejerlejlighederQuerySchema);
   if (!parsed.success) return parsed.response as NextResponse<EjerlejlighederResponse>;
-  const { ejerlavKode, matrikelnr, moderBfe } = parsed.data;
+  const { ejerlavKode, matrikelnr, moderBfe, includeUdfasede } = parsed.data;
 
   if ((!CERT_PATH && !CERT_B64) || !CERT_PASSWORD) {
     return NextResponse.json(
@@ -719,6 +735,15 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
         const bfe = item.ejendomsnummer ? parseInt(item.ejendomsnummer, 10) : 0;
         const sum = summariskMap.get(item.uuid);
 
+        // BIZZ-784: heuristic — Tinglysning doesn't expose an explicit
+        // "retired" status but valuation=0 AND grundVærdi=0 is a reliable
+        // proxy: active properties are always assessed with non-zero values.
+        // Proper BBR-status lookup (status codes 4/10/11) is iter 2.
+        const udfaset =
+          item.ejendomsVurdering != null && item.grundVaerdi != null
+            ? item.ejendomsVurdering === 0 && item.grundVaerdi === 0
+            : null;
+
         return {
           bfe: bfe || 0,
           adresse: item.adresse,
@@ -731,6 +756,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
           koebspris: sum?.koebspris ?? null,
           koebsdato: sum?.koebsdato ?? null,
           dawaId: dawaIdMap.get(item.uuid) ?? null,
+          udfaset,
         };
       })
       .sort((a, b) => {
@@ -746,8 +772,13 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
         return parseDoerSortValue(a.doer) - parseDoerSortValue(b.doer);
       });
 
+    // BIZZ-784: filter udfasede ejerlejligheder unless klienten eksplicit
+    // beder om dem. `udfaset=null` (ukendt) tæller som aktiv så vi ikke
+    // skjuler enheder på basis af en heuristic der ikke kunne afgøres.
+    const filtered = includeUdfasede ? lejligheder : lejligheder.filter((l) => l.udfaset !== true);
+
     return NextResponse.json(
-      { lejligheder, fejl: null },
+      { lejligheder: filtered, fejl: null },
       {
         status: 200,
         headers: { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=600' },

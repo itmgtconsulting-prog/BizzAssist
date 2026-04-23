@@ -41,6 +41,7 @@ import {
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import { formatTokens, resolvePlan, type PlanId } from '@/app/lib/subscriptions';
+import { scopeColor } from '@/app/lib/scopeColors';
 import type { ApiTokenRecord } from '@/app/api/tokens/route';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -380,8 +381,8 @@ function CreateKeyModal({
         aria-hidden="true"
       />
 
-      {/* Panel */}
-      <div className="relative w-full max-w-md rounded-xl bg-slate-800 border border-slate-700/50 shadow-2xl p-6 space-y-5">
+      {/* Panel — BIZZ-782: accent-border som øvrige modals */}
+      <div className="relative w-full max-w-md rounded-xl bg-slate-800 border border-blue-500/30 shadow-2xl p-6 space-y-5">
         {/* Header */}
         <div className="flex items-center justify-between">
           <h2
@@ -810,11 +811,40 @@ export default function TokensPageClient() {
         </button>
 
         {/* ── Page header ── */}
-        <div>
+        <div className="space-y-3">
           <h1 className="text-2xl font-bold text-white flex items-center gap-3">
             <Coins className="w-7 h-7 text-amber-400" />
             {t.title}
           </h1>
+          {/* BIZZ-782: info-chips matching company/ejendom/person detail-page
+              pattern — plan navn + månedligt AI-forbrug vs. tilgængeligt. */}
+          {sub && plan && (
+            <div className="flex flex-wrap gap-2 text-xs">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-blue-500/10 text-blue-300 border border-blue-500/20">
+                <Zap className="w-3 h-3" />
+                {lang === 'da' ? plan.nameDa : plan.nameEn}
+              </span>
+              {isUnlimited ? (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
+                  <Coins className="w-3 h-3" />
+                  {t.unlimited}
+                </span>
+              ) : (
+                <span
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border ${
+                    usagePct < 20
+                      ? 'bg-red-500/10 text-red-300 border-red-500/20'
+                      : usagePct < 50
+                        ? 'bg-amber-500/10 text-amber-300 border-amber-500/20'
+                        : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20'
+                  }`}
+                >
+                  <Coins className="w-3 h-3" />
+                  {formatTokens(remaining)} / {formatTokens(totalAvailable)} {t.tokens}
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         {/* ── Tab bar ── */}
@@ -1096,17 +1126,20 @@ export default function TokensPageClient() {
                         </code>
                       </td>
 
-                      {/* Scopes */}
+                      {/* Scopes — BIZZ-782: farvekodede chips per scope-type */}
                       <td className="px-4 py-3 hidden sm:table-cell">
                         <div className="flex flex-wrap gap-1">
-                          {key.scopes.map((scope) => (
-                            <span
-                              key={scope}
-                              className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-300 border border-blue-500/20"
-                            >
-                              {scope}
-                            </span>
-                          ))}
+                          {key.scopes.map((scope) => {
+                            const c = scopeColor(scope);
+                            return (
+                              <span
+                                key={scope}
+                                className={`text-[10px] px-1.5 py-0.5 rounded border ${c.bg} ${c.text} ${c.border}`}
+                              >
+                                {scope}
+                              </span>
+                            );
+                          })}
                         </div>
                       </td>
 

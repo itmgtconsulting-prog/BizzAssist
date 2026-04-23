@@ -380,6 +380,10 @@ export default function UniversalSearchPageClient() {
           ejerlavKode: matEjerlavKode,
           matrikelnr: matMatrikelnr,
         });
+        // BIZZ-784: når filter-panelet har "Skjul udfasede" slået fra
+        // (hideRetiredProperties=false) beder vi backenden om at inkludere
+        // dem. Default=true betyder filter aktivt → param udelades.
+        if (!hideRetiredProperties) params.set('includeUdfasede', 'true');
         const res = await fetch(`/api/ejerlejligheder?${params.toString()}`);
         if (!res.ok) {
           if (!cancelled) {
@@ -400,7 +404,7 @@ export default function UniversalSearchPageClient() {
     return () => {
       cancelled = true;
     };
-  }, [matrikelMode, matEjerlavKode, matMatrikelnr, da]);
+  }, [matrikelMode, matEjerlavKode, matMatrikelnr, da, hideRetiredProperties]);
 
   /** Focus the input on mount */
   useEffect(() => {

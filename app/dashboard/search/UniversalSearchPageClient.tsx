@@ -44,6 +44,7 @@ import { translations } from '@/app/lib/translations';
 import type { DawaAutocompleteResult } from '@/app/lib/dawa';
 import type { CVRSearchResult } from '@/app/api/cvr-search/route';
 import type { PersonSearchResult } from '@/app/api/person-search/route';
+import ResizableDivider from '@/app/components/ResizableDivider';
 
 // ─── Tab types ────────────────────────────────────────────────────────────────
 
@@ -345,9 +346,35 @@ export default function UniversalSearchPageClient() {
   const [query, setQuery] = useState('');
   const [activeTab, setActiveTab] = useState<Tab>('properties');
 
-  // BIZZ-774: right-side filter-panel state. Start open when matrikel-mode
-  // so the user can immediately toggle "vis udfasede" for the property list.
-  const [filterOpen, setFilterOpen] = useState(matrikelMode);
+  // BIZZ-774 + BIZZ-786: right-side filter-panel state. Open/closed +
+  // bredde persisteres i localStorage (ligesom map-style/-zoom) så brugeren
+  // lander i samme layout næste gang. Default open (iter 1 fra BIZZ-786).
+  // 280-600px clamp matcher BIZZ-786 acceptkriterier.
+  const FILTER_MIN_WIDTH = 280;
+  const FILTER_MAX_WIDTH = 600;
+  const FILTER_DEFAULT_WIDTH = 360;
+  const [filterOpen, setFilterOpen] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return true;
+    const v = window.localStorage.getItem('bizzassist-search-filters-open');
+    // Default = true (åben) når brugeren aldrig har sat præferencen
+    return v === null ? true : v === 'true';
+  });
+  const [filterWidth, setFilterWidth] = useState<number>(() => {
+    if (typeof window === 'undefined') return FILTER_DEFAULT_WIDTH;
+    const v = window.localStorage.getItem('bizzassist-search-filter-width');
+    const n = v ? parseInt(v, 10) : NaN;
+    if (!Number.isFinite(n)) return FILTER_DEFAULT_WIDTH;
+    return Math.max(FILTER_MIN_WIDTH, Math.min(FILTER_MAX_WIDTH, n));
+  });
+  // Persister valg til localStorage når de ændres
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem('bizzassist-search-filters-open', String(filterOpen));
+  }, [filterOpen]);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem('bizzassist-search-filter-width', String(filterWidth));
+  }, [filterWidth]);
   const [hideRetiredProperties, setHideRetiredProperties] = useState(true);
   const [onlyActiveCompanies, setOnlyActiveCompanies] = useState(true);
 
@@ -703,24 +730,45 @@ export default function UniversalSearchPageClient() {
             working filters + stubs for the rest; full filter backends are
             tracked as iter 2 (see ticket). */}
         {filterOpen && (
+          <ResizableDivider
+            width={filterWidth}
+            minWidth={FILTER_MIN_WIDTH}
+            maxWidth={FILTER_MAX_WIDTH}
+            onChange={setFilterWidth}
+            ariaLabel={da ? 'Juster filter-panel bredde' : 'Adjust filter panel width'}
+          />
+        )}
+        {filterOpen && (
           <aside
             aria-label={da ? 'Filter-panel' : 'Filter panel'}
-            className="w-64 shrink-0 border-l border-slate-700/40 bg-slate-900/40 overflow-y-auto p-4 order-last"
+            style={{ width: filterWidth }}
+            className="shrink-0 border-l border-slate-700/40 bg-slate-900/40 overflow-y-auto p-4 order-last"
           >
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-white text-sm font-semibold flex items-center gap-2">
                 <SlidersHorizontal size={14} className="text-blue-400" />
                 {da ? 'Filtre' : 'Filters'}
               </h2>
-              <button
-                onClick={() => {
-                  setHideRetiredProperties(true);
-                  setOnlyActiveCompanies(true);
-                }}
-                className="text-xs text-slate-400 hover:text-blue-300 transition-colors"
-              >
-                {da ? 'Nulstil' : 'Reset'}
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => {
+                    setHideRetiredProperties(true);
+                    setOnlyActiveCompanies(true);
+                  }}
+                  className="text-xs text-slate-400 hover:text-blue-300 transition-colors"
+                >
+                  {da ? 'Nulstil' : 'Reset'}
+                </button>
+                {/* BIZZ-786: collapse-knap så bruger kan lukke panelet direkte
+                    fra header uden at skulle finde toggle over tab-baren */}
+                <button
+                  onClick={() => setFilterOpen(false)}
+                  aria-label={da ? 'Skjul filter-panel' : 'Hide filter panel'}
+                  className="text-slate-400 hover:text-white transition-colors"
+                >
+                  <ChevronRight size={16} />
+                </button>
+              </div>
             </div>
 
             {/* Column 1: Ejendomme */}

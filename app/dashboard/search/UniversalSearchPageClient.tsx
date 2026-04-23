@@ -791,27 +791,40 @@ export default function UniversalSearchPageClient() {
           )}
 
           {/* Properties tab */}
-          {hasQuery && activeTab === 'properties' && (
-            <div role="tabpanel" aria-label={t.tabProperties}>
-              {loadingProps ? (
-                <SkeletonList count={6} />
-              ) : properties.length > 0 ? (
-                <div className="space-y-3">
-                  {properties.map((r) => (
-                    <PropertyCard key={r.adresse.id} result={r} lang={lang} />
-                  ))}
+          {hasQuery &&
+            activeTab === 'properties' &&
+            (() => {
+              // BIZZ-785: filtrér udfasede DAR-adresser på klientsiden.
+              // `status` fra DAR kan være "Gældende"/"Nedlagt"/"Henlagt"/null.
+              // Ukendt status (null/undefined — fx DAWA fallback) tæller som
+              // aktiv — vi skjuler KUN dem vi eksplicit ved er nedlagte.
+              const filteredProps = hideRetiredProperties
+                ? properties.filter(
+                    (r) => !r.status || r.status === 'Gældende' || r.status === 'Foreløbig'
+                  )
+                : properties;
+              return (
+                <div role="tabpanel" aria-label={t.tabProperties}>
+                  {loadingProps ? (
+                    <SkeletonList count={6} />
+                  ) : filteredProps.length > 0 ? (
+                    <div className="space-y-3">
+                      {filteredProps.map((r) => (
+                        <PropertyCard key={r.adresse.id} result={r} lang={lang} />
+                      ))}
+                    </div>
+                  ) : (
+                    searched && (
+                      <EmptyState
+                        query={query}
+                        message={`${t.noResultsFor} "${query.trim()}"`}
+                        icon={<MapPin size={28} />}
+                      />
+                    )
+                  )}
                 </div>
-              ) : (
-                searched && (
-                  <EmptyState
-                    query={query}
-                    message={`${t.noResultsFor} "${query.trim()}"`}
-                    icon={<MapPin size={28} />}
-                  />
-                )
-              )}
-            </div>
-          )}
+              );
+            })()}
 
           {/* Companies tab */}
           {hasQuery && activeTab === 'companies' && (

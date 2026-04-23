@@ -64,6 +64,14 @@ export async function fetchDawa(
 export interface DawaAutocompleteResult {
   type: 'adresse' | 'adgangsadresse' | 'vejnavn';
   tekst: string;
+  /**
+   * BIZZ-785: DAR status for the underlying address object. Common values:
+   * "Gældende" (active), "Nedlagt" (retired), "Foreløbig" (preliminary),
+   * "Henlagt" (suspended). Null for vejnavn-type (no per-vej status) and
+   * for the DAWA fallback path (DAWA doesn't expose status). Consumers
+   * should treat null as "unknown → show".
+   */
+  status?: string | null;
   adresse: {
     id: string; // 'vejnavn:…' for vejnavn-type, UUID for adresse/adgangsadresse
     vejnavn: string;

@@ -636,6 +636,7 @@ export async function darAutocomplete(q: string): Promise<DawaAutocompleteResult
       adressebetegnelse?: string;
       etagebetegnelse?: string;
       doerbetegnelse?: string;
+      status?: string;
     }> = [];
 
     for (let i = 0; i < allResults.length; i++) {
@@ -658,6 +659,7 @@ export async function darAutocomplete(q: string): Promise<DawaAutocompleteResult
               adressebetegnelse?: string;
               etagebetegnelse?: string;
               doerbetegnelse?: string;
+              status?: string;
             }>;
           };
         } | null;
@@ -689,6 +691,8 @@ export async function darAutocomplete(q: string): Promise<DawaAutocompleteResult
         return {
           type: 'adgangsadresse',
           tekst: rensAdresseStreng(h.adgangsadressebetegnelse),
+          // BIZZ-785: pass DAR status through så UI kan filtrere udfasede
+          status: h.status ?? null,
           adresse: {
             id: h.id_lokalId,
             vejnavn: parsed.vejnavn,
@@ -711,6 +715,8 @@ export async function darAutocomplete(q: string): Promise<DawaAutocompleteResult
         return {
           type: 'adresse',
           tekst: rensAdresseStreng(a.adressebetegnelse ?? ''),
+          // BIZZ-785: DAR status for ejerlejligheder (propagated fra GraphQL)
+          status: a.status ?? null,
           adresse: {
             id: a.id_lokalId,
             vejnavn: parsed.vejnavn,

@@ -19,7 +19,6 @@
 
 import { useState, useEffect } from 'react';
 import dynamic from 'next/dynamic';
-import Link from 'next/link';
 import {
   LayoutDashboard,
   Users,
@@ -27,7 +26,6 @@ import {
   History,
   Settings,
   X,
-  ExternalLink,
   Loader2,
   Shield,
   type LucideIcon,
@@ -112,14 +110,7 @@ export function DomainDetailPanel({ domainId, domainName, onClose }: Props) {
             {domainName ?? (da ? 'Domain' : 'Domain')}
           </p>
         </div>
-        <Link
-          href={`/dashboard/admin/domains/${domainId}`}
-          className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs text-slate-400 hover:text-white hover:bg-slate-800 transition-colors shrink-0"
-          title={da ? 'Åbn i fuld skærm' : 'Open full screen'}
-        >
-          <ExternalLink size={12} />
-          {da ? 'Fuld visning' : 'Full view'}
-        </Link>
+        {/* BIZZ-789 v2: "Fuld visning"-link fjernet per user-feedback. */}
         <button
           type="button"
           onClick={onClose}

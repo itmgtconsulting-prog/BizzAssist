@@ -2,10 +2,13 @@
  * Template editor — /domain/[id]/admin/templates/[templateId]
  *
  * BIZZ-721: Five-tab editor. Live tabs: Metadata, Instructions, Examples,
- * Placeholders. Fil-preview and Versions are deferred to follow-ups.
+ * Placeholders, Versions.
+ * BIZZ-787: Renders the editor inside a resizable split-view with the
+ * documents panel on the right so documents (AI background knowledge)
+ * live in the context of the specific template.
  */
 
-import TemplateEditorClient from './TemplateEditorClient';
+import { TemplateEditorSplitView } from './TemplateEditorSplitView';
 
 export default async function TemplateEditorPage({
   params,
@@ -13,5 +16,5 @@ export default async function TemplateEditorPage({
   params: Promise<{ id: string; templateId: string }>;
 }) {
   const { id, templateId } = await params;
-  return <TemplateEditorClient domainId={id} templateId={templateId} />;
+  return <TemplateEditorSplitView domainId={id} templateId={templateId} />;
 }

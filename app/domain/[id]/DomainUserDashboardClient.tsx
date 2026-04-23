@@ -22,7 +22,6 @@ import {
   X,
   LayoutDashboard,
   FileText,
-  FolderOpen,
   History,
   Settings,
   type LucideIcon,
@@ -113,9 +112,11 @@ export default function DomainUserDashboardClient({ domainId }: { domainId: stri
   // Only "Sager" is a fully in-page view right now; other tabs link to the
   // existing admin sub-routes (requires admin role, handled by those
   // layouts). Split-view + AI side-panel are iter 2.
-  const [topTab, setTopTab] = useState<
-    'overview' | 'cases' | 'templates' | 'documents' | 'audit' | 'settings'
-  >('cases');
+  // BIZZ-787: "Dokumenter" fjernet som top-level tab — dokumenter hører
+  // hjemme i kontekst af en skabelon (resizable side-panel i template-editor).
+  const [topTab, setTopTab] = useState<'overview' | 'cases' | 'templates' | 'audit' | 'settings'>(
+    'cases'
+  );
   const topTabs: Array<{
     id: typeof topTab;
     icon: LucideIcon;
@@ -131,13 +132,6 @@ export default function DomainUserDashboardClient({ domainId }: { domainId: stri
       labelDa: 'Skabeloner',
       labelEn: 'Templates',
       adminHref: `/domain/${domainId}/admin/templates`,
-    },
-    {
-      id: 'documents',
-      icon: FolderOpen,
-      labelDa: 'Dokumenter',
-      labelEn: 'Documents',
-      adminHref: `/domain/${domainId}/admin/training`,
     },
     {
       id: 'audit',

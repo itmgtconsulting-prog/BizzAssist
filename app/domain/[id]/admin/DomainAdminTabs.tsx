@@ -25,7 +25,6 @@ import {
   LayoutDashboard,
   Users,
   FileText,
-  FolderOpen,
   Settings,
   Shield,
   History,
@@ -52,13 +51,10 @@ const TABS: TabDef[] = [
     labelDa: 'Skabeloner',
     labelEn: 'Templates',
   },
-  {
-    id: 'training',
-    suffix: '/training',
-    icon: FolderOpen,
-    labelDa: 'Dokumenter',
-    labelEn: 'Documents',
-  },
+  // BIZZ-787: "Dokumenter" er flyttet ind under Skabeloner — ikke længere
+  // en selvstændig top-level tab. Dokumenter lever nu i kontekst af den
+  // skabelon de er tilknyttet (training-docs route forbliver tilgængelig
+  // via deep-link som fallback).
   { id: 'audit', suffix: '/audit', icon: History, labelDa: 'Historik', labelEn: 'Audit log' },
   {
     id: 'settings',

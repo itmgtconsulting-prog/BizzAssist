@@ -24,7 +24,6 @@ import {
   LayoutDashboard,
   Users,
   FileText,
-  FolderOpen,
   History,
   Settings,
   X,
@@ -56,10 +55,9 @@ const TemplatesListClient = dynamic(
   () => import('@/app/domain/[id]/admin/templates/TemplatesListClient'),
   { loading: Loading, ssr: false }
 );
-const TrainingDocsClient = dynamic(
-  () => import('@/app/domain/[id]/admin/training/TrainingDocsClient'),
-  { loading: Loading, ssr: false }
-);
+// BIZZ-787: Dokumenter er flyttet ind under skabelon-editoren som et
+// resizable side-panel — ikke en selvstændig sub-tab her. TrainingDocsClient
+// loades kun hvis nogen deep-linker direkte til /admin/training.
 const AuditLogClient = dynamic(() => import('@/app/domain/[id]/admin/audit/AuditLogClient'), {
   loading: Loading,
   ssr: false,
@@ -69,7 +67,7 @@ const DomainSettingsClient = dynamic(
   { loading: Loading, ssr: false }
 );
 
-type SubTab = 'overview' | 'users' | 'templates' | 'documents' | 'audit' | 'settings';
+type SubTab = 'overview' | 'users' | 'templates' | 'audit' | 'settings';
 
 interface Props {
   domainId: string;
@@ -100,7 +98,6 @@ export function DomainDetailPanel({ domainId, domainName, onClose }: Props) {
     { id: 'overview', icon: LayoutDashboard, labelDa: 'Oversigt', labelEn: 'Overview' },
     { id: 'users', icon: Users, labelDa: 'Brugere', labelEn: 'Users' },
     { id: 'templates', icon: FileText, labelDa: 'Skabeloner', labelEn: 'Templates' },
-    { id: 'documents', icon: FolderOpen, labelDa: 'Dokumenter', labelEn: 'Documents' },
     { id: 'audit', icon: History, labelDa: 'Historik', labelEn: 'Audit log' },
     { id: 'settings', icon: Settings, labelDa: 'Indstillinger', labelEn: 'Settings' },
   ];
@@ -166,7 +163,6 @@ export function DomainDetailPanel({ domainId, domainName, onClose }: Props) {
         {activeTab === 'overview' && <DomainAdminDashboardClient domainId={domainId} />}
         {activeTab === 'users' && <DomainUsersClient domainId={domainId} />}
         {activeTab === 'templates' && <TemplatesListClient domainId={domainId} />}
-        {activeTab === 'documents' && <TrainingDocsClient domainId={domainId} />}
         {activeTab === 'audit' && <AuditLogClient domainId={domainId} />}
         {activeTab === 'settings' && <DomainSettingsClient domainId={domainId} />}
       </div>

@@ -149,6 +149,14 @@ function DiagramForce({
   const svgRef = useRef<SVGSVGElement>(null);
   const [zoom, setZoom] = useState(1);
   const [positions, setPositions] = useState<Map<string, { x: number; y: number }>>(new Map());
+  /**
+   * BIZZ-865: "Simulation ready" flag for at skjule layout-hop. Under
+   * force-sim'ens 120 async ticks render'er noder i foreløbige positioner
+   * der ændrer sig pr. tick-batch. Ved at holde SVG usynlig (opacity 0)
+   * indtil simulation er konvergeret og fitView er kørt, undgår brugeren
+   * at se node'er "hoppe" på plads. Fade-in sker via CSS-transition.
+   */
+  const [simulationReady, setSimulationReady] = useState(false);
   /** User-dragged node positions — preserved across simulation re-runs.
    * Cleared when user clicks Reset. */
   const userPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
@@ -1125,6 +1133,11 @@ function DiagramForce({
   useEffect(() => {
     if (filteredGraph.nodes.length === 0) return;
 
+    // BIZZ-865: Ved ny data-load skjul SVG igen indtil ny simulation er
+    // konvergeret. Uden dette ville brugeren se gamle positioner blandet
+    // med nye nodes mens simulationen kører.
+    setSimulationReady(false);
+
     // Group by Y position (from nodeYMap) for initial X spread — ensures
     // persons and companies on separate sub-rows get independent X layouts
     const byY = new Map<number, DiagramNode[]>();
@@ -1318,6 +1331,12 @@ function DiagramForce({
       setTimeout(() => {
         if (!cancelled) setFitTrigger((t) => t + 1);
       }, 80);
+      // BIZZ-865: Marker simulation ready efter en kort ekstra delay
+      // så fitView-transformet også er applied før vi fade'r ind.
+      // 180ms = 80ms fit-trigger delay + ~100ms CSS-transition buffer.
+      setTimeout(() => {
+        if (!cancelled) setSimulationReady(true);
+      }, 180);
     };
 
     runBatch();
@@ -2616,12 +2635,27 @@ function DiagramForce({
           padding: 16,
         }}
       >
+        {/* BIZZ-865: Subtil loading-dot mens simulation konvergerer.
+            Vises kun når simulation ikke er klar endnu OG vi har data at
+            vise (ellers ville det spinne over tom visning). */}
+        {!simulationReady && filteredGraph.nodes.length > 0 && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <div className="w-2 h-2 rounded-full bg-blue-400/60 animate-pulse" />
+          </div>
+        )}
         <svg
           ref={svgRef}
           width={viewBox.w}
           height={viewBox.h}
           viewBox={`${viewBox.minX} ${viewBox.minY} ${viewBox.w} ${viewBox.h}`}
-          style={{ overflow: 'visible' }}
+          // BIZZ-865: opacity styres af simulationReady — SVG er usynlig
+          // under force-sim'ens 120 ticks så brugeren ikke ser layout-hop.
+          // Fade-in via CSS-transition (180ms matcher simulationReady-delay).
+          style={{
+            overflow: 'visible',
+            opacity: simulationReady ? 1 : 0,
+            transition: 'opacity 180ms ease-out',
+          }}
         >
           {svgContent}
         </svg>

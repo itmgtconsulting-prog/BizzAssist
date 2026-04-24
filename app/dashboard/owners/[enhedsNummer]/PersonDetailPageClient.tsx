@@ -1267,16 +1267,32 @@ export default function PersonDetailPageClient({
     if (!data) return { nodes: [], edges: [], mainId: '' };
     // BIZZ-571: Person-diagram ekskluderer solgte ejendomme — samme regel
     // som virksomheds-diagrammet.
+    // BIZZ-849: ejendommeData indeholder BÅDE virksomheds-ejede (numeric
+    // ownerCvr) OG personligt ejede (ownerCvr='person-<enhedsNummer>').
+    // parseInt på "person-..." gav NaN og entries blev grupperet under
+    // NaN-key der aldrig matchede nogen node. Separer de to kilder:
     const aktiveEjendomme = ejendommeData.filter((p) => p.aktiv !== false);
-    const propertiesByCvr =
-      aktiveEjendomme.length > 0
-        ? aktiveEjendomme.reduce((map, p) => {
-            const cvrNum = parseInt(p.ownerCvr, 10);
-            if (!map.has(cvrNum)) map.set(cvrNum, []);
-            map.get(cvrNum)!.push(p as DiagramPropertySummary);
-            return map;
-          }, new Map<number, DiagramPropertySummary[]>())
-        : undefined;
+    const propertiesByCvr = new Map<number, DiagramPropertySummary[]>();
+    const personlyOwnedFromEnhedLookup: DiagramPropertySummary[] = [];
+    for (const p of aktiveEjendomme) {
+      if (typeof p.ownerCvr === 'string' && p.ownerCvr.startsWith('person-')) {
+        personlyOwnedFromEnhedLookup.push(p as DiagramPropertySummary);
+        continue;
+      }
+      const cvrNum = parseInt(p.ownerCvr, 10);
+      if (!Number.isFinite(cvrNum)) continue; // skip invalid ownerCvr-strenge
+      if (!propertiesByCvr.has(cvrNum)) propertiesByCvr.set(cvrNum, []);
+      propertiesByCvr.get(cvrNum)!.push(p as DiagramPropertySummary);
+    }
+    // Merge enhedsNummer-lookup-resultater med personalBfes (bulk-data-lookup).
+    // Dedup på bfeNummer så samme ejendom ikke rendres to gange.
+    const seenBfe = new Set<number>();
+    const mergedPersonal: DiagramPropertySummary[] = [];
+    for (const p of [...personalBfes, ...personlyOwnedFromEnhedLookup]) {
+      if (seenBfe.has(p.bfeNummer)) continue;
+      seenBfe.add(p.bfeNummer);
+      mergedPersonal.push(p);
+    }
     return buildPersonDiagramGraph(
       data.navn,
       data.enhedsNummer,
@@ -1284,8 +1300,8 @@ export default function PersonDetailPageClient({
       relatedCompanies,
       noeglePersonerMap,
       derived?.andreVirksomheder ?? [],
-      propertiesByCvr,
-      personalBfes
+      propertiesByCvr.size > 0 ? propertiesByCvr : undefined,
+      mergedPersonal
     );
   }, [
     data,

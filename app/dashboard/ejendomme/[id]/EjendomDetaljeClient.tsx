@@ -2237,6 +2237,12 @@ export default function EjendomDetaljeClient({
                 tlTestFallback={tlTestFallback}
                 mergedSalgshistorik={mergedSalgshistorik}
                 bbrData={bbrData}
+                // BIZZ-860: Signal om ejendommen er opdelt — kilde er MAT-data
+                // (matrikelData.opdeltIEjerlejligheder) eller fallback via bbrData.
+                opdeltIEjerlejligheder={
+                  matrikelData?.opdeltIEjerlejligheder ?? bbrData?.opdeltIEjerlejligheder ?? false
+                }
+                lejlighederCount={lejligheder?.length ?? 0}
               />
             )}
 

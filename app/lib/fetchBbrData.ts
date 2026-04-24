@@ -203,6 +203,13 @@ export interface LiveBBREnhed {
   status: string | null;
   energimaerke: string | null;
   varmeinstallation: string;
+  /**
+   * BIZZ-879 (845b): Denormaliseret anvendelses-streng fra LiveBBRBygning
+   * (joined via bygningId). Fx "Etagebolig til helårsbeboelse" — undgår
+   * at UI skal lookup bygning separat. Null hvis bygningId er null eller
+   * bygning ikke findes i response.
+   */
+  bygningAnvendelse?: string | null;
 }
 
 /** A single BBR building point for map display */
@@ -272,6 +279,15 @@ export interface EjendomApiResponse {
    * komponent-listen på detaljesiden (BIZZ-857).
    */
   opdeltIEjerlejligheder?: boolean;
+  /**
+   * BIZZ-879 (845b): Primary bygning når vi står på enkelt-enhed-niveau
+   * (fx én ejerlejlighed). Bruges af UI til at vise "Denne enhed er i
+   * Bygning X" uden at iterere over bbr-arrayet. Null når vi er på SFE-
+   * niveau eller ingen bygning kan resolves.
+   */
+  primaryBygningId?: string | null;
+  primaryBygningAnvendelse?: string | null;
+  primaryBygningsBetegnelse?: string | null;
   /**
    * BIZZ-881 (858a): Hierarki-kæde fra leaf (denne ejendom) til SFE.
    * 2-niveau baglæns kompatibel — fuld rekursion kommer i BIZZ-882.
@@ -2225,9 +2241,43 @@ export async function fetchBbrForAddress(
     hierarkiChain.push({ bfe: moderBfe, adresse: null, niveau: 'sfe' });
   }
 
+  // BIZZ-879 (845b): Denormaliseret bygnings-info på enheder (join via bygningId)
+  // og primaryBygning-felter på top-niveau til single-enhed-views.
+  const bbrById = new Map<string, LiveBBRBygning>();
+  if (bbr) {
+    for (const b of bbr) {
+      if (b.id) bbrById.set(b.id, b);
+    }
+  }
+  const enrichedEnheder = enheder
+    ? enheder.map((e) => ({
+        ...e,
+        bygningAnvendelse: e.bygningId ? (bbrById.get(e.bygningId)?.anvendelse ?? null) : null,
+      }))
+    : null;
+
+  // Resolve primary bygning fra første enhed med ikke-null bygningId
+  let primaryBygningId: string | null = null;
+  let primaryBygningAnvendelse: string | null = null;
+  let primaryBygningsBetegnelse: string | null = null;
+  if (enrichedEnheder && enrichedEnheder.length > 0) {
+    const firstWithBuilding = enrichedEnheder.find((e) => e.bygningId);
+    if (firstWithBuilding?.bygningId) {
+      const byg = bbrById.get(firstWithBuilding.bygningId);
+      if (byg) {
+        primaryBygningId = byg.id;
+        primaryBygningAnvendelse = byg.anvendelse ?? null;
+        // Betegnelse kan udledes fra byg.id_lokalId eller anvendelse — brug
+        // anvendelse som display-label indtil en dedikeret betegnelses-kolonne
+        // er tilgængelig fra BBR (ADR-parkeret til BIZZ-845 full-scope).
+        primaryBygningsBetegnelse = byg.anvendelse ?? null;
+      }
+    }
+  }
+
   return {
     bbr,
-    enheder,
+    enheder: enrichedEnheder,
     bygningPunkter,
     ejendomsrelationer,
     ejerlejlighedBfe,
@@ -2241,5 +2291,9 @@ export async function fetchBbrForAddress(
     opdeltIEjerlejligheder:
       ejerlejlighedBfe != null && moderBfe != null && ejerlejlighedBfe !== moderBfe,
     hierarkiChain,
+    // BIZZ-879 (845b): primary-bygning top-level
+    primaryBygningId,
+    primaryBygningAnvendelse,
+    primaryBygningsBetegnelse,
   };
 }

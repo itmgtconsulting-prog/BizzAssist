@@ -355,15 +355,47 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const storagePath = `${auth.userId}/${randomUUID()}-${safeTitle}.${generated.ext}`;
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
-  const { error: uploadErr } = await admin.storage
-    .from('ai-generated')
-    .upload(storagePath, generated.buffer, {
-      contentType: generated.contentType,
-      upsert: false,
-    });
+  // BIZZ-886: Storage-upload med retry (1 forsøg mere ved transient fejl)
+  // og mere specifik fejl-besked. Upload-fejl skelnes nu fra size/permission/
+  // mime-type fejl så brugeren kan forstå årsagen.
+  const uploadWithRetry = async (): Promise<{ error: { message: string } | null }> => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const { error } = await admin.storage
+        .from('ai-generated')
+        .upload(storagePath, generated.buffer, {
+          contentType: generated.contentType,
+          upsert: false,
+        });
+      if (!error) return { error: null };
+      // Retry kun ved transient fejl (5xx, timeout). 4xx (permission/size) er
+      // ikke retry-bart — fejl igen med samme resultat.
+      const msg = (error.message || '').toLowerCase();
+      const transient = msg.includes('timeout') || msg.includes('network') || msg.includes('5');
+      if (!transient || attempt === 1) return { error };
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    return { error: null };
+  };
+
+  const { error: uploadErr } = await uploadWithRetry();
   if (uploadErr) {
     logger.error('[generate-file] upload fejl:', uploadErr.message);
-    return NextResponse.json({ error: 'Storage upload fejlede' }, { status: 500 });
+    const rawMsg = (uploadErr.message || '').toLowerCase();
+    let userMsg = 'Storage upload fejlede';
+    if (rawMsg.includes('size') || rawMsg.includes('too large')) {
+      userMsg = `Fil for stor — maks 10 MB (${(generated.buffer.length / 1024 / 1024).toFixed(1)} MB)`;
+    } else if (rawMsg.includes('mime') || rawMsg.includes('type')) {
+      userMsg = `Fil-format ikke tilladt (${generated.contentType})`;
+    } else if (
+      rawMsg.includes('permission') ||
+      rawMsg.includes('denied') ||
+      rawMsg.includes('403')
+    ) {
+      userMsg = 'Storage-tilladelser mangler — kontakt support';
+    } else if (rawMsg.includes('timeout') || rawMsg.includes('network')) {
+      userMsg = 'Storage-netværksfejl — prøv igen om et øjeblik';
+    }
+    return NextResponse.json({ error: userMsg }, { status: 500 });
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

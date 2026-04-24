@@ -285,6 +285,10 @@ function AIChatPanel() {
       if (pageData.virksomhedNavn) fields.push(`Virksomhed: ${pageData.virksomhedNavn}`);
       if (pageData.enhedsNummer) fields.push(`CVR enhedsnummer (person): ${pageData.enhedsNummer}`);
       if (pageData.personNavn) fields.push(`Person: ${pageData.personNavn}`);
+      // BIZZ-874: pageType + activeTab så AI kan matche "oversigt tab"/
+      // "ejendomme tab"-referencer til rigtige tools.
+      if (pageData.pageType) fields.push(`Side-type: ${pageData.pageType}`);
+      if (pageData.activeTab) fields.push(`Aktivt tab: ${pageData.activeTab}`);
       if (fields.length > 0) {
         parts.push(
           "Tilgængelige ID'er (brug direkte i tool-kald — ingen yderligere søgning nødvendig):\n" +

@@ -547,6 +547,21 @@ VIGTIGT:
 - På /dashboard/owners/[enhedsNummer] har du enhedsNummer i kontekst — brug det direkte uden at spørge brugeren.
 - For fuldt billede af en persons ejendomsportefølje: kald både hent_ejendomme_for_person (personligt ejede) OG hent_person_virksomheder + hent_ejendomme_for_virksomhed (via selskaber) parallelt.
 
+## Tab-kontekst og dokument-generering (BIZZ-874)
+Konteksten kan indeholde \`activeTab\` + \`pageType\` der angiver hvad brugeren ser. Når brugeren refererer til "oversigt tab", "ejendomme tab", "det her tab" osv.:
+- **pageType=virksomhed + activeTab=ejendomme**: Brug hent_ejendomme_for_virksomhed(cvr) på context-cvr. Inkluder datterselskabers ejendomme kun hvis brugeren eksplicit beder om det.
+- **pageType=virksomhed + activeTab=regnskab**: Brug hent_regnskab_noegletal(cvr) — fokus på omsætning/resultat/egenkapital.
+- **pageType=virksomhed + activeTab=oversigt**: Inkluder både stamdata OG ejendomme OG personer (overblik).
+- **pageType=person + activeTab=ejendomme**: Kald hent_ejendomme_for_person(enhedsNummer) OG hent_person_virksomheder + hent_ejendomme_for_virksomhed i parallel for at samle personlige + via-selskab ejendomme.
+
+### Ved dokument-generering (generate_document tool)
+VIGTIGT — undgå fejlagtigt indhold:
+1. **Match brugerens eksplicitte instruktion**: Hvis brugeren siger "ejendomme fra ejendomstab" → brug hent_ejendomme_for_virksomhed/hent_ejendomme_for_person, IKKE stamdata eller regnskab.
+2. **Ved tvetydighed — bekræft FØR du genererer**: Hvis brugeren siger "eksporter data" uden at specificere scope, spørg:
+   "Vil du have (a) kun ejendomme ejet direkte af denne virksomhed, (b) også datterselskabers ejendomme, eller (c) stifternes personlige ejendomme også?"
+3. **Post-generation rapportering**: Efter tool-kald inkluder tydelig scope-rapport: "Dokumentet indeholder X ejendomme — Y direkte ejede + Z via datterselskaber." Så brugeren straks kan se om scope er rigtigt.
+4. **Aldrig gætte**: Hvis context-tabben ikke matcher det brugeren beder om, bekræft i stedet for at vælge den "tætteste" fortolkning.
+
 ## Workflow ved formueanalyse for en person
 
 ### REGEL 1 — Vælg den rigtige liste baseret på spørgsmålstype

@@ -1017,8 +1017,11 @@ export default function PersonDetailPageClient({
       enhedsNummer: enhedsStr,
       personNavn: data?.navn ?? undefined,
       personVirksomheder: personVirksomheder ?? undefined,
+      // BIZZ-874: Tab-kontekst så AI matcher "ejendomme tab" til rigtige tools.
+      pageType: 'person',
+      activeTab: aktivTab,
     });
-  }, [enhedsStr, data, setAICtx]);
+  }, [enhedsStr, data, aktivTab, setAICtx]);
 
   // ─── Fetch related companies ────────────────────────────────────────────────
   const fetchRelated = useCallback(async () => {

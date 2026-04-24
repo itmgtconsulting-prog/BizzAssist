@@ -57,6 +57,17 @@ export interface AIPageData {
     ejerandel: string | null; // Interval-streng, f.eks. "90-100%"
     roller: string[]; // Aktive rolle-navne
   }>;
+  /**
+   * BIZZ-874: Aktiv tab på detalje-siden (fx "oversigt" / "ejendomme" /
+   * "regnskab" / "diagram"). Sendes til AI så den ved hvad brugeren mener
+   * når de refererer til "det her tab" eller "oversigt-tabbet".
+   */
+  activeTab?: string;
+  /**
+   * BIZZ-874: Type af detaljeside — 'virksomhed' | 'person' | 'ejendom'.
+   * Bruges sammen med activeTab for korrekt tool-dispatch.
+   */
+  pageType?: 'virksomhed' | 'person' | 'ejendom';
 }
 
 // ─── Context ─────────────────────────────────────────────────────────────────

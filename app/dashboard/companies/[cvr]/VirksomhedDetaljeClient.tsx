@@ -748,8 +748,12 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
     setAICtx({
       cvrNummer: String(data.vat),
       virksomhedNavn: data.name,
+      // BIZZ-874: Send aktiv tab + pageType så AI kan matche brugerens
+      // "oversigt tab" / "ejendomme tab"-referencer til rigtige tools.
+      pageType: 'virksomhed',
+      activeTab: aktivTab,
     });
-  }, [data, setAICtx]);
+  }, [data, aktivTab, setAICtx]);
 
   /**
    * Lazy-loader regnskabsdata når bruger klikker på Regnskab-tab.

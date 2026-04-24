@@ -571,8 +571,11 @@ export default function EjendomDetaljeClient({
       kommunekode,
       matrikelnr,
       ejerlavKode,
+      // BIZZ-874: Tab-kontekst for dokument-generering matching.
+      pageType: 'ejendom',
+      activeTab: aktivTab,
     });
-  }, [bbrData, dawaAdresse, dawaJordstykke, setAICtx]);
+  }, [bbrData, dawaAdresse, dawaJordstykke, aktivTab, setAICtx]);
 
   /**
    * Detekterer om ejendommen er en kolonihave/fritidshytte på lejet grund.

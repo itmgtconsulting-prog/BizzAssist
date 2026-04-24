@@ -86,8 +86,9 @@ interface AIChatContextValue {
   /**
    * No-op i API-versionen: /api/ai/chat persisterer user + assistant
    * messages server-side via session_id-hook. Beholdt for bagudkompat.
+   * BIZZ-839: accepterer null-id så callers kan bruge stateless-mode.
    */
-  persistConversation: (id: string, updatedMessages: ChatMessage[]) => void;
+  persistConversation: (id: string | null, updatedMessages: ChatMessage[]) => void;
   /** Auto-title a conversation from the first user message */
   titleConversation: (id: string, firstMessage: string) => Promise<void>;
   /** Ensure there is an active conversation, creating one if needed */
@@ -309,10 +310,13 @@ export function AIChatContextProvider({ children }: { children: ReactNode }) {
   // Server-side /api/ai/chat persisterer user + assistant messages via
   // session_id-hook (BIZZ-819). Callerne må fortsat kalde funktionen for
   // bagudkompat men den laver intet lokalt (messages lever i state).
-  const persistConversation = useCallback((_id: string, _updatedMessages: ChatMessage[]): void => {
-    void _id;
-    void _updatedMessages;
-  }, []);
+  const persistConversation = useCallback(
+    (_id: string | null, _updatedMessages: ChatMessage[]): void => {
+      void _id;
+      void _updatedMessages;
+    },
+    []
+  );
 
   // ── Title ────────────────────────────────────────────────────────────────
   const titleConversation = useCallback(async (id: string, firstMessage: string): Promise<void> => {

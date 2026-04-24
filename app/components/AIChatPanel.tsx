@@ -480,24 +480,21 @@ function AIChatPanel() {
     setAttachments([]);
     const newMessages = [...messages, userMsg];
 
-    // BIZZ-820: Ensure conversation exists in shared context (API-backed).
-    // ensureConversation opretter row via POST /api/ai/sessions når ingen
-    // aktiv session findes.
+    // BIZZ-820/839: Best-effort session-creation via /api/ai/sessions.
+    // Hvis API fejler (401/403/500/tenant-memberships missing) → fortsæt
+    // uden session_id i stateless-mode. Chat fungerer stadig ende-til-ende
+    // via /api/ai/chat; kun cross-device persistens preller af. Tidligere
+    // afbrød vi stille her og brugeren så ingen feedback — BIZZ-839 bug.
     const convId = await chatCtx.ensureConversation(lang as 'da' | 'en');
-    if (!convId) {
-      // Ikke logget ind eller API fejlede — afbryd stille (rate-limit /
-      // auth-lag håndterer fejlvisning)
-      setIsLoading(false);
-      chatCtx.setIsStreaming(false);
-      return;
+    if (convId) {
+      // Auto-title from first user message (non-blocking)
+      if (messages.length === 0) {
+        void chatCtx.titleConversation(convId, text);
+      }
+      // persistConversation er no-op i API-versionen — server persisterer
+      // via session_id-hook i /api/ai/chat. Beholdt for bagudkompat.
+      chatCtx.persistConversation(convId, newMessages);
     }
-    // Auto-title from first user message (non-blocking)
-    if (messages.length === 0) {
-      void chatCtx.titleConversation(convId, text);
-    }
-    // persistConversation er no-op i API-versionen — server persisterer via
-    // session_id-hook i /api/ai/chat. Beholdt for bagudkompat.
-    chatCtx.persistConversation(convId, newMessages);
 
     setInput('');
     setMessages(newMessages);
@@ -529,9 +526,10 @@ function AIChatPanel() {
           messages: newMessages,
           context: buildContext(),
           attachments: attachmentRefs.length > 0 ? attachmentRefs : undefined,
-          // BIZZ-820: Bind chat-turn til aktiv session så server-side
-          // persistChatMessages() gemmer user-prompt + assistant-svar.
-          session_id: convId,
+          // BIZZ-820/839: Bind turn til aktiv session (persist-hook). Når
+          // ensureConversation fejlede (convId null) springer vi
+          // session_id over — server kører stateless-mode.
+          ...(convId ? { session_id: convId } : {}),
         }),
         signal: controller.signal,
       });

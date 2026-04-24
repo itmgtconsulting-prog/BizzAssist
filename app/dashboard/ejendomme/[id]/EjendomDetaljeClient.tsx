@@ -885,9 +885,10 @@ export default function EjendomDetaljeClient({
    */
   useEffect(() => {
     // BIZZ-241: Hent lejligheder for hovedejendomme (ingen etage + har ejerlejlighedBfe)
-    // Også hent hvis dawaAdresse er tilgængelig og viser en moderejendom
+    // BIZZ-832: Også hent for child-units (ejerlejligheder med etage) for søster-enheder
     const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
-    if (!erModer) return;
+    const erChild = !!dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
+    if (!erModer && !erChild) return;
     // Kræver matrikeldata fra BBR ejendomsrelationer
     const rel = bbrData?.ejendomsrelationer?.[0];
     if (!rel?.ejerlavKode || !rel?.matrikelnr) return;
@@ -1735,7 +1736,7 @@ export default function EjendomDetaljeClient({
                     }
                   >
                     <Building2 size={12} />
-                    {lang === 'da' ? 'Gå til hovedejendom' : 'Go to main property'}
+                    {da ? 'Gå til hovedejendom' : 'Go to main property'}
                   </button>
                 )}
                 {/* Moderejandom (ingen etage, men har ejerlejlighedBfe): statisk badge */}
@@ -1989,6 +1990,51 @@ export default function EjendomDetaljeClient({
                 </div>
               </div>
             )}
+
+            {/* BIZZ-832: Søster-enheder — vises når en ejerlejlighed
+                har sibling-enheder på samme matrikel */}
+            {!!dawaAdresse?.etage &&
+              lejligheder &&
+              lejligheder.length > 1 &&
+              (() => {
+                const siblings = lejligheder.filter(
+                  (l) =>
+                    l.adresse !==
+                    `${dawaAdresse?.vejnavn} ${dawaAdresse?.husnr}, ${dawaAdresse?.etage ?? ''}${dawaAdresse?.dør ? `. ${dawaAdresse.dør}` : ''}`
+                );
+                if (siblings.length === 0) return null;
+                return (
+                  <div className="rounded-lg border border-slate-700/50 bg-[#0f172a] p-3 space-y-2">
+                    <h3 className="text-slate-400 text-xs font-medium uppercase tracking-wide flex items-center gap-1.5">
+                      <Building2 size={12} />
+                      {da ? 'Søster-enheder' : 'Sibling units'}
+                    </h3>
+                    <div className="flex flex-wrap gap-1.5">
+                      {siblings.slice(0, 20).map((sib) => {
+                        const sibHref = sib.dawaId
+                          ? `/dashboard/ejendomme/${sib.dawaId}`
+                          : `/dashboard/ejendomme/${sib.bfe}`;
+                        return (
+                          <Link
+                            key={sib.bfe}
+                            href={sibHref}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded bg-slate-800/80 border border-slate-700/40 text-slate-300 text-xs hover:border-blue-500/40 hover:text-white transition-colors"
+                          >
+                            {sib.etage ?? ''}
+                            {sib.doer ? `. ${sib.doer}` : ''}
+                            {sib.areal ? ` · ${sib.areal}m²` : ''}
+                          </Link>
+                        );
+                      })}
+                      {siblings.length > 20 && (
+                        <span className="text-slate-500 text-xs self-center">
+                          +{siblings.length - 20} {da ? 'mere' : 'more'}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
 
             {/* Tabs */}
             <div role="tablist" className="flex gap-1 -mb-px overflow-x-auto scrollbar-hide">

@@ -234,6 +234,22 @@ export const translations = {
       typeProperty: 'Ejendom',
     },
 
+    /* ─── Ejendomshierarki (BIZZ-832) ─────────────────────────────── */
+    hierarchy: {
+      dashboard: 'Dashboard',
+      properties: 'Ejendomme',
+      building: 'Bygning',
+      sfe: 'SFE',
+      belongsToMain: 'Tilhører hovedejendom',
+      belongsToMainDesc: 'Denne enhed er en del af en samlet fast ejendom (SFE)',
+      goToMain: 'Gå til hovedejendom',
+      siblingUnits: 'Søster-enheder',
+      siblingUnitsDesc: 'Andre enheder på samme matrikel',
+      mainProperty: 'Hovedejendom',
+      condominium: 'Ejerlejlighed',
+      breadcrumbLabel: 'Brødkrumme',
+    },
+
     /* ─── Universal search page ────────────────────────────────────── */
     searchPage: {
       title: 'Søg',
@@ -832,6 +848,22 @@ export const translations = {
       typeOwner: 'Person',
       typeRoad: 'Road',
       typeProperty: 'Property',
+    },
+
+    /* ─── Ejendomshierarki (BIZZ-832) ─────────────────────────────── */
+    hierarchy: {
+      dashboard: 'Dashboard',
+      properties: 'Properties',
+      building: 'Building',
+      sfe: 'SFE',
+      belongsToMain: 'Belongs to main property',
+      belongsToMainDesc: 'This unit is part of a collective real property (SFE)',
+      goToMain: 'Go to main property',
+      siblingUnits: 'Sibling units',
+      siblingUnitsDesc: 'Other units on the same cadastral parcel',
+      mainProperty: 'Main property',
+      condominium: 'Condominium',
+      breadcrumbLabel: 'Breadcrumb',
     },
 
     /* ─── Universal search page ────────────────────────────────────── */

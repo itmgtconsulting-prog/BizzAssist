@@ -437,7 +437,7 @@ export default function ChatPageClient() {
    * Beholdt som stub så sendMessage-flow kan kalde den ubekymret for
    * fejl-paths (display-only error messages).
    */
-  const persistConversation = useCallback((_id: string, _updatedMessages: ChatMessage[]) => {
+  const persistConversation = useCallback((_id: string | null, _updatedMessages: ChatMessage[]) => {
     void _id;
     void _updatedMessages;
   }, []);
@@ -555,15 +555,17 @@ export default function ChatPageClient() {
     const blockReason = checkSubscriptionLimit();
 
     // BIZZ-820: Ensure active conversation exists via context (API-backed).
-    let convId = activeId;
+    // BIZZ-820/839: Best-effort session-creation. Hvis API fejler
+    // (401/403/500 fra /api/ai/sessions) → fortsæt med convId=null i
+    // stateless mode i stedet for silent abort. Chat fungerer stadig;
+    // kun cross-device persistens preller af.
+    let convId: string | null = activeId;
     if (!convId) {
       const newId = await chatCtx.ensureConversation(lang as 'da' | 'en');
-      if (!newId) {
-        // Auth mangler eller API fejlede — bryd stille ud
-        return;
+      if (newId) {
+        convId = newId;
+        setActiveIdLocal(convId);
       }
-      convId = newId;
-      setActiveIdLocal(convId);
     }
 
     // BIZZ-811: Fold attachments into the user message so Claude sees the
@@ -598,7 +600,8 @@ export default function ChatPageClient() {
     const newMessages: ChatMessage[] = [...messages, userMsg];
 
     // Auto-title from first user message — use context for sync with drawer
-    if (messages.length === 0) {
+    // BIZZ-839: skip når convId null (stateless mode, ingen session at navngive)
+    if (convId && messages.length === 0) {
       void chatCtx.titleConversation(convId, text);
     }
 
@@ -658,9 +661,9 @@ export default function ChatPageClient() {
               }
             : {}),
           ...(attachmentRefs.length > 0 ? { attachments: attachmentRefs } : {}),
-          // BIZZ-820: Bind turn til aktiv session så persistChatMessages
-          // gemmer user-prompt + assistant-svar server-side.
-          session_id: convId,
+          // BIZZ-820/839: session_id kun når vi har en aktiv session.
+          // convId==null → stateless mode (server-hook springer persist over).
+          ...(convId ? { session_id: convId } : {}),
         }),
         signal: controller.signal,
       });

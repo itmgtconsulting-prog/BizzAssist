@@ -25,6 +25,7 @@ import { notFound } from 'next/navigation';
 import { ArrowLeft, Building2, Ruler, Calendar, Layers, MapPin } from 'lucide-react';
 import { fetchBygningById } from '@/app/lib/fetchBygning';
 import { isUdfasetStatusLabel } from '@/app/lib/bbrKoder';
+import { fetchBbrStatusForAdresser } from '@/app/lib/bbrEjendomStatus';
 import EjendomBreadcrumb from '@/app/components/ejendomme/EjendomBreadcrumb';
 
 export const dynamic = 'force-dynamic';
@@ -48,16 +49,28 @@ export default async function BygningDetailPage({ params }: BygningDetailPagePro
   // bygninger (status 4/10/11) = !statusOk.
   const statusOk = !isUdfasetStatusLabel(bygning.status);
 
+  // BIZZ-832: SFE BFE-lookup via bbr_ejendom_status for breadcrumb.
+  // Non-blocking — manglende BFE giver shallow breadcrumb som før.
+  let sfeBfe: number | null = null;
+  if (bygning.husnummerId) {
+    const statusMap = await fetchBbrStatusForAdresser([bygning.husnummerId]);
+    const entry = statusMap.get(bygning.husnummerId.toLowerCase());
+    sfeBfe = entry?.bfeNummer ?? null;
+  }
+
   return (
     <div className="bg-[#0a1020] min-h-screen">
       <div className="max-w-4xl mx-auto px-6 py-8 space-y-6">
-        {/* BIZZ-797: Breadcrumb. SFE-link er parkeret til iter 2 fordi
-            det kræver MAT-jordstykke-lookup fra bygning.husnummer
-            (håndteres i BIZZ-796b/797b). */}
+        {/* BIZZ-832: Breadcrumb med SFE-link når BFE er bekendt.
+            Dashboard → Ejendomme → SFE [bfe] → Bygning X */}
         <EjendomBreadcrumb
+          ariaLabel="Breadcrumb"
           levels={[
             { label: 'Dashboard', href: '/dashboard' },
             { label: 'Ejendomme', href: '/dashboard/ejendomme' },
+            ...(sfeBfe
+              ? [{ label: `SFE ${sfeBfe}`, href: `/dashboard/ejendomme/sfe/${sfeBfe}` }]
+              : []),
             { label: `Bygning ${bygning.anvendelse ?? bygning.id.slice(0, 8)}` },
           ]}
         />
@@ -161,10 +174,19 @@ export default async function BygningDetailPage({ params }: BygningDetailPagePro
           </Link>
         )}
 
-        {/* Iter 2 placeholder */}
-        <div className="text-xs text-slate-600 italic pt-4">
-          Iter 2: enheder-liste, SFE-breadcrumb, kort, SEO-rute — BIZZ-796b.
-        </div>
+        {/* BIZZ-832: "Tilhører hovedejendom" block */}
+        {sfeBfe && (
+          <Link
+            href={`/dashboard/ejendomme/sfe/${sfeBfe}`}
+            className="flex items-center gap-3 px-4 py-3 rounded-lg bg-amber-500/5 border border-amber-500/20 hover:border-amber-500/40 transition-colors"
+          >
+            <Building2 size={16} className="text-amber-400 shrink-0" />
+            <div className="flex-1">
+              <p className="text-amber-300 text-sm font-medium">Tilhører hovedejendom</p>
+              <p className="text-slate-500 text-xs mt-0.5">SFE {sfeBfe} — Samlet Fast Ejendom</p>
+            </div>
+          </Link>
+        )}
       </div>
     </div>
   );

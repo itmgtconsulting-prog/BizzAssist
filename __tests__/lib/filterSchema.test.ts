@@ -224,3 +224,53 @@ describe('resetFilters', () => {
     expect(resetFilters(allSchemas)).toEqual({ skjulUdfasede: true });
   });
 });
+
+// ─── BIZZ-838: Edge-case tests ──────────────────────────────────────────────
+
+describe('BIZZ-838: comma-escape in multi-select', () => {
+  const withComma: MultiSelectFilterSchema = {
+    type: 'multi-select',
+    key: 'test',
+    label: 'Test',
+    options: [
+      { value: 'a,b', label: 'A,B' },
+      { value: 'c', label: 'C' },
+    ],
+  };
+
+  it('encodes literal commas in values as %2C', () => {
+    expect(encodeFilterValue(withComma, ['a,b', 'c'])).toBe('a%2Cb,c');
+  });
+
+  it('decodes %2C back to commas in values', () => {
+    expect(decodeFilterValue(withComma, 'a%2Cb,c')).toEqual(['a,b', 'c']);
+  });
+
+  it('round-trips values with commas', () => {
+    const encoded = encodeFilterValue(withComma, ['a,b']);
+    expect(decodeFilterValue(withComma, encoded!)).toEqual(['a,b']);
+  });
+});
+
+describe('BIZZ-838: range regex edge cases', () => {
+  it('rejects bare hyphen', () => {
+    expect(decodeFilterValue(range, '-')).toBeUndefined();
+  });
+
+  it('rejects empty string', () => {
+    expect(decodeFilterValue(range, '')).toBeUndefined();
+  });
+
+  it('rejects multiple hyphens', () => {
+    expect(decodeFilterValue(range, '50-100-200')).toBeUndefined();
+  });
+
+  it('rejects non-numeric', () => {
+    expect(decodeFilterValue(range, 'abc-def')).toBeUndefined();
+  });
+
+  it('accepts valid open-ended ranges', () => {
+    expect(decodeFilterValue(range, '50-')).toEqual({ min: 50 });
+    expect(decodeFilterValue(range, '-150')).toEqual({ max: 150 });
+  });
+});

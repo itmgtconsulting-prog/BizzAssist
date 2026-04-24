@@ -107,7 +107,8 @@ export function encodeFilterValue(
   switch (schema.type) {
     case 'multi-select': {
       if (!Array.isArray(value) || value.length === 0) return null;
-      return value.join(',');
+      // BIZZ-838: Escape literal commas in values so split(',') on decode is safe
+      return value.map((v) => v.replaceAll(',', '%2C')).join(',');
     }
     case 'dropdown': {
       if (typeof value !== 'string' || value.length === 0) return null;
@@ -141,9 +142,10 @@ export function decodeFilterValue(
   switch (schema.type) {
     case 'multi-select': {
       if (raw.length === 0) return undefined;
+      // BIZZ-838: Decode %2C back to literal commas in values
       const parts = raw
         .split(',')
-        .map((s) => s.trim())
+        .map((s) => s.trim().replaceAll('%2C', ','))
         .filter((s) => s.length > 0);
       const allowed = new Set(schema.options.map((o) => o.value));
       const filtered = parts.filter((p) => allowed.has(p));
@@ -154,12 +156,13 @@ export function decodeFilterValue(
       return allowed.has(raw) ? raw : undefined;
     }
     case 'range': {
-      // Format: "min-max" | "min-" | "-max" — aldrig bare "-"
+      // BIZZ-838: Tighter regex — require at least one numeric group
+      // Matches "50-150", "50-", "-150", but NOT "-" alone
       const parsed = z
         .string()
-        .regex(/^(\d+)?-(\d+)?$/)
+        .regex(/^(?:\d+-\d*|\d*-\d+)$/)
         .safeParse(raw);
-      if (!parsed.success || raw === '-') return undefined;
+      if (!parsed.success) return undefined;
       const [minStr, maxStr] = raw.split('-');
       const result: { min?: number; max?: number } = {};
       if (minStr) {

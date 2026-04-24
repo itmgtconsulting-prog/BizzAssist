@@ -53,7 +53,6 @@ export function buildStatusSchema(lang: 'da' | 'en'): FilterSchema {
  */
 const VIRKSOMHEDSFORM_OPTIONS: Array<{ value: string; da: string; en: string }> = [
   { value: 'ApS', da: 'ApS (Anpartsselskab)', en: 'ApS (Private limited)' },
-  { value: 'IVS', da: 'IVS (Iværksætterselskab)', en: 'IVS (Entrepreneurial)' },
   { value: 'A/S', da: 'A/S (Aktieselskab)', en: 'A/S (Public limited)' },
   { value: 'Enkeltmandsvirksomhed', da: 'Enkeltmandsvirksomhed', en: 'Sole proprietorship' },
   { value: 'I/S', da: 'I/S (Interessentskab)', en: 'I/S (General partnership)' },
@@ -63,6 +62,12 @@ const VIRKSOMHEDSFORM_OPTIONS: Array<{ value: string; da: string; en: string }> 
   { value: 'Forening', da: 'Forening', en: 'Association' },
   { value: 'Fond', da: 'Fond', en: 'Foundation' },
   { value: 'Offentlig virksomhed', da: 'Offentlig virksomhed', en: 'Public company' },
+  // BIZZ-838: IVS afskaffet i 2019 — historisk markering, sidst i listen
+  {
+    value: 'IVS',
+    da: 'IVS (Iværksætterselskab) (historisk)',
+    en: 'IVS (Entrepreneurial) (historical)',
+  },
 ];
 
 export function buildVirksomhedsformSchema(lang: 'da' | 'en'): FilterSchema {

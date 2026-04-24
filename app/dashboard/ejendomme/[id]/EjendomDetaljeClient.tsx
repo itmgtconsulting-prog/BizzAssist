@@ -1504,17 +1504,43 @@ export default function EjendomDetaljeClient({
       });
     }
 
-    // BIZZ-444: Saml handler med samme dato + samme købesum til én linje
-    // (f.eks. 50%/50% ejere der køber sammen vises som én handel)
+    // BIZZ-444: Saml handler med samme dato til én linje (f.eks. 50%/50%
+    // ejere der køber sammen vises som én handel).
+    // BIZZ-844: Group på dato ALENE — tidligere (dato+sum) splittede rækker
+    // når Tinglysning-enrichment kun matchede én af flere EJF-rows på samme
+    // dato. Resulterede i "phantom"-rækker med samme dato men uden pris der
+    // gav visningen "Brian Holm Larsen, Jakob Juul Rasmussen" ved siden af
+    // en rigtig Jakob-række med pris. Ved merge foretrækkes den højeste
+    // (non-null) sum så prisen ikke går tabt.
     const grouped: MergedHandel[] = [];
     for (const h of merged) {
       const dato = h.overtagelsesdato ?? h.koebsaftaleDato ?? '';
-      const sum = h.kontantKoebesum ?? h.samletKoebesum ?? 0;
       const existing = grouped.find((g) => {
         const gDato = g.overtagelsesdato ?? g.koebsaftaleDato ?? '';
-        const gSum = g.kontantKoebesum ?? g.samletKoebesum ?? 0;
-        return gDato === dato && gSum === sum && dato !== '';
+        return gDato === dato && dato !== '';
       });
+      if (existing) {
+        // Behold højeste known sum (non-null) — Tinglysning-pris overskriver
+        // EJF's null-pris.
+        if (
+          h.kontantKoebesum != null &&
+          (existing.kontantKoebesum == null || h.kontantKoebesum > existing.kontantKoebesum)
+        ) {
+          existing.kontantKoebesum = h.kontantKoebesum;
+        }
+        if (
+          h.samletKoebesum != null &&
+          (existing.samletKoebesum == null || h.samletKoebesum > existing.samletKoebesum)
+        ) {
+          existing.samletKoebesum = h.samletKoebesum;
+        }
+        if (h.tinglysningsdato && !existing.tinglysningsdato) {
+          existing.tinglysningsdato = h.tinglysningsdato;
+        }
+        if (h.tinglysningsafgift != null && existing.tinglysningsafgift == null) {
+          existing.tinglysningsafgift = h.tinglysningsafgift;
+        }
+      }
       if (existing && h.koeber) {
         // BIZZ-468: Build a structured koebere[] — each buyer keeps sin egen
         // andel. Undgår den gamle string-concat-bug hvor kun sidste køber
@@ -1526,7 +1552,13 @@ export default function EjendomDetaljeClient({
             { navn: existing.koeber ?? '', cvr: existing.koebercvr, andel: existing.andel },
           ];
         }
-        existing.koebere.push({ navn: h.koeber, cvr: h.koebercvr, andel: h.andel });
+        // BIZZ-844: Skip hvis samme navn+cvr allerede er i koebere (dedup
+        // når EJF + Tinglysning returnerer samme person for samme handel).
+        const dupKey = `${h.koeber}__${h.koebercvr ?? ''}`;
+        const alreadyPresent = existing.koebere.some((k) => `${k.navn}__${k.cvr ?? ''}` === dupKey);
+        if (!alreadyPresent) {
+          existing.koebere.push({ navn: h.koeber, cvr: h.koebercvr, andel: h.andel });
+        }
         // Rebuild koeber-strengen — inkluder andel per navn hvis minimum ét
         // navn har en kendt andel. Hvis INGEN har andel, vis bare navnene.
         const anyAndel = existing.koebere.some((k) => k.andel);

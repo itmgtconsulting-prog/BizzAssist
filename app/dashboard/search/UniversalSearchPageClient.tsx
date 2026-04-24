@@ -62,6 +62,7 @@ import {
 } from '@/app/lib/search/virksomhedFilterSchema';
 import {
   buildPersonFilterSchemas,
+  buildPersonKommuneOptions,
   matchPersonFilter,
   narrowPersonFilters,
   type FilterablePerson,
@@ -865,32 +866,17 @@ export default function UniversalSearchPageClient() {
                   matchVirksomhedFilter(c, narrowVirksomhedFilters(filters))
                 ).length;
               } else if (activeTab === 'people') {
-                // BIZZ-790a: Person-filter-katalog. Schema fra BIZZ-823
-                // plug'es nu ind. Kommune-filter har begrænset effekt
-                // fordi PersonSearchResult ikke eksponerer kommune —
-                // valget matcher kun personer hvor kommunenavn findes
-                // (iter 2 udvider /api/person-search med adresse-felter).
-                currentTabSchemas = buildPersonFilterSchemas(lang, []);
-                // Map PersonSearchResult → FilterablePerson til matcher.
-                // roleTyper normaliseres til lowercase + da'ske stammer.
-                const normalizeRolle = (r: string | null): string | null => {
-                  if (!r) return null;
-                  const low = r.toLowerCase();
-                  if (low.includes('direktør')) return 'direktør';
-                  if (low.includes('bestyrelsesmedlem')) return 'bestyrelsesmedlem';
-                  if (low.includes('formand')) return 'formand';
-                  if (low.includes('stifter')) return 'stifter';
-                  if (low.includes('reel ejer') || low.includes('reel_ejer')) return 'reel_ejer';
-                  if (low === 'ejer') return 'ejer';
-                  if (low.includes('suppleant')) return 'suppleant';
-                  return low;
-                };
+                // BIZZ-823: Person-filter med enrichment-data fra
+                // cvr_deltager (is_aktiv, antal_aktive_selskaber,
+                // role_typer, kommunenavn). Fallback til ES-heuristik
+                // når enrichment mangler (null).
+                const personKommuneOptions = buildPersonKommuneOptions(people);
+                currentTabSchemas = buildPersonFilterSchemas(lang, personKommuneOptions);
                 const filterable: FilterablePerson[] = people.map((p) => ({
-                  isAktiv: p.antalVirksomheder > 0 || p.roller.length > 0,
-                  antalAktiveSelskaber: p.antalVirksomheder,
-                  roleTyper: p.roller
-                    .map((r) => normalizeRolle(r.rolle))
-                    .filter((r): r is string => r !== null),
+                  isAktiv: p.isAktiv ?? (p.antalVirksomheder > 0 || p.roller.length > 0),
+                  antalAktiveSelskaber: p.antalAktiveSelskaber ?? p.antalVirksomheder,
+                  roleTyper: p.roleTyper ?? null,
+                  adresse: p.kommunenavn ? { kommunenavn: p.kommunenavn } : undefined,
                 }));
                 matchCount = filterable.filter((p) =>
                   matchPersonFilter(p, narrowPersonFilters(filters))
@@ -1014,29 +1000,16 @@ export default function UniversalSearchPageClient() {
           {hasQuery &&
             activeTab === 'people' &&
             (() => {
-              // BIZZ-790a: Anvend person-filter på resultaterne. Samme
-              // normalisering som i match-count-beregningen ovenfor.
-              const normalizeRolle = (r: string | null): string | null => {
-                if (!r) return null;
-                const low = r.toLowerCase();
-                if (low.includes('direktør')) return 'direktør';
-                if (low.includes('bestyrelsesmedlem')) return 'bestyrelsesmedlem';
-                if (low.includes('formand')) return 'formand';
-                if (low.includes('stifter')) return 'stifter';
-                if (low.includes('reel ejer') || low.includes('reel_ejer')) return 'reel_ejer';
-                if (low === 'ejer') return 'ejer';
-                if (low.includes('suppleant')) return 'suppleant';
-                return low;
-              };
+              // BIZZ-823: Anvend person-filter med enrichment-data.
+              // Fallback til ES-heuristik for felter uden enrichment.
               const personFilters = narrowPersonFilters(filters);
               const filteredPeople = people.filter((p) =>
                 matchPersonFilter(
                   {
-                    isAktiv: p.antalVirksomheder > 0 || p.roller.length > 0,
-                    antalAktiveSelskaber: p.antalVirksomheder,
-                    roleTyper: p.roller
-                      .map((r) => normalizeRolle(r.rolle))
-                      .filter((r): r is string => r !== null),
+                    isAktiv: p.isAktiv ?? (p.antalVirksomheder > 0 || p.roller.length > 0),
+                    antalAktiveSelskaber: p.antalAktiveSelskaber ?? p.antalVirksomheder,
+                    roleTyper: p.roleTyper ?? null,
+                    adresse: p.kommunenavn ? { kommunenavn: p.kommunenavn } : undefined,
                   },
                   personFilters
                 )

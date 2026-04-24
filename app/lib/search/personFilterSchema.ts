@@ -106,6 +106,23 @@ export function buildPersonFilterSchemas(
   ];
 }
 
+/**
+ * BIZZ-823: Byg dynamisk kommune-options fra person-resultater.
+ * Kræver at PersonSearchResult har kommunenavn-felt (fra cvr_deltager
+ * enrichment). Null/undefined filtreres fra.
+ */
+export function buildPersonKommuneOptions(
+  people: Array<{ kommunenavn?: string | null }>
+): FilterOption[] {
+  const seen = new Set<string>();
+  for (const p of people) {
+    if (p.kommunenavn && p.kommunenavn.length > 0) seen.add(p.kommunenavn);
+  }
+  return Array.from(seen)
+    .sort((a, b) => a.localeCompare(b, 'da'))
+    .map((k) => ({ value: k, label: k }));
+}
+
 // ─── Filter-state + matching ───────────────────────────────────────────────
 
 export interface PersonFilterState {

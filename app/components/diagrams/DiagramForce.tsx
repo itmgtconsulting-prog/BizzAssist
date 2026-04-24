@@ -8,6 +8,7 @@
  */
 
 import { memo, useMemo, useRef, useState, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import {
   forceSimulation,
@@ -2642,9 +2643,13 @@ function DiagramForce({
   ) : null;
 
   // ── Fullscreen overlay (BIZZ-248: topbar with close button) ──
+  // BIZZ-850: Portal til document.body saa overlay ikke bliver trapped
+  // i <main>.z-0 stacking context. <header> i dashboard-layout er z-10
+  // sibling og ville ellers dække vores z-50 selvom tal er højere —
+  // fordi `<main>` creates en ny stacking-context der isolerer z-50.
   if (isFullscreen) {
-    return (
-      <div className="fixed inset-0 z-50 bg-slate-950/95 flex flex-col">
+    const overlay = (
+      <div className="fixed inset-0 z-[100] bg-slate-950/95 flex flex-col">
         {/* Topbar with title + close button */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-slate-700/40 shrink-0">
           <h2 className="text-white text-sm font-medium">
@@ -2670,6 +2675,9 @@ function DiagramForce({
         {overflowModal}
       </div>
     );
+    // createPortal kun i browser-kontekst — SSR render returnerer null
+    // (overlay vises kun ved user-klik, saa SSR-path bliver aldrig ramt).
+    return typeof document !== 'undefined' ? createPortal(overlay, document.body) : null;
   }
 
   // ── Normal inline mode ──

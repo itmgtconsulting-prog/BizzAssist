@@ -59,6 +59,14 @@ interface ChatRequestBody {
   /** BIZZ-812: Persistede attachments (ai_file-ids). Tool-dispatcher i
    *  BIZZ-813 bruger dem til template-fill. Optional + baglæns-kompatibel. */
   attachments?: ChatAttachmentRef[];
+  /**
+   * BIZZ-819: Valgfri session_id — når sat, persisterer vi user-prompt +
+   * assistant-svar til ai_chat_messages efter streaming er færdig. Hvis
+   * feltet mangler (fx legacy-klient), kører chat i stateless-mode som
+   * før og caller holder historik i localStorage. Migration-path:
+   * BIZZ-820 UI skifter gradvist til at sende session_id.
+   */
+  session_id?: string;
 }
 
 // ─── Tool definitions ───────────────────────────────────────────────────────
@@ -1390,6 +1398,89 @@ function recordTenantTokenUsage(
 }
 
 /**
+ * BIZZ-819: Fire-and-forget persistence af user-prompt + assistant-svar
+ * til ai_chat_messages. Kaldes efter SSE [DONE] så streaming-respons-
+ * tiden ikke forlænges. Fejl logges stille men blokerer ikke chat-flow.
+ *
+ * Verificerer ownership via session-id lookup før INSERT, og bumper
+ * session.last_msg_at til nu. Service_role bypasser RLS men vi gør
+ * eksplicit user_id-check for defense-in-depth.
+ */
+function persistChatMessages(
+  adminClient: SupabaseClient<Database>,
+  sessionId: string,
+  userId: string,
+  // Full messages-array fra klienten (user + eventuelle tidligere assistant).
+  // Sidste user-message er prompten for denne tur.
+  messages: ChatMessage[],
+  assistantText: string,
+  tokensIn: number,
+  tokensOut: number
+): void {
+  void (async () => {
+    try {
+      // Resolve user's tenant schema så vi skriver til rigtig tabel
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: membership } = (await (adminClient as any)
+        .from('tenant_memberships')
+        .select('tenants(schema_name)')
+        .eq('user_id', userId)
+        .limit(1)
+        .single()) as {
+        data: { tenants: { schema_name: string } | null } | null;
+      };
+      const schemaName = membership?.tenants?.schema_name;
+      if (!schemaName) return;
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const db = (adminClient as any).schema(schemaName);
+
+      // Ownership-check: session skal tilhøre user + være i samme tenant
+      const { data: session } = await db
+        .from('ai_chat_sessions')
+        .select('user_id')
+        .eq('id', sessionId)
+        .maybeSingle();
+      if (!session || session.user_id !== userId) return;
+
+      // Find sidste user-message (prompten for denne tur)
+      const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user');
+      if (!lastUserMsg) return;
+
+      const rows = [
+        {
+          session_id: sessionId,
+          role: 'user' as const,
+          content: { text: lastUserMsg.content },
+          tokens_in: null,
+          tokens_out: null,
+          model: null,
+          tool_calls: null,
+        },
+        {
+          session_id: sessionId,
+          role: 'assistant' as const,
+          content: { text: assistantText },
+          tokens_in: tokensIn,
+          tokens_out: tokensOut,
+          model: 'claude-sonnet-4-6',
+          tool_calls: null,
+        },
+      ];
+      await db.from('ai_chat_messages').insert(rows);
+
+      // Bump session.last_msg_at så sidebar-sortering virker
+      await db
+        .from('ai_chat_sessions')
+        .update({ last_msg_at: new Date().toISOString() })
+        .eq('id', sessionId);
+    } catch {
+      // Ikke-kritisk — chat-flow blev afsluttet OK
+    }
+  })();
+}
+
+/**
  * BIZZ-643: Dekrementér AI-token-forbrug i prioritets-rækkefølge:
  *  1. Plan-tokens (nulstilles månedligt — "use it or lose it")
  *  2. Bonus-tokens (admin-tildelt, ingen udløb)
@@ -1720,7 +1811,7 @@ export async function POST(request: NextRequest): Promise<Response> {
     return Response.json({ error: 'Ugyldig JSON' }, { status: 400 });
   }
 
-  const { messages, context, attachments } = body;
+  const { messages, context, attachments, session_id: sessionId } = body;
   if (!messages || !Array.isArray(messages) || messages.length === 0) {
     return Response.json({ error: 'Ingen beskeder' }, { status: 400 });
   }
@@ -1944,6 +2035,22 @@ export async function POST(request: NextRequest): Promise<Response> {
                 adminClient,
                 resolvedTenantId,
                 userId,
+                totalInputTokens,
+                totalOutputTokens
+              );
+            }
+
+            // BIZZ-819: Fire-and-forget — persistér user-prompt +
+            // assistant-svar til ai_chat_messages hvis klienten sendte
+            // session_id. Holder chat-historik server-side så brugeren
+            // kan tilgå den på tværs af devices (BIZZ-820 UI-layer).
+            if (sessionId && resolvedTenantId) {
+              persistChatMessages(
+                adminClient,
+                sessionId,
+                userId,
+                messages,
+                text,
                 totalInputTokens,
                 totalOutputTokens
               );

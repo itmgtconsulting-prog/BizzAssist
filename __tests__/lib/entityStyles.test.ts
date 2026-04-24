@@ -13,7 +13,9 @@ import {
   getEntityStyle,
   getEntityBadge,
   mapLegacyType,
+  getEjendomKindStyle,
   type EntityKind,
+  type EjendomKind,
 } from '@/app/lib/entityStyles';
 
 describe('getEntityStyle', () => {
@@ -98,5 +100,37 @@ describe('konsistens-check: alle 3 entities har unique farver', () => {
       (k) => getEntityStyle(k).Icon
     );
     expect(new Set(icons).size).toBe(3);
+  });
+});
+
+// ─── BIZZ-859: EjendomKind styles ──────────────────────────────────────────
+
+describe('getEjendomKindStyle (BIZZ-859)', () => {
+  const KINDS: EjendomKind[] = ['sfe', 'hovedejendom', 'ejerlejlighed', 'bygning'];
+
+  it('returns style for all 4 property kinds', () => {
+    for (const kind of KINDS) {
+      const s = getEjendomKindStyle(kind);
+      expect(s).toBeDefined();
+      expect(s.badgeDa).toBeTruthy();
+      expect(s.badgeEn).toBeTruthy();
+      expect(s.chip).toMatch(/bg-/);
+      expect(s.tooltipDa).toBeTruthy();
+      expect(s.tooltipEn).toBeTruthy();
+    }
+  });
+
+  it('sfe and hovedejendom use amber, ejerlejlighed uses emerald, bygning uses blue', () => {
+    expect(getEjendomKindStyle('sfe').chip).toContain('amber');
+    expect(getEjendomKindStyle('hovedejendom').chip).toContain('amber');
+    expect(getEjendomKindStyle('ejerlejlighed').chip).toContain('emerald');
+    expect(getEjendomKindStyle('bygning').chip).toContain('blue');
+  });
+
+  it('labels match terminology table', () => {
+    expect(getEjendomKindStyle('sfe').badgeDa).toBe('SFE');
+    expect(getEjendomKindStyle('hovedejendom').badgeDa).toBe('Hovedejendom');
+    expect(getEjendomKindStyle('ejerlejlighed').badgeDa).toBe('Ejerlejlighed');
+    expect(getEjendomKindStyle('bygning').badgeDa).toBe('Bygning');
   });
 });

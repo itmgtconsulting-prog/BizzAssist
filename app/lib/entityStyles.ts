@@ -14,9 +14,74 @@
  * én linje uden per-type conditionals.
  */
 
-import { Home, Briefcase, User, type LucideIcon } from 'lucide-react';
+import { Home, Briefcase, User, Building2, type LucideIcon } from 'lucide-react';
 
 export type EntityKind = 'ejendom' | 'virksomhed' | 'person';
+
+/**
+ * BIZZ-859: Sub-type for ejendoms-hierarki. Bruges til type-badges
+ * og breadcrumb-labels på tværs af søg og detaljesider.
+ *
+ *   sfe            → Samlet Fast Ejendom (matrikel-niveau)
+ *   hovedejendom   → Ejerlejlighed der selv er opdelt i lejligheder
+ *   ejerlejlighed  → Leaf-niveau enhed med etage/dør
+ *   bygning        → Bygning på SFE uden opdelt-status
+ */
+export type EjendomKind = 'sfe' | 'hovedejendom' | 'ejerlejlighed' | 'bygning';
+
+/** Badge-style for ejendoms-hierarki-niveau. */
+export interface EjendomKindStyle {
+  Icon: LucideIcon;
+  chip: string;
+  badgeDa: string;
+  badgeEn: string;
+  tooltipDa: string;
+  tooltipEn: string;
+}
+
+const EJENDOM_STYLES: Record<EjendomKind, EjendomKindStyle> = {
+  sfe: {
+    Icon: Building2,
+    chip: 'bg-amber-500/10 text-amber-300 border-amber-500/20',
+    badgeDa: 'SFE',
+    badgeEn: 'SFE',
+    tooltipDa:
+      'Samlet Fast Ejendom — matrikel-niveau ejendom der samler bygninger og ejerlejligheder',
+    tooltipEn:
+      'Collective Real Property — cadastral-level property combining buildings and condominiums',
+  },
+  hovedejendom: {
+    Icon: Building2,
+    chip: 'bg-amber-500/10 text-amber-300 border-amber-500/20',
+    badgeDa: 'Hovedejendom',
+    badgeEn: 'Main property',
+    tooltipDa: 'Ejerlejlighed der selv er opdelt i flere lejligheder',
+    tooltipEn: 'Condominium that is itself subdivided into multiple units',
+  },
+  ejerlejlighed: {
+    Icon: Home,
+    chip: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20',
+    badgeDa: 'Ejerlejlighed',
+    badgeEn: 'Condominium',
+    tooltipDa: 'Ejerlejlighed under en hovedejendom',
+    tooltipEn: 'Condominium unit under a main property',
+  },
+  bygning: {
+    Icon: Building2,
+    chip: 'bg-blue-500/10 text-blue-300 border-blue-500/20',
+    badgeDa: 'Bygning',
+    badgeEn: 'Building',
+    tooltipDa: 'Bygning med egen vurdering',
+    tooltipEn: 'Building with own valuation',
+  },
+};
+
+/**
+ * BIZZ-859: Returnerer style for en given ejendoms-hierarki-type.
+ */
+export function getEjendomKindStyle(kind: EjendomKind): EjendomKindStyle {
+  return EJENDOM_STYLES[kind];
+}
 
 export interface EntityStyle {
   /** Lucide icon component (default rendering) */

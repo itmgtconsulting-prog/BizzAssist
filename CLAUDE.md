@@ -120,6 +120,19 @@ Every function, component, hook, and API route MUST have a JSDoc comment block:
 
 See `docs/architecture/SAAS.md` for full folder structure.
 
+## Ejendoms-terminologi (BIZZ-859 — authoritative)
+
+Dansk ejendomshierarki har 4 niveauer. Brug disse navne konsistent i kode, UI og kommentarer:
+
+| Niveau | Dansk label   | Engelsk label | Farve   | Ikon      | Beskrivelse                           |
+| ------ | ------------- | ------------- | ------- | --------- | ------------------------------------- |
+| 1      | SFE           | SFE           | amber   | Building2 | Samlet Fast Ejendom — matrikel-niveau |
+| 2      | Hovedejendom  | Main property | amber   | Building2 | Ejerlejlighed der selv er opdelt      |
+| 3      | Ejerlejlighed | Condominium   | emerald | Home      | Leaf-niveau enhed med etage/dør       |
+| –      | Bygning       | Building      | blue    | Building2 | Bygning på SFE uden opdelt-status     |
+
+Definitioner og style-konstanter: `app/lib/entityStyles.ts` → `EjendomKind` + `getEjendomKindStyle()`.
+
 ## Release Process (mandatory — no exceptions)
 
 Full process: `docs/agents/RELEASE_PROCESS.md`

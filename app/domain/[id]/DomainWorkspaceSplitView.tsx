@@ -38,6 +38,7 @@ import { useLanguage } from '@/app/context/LanguageContext';
 import { useSetAIPageContext } from '@/app/context/AIPageContext';
 import type { DomainCaseSummary } from './DomainCaseList';
 import { CustomerSearchPicker, type CustomerLink } from './CustomerSearchPicker';
+import SkabelonPickerModal from '@/app/components/sager/SkabelonPickerModal';
 
 interface CaseDocSummary {
   id: string;
@@ -105,6 +106,12 @@ export function DomainWorkspaceSplitView({
   // sag-skift (ny sag → nye relevante docs).
   const MAX_SELECTED_DOCS = 20;
   const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set());
+
+  // BIZZ-900: Valgte skabelon-IDs + modal-open-state. Persisteres i URL
+  // som ?skabelon=tmpl1,tmpl2. Ryddes IKKE ved sag-skift (skabelon-valg
+  // er tværgående — bruger kan anvende samme skabelon på flere sager).
+  const [selectedTemplateIds, setSelectedTemplateIds] = useState<Set<string>>(new Set());
+  const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -182,6 +189,84 @@ export function DomainWorkspaceSplitView({
     setSelectedDocIds(empty);
     writeDocsToUrl(empty);
   }, [writeDocsToUrl]);
+
+  // BIZZ-900: Initial template-valg fra URL (?skabelon=id1,id2). Læses
+  // kun ved mount — ikke nulstillet ved sag-skift (tværgående state).
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const sp = new URLSearchParams(window.location.search);
+    const raw = sp.get('skabelon');
+    if (!raw) return;
+    const ids = raw
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    setSelectedTemplateIds(new Set(ids));
+  }, []);
+
+  // BIZZ-900: URL-sync for skabelon-valg.
+  const writeTemplatesToUrl = useCallback((ids: Set<string>) => {
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    if (ids.size > 0) {
+      url.searchParams.set('skabelon', Array.from(ids).join(','));
+    } else {
+      url.searchParams.delete('skabelon');
+    }
+    window.history.replaceState(null, '', url.toString());
+  }, []);
+
+  const commitTemplateSelection = useCallback(
+    (ids: Set<string>) => {
+      setSelectedTemplateIds(ids);
+      writeTemplatesToUrl(ids);
+    },
+    [writeTemplatesToUrl]
+  );
+
+  const removeTemplate = useCallback(
+    (id: string) => {
+      setSelectedTemplateIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        writeTemplatesToUrl(next);
+        return next;
+      });
+    },
+    [writeTemplatesToUrl]
+  );
+
+  // BIZZ-900: Cache af navne for at kunne render chips uden at refetche
+  // templates-liste. Fyldes første gang modalen hentet data, eller lazy
+  // ved første chip-render. For MVP: vis ID som fallback når navn mangler.
+  const [templateNameCache, setTemplateNameCache] = useState<Map<string, string>>(new Map());
+
+  // BIZZ-900: Hvis URL havde pre-selected templates (?skabelon=...), hent
+  // liste en gang for at fylde navn-cachet så chips viser navne ikke IDs.
+  useEffect(() => {
+    if (selectedTemplateIds.size === 0) return;
+    // Skip hvis cachet allerede har alle navne
+    if (Array.from(selectedTemplateIds).every((id) => templateNameCache.has(id))) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(`/api/domain/${domainId}/templates`);
+        if (!r.ok) return;
+        const tmpls = (await r.json()) as Array<{ id: string; name: string }>;
+        if (!cancelled) {
+          setTemplateNameCache(new Map(tmpls.map((t) => [t.id, t.name])));
+        }
+      } catch {
+        /* non-fatal */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Kun kør når domainId eller template-ids ændrer — cache-lookup er
+    // reeksekveret ved næste render så vi undgår re-fetch-loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [domainId, selectedTemplateIds]);
 
   // BIZZ-902: Sync workspace-state til AI page-context så AI Chat
   // automatisk kender aktuel sag + valgte dokumenter. AI kan så bruge
@@ -702,6 +787,59 @@ export function DomainWorkspaceSplitView({
                 )}
               </div>
 
+              {/* BIZZ-900: Skabelon-picker sektion. Knap + chips med valgte
+                  skabeloner. Skabelon-IDs persisteres i URL som ?skabelon=... */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5 gap-2">
+                  <p className="text-[11px] uppercase tracking-wide text-slate-500">
+                    {da ? 'Skabeloner' : 'Templates'}
+                    {selectedTemplateIds.size > 0 && (
+                      <span className="ml-1.5 px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 text-[10px] normal-case tracking-normal">
+                        {selectedTemplateIds.size}{' '}
+                        {da ? (selectedTemplateIds.size === 1 ? 'valgt' : 'valgte') : 'selected'}
+                      </span>
+                    )}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setTemplatePickerOpen(true)}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 transition-colors"
+                  >
+                    <Pencil size={10} />
+                    {da ? 'Vælg skabelon' : 'Select template'}
+                  </button>
+                </div>
+                {selectedTemplateIds.size === 0 ? (
+                  <p className="text-xs text-slate-500">
+                    {da ? 'Ingen skabeloner valgt.' : 'No templates selected.'}
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-1">
+                    {Array.from(selectedTemplateIds).map((id) => {
+                      const name = templateNameCache.get(id) ?? id.slice(0, 8);
+                      return (
+                        <span
+                          key={id}
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-slate-800/80 border border-blue-500/30 rounded text-[11px] text-slate-200"
+                        >
+                          <span className="truncate max-w-[180px]" title={name}>
+                            {name}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => removeTemplate(id)}
+                            aria-label={da ? `Fjern ${name}` : `Remove ${name}`}
+                            className="p-0.5 rounded text-slate-400 hover:text-rose-300 hover:bg-slate-700/40 transition-colors"
+                          >
+                            <X size={9} />
+                          </button>
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
               <div>
                 <div className="flex items-center justify-between mb-1.5 gap-2">
                   <p className="text-[11px] uppercase tracking-wide text-slate-500 whitespace-nowrap">
@@ -925,6 +1063,32 @@ export function DomainWorkspaceSplitView({
           )}
         </div>
       </div>
+
+      {/* BIZZ-900: Skabelon-picker modal — renderes uden for split-layout
+          så den ikke er begrænset af scroll-containers. onConfirm-callback
+          cache'er navne fra template-listen så chips kan vise dem. */}
+      <SkabelonPickerModal
+        domainId={domainId}
+        open={templatePickerOpen}
+        onClose={() => setTemplatePickerOpen(false)}
+        selectedIds={selectedTemplateIds}
+        onConfirm={(ids) => {
+          commitTemplateSelection(ids);
+          // Modal henter listen internt — men for chip-rendering caller vi
+          // også /api/domain/[id]/templates en gang for at bygge navn-cache.
+          // Fire-and-forget: chips viser ID som fallback indtil data ankommer.
+          void (async () => {
+            try {
+              const r = await fetch(`/api/domain/${domainId}/templates`);
+              if (!r.ok) return;
+              const tmpls = (await r.json()) as Array<{ id: string; name: string }>;
+              setTemplateNameCache(new Map(tmpls.map((t) => [t.id, t.name])));
+            } catch {
+              /* non-fatal — chips falder tilbage til id-prefix */
+            }
+          })();
+        }}
+      />
     </div>
   );
 }

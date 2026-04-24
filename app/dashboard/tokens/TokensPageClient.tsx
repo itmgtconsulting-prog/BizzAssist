@@ -847,16 +847,23 @@ export default function TokensPageClient() {
           )}
         </div>
 
-        {/* ── Tab bar ── */}
-        <div role="tablist" className="flex gap-1 p-1 rounded-lg bg-slate-800/50 w-fit">
+        {/* ── Tab bar ── BIZZ-876: Underlined horizontal pattern matcher
+            detail-side-tabs (ejendom/virksomhed/person) — border-b-2 aktiv,
+            transparent default. Konsistent på tværs af dashboard. */}
+        <div
+          role="tablist"
+          className="flex gap-4 -mb-px overflow-x-auto scrollbar-hide border-b border-slate-800"
+        >
           <button
             role="tab"
             aria-selected={activeTab === 'ai'}
             id="tab-ai"
             aria-controls="panel-ai"
             onClick={() => setActiveTab('ai')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-              activeTab === 'ai' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-100'
+            className={`flex items-center gap-2 px-2 py-2 text-sm font-medium border-b-2 transition-all whitespace-nowrap ${
+              activeTab === 'ai'
+                ? 'border-blue-500 text-blue-300'
+                : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600'
             }`}
           >
             <Zap className="w-4 h-4" />
@@ -868,8 +875,10 @@ export default function TokensPageClient() {
             id="tab-api"
             aria-controls="panel-api"
             onClick={() => setActiveTab('api')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-              activeTab === 'api' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-100'
+            className={`flex items-center gap-2 px-2 py-2 text-sm font-medium border-b-2 transition-all whitespace-nowrap ${
+              activeTab === 'api'
+                ? 'border-blue-500 text-blue-300'
+                : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-slate-600'
             }`}
           >
             <Key className="w-4 h-4" />

@@ -66,14 +66,26 @@ const BBR_AUTH = Buffer.from(`${BBR_USER}:${BBR_PASS}`).toString('base64');
 const client = createClient(SUPABASE_URL, SERVICE_ROLE);
 
 /**
- * Kilde til BFE-numre: ejf_ejerskab-tabellen (komplet sidste backfill
- * fra Datafordeler Filudtræk — 7.6M rows). Unike bfe_nummer'er vi
- * har "set" via ejerskab er en fornuftig start-population.
+ * BIZZ-835 iter 2b: To BFE-kilder for at dække nyudstykninger uden
+ * tinglyst ejer:
+ *
+ * 1. ejf_ejerskab — primær kilde (7.6M rows fra Filudtræk-backfill).
+ *    Dækker alle registrerede ejerskaber.
+ * 2. bbr_ejendom_status — sekundær kilde. Egen tabel, populeres af
+ *    tidligere runs + cron-refresh (BIZZ-826). Inkluderer BFE'er der
+ *    er blevet opdaget via DAWA-autocomplete eller andre kilder selv
+ *    uden eksplicit ejerskab-record.
+ *
+ * Unionen minimerer manglende coverage for nye BFE'er der endnu ikke
+ * er registreret i ejf_ejerskab (fx nyudstykninger). Dedup via Set.
  */
 async function* iterateBfeNumbers(limit) {
-  let offset = 0;
-  const pageSize = 1000;
+  const seen = new Set();
   let returned = 0;
+  const pageSize = 1000;
+
+  // Kilde 1: ejf_ejerskab (primaer — 7.6M rows)
+  let offset = 0;
   while (returned < limit) {
     const { data, error } = await client
       .from('ejf_ejerskab')
@@ -81,10 +93,34 @@ async function* iterateBfeNumbers(limit) {
       .not('bfe_nummer', 'is', null)
       .range(offset, offset + pageSize - 1);
     if (error) throw error;
-    if (!data || data.length === 0) return;
+    if (!data || data.length === 0) break;
     for (const row of data) {
       if (returned >= limit) return;
-      yield Number(row.bfe_nummer);
+      const bfe = Number(row.bfe_nummer);
+      if (seen.has(bfe)) continue;
+      seen.add(bfe);
+      yield bfe;
+      returned++;
+    }
+    offset += pageSize;
+  }
+
+  // Kilde 2: bbr_ejendom_status (sekundaer — nyudstykninger + tidligere run)
+  offset = 0;
+  while (returned < limit) {
+    const { data, error } = await client
+      .from('bbr_ejendom_status')
+      .select('bfe_nummer')
+      .not('bfe_nummer', 'is', null)
+      .range(offset, offset + pageSize - 1);
+    if (error) break; // non-fatal — fortsaet uden sekundaer kilde
+    if (!data || data.length === 0) break;
+    for (const row of data) {
+      if (returned >= limit) return;
+      const bfe = Number(row.bfe_nummer);
+      if (seen.has(bfe)) continue;
+      seen.add(bfe);
+      yield bfe;
       returned++;
     }
     offset += pageSize;

@@ -200,6 +200,9 @@ async function* iterateBfeNumbers(limit) {
 async function fetchBbrStatusForBfeBatch(bfeNumre) {
   if (bfeNumre.length === 0) return new Map();
 
+  // BIZZ-821: Udvidet med byg039 (boligareal), byg026 (opførelsesår),
+  // byg021 (anvendelse) til filter-berigelse. Energimærke er ikke i BBR
+  // (kræver EMO-integration) — kolonnen NULLes indtil videre.
   const query = `query($vt: DafDateTime!, $bfes: [Int!]!) {
     BBR_Grund(first: 500, virkningstid: $vt, where: { bestemtFastEjendomBFENr: { in: $bfes } }) {
       nodes {
@@ -212,6 +215,9 @@ async function fetchBbrStatusForBfeBatch(bfeNumre) {
               id_lokalId
               status
               byg038SamletBygningsareal
+              byg039BygningensSamledeBoligAreal
+              byg026Opfoerelsesaar
+              byg021BygningensAnvendelse
             }
           }
         }
@@ -295,6 +301,9 @@ async function fetchBbrStatusForBfeBatch(bfeNumre) {
         adgangsadresse_id: entry.adgangsadresse_id,
         bbr_status_code: null,
         kommune_kode: entry.kommune_kode,
+        samlet_boligareal: null,
+        opfoerelsesaar: null,
+        byg021_anvendelse: null,
       });
       continue;
     }
@@ -305,15 +314,40 @@ async function fetchBbrStatusForBfeBatch(bfeNumre) {
       return RETIRED_STATUS_CODES.has(s);
     });
 
-    // Primær status = størst-areal-bygningens status
+    // Primær status + anvendelse = størst-areal-bygningens værdier
     let primaryStatus = null;
+    let primaryAnvendelse = null;
     let maxArea = -1;
+    // BIZZ-821: Aggregér boligareal (sum) og opførelsesår (ældste)
+    let sumBoligareal = 0;
+    let hasBoligareal = false;
+    let minOpfoerelsesaar = Infinity;
+    let hasOpfoerelsesaar = false;
     for (const b of bygs) {
       const area = Number(b.byg038SamletBygningsareal) || 0;
       const s = Number(b.status);
       if (Number.isFinite(s) && area > maxArea) {
         maxArea = area;
         primaryStatus = s;
+        // Primær anvendelse følger størst-areal-bygning
+        const anvKode = b.byg021BygningensAnvendelse != null
+          ? parseInt(String(b.byg021BygningensAnvendelse), 10)
+          : null;
+        if (anvKode != null && Number.isFinite(anvKode)) {
+          primaryAnvendelse = anvKode;
+        }
+      }
+      // Sum boligareal fra alle aktive bygninger
+      const bolig = Number(b.byg039BygningensSamledeBoligAreal);
+      if (Number.isFinite(bolig) && bolig > 0) {
+        sumBoligareal += bolig;
+        hasBoligareal = true;
+      }
+      // Ældste opførelsesår
+      const aar = Number(b.byg026Opfoerelsesaar);
+      if (Number.isFinite(aar) && aar > 0 && aar < minOpfoerelsesaar) {
+        minOpfoerelsesaar = aar;
+        hasOpfoerelsesaar = true;
       }
     }
 
@@ -322,6 +356,9 @@ async function fetchBbrStatusForBfeBatch(bfeNumre) {
       adgangsadresse_id: entry.adgangsadresse_id,
       bbr_status_code: primaryStatus,
       kommune_kode: entry.kommune_kode,
+      samlet_boligareal: hasBoligareal ? sumBoligareal : null,
+      opfoerelsesaar: hasOpfoerelsesaar ? minOpfoerelsesaar : null,
+      byg021_anvendelse: primaryAnvendelse,
     });
   }
 
@@ -354,6 +391,11 @@ async function main() {
         bbr_status_code: entry.bbr_status_code ?? null,
         kommune_kode: entry.kommune_kode ?? null,
         status_last_checked_at: new Date().toISOString(),
+        // BIZZ-821: berigelsesfelter for filter-phase-2
+        samlet_boligareal: entry.samlet_boligareal ?? null,
+        opfoerelsesaar: entry.opfoerelsesaar ?? null,
+        byg021_anvendelse: entry.byg021_anvendelse ?? null,
+        berigelse_sidst: new Date().toISOString(),
       });
     }
     if (!DRY_RUN && rows.length > 0) {

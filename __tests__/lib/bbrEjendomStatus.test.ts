@@ -58,6 +58,10 @@ describe('fetchBbrStatusForAdresser', () => {
           is_udfaset: true,
           bbr_status_code: 10,
           status_last_checked_at: '2026-04-23T12:00:00Z',
+          samlet_boligareal: 120,
+          opfoerelsesaar: 1965,
+          energimaerke: 'C',
+          byg021_anvendelse: 120,
         },
       ],
       error: null,
@@ -68,6 +72,10 @@ describe('fetchBbrStatusForAdresser', () => {
       isUdfaset: true,
       bbrStatusCode: 10,
       statusLastCheckedAt: '2026-04-23T12:00:00Z',
+      samletBoligareal: 120,
+      opfoerelsesaar: 1965,
+      energimaerke: 'C',
+      anvendelseskode: 120,
     });
   });
 

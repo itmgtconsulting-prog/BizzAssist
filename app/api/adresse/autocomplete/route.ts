@@ -89,6 +89,13 @@ export async function GET(request: NextRequest) {
           if (entry.bfeNummer) {
             r.bfe = entry.bfeNummer;
           }
+          // BIZZ-821: Berig med filter-felter fra bbr_ejendom_status
+          // (migration 076). Null-felter falder igennem filtre (vis som
+          // "ukendt" → inkludér i resultat).
+          if (entry.samletBoligareal != null) r.boligareal = entry.samletBoligareal;
+          if (entry.opfoerelsesaar != null) r.opfoerelsesaar = entry.opfoerelsesaar;
+          if (entry.energimaerke != null) r.energimaerke = entry.energimaerke;
+          if (entry.anvendelseskode != null) r.anvendelseskode = entry.anvendelseskode;
         }
       }
     }

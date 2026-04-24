@@ -100,6 +100,25 @@ export interface DawaAutocompleteResult {
    * Null/undefined hvis BFE ikke er bekendt.
    */
   bfe?: number | null;
+  /**
+   * BIZZ-821: Samlet boligareal i m² (sum af byg039 for aktive bygninger).
+   * Populeret server-side fra bbr_ejendom_status berigelsesfelter.
+   */
+  boligareal?: number | null;
+  /**
+   * BIZZ-821: Opførelsesår — ældste byg026 blandt aktive bygninger.
+   */
+  opfoerelsesaar?: number | null;
+  /**
+   * BIZZ-821: Energimærke (A-G / A2020/B2015 etc.) fra EMO via bbr_ejendom_status.
+   * Null indtil EMO-integration er implementeret.
+   */
+  energimaerke?: string | null;
+  /**
+   * BIZZ-821: BBR byg021 anvendelseskode (primær bygning). Bruges af
+   * matchEjendomFilter til kategori-gruppering (helårsbeboelse, erhverv etc.).
+   */
+  anvendelseskode?: number | null;
   adresse: {
     id: string; // 'vejnavn:…' for vejnavn-type, UUID for adresse/adgangsadresse
     vejnavn: string;

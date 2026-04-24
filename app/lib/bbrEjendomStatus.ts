@@ -21,6 +21,14 @@ export interface BbrStatusEntry {
   isUdfaset: boolean;
   bbrStatusCode: number | null;
   statusLastCheckedAt: string | null;
+  /** BIZZ-821: Samlet boligareal m² (sum af byg039 for aktive bygninger) */
+  samletBoligareal: number | null;
+  /** BIZZ-821: Opførelsesår — ældste byg026 blandt aktive bygninger */
+  opfoerelsesaar: number | null;
+  /** BIZZ-821: Energimærke fra EMO (A2020/B/C/…) — null indtil EMO-integration */
+  energimaerke: string | null;
+  /** BIZZ-821: Primær BBR byg021 anvendelseskode (størst-areal-bygning) */
+  anvendelseskode: number | null;
 }
 
 /**
@@ -62,7 +70,9 @@ export async function fetchBbrStatusForAdresser(
     };
     const { data, error } = await client
       .from('bbr_ejendom_status')
-      .select('bfe_nummer, adgangsadresse_id, is_udfaset, bbr_status_code, status_last_checked_at')
+      .select(
+        'bfe_nummer, adgangsadresse_id, is_udfaset, bbr_status_code, status_last_checked_at, samlet_boligareal, opfoerelsesaar, energimaerke, byg021_anvendelse'
+      )
       .in('adgangsadresse_id', unique);
     if (error) {
       logger.warn('[bbr_ejendom_status] lookup fejlede:', error.message);
@@ -76,6 +86,10 @@ export async function fetchBbrStatusForAdresser(
         isUdfaset: !!row.is_udfaset,
         bbrStatusCode: row.bbr_status_code != null ? Number(row.bbr_status_code) : null,
         statusLastCheckedAt: (row.status_last_checked_at as string | null) ?? null,
+        samletBoligareal: row.samlet_boligareal != null ? Number(row.samlet_boligareal) : null,
+        opfoerelsesaar: row.opfoerelsesaar != null ? Number(row.opfoerelsesaar) : null,
+        energimaerke: (row.energimaerke as string | null) ?? null,
+        anvendelseskode: row.byg021_anvendelse != null ? Number(row.byg021_anvendelse) : null,
       });
     }
   } catch (err) {

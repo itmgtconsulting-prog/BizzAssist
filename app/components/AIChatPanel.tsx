@@ -397,6 +397,32 @@ function AIChatPanel() {
     setAttachments((prev) => prev.filter((a) => a.id !== id));
   }, []);
 
+  /**
+   * BIZZ-867: Window-event listener så eksterne komponenter (diagram,
+   * reports osv.) kan sende filer + åbne chat-drawer som én handling.
+   * Event-payload: { files: File[] | FileList, prompt?: string }.
+   * prompt fylder input-feltet så brugeren kan tilpasse før send.
+   */
+  useEffect(() => {
+    const handler = async (event: Event) => {
+      const ce = event as CustomEvent<{
+        files?: File[] | FileList;
+        prompt?: string;
+      }>;
+      const files = ce.detail?.files;
+      const prompt = ce.detail?.prompt;
+      if (files && (files as ArrayLike<File>).length > 0) {
+        await uploadAttachments(files);
+      }
+      if (typeof prompt === 'string' && prompt.length > 0) {
+        setInput(prompt);
+      }
+      chatCtx.setDrawerOpen(true);
+    };
+    window.addEventListener('bizz:ai-attach-files', handler);
+    return () => window.removeEventListener('bizz:ai-attach-files', handler);
+  }, [uploadAttachments, chatCtx]);
+
   /** Send besked til AI og stream svar — blokerer hvis token-grænsen er nået */
   const sendMessage = useCallback(async () => {
     const text = input.trim();

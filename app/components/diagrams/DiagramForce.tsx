@@ -28,6 +28,7 @@ import {
   Clock,
   X,
   Download,
+  Sparkles,
 } from 'lucide-react';
 import type { DiagramVariantProps, DiagramNode, DiagramEdge } from './DiagramData';
 import type { PersonPublicData } from '@/app/api/cvr-public/person/route';
@@ -1983,6 +1984,52 @@ function DiagramForce({
           title={lang === 'da' ? 'Eksportér som SVG-fil' : 'Export as SVG file'}
         >
           <Download size={13} />
+        </button>
+        {/* BIZZ-867 iter 5: Send diagram til AI. Serialiserer nodes+edges
+            til JSON-fil, uploader via /api/ai/attach (kilde for content),
+            og fyrer custom-event 'bizz:ai-attach-files' som AIChatPanel
+            lytter efter. Panelet modtager filen, folder preview ud, og
+            åbner drawer med pre-fillet prompt. AI kan nu genbruge
+            generate_document-tool til xlsx/docx-eksport. */}
+        <button
+          onClick={() => {
+            const payload = {
+              generated_at: new Date().toISOString(),
+              node_count: effectiveGraph.nodes.length,
+              edge_count: effectiveGraph.edges.length,
+              nodes: effectiveGraph.nodes.map((n) => ({
+                id: n.id,
+                type: n.type,
+                label: n.label,
+                cvr: 'cvr' in n ? n.cvr : undefined,
+                bfe: 'bfeNummer' in n ? n.bfeNummer : undefined,
+              })),
+              edges: effectiveGraph.edges.map((e) => ({
+                from: e.from,
+                to: e.to,
+                ejerandel: e.ejerandel ?? null,
+                personallyOwned: e.personallyOwned ?? false,
+              })),
+            };
+            const json = JSON.stringify(payload, null, 2);
+            const file = new File([json], `diagram-${Date.now()}.json`, {
+              type: 'application/json',
+            });
+            const prompt =
+              lang === 'da'
+                ? 'Jeg har vedhæftet mit ejerskabs-diagram som JSON. Giv mig en kort opsummering af strukturen, og generér en Excel-fil med alle nodes (ét ark) og edges (ét ark).'
+                : 'I have attached my ownership diagram as JSON. Give me a short summary of the structure and generate an Excel file with all nodes (one sheet) and edges (one sheet).';
+            window.dispatchEvent(
+              new CustomEvent('bizz:ai-attach-files', {
+                detail: { files: [file], prompt },
+              })
+            );
+          }}
+          className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-blue-300 bg-slate-800 border border-slate-700/50 rounded-lg transition ml-1"
+          aria-label={lang === 'da' ? 'Send diagram til AI' : 'Send diagram to AI'}
+          title={lang === 'da' ? 'Send diagram til AI Chat' : 'Send diagram to AI Chat'}
+        >
+          <Sparkles size={13} />
         </button>
       </div>
     </div>

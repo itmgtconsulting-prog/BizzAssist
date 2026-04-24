@@ -133,21 +133,6 @@ export function DomainWorkspaceSplitView({
   const [caseLoading, setCaseLoading] = useState(false);
 
   const [editing, setEditing] = useState(false);
-  // BIZZ-884: ESC-tast lukker edit-tilstand. Kun aktiv når editing=true
-  // så vi ikke forstyrrer anden keyboard-navigation. Dialog-fokus er
-  // ikke implementeret (form er inline, ikke modal) så vi lytter
-  // globalt på document.
-  useEffect(() => {
-    if (!editing) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setEditing(false);
-        setSaveError(null);
-      }
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [editing]);
   // BIZZ-807: inline edit-mode for selve sagsnavn — klik på header-titel
   // åbner input uden at skulle ind i fuld edit-form.
   const [inlineEditingName, setInlineEditingName] = useState(false);
@@ -224,6 +209,75 @@ export function DomainWorkspaceSplitView({
         : null
     );
   }, [caseDetail]);
+
+  /**
+   * BIZZ-888: Dirty-detection — sammenligner edit-state mod caseDetail.
+   * Bruges af close/cancel-handlers til at vise confirm-dialog hvis
+   * brugeren har ugemte ændringer. Tidligere lukkede X silently og
+   * forkastede status-ændringer (fx 'open' → 'closed' blev glemt).
+   */
+  const isEditDirty = useCallback((): boolean => {
+    if (!caseDetail) return false;
+    if (editName !== caseDetail.name) return true;
+    if (editClientRef !== (caseDetail.client_ref ?? '')) return true;
+    if (editNotes !== (caseDetail.notes ?? '')) return true;
+    if (editShortDescription !== (caseDetail.short_description ?? '')) return true;
+    if (editStatus !== caseDetail.status) return true;
+    if (editTagsInput !== caseDetail.tags.join(', ')) return true;
+    const origCustomer = caseDetail.client_kind
+      ? {
+          kind: caseDetail.client_kind,
+          cvr: caseDetail.client_cvr,
+          person_id: caseDetail.client_person_id,
+        }
+      : null;
+    const currCustomer = editCustomer
+      ? {
+          kind: editCustomer.kind,
+          cvr: editCustomer.cvr,
+          person_id: editCustomer.person_id,
+        }
+      : null;
+    if (JSON.stringify(origCustomer) !== JSON.stringify(currCustomer)) return true;
+    return false;
+  }, [
+    caseDetail,
+    editName,
+    editClientRef,
+    editNotes,
+    editShortDescription,
+    editStatus,
+    editTagsInput,
+    editCustomer,
+  ]);
+
+  /**
+   * BIZZ-888: Close-edit med dirty-check. Hvis ugemte ændringer:
+   * spørg bruger om de vil forkaste. Tom ellers → luk direkte.
+   */
+  const closeEditWithConfirm = useCallback(() => {
+    if (isEditDirty()) {
+      const confirmed = window.confirm(
+        da
+          ? 'Du har ugemte ændringer. Vil du forkaste dem?'
+          : 'You have unsaved changes. Discard them?'
+      );
+      if (!confirmed) return;
+    }
+    setEditing(false);
+    setSaveError(null);
+  }, [isEditDirty, da]);
+
+  // BIZZ-884 + BIZZ-888: ESC-tast lukker edit-tilstand med dirty-check.
+  // Kun aktiv når editing=true — ingen forstyrrelse af anden keyboard-nav.
+  useEffect(() => {
+    if (!editing) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeEditWithConfirm();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [editing, closeEditWithConfirm]);
 
   const saveCase = async () => {
     if (!caseDetail) return;
@@ -462,16 +516,12 @@ export function DomainWorkspaceSplitView({
               </button>
             </>
           )}
-          {/* BIZZ-884: Synlig X-knap der lukker edit-tilstand fra header —
-              eksisterende Annuller-knap er i bunden af formen og kan være
-              skjult ved scroll. Denne gør exit diskoverbart. */}
+          {/* BIZZ-884 + BIZZ-888: Synlig X-knap der lukker edit-tilstand med
+              dirty-check. Forkaster ikke ugemte ændringer silently. */}
           {caseDetail && editing && (
             <button
               type="button"
-              onClick={() => {
-                setEditing(false);
-                setSaveError(null);
-              }}
+              onClick={closeEditWithConfirm}
               aria-label={da ? 'Luk redigering' : 'Close edit'}
               title={da ? 'Luk redigering (Esc)' : 'Close edit (Esc)'}
               className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800 transition-colors shrink-0"
@@ -689,10 +739,9 @@ export function DomainWorkspaceSplitView({
               <div className="flex items-center justify-end gap-1.5 pt-1">
                 <button
                   type="button"
-                  onClick={() => {
-                    setEditing(false);
-                    setSaveError(null);
-                  }}
+                  // BIZZ-888: Annuller bruger samme dirty-check som X/ESC
+                  // for konsistent adfaerd paa tvaers af alle close-paths.
+                  onClick={closeEditWithConfirm}
                   disabled={saving}
                   className="px-2 py-1 text-[11px] text-slate-400 hover:text-white"
                 >

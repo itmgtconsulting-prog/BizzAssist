@@ -56,6 +56,18 @@ interface ChatMessage {
     size: number;
     truncated?: boolean;
   }>;
+  /**
+   * BIZZ-814: AI-genererede filer fra generate_document tool-use.
+   * Rendres som download-chips under assistant-svaret.
+   */
+  generatedFiles?: Array<{
+    file_id: string;
+    file_name: string;
+    download_url: string;
+    preview_text: string;
+    bytes: number;
+    format: string;
+  }>;
 }
 
 /**
@@ -736,6 +748,8 @@ export default function ChatPageClient() {
       const decoder = new TextDecoder();
       let accumulated = '';
       let buffer = '';
+      // BIZZ-814: buffer generated-files fra SSE til final message
+      const generatedFiles: NonNullable<ChatMessage['generatedFiles']> = [];
 
       try {
         while (true) {
@@ -758,6 +772,14 @@ export default function ChatPageClient() {
                 error?: string;
                 status?: string;
                 usage?: { inputTokens: number; outputTokens: number; totalTokens: number };
+                generated_file?: {
+                  file_id: string;
+                  file_name: string;
+                  download_url: string;
+                  preview_text: string;
+                  bytes: number;
+                  format: string;
+                };
               };
               const isActive = activeId === convId;
               if (parsed.error) {
@@ -774,6 +796,13 @@ export default function ChatPageClient() {
                 if (isActive) {
                   setToolStatus(parsed.status);
                   chatCtx.setToolStatus(parsed.status);
+                }
+              } else if (parsed.generated_file) {
+                // BIZZ-814: gem til final-message + vis status
+                generatedFiles.push(parsed.generated_file);
+                if (isActive) {
+                  setToolStatus(`Fil genereret: ${parsed.generated_file.file_name}`);
+                  chatCtx.setToolStatus(`Fil genereret: ${parsed.generated_file.file_name}`);
                 }
               } else if (parsed.t) {
                 accumulated += parsed.t;
@@ -795,8 +824,13 @@ export default function ChatPageClient() {
         reader.cancel().catch(() => {});
       }
 
-      if (accumulated) {
-        const assistantMsg: ChatMessage = { role: 'assistant', content: accumulated };
+      if (accumulated || generatedFiles.length > 0) {
+        // BIZZ-814: attach eventuelle genererede filer til message
+        const assistantMsg: ChatMessage = {
+          role: 'assistant',
+          content: accumulated,
+          ...(generatedFiles.length > 0 ? { generatedFiles: [...generatedFiles] } : {}),
+        };
         const finalMessages = [...newMessages, assistantMsg];
         persistConversation(convId, finalMessages);
         if (activeId === convId) {
@@ -1073,6 +1107,80 @@ export default function ChatPageClient() {
                   ) : (
                     <MarkdownContent text={displayContent} />
                   )}
+                  {/* BIZZ-814: AI-genererede filer som download-chips */}
+                  {msg.role === 'assistant' &&
+                    msg.generatedFiles &&
+                    msg.generatedFiles.length > 0 && (
+                      <div className="mt-3 space-y-1.5">
+                        {msg.generatedFiles.map((gf) => (
+                          <div
+                            key={gf.file_id}
+                            className="flex items-center gap-2 rounded-md px-3 py-2 bg-slate-900/60 border border-blue-500/30"
+                          >
+                            <FileText size={14} className="shrink-0 text-blue-300" />
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-sm font-medium text-white">
+                                {gf.file_name}
+                              </p>
+                              <p className="text-[10px] uppercase text-slate-400">
+                                {gf.format} · {(gf.bytes / 1024).toFixed(1)} KB
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                docPreview.open({
+                                  name: gf.file_name,
+                                  fileType: gf.format,
+                                  text: gf.preview_text,
+                                  downloadUrl: gf.download_url,
+                                  sizeBytes: gf.bytes,
+                                })
+                              }
+                              aria-label="Forhåndsvis"
+                              className="p-1.5 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+                              title="Forhåndsvis"
+                            >
+                              <svg
+                                width="14"
+                                height="14"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              >
+                                <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+                                <circle cx="12" cy="12" r="3" />
+                              </svg>
+                            </button>
+                            <a
+                              href={gf.download_url}
+                              download={gf.file_name}
+                              aria-label="Download"
+                              className="p-1.5 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+                              title="Download"
+                            >
+                              <svg
+                                width="14"
+                                height="14"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              >
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                <polyline points="7 10 12 15 17 10" />
+                                <line x1="12" y1="15" x2="12" y2="3" />
+                              </svg>
+                            </a>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                 </div>
               </div>
             );

@@ -29,12 +29,27 @@ export interface ChatAttachmentMeta {
   file_id?: string | null;
 }
 
+/**
+ * BIZZ-814: Metadata for en AI-genereret fil knyttet til en assistant-
+ * besked. Persisteres i localStorage så chippen overlever reload.
+ */
+export interface ChatGeneratedFileMeta {
+  file_id: string;
+  file_name: string;
+  download_url: string;
+  preview_text: string;
+  bytes: number;
+  format: string;
+}
+
 /** A single chat message */
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   /** BIZZ-812: optional attachment metadata — renders as chips. */
   attachments?: ChatAttachmentMeta[];
+  /** BIZZ-814: optional AI-generated-file metadata — renders as download chips. */
+  generatedFiles?: ChatGeneratedFileMeta[];
 }
 
 /** A persisted conversation stored in localStorage */

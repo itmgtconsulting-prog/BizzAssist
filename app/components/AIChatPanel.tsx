@@ -51,6 +51,19 @@ interface Message {
     size: number;
     truncated?: boolean;
   }>;
+  /**
+   * BIZZ-814: AI-genererede filer fra generate_document tool-use.
+   * Rendres som klikbare chips under assistant-beskeden med download-link
+   * + eye-ikon for at åbne DocPreview (BIZZ-815).
+   */
+  generatedFiles?: Array<{
+    file_id: string;
+    file_name: string;
+    download_url: string;
+    preview_text: string;
+    bytes: number;
+    format: string;
+  }>;
 }
 
 /**
@@ -542,6 +555,10 @@ function AIChatPanel() {
       const decoder = new TextDecoder();
       let accumulated = '';
       let buffer = '';
+      // BIZZ-814: accumulate generated-files fra SSE så de kan attachees
+      // til final assistant-besked. Multi-file per tur (fx AI kalder tool
+      // to gange i samme tur) understøttet.
+      const generatedFiles: NonNullable<Message['generatedFiles']> = [];
 
       try {
         while (true) {
@@ -574,6 +591,19 @@ function AIChatPanel() {
                   bonusRemaining?: number;
                   topUpRemaining?: number;
                 };
+                /**
+                 * BIZZ-814: generate_document tool-call resultat. Emittes
+                 * før tool_result sendes tilbage til Claude så klienten
+                 * kan vise chippen straks.
+                 */
+                generated_file?: {
+                  file_id: string;
+                  file_name: string;
+                  download_url: string;
+                  preview_text: string;
+                  bytes: number;
+                  format: string;
+                };
               };
               // Only update UI if user is still viewing this conversation
               const isActive = chatCtx.activeId === convId;
@@ -604,6 +634,19 @@ function AIChatPanel() {
                   setToolStatus(parsed.status);
                   chatCtx.setToolStatus(parsed.status);
                 }
+              } else if (parsed.generated_file) {
+                // BIZZ-814: buffer til senere attach på final message.
+                // Vis status så brugeren ser progress mens Claude formulerer
+                // sit opfølgende tekst-svar.
+                generatedFiles.push(parsed.generated_file);
+                if (isActive) {
+                  setToolStatus(
+                    `${lang === 'da' ? 'Fil genereret:' : 'File generated:'} ${parsed.generated_file.file_name}`
+                  );
+                  chatCtx.setToolStatus(
+                    `${lang === 'da' ? 'Fil genereret:' : 'File generated:'} ${parsed.generated_file.file_name}`
+                  );
+                }
               } else if (parsed.t) {
                 accumulated += parsed.t;
                 if (isActive) {
@@ -627,10 +670,16 @@ function AIChatPanel() {
       }
 
       // Flyt streamed tekst til message-array + persist
-      if (accumulated) {
-        const finalMsgs = [...newMessages, { role: 'assistant' as const, content: accumulated }];
+      if (accumulated || generatedFiles.length > 0) {
+        const finalAssistant: Message = {
+          role: 'assistant',
+          content: accumulated,
+          // BIZZ-814: attach AI-genererede filer til messagen så chips
+          // renderes under svaret og persisteres i localStorage.
+          ...(generatedFiles.length > 0 ? { generatedFiles: [...generatedFiles] } : {}),
+        };
+        const finalMsgs = [...newMessages, finalAssistant];
         chatCtx.persistConversation(convId, finalMsgs);
-        // Only update UI if still on same conversation
         if (chatCtx.activeId === convId) {
           setMessages(finalMsgs);
         }
@@ -966,6 +1015,80 @@ function AIChatPanel() {
                         ) : (
                           displayContent
                         )}
+                        {/* BIZZ-814: AI-genererede filer som chips under assistant-svaret */}
+                        {msg.role === 'assistant' &&
+                          msg.generatedFiles &&
+                          msg.generatedFiles.length > 0 && (
+                            <div className="mt-2 space-y-1">
+                              {msg.generatedFiles.map((gf) => (
+                                <div
+                                  key={gf.file_id}
+                                  className="flex items-center gap-1.5 rounded-md px-2 py-1.5 bg-slate-900/60 border border-blue-500/30"
+                                >
+                                  <FileText size={12} className="shrink-0 text-blue-300" />
+                                  <div className="min-w-0 flex-1">
+                                    <p className="truncate text-[11px] font-medium text-white">
+                                      {gf.file_name}
+                                    </p>
+                                    <p className="text-[9px] uppercase text-slate-400">
+                                      {gf.format} · {(gf.bytes / 1024).toFixed(1)} KB
+                                    </p>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      docPreview.open({
+                                        name: gf.file_name,
+                                        fileType: gf.format,
+                                        text: gf.preview_text,
+                                        downloadUrl: gf.download_url,
+                                        sizeBytes: gf.bytes,
+                                      })
+                                    }
+                                    aria-label={lang === 'da' ? 'Forhåndsvis' : 'Preview'}
+                                    className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+                                    title={lang === 'da' ? 'Forhåndsvis' : 'Preview'}
+                                  >
+                                    <svg
+                                      width="12"
+                                      height="12"
+                                      viewBox="0 0 24 24"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      strokeWidth="2"
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                    >
+                                      <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+                                      <circle cx="12" cy="12" r="3" />
+                                    </svg>
+                                  </button>
+                                  <a
+                                    href={gf.download_url}
+                                    download={gf.file_name}
+                                    aria-label={lang === 'da' ? 'Download' : 'Download'}
+                                    className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+                                    title={lang === 'da' ? 'Download' : 'Download'}
+                                  >
+                                    <svg
+                                      width="12"
+                                      height="12"
+                                      viewBox="0 0 24 24"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      strokeWidth="2"
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                    >
+                                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                      <polyline points="7 10 12 15 17 10" />
+                                      <line x1="12" y1="15" x2="12" y2="3" />
+                                    </svg>
+                                  </a>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                       </div>
                     </div>
                   );

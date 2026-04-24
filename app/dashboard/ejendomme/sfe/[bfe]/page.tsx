@@ -27,6 +27,7 @@ import { ArrowLeft, Building2, Home } from 'lucide-react';
 import { logger } from '@/app/lib/logger';
 import type { MatrikelResponse } from '@/app/api/matrikel/route';
 import EjendomHierarkiSections from '@/app/components/ejendomme/EjendomHierarkiSections';
+import EjerandelBadge from '@/app/components/ejendomme/EjerandelBadge';
 
 export const dynamic = 'force-dynamic';
 
@@ -341,6 +342,12 @@ export default async function SfeDetailPage({ params }: SfeDetailPageProps) {
                               {k.ejer && k.ejer !== '–' && ` · ${k.ejer}`}
                             </p>
                           </div>
+                          {/* BIZZ-833 iter 2: Per-unit ejerandels-badge (lazy-loaded client-side). */}
+                          {k.bfe > 0 && (
+                            <div className="shrink-0">
+                              <EjerandelBadge bfe={k.bfe} />
+                            </div>
+                          )}
                         </Link>
                       );
                     })}
@@ -351,9 +358,13 @@ export default async function SfeDetailPage({ params }: SfeDetailPageProps) {
           </div>
         )}
 
-        {/* Iter 2 placeholder note (visuelt skjult for brugere men i kode) */}
+        {/* BIZZ-833 iter 2: ejerforening (admin) shipped via BIZZ-889 / admin-
+            sektion øverst. Ejerandele per lejlighed via EjerandelBadge (client-
+            lazy-load). Mapbox-kort med byg021-farvekodede markører parkes til
+            iter 3 — kræver byg021-per-bygning data i jordstykke-response. */}
         <div className="text-xs text-slate-600 italic pt-4">
-          Iter 2: kort, ejerforening, ejerandele — BIZZ-795b.
+          Iter 3 parked: kort med farve-kodede bygnings-markører (kræver byg021- data pr. bygning i
+          komponent-response).
         </div>
       </div>
     </div>

@@ -1542,9 +1542,14 @@ export default function PersonDetailPageClient({
    * PropertyOwnerCard sit eget /enrich-kald = N+1 fetches med cold-start-
    * latency. Batch-endpointet henter areal, vurdering, købspris m.v. i ét
    * kald for alle savnede BFE'er.
+   *
+   * BIZZ-851: Guarden "aktivTab !== 'properties'" fjernet så enrichment
+   * starter så snart ejendomme-data er loaded, ikke først ved tab-klik.
+   * Resultat: Ejendomme-tab er klar uden ventetid når brugeren først
+   * klikker derhen.
    */
   useEffect(() => {
-    if (aktivTab !== 'properties') return;
+    // BIZZ-851: Start enrichment straks ejendomme-data er klar (ingen tab-guard).
     // BIZZ-638: Enrich BÅDE virksomhedsejede (ejendommeData) OG personligt
     // ejede (personalBfes) — sidstnævnte kommer fra ejf_ejerskab-bulkdata
     // (BIZZ-534/595) og blev tidligere glemt i enrich-loopet så de 9
@@ -1608,7 +1613,9 @@ export default function PersonDetailPageClient({
       .catch(() => {});
 
     return () => controller.abort();
-  }, [aktivTab, ejendommeData, personalBfes, preEnrichedByBfe]);
+    // BIZZ-851: aktivTab-dependency fjernet fordi guarden blev fjernet i
+    // useEffect-body. prefetch trigger nu ved ejendomme-data-changes alene.
+  }, [ejendommeData, personalBfes, preEnrichedByBfe]);
 
   /**
    * BIZZ-594: Fetch personligt ejede ejendomme (bulk-data) når diagram eller

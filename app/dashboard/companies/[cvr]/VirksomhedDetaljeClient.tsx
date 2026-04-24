@@ -1213,9 +1213,12 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
    * BIZZ-569: Batch-enrich alle BFE'er i ÉT endpoint-kald i stedet for ét
    * per kort. Sparer N × Vercel cold-start og giver dramatisk hurtigere
    * card-rendering på sider med mange ejendomme.
+   *
+   * BIZZ-848: aktivTab-guard fjernet så prefetch starter så snart ejendomme-
+   * data er loaded (ikke først ved tab-klik). Ejendomme-tab er nu klar
+   * uden ventetid når brugeren klikker derhen.
    */
   useEffect(() => {
-    if (aktivTab !== 'properties') return;
     if (ejendommeData.length === 0) return;
 
     // Find BFE'er der mangler enriched data
@@ -1256,14 +1259,16 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
       .catch(() => {});
 
     return () => controller.abort();
-  }, [aktivTab, ejendommeData, preEnrichedByBfe]);
+    // BIZZ-848: aktivTab fjernet fra dep-array da guarden er fjernet i body.
+  }, [ejendommeData, preEnrichedByBfe]);
 
   /**
    * Trigger progressiv ejendomshentning når properties-tab aktiveres eller CVR-sæt ændres.
    * Kører igen når relatedCompanies ændres (datterselskaber loader ind).
+   * BIZZ-848: prefetch også ved overview-tab — giver props-tab uden ventetid.
    */
   useEffect(() => {
-    if (aktivTab !== 'properties' && aktivTab !== 'diagram') return;
+    if (aktivTab !== 'properties' && aktivTab !== 'diagram' && aktivTab !== 'overview') return;
 
     /* Saml CVR-numre: hovedvirksomhed + aktive datterselskaber */
     const cvrList = [

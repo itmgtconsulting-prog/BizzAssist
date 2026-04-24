@@ -25,11 +25,19 @@ BEGIN
       WHERE table_schema = r.schema_name AND table_name = 'ai_chat_messages'
     ) THEN
       -- Drop eksisterende publikations-indgang hvis den allerede er
-      -- tilføjet (idempotent)
-      EXECUTE format(
-        'ALTER PUBLICATION supabase_realtime DROP TABLE IF EXISTS %I.ai_chat_messages',
-        r.schema_name
-      );
+      -- tilføjet (idempotent) — Postgres har ikke DROP TABLE IF EXISTS
+      -- på ALTER PUBLICATION, så vi tjekker pg_publication_tables først.
+      IF EXISTS (
+        SELECT 1 FROM pg_publication_tables
+        WHERE pubname = 'supabase_realtime'
+          AND schemaname = r.schema_name
+          AND tablename = 'ai_chat_messages'
+      ) THEN
+        EXECUTE format(
+          'ALTER PUBLICATION supabase_realtime DROP TABLE %I.ai_chat_messages',
+          r.schema_name
+        );
+      END IF;
       EXECUTE format(
         'ALTER PUBLICATION supabase_realtime ADD TABLE %I.ai_chat_messages',
         r.schema_name

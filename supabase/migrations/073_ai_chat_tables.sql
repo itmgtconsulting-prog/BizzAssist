@@ -204,9 +204,15 @@ DECLARE
   r RECORD;
 BEGIN
   FOR r IN
-    SELECT id, schema_name
-    FROM   public.tenants
-    WHERE  schema_name IS NOT NULL
+    SELECT t.id, t.schema_name
+    FROM   public.tenants t
+    WHERE  t.schema_name IS NOT NULL
+      -- Skip tenants hvor schema'et faktisk ikke findes i DB'en
+      -- (ghost-tenants fra tidligere failed provisioning).
+      AND  EXISTS (
+        SELECT 1 FROM information_schema.schemata s
+        WHERE s.schema_name = t.schema_name
+      )
   LOOP
     PERFORM public.provision_ai_chat_tables(r.schema_name, r.id);
   END LOOP;

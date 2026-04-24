@@ -32,15 +32,23 @@ loadDotenv({
 
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY;
+// BIZZ-821: Port fra Basic auth (DATAFORDELER_USER/PASS) til OAuth
+// client_credentials flow (DATAFORDELER_OAUTH_CLIENT_ID/SECRET).
+// Legacy basic-auth-env-vars understøttes stadig hvis OAuth ikke er sat.
+const OAUTH_CLIENT_ID = process.env.DATAFORDELER_OAUTH_CLIENT_ID;
+const OAUTH_CLIENT_SECRET = process.env.DATAFORDELER_OAUTH_CLIENT_SECRET;
 const BBR_USER = process.env.DATAFORDELER_USER;
 const BBR_PASS = process.env.DATAFORDELER_PASS;
+const USE_OAUTH = Boolean(OAUTH_CLIENT_ID && OAUTH_CLIENT_SECRET);
 
 if (!SUPABASE_URL || !SERVICE_ROLE) {
   console.error('Missing SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY');
   process.exit(1);
 }
-if (!BBR_USER || !BBR_PASS) {
-  console.error('Missing DATAFORDELER_USER / DATAFORDELER_PASS');
+if (!USE_OAUTH && (!BBR_USER || !BBR_PASS)) {
+  console.error(
+    'Missing auth: set either DATAFORDELER_OAUTH_CLIENT_ID + _SECRET (preferred) or DATAFORDELER_USER + DATAFORDELER_PASS'
+  );
   process.exit(1);
 }
 
@@ -58,10 +66,55 @@ const DRY_RUN = args.includes('--dry-run');
 // 11 = Bygning bortfaldet
 const RETIRED_STATUS_CODES = new Set([4, 10, 11]);
 
-const BBR_GQL_ENDPOINT =
-  'https://services.datafordeler.dk/BBR/BBRPublic/1/rest/GraphQL/ejendom';
+// BIZZ-821: OAuth-porten bruger den nye graphql.datafordeler.dk-endpoint
+// i stedet for services.datafordeler.dk (sidstnævnte er legacy basic-auth).
+const BBR_GQL_ENDPOINT = USE_OAUTH
+  ? 'https://graphql.datafordeler.dk/BBR/v2'
+  : 'https://services.datafordeler.dk/BBR/BBRPublic/1/rest/GraphQL/ejendom';
 
-const BBR_AUTH = Buffer.from(`${BBR_USER}:${BBR_PASS}`).toString('base64');
+const BBR_BASIC_AUTH = USE_OAUTH
+  ? null
+  : Buffer.from(`${BBR_USER}:${BBR_PASS}`).toString('base64');
+
+// OAuth token cache (per script-run). Genbruger token i 60 min (expires_in
+// typisk 3600s) så vi undgår en token-round-trip per batch.
+let _oauthToken = null;
+let _oauthExpiresAt = 0;
+async function getOAuthToken() {
+  if (_oauthToken && _oauthExpiresAt > Date.now() + 60_000) return _oauthToken;
+  const tokenUrl =
+    process.env.DATAFORDELER_TOKEN_URL ||
+    'https://auth.datafordeler.dk/realms/distribution/protocol/openid-connect/token';
+  const res = await fetch(tokenUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'client_credentials',
+      client_id: OAUTH_CLIENT_ID,
+      client_secret: OAUTH_CLIENT_SECRET,
+    }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) {
+    throw new Error(`OAuth token request failed: ${res.status}`);
+  }
+  const json = await res.json();
+  _oauthToken = json.access_token;
+  _oauthExpiresAt = Date.now() + json.expires_in * 1000;
+  return _oauthToken;
+}
+
+/**
+ * Bygger Authorization-header afhængig af auth-mode. Kaldes per request
+ * så OAuth-token auto-refresher når den udløber.
+ */
+async function authHeader() {
+  if (USE_OAUTH) {
+    const token = await getOAuthToken();
+    return `Bearer ${token}`;
+  }
+  return `Basic ${BBR_BASIC_AUTH}`;
+}
 
 const client = createClient(SUPABASE_URL, SERVICE_ROLE);
 
@@ -170,10 +223,11 @@ async function fetchBbrStatusForBfeBatch(bfeNumre) {
 
   let res;
   try {
+    const authorization = await authHeader();
     res = await fetch(BBR_GQL_ENDPOINT, {
       method: 'POST',
       headers: {
-        Authorization: `Basic ${BBR_AUTH}`,
+        Authorization: authorization,
         'Content-Type': 'application/json',
         Accept: 'application/json',
       },

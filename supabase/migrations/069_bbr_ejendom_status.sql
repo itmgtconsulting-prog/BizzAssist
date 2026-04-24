@@ -65,6 +65,7 @@ CREATE INDEX IF NOT EXISTS bbr_ejendom_status_stale_idx
 ALTER TABLE public.bbr_ejendom_status ENABLE ROW LEVEL SECURITY;
 
 -- Lad service_role få fri adgang (backfill + cron)
+DROP POLICY IF EXISTS "Service role full access" ON public.bbr_ejendom_status;
 CREATE POLICY "Service role full access"
   ON public.bbr_ejendom_status
   FOR ALL
@@ -74,6 +75,7 @@ CREATE POLICY "Service role full access"
 
 -- Tillad autenticerede brugere at læse (for at kunne vise is_udfaset
 -- i klient-side komponenter hvis vi senere vil det)
+DROP POLICY IF EXISTS "Authenticated read-only" ON public.bbr_ejendom_status;
 CREATE POLICY "Authenticated read-only"
   ON public.bbr_ejendom_status
   FOR SELECT

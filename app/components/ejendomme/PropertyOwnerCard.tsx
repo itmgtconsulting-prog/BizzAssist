@@ -296,7 +296,7 @@ export default function PropertyOwnerCard({
                   BIZZ-575: Vis "Grundv." label når vi viser grundværdi i
                   stedet for ejendomsværdi (typisk for erhverv hvor
                   ejendomsværdi=0). */}
-            {enriched.vurdering && (
+            {enriched.vurdering ? (
               <div
                 className="flex items-center gap-1.5"
                 title={
@@ -318,6 +318,23 @@ export default function PropertyOwnerCard({
                   {enriched.vurderingsaar && (
                     <span className="text-amber-500/70 ml-0.5">({enriched.vurderingsaar})</span>
                   )}
+                </span>
+              </div>
+            ) : (
+              // BIZZ-852: Tydelig placeholder naar vurdering mangler — bedre end tomt felt.
+              // Brugeren kan straks se at feltet findes men ingen data er tilgaengelig
+              // (fx udfaset ejendom, ejerlejlighed uden egen vurdering, VUR-timeout).
+              <div
+                className="flex items-center gap-1.5"
+                title={
+                  da
+                    ? 'Vurdering ikke tilgængelig — ejendommen kan være udfaset, ejerlejlighed uden egen VUR-vurdering, eller data er endnu ikke indlæst'
+                    : 'Valuation unavailable — property may be retired, condominium without own valuation, or data not yet loaded'
+                }
+              >
+                <TrendingUp size={10} className="text-slate-600" aria-hidden="true" />
+                <span className="text-slate-500 text-[11px] italic">
+                  <span>{da ? 'Vurd.' : 'Val.'}:</span> –
                 </span>
               </div>
             )}

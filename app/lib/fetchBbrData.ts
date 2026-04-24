@@ -1575,7 +1575,10 @@ export function normaliseEnhed(raw: RawBBREnhed): LiveBBREnhed {
 
   return {
     id: raw.id_lokalId ?? '',
-    bygningId: (raw.bygning && !UUID_RE.test(raw.bygning) ? null : raw.bygning) ?? null,
+    // BIZZ-878: raw.bygning ER en UUID fra BBR GraphQL. Tidligere invertere
+    // vi checket og satte feltet til null for alle gyldige UUIDs → bygningId
+    // var altid null. Nu: behold kun hvis det ER en gyldig UUID.
+    bygningId: raw.bygning && UUID_RE.test(raw.bygning) ? raw.bygning : null,
     etage: etageValue,
     doer: null, // udfyldes fra DAWA efter fetch
     adressebetegnelse: null, // udfyldes fra DAWA efter fetch

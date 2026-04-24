@@ -7,7 +7,7 @@
  *   - ai_token_usage:  purge rows older than 13 months (GDPR — BIZZ-172)
  *
  * Also purges global (public-schema) caches:
- *   - regnskab_cache:  purge rows older than 90 days (BIZZ-172)
+ *   - regnskab_cache:  purge rows older than 5 years (BIZZ-829, ADR-0006)
  *
  * Additionally purges full tenant data for tenants closed more than 30 days ago
  * (i.e. public.tenants.closed_at IS NOT NULL AND closed_at < NOW() - 30 days).
@@ -189,7 +189,7 @@ async function writeAuditLog(
  *     schema to fulfil post-closure GDPR erasure.
  *
  * Additionally purges the global public-schema cache:
- *   - regnskab_cache rows older than 90 days (BIZZ-172).
+ *   - regnskab_cache rows older than 5 years (BIZZ-829, ADR-0006).
  *
  * Returns a JSON summary of rows deleted per tenant.
  *
@@ -409,16 +409,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
       // ── Global (public-schema) purges ──────────────────────────────────────────
 
-      // Purge regnskab_cache rows older than 90 days (BIZZ-172).
-      // This is a shared public-schema cache — not tenant-scoped — so it is
-      // purged once here rather than inside the per-tenant loop.
+      // Purge regnskab_cache rows older than 5 years (BIZZ-829, ADR-0006).
+      // Previously 90 days; extended to 5y to support trend UI and filter-
+      // phase-2 historical comparison. Raw XBRL remains authoritative at
+      // regnskabsvirk.dk — we never lose data, only the cached parse.
       let regnskabCacheDeleted = 0;
       try {
-        const cutoff90d = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+        const cutoff5y = new Date(Date.now() - 5 * 365 * 24 * 60 * 60 * 1000).toISOString();
         const { count: cacheCount } = await admin
           .from('regnskab_cache')
           .delete({ count: 'exact' })
-          .lt('fetched_at', cutoff90d);
+          .lt('fetched_at', cutoff5y);
         regnskabCacheDeleted = cacheCount ?? 0;
       } catch (err) {
         logger.error('[purge-old-data] Failed to purge regnskab_cache:', err);

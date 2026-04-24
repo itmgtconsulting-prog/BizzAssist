@@ -235,7 +235,14 @@ Regler:
 - source skal være domænenavnet (f.eks. "krak.dk")
 - sourceUrl skal være den præcise URL fra søgeresultatet
 - Opfind IKKE oplysninger — brug kun hvad søgeresultaterne faktisk viser
-- Inkludér KUN resultater der specifikt matcher denne person`;
+- Inkludér KUN resultater der specifikt matcher denne person
+
+BIZZ-863: Adresse-regler (vigtigt for datakvalitet):
+- FULDSTÆNDIG adresse kræver mindst: vejnavn + husnummer + postnummer + by.
+- Hvis husnummer MANGLER i kildedata, skriv adressen uden husnummer MEN tilføj " (ufuldstændig)"-suffix, fx "Lystoftevej, 2800 Kongens Lyngby (ufuldstændig)".
+- Skelne adresse fra matrikel-reference: "Lundtofte By, Lundtofte 2gx" er MATRIKEL (ejerlav + matrikelnr), IKKE en postadresse — ekskludér fra contacts-arrayet.
+- Etage/dør inkluderes hvis tilgængeligt: "Strandvejen 42, 3. tv, 2900 Hellerup".
+- Hvis adresse kun indeholder vej + by uden husnummer: sænk confidence til max 60 og tilføj "(ufuldstændig)".`;
 }
 
 /**

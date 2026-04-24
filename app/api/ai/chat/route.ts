@@ -319,6 +319,26 @@ const TOOLS: Anthropic.Tool[] = [
       required: ['cvr'],
     },
   },
+  // BIZZ-864: hent_ejendomme_for_person — giver AI samme adgang som
+  // person-detaljesidens Ejendomme-tab. Bruger /api/ejendomme-by-owner
+  // med enhedsNummer-param, som går mod EJF GraphQL med
+  // ejendePersonEnhedsNummer-filter. VIRKER UDEN CPR-nummer.
+  {
+    name: 'hent_ejendomme_for_person',
+    description:
+      'Lister alle ejendomme en person ejer personligt (i eget navn) via EJF-registret. Kræver enhedsNummer (CVR-person-identifier, findes i kontekst på /dashboard/owners/[enhedsNummer] eller via soeg_person_cvr). VIRKER UDEN CPR-nummer — EJF returnerer BFE-numre direkte pr. enhedsNummer. Returnerer adresse, BFE, ejendomstype og ejerandel (fx 50% for par-ejede boliger). Brug dette til at sammensætte en persons samlede ejendomsportefølje — kombiner med hent_person_virksomheder + hent_ejendomme_for_virksomhed for fuldt billede (personligt ejede + via selskaber).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        enhedsNummer: {
+          type: 'string',
+          description:
+            'CVR enhedsnummer for personen (numerisk streng, fx "4000115446"). Findes typisk i konteksten på person-detaljesider, eller via soeg_person_cvr.',
+        },
+      },
+      required: ['enhedsNummer'],
+    },
+  },
   // BIZZ-813 (AI DocGen 4/8): generate_document tool.
   // Claude kalder dette når brugeren eksplicit beder om en fil
   // (XLSX/CSV/DOCX). Returnerer file_id + download_url via SSE-event.
@@ -436,6 +456,8 @@ const TOOL_STATUS: Record<string, string> = {
   soeg_person_cvr: 'Søger efter person i CVR…',
   hent_tinglysning: 'Henter tinglysningsdata…',
   hent_ejendomme_for_virksomhed: 'Henter ejendomme for virksomhed…',
+  // BIZZ-864
+  hent_ejendomme_for_person: 'Henter personens ejendomme…',
   // BIZZ-813
   generate_document: 'Genererer fil…',
 };
@@ -518,6 +540,12 @@ VIGTIGT:
 ## Virksomheds-ejendomme
 - Brug hent_ejendomme_for_virksomhed(cvr) til at liste ALLE ejendomme ejet af et CVR (samme data som Virksomhed → Ejendomme-fanen).
 - For holdingselskaber der selv ikke ejer ejendomme direkte: kald først hent_datterselskaber, dernæst hent_ejendomme_for_virksomhed med alle datter-CVR kommasepareret for at få koncernens samlede portefølje.
+
+## Personligt ejede ejendomme (BIZZ-864)
+- Brug hent_ejendomme_for_person(enhedsNummer) for at liste ejendomme en person ejer PERSONLIGT (i eget navn).
+- VIRKER UDEN CPR-nummer — EJF returnerer BFE direkte via enhedsNummer-filter. Sig ALDRIG at det kræver CPR/Tingbog.
+- På /dashboard/owners/[enhedsNummer] har du enhedsNummer i kontekst — brug det direkte uden at spørge brugeren.
+- For fuldt billede af en persons ejendomsportefølje: kald både hent_ejendomme_for_person (personligt ejede) OG hent_person_virksomheder + hent_ejendomme_for_virksomhed (via selskaber) parallelt.
 
 ## Workflow ved formueanalyse for en person
 
@@ -1276,6 +1304,62 @@ async function executeTool(
           }));
         result = {
           cvr: input.cvr,
+          antal: ejendomme.length,
+          total: data.totalBfe ?? ejendomme.length,
+          afkortet: (data.ejendomme ?? []).length > 20,
+          ejendomme,
+        };
+        break;
+      }
+
+      case 'hent_ejendomme_for_person': {
+        // BIZZ-864: Wraps /api/ejendomme-by-owner så AI kan liste en
+        // persons personligt ejede ejendomme via EJF (enhedsNummer-filter).
+        // Uden dette tool svarer AI fejlagtigt at det kræver CPR-nummer.
+        const res = await fetch(
+          `${baseUrl}/api/ejendomme-by-owner?enhedsNummer=${encodeURIComponent(input.enhedsNummer)}`,
+          internalFetchOpts
+        );
+        if (!res.ok) {
+          result = { fejl: toolErrorMessage('Ejendomme-by-person', res.status) };
+          break;
+        }
+        const data = (await res.json()) as {
+          ejendomme?: Array<{
+            bfeNummer: number;
+            ownerCvr: string;
+            adresse: string | null;
+            postnr: string | null;
+            by: string | null;
+            kommune: string | null;
+            ejendomstype: string | null;
+            etage: string | null;
+            doer: string | null;
+            ejerandel?: string | null;
+            aktiv?: boolean;
+          }>;
+          totalBfe?: number;
+          fejl?: string | null;
+        };
+        if (data.fejl) {
+          result = { fejl: data.fejl };
+          break;
+        }
+        // Samme afkortnings-pattern som hent_ejendomme_for_virksomhed.
+        const ejendomme = (data.ejendomme ?? [])
+          .filter((e) => e.aktiv !== false)
+          .slice(0, 20)
+          .map((e) => ({
+            bfe: e.bfeNummer,
+            adresse: e.etage && e.doer ? `${e.adresse ?? ''}, ${e.etage}. ${e.doer}` : e.adresse,
+            postnr: e.postnr,
+            by: e.by,
+            kommune: e.kommune,
+            type: e.ejendomstype,
+            ejerandel: e.ejerandel,
+          }));
+        result = {
+          enhedsNummer: input.enhedsNummer,
           antal: ejendomme.length,
           total: data.totalBfe ?? ejendomme.length,
           afkortet: (data.ejendomme ?? []).length > 20,

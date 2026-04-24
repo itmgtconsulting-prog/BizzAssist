@@ -1867,12 +1867,10 @@ export default function EjendomDetaljeClient({
                     {dawaJordstykke.ejerlav.navn}
                   </span>
                 )}
-                {/* BIZZ-498: vis zone-badge for ALLE non-empty zone-værdier.
-                    Plandata returnerer fx også "Udfaset" (zone-status under
-                    udfasning) og diverse historiske kategorier — disse må
-                    også vises, ikke kun de 3 standard. Standard 3 har
-                    farve-kodet badge, øvrige får neutral slate-style. */}
-                {dawaAdresse.zone && (
+                {/* BIZZ-498: vis zone-badge for standard zone-værdier.
+                    BIZZ-856: "Udfaset" er zone-polygon-historik (ikke
+                    ejendommens status) — skjult da det forvirrer brugere. */}
+                {dawaAdresse.zone && dawaAdresse.zone !== 'Udfaset' && (
                   <span
                     className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border ${
                       dawaAdresse.zone === 'Byzone'

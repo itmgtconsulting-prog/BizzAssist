@@ -123,7 +123,7 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: 'hent_bbr_data',
     description:
-      'Hent BBR-bygningsdata (opførelsesår, areal, materialer, etager, opvarmning, supplerende varme, vandforsyning, bevaringsværdighed, enheder med boligtype og energiforsyning) for en ejendom via DAWA-adresse-ID. Returnerer også ejendomsrelationer med BFE-nummer.',
+      'Hent BBR-bygningsdata (opførelsesår, areal, materialer, etager, opvarmning, supplerende varme, vandforsyning, bevaringsværdighed, enheder med boligtype og energiforsyning) for en ejendom via DAWA-adresse-ID. Returnerer også ejendomsrelationer med BFE-nummer, samt hierarki-chain (BIZZ-895: SFE → hovedejendom → leaf-BFE) når ejendommen er del af en samlet fast ejendom. Felterne er: ejendomstype (sfe/bygning/ejerlejlighed), hovedejendomOpdeltIEjerlejligheder, moderBfe, hierarkiChain (array fra leaf til SFE med niveau-label).',
     input_schema: {
       type: 'object' as const,
       properties: {

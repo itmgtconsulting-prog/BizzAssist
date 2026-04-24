@@ -93,6 +93,12 @@ interface AIChatContextValue {
   titleConversation: (id: string, firstMessage: string) => Promise<void>;
   /** Ensure there is an active conversation, creating one if needed */
   ensureConversation: (lang: 'da' | 'en') => Promise<string | null>;
+  /**
+   * BIZZ-872: True hvis /api/ai/sessions returnerer 401/500 — indikerer at
+   * brugerens samtaler ikke kan persisteres til Supabase. UI skal vise
+   * warning-banner så brugeren ved at chat-historik er ephemeral.
+   */
+  persistenceError: boolean;
 }
 
 const AIChatContext = createContext<AIChatContextValue | null>(null);
@@ -150,6 +156,8 @@ export function AIChatContextProvider({ children }: { children: ReactNode }) {
   const [streamText, setStreamTextRaw] = useState('');
   const [toolStatus, setToolStatusRaw] = useState('');
   const [isStreaming, setIsStreamingRaw] = useState(false);
+  // BIZZ-872: Tracker om persistens-API er tilgængelig
+  const [persistenceError, setPersistenceError] = useState(false);
 
   /**
    * BIZZ-873: Watchdog for isStreaming — auto-reset efter 90s af
@@ -222,7 +230,17 @@ export function AIChatContextProvider({ children }: { children: ReactNode }) {
   const refreshConversations = useCallback(async (): Promise<Conversation[]> => {
     try {
       const res = await fetch('/api/ai/sessions?limit=100');
-      if (!res.ok) return [];
+      if (!res.ok) {
+        // BIZZ-872: 401 = ingen tenant_membership eller auth udløbet.
+        // 500 = DB-fejl. Sæt flag så UI viser warning om ephemeral chat.
+        if (res.status === 401 || res.status >= 500) {
+          console.warn(`[AIChatContext] sessions-list ${res.status} — persistens utilgængelig`);
+          setPersistenceError(true);
+        }
+        return [];
+      }
+      // Success → clear error-flag hvis det var sat
+      setPersistenceError(false);
       const data = (await res.json()) as { sessions?: ApiSession[] };
       const convs = (data.sessions ?? []).map(apiSessionToConversation);
       setConversations(convs);
@@ -304,7 +322,17 @@ export function AIChatContextProvider({ children }: { children: ReactNode }) {
           title: lang === 'da' ? 'Ny samtale' : 'New conversation',
         }),
       });
-      if (!res.ok) return null;
+      if (!res.ok) {
+        // BIZZ-872: Logg + set error-flag så UI kan vise banner.
+
+        console.warn(`[AIChatContext] createConversation ${res.status} — persistens utilgængelig`);
+        if (res.status === 401 || res.status >= 500) {
+          setPersistenceError(true);
+        }
+        return null;
+      }
+      // Success → clear error-flag
+      setPersistenceError(false);
       const data = (await res.json()) as { session?: ApiSession };
       const s = data.session;
       if (!s) return null;
@@ -314,7 +342,9 @@ export function AIChatContextProvider({ children }: { children: ReactNode }) {
       setMessages([]);
       lastPolledRef.current = null;
       return conv.id;
-    } catch {
+    } catch (err) {
+      console.warn('[AIChatContext] createConversation exception:', err);
+      setPersistenceError(true);
       return null;
     }
   }, []);
@@ -432,6 +462,8 @@ export function AIChatContextProvider({ children }: { children: ReactNode }) {
         persistConversation,
         titleConversation,
         ensureConversation,
+        // BIZZ-872: Expose persistence-error til UI-laget
+        persistenceError,
       }}
     >
       {children}

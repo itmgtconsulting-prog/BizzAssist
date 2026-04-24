@@ -974,6 +974,22 @@ export default function ChatPageClient() {
           </div>
         )}
 
+        {/* BIZZ-872: Warning-banner når persistence-API ikke svarer — samtaler
+            gemmes ikke cross-device. Ephemeral chat bliver tabt ved navigation. */}
+        {chatCtx.persistenceError && (
+          <div
+            className="mx-4 mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300 flex items-start gap-2"
+            role="status"
+          >
+            <span aria-hidden="true">⚠️</span>
+            <div className="flex-1">
+              {da
+                ? 'Chat-historik kan ikke gemmes lige nu. Samtaler er kun tilgængelige i denne session.'
+                : 'Chat history cannot be saved right now. Conversations are only available in this session.'}
+            </div>
+          </div>
+        )}
+
         {/* Messages */}
         <div className="flex-1 overflow-y-auto px-4 py-6 space-y-4">
           {messages.length === 0 && !isLoading && (

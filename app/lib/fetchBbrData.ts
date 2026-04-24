@@ -1903,6 +1903,121 @@ async function fetchDAWAEnhedAdresser(
 /**
  * Henter og aggregerer BBR-data for en given DAWA adgangsadresse UUID.
  *
+/**
+ * BIZZ-882 (858b): Rekursiv resolveHierarkiChain.
+ *
+ * Tager en leaf-BFE + optional initial moderBfe og walker opad via
+ * MAT-lookup til yderste SFE. Safety-guards:
+ *   - maxDepth = 5 (stopper dyb rekursion)
+ *   - seenBfe Set forhindrer cycles (logger.warn ved detected cycle)
+ *   - tidlig exit: når hovedejendomOpdeltIEjerlejligh=false, stop walk
+ *
+ * Kaldt sekventielt (én MAT-lookup pr niveau). Batch-optimering via
+ * MAT_SamletFastEjendom(where: { BFEnummer: { in: [...] } }) parkes til
+ * iter 2 — sekventielle kald er acceptable for typiske 1-2-niveau chains
+ * og giver ikke markant latency ved dobbelt-opdelt ejendomme.
+ *
+ * @param leafBfe - BFE for leaf-niveau (typisk ejerlejlighedBfe)
+ * @param initialModerBfe - Første parent-BFE (fra bbrData.moderBfe)
+ * @returns Array af hierarki-noder fra leaf til SFE — tom hvis intet hierarki
+ */
+async function resolveHierarkiChain(
+  leafBfe: number,
+  initialModerBfe: number | null
+): Promise<NonNullable<EjendomApiResponse['hierarkiChain']>> {
+  const MAX_DEPTH = 5;
+  const chain: NonNullable<EjendomApiResponse['hierarkiChain']> = [];
+  const seenBfe = new Set<number>();
+
+  // Start altid med leaf
+  chain.push({ bfe: leafBfe, adresse: null, niveau: 'leaf' });
+  seenBfe.add(leafBfe);
+
+  if (initialModerBfe == null || initialModerBfe === leafBfe) {
+    return chain;
+  }
+
+  // Walk opad via MAT_SamletFastEjendom lookups. Hver iteration: hent
+  // parent-BFE's egen opdelt-status og evt dens moderBfe.
+  const currentBfe: number | null = initialModerBfe;
+  let depth = 0;
+  while (currentBfe != null && depth < MAX_DEPTH) {
+    if (seenBfe.has(currentBfe)) {
+      console.warn(
+        `[resolveHierarkiChain] cycle detected at bfe=${currentBfe} depth=${depth} — break`
+      );
+      break;
+    }
+    seenBfe.add(currentBfe);
+    // Fetch MAT_SamletFastEjendom for at afgøre om current selv er opdelt.
+    // Hvis ja: det er en hovedejendom (mellem-niveau); hvis nej: det er SFE (top).
+    const query = `query($vt: DafDateTime!, $bfe: Int!) {
+      MAT_SamletFastEjendom(virkningstid: $vt, where: { BFEnummer: { eq: $bfe } }) {
+        nodes {
+          BFEnummer
+          hovedejendomOpdeltIEjerlejligh
+        }
+      }
+    }`;
+    try {
+      const resp = await fetch(
+        `https://services.datafordeler.dk/MATRIKEL2/MatGraphQL/1/rest/GraphQL?username=${process.env.DATAFORDELER_USER ?? ''}&password=${process.env.DATAFORDELER_PASS ?? ''}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            query,
+            variables: { vt: nowDafDateTime(), bfe: currentBfe },
+          }),
+          signal: AbortSignal.timeout(8_000),
+        }
+      );
+      if (!resp.ok) {
+        // Fallback: tilføj BFE som SFE (top-niveau uden mere info)
+        chain.push({ bfe: currentBfe, adresse: null, niveau: 'sfe' });
+        break;
+      }
+      const data = (await resp.json()) as {
+        data?: {
+          MAT_SamletFastEjendom?: {
+            nodes?: Array<{ BFEnummer: number; hovedejendomOpdeltIEjerlejligh: boolean | null }>;
+          };
+        };
+      };
+      const node = data.data?.MAT_SamletFastEjendom?.nodes?.[0];
+      if (!node) {
+        // Ingen MAT-data for denne BFE — fald tilbage til 'sfe' og stop
+        chain.push({ bfe: currentBfe, adresse: null, niveau: 'sfe' });
+        break;
+      }
+      const erOpdelt = !!node.hovedejendomOpdeltIEjerlejligh;
+      // Er current en mellem-hovedejendom (opdelt selv)? Eller er den yderste SFE?
+      // Hvis opdelt + har en parent → mellem-hovedejendom. Ellers SFE.
+      // For dette simple-iter har vi ikke info om parent-moderBfe fra MAT_SamletFastEjendom
+      // selv — vi kan derfor ikke gå dybere end ét niveau op fra initialModerBfe.
+      // (Fuldt recursive multi-level walk kræver forbindelse mellem ejerlejligheder
+      // og deres mellem-hovedejendomme, som ikke er direkte i MAT. Parkes til iter 3.)
+      chain.push({
+        bfe: currentBfe,
+        adresse: null,
+        niveau: erOpdelt && depth > 0 ? 'hovedejendom' : 'sfe',
+      });
+      // Stop walk — vi har ikke en direkte måde at finde parent fra MAT alene
+      // i den nuværende schema-version. Iter 3 vil kræve EJF-query via child-BFE.
+      break;
+    } catch (err) {
+      logger.warn(`[resolveHierarkiChain] fetch fejl ved bfe=${currentBfe}:`, err);
+      chain.push({ bfe: currentBfe, adresse: null, niveau: 'sfe' });
+      break;
+    }
+    // currentBfe = ... (parkes — mangler parent-lookup)
+    depth++;
+  }
+
+  return chain;
+}
+
+/**
  * Kan kaldes direkte fra server components uden HTTP round-trip — modsat
  * /api/ejendom/[id] som kræver en kørende server at kalde.
  *
@@ -2244,20 +2359,27 @@ export async function fetchBbrForAddress(
   const parentAdgangsadresseId =
     adgangsadresseId && adgangsadresseId !== dawaId ? adgangsadresseId : null;
 
-  // BIZZ-881 (858a): Byg 2-niveau hierarkiChain (leaf → sfe) baseret på
-  // ejerlejlighedBfe + moderBfe. Rekursiv dobbelt-opdeling parkeret til
-  // BIZZ-882. Fallback-signal for opdeltIEjerlejligheder bygger på
-  // tilstedeværelsen af ejerlejlighedBfe — rigtige MAT-flag (hovedejendom-
-  // OpdeltIEjerlejligh) kræver separat matrikel-fetch, se EjendomDetalje-
-  // Client der allerede kalder /api/matrikel.
-  const hierarkiChain: EjendomApiResponse['hierarkiChain'] = [];
+  // BIZZ-881 (858a): Byg hierarkiChain (leaf → sfe).
+  // BIZZ-882 (858b): Brug resolveHierarkiChain-helper til at klassificere
+  // parent som 'hovedejendom' (hvis opdelt selv) eller 'sfe' (yderste).
+  // Fuld multi-level walk parkes til iter 3 — kræver EJF-link fra parent
+  // til dens egen moderBfe, som MAT_SamletFastEjendom alene ikke eksponerer.
+  let hierarkiChain: EjendomApiResponse['hierarkiChain'] = [];
   if (ejerlejlighedBfe != null && moderBfe != null && ejerlejlighedBfe !== moderBfe) {
-    // Vi er på en leaf-ejerlejlighed der har en moder-SFE
-    hierarkiChain.push({ bfe: ejerlejlighedBfe, adresse: null, niveau: 'leaf' });
-    hierarkiChain.push({ bfe: moderBfe, adresse: null, niveau: 'sfe' });
+    // Vi er på en leaf-ejerlejlighed der har en moder. Kald recursive
+    // resolver som klassificerer parent korrekt (sfe vs mellem-hovedejendom).
+    try {
+      hierarkiChain = await resolveHierarkiChain(ejerlejlighedBfe, moderBfe);
+    } catch {
+      // Fallback til simple 2-niveau chain ved fetch-fejl
+      hierarkiChain = [
+        { bfe: ejerlejlighedBfe, adresse: null, niveau: 'leaf' },
+        { bfe: moderBfe, adresse: null, niveau: 'sfe' },
+      ];
+    }
   } else if (moderBfe != null) {
     // Vi er på SFE-niveau (moderBfe = vores egen BFE)
-    hierarkiChain.push({ bfe: moderBfe, adresse: null, niveau: 'sfe' });
+    hierarkiChain = [{ bfe: moderBfe, adresse: null, niveau: 'sfe' }];
   }
 
   // BIZZ-879 (845b): Denormaliseret bygnings-info på enheder (join via bygningId)

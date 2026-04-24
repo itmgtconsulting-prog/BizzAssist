@@ -53,6 +53,25 @@ interface ChatAttachmentRef {
   file_type: string;
 }
 
+/**
+ * BIZZ-869 part 2: Metadata for AI-genererede filer emittet under en
+ * turn. Akkumuleres i streaming-loopen og persisteres sammen med
+ * assistant-beskeden i ai_chat_messages.content så download-chippen
+ * overlever reload + cross-device.
+ */
+interface GeneratedFileRef {
+  file_id: string;
+  file_name: string;
+  download_url?: string;
+  preview_text?: string;
+  preview_kind?: 'text' | 'table' | 'html';
+  preview_columns?: string[];
+  preview_rows?: string[][];
+  preview_html?: string;
+  bytes: number;
+  format: string;
+}
+
 interface ChatRequestBody {
   messages: ChatMessage[];
   context?: string;
@@ -1598,7 +1617,12 @@ function persistChatMessages(
   messages: ChatMessage[],
   assistantText: string,
   tokensIn: number,
-  tokensOut: number
+  tokensOut: number,
+  // BIZZ-869 part 2: AI-genererede filer fra denne turn (fx xlsx/docx/csv).
+  // Tom array hvis ingen tools kaldte generate_document. Gemmes i assistant-
+  // beskedens content JSONB som `generatedFiles`-felt så klienten kan
+  // re-rendre download-chips efter reload eller login på ny device.
+  generatedFiles: GeneratedFileRef[] = []
 ): void {
   void (async () => {
     try {
@@ -1630,6 +1654,15 @@ function persistChatMessages(
       const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user');
       if (!lastUserMsg) return;
 
+      // BIZZ-869 part 2: Hvis turnen har genereret filer, inkludér dem i
+      // assistant-beskedens content så klienten kan re-hydrate chips.
+      const assistantContent: { text: string; generatedFiles?: GeneratedFileRef[] } = {
+        text: assistantText,
+      };
+      if (generatedFiles.length > 0) {
+        assistantContent.generatedFiles = generatedFiles;
+      }
+
       const rows = [
         {
           session_id: sessionId,
@@ -1643,7 +1676,7 @@ function persistChatMessages(
         {
           session_id: sessionId,
           role: 'assistant' as const,
-          content: { text: assistantText },
+          content: assistantContent,
           tokens_in: tokensIn,
           tokens_out: tokensOut,
           model: 'claude-sonnet-4-6',
@@ -2124,6 +2157,15 @@ export async function POST(request: NextRequest): Promise<Response> {
         let totalInputTokens = 0;
         let totalOutputTokens = 0;
 
+        /**
+         * BIZZ-869 part 2: Akkumulerer generate_document-tool-outputs
+         * i turnen så vi kan gemme dem i assistant-beskedens content
+         * JSONB. Uden dette mister brugeren adgang til genererede
+         * filer efter reload (kun download_url SSE-event var observer-
+         * bar i klient-memory).
+         */
+        const turnGeneratedFiles: GeneratedFileRef[] = [];
+
         while (round < MAX_TOOL_ROUNDS) {
           round++;
 
@@ -2253,7 +2295,11 @@ export async function POST(request: NextRequest): Promise<Response> {
                 messages,
                 text,
                 totalInputTokens,
-                totalOutputTokens
+                totalOutputTokens,
+                // BIZZ-869 part 2: Lad assistant-beskeden indeholde de
+                // filer vi har genereret i denne turn, så download-chippen
+                // kommer tilbage efter reload + cross-device.
+                turnGeneratedFiles
               );
             }
 
@@ -2334,9 +2380,12 @@ export async function POST(request: NextRequest): Promise<Response> {
                   file_name: string;
                   download_url?: string;
                   preview_text?: string;
-                  preview_kind?: 'text' | 'table';
+                  // BIZZ-868: 'html' tilføjet for docx preview via mammoth
+                  preview_kind?: 'text' | 'table' | 'html';
                   preview_columns?: string[];
                   preview_rows?: string[][];
+                  /** BIZZ-868: sanitiseret html for docx-filer */
+                  preview_html?: string;
                   bytes: number;
                   format: string;
                 };
@@ -2380,6 +2429,20 @@ export async function POST(request: NextRequest): Promise<Response> {
                     },
                   })
                 );
+                // BIZZ-869 part 2: Akkumulér referencen så persistChat-
+                // Messages kan gemme den i assistant-beskeden.
+                turnGeneratedFiles.push({
+                  file_id: fileResult.file_id,
+                  file_name: fileResult.file_name,
+                  download_url: fileResult.download_url,
+                  preview_text: fileResult.preview_text,
+                  preview_kind: fileResult.preview_kind,
+                  preview_columns: fileResult.preview_columns,
+                  preview_rows: fileResult.preview_rows,
+                  preview_html: fileResult.preview_html,
+                  bytes: fileResult.bytes,
+                  format: fileResult.format,
+                });
                 // Claude-facing result har INGEN download_url
                 return {
                   type: 'tool_result' as const,

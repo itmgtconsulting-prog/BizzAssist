@@ -123,12 +123,41 @@ function coerceContent(raw: unknown): string {
   }
 }
 
+/**
+ * BIZZ-869 part 2: Ekstrahér generatedFiles fra persisteret content
+ * JSONB så download-chips kan re-hydrateres efter reload eller cross-
+ * device login. Persistens-formatet er `{ text, generatedFiles: [...] }`.
+ * Returnerer undefined hvis feltet mangler, så eksisterende rows uden
+ * attachments bare opfører sig som før.
+ */
+function extractGeneratedFiles(raw: unknown): ChatMessage['generatedFiles'] {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const obj = raw as Record<string, unknown>;
+  const gf = obj.generatedFiles;
+  if (!Array.isArray(gf) || gf.length === 0) return undefined;
+  // Shallow-validate: hver entry skal have file_id + file_name + bytes + format.
+  return gf.filter(
+    (g): g is NonNullable<ChatMessage['generatedFiles']>[number] =>
+      !!g &&
+      typeof g === 'object' &&
+      typeof (g as Record<string, unknown>).file_id === 'string' &&
+      typeof (g as Record<string, unknown>).file_name === 'string' &&
+      typeof (g as Record<string, unknown>).format === 'string'
+  );
+}
+
 function apiRowToMessage(row: ApiMessageRow): ChatMessage | null {
   if (row.role !== 'user' && row.role !== 'assistant') return null;
-  return {
+  const msg: ChatMessage = {
     role: row.role,
     content: coerceContent(row.content),
   };
+  // BIZZ-869 part 2: genskab download-chips efter reload
+  if (row.role === 'assistant') {
+    const gf = extractGeneratedFiles(row.content);
+    if (gf && gf.length > 0) msg.generatedFiles = gf;
+  }
+  return msg;
 }
 
 function apiSessionToConversation(s: ApiSession): Conversation {

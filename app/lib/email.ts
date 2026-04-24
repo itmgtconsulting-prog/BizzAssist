@@ -609,3 +609,101 @@ export async function sendPaymentFailedEmail(params: PaymentFailedParams): Promi
     logger.error('[email] Failed to send payment-failed email:', err);
   }
 }
+
+// ─── Team invitation (BIZZ-271) ──────────────────────────────────────────
+
+/** Parametre til team invitation email. */
+export interface TeamInvitationParams {
+  /** Email-adresse på den inviterede */
+  to: string;
+  /** Tenant-navn så modtager ved hvilken konto invitationen er for */
+  tenantName: string;
+  /** Navn på admin der sender invitationen */
+  invitedByName: string | null;
+  /** Rolle invitee vil få efter accept (tenant_admin/tenant_member/tenant_viewer) */
+  role: string;
+  /** Accept-URL med token (format: {APP_URL}/team/accept?token=...) */
+  acceptUrl: string;
+  /** Udløbs-dato vist til modtager */
+  expiresAt: Date;
+}
+
+/**
+ * Send en team-invitation email via Resend. Fejler stille hvis
+ * RESEND_API_KEY ikke er sat (dev/staging) — admin-UI vil stadig oprette
+ * invite-rowen, og accept-URL kan deles manuelt.
+ *
+ * Retention: email-indholdet persisteres ikke — kun selve invitation-rowen
+ * indtil accept eller 7-dages udløb. No PII i logs.
+ *
+ * @param params - Email-parametre
+ */
+export async function sendTeamInvitationEmail(params: TeamInvitationParams): Promise<void> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    logger.warn('[email] RESEND_API_KEY not set, skipping team invitation email');
+    return;
+  }
+
+  const roleLabel =
+    params.role === 'tenant_admin'
+      ? 'Admin'
+      : params.role === 'tenant_viewer'
+        ? 'Viewer (read-only)'
+        : 'Medlem';
+
+  const inviterLabel = params.invitedByName ?? 'En teammedlem';
+  const expires = params.expiresAt.toLocaleDateString('da-DK', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+
+  const html = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; background: #0f172a; color: #e2e8f0; padding: 40px; border-radius: 12px;">
+      <h1 style="color: #ffffff; font-size: 24px; margin: 0 0 8px 0;">BizzAssist</h1>
+      <p style="color: #64748b; font-size: 12px; margin: 0 0 24px 0;">Du er inviteret til at blive en del af et team</p>
+
+      <h2 style="color: #3b82f6; font-size: 18px; margin: 0 0 16px 0;">Invitation til ${params.tenantName}</h2>
+
+      <p style="margin: 0 0 16px 0; font-size: 14px;">
+        ${inviterLabel} har inviteret dig til at blive en del af BizzAssist-teamet for <strong>${params.tenantName}</strong> som <strong>${roleLabel}</strong>.
+      </p>
+      <p style="margin: 0 0 24px 0; font-size: 13px; color: #94a3b8;">
+        You have been invited to join the BizzAssist team for ${params.tenantName} as ${roleLabel}.
+      </p>
+
+      <a href="${params.acceptUrl}" style="display: inline-block; background: #2563eb; color: #ffffff; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-size: 14px; font-weight: 600;">
+        Accept&eacute;r invitationen &rarr;
+      </a>
+
+      <p style="margin: 24px 0 0 0; font-size: 12px; color: #64748b;">
+        Linket udl&oslash;ber ${expires}. Hvis du ikke har en BizzAssist-konto bliver du bedt om at oprette &eacute;n.
+      </p>
+
+      <hr style="border: none; border-top: 1px solid #1e293b; margin: 30px 0;" />
+      <p style="color: #475569; font-size: 11px; margin: 0;">${companyInfo.legalLineHtml}</p>
+    </div>
+  `;
+
+  try {
+    const res = await fetch(RESEND_ENDPOINT, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: FROM_ADDRESS,
+        to: params.to,
+        subject: `Invitation til BizzAssist-teamet for ${params.tenantName}`,
+        html,
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      logger.error('[email] Team invitation email error:', res.status, body);
+    } else {
+      logger.log('[email] Team invitation email sent');
+    }
+  } catch (err) {
+    logger.error('[email] Failed to send team invitation email:', err);
+  }
+}

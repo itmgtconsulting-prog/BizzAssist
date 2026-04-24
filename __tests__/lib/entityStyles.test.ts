@@ -45,6 +45,22 @@ describe('getEntityStyle', () => {
     expect(s.chip).toMatch(/text-/);
     expect(s.chip).toMatch(/border-/);
   });
+
+  it('link-streng har hover, focus-visible og transition (BIZZ-853)', () => {
+    for (const kind of ['ejendom', 'virksomhed', 'person'] as EntityKind[]) {
+      const s = getEntityStyle(kind);
+      expect(s.link).toMatch(/hover:text-/);
+      expect(s.link).toMatch(/focus-visible:ring/);
+      expect(s.link).toMatch(/transition-colors/);
+      expect(s.link).toMatch(/cursor-pointer/);
+    }
+  });
+
+  it('person link-hover er purple, virksomhed er blue, ejendom er emerald (BIZZ-853)', () => {
+    expect(getEntityStyle('person').link).toContain('hover:text-purple-400');
+    expect(getEntityStyle('virksomhed').link).toContain('hover:text-blue-400');
+    expect(getEntityStyle('ejendom').link).toContain('hover:text-emerald-400');
+  });
 });
 
 describe('getEntityBadge', () => {

@@ -28,6 +28,13 @@ export interface EntityStyle {
   chip: string;
   /** Tailwind className for ikon-avatar-baggrund uden border */
   iconBg: string;
+  /**
+   * BIZZ-853: Tailwind-klasser til klikbare links på entitetstypen.
+   * Inklusive hover (farveskift) + focus-visible (tastatur-ring) +
+   * transition + cursor. Bruges af EntityLink.tsx + alle inline
+   * <a>/<Link>-references i detaljeviews.
+   */
+  link: string;
   /** Dansk badge-label (kort kategori-navn til chip-tekst) */
   badgeDa: string;
   /** Engelsk badge-label */
@@ -40,6 +47,7 @@ const STYLES: Record<EntityKind, EntityStyle> = {
     textColor: 'text-emerald-400',
     chip: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
     iconBg: 'bg-emerald-500/10 text-emerald-400',
+    link: 'text-slate-200 hover:text-emerald-400 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50 focus-visible:rounded-sm transition-colors cursor-pointer',
     badgeDa: 'Ejendom',
     badgeEn: 'Property',
   },
@@ -48,6 +56,7 @@ const STYLES: Record<EntityKind, EntityStyle> = {
     textColor: 'text-blue-400',
     chip: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
     iconBg: 'bg-blue-500/10 text-blue-400',
+    link: 'text-slate-200 hover:text-blue-400 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50 focus-visible:rounded-sm transition-colors cursor-pointer',
     badgeDa: 'Virksomhed',
     badgeEn: 'Company',
   },
@@ -56,6 +65,7 @@ const STYLES: Record<EntityKind, EntityStyle> = {
     textColor: 'text-purple-400',
     chip: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
     iconBg: 'bg-purple-500/10 text-purple-400',
+    link: 'text-slate-200 hover:text-purple-400 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-500/50 focus-visible:rounded-sm transition-colors cursor-pointer',
     badgeDa: 'Person',
     badgeEn: 'Person',
   },

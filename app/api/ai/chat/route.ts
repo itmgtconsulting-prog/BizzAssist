@@ -379,6 +379,25 @@ const TOOLS: Anthropic.Tool[] = [
       required: ['enhedsNummer'],
     },
   },
+  // BIZZ-889 (audit G1): ejendomsadministrator / ejerforening tool.
+  // UI viser det på SFE-detaljeside + ejerforholds-tab via /api/ejendomsadmin
+  // — AI havde ingen vej til denne data før. Bruges til at svare
+  // "hvem administrerer ejendom X" uden at lede brugeren gennem UI.
+  {
+    name: 'hent_ejendomsadmin',
+    description:
+      'Hent ejendomsadministrator (ejerforening) for en ejendom. Returnerer aktuelle administratorer (virksomhed eller person) med CVR-nummer, navn og type. Brug dette når brugeren spørger "hvem administrerer ejendom X" eller "hvilken ejerforening hører ejendom X til". Tjekker kun aktuelle (virkningTil=null).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        bfeNummer: {
+          type: 'string',
+          description: 'BFE-nummer på ejendommen (kan være SFE eller bygnings-BFE).',
+        },
+      },
+      required: ['bfeNummer'],
+    },
+  },
   // BIZZ-813 (AI DocGen 4/8): generate_document tool.
   // Claude kalder dette når brugeren eksplicit beder om en fil
   // (XLSX/CSV/DOCX). Returnerer file_id + download_url via SSE-event.
@@ -484,6 +503,8 @@ const TOOL_STATUS: Record<string, string> = {
   hent_bbr_data: 'Henter BBR-bygningsdata…',
   hent_vurdering: 'Henter ejendomsvurdering…',
   hent_ejerskab: 'Henter ejerskabsdata…',
+  // BIZZ-889
+  hent_ejendomsadmin: 'Henter ejendomsadministrator…',
   hent_salgshistorik: 'Henter salgshistorik…',
   hent_energimaerke: 'Henter energimærke…',
   hent_jordforurening: 'Henter jordforureningsdata…',
@@ -863,6 +884,43 @@ async function executeTool(
           break;
         }
         result = await res.json();
+        break;
+      }
+
+      // BIZZ-889 (audit G1): ejendomsadministrator / ejerforening lookup.
+      // Filtrerer aktuelle kun (virkningTil=null) så AI ikke præsenterer
+      // historiske administratorer som "ejerforeningen lige nu".
+      case 'hent_ejendomsadmin': {
+        const res = await fetch(
+          `${baseUrl}/api/ejendomsadmin?bfeNummer=${encodeURIComponent(input.bfeNummer)}`,
+          internalFetchOpts
+        );
+        if (!res.ok) {
+          result = { fejl: toolErrorMessage('Ejendomsadmin-API', res.status) };
+          break;
+        }
+        const data = (await res.json()) as {
+          administratorer?: Array<{
+            cvr: string | null;
+            navn: string | null;
+            type: string;
+            virkningFra: string | null;
+            virkningTil: string | null;
+          }>;
+        };
+        // Kun aktuelle administratorer med type + navn/cvr
+        const aktuelle = (data.administratorer ?? []).filter(
+          (a) => a.virkningTil === null && a.type !== 'ukendt' && (a.cvr || a.navn)
+        );
+        result = {
+          antal: aktuelle.length,
+          administratorer: aktuelle.map((a) => ({
+            cvr: a.cvr,
+            navn: a.navn,
+            type: a.type,
+            virkningFra: a.virkningFra,
+          })),
+        };
         break;
       }
 

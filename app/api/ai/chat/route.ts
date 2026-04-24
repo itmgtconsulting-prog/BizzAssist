@@ -310,6 +310,80 @@ const TOOLS: Anthropic.Tool[] = [
       required: ['cvr'],
     },
   },
+  // BIZZ-813 (AI DocGen 4/8): generate_document tool.
+  // Claude kalder dette når brugeren eksplicit beder om en fil
+  // (XLSX/CSV/DOCX). Returnerer file_id + download_url via SSE-event.
+  {
+    name: 'generate_document',
+    description:
+      'Genererer en Word/Excel/CSV-fil som brugeren kan downloade. Kald dette KUN når brugeren eksplicit beder om en fil (fx "lav en Excel", "eksportér til Word", "generer CSV"). Vælg sensibelt format baseret på brugerens verb. Brug IKKE ved "vis mig en liste" — svar i stedet med markdown. Efter tool-call: kvittér kort og henvis brugeren til download-chippen i chatten.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        format: {
+          type: 'string',
+          enum: ['xlsx', 'csv', 'docx'],
+          description:
+            'Output-format. xlsx til talldata/tabeller, csv til simple lister, docx til tekst/rapporter.',
+        },
+        mode: {
+          type: 'string',
+          enum: ['scratch', 'attached_template'],
+          description:
+            'scratch = generér fra scratch. attached_template = fyld en template som brugeren har vedhæftet (iter 1: kun DOCX).',
+        },
+        title: {
+          type: 'string',
+          description: 'Filnavn uden extension (max 100 tegn). Skal være beskrivende.',
+        },
+        scratch: {
+          type: 'object',
+          description:
+            'For mode=scratch. For xlsx/csv: {columns:[{key,header}], rows:[Record<key,value>]}. For docx: {subtitle?, sections:[{heading,body}]}.',
+          properties: {
+            columns: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  key: { type: 'string' },
+                  header: { type: 'string' },
+                },
+                required: ['key', 'header'],
+              },
+            },
+            rows: { type: 'array' },
+            sections: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  heading: { type: 'string' },
+                  body: { type: 'string' },
+                },
+                required: ['heading', 'body'],
+              },
+            },
+            subtitle: { type: 'string' },
+          },
+        },
+        attached_template: {
+          type: 'object',
+          description:
+            'For mode=attached_template. file_id fra en tidligere uploaded fil + placeholders-map.',
+          properties: {
+            file_id: { type: 'string' },
+            placeholders: {
+              type: 'object',
+              description: 'Map af placeholder-navne → værdier til template-fill.',
+            },
+          },
+          required: ['file_id'],
+        },
+      },
+      required: ['format', 'mode', 'title'],
+    },
+  },
 ];
 
 // ─── Tool labels (for status messages) ──────────────────────────────────────
@@ -332,6 +406,8 @@ const TOOL_STATUS: Record<string, string> = {
   soeg_person_cvr: 'Søger efter person i CVR…',
   hent_tinglysning: 'Henter tinglysningsdata…',
   hent_ejendomme_for_virksomhed: 'Henter ejendomme for virksomhed…',
+  // BIZZ-813
+  generate_document: 'Genererer fil…',
 };
 
 // ─── System prompt ──────────────────────────────────────────────────────────
@@ -360,6 +436,22 @@ VIGTIGT: Kald så mange tools som muligt i SAMME runde for at spare tid. Vent ik
 - **hent_forelobig_vurdering**: Foreløbige vurderinger fra Vurderingsportalen. Indeholder de FAKTISKE skatteberegninger: grundskyld, ejendomsværdiskat, total skat. Vurderingsår 2024 = beskatningsår 2025. Brug ALTID dette til skatteanalyse.
 - Kombiner begge vurderings-kilder: endelige for historisk overblik, foreløbige for nuværende og fremtidig beskatning.
 - **Matrikeldata**: Brug \`hent_matrikeldata\` for at se jordstykker, matrikelnumre, registrerede arealer, og noteringstyper (fredskov, strandbeskyttelse, klitfredning, jordrente, landbrugsnotering). Kræver BFE-nummer.
+
+## Fil-generering (BIZZ-813)
+Hvis brugeren EKSPLICIT beder om en fil (fx "lav en Excel", "eksportér til Word", "generer CSV", "jeg vil downloade", "giv mig det i xlsx") → KALD generate_document tool.
+
+Format-valg:
+- "excel" / "xlsx" / "regneark" / tal-data / tabeller → xlsx
+- "word" / "docx" / "dokument" / "rapport" / tekst-heavy → docx
+- "csv" / simple-lister / import-til-andet-system → csv
+
+Mode-valg:
+- scratch: brugeren beskriver hvad de vil have (fx "excel med alle ejendomme på Vej X")
+- attached_template: brugeren har vedhæftet en template og beder dig fylde den (fx "brug den skabelon jeg uploadede og sæt navnene ind"). Kun DOCX understøttet i iter 1.
+
+VIGTIGT:
+- Brug KUN generate_document når brugeren EKSPLICIT beder om en fil. Hvis de bare siger "vis mig en liste" → svar med markdown.
+- Efter tool-kald: giv en KORT kvittering ("Jeg har lavet Excel-filen med 42 ejendomme — den er klar til download") og henvis til download-chippen. Inkludér ALDRIG download_url eller file_id i dit markdown-svar; klienten viser chippen automatisk.
 
 ## Regler
 - BRUG ALTID dine tools til at hente rigtig data — gæt aldrig
@@ -1146,6 +1238,33 @@ async function executeTool(
         break;
       }
 
+      case 'generate_document': {
+        // BIZZ-813: POST til /api/ai/generate-file med Claude's input.
+        // Returnerer HELE response-objektet inkl. download_url —
+        // wrapper-laget emitterer SSE-event med download_url før den
+        // sender et SANITIZED tool_result tilbage til Claude (uden URL,
+        // så Claude ikke inkluderer det i markdown-svar).
+        const fileInput = input as unknown as Record<string, unknown>;
+        const res = await fetch(`${baseUrl}/api/ai/generate-file`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+          },
+          body: JSON.stringify(fileInput),
+          signal: AbortSignal.timeout(30_000),
+        });
+        if (!res.ok) {
+          const errJson = (await res.json().catch(() => ({}))) as { error?: string };
+          result = { fejl: errJson.error ?? `generate-file fejlede (${res.status})` };
+          break;
+        }
+        const json = await res.json();
+        // Returner hele objektet — wrapper-laget splitter det.
+        result = json;
+        break;
+      }
+
       default:
         return { fejl: `Ukendt tool: ${name}` };
     }
@@ -1777,6 +1896,53 @@ export async function POST(request: NextRequest): Promise<Response> {
                 baseUrl,
                 request.headers.get('cookie')
               );
+
+              // BIZZ-813: generate_document returnerer download_url —
+              // emit SSE-event med URL så klienten kan vise chippen
+              // straks, og strip URL'en fra tool_result så Claude ikke
+              // inkluderer det i markdown-svaret.
+              if (
+                toolBlock.name === 'generate_document' &&
+                typeof result === 'object' &&
+                result !== null &&
+                'file_id' in result
+              ) {
+                const fileResult = result as {
+                  file_id: string;
+                  file_name: string;
+                  download_url?: string;
+                  preview_text?: string;
+                  bytes: number;
+                  format: string;
+                };
+                sse(
+                  controller,
+                  JSON.stringify({
+                    generated_file: {
+                      file_id: fileResult.file_id,
+                      file_name: fileResult.file_name,
+                      download_url: fileResult.download_url,
+                      preview_text: fileResult.preview_text,
+                      bytes: fileResult.bytes,
+                      format: fileResult.format,
+                    },
+                  })
+                );
+                // Claude-facing result har INGEN download_url
+                return {
+                  type: 'tool_result' as const,
+                  tool_use_id: toolBlock.id,
+                  content: JSON.stringify({
+                    file_id: fileResult.file_id,
+                    file_name: fileResult.file_name,
+                    bytes: fileResult.bytes,
+                    format: fileResult.format,
+                    status: 'success',
+                    note: 'File generated. Give a short confirmation and tell the user to use the download chip in the chat.',
+                  }),
+                };
+              }
+
               return {
                 type: 'tool_result' as const,
                 tool_use_id: toolBlock.id,

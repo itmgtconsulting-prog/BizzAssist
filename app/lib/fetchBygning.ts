@@ -87,3 +87,50 @@ export async function fetchBygningById(id: string): Promise<BygningDetail | null
     return null;
   }
 }
+
+/**
+ * BIZZ-834: Enheder i en bygning. Returnerer alle BBR_Enhed-rows hvor
+ * bygning_lokalId === bygningId. Cappet til 100 for safety.
+ */
+export interface EnhedSummary {
+  id: string;
+  etage: string | null;
+  doer: string | null;
+  anvendelse: string | null;
+  areal: number | null;
+  status: string | null;
+}
+
+export async function fetchEnhederForBygning(bygningId: string): Promise<EnhedSummary[]> {
+  const vt = nowTs();
+  const query = `query($vt: DafDateTime!, $id: String!) {
+    BBR_Enhed(first: 100, virkningstid: $vt, where: { bygning: { eq: $id } }) {
+      nodes {
+        id_lokalId
+        etage
+        doer
+        enh020EnhedensAnvendelse
+        enh026EnhedensSamledeAreal
+        status
+      }
+    }
+  }`;
+  try {
+    const nodes = await fetchBBRGraphQL(query, { vt, id: bygningId });
+    if (!Array.isArray(nodes)) return [];
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    return (nodes as Array<Record<string, unknown>>).map((n) => ({
+      id: String(n.id_lokalId ?? ''),
+      // etage/doer-felterne fra BBR er ofte UUIDs der peger på et kodesæt
+      // — filtrér så vi kun viser menneske-læsbare strings (fx "1", "tv").
+      etage: typeof n.etage === 'string' && !UUID_RE.test(n.etage) ? n.etage : null,
+      doer: typeof n.doer === 'string' && !UUID_RE.test(n.doer) ? n.doer : null,
+      anvendelse: (n.enh020EnhedensAnvendelse as string | null) ?? null,
+      areal: (n.enh026EnhedensSamledeAreal as number | null) ?? null,
+      status: (n.status as string | null) ?? null,
+    }));
+  } catch (err) {
+    logger.error('[fetchEnhederForBygning] fejl:', err instanceof Error ? err.message : err);
+    return [];
+  }
+}

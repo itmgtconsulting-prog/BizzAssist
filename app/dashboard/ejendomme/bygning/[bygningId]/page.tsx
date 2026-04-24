@@ -23,7 +23,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { ArrowLeft, Building2, Ruler, Calendar, Layers, MapPin } from 'lucide-react';
-import { fetchBygningById } from '@/app/lib/fetchBygning';
+import { fetchBygningById, fetchEnhederForBygning } from '@/app/lib/fetchBygning';
 import { isUdfasetStatusLabel } from '@/app/lib/bbrKoder';
 import { fetchBbrStatusForAdresser } from '@/app/lib/bbrEjendomStatus';
 import EjendomBreadcrumb from '@/app/components/ejendomme/EjendomBreadcrumb';
@@ -49,14 +49,16 @@ export default async function BygningDetailPage({ params }: BygningDetailPagePro
   // bygninger (status 4/10/11) = !statusOk.
   const statusOk = !isUdfasetStatusLabel(bygning.status);
 
-  // BIZZ-832: SFE BFE-lookup via bbr_ejendom_status for breadcrumb.
-  // Non-blocking — manglende BFE giver shallow breadcrumb som før.
-  let sfeBfe: number | null = null;
-  if (bygning.husnummerId) {
-    const statusMap = await fetchBbrStatusForAdresser([bygning.husnummerId]);
-    const entry = statusMap.get(bygning.husnummerId.toLowerCase());
-    sfeBfe = entry?.bfeNummer ?? null;
-  }
+  // BIZZ-832 + 834: SFE-lookup + enheder-fetch parallelt.
+  const [statusMap, enheder] = await Promise.all([
+    bygning.husnummerId
+      ? fetchBbrStatusForAdresser([bygning.husnummerId])
+      : Promise.resolve(new Map()),
+    fetchEnhederForBygning(bygningId),
+  ]);
+  const sfeBfe = bygning.husnummerId
+    ? (statusMap.get(bygning.husnummerId.toLowerCase())?.bfeNummer ?? null)
+    : null;
 
   return (
     <div className="bg-[#0a1020] min-h-screen">
@@ -186,6 +188,43 @@ export default async function BygningDetailPage({ params }: BygningDetailPagePro
               <p className="text-slate-500 text-xs mt-0.5">SFE {sfeBfe} — Samlet Fast Ejendom</p>
             </div>
           </Link>
+        )}
+
+        {/* BIZZ-834: Enheder-liste — BBR_Enhed med bygning===this */}
+        {enheder.length > 0 && (
+          <div className="rounded-xl bg-[#0f172a] border border-slate-700/50 overflow-hidden">
+            <div className="px-4 py-2.5 border-b border-slate-700/40 flex items-center justify-between">
+              <h2 className="text-white text-sm font-semibold flex items-center gap-2">
+                <Building2 size={14} className="text-blue-400" />
+                Enheder i bygningen
+              </h2>
+              <span className="text-slate-500 text-xs">
+                {enheder.length} enhed{enheder.length === 1 ? '' : 'er'}
+              </span>
+            </div>
+            <div className="divide-y divide-slate-700/30">
+              {enheder.map((e) => {
+                const unitLabel =
+                  e.etage || e.doer ? [e.etage, e.doer].filter(Boolean).join('. ') : 'Hovedadresse';
+                return (
+                  <div key={e.id} className="px-4 py-2.5 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Building2 size={12} className="text-slate-500 shrink-0" />
+                      <span className="text-slate-200 text-sm font-medium truncate">
+                        {unitLabel}
+                      </span>
+                      {e.anvendelse && (
+                        <span className="text-slate-500 text-xs truncate">· {e.anvendelse}</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3 text-xs text-slate-400 shrink-0">
+                      {e.areal != null && <span>{e.areal} m²</span>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         )}
       </div>
     </div>

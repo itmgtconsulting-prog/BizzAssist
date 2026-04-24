@@ -265,6 +265,27 @@ export interface EjendomApiResponse {
     status: string | null;
   }> | null;
   bbrFejl: string | null;
+  /**
+   * BIZZ-881 (858a): True hvis denne BFE eller dens moder er opdelt i
+   * ejerlejligheder. Kilde: MAT_SamletFastEjendom.hovedejendomOpdeltIEjerlejligh.
+   * Bruges af UI til at vise "Opdelt ejendom"-badge og til at trigge
+   * komponent-listen på detaljesiden (BIZZ-857).
+   */
+  opdeltIEjerlejligheder?: boolean;
+  /**
+   * BIZZ-881 (858a): Hierarki-kæde fra leaf (denne ejendom) til SFE.
+   * 2-niveau baglæns kompatibel — fuld rekursion kommer i BIZZ-882.
+   *   niveau 'leaf'  → aktuel BFE (denne ejendom, hvis ejerlejlighed)
+   *   niveau 'sfe'   → moder-SFE (hovedejendom på matrikel-niveau)
+   * Tom array hvis vi allerede er på SFE-niveau.
+   * moderBfe forbliver tilgængelig for bagudkompatibilitet —
+   *   moderBfe === hierarkiChain[hierarkiChain.length - 1]?.bfe
+   */
+  hierarkiChain?: Array<{
+    bfe: number;
+    adresse: string | null;
+    niveau: 'leaf' | 'hovedejendom' | 'sfe';
+  }>;
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -2188,6 +2209,22 @@ export async function fetchBbrForAddress(
   const parentAdgangsadresseId =
     adgangsadresseId && adgangsadresseId !== dawaId ? adgangsadresseId : null;
 
+  // BIZZ-881 (858a): Byg 2-niveau hierarkiChain (leaf → sfe) baseret på
+  // ejerlejlighedBfe + moderBfe. Rekursiv dobbelt-opdeling parkeret til
+  // BIZZ-882. Fallback-signal for opdeltIEjerlejligheder bygger på
+  // tilstedeværelsen af ejerlejlighedBfe — rigtige MAT-flag (hovedejendom-
+  // OpdeltIEjerlejligh) kræver separat matrikel-fetch, se EjendomDetalje-
+  // Client der allerede kalder /api/matrikel.
+  const hierarkiChain: EjendomApiResponse['hierarkiChain'] = [];
+  if (ejerlejlighedBfe != null && moderBfe != null && ejerlejlighedBfe !== moderBfe) {
+    // Vi er på en leaf-ejerlejlighed der har en moder-SFE
+    hierarkiChain.push({ bfe: ejerlejlighedBfe, adresse: null, niveau: 'leaf' });
+    hierarkiChain.push({ bfe: moderBfe, adresse: null, niveau: 'sfe' });
+  } else if (moderBfe != null) {
+    // Vi er på SFE-niveau (moderBfe = vores egen BFE)
+    hierarkiChain.push({ bfe: moderBfe, adresse: null, niveau: 'sfe' });
+  }
+
   return {
     bbr,
     enheder,
@@ -2200,5 +2237,9 @@ export async function fetchBbrForAddress(
     etager,
     tekniskeAnlaeg,
     bbrFejl,
+    // BIZZ-881 (858a): hierarki-data på response
+    opdeltIEjerlejligheder:
+      ejerlejlighedBfe != null && moderBfe != null && ejerlejlighedBfe !== moderBfe,
+    hierarkiChain,
   };
 }

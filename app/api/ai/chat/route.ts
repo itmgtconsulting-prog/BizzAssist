@@ -459,8 +459,24 @@ VIGTIGT: Kald så mange tools som muligt i SAMME runde for at spare tid. Vent ik
 - Kombiner begge vurderings-kilder: endelige for historisk overblik, foreløbige for nuværende og fremtidig beskatning.
 - **Matrikeldata**: Brug \`hent_matrikeldata\` for at se jordstykker, matrikelnumre, registrerede arealer, og noteringstyper (fredskov, strandbeskyttelse, klitfredning, jordrente, landbrugsnotering). Kræver BFE-nummer.
 
-## Fil-generering (BIZZ-813)
+## Fil-generering (BIZZ-813, prompt-tuning BIZZ-817)
 Hvis brugeren EKSPLICIT beder om en fil (fx "lav en Excel", "eksportér til Word", "generer CSV", "jeg vil downloade", "giv mig det i xlsx") → KALD generate_document tool.
+
+### Eksempler — hvornår kalde tool vs markdown
+
+**Kald generate_document** (file-intent):
+- "Lav en Excel med de 5 ejendomme" → mode=scratch format=xlsx
+- "Eksportér listen til csv" → mode=scratch format=csv
+- "Generer et Word-dokument med resuméet" → mode=scratch format=docx
+- "Downloade som xlsx" → mode=scratch format=xlsx
+- "Fyld den vedhæftede skabelon med disse navne" (user har uploaded docx) → mode=attached_template format=docx
+- "Brug Ejendomsliste-skabelonen for Kunde 1 sagen" (domain admin) → mode=domain_template format=xlsx
+
+**IKKE kald tool** (list/display-intent — svar med markdown):
+- "Vis mig en liste over ejendommene" → markdown-liste
+- "Hvilke selskaber ejer denne ejendom?" → markdown-tabel
+- "Kan du lave en oversigt?" → markdown-tabel (medmindre bruger specificerer format)
+- "Hvad er ejendomsværdien?" → markdown-tekst
 
 Format-valg:
 - "excel" / "xlsx" / "regneark" / tal-data / tabeller → xlsx
@@ -1941,6 +1957,27 @@ export async function POST(request: NextRequest): Promise<Response> {
           for (const toolBlock of toolUseBlocks) {
             const label = TOOL_STATUS[toolBlock.name] ?? 'Henter data…';
             sse(controller, JSON.stringify({ status: label }));
+
+            // BIZZ-817: Sentry breadcrumb per tool-call. User input
+            // masked — kun tool-navn + stripped-struktur logges.
+            try {
+              const input = toolBlock.input as Record<string, unknown>;
+              const maskedInput: Record<string, unknown> = {};
+              if (typeof input.format === 'string') maskedInput.format = input.format;
+              if (typeof input.mode === 'string') maskedInput.mode = input.mode;
+              // Title-length kun, ikke værdi (kan indeholde PII)
+              if (typeof input.title === 'string') {
+                maskedInput.titleLength = input.title.length;
+              }
+              Sentry.addBreadcrumb({
+                category: 'ai.tool_call',
+                message: toolBlock.name,
+                level: 'info',
+                data: maskedInput,
+              });
+            } catch {
+              // Sentry fejl-håndtering er ikke-fatal
+            }
           }
 
           // Add assistant response (with tool_use blocks) to message history
@@ -1960,6 +1997,24 @@ export async function POST(request: NextRequest): Promise<Response> {
               // emit SSE-event med URL så klienten kan vise chippen
               // straks, og strip URL'en fra tool_result så Claude ikke
               // inkluderer det i markdown-svaret.
+              // BIZZ-817: fang generate_document tool-fejl i Sentry
+              // separat fra success-path. Claude ser fortsat result som
+              // tool_result og kan forsøge igen.
+              if (
+                toolBlock.name === 'generate_document' &&
+                typeof result === 'object' &&
+                result !== null &&
+                'fejl' in result
+              ) {
+                Sentry.captureMessage('ai.generate_document.error', {
+                  level: 'warning',
+                  extra: {
+                    error: (result as { fejl: string }).fejl,
+                    mode: (toolBlock.input as { mode?: string }).mode,
+                    format: (toolBlock.input as { format?: string }).format,
+                  },
+                });
+              }
               if (
                 toolBlock.name === 'generate_document' &&
                 typeof result === 'object' &&
@@ -1977,6 +2032,30 @@ export async function POST(request: NextRequest): Promise<Response> {
                   bytes: number;
                   format: string;
                 };
+                // BIZZ-817: flat token-fee per tool-call som proxy for
+                // compute-omkostning. Prices: XLSX=500, DOCX=800, CSV=200.
+                // Recorded som tokens_out i ai_token_usage så det tæller
+                // mod user's månedlige quota og inkluderes i billing-agg.
+                const FEE_BY_FORMAT: Record<string, number> = {
+                  xlsx: 500,
+                  docx: 800,
+                  csv: 200,
+                };
+                const fee = FEE_BY_FORMAT[fileResult.format] ?? 500;
+                totalOutputTokens += fee;
+                if (resolvedTenantId) {
+                  recordTenantTokenUsage(adminClient, resolvedTenantId, userId, 0, fee);
+                }
+                Sentry.addBreadcrumb({
+                  category: 'ai.tool_success',
+                  message: 'generate_document',
+                  level: 'info',
+                  data: {
+                    format: fileResult.format,
+                    bytes: fileResult.bytes,
+                    fee_tokens: fee,
+                  },
+                });
                 sse(
                   controller,
                   JSON.stringify({

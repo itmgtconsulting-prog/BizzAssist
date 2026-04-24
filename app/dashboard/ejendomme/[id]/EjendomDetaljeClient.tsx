@@ -1794,8 +1794,27 @@ export default function EjendomDetaljeClient({
                   </span>
                 )}
                 {/* BIZZ-550: Ejendomstype-badge — primær kilde: VUR juridiskKategori,
-                     fallback: udledt fra BBR bygningsanvendelser */}
+                     fallback: udledt fra BBR bygningsanvendelser.
+                     BIZZ-840: BBR-kolonihave (kode 520/540) overrider VUR juridiskKategori
+                     fordi VUR nogle gange fejlklassificerer kolonihaver som
+                     "Blandet bolig/erhverv" — BBR er authoritative for bygningstype. */}
                 {(() => {
+                  // 0. BBR kolonihave override (mest specifik + authoritative)
+                  if (erKolonihave) {
+                    return (
+                      <span
+                        className="flex items-center gap-1 px-2.5 py-0.5 bg-emerald-500/15 border border-emerald-500/30 rounded-full text-emerald-300 text-xs font-medium flex-shrink-0"
+                        title={
+                          da
+                            ? 'Kolonihave/fritidshytte — BBR-anvendelseskode 520 eller 540'
+                            : 'Allotment/summer house — BBR use-code 520 or 540'
+                        }
+                      >
+                        <Home size={11} />
+                        {da ? 'Kolonihave' : 'Allotment'}
+                      </span>
+                    );
+                  }
                   // 1. VUR juridiskKategori (nyt vurderingssystem)
                   if (vurdering?.juridiskKategori) {
                     return (

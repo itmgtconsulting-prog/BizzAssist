@@ -780,6 +780,10 @@ function AIChatPanel() {
                 // — kør fire-and-forget; UI rydder straks.
                 void chatCtx.createConversation(lang as 'da' | 'en');
                 setMessages([]);
+                // BIZZ-871: Ryd OGSÅ chatCtx.messages — ellers restores
+                // sync-useEffect (line 208-213) de gamle messages fra context
+                // lige efter lokal clear, så + knappen ikke har visuel effekt.
+                chatCtx.setMessages([]);
                 setStreamText('');
                 setToolStatus('');
                 setIsLoading(false);
@@ -787,6 +791,8 @@ function AIChatPanel() {
                 chatCtx.setToolStatus('');
                 chatCtx.setIsStreaming(false);
                 setInput('');
+                // Focus input så brugeren kan skrive med det samme
+                setTimeout(() => inputRef.current?.focus(), 50);
               }}
               className="text-slate-500 hover:text-slate-300 transition-colors shrink-0 p-1 rounded hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
               aria-label={lang === 'da' ? 'Ny samtale' : 'New conversation'}

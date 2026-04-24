@@ -166,6 +166,36 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
   const body: RequestBody = parsed.data;
 
+  /**
+   * BIZZ-862: Claude leverer nogle gange nested objects/arrays som row-værdier
+   * (fx {ejer: {navn: "Jakob"}}). GenerateXlsxInputSchema kræver primitives,
+   * så zod-validation fejlede med "XLSX-schema fejl" og AI viste "teknisk fejl".
+   * Løsning: coerce nested values til JSON-strings før validation.
+   */
+  function coerceRowsForCells(
+    rows: Array<Record<string, unknown>> | undefined
+  ): Array<Record<string, string | number | boolean | null>> {
+    return (rows ?? []).map((row) => {
+      const out: Record<string, string | number | boolean | null> = {};
+      for (const [k, v] of Object.entries(row)) {
+        if (v === null || v === undefined) {
+          out[k] = null;
+        } else if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+          out[k] = v;
+        } else if (v instanceof Date) {
+          out[k] = v.toISOString();
+        } else {
+          try {
+            out[k] = JSON.stringify(v);
+          } catch {
+            out[k] = String(v);
+          }
+        }
+      }
+      return out;
+    });
+  }
+
   let generated: GeneratedFile;
   try {
     if (body.mode === 'scratch') {
@@ -174,10 +204,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         const v = GenerateXlsxInputSchema.safeParse({
           title: body.title,
           columns: body.scratch?.columns ?? [],
-          rows: body.scratch?.rows ?? [],
+          rows: coerceRowsForCells(body.scratch?.rows),
           sheetName: body.scratch?.sheetName,
         });
         if (!v.success) {
+          logger.warn('[generate-file] XLSX-schema fejl:', JSON.stringify(v.error.issues));
           return NextResponse.json(
             { error: 'XLSX-schema fejl', details: v.error.issues },
             { status: 400 }
@@ -187,9 +218,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       } else if (body.format === 'csv') {
         const v = GenerateCsvInputSchema.safeParse({
           columns: body.scratch?.columns ?? [],
-          rows: body.scratch?.rows ?? [],
+          rows: coerceRowsForCells(body.scratch?.rows),
         });
         if (!v.success) {
+          logger.warn('[generate-file] CSV-schema fejl:', JSON.stringify(v.error.issues));
           return NextResponse.json(
             { error: 'CSV-schema fejl', details: v.error.issues },
             { status: 400 }

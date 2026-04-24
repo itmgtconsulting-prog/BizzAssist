@@ -35,6 +35,7 @@ import {
   Maximize2,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
+import { useSetAIPageContext } from '@/app/context/AIPageContext';
 import type { DomainCaseSummary } from './DomainCaseList';
 import { CustomerSearchPicker, type CustomerLink } from './CustomerSearchPicker';
 
@@ -182,6 +183,11 @@ export function DomainWorkspaceSplitView({
     writeDocsToUrl(empty);
   }, [writeDocsToUrl]);
 
+  // BIZZ-902: Sync workspace-state til AI page-context så AI Chat
+  // automatisk kender aktuel sag + valgte dokumenter. AI kan så bruge
+  // hent_dokument_indhold(docId) for at læse parsed tekst for hvert.
+  const setAICtx = useSetAIPageContext();
+
   const colRef = useRef<HTMLDivElement>(null);
 
   const startHorizontalResize = useCallback((e: React.MouseEvent) => {
@@ -214,6 +220,26 @@ export function DomainWorkspaceSplitView({
   const [caseDetail, setCaseDetail] = useState<CaseDetail | null>(null);
   const [caseDocs, setCaseDocs] = useState<CaseDocSummary[]>([]);
   const [caseLoading, setCaseLoading] = useState(false);
+
+  // BIZZ-902: Push domain-kontekst (aktuel sag + valgte dokumenter) ind
+  // i AIPageContext så AIChatPanel kan sende det som side-kontekst i
+  // chat-request. Opdateres hver gang selectedDocIds eller caseDetail
+  // ændres. Cleanup ved unmount eller sag-close nulstilles via caseDetail=null.
+  useEffect(() => {
+    if (!caseDetail) {
+      setAICtx(null);
+      return;
+    }
+    const selectedDocs = caseDocs
+      .filter((d) => selectedDocIds.has(d.id))
+      .map((d) => ({ id: d.id, name: d.name }));
+    setAICtx({
+      pageType: 'domain',
+      currentCaseId: caseDetail.id,
+      currentCaseName: caseDetail.name,
+      selectedDocuments: selectedDocs,
+    });
+  }, [caseDetail, caseDocs, selectedDocIds, setAICtx]);
 
   const [editing, setEditing] = useState(false);
   // BIZZ-807: inline edit-mode for selve sagsnavn — klik på header-titel

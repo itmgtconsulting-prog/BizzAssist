@@ -67,7 +67,22 @@ export interface AIPageData {
    * BIZZ-874: Type af detaljeside — 'virksomhed' | 'person' | 'ejendom'.
    * Bruges sammen med activeTab for korrekt tool-dispatch.
    */
-  pageType?: 'virksomhed' | 'person' | 'ejendom';
+  pageType?: 'virksomhed' | 'person' | 'ejendom' | 'domain';
+  /**
+   * BIZZ-902 (parent BIZZ-896): Aktuel domain-sag og valgte dokumenter
+   * fra sager-workspace. Når brugeren åbner AI Chat fra /domain/[id]?sag=X
+   * og har checked dokumenter, sendes dette så AI kan bruge dokumenterne
+   * som primær kontekst uden at skulle lede efter dem selv.
+   */
+  currentCaseId?: string;
+  currentCaseName?: string;
+  /**
+   * BIZZ-902: Let-weight summary af de valgte dokumenter (id + navn).
+   * Full extractedText hentes via hent_dokument_indhold tool-call efter
+   * AI beslutter sig for at læse et specifikt doc. Undgår at sende hele
+   * tekst-payload i hver chat-request.
+   */
+  selectedDocuments?: Array<{ id: string; name: string }>;
 }
 
 // ─── Context ─────────────────────────────────────────────────────────────────

@@ -298,6 +298,26 @@ function AIChatPanel() {
         );
       }
 
+      // BIZZ-902: Domain-sag-kontekst — når bruger har en sag åben og
+      // har valgt dokumenter, injicér navne + IDs så AI direkte kan
+      // referere dem via hent_dokument_indhold(docId). AI ved fra
+      // system-prompt at brugeren allerede har valgt dokumenterne og
+      // behøver ikke bede om dem igen.
+      if (pageData.currentCaseId && pageData.currentCaseName) {
+        const lines = [
+          `\n[DOMAIN-SAG] Bruger arbejder i sagen "${pageData.currentCaseName}" (ID: ${pageData.currentCaseId}).`,
+        ];
+        if (pageData.selectedDocuments && pageData.selectedDocuments.length > 0) {
+          lines.push(
+            `Brugeren har VALGT ${pageData.selectedDocuments.length} dokument${pageData.selectedDocuments.length === 1 ? '' : 'er'} som AI-kontekst — brug disse som primær reference. Kald hent_dokument_indhold(docId) for at læse indholdet. Bed IKKE brugeren om at vælge dokumenter igen.`
+          );
+          for (const d of pageData.selectedDocuments) {
+            lines.push(`- ${d.name} (docId: ${d.id})`);
+          }
+        }
+        parts.push(lines.join('\n'));
+      }
+
       // Send virksomhedstilknytninger i to separate lister:
       // 1. Ejede selskaber (med ejerandel) — bruges til formue/værdispørgsmål
       // 2. Funktionsroller uden ejerandel — bruges til spørgsmål om netværk, bestyrelser osv.
@@ -1184,6 +1204,31 @@ function AIChatPanel() {
 
           {/* Input-felt (sidebar) */}
           <div className="px-3 pb-3 pt-1 shrink-0 space-y-2">
+            {/* BIZZ-902: Domain-sag dokument-kontekst-chips. Info-only —
+                viser brugeren hvilke docs AI har adgang til som kontekst.
+                Fjernes via checkbox i workspace-panelet (ikke her — stammer
+                fra pageData.selectedDocuments). */}
+            {pageData?.selectedDocuments && pageData.selectedDocuments.length > 0 && (
+              <div className="rounded-lg bg-blue-500/5 border border-blue-500/20 px-2 py-1.5">
+                <p className="text-[10px] uppercase tracking-wide text-blue-300 mb-1">
+                  {lang === 'da'
+                    ? `${pageData.selectedDocuments.length} ${pageData.selectedDocuments.length === 1 ? 'dokument' : 'dokumenter'} i kontekst`
+                    : `${pageData.selectedDocuments.length} ${pageData.selectedDocuments.length === 1 ? 'document' : 'documents'} in context`}
+                </p>
+                <div className="flex flex-wrap gap-1">
+                  {pageData.selectedDocuments.map((d) => (
+                    <span
+                      key={d.id}
+                      className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-slate-800/80 border border-blue-500/30 rounded text-[11px] text-slate-200 max-w-full"
+                      title={d.name}
+                    >
+                      <Paperclip size={10} className="text-blue-300 shrink-0" />
+                      <span className="truncate">{d.name}</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
             {/* BIZZ-806: Attachment-chips vises over input-feltet. Klik
                 åbner preview-modal. Klik på X fjerner. */}
             {(attachments.length > 0 || attachError) && (

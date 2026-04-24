@@ -425,6 +425,22 @@ const TOOLS: Anthropic.Tool[] = [
       required: ['cvr'],
     },
   },
+  // BIZZ-902 (parent BIZZ-896): Hent extracted_text for et domain_case_doc.
+  // Bruges når bruger har valgt dokumenter via checkbox (BIZZ-899) i sager-
+  // workspace — AI får adgang til parsed tekst så den kan besvare spørgsmål
+  // om dokumentets indhold uden at bruger skal paste det ind selv.
+  {
+    name: 'hent_dokument_indhold',
+    description:
+      'Hent den parsed tekst fra et domain-dokument (docx/pdf/txt/eml/msg). Brug dette når brugeren har valgt dokumenter i sagen og spørger om deres indhold — fx "hvad står der i det første dokument", "opsummer vedhæftningerne". Returnerer tekst, filnavn og filtype. Kræver at brugeren er medlem af dokumentets domain.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        docId: { type: 'string', description: 'domain_case_doc.id (UUID)' },
+      },
+      required: ['docId'],
+    },
+  },
   // BIZZ-894 (audit G6): Person-netværk via cvr_deltagerrelation.
   // UI relationer-sektion viser co-direktører + medejere — AI havde
   // ingen tool. Data-kilde: public.cvr_deltagerrelation (BIZZ-830).
@@ -602,6 +618,8 @@ const TOOL_STATUS: Record<string, string> = {
   hent_virksomhed_ejere: 'Henter virksomhedens ejere…',
   // BIZZ-894
   hent_person_netvaerk: 'Henter personens netværk…',
+  // BIZZ-902
+  hent_dokument_indhold: 'Læser dokumentets indhold…',
   // BIZZ-893
   hent_virksomhed_nyheder: 'Søger nyheder om virksomheden…',
   hent_salgshistorik: 'Henter salgshistorik…',
@@ -1132,6 +1150,52 @@ async function executeTool(
           vejledning: ejere.some((e) => e.erVirksomhed)
             ? 'Mindst én ejer er en virksomhed. For at walke op mod ultimate-ejer: kald hent_virksomhed_ejere med den virksomhed-ejers CVR. Stop ved person-ejer.'
             : 'Alle ejere er personer — ingen yderligere op-walk mulig.',
+        };
+        break;
+      }
+
+      // BIZZ-902: hent extracted_text fra domain_case_doc.
+      case 'hent_dokument_indhold': {
+        const docId = input.docId?.trim();
+        if (!docId) {
+          result = { fejl: 'docId skal angives' };
+          break;
+        }
+        const res = await fetch(
+          `${baseUrl}/api/ai/doc-text?docId=${encodeURIComponent(docId)}`,
+          internalFetchOpts
+        );
+        if (!res.ok) {
+          result = { fejl: toolErrorMessage('Dokument-tekst-API', res.status) };
+          break;
+        }
+        const data = (await res.json()) as {
+          docId: string;
+          name: string;
+          fileType: string;
+          extractedText: string | null;
+          textLength: number;
+          createdAt: string;
+          fejl?: string;
+        };
+        if (data.fejl) {
+          result = { fejl: data.fejl };
+          break;
+        }
+        // Cap teksten ved 20KB for token-budget — claude kan altid bede
+        // om flere dokumenter hvis nødvendigt. Uncapped docs kan være
+        // hundrede-sider-pdf'er der sprænger context-window.
+        const MAX_CHARS = 20_000;
+        const text = data.extractedText ?? '';
+        const truncated = text.length > MAX_CHARS;
+        result = {
+          docId: data.docId,
+          navn: data.name,
+          filtype: data.fileType,
+          tekst: truncated ? text.slice(0, MAX_CHARS) : text,
+          tekstLaengde: data.textLength,
+          afkortet: truncated,
+          oprettet: data.createdAt,
         };
         break;
       }

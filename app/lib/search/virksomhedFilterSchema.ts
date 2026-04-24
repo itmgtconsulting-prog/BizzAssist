@@ -128,34 +128,186 @@ export function buildStiftetSchema(lang: 'da' | 'en'): FilterSchema {
   };
 }
 
+// ─── Regnskab phase-2 filtre (BIZZ-822) ──────────────────────────────────
+//
+// Datakilde: public.regnskab_cache.years[*] (ADR-0006). Ingen nye
+// tabel eller ETL — caller enricher FilterableVirksomhed med nøgletal
+// fra cache-rowen når regnskab-filtre aktiveres. Null-pass-through
+// pattern — virksomheder uden regnskabsdata ekskluderes kun når de
+// respektive filtre er eksplicit sat (ikke bare fordi filteret findes
+// i schema).
+
+/**
+ * Regnskabsklasser fra dansk årsregnskabslov. A er mindst, D er størst.
+ * Value = CVR/XBRL-string, label = lokaliseret vis-streng.
+ */
+export const REGNSKABSKLASSE_OPTIONS: Array<{ value: string; da: string; en: string }> = [
+  { value: 'A', da: 'Klasse A (mindst)', en: 'Class A (smallest)' },
+  { value: 'B', da: 'Klasse B', en: 'Class B' },
+  { value: 'C-lille', da: 'Klasse C — lille', en: 'Class C — small' },
+  { value: 'C-mellem', da: 'Klasse C — mellem', en: 'Class C — medium' },
+  { value: 'C-stor', da: 'Klasse C — stor', en: 'Class C — large' },
+  { value: 'D', da: 'Klasse D (børsnoteret)', en: 'Class D (listed)' },
+];
+
+/**
+ * Antal ansatte range. Dækker typiske virksomhedsstørrelser (0-1000),
+ * 1000+ er sjældent og håndteres som "≥1000" i UI.
+ */
+export function buildAntalAnsatteSchema(lang: 'da' | 'en'): FilterSchema {
+  const da = lang === 'da';
+  return {
+    type: 'range',
+    key: 'antalAnsatte',
+    label: da ? 'Antal ansatte' : 'Employees',
+    min: 0,
+    max: 1000,
+    step: 1,
+    unit: da ? 'ansatte' : 'employees',
+  };
+}
+
+/**
+ * Omsætning range i DKK. Øvre grænse 1B dækker langt de fleste SMB;
+ * store koncerner slår tallet op via /dashboard/companies/[cvr] direkte.
+ */
+export function buildOmsaetningSchema(lang: 'da' | 'en'): FilterSchema {
+  const da = lang === 'da';
+  return {
+    type: 'range',
+    key: 'omsaetning',
+    label: da ? 'Omsætning' : 'Revenue',
+    min: 0,
+    max: 1_000_000_000,
+    step: 100_000,
+    unit: 'DKK',
+  };
+}
+
+/**
+ * Egenkapital range i DKK. Tillader negative værdier (virksomheder
+ * med underskudt egenkapital — "teknisk insolvens"). -100M til 1B.
+ */
+export function buildEgenkapitalSchema(lang: 'da' | 'en'): FilterSchema {
+  const da = lang === 'da';
+  return {
+    type: 'range',
+    key: 'egenkapital',
+    label: da ? 'Egenkapital' : 'Equity',
+    min: -100_000_000,
+    max: 1_000_000_000,
+    step: 100_000,
+    unit: 'DKK',
+  };
+}
+
+/**
+ * Resultat-dropdown: overskud (>0), underskud (<0), balance (=0), alle.
+ * Skiller sig fra range-filtre fordi det er en kvalitativ klassifikation
+ * brugeren tænker i termer af, ikke et beløbs-interval.
+ */
+export function buildResultatSchema(lang: 'da' | 'en'): FilterSchema {
+  const da = lang === 'da';
+  return {
+    type: 'dropdown',
+    key: 'resultat',
+    label: da ? 'Resultat' : 'Net income',
+    options: [
+      { value: 'alle', label: da ? 'Alle' : 'All' },
+      { value: 'overskud', label: da ? 'Overskud' : 'Profit' },
+      { value: 'underskud', label: da ? 'Underskud' : 'Loss' },
+      { value: 'balance', label: da ? 'Balance (0 kr)' : 'Break-even (0 kr)' },
+    ],
+    default: 'alle',
+  };
+}
+
+/**
+ * Regnskabsklasse multi-select. Danish årsregnskabslov klasse A-D.
+ */
+export function buildRegnskabsklasseSchema(lang: 'da' | 'en'): FilterSchema {
+  const da = lang === 'da';
+  return {
+    type: 'multi-select',
+    key: 'regnskabsklasse',
+    label: da ? 'Regnskabsklasse' : 'Accounting class',
+    options: REGNSKABSKLASSE_OPTIONS.map((k) => ({
+      value: k.value,
+      label: da ? k.da : k.en,
+    })),
+  };
+}
+
+/**
+ * Selskabskapital range i DKK. Typiske tærskel-beløb:
+ *   - ApS min 40.000 kr (dog 20.000 for IVS → ApS-konvertering)
+ *   - A/S min 400.000 kr
+ *   - Børs-noterede ofte 10M+
+ * Cap 100M dækker de fleste selskaber; store koncerner slås op direkte.
+ */
+export function buildSelskabskapitalSchema(lang: 'da' | 'en'): FilterSchema {
+  const da = lang === 'da';
+  return {
+    type: 'range',
+    key: 'selskabskapital',
+    label: da ? 'Selskabskapital' : 'Share capital',
+    min: 0,
+    max: 100_000_000,
+    step: 10_000,
+    unit: 'DKK',
+  };
+}
+
 /**
  * Byg komplet virksomhed-filter schema med bilingual labels og
  * dynamiske options. Kaldes fra UniversalSearchPageClient.
+ *
+ * BIZZ-822: Phase-2 regnskab-filtre tilføjes i slutningen så
+ * phase-1 filtre beholder deres plads i UI-rækkefølgen.
  */
 export function buildVirksomhedFilterSchemas(
   lang: 'da' | 'en',
   options?: { brancheOptions?: FilterOption[]; kommuneOptions?: FilterOption[] }
 ): FilterSchema[] {
   return [
+    // Phase 1 (BIZZ-805)
     buildStatusSchema(lang),
     buildVirksomhedsformSchema(lang),
     buildBrancheSchema(lang, options?.brancheOptions ?? []),
     buildVirksomhedKommuneSchema(lang, options?.kommuneOptions ?? []),
     buildStiftetSchema(lang),
+    // Phase 2 — regnskab (BIZZ-822)
+    buildAntalAnsatteSchema(lang),
+    buildOmsaetningSchema(lang),
+    buildEgenkapitalSchema(lang),
+    buildResultatSchema(lang),
+    buildRegnskabsklasseSchema(lang),
+    buildSelskabskapitalSchema(lang),
   ];
 }
 
 // ─── Filter-application helpers ────────────────────────────────────────────
 
 export interface VirksomhedFilterState {
+  // Phase 1
   status?: string[];
   virksomhedsform?: string[];
   branche?: string[];
   kommune?: string[];
   stiftet?: { min?: number; max?: number };
+  // Phase 2 regnskab (BIZZ-822)
+  antalAnsatte?: { min?: number; max?: number };
+  omsaetning?: { min?: number; max?: number };
+  egenkapital?: { min?: number; max?: number };
+  /** 'alle' | 'overskud' | 'underskud' | 'balance'. 'alle' er no-op. */
+  resultat?: string;
+  regnskabsklasse?: string[];
+  selskabskapital?: { min?: number; max?: number };
 }
 
 export function narrowVirksomhedFilters(raw: Record<string, unknown>): VirksomhedFilterState {
+  const isRange = (v: unknown): v is { min?: number; max?: number } =>
+    typeof v === 'object' && v !== null && !Array.isArray(v);
   return {
     status: Array.isArray(raw.status) ? (raw.status as string[]) : undefined,
     virksomhedsform: Array.isArray(raw.virksomhedsform)
@@ -163,10 +315,24 @@ export function narrowVirksomhedFilters(raw: Record<string, unknown>): Virksomhe
       : undefined,
     branche: Array.isArray(raw.branche) ? (raw.branche as string[]) : undefined,
     kommune: Array.isArray(raw.kommune) ? (raw.kommune as string[]) : undefined,
-    stiftet:
-      typeof raw.stiftet === 'object' && raw.stiftet !== null && !Array.isArray(raw.stiftet)
-        ? (raw.stiftet as { min?: number; max?: number })
-        : undefined,
+    stiftet: isRange(raw.stiftet) ? (raw.stiftet as { min?: number; max?: number }) : undefined,
+    // Phase 2
+    antalAnsatte: isRange(raw.antalAnsatte)
+      ? (raw.antalAnsatte as { min?: number; max?: number })
+      : undefined,
+    omsaetning: isRange(raw.omsaetning)
+      ? (raw.omsaetning as { min?: number; max?: number })
+      : undefined,
+    egenkapital: isRange(raw.egenkapital)
+      ? (raw.egenkapital as { min?: number; max?: number })
+      : undefined,
+    resultat: typeof raw.resultat === 'string' ? raw.resultat : undefined,
+    regnskabsklasse: Array.isArray(raw.regnskabsklasse)
+      ? (raw.regnskabsklasse as string[])
+      : undefined,
+    selskabskapital: isRange(raw.selskabskapital)
+      ? (raw.selskabskapital as { min?: number; max?: number })
+      : undefined,
   };
 }
 
@@ -181,6 +347,20 @@ export interface FilterableVirksomhed {
   industry?: string | null;
   kommuneNavn?: string | null;
   stiftetAar?: number | null;
+  // BIZZ-822: regnskab-nøgletal (seneste år fra regnskab_cache.years[0]).
+  // Null pass-through — caller enricher kun når regnskab-filtre er aktive.
+  /** Antal ansatte (gennemsnit eller ultimo). */
+  antalAnsatte?: number | null;
+  /** Omsætning i DKK (ikke tusinde). */
+  omsaetning?: number | null;
+  /** Egenkapital i DKK (kan være negativ). */
+  egenkapital?: number | null;
+  /** Årets resultat i DKK (kan være negativ). */
+  aaretsResultat?: number | null;
+  /** Regnskabsklasse A/B/C-lille/C-mellem/C-stor/D. */
+  regnskabsklasse?: string | null;
+  /** Selskabskapital i DKK. */
+  selskabskapital?: number | null;
 }
 
 export function matchVirksomhedFilter(
@@ -228,6 +408,43 @@ export function matchVirksomhedFilter(
     if (year == null) return false;
     if (filters.stiftet.min !== undefined && year < filters.stiftet.min) return false;
     if (filters.stiftet.max !== undefined && year > filters.stiftet.max) return false;
+  }
+  // ─── BIZZ-822: regnskab-filtre ────────────────────────────────────────
+  // Null pass-through: når caller ikke har enriched regnskab-felter,
+  // lader vi items passere. Filter udelukker kun når felt er eksplicit
+  // populated OG filteret er sat — samme pattern som personFilterSchema.
+  if (filters.antalAnsatte && item.antalAnsatte != null) {
+    const n = item.antalAnsatte;
+    if (filters.antalAnsatte.min != null && n < filters.antalAnsatte.min) return false;
+    if (filters.antalAnsatte.max != null && n > filters.antalAnsatte.max) return false;
+  }
+  if (filters.omsaetning && item.omsaetning != null) {
+    const v = item.omsaetning;
+    if (filters.omsaetning.min != null && v < filters.omsaetning.min) return false;
+    if (filters.omsaetning.max != null && v > filters.omsaetning.max) return false;
+  }
+  if (filters.egenkapital && item.egenkapital != null) {
+    const v = item.egenkapital;
+    if (filters.egenkapital.min != null && v < filters.egenkapital.min) return false;
+    if (filters.egenkapital.max != null && v > filters.egenkapital.max) return false;
+  }
+  if (filters.resultat && filters.resultat !== 'alle' && item.aaretsResultat != null) {
+    const r = item.aaretsResultat;
+    if (filters.resultat === 'overskud' && r <= 0) return false;
+    if (filters.resultat === 'underskud' && r >= 0) return false;
+    if (filters.resultat === 'balance' && r !== 0) return false;
+  }
+  if (
+    filters.regnskabsklasse &&
+    filters.regnskabsklasse.length > 0 &&
+    item.regnskabsklasse != null
+  ) {
+    if (!filters.regnskabsklasse.includes(item.regnskabsklasse)) return false;
+  }
+  if (filters.selskabskapital && item.selskabskapital != null) {
+    const v = item.selskabskapital;
+    if (filters.selskabskapital.min != null && v < filters.selskabskapital.min) return false;
+    if (filters.selskabskapital.max != null && v > filters.selskabskapital.max) return false;
   }
   return true;
 }

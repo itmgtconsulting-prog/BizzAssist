@@ -151,6 +151,70 @@ export function AIChatContextProvider({ children }: { children: ReactNode }) {
   const [toolStatus, setToolStatusRaw] = useState('');
   const [isStreaming, setIsStreamingRaw] = useState(false);
 
+  /**
+   * BIZZ-873: Watchdog for isStreaming — auto-reset efter 90s af
+   * inaktivitet så input ikke sidder fast efter afbrudte streams
+   * (navigation, tab-close, network drop, error mellem
+   * setIsStreaming(true) og finally-blokken).
+   *
+   * streamStartedAtRef opdateres hver gang isStreaming sættes til true
+   * eller streamText modtages nye chunks. Watchdog tjekker hver 10s
+   * om der er gået mere end 90s uden aktivitet → auto-reset.
+   */
+  const streamStartedAtRef = useRef<number | null>(null);
+  const setIsStreaming = useCallback((streaming: boolean) => {
+    setIsStreamingRaw(streaming);
+    if (streaming) {
+      streamStartedAtRef.current = Date.now();
+    } else {
+      streamStartedAtRef.current = null;
+    }
+  }, []);
+  const setStreamText = useCallback((text: string) => {
+    setStreamTextRaw(text);
+    // Enhver chunk-opdatering nulstiller watchdog-timer
+    if (text) streamStartedAtRef.current = Date.now();
+  }, []);
+
+  useEffect(() => {
+    const WATCHDOG_INTERVAL_MS = 10_000;
+    const STUCK_THRESHOLD_MS = 90_000;
+    const handle = setInterval(() => {
+      if (!isStreaming || streamStartedAtRef.current === null) return;
+      const elapsed = Date.now() - streamStartedAtRef.current;
+      if (elapsed > STUCK_THRESHOLD_MS) {
+        console.warn(`[AIChatContext] isStreaming stuck for ${elapsed}ms — auto-reset`);
+        setIsStreamingRaw(false);
+        setStreamTextRaw('');
+        setToolStatusRaw('');
+        streamStartedAtRef.current = null;
+      }
+    }, WATCHDOG_INTERVAL_MS);
+    return () => clearInterval(handle);
+  }, [isStreaming]);
+
+  /**
+   * BIZZ-873: Visibility-change handler — når brugeren returnerer til tab
+   * efter lang fravær og isStreaming er stuck (elapsed > threshold), reset.
+   * Dækker scenarie hvor browser har paused baggrunds-timers.
+   */
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (!isStreaming || streamStartedAtRef.current === null) return;
+      const elapsed = Date.now() - streamStartedAtRef.current;
+      if (elapsed > 90_000) {
+        console.warn(`[AIChatContext] visibility-regained, stream stuck ${elapsed}ms — reset`);
+        setIsStreamingRaw(false);
+        setStreamTextRaw('');
+        setToolStatusRaw('');
+        streamStartedAtRef.current = null;
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [isStreaming]);
+
   // Seneste message-timestamp for aktiv session (bruges til polling ?since=)
   const lastPolledRef = useRef<string | null>(null);
 
@@ -354,11 +418,13 @@ export function AIChatContextProvider({ children }: { children: ReactNode }) {
         drawerOpen,
         setDrawerOpen,
         streamText,
-        setStreamText: setStreamTextRaw,
+        // BIZZ-873: setStreamText wraps raw setter med watchdog-timer reset
+        setStreamText,
         toolStatus,
         setToolStatus: setToolStatusRaw,
         isStreaming,
-        setIsStreaming: setIsStreamingRaw,
+        // BIZZ-873: setIsStreaming wraps raw setter med watchdog-timer init
+        setIsStreaming,
         createConversation,
         selectConversation,
         deleteConversation,

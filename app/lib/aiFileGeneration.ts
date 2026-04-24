@@ -447,6 +447,39 @@ function cellToString(value: unknown): string {
   return String(value);
 }
 
+/**
+ * BIZZ-868: Parse docx buffer til sanitiseret HTML for inline preview.
+ * Mammoth returnerer minimal HTML (headings, paragraphs, lists, tables).
+ * Vi stripper potentielt farlige tags server-side — DocPreviewPanel
+ * injicerer resultatet via dangerouslySetInnerHTML.
+ *
+ * @param buffer - Raw docx-buffer
+ * @returns {html, warnings} — html er sanitiseret, warnings er parse-warnings
+ */
+export async function docxToPreviewHtml(buffer: Buffer): Promise<{
+  html: string;
+  warnings: string[];
+}> {
+  const mammoth = await import('mammoth');
+  const result = await mammoth.convertToHtml({ buffer });
+  // Mammoth outputter kun et begrænset sæt tags (p, h1-h6, ul, ol, li, table,
+  // tr, td, th, strong, em, a). Strip script/style/iframe/event-handlers for
+  // sikkerhed — aldrig stol på input selv hvis kilden er vores egen.
+  const sanitized = result.value
+    // Fjern script/style/iframe indhold + tag (multiline)
+    .replace(/<(script|style|iframe|object|embed)[^>]*>[\s\S]*?<\/\1>/gi, '')
+    // Fjern selv-lukkende farlige tags
+    .replace(/<(script|iframe|object|embed|link|meta)[^>]*\/?>/gi, '')
+    // Fjern on*=handlers på alle tags
+    .replace(/\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    // Fjern javascript:-URLer
+    .replace(/(\s(?:href|src)\s*=\s*)(?:"javascript:[^"]*"|'javascript:[^']*')/gi, '$1"#"');
+  return {
+    html: sanitized,
+    warnings: result.messages.map((m) => m.message),
+  };
+}
+
 /** Auto-detect CSV delimiter ved at tælle forekomster på første linje. */
 function detectCsvDelimiter(text: string): ',' | ';' {
   const firstLine = text.split(/\r?\n/)[0] ?? '';

@@ -138,10 +138,13 @@ export function DocPreviewPanel() {
       </div>
 
       {/* Body — scrollable preview. BIZZ-815: render strategi styret af
-          content.kind. Default 'text' for bagudkompatibilitet. */}
+          content.kind. Default 'text' for bagudkompatibilitet.
+          BIZZ-868: 'html' render docx-mammoth-output som sanitiseret HTML. */}
       <div className="flex-1 min-h-0 overflow-y-auto p-4">
         {content.kind === 'table' && content.columns && content.rows ? (
           <TablePreview columns={content.columns} rows={content.rows} />
+        ) : content.kind === 'html' && content.html ? (
+          <HtmlPreview html={content.html} />
         ) : (
           <pre className="text-xs text-slate-200 whitespace-pre-wrap font-sans leading-relaxed">
             {content.text}
@@ -149,6 +152,23 @@ export function DocPreviewPanel() {
         )}
       </div>
     </aside>
+  );
+}
+
+/**
+ * BIZZ-868: HTML-preview til docx-filer. Bruger mammoth-genereret HTML
+ * som er sanitiseret server-side (app/lib/aiFileGeneration.docxToPreviewHtml).
+ * dangerouslySetInnerHTML er acceptabelt her fordi:
+ *   1. Kilden er vores egen server (docxToPreviewHtml)
+ *   2. Mammoth output er begrænset til <p> <h1-6> <ul> <ol> <li> <table> osv.
+ *   3. Post-parse sanitisering fjerner script/style/iframe + on*-handlers
+ */
+function HtmlPreview({ html }: { html: string }) {
+  return (
+    <div
+      className="text-sm text-slate-200 prose prose-invert prose-sm max-w-none leading-relaxed [&_h1]:text-white [&_h2]:text-white [&_h3]:text-slate-100 [&_table]:border-collapse [&_th]:bg-slate-800 [&_th]:px-2 [&_th]:py-1 [&_th]:border [&_th]:border-slate-700 [&_td]:px-2 [&_td]:py-1 [&_td]:border [&_td]:border-slate-700"
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
   );
 }
 

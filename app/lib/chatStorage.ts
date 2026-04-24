@@ -43,10 +43,12 @@ export interface ChatGeneratedFileMeta {
   preview_text: string;
   bytes: number;
   format: string;
-  /** BIZZ-815: 'table' for xlsx/csv, 'text' for docx */
-  preview_kind?: 'text' | 'table';
+  /** BIZZ-815/868: 'table' for xlsx/csv, 'html' for docx, 'text' fallback */
+  preview_kind?: 'text' | 'table' | 'html';
   preview_columns?: string[];
   preview_rows?: string[][];
+  /** BIZZ-868: sanitiseret html for docx-filer (mammoth convertToHtml) */
+  preview_html?: string;
 }
 
 /** A single chat message */

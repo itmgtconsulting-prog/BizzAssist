@@ -67,10 +67,11 @@ interface ChatMessage {
     preview_text: string;
     bytes: number;
     format: string;
-    /** BIZZ-815: binary-aware preview felter */
-    preview_kind?: 'text' | 'table';
+    /** BIZZ-815/868: binary-aware preview felter */
+    preview_kind?: 'text' | 'table' | 'html';
     preview_columns?: string[];
     preview_rows?: string[][];
+    preview_html?: string;
   }>;
 }
 
@@ -1090,10 +1091,11 @@ export default function ChatPageClient() {
                                   text: gf.preview_text,
                                   downloadUrl: gf.download_url,
                                   sizeBytes: gf.bytes,
-                                  // BIZZ-815: binary-aware preview
+                                  // BIZZ-815/868: binary-aware preview
                                   kind: gf.preview_kind,
                                   columns: gf.preview_columns,
                                   rows: gf.preview_rows,
+                                  html: gf.preview_html,
                                 })
                               }
                               aria-label="Forhåndsvis"

@@ -36,6 +36,7 @@ import {
   fillDocxTemplate,
   xlsxToPreviewTable,
   csvToPreviewTable,
+  docxToPreviewHtml,
   GenerateXlsxInputSchema,
   GenerateCsvInputSchema,
   GenerateDocxInputSchema,
@@ -374,10 +375,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   // BIZZ-815: binary-aware preview. For XLSX/CSV bygger vi table-preview
   // som klienten kan rendere direkte (sticky header + zebra rows).
-  // For DOCX fortsætter vi med tekst-preview (extracted lazily i iter 2).
-  let previewKind: 'text' | 'table' = 'text';
+  // BIZZ-868: DOCX faar nu html-preview via mammoth (inline tekst + basic formatering).
+  let previewKind: 'text' | 'table' | 'html' = 'text';
   let previewColumns: string[] | undefined;
   let previewRows: string[][] | undefined;
+  let previewHtml: string | undefined;
   try {
     if (body.format === 'xlsx') {
       const tbl = await xlsxToPreviewTable(generated.buffer);
@@ -393,6 +395,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         previewColumns = tbl.columns;
         previewRows = tbl.rows;
       }
+    } else if (body.format === 'docx') {
+      const parsed = await docxToPreviewHtml(generated.buffer);
+      if (parsed.html.length > 0) {
+        previewKind = 'html';
+        previewHtml = parsed.html;
+      }
     }
   } catch (previewErr) {
     // Preview-parsing er best-effort — hvis det fejler falder vi tilbage til text
@@ -407,6 +415,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     preview_kind: previewKind,
     preview_columns: previewColumns,
     preview_rows: previewRows,
+    preview_html: previewHtml,
     bytes: generated.buffer.length,
     format: body.format,
   });

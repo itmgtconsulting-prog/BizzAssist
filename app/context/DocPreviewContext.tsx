@@ -46,12 +46,15 @@ export interface DocPreviewContent {
   /**
    * BIZZ-815: Render-strategi. Default 'text' (bagudkompatibel med
    * eksisterende callers). 'table' → brug columns + rows felter.
+   * BIZZ-868: 'html' → sanitiseret HTML fra docx-mammoth-parse.
    */
-  kind?: 'text' | 'table' | 'slides';
+  kind?: 'text' | 'table' | 'slides' | 'html';
   /** Tabel-kolonner (kun relevant når kind='table'). */
   columns?: string[];
   /** Tabel-rækker (kun relevant når kind='table'). */
   rows?: string[][];
+  /** BIZZ-868: Sanitiseret HTML (kun relevant når kind='html'). */
+  html?: string;
 }
 
 interface DocPreviewCtx {

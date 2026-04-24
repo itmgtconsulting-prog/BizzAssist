@@ -65,9 +65,11 @@ interface Message {
     bytes: number;
     format: string;
     /** BIZZ-815: binary-aware preview */
-    preview_kind?: 'text' | 'table';
+    preview_kind?: 'text' | 'table' | 'html';
     preview_columns?: string[];
     preview_rows?: string[][];
+    /** BIZZ-868: sanitiseret html-preview for docx-filer */
+    preview_html?: string;
   }>;
 }
 
@@ -624,9 +626,10 @@ function AIChatPanel() {
                   preview_text: string;
                   bytes: number;
                   format: string;
-                  preview_kind?: 'text' | 'table';
+                  preview_kind?: 'text' | 'table' | 'html';
                   preview_columns?: string[];
                   preview_rows?: string[][];
+                  preview_html?: string;
                 };
               };
               // Only update UI if user is still viewing this conversation
@@ -1081,6 +1084,8 @@ function AIChatPanel() {
                                         kind: gf.preview_kind,
                                         columns: gf.preview_columns,
                                         rows: gf.preview_rows,
+                                        // BIZZ-868: html-preview for docx
+                                        html: gf.preview_html,
                                       })
                                     }
                                     aria-label={lang === 'da' ? 'Forhåndsvis' : 'Preview'}

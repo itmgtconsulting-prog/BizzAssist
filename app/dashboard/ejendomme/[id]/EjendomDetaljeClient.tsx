@@ -1851,6 +1851,41 @@ export default function EjendomDetaljeClient({
                 })()}
               </div>
               <div className="flex items-center gap-2 mt-2 flex-wrap">
+                {/* BIZZ-854: Ejendomstype-badge — amber for SFE/hovedejendom,
+                    emerald for ejerlejlighed. Første chip i rækken. */}
+                {(() => {
+                  const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
+                  const erEjerlej = !!dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
+                  if (erModer)
+                    return (
+                      <span
+                        className="flex items-center gap-1 px-2.5 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded-full text-amber-300 text-xs font-medium flex-shrink-0"
+                        title={
+                          da
+                            ? 'Matrikel-niveau ejendom der samler bygninger og ejerlejligheder'
+                            : 'Cadastral-level property combining buildings and condominiums'
+                        }
+                      >
+                        <Building2 size={11} />
+                        {da ? 'Hovedejendom (SFE)' : 'Main property (SFE)'}
+                      </span>
+                    );
+                  if (erEjerlej)
+                    return (
+                      <span
+                        className="flex items-center gap-1 px-2.5 py-0.5 bg-emerald-500/10 border border-emerald-500/20 rounded-full text-emerald-300 text-xs font-medium flex-shrink-0"
+                        title={
+                          da
+                            ? 'Ejerlejlighed under en hovedejendom'
+                            : 'Condominium unit under a main property'
+                        }
+                      >
+                        <Home size={11} />
+                        {da ? 'Ejerlejlighed' : 'Condominium'}
+                      </span>
+                    );
+                  return null;
+                })()}
                 <span className="flex items-center gap-1 px-2 py-0.5 bg-slate-800 border border-slate-700/50 rounded-full text-xs text-slate-300">
                   <MapPin size={11} />
                   {(dawaAdresse.kommunenavn || null) ?? dawaJordstykke?.kommune.navn ?? '–'}

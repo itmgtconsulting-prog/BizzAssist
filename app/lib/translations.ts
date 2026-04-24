@@ -236,8 +236,8 @@ export const translations = {
 
     /* ─── Universal search page ────────────────────────────────────── */
     searchPage: {
-      title: 'Universel søgning',
-      subtitle: 'Find ejendomme, virksomheder og personer på ét sted',
+      title: 'Søg',
+      subtitle: 'Ejendomme, virksomheder og personer',
       placeholder: 'Søg på ejendomme, virksomheder og personer...',
       tabProperties: 'Ejendomme',
       tabCompanies: 'Virksomheder',
@@ -836,8 +836,8 @@ export const translations = {
 
     /* ─── Universal search page ────────────────────────────────────── */
     searchPage: {
-      title: 'Universal search',
-      subtitle: 'Find properties, companies and people in one place',
+      title: 'Search',
+      subtitle: 'Properties, companies and people',
       placeholder: 'Search properties, companies and people...',
       tabProperties: 'Properties',
       tabCompanies: 'Companies',

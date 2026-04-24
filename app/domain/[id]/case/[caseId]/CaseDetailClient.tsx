@@ -347,7 +347,7 @@ export default function CaseDetailClient({
               labelDa: 'Dokumenter',
               labelEn: 'Documents',
             },
-            { id: 'ai' as const, icon: Bot, labelDa: 'AI Assistent', labelEn: 'AI Assistant' },
+            { id: 'ai' as const, icon: Bot, labelDa: 'AI Chat', labelEn: 'AI Chat' },
           ] as const
         ).map((tab) => {
           const Icon = tab.icon;
@@ -670,7 +670,7 @@ export default function CaseDetailClient({
           <Bot size={40} className="text-purple-400 mx-auto" />
           <div>
             <h2 className="text-white text-lg font-bold">
-              {da ? 'AI Assistent — kommer snart' : 'AI Assistant — coming soon'}
+              {da ? 'AI Chat — kommer snart' : 'AI Chat — coming soon'}
             </h2>
             <p className="text-slate-400 text-sm mt-1 max-w-md mx-auto">
               {da

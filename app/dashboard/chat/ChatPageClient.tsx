@@ -850,9 +850,7 @@ export default function ChatPageClient() {
       <aside className="w-64 shrink-0 flex flex-col border-r border-white/8 bg-[#0f172a]">
         {/* Header */}
         <div className="px-4 pt-5 pb-3 border-b border-white/8">
-          <h1 className="text-white font-bold text-base mb-3">
-            {da ? 'AI Assistent' : 'AI Assistant'}
-          </h1>
+          <h1 className="text-white font-bold text-base mb-3">AI Chat</h1>
           <button
             onClick={handleNewConversation}
             className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"

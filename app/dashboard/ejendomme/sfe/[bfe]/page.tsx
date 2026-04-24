@@ -96,6 +96,40 @@ async function fetchEjerlejligheder(
 }
 
 /**
+ * BIZZ-833: Server-side fetch af administrator (ejerforening) via
+ * /api/ejendomsadmin. Returnerer tom array ved fejl — ikke-fatal.
+ */
+interface AdminInfo {
+  cvr: string | null;
+  navn: string | null;
+  type: 'virksomhed' | 'person' | 'ukendt';
+}
+async function fetchAdminForBfe(bfeNummer: number): Promise<AdminInfo[]> {
+  try {
+    const base = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
+    const res = await fetch(`${base}/api/ejendomsadmin?bfeNummer=${bfeNummer}`, {
+      cache: 'no-store',
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as {
+      administratorer?: Array<{
+        cvr: string | null;
+        navn: string | null;
+        type: 'virksomhed' | 'person' | 'ukendt';
+        virkningTil: string | null;
+      }>;
+    };
+    // Kun aktuelle administratorer (virkningTil === null)
+    return (data.administratorer ?? [])
+      .filter((a) => a.virkningTil === null && a.type !== 'ukendt' && (a.cvr || a.navn))
+      .map((a) => ({ cvr: a.cvr, navn: a.navn, type: a.type }));
+  } catch (err) {
+    logger.error('[sfe-page] admin fetch fejl:', err);
+    return [];
+  }
+}
+
+/**
  * Parser bygnings-prefix fra adresse. For "Arnold Nielsens Boulevard
  * 62A, 1. tv, 1234 By" → returnerer "62A" som grupperings-nøgle.
  * For "Arnold Nielsens Boulevard 62, 1234 By" (uden bogstav) → "62".
@@ -121,13 +155,19 @@ export default async function SfeDetailPage({ params }: SfeDetailPageProps) {
   const { matrikel } = mat;
   const bfeNum = Number(bfe);
 
-  // Hent komponenter for hvert jordstykke
-  const komponenter: EjerlejlighedItem[] = [];
-  for (const js of matrikel.jordstykker) {
-    if (!js.ejerlavskode || !js.matrikelnummer) continue;
-    const comps = await fetchEjerlejligheder(js.ejerlavskode, js.matrikelnummer, bfeNum);
-    komponenter.push(...comps);
-  }
+  // BIZZ-833: Parallelt fetch af komponenter + administrator via Promise.all.
+  // Tidligere var MAT → komponenter pr jordstykke sekventielt; admin blev
+  // kaldt slet ikke. Nu kommer begge ind parallelt for hurtigere render.
+  const komponenterPromises = matrikel.jordstykker
+    .filter((js) => js.ejerlavskode && js.matrikelnummer)
+    .map((js) => fetchEjerlejligheder(js.ejerlavskode!, js.matrikelnummer!, bfeNum));
+  const adminPromise = fetchAdminForBfe(bfeNum);
+
+  const [komponenterArrays, adminer] = await Promise.all([
+    Promise.all(komponenterPromises),
+    adminPromise,
+  ]);
+  const komponenter: EjerlejlighedItem[] = komponenterArrays.flat();
 
   // BIZZ-846: Grupper på BBR bygning_id (FK) når tilgængeligt, fallback til
   // adresse-prefix-parsing når ikke. bygningId-populeres af BIZZ-880 via
@@ -197,6 +237,43 @@ export default async function SfeDetailPage({ params }: SfeDetailPageProps) {
             )}
           </div>
         </div>
+
+        {/* BIZZ-833: Administrator (ejerforening) - vises øverst når tilstede */}
+        {adminer.length > 0 && (
+          <div className="rounded-xl bg-amber-500/5 border border-amber-500/20 p-4 space-y-2">
+            <div className="flex items-center gap-2 text-amber-300 text-xs font-medium uppercase tracking-wide">
+              <Building2 size={12} />
+              Ejendomsadministrator
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {adminer.map((a, i) => {
+                const label = a.navn ?? (a.cvr ? `CVR ${a.cvr}` : 'Administrator');
+                const content = (
+                  <>
+                    <span className="text-amber-200 font-medium">{label}</span>
+                    {a.cvr && <span className="text-amber-400/70 text-[11px]">CVR {a.cvr}</span>}
+                  </>
+                );
+                return a.cvr ? (
+                  <Link
+                    key={`${a.cvr}-${i}`}
+                    href={`/dashboard/companies/${a.cvr}`}
+                    className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-800/60 border border-amber-500/20 hover:border-amber-500/40 text-sm transition-colors"
+                  >
+                    {content}
+                  </Link>
+                ) : (
+                  <span
+                    key={`${a.navn}-${i}`}
+                    className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-800/60 border border-amber-500/20 text-sm"
+                  >
+                    {content}
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Komponenter grupperet per bygning */}
         {sortedGroups.length === 0 ? (

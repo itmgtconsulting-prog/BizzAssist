@@ -73,7 +73,9 @@ interface Props {
 }
 
 const STORAGE = {
-  topPct: 'bizz-domain-ws-topPct',
+  // BIZZ-877: Tidligere topPct (vertikal split). Nu leftPct (horisontal split).
+  // Læses ikke længere — ny key undgår kollision med gamle værdier.
+  leftPct: 'bizz-domain-ws-leftPct',
 };
 
 export function DomainWorkspaceSplitView({
@@ -87,12 +89,14 @@ export function DomainWorkspaceSplitView({
   const { lang } = useLanguage();
   const da = lang === 'da';
 
-  const [topPct, setTopPct] = useState(40);
+  // BIZZ-877: Skift fra vertikal split (topPct) til horisontal split (leftPct).
+  // Default 38% = ~380px paa 1000px skaerm. Clamp 25-55% for laesbarhed.
+  const [leftPct, setLeftPct] = useState(38);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const v = Number(window.localStorage.getItem(STORAGE.topPct));
-    if (v >= 20 && v <= 80) setTopPct(v);
+    const v = Number(window.localStorage.getItem(STORAGE.leftPct));
+    if (v >= 25 && v <= 55) setLeftPct(v);
   }, []);
 
   const colRef = useRef<HTMLDivElement>(null);
@@ -103,10 +107,11 @@ export function DomainWorkspaceSplitView({
     if (!el) return;
     const onMove = (ev: MouseEvent) => {
       const rect = el.getBoundingClientRect();
-      const pct = ((ev.clientY - rect.top) / rect.height) * 100;
-      const clamped = Math.max(20, Math.min(80, pct));
-      setTopPct(clamped);
-      window.localStorage.setItem(STORAGE.topPct, String(Math.round(clamped)));
+      // BIZZ-877: Horisontal resize — maalt paa clientX i stedet for clientY.
+      const pct = ((ev.clientX - rect.left) / rect.width) * 100;
+      const clamped = Math.max(25, Math.min(55, pct));
+      setLeftPct(clamped);
+      window.localStorage.setItem(STORAGE.leftPct, String(Math.round(clamped)));
     };
     const onUp = () => {
       window.removeEventListener('mousemove', onMove);
@@ -116,7 +121,7 @@ export function DomainWorkspaceSplitView({
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
-    document.body.style.cursor = 'row-resize';
+    document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
   }, []);
 
@@ -300,11 +305,17 @@ export function DomainWorkspaceSplitView({
   return (
     <div
       ref={colRef}
-      className="flex flex-col border border-slate-700/40 rounded-xl overflow-hidden"
+      // BIZZ-877: Horisontal split-view — flex-row (venstre: liste, højre: detaljer).
+      // Tidligere flex-col (vertikal stack) som ikke udnyttede skærmens bredde.
+      className="flex flex-col md:flex-row border border-slate-700/40 rounded-xl overflow-hidden"
       style={{ height: 'calc(100vh - 280px)', minHeight: 480 }}
     >
-      {/* TOP: cases list */}
-      <div className="min-h-0 overflow-y-auto bg-slate-900/30" style={{ height: `${topPct}%` }}>
+      {/* LEFT: cases list. BIZZ-877: På mobile (< md) fylder den hele bredden
+          via w-full; på md+ bruges custom-pct via inline style. */}
+      <div
+        className="min-h-0 overflow-y-auto bg-slate-900/30 w-full md:w-[var(--split-left)] md:flex-shrink-0"
+        style={{ ['--split-left' as string]: `${leftPct}%` }}
+      >
         <div className="px-3 py-2 border-b border-slate-700/40 bg-slate-900/50 flex items-center justify-between sticky top-0 z-10">
           <p className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
             <Briefcase size={12} />
@@ -342,25 +353,23 @@ export function DomainWorkspaceSplitView({
         </ul>
       </div>
 
-      {/* Horizontal divider */}
+      {/* BIZZ-877: Vertikal divider (vises kun på md+). På mobile falder
+          layoutet tilbage til stack (flex-col) så divideren er skjult. */}
       <div
         role="separator"
-        aria-orientation="horizontal"
+        aria-orientation="vertical"
         onMouseDown={startHorizontalResize}
-        className="group h-1.5 shrink-0 cursor-row-resize bg-slate-800/40 hover:bg-blue-500/40 relative transition-colors"
-        title={da ? 'Træk op/ned' : 'Drag up/down'}
+        className="group shrink-0 cursor-col-resize bg-slate-800/40 hover:bg-blue-500/40 relative transition-colors w-1.5 hidden md:block"
+        title={da ? 'Træk venstre/højre' : 'Drag left/right'}
       >
         <GripHorizontal
           size={12}
-          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-slate-600 group-hover:text-blue-300"
+          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-slate-600 group-hover:text-blue-300 rotate-90"
         />
       </div>
 
-      {/* BOTTOM: selected case detail */}
-      <div
-        className="min-h-0 overflow-y-auto bg-slate-900/20"
-        style={{ height: `${100 - topPct}%` }}
-      >
+      {/* RIGHT: selected case detail */}
+      <div className="min-h-0 overflow-y-auto bg-slate-900/20 flex-1">
         <div className="px-3 py-2 border-b border-slate-700/40 bg-slate-900/50 sticky top-0 z-10 flex items-center justify-between gap-2">
           {/* BIZZ-807: Sagsnavn er klik-til-edit. Klik på tekst eller Pencil
               starter inline-edit; Enter/Blur gemmer; Escape cancel. */}

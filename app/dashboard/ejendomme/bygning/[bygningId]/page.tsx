@@ -26,7 +26,7 @@ import { ArrowLeft, Building2, Ruler, Calendar, Layers, MapPin } from 'lucide-re
 import { fetchBygningById, fetchEnhederForBygning } from '@/app/lib/fetchBygning';
 import { isUdfasetStatusLabel } from '@/app/lib/bbrKoder';
 import { fetchBbrStatusForAdresser } from '@/app/lib/bbrEjendomStatus';
-import EjendomBreadcrumb from '@/app/components/ejendomme/EjendomBreadcrumb';
+import EjendomHierarkiSections from '@/app/components/ejendomme/EjendomHierarkiSections';
 
 export const dynamic = 'force-dynamic';
 
@@ -63,17 +63,27 @@ export default async function BygningDetailPage({ params }: BygningDetailPagePro
   return (
     <div className="bg-[#0a1020] min-h-screen">
       <div className="max-w-4xl mx-auto px-6 py-8 space-y-6">
-        {/* BIZZ-832: Breadcrumb med SFE-link når BFE er bekendt.
-            Dashboard → Ejendomme → SFE [bfe] → Bygning X */}
-        <EjendomBreadcrumb
-          ariaLabel="Breadcrumb"
-          levels={[
-            { label: 'Dashboard', href: '/dashboard' },
-            { label: 'Ejendomme', href: '/dashboard/ejendomme' },
+        {/* BIZZ-832 + BIZZ-827 iter 2b: Bilingual breadcrumb + "Tilhører
+            hovedejendom"-kort + enheder-liste via client-komponent der
+            læser useLanguage(). Server-komponent fetcher data, klient
+            renderer lokaliseret UI. */}
+        <EjendomHierarkiSections
+          breadcrumb={[
+            { key: 'dashboard', href: '/dashboard' },
+            { key: 'properties', href: '/dashboard/ejendomme' },
             ...(sfeBfe
-              ? [{ label: `SFE ${sfeBfe}`, href: `/dashboard/ejendomme/sfe/${sfeBfe}` }]
+              ? [
+                  {
+                    key: 'sfe' as const,
+                    param: sfeBfe,
+                    href: `/dashboard/ejendomme/sfe/${sfeBfe}`,
+                  },
+                ]
               : []),
-            { label: `Bygning ${bygning.anvendelse ?? bygning.id.slice(0, 8)}` },
+            {
+              key: 'building',
+              param: bygning.anvendelse ?? bygning.id.slice(0, 8),
+            },
           ]}
         />
 
@@ -176,56 +186,20 @@ export default async function BygningDetailPage({ params }: BygningDetailPagePro
           </Link>
         )}
 
-        {/* BIZZ-832: "Tilhører hovedejendom" block */}
-        {sfeBfe && (
-          <Link
-            href={`/dashboard/ejendomme/sfe/${sfeBfe}`}
-            className="flex items-center gap-3 px-4 py-3 rounded-lg bg-amber-500/5 border border-amber-500/20 hover:border-amber-500/40 transition-colors"
-          >
-            <Building2 size={16} className="text-amber-400 shrink-0" />
-            <div className="flex-1">
-              <p className="text-amber-300 text-sm font-medium">Tilhører hovedejendom</p>
-              <p className="text-slate-500 text-xs mt-0.5">SFE {sfeBfe} — Samlet Fast Ejendom</p>
-            </div>
-          </Link>
-        )}
-
-        {/* BIZZ-834: Enheder-liste — BBR_Enhed med bygning===this */}
-        {enheder.length > 0 && (
-          <div className="rounded-xl bg-[#0f172a] border border-slate-700/50 overflow-hidden">
-            <div className="px-4 py-2.5 border-b border-slate-700/40 flex items-center justify-between">
-              <h2 className="text-white text-sm font-semibold flex items-center gap-2">
-                <Building2 size={14} className="text-blue-400" />
-                Enheder i bygningen
-              </h2>
-              <span className="text-slate-500 text-xs">
-                {enheder.length} enhed{enheder.length === 1 ? '' : 'er'}
-              </span>
-            </div>
-            <div className="divide-y divide-slate-700/30">
-              {enheder.map((e) => {
-                const unitLabel =
-                  e.etage || e.doer ? [e.etage, e.doer].filter(Boolean).join('. ') : 'Hovedadresse';
-                return (
-                  <div key={e.id} className="px-4 py-2.5 flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <Building2 size={12} className="text-slate-500 shrink-0" />
-                      <span className="text-slate-200 text-sm font-medium truncate">
-                        {unitLabel}
-                      </span>
-                      {e.anvendelse && (
-                        <span className="text-slate-500 text-xs truncate">· {e.anvendelse}</span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-3 text-xs text-slate-400 shrink-0">
-                      {e.areal != null && <span>{e.areal} m²</span>}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
+        {/* BIZZ-832 + BIZZ-834 + BIZZ-827 iter 2b: Bilingual "Tilhører
+            hovedejendom"-kort + enheder-i-bygningen sektion via client-
+            wrapper der læser useLanguage(). */}
+        <EjendomHierarkiSections
+          sfeBfe={sfeBfe}
+          sisterEnheder={enheder.map((e) => ({
+            id: e.id,
+            etage: e.etage,
+            doer: e.doer,
+            anvendelse: e.anvendelse,
+            areal: e.areal,
+          }))}
+          sisterContext="building"
+        />
       </div>
     </div>
   );

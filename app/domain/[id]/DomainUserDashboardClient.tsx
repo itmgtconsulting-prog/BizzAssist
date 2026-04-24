@@ -423,6 +423,10 @@ export default function DomainUserDashboardClient({ domainId }: { domainId: stri
               selectedIds={selectedIds}
               onToggleSelect={toggleSelect}
               onOpenCase={(id) => setWorkspaceWithUrl(id)}
+              // BIZZ-898: Highlight aktuelt-åben sag i listen selv når
+              // workspace er lukket (fx hvis brugeren klikker luk og
+              // senere ønsker visuel reference til seneste-åbne sag).
+              currentCaseId={workspaceCaseId}
             />
           )}
         </>

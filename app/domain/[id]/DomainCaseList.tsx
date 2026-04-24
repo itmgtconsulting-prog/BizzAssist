@@ -50,6 +50,13 @@ export interface DomainCaseListProps {
    * full-page case detail route.
    */
   onOpenCase?: (id: string) => void;
+  /**
+   * BIZZ-898: ID for the case currently open in the workspace panel (on the
+   * right side). Used to highlight the matching row in the list with an
+   * accent border, distinct from the multi-select checkbox state. Only
+   * applies when the list is rendered alongside the workspace view.
+   */
+  currentCaseId?: string | null;
 }
 
 /**
@@ -65,6 +72,7 @@ export function DomainCaseList({
   selectedIds,
   onToggleSelect,
   onOpenCase,
+  currentCaseId,
 }: DomainCaseListProps) {
   const { lang } = useLanguage();
   const da = lang === 'da';
@@ -95,8 +103,16 @@ export function DomainCaseList({
     <div className="flex flex-col divide-y divide-slate-800/60 rounded-xl border border-slate-700/40 bg-slate-800/20 overflow-hidden">
       {cases.map((c) => {
         const checked = selectedIds?.has(c.id) ?? false;
-        const rowClassName = `flex items-center gap-3 px-4 py-2.5 transition-colors ${
-          checked ? 'bg-blue-500/10' : 'hover:bg-slate-800/60'
+        const isCurrent = currentCaseId === c.id;
+        // BIZZ-898: isCurrent giver en kraftig accent-border + baggrund til
+        // rækken der matcher det workspace-panel brugeren har åbent. Skiller
+        // sig fra multi-select (checked) som kun farver baggrunden svagt.
+        const rowClassName = `flex items-center gap-3 px-4 py-2.5 transition-colors border-l-2 ${
+          isCurrent
+            ? 'bg-blue-500/15 border-blue-400'
+            : checked
+              ? 'bg-blue-500/10 border-transparent'
+              : 'hover:bg-slate-800/60 border-transparent'
         }`;
         // BIZZ-800: Wrapper skifter mellem Link og button-div afhængigt
         // af onOpenCase — samme row-indhold i begge tilfælde.

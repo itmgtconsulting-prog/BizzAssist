@@ -93,11 +93,23 @@ export function DomainWorkspaceSplitView({
   // Default 38% = ~380px paa 1000px skaerm. Clamp 25-55% for laesbarhed.
   const [leftPct, setLeftPct] = useState(38);
 
+  // BIZZ-898: Ref til højre-panel så vi kan scrollTo-top når brugeren
+  // skifter sag. Ellers beholder panel sin nuværende scroll-position som
+  // ofte er langt nede — så brugeren ser "forkert" content ved skift.
+  const rightPanelRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const v = Number(window.localStorage.getItem(STORAGE.leftPct));
     if (v >= 25 && v <= 55) setLeftPct(v);
   }, []);
+
+  // BIZZ-898: Smooth scroll-to-top af højre panel når selectedCaseId ændres.
+  // Matcher UX-kravet om "smooth scroll-to-top of højre panel ved skift".
+  useEffect(() => {
+    if (!rightPanelRef.current) return;
+    rightPanelRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [selectedCaseId]);
 
   const colRef = useRef<HTMLDivElement>(null);
 
@@ -423,7 +435,7 @@ export function DomainWorkspaceSplitView({
       </div>
 
       {/* RIGHT: selected case detail */}
-      <div className="min-h-0 overflow-y-auto bg-slate-900/20 flex-1">
+      <div ref={rightPanelRef} className="min-h-0 overflow-y-auto bg-slate-900/20 flex-1">
         <div className="px-3 py-2 border-b border-slate-700/40 bg-slate-900/50 sticky top-0 z-10 flex items-center justify-between gap-2">
           {/* BIZZ-807: Sagsnavn er klik-til-edit. Klik på tekst eller Pencil
               starter inline-edit; Enter/Blur gemmer; Escape cancel. */}

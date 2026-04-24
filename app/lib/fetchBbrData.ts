@@ -1322,6 +1322,8 @@ export async function fetchBbrAreasByDawaId(dawaId: string): Promise<{
 export async function resolveEnhedByDawaId(dawaId: string): Promise<{
   bfe: number | null;
   areal: number | null;
+  /** BIZZ-880 (845c): Bygning-UUID fra BBR_Enhed.bygning — brugt af /api/ejerlejligheder */
+  bygningId: string | null;
 } | null> {
   if (!dawaId) return null;
   const vt = nowDafDateTime();
@@ -1333,6 +1335,8 @@ export async function resolveEnhedByDawaId(dawaId: string): Promise<{
     enh027ArealTilBeboelse?: number | null;
     enh028ArealTilErhverv?: number | null;
     status?: string | number | null;
+    /** BIZZ-880: BBR_Enhed.bygning returnerer UUID for ejende bygning. */
+    bygning?: string | null;
   };
 
   const pickAreal = (n: EnhedNode): number | null => {
@@ -1344,6 +1348,7 @@ export async function resolveEnhedByDawaId(dawaId: string): Promise<{
 
   // Step 1: Try direct BBR_Enhed match by adresseIdentificerer = dawaId
   let matchedAreal: number | null = null;
+  let matchedBygningId: string | null = null;
   try {
     const directNodes = await fetchBBRGraphQL(
       `query($vt: DafDateTime!, $id: String!) {
@@ -1354,6 +1359,7 @@ export async function resolveEnhedByDawaId(dawaId: string): Promise<{
             enh027ArealTilBeboelse
             enh028ArealTilErhverv
             status
+            bygning
           }
         }
       }`,
@@ -1361,7 +1367,13 @@ export async function resolveEnhedByDawaId(dawaId: string): Promise<{
     );
     const directList = Array.isArray(directNodes) ? (directNodes as EnhedNode[]) : [];
     const directMatch = directList.find((n) => String(n.status ?? '') !== '7');
-    if (directMatch) matchedAreal = pickAreal(directMatch);
+    if (directMatch) {
+      matchedAreal = pickAreal(directMatch);
+      // BIZZ-880: bevar bygning-UUID hvis det passer UUID-mønster
+      if (directMatch.bygning && UUID_RE.test(directMatch.bygning)) {
+        matchedBygningId = directMatch.bygning;
+      }
+    }
   } catch {
     /* fall through */
   }
@@ -1389,6 +1401,7 @@ export async function resolveEnhedByDawaId(dawaId: string): Promise<{
                   enh027ArealTilBeboelse
                   enh028ArealTilErhverv
                   status
+                  bygning
                 }
               }
             }`,
@@ -1398,7 +1411,13 @@ export async function resolveEnhedByDawaId(dawaId: string): Promise<{
           const match = list.find(
             (n) => n.adresseIdentificerer === dawaId && String(n.status ?? '') !== '7'
           );
-          if (match) matchedAreal = pickAreal(match);
+          if (match) {
+            matchedAreal = pickAreal(match);
+            // BIZZ-880: populate bygningId fra bygning-feltet hvis gyldig UUID
+            if (match.bygning && UUID_RE.test(match.bygning)) {
+              matchedBygningId = match.bygning;
+            }
+          }
         }
       }
     } catch {
@@ -1512,8 +1531,8 @@ export async function resolveEnhedByDawaId(dawaId: string): Promise<{
     }
   }
 
-  if (matchedBfe == null && matchedAreal == null) return null;
-  return { bfe: matchedBfe, areal: matchedAreal };
+  if (matchedBfe == null && matchedAreal == null && matchedBygningId == null) return null;
+  return { bfe: matchedBfe, areal: matchedAreal, bygningId: matchedBygningId };
 }
 
 /** Returns a DafDateTime string for the current moment (CET/CEST). */

@@ -62,6 +62,19 @@ export interface Ejerlejlighed {
    * the data is insufficient to decide.
    */
   udfaset: boolean | null;
+  /**
+   * BIZZ-880 (845c): BBR bygning-id (UUID) som ejerlejligheden fysisk
+   * ligger i. Resolves via BBR_Enhed.bygning-feltet når dawaId → UUID
+   * mapping findes. Bruges af BIZZ-846 til at gruppere komponenter på
+   * ægte FK i stedet for adresse-prefix-parsing.
+   */
+  bygningId: string | null;
+  /**
+   * BIZZ-880 (845c): Menneske-læsbar bygnings-betegnelse (typisk
+   * anvendelses-tekst fra LiveBBRBygning). Null hvis bygningId ikke
+   * kunne resolves.
+   */
+  bygningBetegnelse: string | null;
 }
 
 /** API-svar fra denne route */
@@ -318,6 +331,11 @@ async function resolveLejlighederViaDawa(
         // BIZZ-784: DAWA-fallback path has no valuation data — mark null so
         // the filter neither includes nor excludes these by heuristic.
         udfaset: null,
+        // BIZZ-880 (845c): bygningId/betegnelse ikke tilgængelig i DAWA-
+        // fallback path — BBR_Enhed-enrichment nedenfor kan populere
+        // via dedikeret lookup når path er aktiveret.
+        bygningId: null,
+        bygningBetegnelse: null,
       });
     }
   }
@@ -411,12 +429,16 @@ async function resolveLejlighederViaDawa(
   // individuel ejendomsnummer, hvilket er ~alle bolig-ejerlejligheder.
   await Promise.all(
     lejligheder.map(async (lej) => {
-      if (lej.bfe > 0 && lej.areal != null) return;
+      // BIZZ-880: vi henter stadig enhed hvis bygningId mangler — selv når
+      // bfe+areal allerede er sat — så SFE-gruppering kan ske på ægte FK.
+      const alreadyEnriched = lej.bfe > 0 && lej.areal != null && lej.bygningId != null;
+      if (alreadyEnriched) return;
       if (!lej.dawaId) return;
       try {
         const enhed = await resolveEnhedByDawaId(lej.dawaId);
         if (enhed?.bfe && lej.bfe === 0) lej.bfe = enhed.bfe;
         if (enhed?.areal != null && lej.areal == null) lej.areal = enhed.areal;
+        if (enhed?.bygningId && lej.bygningId == null) lej.bygningId = enhed.bygningId;
       } catch {
         /* non-fatal */
       }
@@ -757,6 +779,9 @@ export async function GET(request: NextRequest): Promise<NextResponse<Ejerlejlig
           koebsdato: sum?.koebsdato ?? null,
           dawaId: dawaIdMap.get(item.uuid) ?? null,
           udfaset,
+          // BIZZ-880: bygningId populeres via BBR_Enhed-enrichment (efter denne map)
+          bygningId: null,
+          bygningBetegnelse: null,
         };
       })
       .sort((a, b) => {

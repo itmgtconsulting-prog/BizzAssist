@@ -42,6 +42,9 @@ interface EjerlejlighedItem {
   ejer: string;
   areal: number | null;
   dawaId: string | null;
+  /** BIZZ-880 (845c): BBR bygning-UUID til SFE-gruppering */
+  bygningId?: string | null;
+  bygningBetegnelse?: string | null;
 }
 
 /**
@@ -126,12 +129,15 @@ export default async function SfeDetailPage({ params }: SfeDetailPageProps) {
     komponenter.push(...comps);
   }
 
-  // Grupper per bygnings-prefix
+  // BIZZ-846: Grupper på BBR bygning_id (FK) når tilgængeligt, fallback til
+  // adresse-prefix-parsing når ikke. bygningId-populeres af BIZZ-880 via
+  // resolveEnhedByDawaId → BBR_Enhed.bygning. Giver korrekt gruppering selv
+  // for adresser uden konsistent bogstav-suffix (fx "62" + "Vestergade 5").
   const groups = new Map<string, EjerlejlighedItem[]>();
   for (const k of komponenter) {
-    const prefix = parseBygningsPrefix(k.adresse);
-    if (!groups.has(prefix)) groups.set(prefix, []);
-    groups.get(prefix)!.push(k);
+    const groupKey = k.bygningId ?? `adresse:${parseBygningsPrefix(k.adresse)}`;
+    if (!groups.has(groupKey)) groups.set(groupKey, []);
+    groups.get(groupKey)!.push(k);
   }
   const sortedGroups = Array.from(groups.entries()).sort(([a], [b]) => a.localeCompare(b, 'da'));
 
@@ -200,48 +206,72 @@ export default async function SfeDetailPage({ params }: SfeDetailPageProps) {
           </div>
         ) : (
           <div className="space-y-6">
-            {sortedGroups.map(([prefix, items]) => (
-              <section key={prefix}>
-                <h2 className="text-white text-lg font-semibold flex items-center gap-2 mb-3">
+            {sortedGroups.map(([groupKey, items]) => {
+              // BIZZ-846: groupKey er enten bygning-UUID eller "adresse:<prefix>"-fallback.
+              // Vis kortlabel for UUID-grupper (adresse-prefix fra første item) så brugeren
+              // ikke ser den rå UUID. Når bygning_id findes, wrap heading i link til
+              // bygning-detaljesiden.
+              const isUuidGroup = !groupKey.startsWith('adresse:');
+              const displayLabel = isUuidGroup
+                ? parseBygningsPrefix(items[0]?.adresse ?? '')
+                : groupKey.replace(/^adresse:/, '');
+              const headingContent = (
+                <>
                   <Building2 size={18} className="text-emerald-400" />
-                  Bygning {prefix}
+                  Bygning {displayLabel}
                   <span className="text-xs text-slate-500 font-normal">
                     ({items.length} enhed{items.length === 1 ? '' : 'er'})
                   </span>
-                </h2>
-                <div className="space-y-2">
-                  {items.map((k) => {
-                    // Link: foretræk dawaId til detalje-side (giver
-                    // adgang til BBR-data), ellers BFE.
-                    const href = k.dawaId
-                      ? `/dashboard/ejendomme/${k.dawaId}`
-                      : `/dashboard/ejendomme/${k.bfe}`;
-                    const unitLabel =
-                      k.etage || k.doer
-                        ? [k.etage, k.doer].filter(Boolean).join('. ')
-                        : 'Hovedadresse';
-                    return (
-                      <Link
-                        key={`${k.bfe}-${k.adresse}`}
-                        href={href}
-                        className="flex items-center gap-3 px-4 py-3 rounded-lg bg-[#0f172a] border border-slate-700/50 hover:border-blue-500/40 transition-colors"
-                      >
-                        <Home size={14} className="text-blue-400 shrink-0" />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-white text-sm font-medium truncate">{k.adresse}</p>
-                          <p className="text-slate-500 text-xs mt-0.5">
-                            {unitLabel}
-                            {k.areal != null && ` · ${k.areal} m²`}
-                            {k.bfe > 0 && ` · BFE ${k.bfe}`}
-                            {k.ejer && k.ejer !== '–' && ` · ${k.ejer}`}
-                          </p>
-                        </div>
-                      </Link>
-                    );
-                  })}
-                </div>
-              </section>
-            ))}
+                </>
+              );
+              return (
+                <section key={groupKey}>
+                  {isUuidGroup ? (
+                    <Link
+                      href={`/dashboard/ejendomme/bygning/${groupKey}`}
+                      className="text-white text-lg font-semibold flex items-center gap-2 mb-3 hover:text-emerald-300 transition-colors"
+                    >
+                      {headingContent}
+                    </Link>
+                  ) : (
+                    <h2 className="text-white text-lg font-semibold flex items-center gap-2 mb-3">
+                      {headingContent}
+                    </h2>
+                  )}
+                  <div className="space-y-2">
+                    {items.map((k) => {
+                      // Link: foretræk dawaId til detalje-side (giver
+                      // adgang til BBR-data), ellers BFE.
+                      const href = k.dawaId
+                        ? `/dashboard/ejendomme/${k.dawaId}`
+                        : `/dashboard/ejendomme/${k.bfe}`;
+                      const unitLabel =
+                        k.etage || k.doer
+                          ? [k.etage, k.doer].filter(Boolean).join('. ')
+                          : 'Hovedadresse';
+                      return (
+                        <Link
+                          key={`${k.bfe}-${k.adresse}`}
+                          href={href}
+                          className="flex items-center gap-3 px-4 py-3 rounded-lg bg-[#0f172a] border border-slate-700/50 hover:border-blue-500/40 transition-colors"
+                        >
+                          <Home size={14} className="text-blue-400 shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-white text-sm font-medium truncate">{k.adresse}</p>
+                            <p className="text-slate-500 text-xs mt-0.5">
+                              {unitLabel}
+                              {k.areal != null && ` · ${k.areal} m²`}
+                              {k.bfe > 0 && ` · BFE ${k.bfe}`}
+                              {k.ejer && k.ejer !== '–' && ` · ${k.ejer}`}
+                            </p>
+                          </div>
+                        </Link>
+                      );
+                    })}
+                  </div>
+                </section>
+              );
+            })}
           </div>
         )}
 

@@ -21,9 +21,6 @@ import {
   Trash2,
   X,
   LayoutDashboard,
-  FileText,
-  History,
-  Settings,
   ArrowLeft,
   type LucideIcon,
 } from 'lucide-react';
@@ -135,9 +132,10 @@ export default function DomainUserDashboardClient({ domainId }: { domainId: stri
   // layouts). Split-view + AI side-panel are iter 2.
   // BIZZ-787: "Dokumenter" fjernet som top-level tab — dokumenter hører
   // hjemme i kontekst af en skabelon (resizable side-panel i template-editor).
-  const [topTab, setTopTab] = useState<'overview' | 'cases' | 'templates' | 'audit' | 'settings'>(
-    'cases'
-  );
+  const [topTab, setTopTab] = useState<'overview' | 'cases'>('cases');
+  // BIZZ-885: Skabeloner, Historik og Indstillinger fjernet fra hoved-
+  // menuen. Admin-funktioner tilgås via dedikeret Admin-knap i header
+  // (kun synlig for admins). Medlemmer ser kun Oversigt + Sager.
   const topTabs: Array<{
     id: typeof topTab;
     icon: LucideIcon;
@@ -147,27 +145,6 @@ export default function DomainUserDashboardClient({ domainId }: { domainId: stri
   }> = [
     { id: 'overview', icon: LayoutDashboard, labelDa: 'Oversigt', labelEn: 'Overview' },
     { id: 'cases', icon: Briefcase, labelDa: 'Sager', labelEn: 'Cases' },
-    {
-      id: 'templates',
-      icon: FileText,
-      labelDa: 'Skabeloner',
-      labelEn: 'Templates',
-      adminHref: `/domain/${domainId}/admin/templates`,
-    },
-    {
-      id: 'audit',
-      icon: History,
-      labelDa: 'Historik',
-      labelEn: 'Audit log',
-      adminHref: `/domain/${domainId}/admin/audit`,
-    },
-    {
-      id: 'settings',
-      icon: Settings,
-      labelDa: 'Indstillinger',
-      labelEn: 'Settings',
-      adminHref: `/domain/${domainId}/admin/settings`,
-    },
   ];
 
   // BIZZ-759: bulk actions — iterate the selected IDs and fire per-case PATCH

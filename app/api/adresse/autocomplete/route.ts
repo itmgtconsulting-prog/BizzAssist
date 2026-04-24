@@ -15,6 +15,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { darAutocomplete } from '@/app/lib/dar';
+import { expandAddressQueryVariants, hasInitialPrefix } from '@/app/lib/search/normalizeQuery';
 import { checkRateLimit, rateLimit } from '@/app/lib/rateLimit';
 import { resolveTenantId } from '@/lib/api/auth';
 import { createAdminClient } from '@/lib/supabase/admin';
@@ -52,7 +53,21 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const results = await darAutocomplete(q);
+    // BIZZ-843: Initialer-normalisering. Brugere skriver ofte "HC
+    // Møllersvej" / "H.C. Andersens" hvor DAR har "H C Møllersvej".
+    // Når query har et initialer-mønster prøver vi begge varianter
+    // parallelt og merger resultater (dedup på adresse.id).
+    const variants = hasInitialPrefix(q) ? expandAddressQueryVariants(q) : [q];
+    const variantResults = await Promise.all(variants.map((v) => darAutocomplete(v)));
+    const seenIds = new Set<string>();
+    const results = [];
+    for (const batch of variantResults) {
+      for (const r of batch) {
+        if (seenIds.has(r.adresse.id)) continue;
+        seenIds.add(r.adresse.id);
+        results.push(r);
+      }
+    }
     // BIZZ-785 iter 2a: berig med server-side is_udfaset flag fra
     // lokal bbr_ejendom_status-tabel. Batch-lookup pr. adresse-ID.
     // Tabellen er populated af backfill-scriptet + cron-refresh.

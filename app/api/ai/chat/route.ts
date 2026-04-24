@@ -425,6 +425,28 @@ const TOOLS: Anthropic.Tool[] = [
       required: ['cvr'],
     },
   },
+  // BIZZ-894 (audit G6): Person-netværk via cvr_deltagerrelation.
+  // UI relationer-sektion viser co-direktører + medejere — AI havde
+  // ingen tool. Data-kilde: public.cvr_deltagerrelation (BIZZ-830).
+  {
+    name: 'hent_person_netvaerk',
+    description:
+      'Hent personens netværk: andre personer som oftest er deltager (direktør/ejer/bestyrelsesmedlem) i de samme virksomheder. Sorteret efter antal fælles virksomheder. Brug dette til at svare "hvem arbejder X sammen med" eller "hvem er i netværk med X". Stopper ved top-20 (default, cap 50).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        enhedsNummer: {
+          type: 'string',
+          description: 'Personens enhedsNummer fra CVR ES (ikke CPR!).',
+        },
+        max_results: {
+          type: 'string',
+          description: 'Maksimum antal netværks-personer (default 20, cap 50).',
+        },
+      },
+      required: ['enhedsNummer'],
+    },
+  },
   // BIZZ-893 (audit G5): Nyheder om virksomhed via aggregator.
   // UI viser seneste nyheder på virksomhed/overblik — AI havde
   // ingen vej til at citere artikler. /api/news aggregerer Ritzau +
@@ -578,6 +600,8 @@ const TOOL_STATUS: Record<string, string> = {
   hent_virksomhed_historik: 'Henter virksomhedshistorik…',
   // BIZZ-891
   hent_virksomhed_ejere: 'Henter virksomhedens ejere…',
+  // BIZZ-894
+  hent_person_netvaerk: 'Henter personens netværk…',
   // BIZZ-893
   hent_virksomhed_nyheder: 'Søger nyheder om virksomheden…',
   hent_salgshistorik: 'Henter salgshistorik…',
@@ -1108,6 +1132,46 @@ async function executeTool(
           vejledning: ejere.some((e) => e.erVirksomhed)
             ? 'Mindst én ejer er en virksomhed. For at walke op mod ultimate-ejer: kald hent_virksomhed_ejere med den virksomhed-ejers CVR. Stop ved person-ejer.'
             : 'Alle ejere er personer — ingen yderligere op-walk mulig.',
+        };
+        break;
+      }
+
+      // BIZZ-894 (audit G6): person-netværk via cvr_deltagerrelation.
+      case 'hent_person_netvaerk': {
+        const eid = input.enhedsNummer?.trim();
+        if (!eid || !/^\d+$/.test(eid)) {
+          result = { fejl: 'enhedsNummer skal være et positivt heltal' };
+          break;
+        }
+        const params = new URLSearchParams({ enhedsNummer: eid });
+        if (input.max_results) params.set('max_results', input.max_results);
+        const res = await fetch(`${baseUrl}/api/person/netvaerk?${params}`, internalFetchOpts);
+        if (!res.ok) {
+          result = { fejl: toolErrorMessage('Netvaerk-API', res.status) };
+          break;
+        }
+        const data = (await res.json()) as {
+          enhedsNummer: number;
+          antalDinevirksomheder: number;
+          antalNetvaerk: number;
+          netvaerk: Array<{
+            enhedsNummer: number;
+            navn: string;
+            antalFaellesVirksomheder: number;
+            faellesCvrListe: string[];
+            roller: string[];
+          }>;
+          fejl?: string;
+        };
+        if (data.fejl) {
+          result = { fejl: data.fejl };
+          break;
+        }
+        result = {
+          enhedsNummer: data.enhedsNummer,
+          antalPersonligeVirksomheder: data.antalDinevirksomheder,
+          antalNetvaerk: data.antalNetvaerk,
+          netvaerk: data.netvaerk,
         };
         break;
       }

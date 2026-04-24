@@ -98,6 +98,13 @@ export function DomainWorkspaceSplitView({
   // ofte er langt nede — så brugeren ser "forkert" content ved skift.
   const rightPanelRef = useRef<HTMLDivElement>(null);
 
+  // BIZZ-899: Valgte dokumenter til ai-chat-kontekst. Cap 20 (server-side
+  // token-budget — ~20KB * 20 = 400KB parsed text). Persisteres i URL som
+  // ?docs=id1,id2,id3 så state er bookmarkable. Ryddes automatisk ved
+  // sag-skift (ny sag → nye relevante docs).
+  const MAX_SELECTED_DOCS = 20;
+  const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set());
+
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const v = Number(window.localStorage.getItem(STORAGE.leftPct));
@@ -110,6 +117,70 @@ export function DomainWorkspaceSplitView({
     if (!rightPanelRef.current) return;
     rightPanelRef.current.scrollTo({ top: 0, behavior: 'smooth' });
   }, [selectedCaseId]);
+
+  // BIZZ-899: Initial dokument-valg fra URL (?docs=id1,id2). Læses kun
+  // ved mount + hver gang selectedCaseId ændres — sag-skift nulstiller
+  // valget fordi dokument-IDs er sag-specifikke.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const sp = new URLSearchParams(window.location.search);
+    const raw = sp.get('docs');
+    if (!raw) {
+      setSelectedDocIds(new Set());
+      return;
+    }
+    const ids = raw
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    setSelectedDocIds(new Set(ids.slice(0, MAX_SELECTED_DOCS)));
+  }, [selectedCaseId]);
+
+  // BIZZ-899: Sync selectedDocIds → URL via replaceState. Non-empty: sæt
+  // ?docs=id1,id2. Empty: fjern param helt.
+  const writeDocsToUrl = useCallback((ids: Set<string>) => {
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    if (ids.size > 0) {
+      url.searchParams.set('docs', Array.from(ids).join(','));
+    } else {
+      url.searchParams.delete('docs');
+    }
+    window.history.replaceState(null, '', url.toString());
+  }, []);
+
+  // BIZZ-899: Toggle enkelt dokument. Cap håndhæves — ignorer add når
+  // cap er nået (UI viser toast via uploadError-felt eller tooltip).
+  const toggleDocSelect = useCallback(
+    (docId: string) => {
+      setSelectedDocIds((prev) => {
+        const next = new Set(prev);
+        if (next.has(docId)) {
+          next.delete(docId);
+        } else if (next.size < MAX_SELECTED_DOCS) {
+          next.add(docId);
+        }
+        writeDocsToUrl(next);
+        return next;
+      });
+    },
+    [writeDocsToUrl]
+  );
+
+  // BIZZ-899: Bulk-actions "Vælg alle" / "Ryd valg".
+  const selectAllDocs = useCallback(
+    (allIds: string[]) => {
+      const capped = new Set(allIds.slice(0, MAX_SELECTED_DOCS));
+      setSelectedDocIds(capped);
+      writeDocsToUrl(capped);
+    },
+    [writeDocsToUrl]
+  );
+  const clearSelectedDocs = useCallback(() => {
+    const empty = new Set<string>();
+    setSelectedDocIds(empty);
+    writeDocsToUrl(empty);
+  }, [writeDocsToUrl]);
 
   const colRef = useRef<HTMLDivElement>(null);
 
@@ -606,44 +677,99 @@ export function DomainWorkspaceSplitView({
               </div>
 
               <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <p className="text-[11px] uppercase tracking-wide text-slate-500">
+                <div className="flex items-center justify-between mb-1.5 gap-2">
+                  <p className="text-[11px] uppercase tracking-wide text-slate-500 whitespace-nowrap">
                     {da ? 'Dokumenter' : 'Documents'} · {caseDocs.length}
-                  </p>
-                  <label className="cursor-pointer inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 transition-colors">
-                    {uploadBusy ? (
-                      <Loader2 size={10} className="animate-spin" />
-                    ) : (
-                      <Upload size={10} />
+                    {selectedDocIds.size > 0 && (
+                      <span className="ml-1.5 px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 text-[10px] normal-case tracking-normal">
+                        {selectedDocIds.size}{' '}
+                        {da ? (selectedDocIds.size === 1 ? 'valgt' : 'valgte') : 'selected'}
+                      </span>
                     )}
-                    {da ? 'Upload' : 'Upload'}
-                    <input
-                      type="file"
-                      multiple
-                      hidden
-                      onChange={(e) => {
-                        if (e.target.files) void uploadFiles(e.target.files);
-                        e.target.value = '';
-                      }}
-                    />
-                  </label>
+                  </p>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {/* BIZZ-899: Bulk-actions — kun relevant når der er docs */}
+                    {caseDocs.length > 0 && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => selectAllDocs(caseDocs.map((d) => d.id))}
+                          className="text-[10px] px-1.5 py-0.5 rounded text-slate-300 hover:text-white hover:bg-slate-800"
+                          disabled={selectedDocIds.size === caseDocs.length}
+                        >
+                          {da ? 'Vælg alle' : 'Select all'}
+                        </button>
+                        {selectedDocIds.size > 0 && (
+                          <button
+                            type="button"
+                            onClick={clearSelectedDocs}
+                            className="text-[10px] px-1.5 py-0.5 rounded text-slate-300 hover:text-white hover:bg-slate-800"
+                          >
+                            {da ? 'Ryd valg' : 'Clear'}
+                          </button>
+                        )}
+                      </>
+                    )}
+                    <label className="cursor-pointer inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 transition-colors">
+                      {uploadBusy ? (
+                        <Loader2 size={10} className="animate-spin" />
+                      ) : (
+                        <Upload size={10} />
+                      )}
+                      {da ? 'Upload' : 'Upload'}
+                      <input
+                        type="file"
+                        multiple
+                        hidden
+                        onChange={(e) => {
+                          if (e.target.files) void uploadFiles(e.target.files);
+                          e.target.value = '';
+                        }}
+                      />
+                    </label>
+                  </div>
                 </div>
                 {uploadError && <p className="text-[10px] text-rose-300 mb-1">{uploadError}</p>}
+                {/* BIZZ-899: Cap-advisel når bruger har valgt MAX og forsøger at
+                    vælge flere. Forhindrer forvirring over "intet sker". */}
+                {selectedDocIds.size >= MAX_SELECTED_DOCS && (
+                  <p className="text-[10px] text-amber-300 mb-1">
+                    {da
+                      ? `Max ${MAX_SELECTED_DOCS} dokumenter kan vælges til AI-kontekst.`
+                      : `Max ${MAX_SELECTED_DOCS} documents can be selected for AI context.`}
+                  </p>
+                )}
                 {caseDocs.length === 0 ? (
                   <p className="text-xs text-slate-500">
                     {da ? 'Ingen dokumenter på sagen.' : 'No documents on this case.'}
                   </p>
                 ) : (
                   <ul className="space-y-1">
-                    {caseDocs.map((d) => (
-                      <li
-                        key={d.id}
-                        className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-800/40"
-                      >
-                        <Paperclip size={11} className="text-slate-400 shrink-0" />
-                        <span className="text-xs text-slate-200 truncate">{d.name}</span>
-                      </li>
-                    ))}
+                    {caseDocs.map((d) => {
+                      const checked = selectedDocIds.has(d.id);
+                      return (
+                        <li
+                          key={d.id}
+                          className={`flex items-center gap-2 px-2 py-1.5 rounded transition-colors border ${
+                            checked
+                              ? 'bg-blue-500/10 border-blue-400/40'
+                              : 'border-transparent hover:bg-slate-800/40'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleDocSelect(d.id)}
+                            aria-label={
+                              da ? `Vælg dokument ${d.name}` : `Select document ${d.name}`
+                            }
+                            className="shrink-0 accent-blue-500"
+                          />
+                          <Paperclip size={11} className="text-slate-400 shrink-0" />
+                          <span className="text-xs text-slate-200 truncate">{d.name}</span>
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
               </div>

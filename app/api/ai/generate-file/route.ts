@@ -240,14 +240,76 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
       generated = await fillDocxTemplate(tmpl.buffer, body.attached_template.placeholders ?? {});
     } else {
-      // ─── mode: domain_template — iter 2 (BIZZ-816) ──────────
-      return NextResponse.json(
+      // ─── mode: domain_template (BIZZ-816) ───────────────────
+      // Proxy til /api/domain/[id]/case/[caseId]/generate som kører
+      // Claude-baseret placeholder-fill. Derefter downloader vi output
+      // fra domain-files og re-uploader til ai-generated så klienten
+      // bruger samme signed-URL-flow som scratch + attached_template.
+      if (!body.domain_template) {
+        return NextResponse.json({ error: 'domain_template input mangler' }, { status: 400 });
+      }
+      const admin = createAdminClient();
+      const host = request.headers.get('host');
+      const proto = request.headers.get('x-forwarded-proto') ?? 'http';
+      const base = `${proto}://${host}`;
+      const cookieHeader = request.headers.get('cookie') ?? '';
+      const genRes = await fetch(
+        `${base}/api/domain/${body.domain_template.domain_id}/case/${body.domain_template.case_id}/generate`,
         {
-          error:
-            'domain_template-mode er parkeret til BIZZ-816. Brug /api/domain/[id]/case/[caseId]/generate direkte indtil da.',
-        },
-        { status: 501 }
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+          },
+          body: JSON.stringify({
+            template_id: body.domain_template.domain_template_id,
+            user_instructions: body.domain_template.user_instructions,
+          }),
+          signal: AbortSignal.timeout(60_000),
+        }
       );
+      if (!genRes.ok) {
+        const errJson = (await genRes.json().catch(() => ({}))) as { error?: string };
+        return NextResponse.json(
+          {
+            error: errJson.error ?? `domain_template generation fejl (${genRes.status})`,
+          },
+          { status: genRes.status }
+        );
+      }
+      const genJson = (await genRes.json()) as {
+        generation_id: string;
+        output_path: string;
+        tokens?: number;
+      };
+      // Download udfyldt output fra domain-files → re-upload til
+      // ai-generated så vores TTL-model gælder.
+      const { data: blob, error: dlErr } = await admin.storage
+        .from('domain-files')
+        .download(genJson.output_path);
+      if (dlErr || !blob) {
+        return NextResponse.json(
+          { error: `Kunne ikke hente genereret dokument: ${dlErr?.message ?? 'missing'}` },
+          { status: 500 }
+        );
+      }
+      // Udled ext fra output_path (fx "xxx.docx")
+      const extMatch = genJson.output_path.match(/\.([a-z0-9]+)$/i);
+      const derivedExt = (extMatch?.[1]?.toLowerCase() ?? 'docx') as 'xlsx' | 'csv' | 'docx';
+      const contentType =
+        derivedExt === 'docx'
+          ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+          : derivedExt === 'xlsx'
+            ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            : derivedExt === 'csv'
+              ? 'text/csv; charset=utf-8'
+              : 'application/octet-stream';
+      const arrayBuf = await blob.arrayBuffer();
+      generated = {
+        buffer: Buffer.from(arrayBuf),
+        ext: derivedExt,
+        contentType,
+      };
     }
   } catch (err) {
     logger.error('[generate-file] generator-fejl:', err);

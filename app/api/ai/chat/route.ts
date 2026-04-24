@@ -33,6 +33,7 @@ import { createAdminClient, tenantDb, type TenantDb } from '@/lib/supabase/admin
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/lib/supabase/types';
 import { logActivity } from '@/app/lib/activityLog';
+import { logger } from '@/app/lib/logger';
 import { assertAiAllowed } from '@/app/lib/aiGate';
 
 export const runtime = 'nodejs';
@@ -328,9 +329,9 @@ const TOOLS: Anthropic.Tool[] = [
         },
         mode: {
           type: 'string',
-          enum: ['scratch', 'attached_template'],
+          enum: ['scratch', 'attached_template', 'domain_template'],
           description:
-            'scratch = generér fra scratch. attached_template = fyld en template som brugeren har vedhæftet (iter 1: kun DOCX).',
+            'scratch = generér fra scratch. attached_template = fyld en template som brugeren har vedhæftet (iter 1: kun DOCX). domain_template = brug en pre-gemt domain-skabelon (kun tilgængelig hvis "Domain templates tilgængelige" sektionen findes i din kontekst).',
         },
         title: {
           type: 'string',
@@ -379,6 +380,27 @@ const TOOLS: Anthropic.Tool[] = [
             },
           },
           required: ['file_id'],
+        },
+        domain_template: {
+          type: 'object',
+          description:
+            'For mode=domain_template. domain_id + domain_template_id + case_id refererer til en pre-gemt skabelon i users domain. Alle tre UUIDs skal være i samme domain. case_id bruges til at hente dokumenter der beriger template-fill via Claude.',
+          properties: {
+            domain_id: { type: 'string', description: 'Domain UUID' },
+            domain_template_id: {
+              type: 'string',
+              description: 'Template UUID fra Domain templates-listen',
+            },
+            case_id: {
+              type: 'string',
+              description: 'Sag UUID i samme domain — template fylder mod denne sags kontekst',
+            },
+            user_instructions: {
+              type: 'string',
+              description: 'Valgfri fri tekst der guider Claude i placeholder-fill',
+            },
+          },
+          required: ['domain_id', 'domain_template_id', 'case_id'],
         },
       },
       required: ['format', 'mode', 'title'],
@@ -1735,6 +1757,43 @@ export async function POST(request: NextRequest): Promise<Response> {
   }
   if (context) {
     systemPrompt += `\n\n## Aktuel kontekst\nBrugeren kigger på: ${context}`;
+  }
+
+  // BIZZ-816: injicér user's domain-templates så AI kender deres
+  // navne/id'er og kan kalde generate_document med mode='domain_template'.
+  // Bruger listUserDomains (BIZZ-711) + per-domain domainScopedQuery
+  // så vi respekterer BIZZ-722 mandatory-domain-filter enforcement.
+  // Fejler stille — hvis user ikke er domain-member eller query fejler,
+  // skipper vi sektionen og AI falder tilbage til scratch/attached_template.
+  try {
+    const { listUserDomains } = await import('@/app/lib/domainAuth');
+    const { domainScopedQuery } = await import('@/app/lib/domainScopedQuery');
+    const domains = await listUserDomains();
+    if (domains.length > 0) {
+      type TemplateRow = { id: string; domain_id: string; name: string; file_type: string };
+      const templatesByDomain: TemplateRow[] = [];
+      for (const d of domains) {
+        const scoped = domainScopedQuery(d.id);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data } = (await (scoped('domain_template') as any)
+          .select('id, domain_id, name, file_type')
+          .limit(20)) as { data: TemplateRow[] | null };
+        if (Array.isArray(data)) templatesByDomain.push(...data);
+      }
+      if (templatesByDomain.length > 0) {
+        const domainNameById = new Map(domains.map((d) => [d.id, d.name]));
+        const lines = templatesByDomain
+          .slice(0, 30)
+          .map((t) => {
+            const dn = domainNameById.get(t.domain_id) ?? t.domain_id.slice(0, 8);
+            return `[domain: ${dn}] id=${t.id} name="${t.name}" (${t.file_type.toUpperCase()})`;
+          })
+          .join('\n');
+        systemPrompt += `\n\n## Domain templates tilgængelige\n${lines}\n\nHvis brugeren refererer til en af disse ved navn → kald generate_document med mode='domain_template' + domain_template_id (ikke navnet). Du skal også give case_id — hvis den ikke er i pageContext, bed brugeren om at vælge en sag først.`;
+      }
+    }
+  } catch (tmplErr) {
+    logger.warn('[ai/chat] domain-templates fetch failed (non-fatal):', tmplErr);
   }
 
   // Map to Anthropic format (only simple text messages from the client)

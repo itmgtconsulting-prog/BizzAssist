@@ -20,6 +20,7 @@ import Link from 'next/link';
 import { ChevronRight, TrendingUp } from 'lucide-react';
 import SektionLoader from '@/app/components/SektionLoader';
 import { formatDKK } from '@/app/lib/mock/ejendomme';
+import { getHandelstypeInfo, handelstypeBadgeClasses } from '@/app/lib/ejfKoder';
 import type { VurderingData, VurderingResponse } from '@/app/api/vurdering/route';
 import type { ForelobigVurdering } from '@/app/api/vurdering-forelobig/route';
 
@@ -467,17 +468,39 @@ export default function EjendomOekonomiTab(props: Props) {
                         </td>
                         <td className="px-4 py-2.5">
                           <div className="flex flex-col gap-1">
-                            <span
-                              className={`text-xs px-2 py-0.5 rounded-full inline-block w-fit ${
-                                overdragelse?.toLowerCase().includes('frit')
-                                  ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20'
-                                  : overdragelse?.toLowerCase().includes('tvang')
-                                    ? 'text-red-400 bg-red-500/10 border border-red-500/20'
-                                    : 'text-slate-400 bg-slate-500/10 border border-slate-500/20'
-                              }`}
-                            >
-                              {overdragelse ?? '—'}
-                            </span>
+                            {(() => {
+                              // BIZZ-842: oversæt EJF-numeriske koder (10/20/30/40)
+                              // til human-readable label + tooltip. Fallback til den
+                              // eksisterende frit/tvang-heuristik hvis overdragelse er
+                              // en fritekstet streng (pre-EJF-kodeformat).
+                              const info = getHandelstypeInfo(overdragelse);
+                              if (info) {
+                                return (
+                                  <span
+                                    className={`text-xs px-2 py-0.5 rounded-full inline-block w-fit border ${handelstypeBadgeClasses(info.color)}`}
+                                    title={da ? info.description : info.descriptionEn}
+                                  >
+                                    {da ? info.label : info.labelEn}
+                                    <span className="ml-1 text-[10px] opacity-60">
+                                      ({overdragelse})
+                                    </span>
+                                  </span>
+                                );
+                              }
+                              return (
+                                <span
+                                  className={`text-xs px-2 py-0.5 rounded-full inline-block w-fit ${
+                                    overdragelse?.toLowerCase().includes('frit')
+                                      ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20'
+                                      : overdragelse?.toLowerCase().includes('tvang')
+                                        ? 'text-red-400 bg-red-500/10 border border-red-500/20'
+                                        : 'text-slate-400 bg-slate-500/10 border border-slate-500/20'
+                                  }`}
+                                >
+                                  {overdragelse ?? '—'}
+                                </span>
+                              );
+                            })()}
                             {/* BIZZ-481: Betinget-badge med frist-dato — vigtigt
                                 advarselsflag på tinglyste handler med uopfyldte
                                 betingelser (købesum ikke fuldt betalt, skøder

@@ -93,6 +93,13 @@ export interface DawaAutocompleteResult {
    *   - null                        → harVurdering=null
    */
   harVurdering?: boolean | null;
+  /**
+   * BIZZ-831: BFE-nummer (Bestemt Fast Ejendom). Populeret server-side
+   * fra bbr_ejendom_status-tabellen når tilgængeligt. Bruges til at
+   * linke SFE-hits direkte til /dashboard/ejendomme/sfe/[bfe].
+   * Null/undefined hvis BFE ikke er bekendt.
+   */
+  bfe?: number | null;
   adresse: {
     id: string; // 'vejnavn:…' for vejnavn-type, UUID for adresse/adgangsadresse
     vejnavn: string;

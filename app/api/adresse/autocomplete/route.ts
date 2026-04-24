@@ -70,6 +70,10 @@ export async function GET(request: NextRequest) {
           if (entry.isUdfaset) {
             r.status = DAR_STATUS.Nedlagt;
           }
+          // BIZZ-831: Pass BFE through for SFE href routing
+          if (entry.bfeNummer) {
+            r.bfe = entry.bfeNummer;
+          }
         }
       }
     }

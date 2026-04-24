@@ -51,11 +51,17 @@ const LIMIT = (() => {
 })();
 const DRY_RUN = args.includes('--dry-run');
 
-const RETIRED_STATUSES = new Set([
-  'Nedrevet/slettet',
-  'Bygning nedrevet',
-  'Bygning bortfaldet',
-]);
+// BIZZ-824 iter 2b: Centrale status-koder (mapping-konsistens koordineres
+// med BIZZ-825 iter 2c der konsoliderer bbrKoder.ts).
+// 4  = Nedrevet/slettet
+// 10 = Bygning nedrevet
+// 11 = Bygning bortfaldet
+const RETIRED_STATUS_CODES = new Set([4, 10, 11]);
+
+const BBR_GQL_ENDPOINT =
+  'https://services.datafordeler.dk/BBR/BBRPublic/1/rest/GraphQL/ejendom';
+
+const BBR_AUTH = Buffer.from(`${BBR_USER}:${BBR_PASS}`).toString('base64');
 
 const client = createClient(SUPABASE_URL, SERVICE_ROLE);
 
@@ -86,17 +92,150 @@ async function* iterateBfeNumbers(limit) {
 }
 
 /**
- * Kalder BBR GraphQL for en liste af BFE'er. Returnerer map
- * bfe_nummer → { is_udfaset, adgangsadresse_id, bbr_status_code }.
- * Batch-størrelse 50 pr. kald.
+ * BIZZ-824 iter 2b: Live BBR-opslag for en liste af BFE'er. Erstatter
+ * iter 2a scaffold (no-op). Returnerer map
+ *   bfe_nummer → { is_udfaset, adgangsadresse_id, bbr_status_code, kommune_kode }
+ *
+ * Strategi: BBR_Grund.bestemtFastEjendomBFENr matcher alle BFE-typer
+ * (SFE, bygning på fremmed grund, ejerlejlighed). Via bygningPaaGrund
+ * joiner vi til BBR_Bygning med status + anvendelse. Konsolidering:
+ *   is_udfaset = true hvis ALLE bygninger har status ∈ {4,10,11}
+ *   bbr_status_code = primær bygnings status (størst-areal)
+ *
+ * Batch-størrelse 50 pr. kald. Rate-limit safety: 500ms mellem batches
+ * (kontrolleret af caller).
+ *
+ * @param {number[]} bfeNumre - Batch af BFE-numre
+ * @returns {Promise<Map<number, {is_udfaset, adgangsadresse_id, bbr_status_code, kommune_kode}>>}
  */
 async function fetchBbrStatusForBfeBatch(bfeNumre) {
-  // Placeholder: den rigtige BBR query kan afledes fra app/lib/fetchBbrData.ts
-  // (fetchBbrByBfe). For at holde scriptet selvstændigt og ikke importere
-  // Next.js runtime, loggger vi bare at vi ville kalde her.
-  // Iter 2b replacer dette med et rigtigt HTTP-kald.
-  console.log(`[bbr] Skipping live BBR-query for ${bfeNumre.length} BFE'er (iter 2a scaffold)`);
-  return new Map();
+  if (bfeNumre.length === 0) return new Map();
+
+  const query = `query($vt: DafDateTime!, $bfes: [Int!]!) {
+    BBR_Grund(first: 500, virkningstid: $vt, where: { bestemtFastEjendomBFENr: { in: $bfes } }) {
+      nodes {
+        bestemtFastEjendomBFENr
+        kommunekode
+        husnummer { id_lokalId }
+        bygningPaaGrund {
+          bygning {
+            nodes {
+              id_lokalId
+              status
+              byg038SamletBygningsareal
+            }
+          }
+        }
+      }
+    }
+  }`;
+
+  const vt = new Date().toISOString().slice(0, 10) + 'T00:00:00.000Z';
+
+  let res;
+  try {
+    res = await fetch(BBR_GQL_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        Authorization: `Basic ${BBR_AUTH}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({ query, variables: { vt, bfes: bfeNumre } }),
+      signal: AbortSignal.timeout(30000),
+    });
+  } catch (err) {
+    console.error(`[bbr] network error på batch ${bfeNumre.slice(0, 3)}...:`, err?.message ?? err);
+    return new Map();
+  }
+
+  if (!res.ok) {
+    console.error(`[bbr] HTTP ${res.status} for batch ${bfeNumre.slice(0, 3)}...`);
+    return new Map();
+  }
+
+  let json;
+  try {
+    json = await res.json();
+  } catch {
+    console.error(`[bbr] JSON parse error for batch ${bfeNumre.slice(0, 3)}...`);
+    return new Map();
+  }
+
+  if (json.errors) {
+    console.error('[bbr] GraphQL errors:', JSON.stringify(json.errors).slice(0, 300));
+    return new Map();
+  }
+
+  const grunde = json.data?.BBR_Grund?.nodes ?? [];
+
+  // Aggregér pr BFE — samme BFE kan have flere grunde (jordstykker)
+  const byBfe = new Map();
+  for (const g of grunde) {
+    const bfe = Number(g.bestemtFastEjendomBFENr);
+    if (!Number.isFinite(bfe)) continue;
+
+    const kommuneKode = g.kommunekode != null ? parseInt(String(g.kommunekode), 10) : null;
+    const adgangsId = g.husnummer?.id_lokalId ?? null;
+
+    const bygninger = (g.bygningPaaGrund ?? [])
+      .flatMap((bp) => bp?.bygning?.nodes ?? [])
+      .filter((b) => b != null);
+
+    if (!byBfe.has(bfe)) {
+      byBfe.set(bfe, { bygninger: [], adgangsadresse_id: null, kommune_kode: null });
+    }
+    const entry = byBfe.get(bfe);
+    entry.bygninger.push(...bygninger);
+    if (!entry.adgangsadresse_id && adgangsId) entry.adgangsadresse_id = adgangsId;
+    if (!entry.kommune_kode && kommuneKode != null && Number.isFinite(kommuneKode)) {
+      entry.kommune_kode = kommuneKode;
+    }
+  }
+
+  // Konsolider til status-outputs
+  const result = new Map();
+  for (const [bfe, entry] of byBfe) {
+    const bygs = entry.bygninger;
+    if (bygs.length === 0) {
+      // Ingen bygninger fundet — ejendommen er registreret uden bygninger
+      // (ren grund). Marker som ikke-udfaset.
+      result.set(bfe, {
+        is_udfaset: false,
+        adgangsadresse_id: entry.adgangsadresse_id,
+        bbr_status_code: null,
+        kommune_kode: entry.kommune_kode,
+      });
+      continue;
+    }
+
+    // is_udfaset hvis ALLE bygninger er retired
+    const allRetired = bygs.every((b) => {
+      const s = Number(b.status);
+      return RETIRED_STATUS_CODES.has(s);
+    });
+
+    // Primær status = størst-areal-bygningens status
+    let primaryStatus = null;
+    let maxArea = -1;
+    for (const b of bygs) {
+      const area = Number(b.byg038SamletBygningsareal) || 0;
+      const s = Number(b.status);
+      if (Number.isFinite(s) && area > maxArea) {
+        maxArea = area;
+        primaryStatus = s;
+      }
+    }
+
+    result.set(bfe, {
+      is_udfaset: allRetired,
+      adgangsadresse_id: entry.adgangsadresse_id,
+      bbr_status_code: primaryStatus,
+      kommune_kode: entry.kommune_kode,
+    });
+  }
+
+  return result;
 }
 
 async function main() {
@@ -123,6 +262,7 @@ async function main() {
         adgangsadresse_id: entry.adgangsadresse_id ?? null,
         is_udfaset: entry.is_udfaset,
         bbr_status_code: entry.bbr_status_code ?? null,
+        kommune_kode: entry.kommune_kode ?? null,
         status_last_checked_at: new Date().toISOString(),
       });
     }

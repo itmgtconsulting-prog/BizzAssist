@@ -120,6 +120,12 @@ export interface DiagramEdge {
    * person→virksomhed-edges og company→property-edges.
    */
   personallyOwned?: boolean;
+  /**
+   * BIZZ-689: True for krydsejerskab-edges (2nd links). Når virksomhed A
+   * ejer andele i virksomhed B, og begge er i grafen, tegnes en ekstra
+   * edge fra A→B. Distinkt fra primary parent→child-edges (amber dashed).
+   */
+  crossOwnership?: boolean;
 }
 
 /** Complete graph structure for diagram rendering */
@@ -707,9 +713,28 @@ export function buildPersonDiagramGraph(
       for (const ejer of sub.ejere ?? []) {
         const ejerId = ejer.erVirksomhed ? `cvr-${ejer.enhedsNummer}` : `en-${ejer.enhedsNummer}`;
 
-        if (seenIds.has(ejerId)) continue;
         if (ejerId === mainId) continue;
         if (ejerId === `cvr-${sub.ejetAfCvr ?? v.cvr}`) continue;
+
+        // BIZZ-689: Hvis ejer allerede er i grafen (fx SJKL Holding er primary
+        // ejer-virksomhed OG ejer andele i JaJR Holding 2 der også er i grafen),
+        // tilføj en cross-ownership-edge i stedet for at springe over. Edgen
+        // tegnes distinkt (dashed amber) så brugeren ser krydsejerskabet.
+        if (seenIds.has(ejerId)) {
+          // Undgå duplikat-edges hvis samme cross-link allerede findes
+          const hasEdge = edges.some(
+            (e) => e.from === ejerId && e.to === childId && e.crossOwnership
+          );
+          if (!hasEdge) {
+            edges.push({
+              from: ejerId,
+              to: childId,
+              ejerandel: ejer.ejerandel ?? undefined,
+              crossOwnership: true,
+            });
+          }
+          continue;
+        }
 
         seenIds.add(ejerId);
         const link = ejer.erVirksomhed

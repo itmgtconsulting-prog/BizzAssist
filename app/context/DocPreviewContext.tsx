@@ -23,6 +23,10 @@ import { createContext, useCallback, useContext, useMemo, useState, type ReactNo
 /**
  * Generic previewable payload. `text` is what actually gets rendered;
  * `downloadUrl` (when set) adds a "Hent" button on the panel header.
+ *
+ * BIZZ-815: `kind` driver render-strategi — 'text' for plain-preview,
+ * 'table' for XLSX/CSV med HTML-table (sticky header + zebra rows),
+ * 'slides' reserveret til fremtidig pptx.
  */
 export interface DocPreviewContent {
   /** Filename shown in the panel header */
@@ -39,6 +43,15 @@ export interface DocPreviewContent {
   downloadUrl?: string;
   /** Optional identifier to let consumers deduplicate / re-open the same content */
   key?: string;
+  /**
+   * BIZZ-815: Render-strategi. Default 'text' (bagudkompatibel med
+   * eksisterende callers). 'table' → brug columns + rows felter.
+   */
+  kind?: 'text' | 'table' | 'slides';
+  /** Tabel-kolonner (kun relevant når kind='table'). */
+  columns?: string[];
+  /** Tabel-rækker (kun relevant når kind='table'). */
+  rows?: string[][];
 }
 
 interface DocPreviewCtx {

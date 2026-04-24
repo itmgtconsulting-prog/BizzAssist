@@ -34,6 +34,8 @@ import {
   generateCsv,
   generateDocx,
   fillDocxTemplate,
+  xlsxToPreviewTable,
+  csvToPreviewTable,
   GenerateXlsxInputSchema,
   GenerateCsvInputSchema,
   GenerateDocxInputSchema,
@@ -308,11 +310,41 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Signed URL kunne ikke oprettes' }, { status: 500 });
   }
 
+  // BIZZ-815: binary-aware preview. For XLSX/CSV bygger vi table-preview
+  // som klienten kan rendere direkte (sticky header + zebra rows).
+  // For DOCX fortsætter vi med tekst-preview (extracted lazily i iter 2).
+  let previewKind: 'text' | 'table' = 'text';
+  let previewColumns: string[] | undefined;
+  let previewRows: string[][] | undefined;
+  try {
+    if (body.format === 'xlsx') {
+      const tbl = await xlsxToPreviewTable(generated.buffer);
+      if (tbl.columns.length > 0) {
+        previewKind = 'table';
+        previewColumns = tbl.columns;
+        previewRows = tbl.rows;
+      }
+    } else if (body.format === 'csv') {
+      const tbl = csvToPreviewTable(generated.buffer);
+      if (tbl.columns.length > 0) {
+        previewKind = 'table';
+        previewColumns = tbl.columns;
+        previewRows = tbl.rows;
+      }
+    }
+  } catch (previewErr) {
+    // Preview-parsing er best-effort — hvis det fejler falder vi tilbage til text
+    logger.warn('[generate-file] preview-parse fejl (non-fatal):', previewErr);
+  }
+
   return NextResponse.json({
     file_id: row.id as string,
     file_name: row.file_name as string,
     download_url: signedData.signedUrl,
     preview_text: buildPreviewText(body.format, safeTitle, generated.buffer.length),
+    preview_kind: previewKind,
+    preview_columns: previewColumns,
+    preview_rows: previewRows,
     bytes: generated.buffer.length,
     format: body.format,
   });

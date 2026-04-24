@@ -137,12 +137,85 @@ export function DocPreviewPanel() {
         </button>
       </div>
 
-      {/* Body — scrollable plain-text preview */}
+      {/* Body — scrollable preview. BIZZ-815: render strategi styret af
+          content.kind. Default 'text' for bagudkompatibilitet. */}
       <div className="flex-1 min-h-0 overflow-y-auto p-4">
-        <pre className="text-xs text-slate-200 whitespace-pre-wrap font-sans leading-relaxed">
-          {content.text}
-        </pre>
+        {content.kind === 'table' && content.columns && content.rows ? (
+          <TablePreview columns={content.columns} rows={content.rows} />
+        ) : (
+          <pre className="text-xs text-slate-200 whitespace-pre-wrap font-sans leading-relaxed">
+            {content.text}
+          </pre>
+        )}
       </div>
     </aside>
+  );
+}
+
+/**
+ * BIZZ-815: HTML-tabel med sticky header, zebra rows, og "vis flere"-
+ * toggle for store datasets. Formateret til at være læsbar i det
+ * smalle preview-panel (~360px default).
+ */
+function TablePreview({ columns, rows }: { columns: string[]; rows: string[][] }) {
+  const INITIAL_ROWS = 200;
+  const [showAll, setShowAll] = useState(false);
+  const visibleRows = showAll ? rows : rows.slice(0, INITIAL_ROWS);
+  const hasMore = rows.length > INITIAL_ROWS;
+
+  return (
+    <div className="space-y-3">
+      <div className="text-[10px] text-slate-500 uppercase tracking-wide flex items-center justify-between">
+        <span>
+          {columns.length} {columns.length === 1 ? 'kolonne' : 'kolonner'} · {rows.length}{' '}
+          {rows.length === 1 ? 'række' : 'rækker'}
+        </span>
+        {hasMore && !showAll && (
+          <button
+            type="button"
+            onClick={() => setShowAll(true)}
+            className="text-blue-400 hover:text-blue-300 text-[10px] font-medium uppercase tracking-wide normal-case"
+          >
+            Vis alle →
+          </button>
+        )}
+      </div>
+      <div className="rounded-md border border-slate-700/50 overflow-hidden">
+        <table className="w-full text-xs text-slate-200">
+          <thead className="bg-slate-800/60 sticky top-0 z-10">
+            <tr>
+              {columns.map((col, i) => (
+                <th
+                  key={i}
+                  className="px-2 py-1.5 text-left font-semibold text-slate-300 border-b border-slate-700/40"
+                >
+                  {col}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {visibleRows.map((row, ri) => (
+              <tr key={ri} className={ri % 2 === 0 ? 'bg-slate-900/30' : 'bg-slate-900/10'}>
+                {columns.map((_, ci) => (
+                  <td
+                    key={ci}
+                    className="px-2 py-1 border-b border-slate-800/40 align-top whitespace-nowrap max-w-[200px] truncate"
+                    title={row[ci] ?? ''}
+                  >
+                    {row[ci] ?? ''}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {hasMore && !showAll && (
+        <p className="text-[10px] text-slate-500 italic">
+          Viser første {INITIAL_ROWS} af {rows.length} rækker. Download for komplet data.
+        </p>
+      )}
+    </div>
   );
 }

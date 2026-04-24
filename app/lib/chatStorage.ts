@@ -32,6 +32,9 @@ export interface ChatAttachmentMeta {
 /**
  * BIZZ-814: Metadata for en AI-genereret fil knyttet til en assistant-
  * besked. Persisteres i localStorage så chippen overlever reload.
+ *
+ * BIZZ-815: preview_kind + columns/rows for XLSX/CSV så preview-panelet
+ * kan vise HTML-tabel med sticky header i stedet for plain tekst.
  */
 export interface ChatGeneratedFileMeta {
   file_id: string;
@@ -40,6 +43,10 @@ export interface ChatGeneratedFileMeta {
   preview_text: string;
   bytes: number;
   format: string;
+  /** BIZZ-815: 'table' for xlsx/csv, 'text' for docx */
+  preview_kind?: 'text' | 'table';
+  preview_columns?: string[];
+  preview_rows?: string[][];
 }
 
 /** A single chat message */

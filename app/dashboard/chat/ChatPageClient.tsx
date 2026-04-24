@@ -67,6 +67,10 @@ interface ChatMessage {
     preview_text: string;
     bytes: number;
     format: string;
+    /** BIZZ-815: binary-aware preview felter */
+    preview_kind?: 'text' | 'table';
+    preview_columns?: string[];
+    preview_rows?: string[][];
   }>;
 }
 
@@ -779,6 +783,9 @@ export default function ChatPageClient() {
                   preview_text: string;
                   bytes: number;
                   format: string;
+                  preview_kind?: 'text' | 'table';
+                  preview_columns?: string[];
+                  preview_rows?: string[][];
                 };
               };
               const isActive = activeId === convId;
@@ -1135,6 +1142,10 @@ export default function ChatPageClient() {
                                   text: gf.preview_text,
                                   downloadUrl: gf.download_url,
                                   sizeBytes: gf.bytes,
+                                  // BIZZ-815: binary-aware preview
+                                  kind: gf.preview_kind,
+                                  columns: gf.preview_columns,
+                                  rows: gf.preview_rows,
                                 })
                               }
                               aria-label="Forhåndsvis"

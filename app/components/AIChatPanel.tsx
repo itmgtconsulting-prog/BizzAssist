@@ -63,6 +63,10 @@ interface Message {
     preview_text: string;
     bytes: number;
     format: string;
+    /** BIZZ-815: binary-aware preview */
+    preview_kind?: 'text' | 'table';
+    preview_columns?: string[];
+    preview_rows?: string[][];
   }>;
 }
 
@@ -603,6 +607,9 @@ function AIChatPanel() {
                   preview_text: string;
                   bytes: number;
                   format: string;
+                  preview_kind?: 'text' | 'table';
+                  preview_columns?: string[];
+                  preview_rows?: string[][];
                 };
               };
               // Only update UI if user is still viewing this conversation
@@ -1043,6 +1050,10 @@ function AIChatPanel() {
                                         text: gf.preview_text,
                                         downloadUrl: gf.download_url,
                                         sizeBytes: gf.bytes,
+                                        // BIZZ-815: binary-aware preview
+                                        kind: gf.preview_kind,
+                                        columns: gf.preview_columns,
+                                        rows: gf.preview_rows,
                                       })
                                     }
                                     aria-label={lang === 'da' ? 'Forhåndsvis' : 'Preview'}

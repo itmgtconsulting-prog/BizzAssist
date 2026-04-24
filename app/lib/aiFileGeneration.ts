@@ -359,3 +359,149 @@ export async function fillXlsxTemplate(
     'fillXlsxTemplate er parkeret til iter 2. Brug generateXlsx med pre-filled rows indtil da.'
   );
 }
+
+/**
+ * BIZZ-815: Parse en XLSX buffer til preview-friendly table-struktur.
+ * Læser første sheet, bruger række 1 som header-labels og række 2+
+ * som data. Cell-values stringifieres (Date → ISO-dato).
+ *
+ * Limits: Første 500 rækker + 50 kolonner — forhindrer at render-panel
+ * bliver overbelastet ved store templates.
+ *
+ * @param buffer - Rå XLSX binær
+ * @returns columns (header-strings) + rows (string-matrix)
+ */
+export async function xlsxToPreviewTable(buffer: Buffer): Promise<{
+  columns: string[];
+  rows: string[][];
+}> {
+  const { default: ExcelJS } = await import('exceljs');
+  const wb = new ExcelJS.Workbook();
+  // exceljs forventer ArrayBuffer; Node Buffer er assignable men TS-types
+  // fanger det ikke i alle versioner — cast via .buffer-slice.
+  const arrayBuf = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+  await wb.xlsx.load(arrayBuf as ArrayBuffer);
+  const sheet = wb.worksheets[0];
+  if (!sheet) return { columns: [], rows: [] };
+
+  const PREVIEW_MAX_ROWS = 500;
+  const PREVIEW_MAX_COLS = 50;
+
+  const headerRow = sheet.getRow(1);
+  const columns: string[] = [];
+  const colCount = Math.min(sheet.columnCount, PREVIEW_MAX_COLS);
+  for (let c = 1; c <= colCount; c++) {
+    const cell = headerRow.getCell(c);
+    columns.push(cellToString(cell.value));
+  }
+
+  const rows: string[][] = [];
+  const rowLimit = Math.min(sheet.rowCount, PREVIEW_MAX_ROWS + 1); // +1 for header
+  for (let r = 2; r <= rowLimit; r++) {
+    const row = sheet.getRow(r);
+    const cells: string[] = [];
+    for (let c = 1; c <= colCount; c++) {
+      cells.push(cellToString(row.getCell(c).value));
+    }
+    rows.push(cells);
+  }
+  return { columns, rows };
+}
+
+/**
+ * BIZZ-815: Parse CSV buffer til preview-friendly table-struktur.
+ * Håndterer: komma OG semikolon delimiters (auto-detect), UTF-8 BOM,
+ * quoted fields med " + doubled-""-escape, CRLF/LF line-endings.
+ */
+export function csvToPreviewTable(buffer: Buffer): {
+  columns: string[];
+  rows: string[][];
+} {
+  let text = buffer.toString('utf8');
+  // Strip UTF-8 BOM
+  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+  const delimiter = detectCsvDelimiter(text);
+  const parsed = parseCsv(text, delimiter);
+  if (parsed.length === 0) return { columns: [], rows: [] };
+  const [header, ...data] = parsed;
+  return {
+    columns: header,
+    rows: data.slice(0, 500),
+  };
+}
+
+/** Stringify exceljs cell-value. Handles Date + formula (takes result). */
+function cellToString(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  if (typeof value === 'object' && value !== null) {
+    // exceljs formula: { formula, result } → prefer result
+    const obj = value as { result?: unknown; text?: unknown; richText?: unknown };
+    if (obj.result !== undefined) return cellToString(obj.result);
+    if (obj.text !== undefined) return String(obj.text);
+    if (Array.isArray(obj.richText)) {
+      return obj.richText.map((r) => String((r as { text?: string }).text ?? '')).join('');
+    }
+    return String(value);
+  }
+  return String(value);
+}
+
+/** Auto-detect CSV delimiter ved at tælle forekomster på første linje. */
+function detectCsvDelimiter(text: string): ',' | ';' {
+  const firstLine = text.split(/\r?\n/)[0] ?? '';
+  const semis = (firstLine.match(/;/g) ?? []).length;
+  const commas = (firstLine.match(/,/g) ?? []).length;
+  return semis > commas ? ';' : ',';
+}
+
+/** Minimal RFC-4180 CSV parser med quoted-field + doubled-quote-escape. */
+function parseCsv(text: string, delimiter: ',' | ';'): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = '';
+  let inQuotes = false;
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') {
+          field += '"';
+          i += 2;
+        } else {
+          inQuotes = false;
+          i++;
+        }
+      } else {
+        field += ch;
+        i++;
+      }
+    } else {
+      if (ch === '"') {
+        inQuotes = true;
+        i++;
+      } else if (ch === delimiter) {
+        row.push(field);
+        field = '';
+        i++;
+      } else if (ch === '\n' || ch === '\r') {
+        row.push(field);
+        field = '';
+        rows.push(row);
+        row = [];
+        if (ch === '\r' && text[i + 1] === '\n') i += 2;
+        else i++;
+      } else {
+        field += ch;
+        i++;
+      }
+    }
+  }
+  // Sidste felt hvis no trailing newline
+  if (field.length > 0 || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows;
+}

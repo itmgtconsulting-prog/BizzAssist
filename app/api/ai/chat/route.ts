@@ -1912,6 +1912,9 @@ export async function POST(request: NextRequest): Promise<Response> {
                   file_name: string;
                   download_url?: string;
                   preview_text?: string;
+                  preview_kind?: 'text' | 'table';
+                  preview_columns?: string[];
+                  preview_rows?: string[][];
                   bytes: number;
                   format: string;
                 };
@@ -1923,6 +1926,9 @@ export async function POST(request: NextRequest): Promise<Response> {
                       file_name: fileResult.file_name,
                       download_url: fileResult.download_url,
                       preview_text: fileResult.preview_text,
+                      preview_kind: fileResult.preview_kind,
+                      preview_columns: fileResult.preview_columns,
+                      preview_rows: fileResult.preview_rows,
                       bytes: fileResult.bytes,
                       format: fileResult.format,
                     },

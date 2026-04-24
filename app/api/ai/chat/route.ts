@@ -2067,12 +2067,30 @@ export async function POST(request: NextRequest): Promise<Response> {
             });
           }
 
-          // Call Claude (non-streaming for tool rounds, streaming for final)
+          // BIZZ-866: Anthropic prompt caching. System-prompten er stor
+          // (~5-10K tokens) og genbruges på tværs af tool-runde og efterfølgende
+          // requests. Marker som ephemeral (5min TTL) for 90% cache-hit og
+          // 50-90% latency/cost-besparelse. Tools cached separat med samme
+          // breakpoint-mønster. Cache-opbygning koster ~25% ekstra ved cache-miss
+          // men amortiseres efter blot 2 requests.
           const response = await client.messages.create({
             model: 'claude-sonnet-4-6',
             max_tokens: 4096,
-            system: systemPrompt,
-            tools: forceFinalSynthesis ? undefined : TOOLS,
+            system: [
+              {
+                type: 'text',
+                text: systemPrompt,
+                cache_control: { type: 'ephemeral' },
+              },
+            ],
+            tools: forceFinalSynthesis
+              ? undefined
+              : TOOLS.map((t, idx) =>
+                  idx === TOOLS.length - 1
+                    ? // Cache-breakpoint på sidste tool dækker hele tool-blokken
+                      { ...t, cache_control: { type: 'ephemeral' } as const }
+                    : t
+                ),
             messages: anthropicMessages,
           });
 

@@ -562,6 +562,12 @@ VIGTIGT — undgå fejlagtigt indhold:
 3. **Post-generation rapportering**: Efter tool-kald inkluder tydelig scope-rapport: "Dokumentet indeholder X ejendomme — Y direkte ejede + Z via datterselskaber." Så brugeren straks kan se om scope er rigtigt.
 4. **Aldrig gætte**: Hvis context-tabben ikke matcher det brugeren beder om, bekræft i stedet for at vælge den "tætteste" fortolkning.
 
+### Håndtering af afkortede tool-resultater (BIZZ-869)
+Flere tools returnerer \`afkortet: true\` + \`total: N\` når resultatet er trimmet for at holde context kompakt.
+- **ALTID informer brugeren** når \`afkortet: true\` — fx: "Jeg fik 50 af total 73 ejendomme i denne forespørgsel. Sig til hvis du vil have den komplette liste i mindre segmenter."
+- **Ved dokument-generering med afkortet data**: Sig tydeligt at dokumentet er ufuldstændigt, spørg om brugeren vil have resten i efterfølgende kald.
+- **Aldrig sig "Jakob har 8 ejendomme"** hvis total=21 — rapportér altid total og afkortning.
+
 ## Workflow ved formueanalyse for en person
 
 ### REGEL 1 — Vælg den rigtige liste baseret på spørgsmålstype
@@ -1302,11 +1308,13 @@ async function executeTool(
           result = { fejl: data.fejl };
           break;
         }
-        // Begræns til maks 20 ejendomme i AI-svar så tool-result forbliver kompakt.
-        // Fuld liste kan tilgås via Ejendomme-fanen i UI.
+        // BIZZ-869: Cap udvidet fra 20 til 50 så dokument-generering har
+        // fuld-portefølje-coverage for typiske virksomheder. AI SKAL
+        // informere brugeren når afkortet=true (system prompt-regel).
+        const MAX_EJENDOMME = 50;
         const ejendomme = (data.ejendomme ?? [])
           .filter((e) => e.aktiv !== false)
-          .slice(0, 20)
+          .slice(0, MAX_EJENDOMME)
           .map((e) => ({
             bfe: e.bfeNummer,
             ownerCvr: e.ownerCvr,
@@ -1321,7 +1329,7 @@ async function executeTool(
           cvr: input.cvr,
           antal: ejendomme.length,
           total: data.totalBfe ?? ejendomme.length,
-          afkortet: (data.ejendomme ?? []).length > 20,
+          afkortet: (data.ejendomme ?? []).length > MAX_EJENDOMME,
           ejendomme,
         };
         break;
@@ -1360,10 +1368,12 @@ async function executeTool(
           result = { fejl: data.fejl };
           break;
         }
-        // Samme afkortnings-pattern som hent_ejendomme_for_virksomhed.
+        // BIZZ-869: Cap 50 (samme som virksomhed-varianten) for fuldere
+        // dokument-generering-coverage. AI skal informere om afkortning.
+        const MAX_EJENDOMME_PERSON = 50;
         const ejendomme = (data.ejendomme ?? [])
           .filter((e) => e.aktiv !== false)
-          .slice(0, 20)
+          .slice(0, MAX_EJENDOMME_PERSON)
           .map((e) => ({
             bfe: e.bfeNummer,
             adresse: e.etage && e.doer ? `${e.adresse ?? ''}, ${e.etage}. ${e.doer}` : e.adresse,
@@ -1377,7 +1387,7 @@ async function executeTool(
           enhedsNummer: input.enhedsNummer,
           antal: ejendomme.length,
           total: data.totalBfe ?? ejendomme.length,
-          afkortet: (data.ejendomme ?? []).length > 20,
+          afkortet: (data.ejendomme ?? []).length > MAX_EJENDOMME_PERSON,
           ejendomme,
         };
         break;
@@ -2363,7 +2373,33 @@ export async function POST(request: NextRequest): Promise<Response> {
         if (!(err instanceof Anthropic.APIError)) {
           Sentry.captureException(err);
         }
-        const msg = err instanceof Anthropic.APIError ? 'Ekstern API fejl' : 'AI-tjeneste fejl';
+        // BIZZ-870: Specifik fejl-mapping til dansk brugerbesked uden at
+        // afsløre rå Anthropic error-detaljer (CLAUDE.md security rule).
+        let msg = 'AI-tjeneste fejl';
+        if (err instanceof Anthropic.APIError) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const anthErr = err as any;
+          const errorType: string = anthErr.error?.type ?? '';
+          const status: number | undefined = anthErr.status;
+          if (errorType === 'overloaded_error' || status === 529) {
+            msg = 'AI-tjenesten er midlertidigt overbelastet. Prøv igen om et øjeblik.';
+          } else if (errorType === 'rate_limit_error' || status === 429) {
+            msg = 'Midlertidigt højt træk på AI-tjenesten. Prøv igen om lidt.';
+          } else if (
+            errorType === 'invalid_request_error' &&
+            anthErr.message?.toLowerCase().includes('context')
+          ) {
+            msg =
+              'Samtalen er for lang til at fortsætte. Start gerne en ny samtale for bedste svar.';
+          } else if (status === 401 || status === 403) {
+            msg =
+              'AI-tjenesten er ikke konfigureret korrekt. Kontakt support hvis problemet fortsætter.';
+          } else if (status && status >= 500) {
+            msg = 'AI-tjenesten har midlertidige problemer. Prøv igen om lidt.';
+          } else {
+            msg = 'Ekstern API fejl';
+          }
+        }
         sse(controller, JSON.stringify({ error: msg }));
         sse(controller, '[DONE]');
         controller.close();

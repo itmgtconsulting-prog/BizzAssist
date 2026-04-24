@@ -889,17 +889,29 @@ export default function EjendomDetaljeClient({
   useEffect(() => {
     // BIZZ-241: Hent lejligheder for hovedejendomme (ingen etage + har ejerlejlighedBfe)
     // BIZZ-832: Også hent for child-units (ejerlejligheder med etage) for søster-enheder
+    // BIZZ-841: Prefetch så snart matrikelData ELLER bbrData har ejerlavkode+matrikelnr —
+    // tidligere ventede vi udelukkende på BBR's ejendomsrelationer, hvilket
+    // serialiserede BBR → MAT → ejerlejligheder. Nu kan ejerlejligheder-fetch
+    // starte så snart én af de to kilder har koordinater.
     const erModer = !dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
     const erChild = !!dawaAdresse?.etage && !!bbrData?.ejerlejlighedBfe;
-    if (!erModer && !erChild) return;
-    // Kræver matrikeldata fra BBR ejendomsrelationer
-    const rel = bbrData?.ejendomsrelationer?.[0];
-    if (!rel?.ejerlavKode || !rel?.matrikelnr) return;
+    // Fallback: hvis matrikelData er klar før BBR, kan vi ikke vide om det er
+    // opdelt. Prefetch kun hvis vi har bbr-signal eller matrikel-opdelt-flag.
+    const matOpdelt = matrikelData?.opdeltIEjerlejligheder === true;
+    if (!erModer && !erChild && !matOpdelt) return;
+
+    // Find ejerlavkode + matrikelnr — foretræk BBR (konsistent med eksisterende
+    // logic), fallback til MAT når BBR endnu ikke er loaded.
+    const bbrRel = bbrData?.ejendomsrelationer?.[0];
+    const matJs = matrikelData?.jordstykker?.[0];
+    const ejerlavKode = bbrRel?.ejerlavKode ?? matJs?.ejerlavskode;
+    const matrikelnr = bbrRel?.matrikelnr ?? matJs?.matrikelnummer;
+    if (!ejerlavKode || !matrikelnr) return;
     const controller = new AbortController();
     setLejlighederLoader(true);
     const params = new URLSearchParams({
-      ejerlavKode: String(rel.ejerlavKode),
-      matrikelnr: rel.matrikelnr,
+      ejerlavKode: String(ejerlavKode),
+      matrikelnr: String(matrikelnr),
     });
     // BIZZ-695: Send ejerlejlighedBfe so DAWA fallback can look up owners via ejf_ejerskab
     if (bbrData?.ejerlejlighedBfe) params.set('moderBfe', String(bbrData.ejerlejlighedBfe));
@@ -918,7 +930,7 @@ export default function EjendomDetaljeClient({
         if (!controller.signal.aborted) setLejlighederLoader(false);
       });
     return () => controller.abort();
-  }, [id, erDAWA, dawaStatus, dawaAdresse, bbrData]);
+  }, [id, erDAWA, dawaStatus, dawaAdresse, bbrData, matrikelData]);
 
   /**
    * Henter ejendomsvurdering og ejerskabsdata fra Datafordeler når BFEnummer

@@ -203,6 +203,15 @@ function DanishPrivacy() {
           slettes dine data inden for 30 dage, medmindre lovgivning kræver længere opbevaring
           (f.eks. bogføringslovens krav om 5 år).
         </p>
+        <p className="text-slate-400 text-sm">
+          <strong className="text-white">AI-chat-historik:</strong> Dine samtaler med AI-
+          assistenten (spørgsmål og svar) gemmes i din BizzAssist-konto så du kan genbesøge dem på
+          tværs af enheder. Aktive samtaler opbevares i op til 12 måneder fra sidste aktivitet —
+          derefter slettes de automatisk. Arkiverede samtaler er ikke inkluderet i denne
+          auto-sletning. Du kan til enhver tid slette en enkelt samtale manuelt, eller eksportere
+          hele din chat-historik som en del af din data-eksport. Ved sletning af konto fjernes al
+          chat-historik ved cascade-delete (GDPR art. 17).
+        </p>
       </section>
 
       <section>
@@ -426,6 +435,15 @@ function EnglishPrivacy() {
           We retain your personal data as long as you have an active account. Upon account deletion,
           your data will be deleted within 30 days, unless legislation requires longer retention
           (e.g., accounting law requires 5 years).
+        </p>
+        <p className="text-slate-400 text-sm">
+          <strong className="text-white">AI chat history:</strong> Your conversations with the AI
+          assistant (questions and responses) are stored in your BizzAssist account so you can
+          revisit them across devices. Active conversations are retained for up to 12 months from
+          the last activity, after which they are deleted automatically. Archived conversations are
+          excluded from this auto-purge. You can delete individual conversations manually at any
+          time, or export your full chat history as part of your data export. Upon account deletion,
+          all chat history is removed via cascade-delete (GDPR Art. 17).
         </p>
       </section>
 

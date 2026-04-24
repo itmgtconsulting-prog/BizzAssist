@@ -36,7 +36,8 @@ import { useSubscription } from '@/app/context/SubscriptionContext';
 import { useAIPageContext } from '@/app/context/AIPageContext';
 import { useAIChatContext } from '@/app/context/AIChatContext';
 import { useDocPreview } from '@/app/context/DocPreviewContext';
-import { loadConversations } from '@/app/lib/chatStorage';
+// BIZZ-820: Chat-historik flyttet fra localStorage til Supabase via
+// /api/ai/sessions. Context-context.messages bærer nu den aktive session.
 import { Lock } from 'lucide-react';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -190,13 +191,14 @@ function AIChatPanel() {
     prevDrawerOpenRef.current = chatCtx.drawerOpen;
 
     if ((activeChanged || drawerJustOpened) && !isLoading) {
-      // Reload fresh from localStorage to get any messages added by fullpage chat
-      const fresh = loadConversations();
-      const active = chatCtx.activeId ? fresh.find((c) => c.id === chatCtx.activeId) : null;
-      setMessages(active?.messages ?? []);
+      // BIZZ-820: Context.messages er allerede loaded via API når fuldpage
+      // eller drawer åbner — adoptér state-of-truth uden at kalde
+      // localStorage direkte. selectConversation hydrerer selv via API.
+      setMessages(chatCtx.messages);
       setStreamText('');
       setToolStatus('');
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatCtx.activeId, chatCtx.drawerOpen, isLoading]);
 
   /** BIZZ-810: Keep drawer in sync with fullpage while the app is running.
@@ -478,13 +480,23 @@ function AIChatPanel() {
     setAttachments([]);
     const newMessages = [...messages, userMsg];
 
-    // Ensure conversation exists in shared context (persists to localStorage)
-    const convId = chatCtx.ensureConversation(lang as 'da' | 'en');
-    // Auto-title from first user message
-    if (messages.length === 0) {
-      chatCtx.titleConversation(convId, text);
+    // BIZZ-820: Ensure conversation exists in shared context (API-backed).
+    // ensureConversation opretter row via POST /api/ai/sessions når ingen
+    // aktiv session findes.
+    const convId = await chatCtx.ensureConversation(lang as 'da' | 'en');
+    if (!convId) {
+      // Ikke logget ind eller API fejlede — afbryd stille (rate-limit /
+      // auth-lag håndterer fejlvisning)
+      setIsLoading(false);
+      chatCtx.setIsStreaming(false);
+      return;
     }
-    // Persist user message immediately
+    // Auto-title from first user message (non-blocking)
+    if (messages.length === 0) {
+      void chatCtx.titleConversation(convId, text);
+    }
+    // persistConversation er no-op i API-versionen — server persisterer via
+    // session_id-hook i /api/ai/chat. Beholdt for bagudkompat.
     chatCtx.persistConversation(convId, newMessages);
 
     setInput('');
@@ -517,6 +529,9 @@ function AIChatPanel() {
           messages: newMessages,
           context: buildContext(),
           attachments: attachmentRefs.length > 0 ? attachmentRefs : undefined,
+          // BIZZ-820: Bind chat-turn til aktiv session så server-side
+          // persistChatMessages() gemmer user-prompt + assistant-svar.
+          session_id: convId,
         }),
         signal: controller.signal,
       });
@@ -754,10 +769,12 @@ function AIChatPanel() {
             {/* New conversation button — does NOT abort streaming; lets it finish in background */}
             <button
               onClick={() => {
-                // Don't abort — let the old conversation's streaming finish in background.
-                // It will persist its result to localStorage via convId captured in closure.
-                abortRef.current = null; // Detach so stop button doesn't kill background stream
-                chatCtx.createConversation(lang as 'da' | 'en');
+                // Don't abort — let the old conversation's streaming finish
+                // in background. Serveren persisterer den via session_id.
+                abortRef.current = null;
+                // BIZZ-820: createConversation er async (POST /api/ai/sessions)
+                // — kør fire-and-forget; UI rydder straks.
+                void chatCtx.createConversation(lang as 'da' | 'en');
                 setMessages([]);
                 setStreamText('');
                 setToolStatus('');

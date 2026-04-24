@@ -100,58 +100,10 @@ interface Conversation {
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const STORAGE_KEY = 'ba-chat-history';
-const MAX_TITLE_LENGTH = 40;
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-/**
- * Generate a unique conversation ID.
- *
- * @returns A random alphanumeric string prefixed with timestamp
- */
-function generateId(): string {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-}
-
-/**
- * Load all conversations from localStorage.
- *
- * @returns Array of conversations, newest first
- */
-function loadConversations(): Conversation[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    return JSON.parse(raw) as Conversation[];
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Save conversations array to localStorage.
- *
- * @param conversations - Full list of conversations to persist
- */
-function saveConversations(conversations: Conversation[]): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations));
-  } catch {
-    // Ignore quota errors
-  }
-}
-
-/**
- * Derive conversation title from first user message.
- *
- * @param firstMessage - The first user message text
- * @returns Truncated title string
- */
-function deriveTitle(firstMessage: string): string {
-  const clean = firstMessage.trim().replace(/\n/g, ' ');
-  return clean.length > MAX_TITLE_LENGTH ? clean.slice(0, MAX_TITLE_LENGTH) + '…' : clean;
-}
+// BIZZ-820: STORAGE_KEY + local helpers fjernet. Chat-historik er nu
+// persisteret i Supabase via /api/ai/sessions. AIChatContext ejer state;
+// denne fil læser chatCtx.conversations og kalder chatCtx.createConversation
+// / selectConversation / deleteConversation / titleConversation.
 
 /**
  * Format a date string for the conversation history sidebar.
@@ -361,22 +313,14 @@ export default function ChatPageClient() {
   const docPreview = useDocPreview();
 
   // ── Conversation state (synced with AIChatContext) ──
+  // BIZZ-820: Context ejer conversation-listen (API-backed). Lokale
+  // setters er fjernet — al state-mutation sker via context.
   const conversations = chatCtx.conversations;
-  const setConversations = useCallback(
-    (updater: Conversation[] | ((prev: Conversation[]) => Conversation[])) => {
-      // When ChatPageClient updates conversations, sync back to context via localStorage
-      const updated = typeof updater === 'function' ? updater(chatCtx.conversations) : updater;
-      saveConversations(updated);
-      // Force context to re-read (context listens to storage events for cross-tab,
-      // but same-tab needs direct state update — this happens via loadConversations in context)
-    },
-    [chatCtx.conversations]
-  );
   const [activeId, setActiveIdLocal] = useState<string | null>(chatCtx.activeId);
   const setActiveId = useCallback(
     (id: string | null) => {
       setActiveIdLocal(id);
-      if (id) chatCtx.selectConversation(id);
+      if (id) void chatCtx.selectConversation(id);
     },
     [chatCtx]
   );
@@ -438,36 +382,39 @@ export default function ChatPageClient() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  // ── Load from localStorage on mount — prefer context's active conversation ──
+  // ── BIZZ-820: Sync with context on mount + when context-state changes ──
   useEffect(() => {
     setIsMounted(true);
-    const stored = loadConversations();
-    setConversations(stored);
-    // Prefer context's active conversation (e.g. from drawer), else most recent
-    const targetId = chatCtx.activeId;
-    const target = targetId ? stored.find((c) => c.id === targetId) : null;
-    if (target) {
-      setActiveIdLocal(target.id);
-      setMessages(target.messages);
-    } else if (stored.length > 0) {
-      setActiveId(stored[0].id);
-      setMessages(stored[0].messages);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Sync messages from context when streaming finishes (drawer or local) ──
+  // Auto-vælg seneste samtale når context-listen loader (hvis ingen
+  // aktiv er sat fra URL/drawer).
+  useEffect(() => {
+    if (activeId) return;
+    if (chatCtx.activeId) {
+      setActiveIdLocal(chatCtx.activeId);
+      return;
+    }
+    if (conversations.length > 0) {
+      setActiveId(conversations[0].id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversations.length, chatCtx.activeId]);
+
+  // Adoptér messages fra context når de opdateres (API-fetch eller
+  // Realtime/polling). Overskriv ikke under streaming.
+  useEffect(() => {
+    if (isLoadingLocal) return;
+    setMessages(chatCtx.messages);
+  }, [chatCtx.messages, isLoadingLocal]);
+
+  // ── Detect streaming-finish (drawer or local) ──────────────────────────
+  // Bruges til at rydde streamText, ikke længere til at re-reade lokal data.
   const wasStreamingRef = useRef(false);
   useEffect(() => {
     const nowStreaming = chatCtx.isStreaming || isLoadingLocal;
-    if (wasStreamingRef.current && !nowStreaming) {
-      // Streaming just finished — reload from localStorage to get final messages
-      const fresh = loadConversations();
-      const active = fresh.find((c) => c.id === (activeId ?? chatCtx.activeId));
-      if (active) setMessages(active.messages);
-    }
     wasStreamingRef.current = nowStreaming;
-  }, [chatCtx.isStreaming, isLoadingLocal, activeId, chatCtx.activeId]);
+  }, [chatCtx.isStreaming, isLoadingLocal]);
 
   // ── Pre-fill from URL query param (?context=…) ──
   useEffect(() => {
@@ -484,33 +431,26 @@ export default function ChatPageClient() {
   }, [messages, streamText]);
 
   /**
-   * Persist the current active conversation back to localStorage.
-   *
-   * @param id - Conversation ID to update
-   * @param updatedMessages - New message array
-   * @param currentConvs - Current conversations snapshot
+   * BIZZ-820: Local persistConversation er no-op. Serveren persisterer
+   * user + assistant messages via session_id-hook i /api/ai/chat (BIZZ-819)
+   * og context adopterer via polling (iter 1) / Realtime (iter 2).
+   * Beholdt som stub så sendMessage-flow kan kalde den ubekymret for
+   * fejl-paths (display-only error messages).
    */
-  /**
-   * BIZZ-240 fix: reads conversations from localStorage instead of using
-   * a stale snapshot, so auto-derived titles are preserved after streaming.
-   */
-  const persistConversation = useCallback((id: string, updatedMessages: ChatMessage[]) => {
-    const freshConvs = loadConversations();
-    const updated = freshConvs.map((c) => (c.id === id ? { ...c, messages: updatedMessages } : c));
-    saveConversations(updated);
-    setConversations(updated);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  const persistConversation = useCallback((_id: string, _updatedMessages: ChatMessage[]) => {
+    void _id;
+    void _updatedMessages;
   }, []);
 
   /**
    * Create a new empty conversation and select it.
    */
-  const handleNewConversation = useCallback(() => {
+  const handleNewConversation = useCallback(async () => {
     // Don't abort — let streaming finish in background for the old conversation
-    abortRef.current = null; // Detach so stop button doesn't kill background stream
-    // Use context to create conversation — syncs with drawer
-    const newId = chatCtx.createConversation(lang as 'da' | 'en');
-    setActiveIdLocal(newId);
+    abortRef.current = null;
+    // BIZZ-820: createConversation er async (POST /api/ai/sessions).
+    const newId = await chatCtx.createConversation(lang as 'da' | 'en');
+    if (newId) setActiveIdLocal(newId);
     setMessages([]);
     setStreamText('');
     setToolStatus('');
@@ -533,7 +473,8 @@ export default function ChatPageClient() {
       const conv = conversations.find((c) => c.id === id);
       if (!conv) return;
       setActiveId(id);
-      setMessages(conv.messages);
+      // BIZZ-820: context.selectConversation fetcher messages via API.
+      // setMessages opdateres når context.messages ændres (effect ovenfor).
       setStreamText('');
       setToolStatus('');
     },
@@ -547,23 +488,17 @@ export default function ChatPageClient() {
    * @param id - Conversation ID to remove
    */
   const handleDeleteConversation = useCallback(
-    (id: string, e: React.MouseEvent) => {
+    async (id: string, e: React.MouseEvent) => {
       e.stopPropagation();
-      const updated = conversations.filter((c) => c.id !== id);
-      saveConversations(updated);
-      setConversations(updated);
+      // BIZZ-820: context.deleteConversation rammer DELETE-endpointet og
+      // opdaterer listen. Select-handler tager sig af valg af næste.
+      await chatCtx.deleteConversation(id);
       if (activeId === id) {
-        if (updated.length > 0) {
-          setActiveId(updated[0].id);
-          setMessages(updated[0].messages);
-        } else {
-          setActiveId(null);
-          setMessages([]);
-        }
+        setActiveIdLocal(null);
+        setMessages([]);
       }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [conversations, activeId]
+    [chatCtx, activeId]
   );
 
   /** Stop AI streaming */
@@ -619,22 +554,16 @@ export default function ChatPageClient() {
     // Subscription check
     const blockReason = checkSubscriptionLimit();
 
-    // Ensure there is an active conversation
+    // BIZZ-820: Ensure active conversation exists via context (API-backed).
     let convId = activeId;
-    let currentConvs = conversations;
-
     if (!convId) {
-      const newConv: Conversation = {
-        id: generateId(),
-        title: deriveTitle(text || (attachments[0]?.name ?? '')),
-        messages: [],
-        createdAt: new Date().toISOString(),
-      };
-      currentConvs = [newConv, ...conversations];
-      saveConversations(currentConvs);
-      setConversations(currentConvs);
-      convId = newConv.id;
-      setActiveId(convId);
+      const newId = await chatCtx.ensureConversation(lang as 'da' | 'en');
+      if (!newId) {
+        // Auth mangler eller API fejlede — bryd stille ud
+        return;
+      }
+      convId = newId;
+      setActiveIdLocal(convId);
     }
 
     // BIZZ-811: Fold attachments into the user message so Claude sees the
@@ -670,7 +599,7 @@ export default function ChatPageClient() {
 
     // Auto-title from first user message — use context for sync with drawer
     if (messages.length === 0) {
-      chatCtx.titleConversation(convId, text);
+      void chatCtx.titleConversation(convId, text);
     }
 
     setInput('');
@@ -729,6 +658,9 @@ export default function ChatPageClient() {
               }
             : {}),
           ...(attachmentRefs.length > 0 ? { attachments: attachmentRefs } : {}),
+          // BIZZ-820: Bind turn til aktiv session så persistChatMessages
+          // gemmer user-prompt + assistant-svar server-side.
+          session_id: convId,
         }),
         signal: controller.signal,
       });
@@ -873,22 +805,18 @@ export default function ChatPageClient() {
       chatCtx.setIsStreaming(false);
       abortRef.current = null;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     input,
     isLoading,
     messages,
     activeId,
-    conversations,
     checkSubscriptionLimit,
     persistConversation,
     streamText,
     addTokenUsage,
     attachments,
-    setConversations,
-    setActiveId,
     chatCtx,
-    da,
+    lang,
     pageData,
   ]);
 

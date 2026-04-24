@@ -1,35 +1,64 @@
 'use client';
 
 /**
- * AIChatContext — shared conversation state between drawer panel and full-page chat.
+ * AIChatContext — shared conversation state between drawer panel and
+ * full-page chat.
  *
- * Manages conversations in localStorage via chatStorage.ts.
- * Both AIChatPanel (drawer) and ChatPageClient consume this context
- * so conversations started in one are visible in the other.
+ * BIZZ-820: Persistens flyttet fra localStorage til Supabase (via
+ * /api/ai/sessions + /api/ai/sessions/[id] + /api/ai/sessions/[id]/messages).
+ * I denne iter bruger vi polling (5s) for aktiv session — Realtime
+ * integration (ALTER PUBLICATION i BIZZ-819 migration 075) unblocker
+ * iter 2 hvor vi skifter til Supabase Realtime-subscribe for sub-sekund
+ * cross-device sync.
  *
- * Also holds `drawerOpen` state for the topbar slide-out drawer.
+ * Både AIChatPanel (drawer) og ChatPageClient bruger denne context så
+ * conversations startet i én overflade er synlige i den anden.
+ *
+ * Public interface holdt bagudkompatibelt med chatStorage-versionen så
+ * callers ikke skal ændres (bortset fra at passe session_id til
+ * /api/ai/chat).
  *
  * @module context/AIChatContext
  */
 
-import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react';
-import { usePathname } from 'next/navigation';
 import {
-  loadConversations,
-  saveConversations,
-  generateId,
-  deriveTitle,
-  STORAGE_KEY,
-  type Conversation,
-  type ChatMessage,
-} from '@/app/lib/chatStorage';
+  createContext,
+  useContext,
+  useState,
+  useCallback,
+  useEffect,
+  useRef,
+  type ReactNode,
+} from 'react';
+import { usePathname } from 'next/navigation';
+import type { ChatMessage, Conversation } from '@/app/lib/chatStorage';
+import { migrateChatHistoryToSupabase } from '@/app/lib/migrateLocalStorage';
+
+// ─── API types (matcher /api/ai/sessions) ───────────────────────────────────
+
+interface ApiSession {
+  id: string;
+  title: string | null;
+  context_type?: string | null;
+  context_id?: string | null;
+  created_at: string;
+  last_msg_at?: string | null;
+  archived_at?: string | null;
+}
+
+interface ApiMessageRow {
+  id: string;
+  role: 'user' | 'assistant' | 'system' | 'tool';
+  content: unknown;
+  created_at: string;
+}
 
 // ─── Context interface ──────────────────────────────────────────────────────
 
 interface AIChatContextValue {
   /** All persisted conversations (newest first) */
   conversations: Conversation[];
-  /** Currently active conversation ID */
+  /** Currently active conversation ID (matches session_id i API) */
   activeId: string | null;
   /** Messages for the active conversation */
   messages: ChatMessage[];
@@ -47,25 +76,70 @@ interface AIChatContextValue {
   isStreaming: boolean;
   setIsStreaming: (streaming: boolean) => void;
   /** Create a new empty conversation and select it */
-  createConversation: (lang: 'da' | 'en') => string;
+  createConversation: (lang: 'da' | 'en') => Promise<string | null>;
   /** Select an existing conversation */
-  selectConversation: (id: string) => void;
+  selectConversation: (id: string) => Promise<void>;
   /** Delete a conversation */
-  deleteConversation: (id: string) => void;
-  /** Set messages for the active conversation (e.g. during streaming) */
+  deleteConversation: (id: string) => Promise<void>;
+  /** Set messages for the active conversation (used during streaming) */
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
-  /** Persist the current messages to the active conversation in localStorage */
+  /**
+   * No-op i API-versionen: /api/ai/chat persisterer user + assistant
+   * messages server-side via session_id-hook. Beholdt for bagudkompat.
+   */
   persistConversation: (id: string, updatedMessages: ChatMessage[]) => void;
   /** Auto-title a conversation from the first user message */
-  titleConversation: (id: string, firstMessage: string) => void;
+  titleConversation: (id: string, firstMessage: string) => Promise<void>;
   /** Ensure there is an active conversation, creating one if needed */
-  ensureConversation: (lang: 'da' | 'en') => string;
+  ensureConversation: (lang: 'da' | 'en') => Promise<string | null>;
 }
 
 const AIChatContext = createContext<AIChatContextValue | null>(null);
 
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+/**
+ * Coerce server-persisted content-jsonb til ChatMessage.content-string.
+ * persistChatMessages skriver `{text: '...'}`. Legacy-migrerede
+ * rows kan være plain strings. Array/objekt → JSON-serialisér.
+ */
+function coerceContent(raw: unknown): string {
+  if (typeof raw === 'string') return raw;
+  if (raw && typeof raw === 'object') {
+    const obj = raw as Record<string, unknown>;
+    if (typeof obj.text === 'string') return obj.text;
+  }
+  try {
+    return JSON.stringify(raw);
+  } catch {
+    return '';
+  }
+}
+
+function apiRowToMessage(row: ApiMessageRow): ChatMessage | null {
+  if (row.role !== 'user' && row.role !== 'assistant') return null;
+  return {
+    role: row.role,
+    content: coerceContent(row.content),
+  };
+}
+
+function apiSessionToConversation(s: ApiSession): Conversation {
+  return {
+    id: s.id,
+    title: s.title ?? 'Samtale',
+    messages: [],
+    createdAt: s.created_at,
+  };
+}
+
 // ─── Provider ───────────────────────────────────────────────────────────────
 
+/**
+ * Provider der loader conversations fra /api/ai/sessions ved mount og
+ * bruger polling (5s) for aktiv session. Kører én-gangs localStorage
+ * migration første gang context mounter med auth.
+ */
 export function AIChatContextProvider({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -76,97 +150,191 @@ export function AIChatContextProvider({ children }: { children: ReactNode }) {
   const [toolStatus, setToolStatusRaw] = useState('');
   const [isStreaming, setIsStreamingRaw] = useState(false);
 
-  // Load conversations from localStorage on mount
-  useEffect(() => {
-    setConversations(loadConversations());
+  // Seneste message-timestamp for aktiv session (bruges til polling ?since=)
+  const lastPolledRef = useRef<string | null>(null);
+
+  // ── Fetch sessions-list ──────────────────────────────────────────────────
+  const refreshConversations = useCallback(async (): Promise<Conversation[]> => {
+    try {
+      const res = await fetch('/api/ai/sessions?limit=100');
+      if (!res.ok) return [];
+      const data = (await res.json()) as { sessions?: ApiSession[] };
+      const convs = (data.sessions ?? []).map(apiSessionToConversation);
+      setConversations(convs);
+      return convs;
+    } catch {
+      return [];
+    }
   }, []);
 
-  // Auto-close drawer when navigating to full-page chat
+  // ── Initial load + migration ─────────────────────────────────────────────
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      await refreshConversations();
+      if (cancelled) return;
+      // Engangs-migration af localStorage → Supabase. Kører efter sessions
+      // er loadet så vi ikke duplikerer hvis migration allerede er done.
+      try {
+        const migrated = await migrateChatHistoryToSupabase();
+        if (!cancelled && migrated > 0) {
+          // Genindlæs listen så migrerede conversations er synlige
+          await refreshConversations();
+        }
+      } catch {
+        /* best-effort */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshConversations]);
+
+  // ── Auto-close drawer ved navigation til fullpage ────────────────────────
   useEffect(() => {
     if (pathname === '/dashboard/chat') {
       setDrawerOpenRaw(false);
     }
   }, [pathname]);
 
-  // Cross-tab sync: listen for localStorage changes from other tabs
+  // ── Polling fallback for aktiv session ───────────────────────────────────
+  // Sub-sekund Realtime kommer i iter 2 via Supabase publication (migration
+  // 075). Indtil da: poll hver 5s efter messages oprettet EFTER sidste kendte
+  // timestamp. Ingen polling hvis vi streamer (optimistic state ejer UI).
   useEffect(() => {
-    const handler = (e: StorageEvent) => {
-      if (e.key === STORAGE_KEY) {
-        setConversations(loadConversations());
+    if (!activeId || isStreaming) return;
+    const handle = setInterval(async () => {
+      try {
+        const since = lastPolledRef.current;
+        const qs = since ? `?since=${encodeURIComponent(since)}` : '';
+        const res = await fetch(`/api/ai/sessions/${activeId}/messages${qs}`);
+        if (!res.ok) return;
+        const data = (await res.json()) as { messages?: ApiMessageRow[] };
+        const rows = data.messages ?? [];
+        if (rows.length === 0) return;
+        const newMsgs = rows.map(apiRowToMessage).filter((m): m is ChatMessage => m !== null);
+        if (newMsgs.length > 0) {
+          setMessages((prev) => [...prev, ...newMsgs]);
+        }
+        lastPolledRef.current = rows[rows.length - 1].created_at;
+      } catch {
+        /* transient netværksfejl */
       }
-    };
-    window.addEventListener('storage', handler);
-    return () => window.removeEventListener('storage', handler);
-  }, []);
+    }, 5000);
+    return () => clearInterval(handle);
+  }, [activeId, isStreaming]);
 
+  // ── Drawer toggle ────────────────────────────────────────────────────────
   const setDrawerOpen = useCallback((open: boolean) => {
     setDrawerOpenRaw(open);
   }, []);
 
-  const createConversation = useCallback(
-    (lang: 'da' | 'en'): string => {
-      const newConv: Conversation = {
-        id: generateId(),
-        title: lang === 'da' ? 'Ny samtale' : 'New conversation',
-        messages: [],
-        createdAt: new Date().toISOString(),
-      };
-      const updated = [newConv, ...conversations];
-      saveConversations(updated);
-      setConversations(updated);
-      setActiveId(newConv.id);
+  // ── Create ───────────────────────────────────────────────────────────────
+  const createConversation = useCallback(async (lang: 'da' | 'en'): Promise<string | null> => {
+    try {
+      const res = await fetch('/api/ai/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: lang === 'da' ? 'Ny samtale' : 'New conversation',
+        }),
+      });
+      if (!res.ok) return null;
+      const data = (await res.json()) as { session?: ApiSession };
+      const s = data.session;
+      if (!s) return null;
+      const conv = apiSessionToConversation(s);
+      setConversations((prev) => [conv, ...prev]);
+      setActiveId(conv.id);
       setMessages([]);
-      return newConv.id;
-    },
-    [conversations]
-  );
+      lastPolledRef.current = null;
+      return conv.id;
+    } catch {
+      return null;
+    }
+  }, []);
 
-  const selectConversation = useCallback(
-    (id: string) => {
-      const conv = conversations.find((c) => c.id === id);
-      if (!conv) return;
-      setActiveId(id);
-      setMessages(conv.messages);
-    },
-    [conversations]
-  );
-
-  const deleteConversation = useCallback(
-    (id: string) => {
-      const updated = conversations.filter((c) => c.id !== id);
-      saveConversations(updated);
-      setConversations(updated);
-      if (activeId === id) {
-        if (updated.length > 0) {
-          setActiveId(updated[0].id);
-          setMessages(updated[0].messages);
-        } else {
-          setActiveId(null);
-          setMessages([]);
-        }
+  // ── Select ───────────────────────────────────────────────────────────────
+  const selectConversation = useCallback(async (id: string): Promise<void> => {
+    setActiveId(id);
+    setMessages([]);
+    lastPolledRef.current = null;
+    try {
+      const res = await fetch(`/api/ai/sessions/${id}`);
+      if (!res.ok) return;
+      const data = (await res.json()) as {
+        session?: ApiSession;
+        messages?: ApiMessageRow[];
+      };
+      const rows = data.messages ?? [];
+      const msgs = rows.map(apiRowToMessage).filter((m): m is ChatMessage => m !== null);
+      setMessages(msgs);
+      if (rows.length > 0) {
+        lastPolledRef.current = rows[rows.length - 1].created_at;
       }
+    } catch {
+      /* best-effort */
+    }
+  }, []);
+
+  // ── Delete ───────────────────────────────────────────────────────────────
+  const deleteConversation = useCallback(
+    async (id: string): Promise<void> => {
+      try {
+        await fetch(`/api/ai/sessions/${id}`, { method: 'DELETE' });
+      } catch {
+        /* ignorer — UI opdateres alligevel */
+      }
+      setConversations((prev) => {
+        const updated = prev.filter((c) => c.id !== id);
+        if (activeId === id) {
+          if (updated.length > 0) {
+            // Vælg næste øverste uden fetch — vis tom messages indtil select
+            setActiveId(updated[0].id);
+            setMessages([]);
+            lastPolledRef.current = null;
+          } else {
+            setActiveId(null);
+            setMessages([]);
+            lastPolledRef.current = null;
+          }
+        }
+        return updated;
+      });
     },
-    [conversations, activeId]
+    [activeId]
   );
 
-  const persistConversation = useCallback((id: string, updatedMessages: ChatMessage[]) => {
-    const fresh = loadConversations();
-    const updated = fresh.map((c) => (c.id === id ? { ...c, messages: updatedMessages } : c));
-    saveConversations(updated);
-    setConversations(updated);
+  // ── Persist (no-op) ──────────────────────────────────────────────────────
+  // Server-side /api/ai/chat persisterer user + assistant messages via
+  // session_id-hook (BIZZ-819). Callerne må fortsat kalde funktionen for
+  // bagudkompat men den laver intet lokalt (messages lever i state).
+  const persistConversation = useCallback((_id: string, _updatedMessages: ChatMessage[]): void => {
+    void _id;
+    void _updatedMessages;
   }, []);
 
-  const titleConversation = useCallback((id: string, firstMessage: string) => {
-    const fresh = loadConversations();
-    const updated = fresh.map((c) =>
-      c.id === id ? { ...c, title: deriveTitle(firstMessage) } : c
-    );
-    saveConversations(updated);
-    setConversations(updated);
+  // ── Title ────────────────────────────────────────────────────────────────
+  const titleConversation = useCallback(async (id: string, firstMessage: string): Promise<void> => {
+    const MAX = 40;
+    const clean = firstMessage.trim().replace(/\n/g, ' ');
+    const title = clean.length > MAX ? `${clean.slice(0, MAX)}\u2026` : clean;
+    try {
+      const res = await fetch(`/api/ai/sessions/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title }),
+      });
+      if (!res.ok) return;
+    } catch {
+      return;
+    }
+    setConversations((prev) => prev.map((c) => (c.id === id ? { ...c, title } : c)));
   }, []);
 
+  // ── Ensure ───────────────────────────────────────────────────────────────
   const ensureConversation = useCallback(
-    (lang: 'da' | 'en'): string => {
+    async (lang: 'da' | 'en'): Promise<string | null> => {
       if (activeId) return activeId;
       return createConversation(lang);
     },

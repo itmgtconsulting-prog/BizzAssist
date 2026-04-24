@@ -32,6 +32,7 @@ import {
   Building2,
   User,
   Upload,
+  Maximize2,
 } from 'lucide-react';
 import { useLanguage } from '@/app/context/LanguageContext';
 import type { DomainCaseSummary } from './DomainCaseList';
@@ -429,15 +430,28 @@ export function DomainWorkspaceSplitView({
             </button>
           )}
           {caseDetail && !editing && !inlineEditingName && (
-            <button
-              type="button"
-              onClick={() => setEditing(true)}
-              aria-label={da ? 'Rediger sag (alle felter)' : 'Edit case (all fields)'}
-              className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800 transition-colors shrink-0"
-              title={da ? 'Rediger alle felter' : 'Edit all fields'}
-            >
-              <Pencil size={12} />
-            </button>
+            <>
+              {/* BIZZ-883: Expand-knap giver fokuseret arbejde med én sag —
+                  samme destination som eksisterende "Åbn i fuld visning"-link
+                  i bunden, men synlig i header. */}
+              <Link
+                href={`/domain/${domainId}/case/${selectedCaseId}`}
+                aria-label={da ? 'Åbn i fuld visning' : 'Open in full view'}
+                title={da ? 'Åbn i fuld visning' : 'Open in full view'}
+                className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800 transition-colors shrink-0"
+              >
+                <Maximize2 size={12} />
+              </Link>
+              <button
+                type="button"
+                onClick={() => setEditing(true)}
+                aria-label={da ? 'Rediger sag (alle felter)' : 'Edit case (all fields)'}
+                className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800 transition-colors shrink-0"
+                title={da ? 'Rediger alle felter' : 'Edit all fields'}
+              >
+                <Pencil size={12} />
+              </button>
+            </>
           )}
           {/* BIZZ-884: Synlig X-knap der lukker edit-tilstand fra header —
               eksisterende Annuller-knap er i bunden af formen og kan være

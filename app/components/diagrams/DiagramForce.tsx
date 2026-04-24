@@ -27,6 +27,7 @@ import {
   RotateCcw,
   Clock,
   X,
+  Download,
 } from 'lucide-react';
 import type { DiagramVariantProps, DiagramNode, DiagramEdge } from './DiagramData';
 import type { PersonPublicData } from '@/app/api/cvr-public/person/route';
@@ -1936,6 +1937,33 @@ function DiagramForce({
           }
         >
           {isFullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+        </button>
+        {/* BIZZ-867: Eksport af diagram som SVG. Serialize SVG-DOM til
+            blob og trigger download. Kan bruges som udgangspunkt for
+            Excel/Word-export via ekstern konvertering eller via AI-chat. */}
+        <button
+          onClick={() => {
+            const svgEl = svgRef.current;
+            if (!svgEl) return;
+            const serializer = new XMLSerializer();
+            const svgString = serializer.serializeToString(svgEl);
+            const blob = new Blob([`<?xml version="1.0" encoding="UTF-8"?>\n${svgString}`], {
+              type: 'image/svg+xml;charset=utf-8',
+            });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `diagram-${Date.now()}.svg`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+          }}
+          className="w-7 h-7 flex items-center justify-center text-slate-400 hover:text-white bg-slate-800 border border-slate-700/50 rounded-lg transition ml-1"
+          aria-label={lang === 'da' ? 'Eksportér diagram som SVG' : 'Export diagram as SVG'}
+          title={lang === 'da' ? 'Eksportér som SVG-fil' : 'Export as SVG file'}
+        >
+          <Download size={13} />
         </button>
       </div>
     </div>

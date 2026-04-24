@@ -379,6 +379,52 @@ const TOOLS: Anthropic.Tool[] = [
       required: ['enhedsNummer'],
     },
   },
+  // BIZZ-890 (audit G2): Virksomheds-historik (navn/adresse/form/status/
+  // branche/fusion/spaltning) via /api/cvr-public. Historik-tab i UI
+  // viser dette men AI havde ingen tool → kunne ikke svare "hvornår
+  // skiftede X navn" eller "er virksomheden fusioneret".
+  {
+    name: 'hent_virksomhed_historik',
+    description:
+      'Hent virksomhedens historik (navneskifter, adresseskifter, form-ændringer, status-ændringer, brancheskifter, fusioner, spaltninger). Returnerer tidslinje sorteret nyeste først. Brug dette når brugeren spørger "hvornår skiftede X navn", "er X fusioneret med nogen", "hvad er virksomhedens historik". Kan filtreres på type.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        cvr: { type: 'string', description: '8-cifret CVR-nummer.' },
+        type: {
+          type: 'string',
+          description:
+            'Valgfri filter: navn | adresse | form | status | branche | fusion | spaltning | ejerskab. Default: alle.',
+        },
+        max_results: {
+          type: 'string',
+          description: 'Maksimum antal entries (default 30, max 100).',
+        },
+      },
+      required: ['cvr'],
+    },
+  },
+  // BIZZ-891 (audit G3): Ejere af virksomhed (UP-retning i koncern-chain).
+  // Eksisterende hent_datterselskaber dækker DOWN. Dette tool dækker
+  // "hvem ejer virksomhed X" — ét niveau op. AI kan rekursere selv
+  // ved at kalde hent_virksomhed_ejere for hvert firma-ejer-CVR.
+  {
+    name: 'hent_virksomhed_ejere',
+    description:
+      'Hent de aktuelle ejere af en virksomhed (én niveau op i koncern-strukturen). Returnerer personer + virksomheder med ejerandel-interval, stemmeandel, role og fra/til-periode. Brug dette til at finde "hvem ejer X i sidste ende" (ultimate-ejer) — hvis en ejer selv er en virksomhed, kald toolet igen med dennes CVR for at walke op. Stop ved person-ejer eller når en ejer ikke selv har en CVR (udenlandsk entity).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        cvr: { type: 'string', description: '8-cifret CVR-nummer.' },
+        kun_aktuelle: {
+          type: 'string',
+          description:
+            'Hvis "true" (default): filtrer til ejer-roller hvor til-dato er null. Hvis "false": inkludér historiske ejere.',
+        },
+      },
+      required: ['cvr'],
+    },
+  },
   // BIZZ-893 (audit G5): Nyheder om virksomhed via aggregator.
   // UI viser seneste nyheder på virksomhed/overblik — AI havde
   // ingen vej til at citere artikler. /api/news aggregerer Ritzau +
@@ -528,6 +574,10 @@ const TOOL_STATUS: Record<string, string> = {
   hent_ejerskab: 'Henter ejerskabsdata…',
   // BIZZ-889
   hent_ejendomsadmin: 'Henter ejendomsadministrator…',
+  // BIZZ-890
+  hent_virksomhed_historik: 'Henter virksomhedshistorik…',
+  // BIZZ-891
+  hent_virksomhed_ejere: 'Henter virksomhedens ejere…',
   // BIZZ-893
   hent_virksomhed_nyheder: 'Søger nyheder om virksomheden…',
   hent_salgshistorik: 'Henter salgshistorik…',
@@ -945,6 +995,119 @@ async function executeTool(
             type: a.type,
             virkningFra: a.virkningFra,
           })),
+        };
+        break;
+      }
+
+      // BIZZ-890 (audit G2): virksomhedshistorik via /api/cvr-public.
+      // Returnerer tidslinje fra periodiserede arrays (navne, adresse,
+      // form, status, branche) + fusioner/spaltninger.
+      case 'hent_virksomhed_historik': {
+        const cvr = input.cvr?.trim();
+        if (!cvr || !/^\d{8}$/.test(cvr)) {
+          result = { fejl: 'CVR skal være 8 cifre' };
+          break;
+        }
+        const res = await fetch(
+          `${baseUrl}/api/cvr-public?vat=${encodeURIComponent(cvr)}`,
+          internalFetchOpts
+        );
+        if (!res.ok) {
+          result = { fejl: toolErrorMessage('CVR-public API', res.status) };
+          break;
+        }
+        const data = (await res.json()) as {
+          error?: string;
+          historik?: Array<{
+            type: string;
+            fra: string;
+            til: string | null;
+            vaerdi: string;
+            modpartEnhedsNummer?: number | null;
+            fusionRetning?: 'ind' | 'ud' | null;
+          }>;
+        };
+        if (data.error) {
+          result = { fejl: data.error };
+          break;
+        }
+        const maxParsed = input.max_results ? parseInt(input.max_results, 10) : 30;
+        const max = Number.isFinite(maxParsed) ? Math.min(Math.max(1, maxParsed), 100) : 30;
+        const typeFilter = input.type?.toLowerCase();
+        let entries = data.historik ?? [];
+        if (typeFilter) entries = entries.filter((h) => h.type === typeFilter);
+        // Sortér nyeste først + cap
+        entries = entries
+          .slice()
+          .sort((a, b) => new Date(b.fra).getTime() - new Date(a.fra).getTime())
+          .slice(0, max);
+        result = { cvr, antal: entries.length, historik: entries };
+        break;
+      }
+
+      // BIZZ-891 (audit G3): ejere af virksomhed (UP-retning). AI kan
+      // rekursere via gentagne tool-calls for at finde ultimate-ejer.
+      case 'hent_virksomhed_ejere': {
+        const cvr = input.cvr?.trim();
+        if (!cvr || !/^\d{8}$/.test(cvr)) {
+          result = { fejl: 'CVR skal være 8 cifre' };
+          break;
+        }
+        const kunAktuelle = input.kun_aktuelle !== 'false';
+        const res = await fetch(
+          `${baseUrl}/api/cvr-public?vat=${encodeURIComponent(cvr)}`,
+          internalFetchOpts
+        );
+        if (!res.ok) {
+          result = { fejl: toolErrorMessage('CVR-public API', res.status) };
+          break;
+        }
+        const data = (await res.json()) as {
+          error?: string;
+          deltagere?: Array<{
+            navn: string;
+            enhedsNummer: number | null;
+            erVirksomhed: boolean;
+            roller: Array<{
+              rolle: string;
+              fra: string | null;
+              til: string | null;
+              ejerandel: string | null;
+              stemmeandel: string | null;
+            }>;
+          }>;
+        };
+        if (data.error) {
+          result = { fejl: data.error };
+          break;
+        }
+        // Find deltagere med EJER-rolle. Én deltager kan have flere roller —
+        // vi tager første EJER-rolle per deltager (den aktuelle/seneste).
+        const ejere = (data.deltagere ?? [])
+          .map((d) => {
+            const ejerRoller = d.roller.filter((r) => r.rolle === 'EJER');
+            if (ejerRoller.length === 0) return null;
+            const aktuel = ejerRoller.find((r) => r.til === null);
+            const relevant = kunAktuelle ? aktuel : (aktuel ?? ejerRoller[0]);
+            if (!relevant) return null;
+            return {
+              navn: d.navn,
+              enhedsNummer: d.enhedsNummer,
+              erVirksomhed: d.erVirksomhed,
+              ejerandel: relevant.ejerandel,
+              stemmeandel: relevant.stemmeandel,
+              fra: relevant.fra,
+              til: relevant.til,
+            };
+          })
+          .filter((e): e is NonNullable<typeof e> => e !== null);
+        result = {
+          cvr,
+          antal: ejere.length,
+          ejere,
+          vejledning: ejere.some((e) => e.erVirksomhed)
+            ? 'Mindst én ejer er en virksomhed. For at walke op mod ultimate-ejer: kald hent_virksomhed_ejere med den virksomhed-ejers CVR. Stop ved person-ejer.'
+            : 'Alle ejere er personer — ingen yderligere op-walk mulig.',
         };
         break;
       }

@@ -60,6 +60,12 @@ import {
   matchVirksomhedFilter,
   narrowVirksomhedFilters,
 } from '@/app/lib/search/virksomhedFilterSchema';
+import {
+  buildPersonFilterSchemas,
+  matchPersonFilter,
+  narrowPersonFilters,
+  type FilterablePerson,
+} from '@/app/lib/search/personFilterSchema';
 import type { FilterSchema } from '@/app/lib/search/filterSchema';
 
 // ─── Tab types ────────────────────────────────────────────────────────────────
@@ -859,10 +865,36 @@ export default function UniversalSearchPageClient() {
                   matchVirksomhedFilter(c, narrowVirksomhedFilters(filters))
                 ).length;
               } else if (activeTab === 'people') {
-                // Person-filter-katalog kommer i BIZZ-790a. Empty
-                // schema viser bare panel-header + placeholder.
-                currentTabSchemas = [];
-                matchCount = people.length;
+                // BIZZ-790a: Person-filter-katalog. Schema fra BIZZ-823
+                // plug'es nu ind. Kommune-filter har begrænset effekt
+                // fordi PersonSearchResult ikke eksponerer kommune —
+                // valget matcher kun personer hvor kommunenavn findes
+                // (iter 2 udvider /api/person-search med adresse-felter).
+                currentTabSchemas = buildPersonFilterSchemas(lang, []);
+                // Map PersonSearchResult → FilterablePerson til matcher.
+                // roleTyper normaliseres til lowercase + da'ske stammer.
+                const normalizeRolle = (r: string | null): string | null => {
+                  if (!r) return null;
+                  const low = r.toLowerCase();
+                  if (low.includes('direktør')) return 'direktør';
+                  if (low.includes('bestyrelsesmedlem')) return 'bestyrelsesmedlem';
+                  if (low.includes('formand')) return 'formand';
+                  if (low.includes('stifter')) return 'stifter';
+                  if (low.includes('reel ejer') || low.includes('reel_ejer')) return 'reel_ejer';
+                  if (low === 'ejer') return 'ejer';
+                  if (low.includes('suppleant')) return 'suppleant';
+                  return low;
+                };
+                const filterable: FilterablePerson[] = people.map((p) => ({
+                  isAktiv: p.antalVirksomheder > 0 || p.roller.length > 0,
+                  antalAktiveSelskaber: p.antalVirksomheder,
+                  roleTyper: p.roller
+                    .map((r) => normalizeRolle(r.rolle))
+                    .filter((r): r is string => r !== null),
+                }));
+                matchCount = filterable.filter((p) =>
+                  matchPersonFilter(p, narrowPersonFilters(filters))
+                ).length;
               }
               const handleReset = () => {
                 // Reset kun keys tilhørende current tab — bevar andre
@@ -979,27 +1011,58 @@ export default function UniversalSearchPageClient() {
             })()}
 
           {/* People tab */}
-          {hasQuery && activeTab === 'people' && (
-            <div role="tabpanel" aria-label={t.tabPeople}>
-              {loadingPeople ? (
-                <SkeletonList count={6} />
-              ) : people.length > 0 ? (
-                <div className="space-y-3">
-                  {people.map((r) => (
-                    <PersonCard key={r.enhedsNummer} result={r} lang={lang} />
-                  ))}
-                </div>
-              ) : (
-                searched && (
-                  <EmptyState
-                    query={query}
-                    message={`${t.noResultsFor} "${query.trim()}"`}
-                    icon={<Users size={28} />}
-                  />
+          {hasQuery &&
+            activeTab === 'people' &&
+            (() => {
+              // BIZZ-790a: Anvend person-filter på resultaterne. Samme
+              // normalisering som i match-count-beregningen ovenfor.
+              const normalizeRolle = (r: string | null): string | null => {
+                if (!r) return null;
+                const low = r.toLowerCase();
+                if (low.includes('direktør')) return 'direktør';
+                if (low.includes('bestyrelsesmedlem')) return 'bestyrelsesmedlem';
+                if (low.includes('formand')) return 'formand';
+                if (low.includes('stifter')) return 'stifter';
+                if (low.includes('reel ejer') || low.includes('reel_ejer')) return 'reel_ejer';
+                if (low === 'ejer') return 'ejer';
+                if (low.includes('suppleant')) return 'suppleant';
+                return low;
+              };
+              const personFilters = narrowPersonFilters(filters);
+              const filteredPeople = people.filter((p) =>
+                matchPersonFilter(
+                  {
+                    isAktiv: p.antalVirksomheder > 0 || p.roller.length > 0,
+                    antalAktiveSelskaber: p.antalVirksomheder,
+                    roleTyper: p.roller
+                      .map((r) => normalizeRolle(r.rolle))
+                      .filter((r): r is string => r !== null),
+                  },
+                  personFilters
                 )
-              )}
-            </div>
-          )}
+              );
+              return (
+                <div role="tabpanel" aria-label={t.tabPeople}>
+                  {loadingPeople ? (
+                    <SkeletonList count={6} />
+                  ) : filteredPeople.length > 0 ? (
+                    <div className="space-y-3">
+                      {filteredPeople.map((r) => (
+                        <PersonCard key={r.enhedsNummer} result={r} lang={lang} />
+                      ))}
+                    </div>
+                  ) : (
+                    searched && (
+                      <EmptyState
+                        query={query}
+                        message={`${t.noResultsFor} "${query.trim()}"`}
+                        icon={<Users size={28} />}
+                      />
+                    )
+                  )}
+                </div>
+              );
+            })()}
         </div>
       </div>
     </div>

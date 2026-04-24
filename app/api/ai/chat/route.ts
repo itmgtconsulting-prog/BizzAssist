@@ -135,7 +135,7 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: 'hent_vurdering',
     description:
-      'Hent offentlig ejendomsvurdering med udvidede data fra Datafordeler. Returnerer: ejendomsværdi, grundværdi, afgiftspligtige beløb, estimeret grundskyld, grundskyldspromille, juridisk kategori, vurderingshistorik (alle år), PLUS: ejerboligfordeling, grundværdispecifikation (areal × enhedspris nedbrydning), grundskatteloft (loftansættelse), skattefritagelser, og fradrag for forbedringer. Kræver BFE-nummer og kommunekode.',
+      'Hent offentlig ejendomsvurdering med udvidede data fra Datafordeler. Returnerer: ejendomsværdi, grundværdi, afgiftspligtige beløb, estimeret grundskyld, grundskyldspromille, juridisk kategori, vurderingshistorik (alle år), PLUS: ejerboligfordeling, grundværdispecifikation (areal × enhedspris nedbrydning), grundskatteloft (loftansættelse), skattefritagelser, og fradrag for forbedringer. BIZZ-892: Bruger kan bede om grundskyld/dækningsafgift/ejendomsværdiskat — kald hent_forelobig_vurdering FØRST (giver faktiske nye system-beløb), dette tool er fallback for ældre/estimerede tal. Kræver BFE-nummer og kommunekode.',
     input_schema: {
       type: 'object' as const,
       properties: {

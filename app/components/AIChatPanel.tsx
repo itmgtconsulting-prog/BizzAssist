@@ -700,7 +700,9 @@ function AIChatPanel() {
         };
         const finalMsgs = [...newMessages, finalAssistant];
         chatCtx.persistConversation(convId, finalMsgs);
-        if (chatCtx.activeId === convId) {
+        // BIZZ-839: Update local state if we're still on the same conversation,
+        // OR if convId is null (stateless fallback — always update).
+        if (!convId || chatCtx.activeId === convId) {
           setMessages(finalMsgs);
         }
       }
@@ -712,8 +714,8 @@ function AIChatPanel() {
         const current = streamText || a.stopped;
         const finalMsgs = [...newMessages, { role: 'assistant' as const, content: current }];
         chatCtx.persistConversation(convId, finalMsgs);
-        // Only update local messages if we're still on the same conversation
-        if (chatCtx.activeId === convId) {
+        // BIZZ-839: Same fix — always update if stateless mode (convId null)
+        if (!convId || chatCtx.activeId === convId) {
           setMessages(finalMsgs);
         }
       } else {

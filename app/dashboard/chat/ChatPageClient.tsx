@@ -775,7 +775,8 @@ export default function ChatPageClient() {
         };
         const finalMessages = [...newMessages, assistantMsg];
         persistConversation(convId, finalMessages);
-        if (activeId === convId) {
+        // BIZZ-839: Update local state if same conversation OR stateless (convId null)
+        if (!convId || activeId === convId) {
           setMessages(finalMessages);
         }
       }
@@ -786,8 +787,8 @@ export default function ChatPageClient() {
         const stoppedMsg: ChatMessage = { role: 'assistant', content: current };
         const finalMessages = [...newMessages, stoppedMsg];
         persistConversation(convId, finalMessages);
-        // Only update UI if still on same conversation (user may have clicked "Ny samtale")
-        if (activeId === convId) {
+        // BIZZ-839: Same fix — always update if stateless mode
+        if (!convId || activeId === convId) {
           setMessages(finalMessages);
         }
       } else {

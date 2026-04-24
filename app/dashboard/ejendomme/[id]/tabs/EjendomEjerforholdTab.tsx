@@ -117,6 +117,21 @@ export default function EjendomEjerforholdTab({
                     label={da ? 'Henter lejlighedsdata…' : 'Loading apartment data…'}
                   />
                 )}
+                {/* BIZZ-857: Empty-state når opdelt-flag er true men listen er tom —
+                    tydelig fejl i stedet for kun det generiske "ejerskab er registreret"-
+                    budskab der ikke hjælper brugeren videre. */}
+                {!lejlighederLoader && lejligheder !== null && lejligheder.length === 0 && (
+                  <div className="bg-red-500/5 border border-red-500/20 rounded-xl p-6 text-center space-y-2">
+                    <p className="text-red-300 text-sm font-medium">
+                      {da ? 'Data mangler' : 'Data missing'}
+                    </p>
+                    <p className="text-slate-400 text-xs max-w-md mx-auto">
+                      {da
+                        ? 'Ejendommen er registreret som opdelt, men listen af ejerlejligheder kunne ikke hentes. Kontakt support hvis problemet fortsætter.'
+                        : 'The property is registered as divided, but the list of condominiums could not be retrieved. Contact support if the issue persists.'}
+                    </p>
+                  </div>
+                )}
                 {lejligheder !== null && lejligheder.length > 0 && (
                   <div className="bg-slate-800/40 border border-slate-700/40 rounded-xl overflow-hidden overflow-x-auto">
                     <div className="px-3 py-2.5 border-b border-slate-700/40 flex items-center justify-between">

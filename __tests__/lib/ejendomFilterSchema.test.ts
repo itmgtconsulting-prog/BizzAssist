@@ -21,12 +21,17 @@ import {
 } from '@/app/lib/search/ejendomFilterSchema';
 
 describe('buildEjendomFilterSchemas', () => {
-  it('returnerer 3 filtre i korrekt rækkefølge', () => {
+  it('returnerer 7 filtre i korrekt rækkefølge (BIZZ-821 phase-2 udvidet)', () => {
     const schemas = buildEjendomFilterSchemas('da', []);
-    expect(schemas).toHaveLength(3);
+    expect(schemas).toHaveLength(7);
     expect(schemas[0].key).toBe('ejendomstype');
     expect(schemas[1].key).toBe('skjulUdfasede');
     expect(schemas[2].key).toBe('kommune');
+    // BIZZ-821 phase-2
+    expect(schemas[3].key).toBe('boligareal');
+    expect(schemas[4].key).toBe('opfoerelsesaar');
+    expect(schemas[5].key).toBe('energimaerke');
+    expect(schemas[6].key).toBe('anvendelse');
   });
 
   it('skjulUdfasede har default=true', () => {

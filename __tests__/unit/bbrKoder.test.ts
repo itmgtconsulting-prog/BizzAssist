@@ -35,6 +35,9 @@ import {
   isUdfasetStatusCode,
   udfasetLabelForCode,
   BBR_STATUS_UDFASET,
+  BBR_STATUS_RETIRED,
+  BBR_STATUS_AKTIV,
+  DAR_STATUS,
 } from '@/app/lib/bbrKoder';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -450,5 +453,53 @@ describe('udfasetLabelForCode', () => {
 
   it('accepts numeric strings', () => {
     expect(udfasetLabelForCode('4')).toBe('Nedrevet/slettet');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BIZZ-836: BBR_STATUS_RETIRED, BBR_STATUS_AKTIV, DAR_STATUS
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('BBR_STATUS_RETIRED', () => {
+  it('contains all retired status labels', () => {
+    expect(BBR_STATUS_RETIRED.has('Nedrevet/slettet')).toBe(true);
+    expect(BBR_STATUS_RETIRED.has('Bygning nedrevet')).toBe(true);
+    expect(BBR_STATUS_RETIRED.has('Bygning bortfaldet')).toBe(true);
+  });
+
+  it('does not contain active labels', () => {
+    expect(BBR_STATUS_RETIRED.has('Bygning opført')).toBe(false);
+    expect(BBR_STATUS_RETIRED.has('Projekteret bygning')).toBe(false);
+  });
+
+  it('is consistent with BBR_STATUS_UDFASET code set', () => {
+    expect(BBR_STATUS_RETIRED.size).toBe(BBR_STATUS_UDFASET.size);
+  });
+});
+
+describe('BBR_STATUS_AKTIV', () => {
+  it('contains active status codes as strings', () => {
+    for (const code of ['1', '2', '3', '6', '7']) {
+      expect(BBR_STATUS_AKTIV.has(code)).toBe(true);
+    }
+  });
+
+  it('excludes retired codes', () => {
+    for (const code of ['4', '10', '11']) {
+      expect(BBR_STATUS_AKTIV.has(code)).toBe(false);
+    }
+  });
+});
+
+describe('DAR_STATUS', () => {
+  it('has correct Danish status values', () => {
+    expect(DAR_STATUS.Gaeldende).toBe('Gældende');
+    expect(DAR_STATUS.Forelobig).toBe('Foreløbig');
+    expect(DAR_STATUS.Nedlagt).toBe('Nedlagt');
+    expect(DAR_STATUS.Henlagt).toBe('Henlagt');
+  });
+
+  it('has exactly 4 entries', () => {
+    expect(Object.keys(DAR_STATUS)).toHaveLength(4);
   });
 });

@@ -227,6 +227,18 @@ const bygStatus: Record<number, string> = {
   11: 'Bygning bortfaldet',
 };
 
+// ─── DAR status-værdier (BIZZ-836) ────────────────────────────────────────
+/**
+ * BIZZ-836: DAR-statusværdier som konstanter. Bruges af filter-logic
+ * og adresse-autocomplete i stedet for spredte string-literals.
+ */
+export const DAR_STATUS = {
+  Gaeldende: 'Gældende',
+  Forelobig: 'Foreløbig',
+  Nedlagt: 'Nedlagt',
+  Henlagt: 'Henlagt',
+} as const;
+
 // ─── BBR Status — udfaset-logik (BIZZ-825) ────────────────────────────────
 /**
  * BIZZ-825: Centraliseret status-kode-mapping så alle call-sites
@@ -242,6 +254,23 @@ const bygStatus: Record<number, string> = {
  * Kilde: BBR kodeliste BYG_STATUS (teknik.bbr.dk/kodelister/0/1/0).
  */
 export const BBR_STATUS_UDFASET: ReadonlySet<number> = new Set([4, 10, 11]);
+
+/**
+ * BIZZ-836: String-baseret set af udfaset-labels. Bruges af call-sites
+ * der har BBR-status som streng (fra bygStatusTekst) i stedet for kode.
+ */
+export const BBR_STATUS_RETIRED: ReadonlySet<string> = new Set([
+  'Nedrevet/slettet',
+  'Bygning nedrevet',
+  'Bygning bortfaldet',
+]);
+
+/**
+ * BIZZ-836: Numeriske BYG_STATUS koder for aktive bygninger.
+ * Complement af BBR_STATUS_UDFASET + kondemneret (5).
+ * Bruges af PropertyMap til at afgøre cirkelfarve.
+ */
+export const BBR_STATUS_AKTIV: ReadonlySet<string> = new Set(['1', '2', '3', '6', '7']);
 
 /**
  * BIZZ-825: Bilingual status-labels. Brugt af filter-kataloget +

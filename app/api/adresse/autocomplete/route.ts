@@ -22,6 +22,7 @@ import { logActivity } from '@/app/lib/activityLog';
 import { logger } from '@/app/lib/logger';
 import { parseQuery } from '@/app/lib/validate';
 import { fetchBbrStatusForAdresser } from '@/app/lib/bbrEjendomStatus';
+import { DAR_STATUS } from '@/app/lib/bbrKoder';
 
 /** Zod schema for autocomplete query params */
 const autocompleteSchema = z.object({
@@ -67,7 +68,7 @@ export async function GET(request: NextRequest) {
           // Server-side verificeret udfaset-flag — overskriver DAR-
           // status-proxy hvis tilgængelig.
           if (entry.isUdfaset) {
-            r.status = 'Nedlagt';
+            r.status = DAR_STATUS.Nedlagt;
           }
         }
       }

@@ -39,6 +39,7 @@ import {
   Layers,
   X,
 } from 'lucide-react';
+import { BBR_STATUS_AKTIV } from '@/app/lib/bbrKoder';
 
 /**
  * Mapbox basekort-styles.
@@ -142,8 +143,8 @@ export interface BBRBygningPunkt {
   ejerforholdskode: string | null;
 }
 
-/** Statuskoder der anses som aktive bygninger */
-const AKTIV_STATUS = new Set(['1', '2', '3', '6', '7']);
+/** BIZZ-836: Brug central BBR_STATUS_AKTIV fra bbrKoder.ts */
+const AKTIV_STATUS = BBR_STATUS_AKTIV;
 
 /**
  * localStorage-nøgle for kortstil (gadekort / satellitfoto / BBR).

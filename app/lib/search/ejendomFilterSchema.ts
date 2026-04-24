@@ -14,6 +14,7 @@
  * lister. Samme Filter State pattern som BIZZ-789a/790a for konsistens.
  */
 
+import { isUdfasetStatusCode } from '@/app/lib/bbrKoder';
 import type { FilterSchema, FilterOption } from './filterSchema';
 
 /**
@@ -112,9 +113,16 @@ export function narrowEjendomFilters(raw: Record<string, unknown>): EjendomFilte
  * Shape som bruges af ejendoms-filter-match. Generisk fordi schema'et
  * skal kunne applies uanset hvilken kilde ejendommen kommer fra
  * (autocomplete, enhedsliste, recent).
+ *
+ * BIZZ-825: Udfaset-signal er nu numerisk bbrStatusCode via centraliseret
+ * isUdfasetStatusCode. is_udfaset-flag (fra bbr_ejendom_status-berigelse)
+ * accepteres også som direkte signal.
  */
 export interface FilterableEjendom {
-  status?: string | null;
+  /** BBR bygning-status-kode (BYG_STATUS). 4/10/11 = udfaset. */
+  bbrStatusCode?: number | string | null;
+  /** Direkte udfaset-flag fra bbr_ejendom_status (migration 069). */
+  isUdfaset?: boolean | null;
   ejendomstype?: 'sfe' | 'bygning' | 'ejerlejlighed' | null;
   adresse?: { kommunenavn?: string };
 }
@@ -123,14 +131,16 @@ export interface FilterableEjendom {
  * Applier ejendoms-filters til en single-item. Returnerer true hvis
  * item skal vises. Ukendte felter (null/undefined) tæller som
  * "passer igennem" — vi skjuler kun eksplicit hvad filter udelukker.
+ *
+ * BIZZ-825: String-fallback (s === 'Nedrevet' etc.) fjernet — var dead
+ * code (matchede aldrig DAR-værdier). Primær signal er bbrStatusCode via
+ * isUdfasetStatusCode, sekundær er isUdfaset-flag fra berigelse-tabel.
  */
 export function matchEjendomFilter(item: FilterableEjendom, filters: EjendomFilterState): boolean {
   // Skjul udfasede
   if (filters.skjulUdfasede) {
-    const s = item.status;
-    // Samme logik som BIZZ-785 iter 1: "Nedlagt" / "Nedrevet" filtreres
-    // væk; Gældende/Foreløbig/null/undefined passer igennem.
-    if (s === 'Nedlagt' || s === 'Nedrevet' || s === 'Henlagt') return false;
+    if (item.isUdfaset === true) return false;
+    if (isUdfasetStatusCode(item.bbrStatusCode)) return false;
   }
   // Ejendomstype multi-select
   if (filters.ejendomstype && filters.ejendomstype.length > 0) {

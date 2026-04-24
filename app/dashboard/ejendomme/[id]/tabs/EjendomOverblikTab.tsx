@@ -21,6 +21,7 @@ import Link from 'next/link';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import TabLoadingSpinner from '@/app/components/TabLoadingSpinner';
 import { formatDKK } from '@/app/lib/mock/ejendomme';
+import { isUdfasetStatusLabel } from '@/app/lib/bbrKoder';
 import type { EjendomApiResponse } from '@/app/api/ejendom/[id]/route';
 import type { VurderingData } from '@/app/api/vurdering/route';
 import type { ForelobigVurdering } from '@/app/api/vurdering-forelobig/route';
@@ -408,13 +409,9 @@ export default function EjendomOverblikTab({
 
         {/* Bygninger */}
         {(() => {
+          // BIZZ-825: central udfaset-tjek
           const bygninger = (bbrData?.bbr ?? [])
-            .filter(
-              (b) =>
-                b.status !== 'Nedrevet/slettet' &&
-                b.status !== 'Bygning nedrevet' &&
-                b.status !== 'Bygning bortfaldet'
-            )
+            .filter((b) => !isUdfasetStatusLabel(b.status))
             .sort((a, b) => (a.bygningsnr ?? 9999) - (b.bygningsnr ?? 9999));
           const totAreal = bygninger.reduce((s, b) => s + (b.samletBygningsareal ?? 0), 0);
           const boligAreal = bygninger.reduce((s, b) => s + (b.samletBoligareal ?? 0), 0);

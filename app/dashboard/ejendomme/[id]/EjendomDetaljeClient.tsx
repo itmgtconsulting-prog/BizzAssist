@@ -37,6 +37,7 @@ const PropertyMap = dynamic(/* mapbox-gl */ () => import('@/app/components/ejend
 import { type EjerstrukturNode } from '@/app/lib/mock/ejendomme';
 import { erDawaId, type DawaAdresse, type DawaJordstykke } from '@/app/lib/dawa';
 import { formatBenyttelseOgByggeaar } from '@/app/lib/benyttelseskoder';
+import { isUdfasetStatusLabel } from '@/app/lib/bbrKoder';
 import type { EjendomApiResponse, LiveBBRBygning } from '@/app/api/ejendom/[id]/route';
 import type { CVRVirksomhed, CVRResponse } from '@/app/api/cvr/route';
 import type { VurderingData, VurderingResponse } from '@/app/api/vurdering/route';
@@ -595,13 +596,7 @@ export default function EjendomDetaljeClient({
    * re-renders — without this the inline .filter() would create a new array each time.
    */
   const aktiveBygningPunkter = useMemo(
-    () =>
-      bbrData?.bygningPunkter?.filter(
-        (p) =>
-          p.status !== 'Nedrevet/slettet' &&
-          p.status !== 'Bygning nedrevet' &&
-          p.status !== 'Bygning bortfaldet'
-      ) ?? undefined,
+    () => bbrData?.bygningPunkter?.filter((p) => !isUdfasetStatusLabel(p.status)) ?? undefined,
     [bbrData?.bygningPunkter]
   );
 
@@ -1775,8 +1770,11 @@ export default function EjendomDetaljeClient({
                     );
                   }
                   // 2. Udled fra BBR bygningsanvendelser (gammelt VUR system)
+                  // BIZZ-825: udfaset via central helper; 'Ikke opført' er
+                  // ikke i BBR status-kodesættet (legacy VUR-værdi) så den
+                  // fortsat string-match'es.
                   const bygninger = bbrData?.bbr?.filter(
-                    (b) => b.status !== 'Nedrevet/slettet' && b.status !== 'Ikke opført'
+                    (b) => !isUdfasetStatusLabel(b.status) && b.status !== 'Ikke opført'
                   );
                   if (!bygninger?.length) return null;
                   let harBolig = false;
@@ -1941,16 +1939,12 @@ export default function EjendomDetaljeClient({
                 eller Bygning bortfaldet, er den fysiske ejendom udfaset.
                 Minst én aktiv bygning → vis ikke banneret. */}
             {(() => {
-              const retiredStatuses = new Set([
-                'Nedrevet/slettet',
-                'Bygning nedrevet',
-                'Bygning bortfaldet',
-              ]);
+              // BIZZ-825: Central isUdfasetStatusLabel erstatter lokal Set.
               const bygninger = bbrData?.bbr;
               const erUdfasetEjendom =
                 !!bygninger &&
                 bygninger.length > 0 &&
-                bygninger.every((b) => b.status !== null && retiredStatuses.has(b.status));
+                bygninger.every((b) => isUdfasetStatusLabel(b.status));
               return erUdfasetEjendom;
             })() && (
               <div

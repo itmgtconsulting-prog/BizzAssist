@@ -24,6 +24,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { ArrowLeft, Building2, Ruler, Calendar, Layers, MapPin } from 'lucide-react';
 import { fetchBygningById } from '@/app/lib/fetchBygning';
+import { isUdfasetStatusLabel } from '@/app/lib/bbrKoder';
 import EjendomBreadcrumb from '@/app/components/ejendomme/EjendomBreadcrumb';
 
 export const dynamic = 'force-dynamic';
@@ -43,7 +44,9 @@ export default async function BygningDetailPage({ params }: BygningDetailPagePro
   const bygning = await fetchBygningById(bygningId);
   if (!bygning) notFound();
 
-  const statusOk = bygning.status !== 'Nedrevet/slettet' && bygning.status !== 'Bygning nedrevet';
+  // BIZZ-825: central udfaset-tjek via isUdfasetStatusLabel. Udfasede
+  // bygninger (status 4/10/11) = !statusOk.
+  const statusOk = !isUdfasetStatusLabel(bygning.status);
 
   return (
     <div className="bg-[#0a1020] min-h-screen">

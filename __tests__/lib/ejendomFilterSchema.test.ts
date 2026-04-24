@@ -48,7 +48,7 @@ describe('buildEjendomFilterSchemas', () => {
 
 describe('matchEjendomFilter', () => {
   const base: FilterableEjendom = {
-    status: 'Gældende',
+    bbrStatusCode: 3, // Bygning opført
     ejendomstype: 'bygning',
     adresse: { kommunenavn: 'Hvidovre' },
   };
@@ -57,17 +57,26 @@ describe('matchEjendomFilter', () => {
     expect(matchEjendomFilter(base, {})).toBe(true);
   });
 
-  it('skjulUdfasede skjuler Nedlagt/Nedrevet men ikke Gældende eller null', () => {
-    expect(matchEjendomFilter({ status: 'Nedlagt' }, { skjulUdfasede: true })).toBe(false);
-    expect(matchEjendomFilter({ status: 'Nedrevet' }, { skjulUdfasede: true })).toBe(false);
-    expect(matchEjendomFilter({ status: 'Henlagt' }, { skjulUdfasede: true })).toBe(false);
-    expect(matchEjendomFilter({ status: 'Gældende' }, { skjulUdfasede: true })).toBe(true);
-    expect(matchEjendomFilter({ status: null }, { skjulUdfasede: true })).toBe(true);
+  it('skjulUdfasede skjuler bbrStatusCode 4/10/11 men ikke 1/3/null (BIZZ-825)', () => {
+    expect(matchEjendomFilter({ bbrStatusCode: 4 }, { skjulUdfasede: true })).toBe(false);
+    expect(matchEjendomFilter({ bbrStatusCode: 10 }, { skjulUdfasede: true })).toBe(false);
+    expect(matchEjendomFilter({ bbrStatusCode: 11 }, { skjulUdfasede: true })).toBe(false);
+    // String-varianter (BBR returns numeric-string inconsistently)
+    expect(matchEjendomFilter({ bbrStatusCode: '10' }, { skjulUdfasede: true })).toBe(false);
+    // Aktive + ukendte passer igennem
+    expect(matchEjendomFilter({ bbrStatusCode: 3 }, { skjulUdfasede: true })).toBe(true);
+    expect(matchEjendomFilter({ bbrStatusCode: null }, { skjulUdfasede: true })).toBe(true);
     expect(matchEjendomFilter({}, { skjulUdfasede: true })).toBe(true);
   });
 
+  it('skjulUdfasede respekterer isUdfaset-flag fra berigelse (BIZZ-825)', () => {
+    expect(matchEjendomFilter({ isUdfaset: true }, { skjulUdfasede: true })).toBe(false);
+    expect(matchEjendomFilter({ isUdfaset: false }, { skjulUdfasede: true })).toBe(true);
+  });
+
   it('skjulUdfasede=false viser udfasede', () => {
-    expect(matchEjendomFilter({ status: 'Nedlagt' }, { skjulUdfasede: false })).toBe(true);
+    expect(matchEjendomFilter({ bbrStatusCode: 4 }, { skjulUdfasede: false })).toBe(true);
+    expect(matchEjendomFilter({ isUdfaset: true }, { skjulUdfasede: false })).toBe(true);
   });
 
   it('ejendomstype multi-select honoreres', () => {

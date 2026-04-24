@@ -23,6 +23,7 @@ import SektionLoader from '@/app/components/SektionLoader';
 import TabLoadingSpinner from '@/app/components/TabLoadingSpinner';
 import { formatDKK } from '@/app/lib/mock/ejendomme';
 import { tekniskAnlaegTekst, tekniskAnlaegKategori } from '@/app/lib/bbrTekniskAnlaegKoder';
+import { isUdfasetStatusLabel } from '@/app/lib/bbrKoder';
 import type { EjendomApiResponse } from '@/app/api/ejendom/[id]/route';
 import type { VurderingData } from '@/app/api/vurdering/route';
 import type { DawaAdresse, DawaJordstykke } from '@/app/lib/dawa';
@@ -226,13 +227,9 @@ export default function EjendomBBRTab({
       {(() => {
         const alleBygninger = bbrData?.bbr ?? [];
         const geodataIds = new Set((bbrData?.bygningPunkter ?? []).map((p) => p.id));
+        // BIZZ-825: central udfaset-tjek
         const bygninger = alleBygninger
-          .filter(
-            (b) =>
-              b.status !== 'Nedrevet/slettet' &&
-              b.status !== 'Bygning nedrevet' &&
-              b.status !== 'Bygning bortfaldet'
-          )
+          .filter((b) => !isUdfasetStatusLabel(b.status))
           .sort((a, b) => (a.bygningsnr ?? 9999) - (b.bygningsnr ?? 9999));
         const totAreal = bygninger.reduce((s, b) => s + (b.samletBygningsareal ?? 0), 0);
         const boligAreal = bygninger.reduce((s, b) => s + (b.samletBoligareal ?? 0), 0);
@@ -313,13 +310,15 @@ export default function EjendomBBRTab({
                     traeYdervaeg: false,
                   };
                   // BIZZ-486: Opgang/etage data for denne bygning
+                  // BIZZ-825: central udfaset-tjek. '7' er midlertidig
+                  // opførelse-kode som også filtreres fra opgang/etage-lister.
                   const bygOpgange = (bbrData?.opgange ?? []).filter(
                     (o) =>
-                      o.bygningId === b.id && o.status !== '7' && o.status !== 'Nedrevet/slettet'
+                      o.bygningId === b.id && o.status !== '7' && !isUdfasetStatusLabel(o.status)
                   );
                   const bygEtager = (bbrData?.etager ?? []).filter(
                     (e) =>
-                      e.bygningId === b.id && e.status !== '7' && e.status !== 'Nedrevet/slettet'
+                      e.bygningId === b.id && e.status !== '7' && !isUdfasetStatusLabel(e.status)
                   );
                   const harElevator = bygOpgange.some((o) => o.elevator === true);
                   const etageBetegnelser = [

@@ -2383,15 +2383,14 @@ export default function PersonDetailPageClient({
               // D3-simulering genstarter nu kun når diagram-data reelt ændrer sig.
               graph={personDiagramGraph}
               lang={lang}
-              // BIZZ-571: Person-diagram åbnede tidligere uden ejendomme
-              // synlige for at undgå overfyldt view.
-              // BIZZ-619: Revideret — ejendomme skal vises fra start så
-              // persondiagrammet er symmetrisk med virksomhedsdiagrammets
-              // opførsel. Antal pr. virksomhed er begrænset til 3 via
-              // MAX_PROPS_PER_COMPANY, så overfyldt-risikoen er mindre
-              // relevant end konsistens. Brugeren kan stadig skjule
-              // ejendomme via toolbar-toggle.
-              defaultShowProperties={true}
+              // BIZZ-571: Person-diagram aabnede tidligere uden ejendomme
+              // synlige for at undgaa overfyldt view.
+              // BIZZ-619: Revideret — ejendomme skulle vises fra start for
+              // konsistens med virksomhedsdiagrammet.
+              // BIZZ-847: Ændret tilbage — for personer med mange personligt
+              // ejede ejendomme (fx Jakob med 9) blev diagrammet for tungt.
+              // Default OFF; brugeren kan toggle via toolbar eller Udvid.
+              defaultShowProperties={false}
               onNodeClick={(node) => {
                 // BIZZ-368: clicking a company node in the person diagram should switch to
                 // the overview tab (staying on this page) rather than navigating to the

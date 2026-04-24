@@ -213,6 +213,27 @@ const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'hent_virksomhed_personer',
+    // BIZZ-875: Lukker kritisk gap — AI kunne ikke besvare "hvem er
+    // direktør?" uden et tool til deltager-listen. cvr-public route
+    // returnerer allerede deltagere med roller; dette tool eksponerer det.
+    description:
+      'Lister alle personer og virksomheder tilknyttet et CVR-nummer som deltagere (direktion, bestyrelse, stifter, revision, ejer osv.). Returnerer navn, enhedsNummer, rolle(r), startdato, slutdato (hvis ophørt), ejerandel og stemmeandel. Brug dette når brugeren spørger "hvem er direktør", "hvem sidder i bestyrelsen", "hvem er ejere" eller lignende. Kombiner med soeg_person_cvr hvis brugeren vil drill ned på én person.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        cvr: { type: 'string', description: '8-cifret CVR-nummer' },
+        /** BIZZ-875: Optional filter — hvis angivet, returner kun deltagere med aktiv rolle. */
+        kunAktive: {
+          type: 'boolean',
+          description:
+            'Hvis true (default): returner kun deltagere med mindst én aktiv rolle (til=null). Hvis false: inkluder også historiske deltagere.',
+        },
+      },
+      required: ['cvr'],
+    },
+  },
+  {
     name: 'hent_matrikeldata',
     description:
       'Henter matrikeloplysninger (jordstykker, matrikelnumre, arealer, fredskov, strandbeskyttelse, landbrugsnotering) for en ejendom fra Datafordeler MAT/v1. Kræver BFE-nummer.',
@@ -449,6 +470,8 @@ const TOOL_STATUS: Record<string, string> = {
   hent_jordforurening: 'Henter jordforureningsdata…',
   hent_plandata: 'Henter plandata…',
   hent_cvr_virksomhed: 'Henter CVR-data…',
+  // BIZZ-875
+  hent_virksomhed_personer: 'Henter virksomhedens personer…',
   hent_matrikeldata: 'Henter matrikeldata…',
   hent_person_virksomheder: 'Henter personens virksomhedstilknytninger…',
   hent_regnskab_noegletal: 'Henter regnskabsnøgletal…',
@@ -887,6 +910,57 @@ async function executeTool(
           break;
         }
         result = await res.json();
+        break;
+      }
+
+      case 'hent_virksomhed_personer': {
+        // BIZZ-875: Wraps /api/cvr-public deltagere-feltet.
+        // input.kunAktive kommer som string fra Claude tool-input. Default true.
+        const kunAktiveRaw = input.kunAktive;
+        const kunAktive = kunAktiveRaw !== 'false' && kunAktiveRaw !== String(false);
+        const res = await fetch(
+          `${baseUrl}/api/cvr-public?cvr=${encodeURIComponent(input.cvr)}`,
+          internalFetchOpts
+        );
+        if (!res.ok) {
+          result = { fejl: toolErrorMessage('CVR-public-API', res.status) };
+          break;
+        }
+        const data = (await res.json()) as {
+          name?: string;
+          deltagere?: Array<{
+            navn: string;
+            enhedsNummer: number | null;
+            erVirksomhed: boolean;
+            roller: Array<{
+              rolle: string;
+              fra: string | null;
+              til: string | null;
+              ejerandel: string | null;
+              stemmeandel: string | null;
+            }>;
+          }>;
+        };
+        const deltagere = (data.deltagere ?? []).map((d) => ({
+          navn: d.navn,
+          enhedsNummer: d.enhedsNummer,
+          erVirksomhed: d.erVirksomhed,
+          // Filter roller: kun aktive hvis kunAktive=true (til=null betyder stadig aktiv)
+          roller: kunAktive ? d.roller.filter((r) => r.til === null) : d.roller,
+        }));
+        // Cap max 50 deltagere i AI-svar
+        const trimmed = deltagere.slice(0, 50);
+        // Filter ud deltagere der ikke har nogen aktiv rolle (når kunAktive=true)
+        const filtered = kunAktive ? trimmed.filter((d) => d.roller.length > 0) : trimmed;
+        result = {
+          cvr: input.cvr,
+          navn: data.name ?? null,
+          antal: filtered.length,
+          total: deltagere.length,
+          afkortet: deltagere.length > 50,
+          kunAktive,
+          deltagere: filtered,
+        };
         break;
       }
 

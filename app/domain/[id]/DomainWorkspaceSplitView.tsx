@@ -127,6 +127,21 @@ export function DomainWorkspaceSplitView({
   const [caseLoading, setCaseLoading] = useState(false);
 
   const [editing, setEditing] = useState(false);
+  // BIZZ-884: ESC-tast lukker edit-tilstand. Kun aktiv når editing=true
+  // så vi ikke forstyrrer anden keyboard-navigation. Dialog-fokus er
+  // ikke implementeret (form er inline, ikke modal) så vi lytter
+  // globalt på document.
+  useEffect(() => {
+    if (!editing) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setEditing(false);
+        setSaveError(null);
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [editing]);
   // BIZZ-807: inline edit-mode for selve sagsnavn — klik på header-titel
   // åbner input uden at skulle ind i fuld edit-form.
   const [inlineEditingName, setInlineEditingName] = useState(false);
@@ -422,6 +437,23 @@ export function DomainWorkspaceSplitView({
               title={da ? 'Rediger alle felter' : 'Edit all fields'}
             >
               <Pencil size={12} />
+            </button>
+          )}
+          {/* BIZZ-884: Synlig X-knap der lukker edit-tilstand fra header —
+              eksisterende Annuller-knap er i bunden af formen og kan være
+              skjult ved scroll. Denne gør exit diskoverbart. */}
+          {caseDetail && editing && (
+            <button
+              type="button"
+              onClick={() => {
+                setEditing(false);
+                setSaveError(null);
+              }}
+              aria-label={da ? 'Luk redigering' : 'Close edit'}
+              title={da ? 'Luk redigering (Esc)' : 'Close edit (Esc)'}
+              className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800 transition-colors shrink-0"
+            >
+              <X size={12} />
             </button>
           )}
         </div>

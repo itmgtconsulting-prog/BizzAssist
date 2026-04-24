@@ -41,6 +41,7 @@ export type AdminTabId =
   | 'service-management'
   | 'cron-status'
   | 'domains'
+  | 'config'
   // BIZZ-749: pages below don't appear in the tab-bar but render it so
   // users have a way back to the main admin surface. Neither value matches
   // a TAB id, so no tab is highlighted — the surface is "in between".
@@ -128,6 +129,14 @@ const TABS: TabDef[] = [
     labelDa: 'Domains',
     labelEn: 'Domains',
     flag: 'domain',
+  },
+  // BIZZ-419: System config — central admin-konfigurerbar nøgle/værdi-store.
+  {
+    id: 'config',
+    href: '/dashboard/admin/config',
+    icon: Settings,
+    labelDa: 'System config',
+    labelEn: 'System config',
   },
 ];
 

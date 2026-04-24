@@ -379,6 +379,29 @@ const TOOLS: Anthropic.Tool[] = [
       required: ['enhedsNummer'],
     },
   },
+  // BIZZ-893 (audit G5): Nyheder om virksomhed via aggregator.
+  // UI viser seneste nyheder på virksomhed/overblik — AI havde
+  // ingen vej til at citere artikler. /api/news aggregerer Ritzau +
+  // Ritzau Via + danske RSS-feeds + Google News.
+  {
+    name: 'hent_virksomhed_nyheder',
+    description:
+      'Hent seneste nyhedsartikler om en virksomhed fra danske kilder (Ritzau, Ritzau Via, RSS-feeds, Google News). Returnerer titel, URL, kilde, publiceringsdato og snippet. Brug dette når brugeren spørger "hvad står der i pressen om X" eller "hvad er nyt om X". Returnerer max 10 artikler (sorteret nyeste først).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        navn: {
+          type: 'string',
+          description: 'Virksomhedsnavn (uden juridiske suffikser som A/S, ApS — vi renser selv).',
+        },
+        max_results: {
+          type: 'string',
+          description: 'Maksimum antal artikler (default 10, max 20).',
+        },
+      },
+      required: ['navn'],
+    },
+  },
   // BIZZ-889 (audit G1): ejendomsadministrator / ejerforening tool.
   // UI viser det på SFE-detaljeside + ejerforholds-tab via /api/ejendomsadmin
   // — AI havde ingen vej til denne data før. Bruges til at svare
@@ -505,6 +528,8 @@ const TOOL_STATUS: Record<string, string> = {
   hent_ejerskab: 'Henter ejerskabsdata…',
   // BIZZ-889
   hent_ejendomsadmin: 'Henter ejendomsadministrator…',
+  // BIZZ-893
+  hent_virksomhed_nyheder: 'Søger nyheder om virksomheden…',
   hent_salgshistorik: 'Henter salgshistorik…',
   hent_energimaerke: 'Henter energimærke…',
   hent_jordforurening: 'Henter jordforureningsdata…',
@@ -921,6 +946,44 @@ async function executeTool(
             virkningFra: a.virkningFra,
           })),
         };
+        break;
+      }
+
+      // BIZZ-893 (audit G5): nyheder om virksomhed via aggregator.
+      // Claude vælger selv de mest relevante efter læsning.
+      case 'hent_virksomhed_nyheder': {
+        const navn = input.navn?.trim();
+        if (!navn) {
+          result = { fejl: 'Virksomhedsnavn skal angives' };
+          break;
+        }
+        const res = await fetch(
+          `${baseUrl}/api/news?q=${encodeURIComponent(navn)}`,
+          internalFetchOpts
+        );
+        if (!res.ok) {
+          result = { fejl: toolErrorMessage('Nyheder-API', res.status) };
+          break;
+        }
+        // /api/news returnerer array af { title, url, source, pubDate?, description? }.
+        // Cap til max 20 (default 10) så Claude ikke får overvældende payload.
+        const maxParsed = input.max_results ? parseInt(input.max_results, 10) : 10;
+        const max = Number.isFinite(maxParsed) ? Math.min(Math.max(1, maxParsed), 20) : 10;
+        const articles = (await res.json()) as Array<{
+          title?: string;
+          url?: string;
+          source?: string;
+          pubDate?: string;
+          description?: string;
+        }>;
+        const trimmed = (articles ?? []).slice(0, max).map((a) => ({
+          title: a.title ?? '(uden titel)',
+          url: a.url ?? '',
+          kilde: a.source ?? 'Ukendt',
+          dato: a.pubDate ?? null,
+          uddrag: a.description ?? null,
+        }));
+        result = { antal: trimmed.length, artikler: trimmed };
         break;
       }
 

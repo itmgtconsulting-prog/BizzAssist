@@ -526,6 +526,11 @@ export default function VirksomhedDetaljeClient({ params }: PageProps) {
    * preventing "jumping" as properties stream in progressively. Shows active only. */
   const diagramGraphStable = useMemo(() => {
     if (!data) return { nodes: [], edges: [], mainId: '' };
+    // BIZZ-926: Vent med diagram-build til ejendomme-fetch er komplet.
+    // Uden denne guard bygges grafen med ufuldstændige data ved første
+    // render → DiagramForce cancelerer igangværende D3-simulation →
+    // positions forbliver tom → blank canvas (identisk med BIZZ-925).
+    if (!ejendommeFetchComplete) return { nodes: [], edges: [], mainId: '' };
     const aktiveEjendomme = ejendommeData.filter((p) => p.aktiv !== false);
     const propertiesByCvr =
       aktiveEjendomme.length > 0

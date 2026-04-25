@@ -156,16 +156,16 @@ function DiagramForce({
    * der ændrer sig pr. tick-batch. Ved at holde SVG usynlig (opacity 0)
    * indtil simulation er konvergeret og fitView er kørt, undgår brugeren
    * at se node'er "hoppe" på plads. Fade-in sker via CSS-transition.
+   *
+   * BIZZ-932: Brug hasEverSimulated ref i stedet for oscillerende state.
+   * Async data-deps (noeglePersonerMap, personalBfes) genstartede simulation
+   * gentagne gange → cancelled-flag forhindrede setSimulationReady(true) →
+   * 2s fallback satte true → ny restart satte false → uendelig oscillation
+   * med opacity=0 permanent. Nu: første completion sætter ref=true og SVG
+   * forbliver synlig — efterfølgende sim-restarts opdaterer positions
+   * in-place uden at skjule diagrammet.
    */
-  const [simulationReady, setSimulationReady] = useState(false);
-  // BIZZ-932: Safety fallback — force simulationReady efter 2s.
-  // Dækker edge-cases hvor async data-deps genstarter simulation
-  // og cancelled-flag forhindrer setSimulationReady(true).
-  useEffect(() => {
-    if (simulationReady) return;
-    const t = setTimeout(() => setSimulationReady(true), 2000);
-    return () => clearTimeout(t);
-  }, [simulationReady]);
+  const hasEverSimulated = useRef(false);
   /** User-dragged node positions — preserved across simulation re-runs.
    * Cleared when user clicks Reset. */
   const userPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
@@ -1341,11 +1341,12 @@ function DiagramForce({
       setTimeout(() => {
         if (!cancelled) setFitTrigger((t) => t + 1);
       }, 80);
-      // BIZZ-865: Marker simulation ready efter en kort ekstra delay
-      // så fitView-transformet også er applied før vi fade'r ind.
-      // 180ms = 80ms fit-trigger delay + ~100ms CSS-transition buffer.
+      // BIZZ-865/932: Marker simulation complete via ref (ikke state).
+      // Ref flipper til true ved første completion og forbliver true —
+      // efterfølgende simulation-restarts skjuler IKKE diagrammet.
+      // Kort delay (180ms) sikrer fitView-transformet er applied først.
       setTimeout(() => {
-        if (!cancelled) setSimulationReady(true);
+        if (!cancelled) hasEverSimulated.current = true;
       }, 180);
     };
 
@@ -2693,10 +2694,10 @@ function DiagramForce({
           padding: 16,
         }}
       >
-        {/* BIZZ-865: Subtil loading-dot mens simulation konvergerer.
-            Vises kun når simulation ikke er klar endnu OG vi har data at
-            vise (ellers ville det spinne over tom visning). */}
-        {!simulationReady && filteredGraph.nodes.length > 0 && (
+        {/* BIZZ-865/932: Loading-dot vises kun ved allerførste render
+            (ingen positions endnu). Efterfølgende sim-restarts viser
+            eksisterende layout mens nyt beregnes. */}
+        {!hasEverSimulated.current && positions.size === 0 && filteredGraph.nodes.length > 0 && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             <div className="w-2 h-2 rounded-full bg-blue-400/60 animate-pulse" />
           </div>
@@ -2706,12 +2707,13 @@ function DiagramForce({
           width={viewBox.w}
           height={viewBox.h}
           viewBox={`${viewBox.minX} ${viewBox.minY} ${viewBox.w} ${viewBox.h}`}
-          // BIZZ-865: opacity styres af simulationReady — SVG er usynlig
-          // under force-sim'ens 120 ticks så brugeren ikke ser layout-hop.
-          // Fade-in via CSS-transition (180ms matcher simulationReady-delay).
+          // BIZZ-932: SVG synlig så snart positions er beregnet (positions.size > 0)
+          // ELLER hasEverSimulated er true. Undgår permanent opacity:0 fra
+          // oscillerende simulationReady state. Første render fade'r ind via
+          // CSS-transition; efterfølgende restarts holder SVG synlig.
           style={{
             overflow: 'visible',
-            opacity: simulationReady ? 1 : 0,
+            opacity: hasEverSimulated.current || positions.size > 0 ? 1 : 0,
             transition: 'opacity 180ms ease-out',
           }}
         >

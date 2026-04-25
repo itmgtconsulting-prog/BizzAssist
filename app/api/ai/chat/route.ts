@@ -2618,8 +2618,31 @@ export async function POST(request: NextRequest): Promise<Response> {
     controller.enqueue(encoder.encode(`data: ${data}\n\n`));
   };
 
+  // BIZZ-939: SSE keepalive — sender heartbeat comment hvert 15s for at
+  // forhindre idle-timeout på mobil Safari. SSE spec: linjer der starter
+  // med ":" er comments og ignoreres af EventSource-klienter.
+  let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+  const startHeartbeat = (ctrl: ReadableStreamDefaultController) => {
+    heartbeatInterval = setInterval(() => {
+      try {
+        ctrl.enqueue(encoder.encode(': heartbeat\n\n'));
+      } catch {
+        // Stream allerede lukket — stop heartbeat
+        if (heartbeatInterval) clearInterval(heartbeatInterval);
+      }
+    }, 15_000);
+  };
+  const stopHeartbeat = () => {
+    if (heartbeatInterval) {
+      clearInterval(heartbeatInterval);
+      heartbeatInterval = null;
+    }
+  };
+
   const stream = new ReadableStream({
     async start(controller) {
+      // BIZZ-939: Start SSE heartbeat for at holde forbindelsen åben
+      startHeartbeat(controller);
       try {
         const MAX_TOOL_ROUNDS = 15;
         // BIZZ-590: Soft time-budget. Vercel hard-kill ved maxDuration (120s)
@@ -2750,6 +2773,7 @@ export async function POST(request: NextRequest): Promise<Response> {
             );
 
             sse(controller, '[DONE]');
+            stopHeartbeat();
             controller.close();
 
             // Fire-and-forget: persist token usage so quota check works next request
@@ -2992,6 +3016,7 @@ export async function POST(request: NextRequest): Promise<Response> {
           })
         );
         sse(controller, '[DONE]');
+        stopHeartbeat();
         controller.close();
 
         // Fire-and-forget: persist token usage so quota check works next request
@@ -3048,6 +3073,7 @@ export async function POST(request: NextRequest): Promise<Response> {
         }
         sse(controller, JSON.stringify({ error: msg }));
         sse(controller, '[DONE]');
+        stopHeartbeat();
         controller.close();
       }
     },

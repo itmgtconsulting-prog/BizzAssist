@@ -518,9 +518,9 @@ const TOOLS: Anthropic.Tool[] = [
       properties: {
         format: {
           type: 'string',
-          enum: ['xlsx', 'csv', 'docx'],
+          enum: ['xlsx', 'csv', 'docx', 'pptx'],
           description:
-            'Output-format. xlsx til talldata/tabeller, csv til simple lister, docx til tekst/rapporter.',
+            'Output-format. xlsx til talldata/tabeller, csv til simple lister, docx til tekst/rapporter, pptx til præsentationer.',
         },
         mode: {
           type: 'string',
@@ -535,7 +535,7 @@ const TOOLS: Anthropic.Tool[] = [
         scratch: {
           type: 'object',
           description:
-            'For mode=scratch. For xlsx/csv: {columns:[{key,header}], rows:[Record<key,value>]}. For docx: {subtitle?, sections:[{heading,body}]}.',
+            'For mode=scratch. For xlsx/csv: {columns:[{key,header}], rows:[Record<key,value>]}. For docx: {subtitle?, sections:[{heading,body}]}. For pptx: {slides:[{title, bullets?:string[], table?:{columns:string[], rows:string[][]}}]}.',
           properties: {
             columns: {
               type: 'array',
@@ -733,7 +733,9 @@ Konteksten kan indeholde \`activeTab\` + \`pageType\` der angiver hvad brugeren 
 - **pageType=virksomhed + activeTab=ejendomme**: Brug hent_ejendomme_for_virksomhed(cvr) på context-cvr. Inkluder datterselskabers ejendomme kun hvis brugeren eksplicit beder om det.
 - **pageType=virksomhed + activeTab=regnskab**: Brug hent_regnskab_noegletal(cvr) — fokus på omsætning/resultat/egenkapital.
 - **pageType=virksomhed + activeTab=oversigt**: Inkluder både stamdata OG ejendomme OG personer (overblik).
-- **pageType=person + activeTab=ejendomme**: Kald hent_ejendomme_for_person(enhedsNummer) OG hent_person_virksomheder + hent_ejendomme_for_virksomhed i parallel for at samle personlige + via-selskab ejendomme.
+- **pageType=person + activeTab=ejendomme**: Kald hent_ejendomme_for_person(enhedsNummer) — dette ene tool returnerer ALLE ejendomme (personlige + via virksomheder).
+- **pageType=person + activeTab=relations (diagram)**: Brugeren ser ejerskabsdiagrammet. Når de siger "eksporter diagram" eller "diagram til word/pptx", generer en struktureret fil med ejerskabshierarkiet. Kald hent_person_virksomheder for at få virksomhedslisten, derefter generate_document med format=docx (sektioner: Ejerskabsoversigt, Virksomheder med roller/ejerandel) eller format=pptx (slides pr. virksomhed). "Diagram" = ejerskabsdiagrammet — IKKE et billede.
+- **pageType=virksomhed + activeTab=diagram**: Brugeren ser virksomheds-ejerskabsdiagrammet. "Eksporter diagram" = generer struktureret ejerskabsoversigt via hent_datterselskaber + hent_ejeroplysninger. Brug docx/pptx format.
 
 ### Ved dokument-generering (generate_document tool)
 VIGTIGT — undgå fejlagtigt indhold:

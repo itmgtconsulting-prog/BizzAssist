@@ -33,6 +33,7 @@ import {
   generateXlsx,
   generateCsv,
   generateDocx,
+  generatePptx,
   fillDocxTemplate,
   xlsxToPreviewTable,
   csvToPreviewTable,
@@ -40,13 +41,14 @@ import {
   GenerateXlsxInputSchema,
   GenerateCsvInputSchema,
   GenerateDocxInputSchema,
+  GeneratePptxInputSchema,
   sanitizeFilename,
   type GeneratedFile,
 } from '@/app/lib/aiFileGeneration';
 
 // ─── Input schemas ──────────────────────────────────────────────────────
 
-const FormatSchema = z.enum(['xlsx', 'csv', 'docx']);
+const FormatSchema = z.enum(['xlsx', 'csv', 'docx', 'pptx']);
 const ModeSchema = z.enum(['scratch', 'attached_template', 'domain_template']);
 
 const ScratchInputSchema = z
@@ -58,6 +60,21 @@ const ScratchInputSchema = z
     sections: z.array(z.object({ heading: z.string(), body: z.string() })).optional(),
     subtitle: z.string().optional(),
     sheetName: z.string().optional(),
+    // BIZZ-935: PPTX slides input
+    slides: z
+      .array(
+        z.object({
+          title: z.string(),
+          bullets: z.array(z.string()).optional(),
+          table: z
+            .object({
+              columns: z.array(z.string()),
+              rows: z.array(z.array(z.string())),
+            })
+            .optional(),
+        })
+      )
+      .optional(),
   })
   .optional();
 
@@ -228,6 +245,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           );
         }
         generated = generateCsv(v.data);
+      } else if (body.format === 'pptx') {
+        // BIZZ-935: PowerPoint-generering
+        const v = GeneratePptxInputSchema.safeParse({
+          title: body.title,
+          slides: body.scratch?.slides ?? [],
+        });
+        if (!v.success) {
+          logger.warn('[generate-file] PPTX-schema fejl:', JSON.stringify(v.error.issues));
+          return NextResponse.json(
+            { error: 'PPTX-schema fejl', details: v.error.issues },
+            { status: 400 }
+          );
+        }
+        generated = await generatePptx(v.data);
       } else {
         // docx
         const v = GenerateDocxInputSchema.safeParse({

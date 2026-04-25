@@ -41,7 +41,7 @@ export const MAX_FILENAME_CHARS = 100;
 
 export type GeneratedFile = {
   buffer: Buffer;
-  ext: 'xlsx' | 'csv' | 'docx';
+  ext: 'xlsx' | 'csv' | 'docx' | 'pptx';
   contentType: string;
 };
 
@@ -86,9 +86,30 @@ export const GenerateDocxInputSchema = z.object({
     .max(100),
 });
 
+// BIZZ-935: PPTX schema — slides med titel + bullet-punkter
+export const GeneratePptxInputSchema = z.object({
+  title: z.string().min(1).max(200),
+  slides: z
+    .array(
+      z.object({
+        title: z.string().min(1).max(200),
+        bullets: z.array(z.string().max(2000)).max(20).optional(),
+        table: z
+          .object({
+            columns: z.array(z.string().max(100)).min(1).max(10),
+            rows: z.array(z.array(z.string().max(500))).max(50),
+          })
+          .optional(),
+      })
+    )
+    .min(1)
+    .max(50),
+});
+
 export type GenerateXlsxInput = z.infer<typeof GenerateXlsxInputSchema>;
 export type GenerateCsvInput = z.infer<typeof GenerateCsvInputSchema>;
 export type GenerateDocxInput = z.infer<typeof GenerateDocxInputSchema>;
+export type GeneratePptxInput = z.infer<typeof GeneratePptxInputSchema>;
 
 // ─── Helpers: security + sanitation ─────────────────────────────────────
 
@@ -306,6 +327,113 @@ export async function generateDocx(input: GenerateDocxInput): Promise<GeneratedF
     buffer,
     ext: 'docx',
     contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  };
+}
+
+// ─── PPTX generator (BIZZ-935) ────────────────────────────────────────
+
+/**
+ * Genererer en PPTX-fil fra strukturerede slides med titler, bullet-punkter og tabeller.
+ *
+ * @param input - Slides med titler og indhold
+ * @returns GeneratedFile med PPTX-buffer
+ */
+export async function generatePptx(input: GeneratePptxInput): Promise<GeneratedFile> {
+  const PptxGenJS = (await import('pptxgenjs')).default;
+  const pres = new PptxGenJS();
+  pres.layout = 'LAYOUT_WIDE';
+  pres.author = 'BizzAssist AI';
+  pres.title = input.title;
+
+  // Titel-slide
+  const titleSlide = pres.addSlide();
+  titleSlide.background = { color: '0F172A' };
+  titleSlide.addText(input.title, {
+    x: 0.5,
+    y: 2.0,
+    w: 12.3,
+    h: 1.5,
+    fontSize: 32,
+    bold: true,
+    color: 'FFFFFF',
+    align: 'center',
+  });
+  titleSlide.addText('BizzAssist', {
+    x: 0.5,
+    y: 4.0,
+    w: 12.3,
+    h: 0.5,
+    fontSize: 14,
+    color: '60A5FA',
+    align: 'center',
+  });
+
+  // Indholds-slides
+  for (const s of input.slides) {
+    const slide = pres.addSlide();
+    slide.background = { color: '0F172A' };
+
+    // Slide-titel
+    slide.addText(s.title, {
+      x: 0.5,
+      y: 0.3,
+      w: 12.3,
+      h: 0.8,
+      fontSize: 24,
+      bold: true,
+      color: 'FFFFFF',
+    });
+
+    let yOffset = 1.3;
+
+    // Bullet-punkter
+    if (s.bullets && s.bullets.length > 0) {
+      const bulletText = s.bullets.map((b) => ({
+        text: b,
+        options: { fontSize: 14, color: 'CBD5E1', bullet: { code: '2022' } },
+      }));
+      slide.addText(bulletText, {
+        x: 0.5,
+        y: yOffset,
+        w: 12.3,
+        h: Math.min(s.bullets.length * 0.5 + 0.5, 5),
+        valign: 'top',
+        paraSpaceAfter: 6,
+      });
+      yOffset += Math.min(s.bullets.length * 0.5 + 0.5, 5) + 0.2;
+    }
+
+    // Tabel
+    if (s.table && s.table.columns.length > 0) {
+      const headerRow = s.table.columns.map((c) => ({
+        text: c,
+        options: { bold: true, color: 'FFFFFF', fill: { color: '1E3A5F' }, fontSize: 11 },
+      }));
+      const dataRows = s.table.rows.map((row) =>
+        row.map((cell) => ({
+          text: cell,
+          options: { color: 'CBD5E1', fill: { color: '1E293B' }, fontSize: 10 },
+        }))
+      );
+      slide.addTable([headerRow, ...dataRows], {
+        x: 0.5,
+        y: yOffset,
+        w: 12.3,
+        border: { type: 'solid', pt: 0.5, color: '334155' },
+        colW: Array(s.table.columns.length).fill(12.3 / s.table.columns.length),
+      });
+    }
+  }
+
+  const arrayBuffer = (await pres.write({ outputType: 'arraybuffer' })) as ArrayBuffer;
+  const buffer = Buffer.from(arrayBuffer);
+  if (buffer.length > MAX_OUTPUT_BYTES) {
+    throw new Error(`PPTX output ${buffer.length}B overstiger ${MAX_OUTPUT_BYTES}B limit`);
+  }
+  return {
+    buffer,
+    ext: 'pptx',
+    contentType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   };
 }
 

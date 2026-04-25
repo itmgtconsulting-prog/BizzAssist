@@ -118,12 +118,17 @@ async function aggregateForBatch(enhedsNumre) {
         aktiveCvrs: new Set(),
         roleTypes: new Set(),
         maxFra: null,
+        historiskeCvrs: new Set(),
+        totalRoller: 0,
       });
     }
     const acc = perDeltager.get(enr);
     const erAktiv = !row.gyldig_til || row.gyldig_til > nowIso;
     const normType = normalizeRoleType(row.type);
     if (normType) acc.roleTypes.add(normType);
+    // BIZZ-823: Track alle roller og historiske virksomheder
+    acc.totalRoller++;
+    if (row.gyldig_til) acc.historiskeCvrs.add(row.virksomhed_cvr);
     if (erAktiv) {
       acc.aktive.push({
         cvr: row.virksomhed_cvr,
@@ -149,6 +154,8 @@ async function aggregateForBatch(enhedsNumre) {
         antal_aktive_selskaber: 0,
         senest_indtraadt_dato: null,
         role_typer: [],
+        antal_historiske_virksomheder: 0,
+        totalt_antal_roller: 0,
       });
       continue;
     }
@@ -158,6 +165,8 @@ async function aggregateForBatch(enhedsNumre) {
       antal_aktive_selskaber: acc.aktiveCvrs.size,
       senest_indtraadt_dato: acc.maxFra,
       role_typer: Array.from(acc.roleTypes),
+      antal_historiske_virksomheder: acc.historiskeCvrs.size,
+      totalt_antal_roller: acc.totalRoller,
     });
   }
   return result;
@@ -225,6 +234,8 @@ async function main() {
                   antal_aktive_selskaber: p.antal_aktive_selskaber,
                   senest_indtraadt_dato: p.senest_indtraadt_dato,
                   role_typer: p.role_typer,
+                  antal_historiske_virksomheder: p.antal_historiske_virksomheder,
+                  totalt_antal_roller: p.totalt_antal_roller,
                   berigelse_sidst: p.berigelse_sidst,
                 })
                 .eq('enhedsnummer', p.enhedsnummer)

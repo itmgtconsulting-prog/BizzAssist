@@ -1,20 +1,22 @@
 /**
  * BIZZ-823 (BIZZ-790b): Person-filter-katalog phase-2.
  *
- * Data-kilde: cvr_deltager-tabellen efter BIZZ-830 berigelse (migration 077):
+ * Data-kilde: cvr_deltager-tabellen efter berigelse (migration 077 + 081):
  *   - is_aktiv (boolean)
  *   - antal_aktive_selskaber (integer)
  *   - senest_indtraadt_dato (date)
  *   - role_typer (text[])
+ *   - antal_historiske_virksomheder (integer) — migration 081
+ *   - totalt_antal_roller (integer) — migration 081
  *
  * Filtre:
  *   - Rolle multi-select (direktør/bestyrelsesmedlem/stifter/reel_ejer/ejer/suppleant/formand)
  *   - Rollestatus (aktive/ophørte/alle, default: aktive)
- *   - Antal aktive virksomheder (range 0-20)
+ *   - Antal aktive virksomheder (range 0-50)
+ *   - Antal historiske virksomheder (range 0-50)
+ *   - Totalt antal roller (range 0-100)
  *   - Kommune (dynamisk fra live-resultater)
- *
- * Presets-tags (phase-3 parkering) er ikke inkluderet i denne iter —
- * kan tilføjes som dedicated preset-schema senere.
+ *   - Preset-tags (7 forudindstillede profiler)
  */
 
 import type { FilterOption, FilterSchema } from './filterSchema';
@@ -61,8 +63,8 @@ export function buildRollestatusSchema(lang: 'da' | 'en'): FilterSchema {
 }
 
 /**
- * Antal aktive virksomheder range. 0-20 dækker typisk interval;
- * >20 er sjældent (stråmænd eller professionelle advokater).
+ * Antal aktive virksomheder range. 0-50 dækker typisk interval;
+ * >50 er meget sjældent (stråmænd eller professionelle advokater).
  */
 export function buildAntalAktiveSchema(lang: 'da' | 'en'): FilterSchema {
   const da = lang === 'da';
@@ -71,8 +73,72 @@ export function buildAntalAktiveSchema(lang: 'da' | 'en'): FilterSchema {
     key: 'antalAktiveSelskaber',
     label: da ? 'Antal aktive virksomheder' : 'Active companies count',
     min: 0,
-    max: 20,
+    max: 50,
     step: 1,
+  };
+}
+
+/**
+ * BIZZ-823: Antal historiske (ophørte) virksomheder range.
+ */
+export function buildAntalHistoriskeSchema(lang: 'da' | 'en'): FilterSchema {
+  const da = lang === 'da';
+  return {
+    type: 'range',
+    key: 'antalHistoriskeVirksomheder',
+    label: da ? 'Antal historiske virksomheder' : 'Historical companies count',
+    min: 0,
+    max: 50,
+    step: 1,
+  };
+}
+
+/**
+ * BIZZ-823: Totalt antal roller (aktive + ophørte) range.
+ */
+export function buildTotalRollerSchema(lang: 'da' | 'en'): FilterSchema {
+  const da = lang === 'da';
+  return {
+    type: 'range',
+    key: 'totalAntalRoller',
+    label: da ? 'Totalt antal roller' : 'Total role count',
+    min: 0,
+    max: 100,
+    step: 1,
+  };
+}
+
+/**
+ * BIZZ-823: Preset-tags for hurtig profilering.
+ * Mutually exclusive — klik sætter kombineret filter.
+ */
+export function buildPresetSchema(lang: 'da' | 'en'): FilterSchema {
+  const da = lang === 'da';
+  return {
+    type: 'multi-select',
+    key: 'preset',
+    label: da ? 'Profil-presets' : 'Profile presets',
+    options: [
+      { value: 'kunDirektoerer', label: da ? 'Kun direktører' : 'Directors only' },
+      { value: 'kunReelleEjere', label: da ? 'Kun reelle ejere' : 'Beneficial owners only' },
+      {
+        value: 'kunBestyrelsesmedlemmer',
+        label: da ? 'Kun bestyrelsesmedlemmer' : 'Board members only',
+      },
+      { value: 'kunStiftere', label: da ? 'Kun stiftere' : 'Founders only' },
+      {
+        value: 'serielIvaerksaetter',
+        label: da ? 'Seriel iværksætter (5+)' : 'Serial entrepreneur (5+)',
+      },
+      {
+        value: 'professionelBestyrelse',
+        label: da ? 'Professionel bestyrelse (3+)' : 'Professional board (3+)',
+      },
+      {
+        value: 'enkeltvirksomhed',
+        label: da ? 'Enkeltvirksomhed' : 'Single company',
+      },
+    ],
   };
 }
 
@@ -99,9 +165,12 @@ export function buildPersonFilterSchemas(
   kommuneOptions: FilterOption[]
 ): FilterSchema[] {
   return [
+    buildPresetSchema(lang),
     buildRolleSchema(lang),
     buildRollestatusSchema(lang),
     buildAntalAktiveSchema(lang),
+    buildAntalHistoriskeSchema(lang),
+    buildTotalRollerSchema(lang),
     buildPersonKommuneSchema(lang, kommuneOptions),
   ];
 }
@@ -126,9 +195,12 @@ export function buildPersonKommuneOptions(
 // ─── Filter-state + matching ───────────────────────────────────────────────
 
 export interface PersonFilterState {
+  preset?: string[];
   rolle?: string[];
   rollestatus?: string;
   antalAktiveSelskaber?: { min?: number; max?: number };
+  antalHistoriskeVirksomheder?: { min?: number; max?: number };
+  totalAntalRoller?: { min?: number; max?: number };
   kommune?: string[];
 }
 
@@ -136,10 +208,17 @@ export function narrowPersonFilters(raw: Record<string, unknown>): PersonFilterS
   const isRange = (v: unknown): v is { min?: number; max?: number } =>
     typeof v === 'object' && v !== null && !Array.isArray(v);
   return {
+    preset: Array.isArray(raw.preset) ? (raw.preset as string[]) : undefined,
     rolle: Array.isArray(raw.rolle) ? (raw.rolle as string[]) : undefined,
     rollestatus: typeof raw.rollestatus === 'string' ? raw.rollestatus : undefined,
     antalAktiveSelskaber: isRange(raw.antalAktiveSelskaber)
       ? (raw.antalAktiveSelskaber as { min?: number; max?: number })
+      : undefined,
+    antalHistoriskeVirksomheder: isRange(raw.antalHistoriskeVirksomheder)
+      ? (raw.antalHistoriskeVirksomheder as { min?: number; max?: number })
+      : undefined,
+    totalAntalRoller: isRange(raw.totalAntalRoller)
+      ? (raw.totalAntalRoller as { min?: number; max?: number })
       : undefined,
     kommune: Array.isArray(raw.kommune) ? (raw.kommune as string[]) : undefined,
   };
@@ -158,34 +237,84 @@ export interface FilterablePerson {
   roleTyper?: string[] | null;
   /** Kommune fra personens adresse */
   adresse?: { kommunenavn?: string };
+  /** BIZZ-823: Antal virksomheder med ophørte roller */
+  antalHistoriskeVirksomheder?: number | null;
+  /** BIZZ-823: Total antal roller (aktive + ophørte) */
+  totalAntalRoller?: number | null;
+}
+
+/**
+ * Hjælper til range-check med null-pass-through.
+ */
+function matchRange(
+  value: number | null | undefined,
+  range: { min?: number; max?: number } | undefined
+): boolean {
+  if (!range || value == null) return true;
+  if (range.min != null && value < range.min) return false;
+  if (range.max != null && value > range.max) return false;
+  return true;
 }
 
 /**
  * Match person mod filter-state. Null-felter passer gennem — vi
  * skjuler kun eksplicit hvad filter udelukker.
+ *
+ * Preset-tags fungerer som genveje der matcher mod eksisterende felter.
  */
 export function matchPersonFilter(item: FilterablePerson, filters: PersonFilterState): boolean {
-  // Rollestatus (aktive default)
+  // ── Preset-tags (mutually exclusive, maps til kombineret filter) ──
+  if (filters.preset && filters.preset.length > 0) {
+    const p = filters.preset[0];
+    switch (p) {
+      case 'kunDirektoerer':
+        if (!item.roleTyper?.includes('direktør')) return false;
+        break;
+      case 'kunReelleEjere':
+        if (!item.roleTyper?.includes('reel_ejer')) return false;
+        break;
+      case 'kunBestyrelsesmedlemmer':
+        if (!item.roleTyper?.includes('bestyrelsesmedlem')) return false;
+        break;
+      case 'kunStiftere':
+        if (!item.roleTyper?.includes('stifter')) return false;
+        break;
+      case 'serielIvaerksaetter':
+        if ((item.antalAktiveSelskaber ?? 0) < 5) return false;
+        break;
+      case 'professionelBestyrelse':
+        if (!item.roleTyper?.includes('bestyrelsesmedlem') && !item.roleTyper?.includes('formand'))
+          return false;
+        if ((item.antalAktiveSelskaber ?? 0) < 3) return false;
+        break;
+      case 'enkeltvirksomhed':
+        if (item.antalAktiveSelskaber !== 1) return false;
+        break;
+    }
+  }
+
+  // ── Rollestatus (aktive default) ──
   const status = filters.rollestatus ?? 'aktive';
   if (status === 'aktive' && item.isAktiv === false) return false;
   if (status === 'ophoerte' && item.isAktiv === true) return false;
-  // Rolle multi-select — match hvis ET overlap mellem valgte og person's role_typer
+
+  // ── Rolle multi-select ──
   if (filters.rolle && filters.rolle.length > 0 && item.roleTyper) {
     const overlap = filters.rolle.some((r) => item.roleTyper!.includes(r));
     if (!overlap) return false;
   }
-  // Antal aktive virksomheder range
-  if (filters.antalAktiveSelskaber && item.antalAktiveSelskaber != null) {
-    const n = item.antalAktiveSelskaber;
-    if (filters.antalAktiveSelskaber.min != null && n < filters.antalAktiveSelskaber.min)
-      return false;
-    if (filters.antalAktiveSelskaber.max != null && n > filters.antalAktiveSelskaber.max)
-      return false;
-  }
-  // Kommune multi-select
+
+  // ── Range-filtre ──
+  if (!matchRange(item.antalAktiveSelskaber, filters.antalAktiveSelskaber)) return false;
+  if (!matchRange(item.antalHistoriskeVirksomheder, filters.antalHistoriskeVirksomheder))
+    return false;
+  if (!matchRange(item.totalAntalRoller, filters.totalAntalRoller)) return false;
+
+  // ── Kommune multi-select ──
   if (filters.kommune && filters.kommune.length > 0) {
     const k = item.adresse?.kommunenavn ?? '';
     if (!filters.kommune.includes(k)) return false;
   }
+
   return true;
 }

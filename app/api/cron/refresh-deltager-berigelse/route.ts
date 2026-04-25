@@ -82,6 +82,8 @@ async function aggregateForBatch(
       antal_aktive_selskaber: number;
       senest_indtraadt_dato: string | null;
       role_typer: string[];
+      antal_historiske_virksomheder: number;
+      totalt_antal_roller: number;
     }
   >
 > {
@@ -103,6 +105,8 @@ async function aggregateForBatch(
       aktiveCvrs: Set<string>;
       roleTypes: Set<string>;
       maxFra: string | null;
+      historiskeCvrs: Set<string>;
+      totalRoller: number;
     }
   >();
 
@@ -115,12 +119,17 @@ async function aggregateForBatch(
         aktiveCvrs: new Set(),
         roleTypes: new Set(),
         maxFra: null,
+        historiskeCvrs: new Set(),
+        totalRoller: 0,
       });
     }
     const acc = perDeltager.get(enr)!;
     const erAktiv = !row.gyldig_til || row.gyldig_til > nowIso;
     const normType = normalizeRoleType(row.type);
     if (normType) acc.roleTypes.add(normType);
+    // BIZZ-823: Track alle roller og historiske virksomheder
+    acc.totalRoller++;
+    if (row.gyldig_til) acc.historiskeCvrs.add(row.virksomhed_cvr);
     if (erAktiv) {
       acc.aktive.push({
         cvr: row.virksomhed_cvr,
@@ -147,6 +156,8 @@ async function aggregateForBatch(
       antal_aktive_selskaber: number;
       senest_indtraadt_dato: string | null;
       role_typer: string[];
+      antal_historiske_virksomheder: number;
+      totalt_antal_roller: number;
     }
   >();
 
@@ -161,6 +172,8 @@ async function aggregateForBatch(
             antal_aktive_selskaber: acc.aktiveCvrs.size,
             senest_indtraadt_dato: acc.maxFra,
             role_typer: Array.from(acc.roleTypes),
+            antal_historiske_virksomheder: acc.historiskeCvrs.size,
+            totalt_antal_roller: acc.totalRoller,
           }
         : {
             is_aktiv: false,
@@ -168,6 +181,8 @@ async function aggregateForBatch(
             antal_aktive_selskaber: 0,
             senest_indtraadt_dato: null,
             role_typer: [],
+            antal_historiske_virksomheder: 0,
+            totalt_antal_roller: 0,
           }
     );
   }
@@ -221,6 +236,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         antal_aktive_selskaber: agg.antal_aktive_selskaber,
         senest_indtraadt_dato: agg.senest_indtraadt_dato,
         role_typer: agg.role_typer,
+        antal_historiske_virksomheder: agg.antal_historiske_virksomheder,
+        totalt_antal_roller: agg.totalt_antal_roller,
         berigelse_sidst: nowIso,
       }));
 

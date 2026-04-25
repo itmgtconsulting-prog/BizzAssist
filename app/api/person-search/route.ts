@@ -52,6 +52,10 @@ export interface PersonSearchResult {
   roleTyper?: string[] | null;
   /** Kommune fra adresse_json (til kommune-filter) */
   kommunenavn?: string | null;
+  /** BIZZ-823: Antal virksomheder med ophørte roller */
+  antalHistoriskeVirksomheder?: number | null;
+  /** BIZZ-823: Total antal roller (aktive + ophørte) */
+  totalAntalRoller?: number | null;
 }
 
 // ─── Config ──────────────────────────────────────────────────────────────────
@@ -188,6 +192,8 @@ async function enrichFromCvrDeltager(enhedsNumre: number[]): Promise<
       antalAktiveSelskaber: number | null;
       roleTyper: string[] | null;
       kommunenavn: string | null;
+      antalHistoriskeVirksomheder: number | null;
+      totalAntalRoller: number | null;
     }
   >
 > {
@@ -198,6 +204,8 @@ async function enrichFromCvrDeltager(enhedsNumre: number[]): Promise<
       antalAktiveSelskaber: number | null;
       roleTyper: string[] | null;
       kommunenavn: string | null;
+      antalHistoriskeVirksomheder: number | null;
+      totalAntalRoller: number | null;
     }
   >();
   if (enhedsNumre.length === 0) return result;
@@ -218,7 +226,9 @@ async function enrichFromCvrDeltager(enhedsNumre: number[]): Promise<
     };
     const { data, error } = await client
       .from('cvr_deltager')
-      .select('enhedsNummer, is_aktiv, antal_aktive_selskaber, role_typer, adresse_json')
+      .select(
+        'enhedsNummer, is_aktiv, antal_aktive_selskaber, role_typer, adresse_json, antal_historiske_virksomheder, totalt_antal_roller'
+      )
       .in('enhedsNummer', enhedsNumre);
 
     if (error) {
@@ -248,6 +258,11 @@ async function enrichFromCvrDeltager(enhedsNumre: number[]): Promise<
           row.antal_aktive_selskaber != null ? Number(row.antal_aktive_selskaber) : null,
         roleTyper: Array.isArray(row.role_typer) ? (row.role_typer as string[]) : null,
         kommunenavn,
+        antalHistoriskeVirksomheder:
+          row.antal_historiske_virksomheder != null
+            ? Number(row.antal_historiske_virksomheder)
+            : null,
+        totalAntalRoller: row.totalt_antal_roller != null ? Number(row.totalt_antal_roller) : null,
       });
     }
   } catch (err) {
@@ -371,6 +386,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         r.antalAktiveSelskaber = enrichment.antalAktiveSelskaber;
         r.roleTyper = enrichment.roleTyper;
         r.kommunenavn = enrichment.kommunenavn;
+        r.antalHistoriskeVirksomheder = enrichment.antalHistoriskeVirksomheder;
+        r.totalAntalRoller = enrichment.totalAntalRoller;
       }
     }
 

@@ -877,6 +877,8 @@ export default function UniversalSearchPageClient() {
                   antalAktiveSelskaber: p.antalAktiveSelskaber ?? p.antalVirksomheder,
                   roleTyper: p.roleTyper ?? null,
                   adresse: p.kommunenavn ? { kommunenavn: p.kommunenavn } : undefined,
+                  antalHistoriskeVirksomheder: p.antalHistoriskeVirksomheder ?? null,
+                  totalAntalRoller: p.totalAntalRoller ?? null,
                 }));
                 matchCount = filterable.filter((p) =>
                   matchPersonFilter(p, narrowPersonFilters(filters))
@@ -1010,6 +1012,8 @@ export default function UniversalSearchPageClient() {
                     antalAktiveSelskaber: p.antalAktiveSelskaber ?? p.antalVirksomheder,
                     roleTyper: p.roleTyper ?? null,
                     adresse: p.kommunenavn ? { kommunenavn: p.kommunenavn } : undefined,
+                    antalHistoriskeVirksomheder: p.antalHistoriskeVirksomheder ?? null,
+                    totalAntalRoller: p.totalAntalRoller ?? null,
                   },
                   personFilters
                 )

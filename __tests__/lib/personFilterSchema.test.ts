@@ -10,13 +10,16 @@ import {
 } from '@/app/lib/search/personFilterSchema';
 
 describe('buildPersonFilterSchemas', () => {
-  it('returnerer 4 filtre i korrekt rækkefølge', () => {
+  it('returnerer 7 filtre i korrekt rækkefølge', () => {
     const schemas = buildPersonFilterSchemas('da', []);
-    expect(schemas).toHaveLength(4);
-    expect(schemas[0].key).toBe('rolle');
-    expect(schemas[1].key).toBe('rollestatus');
-    expect(schemas[2].key).toBe('antalAktiveSelskaber');
-    expect(schemas[3].key).toBe('kommune');
+    expect(schemas).toHaveLength(7);
+    expect(schemas[0].key).toBe('preset');
+    expect(schemas[1].key).toBe('rolle');
+    expect(schemas[2].key).toBe('rollestatus');
+    expect(schemas[3].key).toBe('antalAktiveSelskaber');
+    expect(schemas[4].key).toBe('antalHistoriskeVirksomheder');
+    expect(schemas[5].key).toBe('totalAntalRoller');
+    expect(schemas[6].key).toBe('kommune');
   });
 
   it('rollestatus default er aktive', () => {
@@ -33,6 +36,8 @@ describe('matchPersonFilter', () => {
     antalAktiveSelskaber: 3,
     roleTyper: ['direktør', 'ejer'],
     adresse: { kommunenavn: 'København' },
+    antalHistoriskeVirksomheder: 5,
+    totalAntalRoller: 12,
   };
 
   it('rolle overlap: match når mindst én valgt rolle findes på person', () => {
@@ -63,20 +68,96 @@ describe('matchPersonFilter', () => {
     const sparse: FilterablePerson = { isAktiv: null };
     expect(matchPersonFilter(sparse, { antalAktiveSelskaber: { min: 5 } })).toBe(true);
   });
+
+  // BIZZ-823: Nye filtre
+  it('antalHistoriskeVirksomheder range honoreres', () => {
+    expect(matchPersonFilter(base, { antalHistoriskeVirksomheder: { min: 3, max: 10 } })).toBe(
+      true
+    );
+    expect(matchPersonFilter(base, { antalHistoriskeVirksomheder: { min: 10 } })).toBe(false);
+  });
+
+  it('totalAntalRoller range honoreres', () => {
+    expect(matchPersonFilter(base, { totalAntalRoller: { min: 10, max: 20 } })).toBe(true);
+    expect(matchPersonFilter(base, { totalAntalRoller: { min: 15 } })).toBe(false);
+  });
+
+  // BIZZ-823: Preset-tags
+  it('preset kunDirektoerer matcher kun direktører', () => {
+    expect(matchPersonFilter(base, { preset: ['kunDirektoerer'] })).toBe(true);
+    const noDir: FilterablePerson = { ...base, roleTyper: ['stifter'] };
+    expect(matchPersonFilter(noDir, { preset: ['kunDirektoerer'] })).toBe(false);
+  });
+
+  it('preset serielIvaerksaetter kræver 5+ aktive virksomheder', () => {
+    const seriel: FilterablePerson = { ...base, antalAktiveSelskaber: 7 };
+    expect(matchPersonFilter(seriel, { preset: ['serielIvaerksaetter'] })).toBe(true);
+    expect(matchPersonFilter(base, { preset: ['serielIvaerksaetter'] })).toBe(false);
+  });
+
+  it('preset professionelBestyrelse kræver bestyrelsesrolle + 3+ virksomheder', () => {
+    const prof: FilterablePerson = {
+      ...base,
+      roleTyper: ['bestyrelsesmedlem', 'direktør'],
+      antalAktiveSelskaber: 4,
+    };
+    expect(matchPersonFilter(prof, { preset: ['professionelBestyrelse'] })).toBe(true);
+    // Har bestyrelsesrolle men kun 2 virksomheder
+    const faa: FilterablePerson = {
+      ...base,
+      roleTyper: ['bestyrelsesmedlem'],
+      antalAktiveSelskaber: 2,
+    };
+    expect(matchPersonFilter(faa, { preset: ['professionelBestyrelse'] })).toBe(false);
+  });
+
+  it('preset enkeltvirksomhed kræver præcis 1 aktiv', () => {
+    const enkel: FilterablePerson = { ...base, antalAktiveSelskaber: 1 };
+    expect(matchPersonFilter(enkel, { preset: ['enkeltvirksomhed'] })).toBe(true);
+    expect(matchPersonFilter(base, { preset: ['enkeltvirksomhed'] })).toBe(false);
+  });
+
+  it('preset + range kan kombineres', () => {
+    const seriel: FilterablePerson = {
+      ...base,
+      antalAktiveSelskaber: 7,
+      totalAntalRoller: 20,
+    };
+    // Seriel iværksætter + total roller 15-25 = match
+    expect(
+      matchPersonFilter(seriel, {
+        preset: ['serielIvaerksaetter'],
+        totalAntalRoller: { min: 15, max: 25 },
+      })
+    ).toBe(true);
+    // Seriel iværksætter + total roller 25-50 = no match
+    expect(
+      matchPersonFilter(seriel, {
+        preset: ['serielIvaerksaetter'],
+        totalAntalRoller: { min: 25 },
+      })
+    ).toBe(false);
+  });
 });
 
 describe('narrowPersonFilters', () => {
   it('parser range-shapes og arrays korrekt', () => {
     const raw = {
+      preset: ['serielIvaerksaetter'],
       rolle: ['direktør'],
       rollestatus: 'aktive',
       antalAktiveSelskaber: { min: 2 },
+      antalHistoriskeVirksomheder: { min: 3, max: 10 },
+      totalAntalRoller: { max: 50 },
       kommune: ['København', 'Aarhus'],
     };
     const narrow = narrowPersonFilters(raw);
+    expect(narrow.preset).toEqual(['serielIvaerksaetter']);
     expect(narrow.rolle).toEqual(['direktør']);
     expect(narrow.rollestatus).toBe('aktive');
     expect(narrow.antalAktiveSelskaber).toEqual({ min: 2 });
+    expect(narrow.antalHistoriskeVirksomheder).toEqual({ min: 3, max: 10 });
+    expect(narrow.totalAntalRoller).toEqual({ max: 50 });
     expect(narrow.kommune).toEqual(['København', 'Aarhus']);
   });
 
